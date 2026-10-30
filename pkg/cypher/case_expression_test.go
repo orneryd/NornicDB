@@ -1,0 +1,522 @@
+package cypher
+
+import (
+	"context"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSimpleCaseUsesTypedEquality(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))
+
+	result, err := exec.Execute(context.Background(), `
+		RETURN CASE '0'
+			WHEN 0 THEN 'numeric match'
+			ELSE 'different type'
+		END AS result
+	`, nil)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(result.Rows) != 1 || len(result.Rows[0]) != 1 {
+		t.Fatalf("expected one scalar row, got %#v", result.Rows)
+	}
+	if got := result.Rows[0][0]; got != "different type" {
+		t.Fatalf("expected typed CASE comparison, got %#v", got)
+	}
+}
+
+func TestCaseExpressionSearched(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create test data
+	for _, data := range []struct {
+		name string
+		age  int64
+	}{
+		{"Alice", 15},
+		{"Bob", 30},
+		{"Charlie", 70},
+		{"Diana", 25},
+	} {
+		_, err := exec.Execute(ctx, "CREATE (p:Person {name: $name, age: $age})", map[string]interface{}{
+			"name": data.name,
+			"age":  data.age,
+		})
+		if err != nil {
+			t.Fatalf("Failed to create node: %v", err)
+		}
+	}
+
+	t.Run("BasicSearchedCase", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (p:Person)
+			RETURN p.name,
+				CASE
+					WHEN p.age < 18 THEN 'minor'
+					WHEN p.age < 65 THEN 'adult'
+					ELSE 'senior'
+				END AS ageGroup
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if len(result.Rows) != 4 {
+			t.Errorf("Expected 4 rows, got %d", len(result.Rows))
+		}
+
+		// Check specific cases
+		expected := map[string]string{
+			"Alice":   "minor",
+			"Bob":     "adult",
+			"Charlie": "senior",
+			"Diana":   "adult",
+		}
+
+		for _, row := range result.Rows {
+			name := row[0].(string)
+			ageGroup := row[1]
+			if ageGroup == nil {
+				t.Errorf("Got NULL for %s, expected %s", name, expected[name])
+				continue
+			}
+			if expected[name] != ageGroup.(string) {
+				t.Errorf("For %s: expected %s, got %v", name, expected[name], ageGroup)
+			}
+		}
+	})
+
+	t.Run("CaseWithoutElse", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (p:Person)
+			RETURN p.name,
+				CASE
+					WHEN p.age < 18 THEN 'minor'
+					WHEN p.age >= 65 THEN 'senior'
+				END AS category
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		// Check that adults get NULL (no matching WHEN, no ELSE)
+		for _, row := range result.Rows {
+			name := row[0].(string)
+			category := row[1]
+
+			if name == "Bob" || name == "Diana" {
+				// Adults should get NULL
+				if category != nil {
+					t.Errorf("Expected NULL for %s (adult), got %v", name, category)
+				}
+			} else {
+				// Minor and senior should have values
+				if category == nil {
+					t.Errorf("Expected non-NULL for %s", name)
+				}
+			}
+		}
+	})
+
+	t.Run("CaseWithComparison", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (p:Person)
+			WHERE p.name = 'Bob'
+			RETURN 
+				CASE
+					WHEN p.age > 50 THEN 'old'
+					WHEN p.age > 25 THEN 'middle'
+					WHEN p.age > 0 THEN 'young'
+				END AS category
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Fatalf("Expected 1 row, got %d", len(result.Rows))
+		}
+
+		if result.Rows[0][0] != "middle" {
+			t.Errorf("Expected 'middle', got %v", result.Rows[0][0])
+		}
+	})
+
+	t.Run("CaseWithLessEqual", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (p:Person)
+			WHERE p.name = 'Diana'
+			RETURN 
+				CASE
+					WHEN p.age <= 20 THEN 'young'
+					WHEN p.age <= 40 THEN 'adult'
+					ELSE 'old'
+				END AS category
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if result.Rows[0][0] != "adult" {
+			t.Errorf("Expected 'adult', got %v", result.Rows[0][0])
+		}
+	})
+}
+
+func TestCaseExpressionSimple(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create test data with status
+	for _, data := range []struct {
+		name   string
+		status string
+	}{
+		{"Task1", "pending"},
+		{"Task2", "active"},
+		{"Task3", "done"},
+		{"Task4", "cancelled"},
+	} {
+		_, err := exec.Execute(ctx, "CREATE (t:Task {name: $name, status: $status})", map[string]interface{}{
+			"name":   data.name,
+			"status": data.status,
+		})
+		if err != nil {
+			t.Fatalf("Failed to create node: %v", err)
+		}
+	}
+
+	t.Run("SimpleCaseExpression", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (t:Task)
+			RETURN t.name,
+				CASE t.status
+					WHEN 'pending' THEN 'Not Started'
+					WHEN 'active' THEN 'In Progress'
+					WHEN 'done' THEN 'Completed'
+					ELSE 'Unknown'
+				END AS statusLabel
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if len(result.Rows) != 4 {
+			t.Errorf("Expected 4 rows, got %d", len(result.Rows))
+		}
+
+		expected := map[string]string{
+			"Task1": "Not Started",
+			"Task2": "In Progress",
+			"Task3": "Completed",
+			"Task4": "Unknown",
+		}
+
+		for _, row := range result.Rows {
+			name := row[0].(string)
+			label := row[1].(string)
+			if expected[name] != label {
+				t.Errorf("For %s: expected %s, got %s", name, expected[name], label)
+			}
+		}
+	})
+
+	t.Run("SimpleCaseWithNumbers", func(t *testing.T) {
+		// Create numeric test data
+		exec.Execute(ctx, "CREATE (n:Number {value: 1})", nil)
+		exec.Execute(ctx, "CREATE (n:Number {value: 2})", nil)
+		exec.Execute(ctx, "CREATE (n:Number {value: 3})", nil)
+
+		result, err := exec.Execute(ctx, `
+			MATCH (n:Number)
+			RETURN n.value,
+				CASE n.value
+					WHEN 1 THEN 'one'
+					WHEN 2 THEN 'two'
+					WHEN 3 THEN 'three'
+				END AS word
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if len(result.Rows) != 3 {
+			t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+		}
+
+		for _, row := range result.Rows {
+			value := row[0].(int64)
+			word := row[1].(string)
+
+			expected := map[int64]string{1: "one", 2: "two", 3: "three"}
+			if expected[value] != word {
+				t.Errorf("For value %d: expected %s, got %s", value, expected[value], word)
+			}
+		}
+	})
+}
+
+func TestCaseExpressionNullHandling(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create data with NULL values
+	exec.Execute(ctx, "CREATE (p:Person {name: 'Alice', age: 30})", nil)
+	exec.Execute(ctx, "CREATE (p:Person {name: 'Bob'})", nil) // No age property
+
+	t.Run("CaseWithNullValue", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (p:Person)
+			RETURN p.name,
+				CASE
+					WHEN p.age IS NULL THEN 'unknown'
+					WHEN p.age < 18 THEN 'minor'
+					ELSE 'adult'
+				END AS category
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		for _, row := range result.Rows {
+			name := row[0].(string)
+			category := row[1].(string)
+
+			if name == "Bob" && category != "unknown" {
+				t.Errorf("Expected 'unknown' for Bob (NULL age), got %s", category)
+			}
+			if name == "Alice" && category != "adult" {
+				t.Errorf("Expected 'adult' for Alice, got %s", category)
+			}
+		}
+	})
+
+	t.Run("CaseReturningNull", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (p:Person)
+			WHERE p.name = 'Bob'
+			RETURN 
+				CASE
+					WHEN p.age > 100 THEN 'very old'
+				END AS category
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		// Should return NULL (no matching WHEN, no ELSE)
+		if result.Rows[0][0] != nil {
+			t.Errorf("Expected NULL, got %v", result.Rows[0][0])
+		}
+	})
+}
+
+func TestCaseExpressionComplexConditions(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	exec.Execute(ctx, "CREATE (p:Product {name: 'Widget', price: 100, stock: 5})", nil)
+	exec.Execute(ctx, "CREATE (p:Product {name: 'Gadget', price: 50, stock: 0})", nil)
+	exec.Execute(ctx, "CREATE (p:Product {name: 'Tool', price: 200, stock: 10})", nil)
+
+	t.Run("CaseWithMultipleConditions", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (p:Product)
+			RETURN p.name,
+				CASE
+					WHEN p.stock = 0 THEN 'Out of Stock'
+					WHEN p.price >= 200 THEN 'Premium'
+					WHEN p.price >= 100 THEN 'Standard'
+					ELSE 'Budget'
+				END AS category
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		expected := map[string]string{
+			"Widget": "Standard",
+			"Gadget": "Out of Stock", // stock = 0 comes first
+			"Tool":   "Premium",
+		}
+
+		for _, row := range result.Rows {
+			name := row[0].(string)
+			category := row[1].(string)
+			if expected[name] != category {
+				t.Errorf("For %s: expected %s, got %s", name, expected[name], category)
+			}
+		}
+	})
+
+	t.Run("CaseWithNotEquals", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (p:Product)
+			WHERE p.name = 'Widget'
+			RETURN 
+				CASE
+					WHEN p.stock <> 0 THEN 'available'
+					ELSE 'unavailable'
+				END AS availability
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if result.Rows[0][0] != "available" {
+			t.Errorf("Expected 'available', got %v", result.Rows[0][0])
+		}
+	})
+}
+
+func TestCaseExpressionEdgeCases(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	exec.Execute(ctx, "CREATE (n:Test {value: 0})", nil)
+	exec.Execute(ctx, "CREATE (n:Test {value: -1})", nil)
+	exec.Execute(ctx, "CREATE (n:Test {name: ''})", nil)
+
+	t.Run("CaseWithZeroValue", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (n:Test)
+			WHERE n.value = 0
+			RETURN 
+				CASE n.value
+					WHEN 0 THEN 'zero'
+					WHEN 1 THEN 'one'
+					ELSE 'other'
+				END AS label
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if result.Rows[0][0] != "zero" {
+			t.Errorf("Expected 'zero', got %v", result.Rows[0][0])
+		}
+	})
+
+	t.Run("CaseWithNegativeNumber", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (n:Test)
+			WHERE n.value = -1
+			RETURN 
+				CASE
+					WHEN n.value < 0 THEN 'negative'
+					WHEN n.value > 0 THEN 'positive'
+					ELSE 'zero'
+				END AS sign
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if result.Rows[0][0] != "negative" {
+			t.Errorf("Expected 'negative', got %v", result.Rows[0][0])
+		}
+	})
+
+	t.Run("CaseWithEmptyString", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (n:Test)
+			WHERE n.name IS NOT NULL
+			RETURN 
+				CASE n.name
+					WHEN '' THEN 'empty'
+					ELSE 'not empty'
+				END AS status
+		`, nil)
+
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if result.Rows[0][0] != "empty" {
+			t.Errorf("Expected 'empty', got %v", result.Rows[0][0])
+		}
+	})
+}
+
+// A searched CASE inside a list literal is the list's element: the
+// comparison of its WHEN isn't the expression's (#907).
+func TestCaseInListLiteral(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_in_list"))
+	ctx := context.Background()
+	for query, want := range map[string]interface{}{
+		"WITH 1 AS a RETURN [CASE WHEN a = 1 THEN 1 ELSE 2 END] AS v":        []interface{}{int64(1)},
+		"WITH 1 AS a RETURN [CASE WHEN a = 1 THEN 1 ELSE 2 END, 3] AS v":     []interface{}{int64(1), int64(3)},
+		"WITH 1 AS a RETURN size([CASE WHEN a <> 1 THEN 1 ELSE 2 END]) AS v": int64(1),
+		"UNWIND [CASE WHEN 1 = 2 THEN 1 ELSE 2 END] AS v RETURN v":           int64(2),
+		"WITH [1] AS l RETURN l[0] = 1 AS v":                                 true,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows[0][0], query)
+	}
+}
+
+// List literals and comprehensions as Neo4j reads them: an element is split
+// only at a top-level comma ([f(a, b)] is one element), a comprehension's
+// parts are found at its top level, a source that isn't a list is a one-item
+// list, null is null, and [x IN v] is v itself (#907).
+func TestListLiteralsAndComprehensions(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "list_comprehensions"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:LC {id: 5, s: 'ab'})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (n:LC) RETURN [x IN n.id | x * 2] AS a, [x IN n.id WHERE x > 0] AS b, [x IN n.id] AS c, [x IN n.s | x] AS d, [x IN n.nope | x] AS e, [x IN n.nope WHERE true] AS f", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{int64(10)}, []interface{}{int64(5)}, int64(5), []interface{}{"ab"}, nil, nil}}, result.Rows)
+	for query, want := range map[string]interface{}{
+		"RETURN [x IN null | x] AS v":        nil,
+		"RETURN [x IN null] AS v":            nil,
+		"RETURN [coalesce(null, 1), 2] AS v": []interface{}{int64(1), int64(2)},
+		"RETURN [v IN [{b: 1}] | [1, CASE WHEN false THEN 'n' ELSE [k IN keys(v) | k] END]] AS v": []interface{}{[]interface{}{int64(1), []interface{}{"b"}}},
+		"RETURN [x IN [1, 2] | [y IN [x] | y * 10]] AS v":                                         []interface{}{[]interface{}{int64(10)}, []interface{}{int64(20)}},
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows[0][0], query)
+	}
+	require.Equal(t, []interface{}{int64(1), int64(2)}, exec.evaluateExpressionWithContextFull(ctx, "[coalesce(null, 1), 2]", nil, nil, nil, nil, nil, 0))
+	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "[x IN null | x]", nil, nil, nil, nil, nil, 0))
+	require.Equal(t, int64(5), exec.evaluateExpressionWithContextFull(ctx, "[x IN 5]", nil, nil, nil, nil, nil, 0))
+	require.Equal(t, []interface{}{"a"}, exec.evaluateExpressionWithContextFull(ctx, "[x IN ['a', 'b'] WHERE x = 'a']", nil, nil, nil, nil, nil, 0))
+	require.Equal(t, []interface{}{int64(10)}, exec.evaluateExpressionWithContextFull(ctx, "[x IN 5 | x * 2]", nil, nil, nil, nil, nil, 0))
+	failureCtx := withExpressionFailureSlot(ctx)
+	_ = exec.evaluateExpressionWithContextFull(failureCtx, "[r IN [{type: 'R'}] | type(r)]", nil, nil, nil, nil, nil, 0)
+	require.Error(t, getExpressionFailure(failureCtx), "ordinary maps are not relationships")
+}

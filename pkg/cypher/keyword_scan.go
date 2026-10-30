@@ -1,0 +1,1589 @@
+package cypher
+
+// This file is the scanning core of the Nornic parser, a scannerless
+// recursive descent parser: clause boundaries and keyword classification come
+// from top-level keyword scans over the raw query text, with quoted text,
+// comments and bracket nesting tracked inline instead of by a lexer.
+
+import (
+	"hash/maphash"
+	"strings"
+	"sync/atomic"
+	"unicode/utf8"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+)
+
+// cutDistinct reports whether text (a projection body, or an aggregate's
+// argument list) starts with the DISTINCT keyword, and returns the text after
+// it, trimmed. The keyword ends at any character that can't continue an
+// identifier, so DISTINCT{a: 1}, DISTINCT(x) and DISTINCT followed by a
+// newline are DISTINCT, and a name that only starts with it (distinctName) is
+// not. A variable named distinct is a name, not the keyword, when what
+// follows it can't start an expression (distinctFollowsAsName, #894).
+// Without the keyword, text is returned trimmed.
+func cutDistinct(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	start, unfinished := cyphertext.GapEnd(text, 0)
+	if unfinished >= 0 {
+		return text, false
+	}
+	text = text[start:]
+	const keyword = "DISTINCT"
+	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || cyphertext.NamePartAt(text, len(keyword)) {
+		return text, false
+	}
+	end, unfinished := cyphertext.GapEnd(text, len(keyword))
+	if unfinished >= 0 {
+		return text, false
+	}
+	rest := strings.TrimSpace(text[end:])
+	if rest == "" || distinctFollowsAsName(rest) {
+		return text, false
+	}
+	return rest, true
+}
+
+// distinctFollowsAsName reports whether rest, the text after a projection's
+// or aggregate's leading word distinct, makes that word a variable. Neo4j
+// reads distinct as the keyword whenever rest can be an expression, so it is
+// a variable only when rest can't start one: a property access, a label
+// (distinct:Q), a separator, a comparison, / % ^ * (not RETURN DISTINCT *, a
+// star projection) or ::, a map projection (distinct{.a}; DISTINCT {a: 1} is
+// a map), AND, OR, XOR, CONTAINS, AS, IS (not IS ::), or a clause
+// (startsWithClauseAfterDistinct: RETURN distinct ORDER BY distinct). Before
+// + - [ ( a number, IN, STARTS, ENDS or a name, distinct is the keyword.
+func distinctFollowsAsName(rest string) bool {
+	switch rest[0] {
+	case '.':
+		return len(rest) == 1 || !isDigitByte(rest[1]) // RETURN DISTINCT .5
+	case ',', ':', '/', '%', '^', '=', '<', '>':
+		return true
+	case '*':
+		after := strings.TrimSpace(rest[1:])
+		return after != "" && after[0] != ',' && !startsWithClauseAfterDistinct(after)
+	case '{':
+		after := strings.TrimSpace(rest[1:])
+		return after != "" && after[0] == '.'
+	}
+	for _, word := range [...]string{"AS", "AND", "OR", "XOR", "CONTAINS"} {
+		if matchKeywordAt(rest, 0, word) {
+			return true
+		}
+	}
+	if matchKeywordAt(rest, 0, "IS") {
+		return !strings.HasPrefix(strings.TrimSpace(rest[len("IS"):]), "::")
+	}
+	return startsWithClauseAfterDistinct(rest)
+}
+
+// startsWithClauseAfterDistinct reports whether text, which follows the word
+// distinct, starts with a clause rather than a name spelled as a clause
+// keyword. As Neo4j reads it, the word is a name when it ends the text or
+// what follows it continues an expression (RETURN DISTINCT order, RETURN
+// DISTINCT skip - 1, RETURN DISTINCT where.x), and a clause otherwise
+// (RETURN distinct SKIP 1, WITH distinct WHERE where = 3). UNION is a clause
+// only as UNION ALL.
+func startsWithClauseAfterDistinct(text string) bool {
+	end := 0
+	end = cyphertext.NamePartEnd(text, end)
+	if end == 0 || !isNameableClauseKeyword(text[:end]) {
+		return false
+	}
+	rest := strings.TrimSpace(text[end:])
+	if strings.EqualFold(text[:end], "UNION") {
+		return matchKeywordAt(rest, 0, "ALL")
+	}
+	return startsWithClauseAfterName(text)
+}
+
+// startsWithClauseAfterName reports whether text, which follows a name,
+// starts with a clause: a clause keyword that isn't itself a name there. The
+// word is a name when it ends the text, what follows it continues an
+// expression, or a clause follows it (no clause keyword but OPTIONAL and
+// UNION is followed directly by a clause: WITH where WHERE where = 3); ORDER
+// is a clause only as ORDER BY and OPTIONAL only as OPTIONAL MATCH (WITH
+// order ORDER BY order).
+func startsWithClauseAfterName(text string) bool {
+	end := 0
+	end = cyphertext.NamePartEnd(text, end)
+	if end == 0 || !isNameableClauseKeyword(text[:end]) {
+		return false
+	}
+	rest := text[queryGapEnd(text, end):]
+	switch {
+	case strings.EqualFold(text[:end], "ORDER"):
+		return matchKeywordAt(rest, 0, "BY")
+	case strings.EqualFold(text[:end], "OPTIONAL"):
+		return matchKeywordAt(rest, 0, "MATCH")
+	}
+	if rest == "" || nameContinuesExpression(rest) {
+		return false
+	}
+	return strings.EqualFold(text[:end], "UNION") || !startsWithClauseAfterName(rest)
+}
+
+// nameContinuesExpression reports whether rest, the non-empty text after a
+// name, continues an expression from that name: an operator, a separator, a
+// property access, a subscript, a closing parenthesis, AS or a word
+// operator.
+func nameContinuesExpression(rest string) bool {
+	if strings.IndexByte(".,:/%^=<>*+-[)", rest[0]) >= 0 {
+		return true
+	}
+	if matchKeywordAt(rest, 0, "AS") {
+		// AS introduces an alias only before a name (WHERE as = 3: as is a
+		// variable).
+		alias := strings.TrimSpace(rest[len("AS"):])
+		return alias != "" && (cyphertext.NamePartAt(alias, 0) || alias[0] == '`')
+	}
+	for _, word := range [...]string{"AND", "OR", "XOR", "CONTAINS", "IS", "IN", "STARTS", "ENDS"} {
+		if matchKeywordAt(rest, 0, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// startsWithDistinct reports whether text starts with the DISTINCT keyword
+// (cutDistinct).
+func startsWithDistinct(text string) bool {
+	_, distinct := cutDistinct(text)
+	return distinct
+}
+
+// keywordScan provides high-performance, allocation-free keyword searching with:
+//   - case-insensitive matching
+//   - flexible whitespace between keyword tokens
+//   - skipping over string literals / backtick identifiers / comments
+//   - optional skipping over nested (), [], {} regions
+//
+// It is used to harden clause routing against "keywords inside data" (e.g. string literals)
+// and to make keyword detection lenient about whitespace without falling back to regex.
+
+type keywordBoundaryMode uint8
+
+const (
+	keywordBoundaryWord keywordBoundaryMode = iota
+	keywordBoundaryWhitespace
+)
+
+type keywordScanOpts struct {
+	SkipParens   bool
+	SkipBrackets bool
+	SkipBraces   bool
+
+	SkipStrings   bool
+	SkipBackticks bool
+	SkipComments  bool
+
+	Boundary keywordBoundaryMode
+}
+
+type keywordIndexCacheKey struct {
+	s       string
+	keyword string
+	from    int
+}
+
+// defaultKeywordIndexCache caches keyword positions found with the default
+// scan options.
+var defaultKeywordIndexCache = newBoundedCache[keywordIndexCacheKey, int](4096, keywordIndexCacheKeyShardIndex)
+
+func defaultKeywordScanOpts() keywordScanOpts {
+	return keywordScanOpts{
+		SkipParens:    true,
+		SkipBrackets:  true,
+		SkipBraces:    false,
+		SkipStrings:   true,
+		SkipBackticks: true,
+		SkipComments:  true,
+		Boundary:      keywordBoundaryWord,
+	}
+}
+
+func keywordIndex(s, keyword string) int {
+	return keywordIndexFrom(s, keyword, 0, defaultKeywordScanOpts())
+}
+
+// topLevelKeywordIndex finds a keyword only at the "top level" of the query,
+// skipping over nested (), [], and {} regions as well as string literals and comments.
+//
+// This is intended for clause splitting/routing (e.g., finding the RETURN after a CALL { ... }
+// subquery), where keywords inside nested structures must not be treated as delimiters.
+//
+// NOTE: General-purpose findKeywordIndex intentionally does NOT skip {} by default, because
+// braces are used for write operations (CREATE {...}) and CALL { ... } subqueries, and other
+// analyzers need to see keywords within those bodies.
+func topLevelKeywordIndex(s, keyword string) int {
+	opts := defaultKeywordScanOpts()
+	opts.SkipBraces = true
+	return keywordIndexFrom(s, keyword, 0, opts)
+}
+
+// isWithKeyword reports whether a keyword search is for the WITH clause.
+func isWithKeyword(keyword string) bool {
+	ks, ke := trimKeywordWSBounds(keyword)
+	if ke-ks != len("WITH") {
+		return false
+	}
+	for j := 0; j < len("WITH"); j++ {
+		if asciiUpper(keyword[ks+j]) != "WITH"[j] {
+			return false
+		}
+	}
+	return true
+}
+
+// isOperatorWith reports whether the WITH at pos belongs to the STARTS WITH /
+// ENDS WITH string operator rather than starting a WITH clause. Every keyword
+// scanner applies it when searching for WITH (keywordIndexFrom,
+// findKeywordIndexInContext, findAllTopLevelPipelineKeywordPositions), so no
+// caller splits a WHERE at the operator.
+//
+// The operator's STARTS / ENDS follows the end of an expression (an
+// identifier, ')', ']', '}', or a closing quote). A variable named starts /
+// ends before a WITH clause follows a keyword (AS, WITH, WHERE, AND, IN, ...),
+// a comma, an operator symbol, or a '.' (property key), so that WITH is a
+// clause: UNWIND [1] AS starts WITH starts RETURN starts.
+func isOperatorWith(s string, pos int) bool {
+	// The WITH of the type names TIME WITH TIME ZONE and TIMESTAMP WITH TIME
+	// ZONE (type predicates, #838) is not a clause.
+	if (prevWordEqualsIgnoreCase(s, pos, "TIME") || prevWordEqualsIgnoreCase(s, pos, "TIMESTAMP")) && followedByTimeZone(s, pos+len("WITH")) {
+		return true
+	}
+	var wordStart int
+	switch {
+	case prevWordEqualsIgnoreCase(s, pos, "STARTS"):
+		wordStart = prevWordStart(s, pos)
+	case prevWordEqualsIgnoreCase(s, pos, "ENDS"):
+		wordStart = prevWordStart(s, pos)
+	default:
+		return false
+	}
+	i := lastLiveByte(s, wordStart)
+	if i < 0 {
+		return false
+	}
+	switch c := s[i]; {
+	case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
+		return true
+	case cyphertext.NamePartAt(s, i):
+		end := i + 1
+		for i >= 0 && cyphertext.NamePartAt(s, i) {
+			i--
+		}
+		if i >= 0 && s[i] == '.' {
+			return true // n.name STARTS WITH ...
+		}
+		return !isExpressionBoundaryWord(s[i+1 : end])
+	default:
+		return false
+	}
+}
+
+// clauseKeywordUsedAsName reports whether the clause keyword matched at
+// s[pos:end] is a name there, as Cypher's grammar reads it (#740). Only
+// clause keywords are checked (keywords such as DISTINCT, NOT and CASE follow
+// the words below in valid Cypher). Every keyword scanner applies it next to
+// isOperatorWith. The keyword is a name when what precedes it is
+//   - '.', ':' or '$' (a property key, label or map key, parameter);
+//   - an operator or separator: + - / % ^ = < > , ( [ (a clause can't start
+//     in an operand position; after | one does: FOREACH (x IN l | SET …),
+//     and * reads alike as RETURN * and multiplication);
+//   - a word that must be followed by a name or an expression (AS set,
+//     RETURN set + 1, WHERE limit > 1, ORDER BY skip), unless that word is
+//     itself a name (WITH 1 AS set RETURN …);
+//
+// or, when it starts the scanned text (a projection body such as
+// "skip + 1 AS v"), when what follows it is an operator, a separator, AS or
+// nothing. SKIP and LIMIT, which take an expression, are names before
+// another clause keyword (RETURN skip ORDER BY skip). Inside a CASE … END
+// block no clause can start, so a clause keyword there is a name wherever it
+// stands (CASE match WHEN 1 THEN match END; #1162).
+func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
+	if !isNameableClauseKeyword(keyword) {
+		return false
+	}
+	return useGraphNameAt(s, pos) || clauseKeywordNamedByContext(s, pos, end, keyword) || insideCaseBlock(s, pos)
+}
+
+// rawWordBefore is the identifier that ends at the last non-space byte
+// before pos, comments not considered.
+func rawWordBefore(s string, pos int) string {
+	end := pos
+	for end > 0 && (cyphertext.IsWhitespaceAt(s, end-1)) {
+		end--
+	}
+	start := end
+	for start > 0 && cyphertext.NamePartAt(s, start-1) {
+		start--
+	}
+	return s[start:end]
+}
+
+// clauseKeywordNamedByContext is clauseKeywordUsedAsName's reading of the
+// keyword's neighbours.
+func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
+	i := lastLiveByte(s, pos)
+	if i >= 0 {
+		switch s[i] {
+		case '.', ':':
+			return true
+		case '$':
+			// $RETURN is a parameter; a$ RETURN ends the name a$.
+			return isParameterStart(s, i)
+		case '/':
+			return true
+		case '%':
+			// n:% (any label, #860) ends an operand; a remainder operator
+			// follows one.
+			return !labelWildcardAt(s, i)
+		case '+':
+			// ((a)-->(b))+ RETURN …: a quantified path pattern's + ends the
+			// pattern.
+			return !quantifiedGroupQuantifierAt(s, i)
+		case '-', '^', '=', '<', '>', ',', '(', '[':
+			return true
+		}
+	}
+	j := queryGapEnd(s, end)
+	if j < len(s) && s[j] == ':' {
+		return true // a map key: {set: 1}
+	}
+	if strings.EqualFold(keyword, "SKIP") || strings.EqualFold(keyword, "LIMIT") {
+		wordEnd := j
+		wordEnd = cyphertext.NamePartEnd(s, wordEnd)
+		for _, next := range [...]string{"ORDER", "SKIP", "LIMIT", "WHERE", "UNION", "RETURN", "WITH"} {
+			if strings.EqualFold(s[j:wordEnd], next) {
+				return true
+			}
+		}
+	}
+	if i < 0 {
+		// The keyword starts the text: read what follows.
+		if j >= len(s) {
+			return true
+		}
+		// A sign after it is a unary operator (RETURN +3, RETURN -3), as
+		// a statement can only start with a clause.
+		switch s[j] {
+		case '+':
+			return j+1 < len(s) && s[j+1] == '='
+		case ',', '/', '%', '^', '=', '<', '>', ')':
+			return true
+		case '.':
+			return j+1 < len(s) && !isDigitByte(s[j+1]) // RETURN .5 is a number
+		}
+		return j+2 <= len(s) && strings.EqualFold(s[j:j+2], "AS") && (j+2 == len(s) || !cyphertext.NamePartAt(s, j+2))
+	}
+	if !cyphertext.NamePartAt(s, i) {
+		return false
+	}
+	wordEnd := i + 1
+	for i >= 0 && cyphertext.NamePartAt(s, i) {
+		i--
+	}
+	if i >= 0 && s[i] == '.' {
+		return false // n.as SET …: the word is a property key
+	}
+	if !isExpressionBoundaryWord(s[i+1 : wordEnd]) {
+		return false
+	}
+	// The word before is a keyword only when it isn't itself a name
+	// (WITH 1 AS set RETURN …: set is an alias, so RETURN is a clause).
+	if wordIsName(s, i+1) {
+		return false
+	}
+	if strings.EqualFold(s[i+1:wordEnd], "DISTINCT") {
+		// distinct may be a variable: RETURN distinct ORDER BY distinct (#894).
+		return !startsWithClauseAfterDistinct(s[pos:])
+	}
+	return true
+}
+
+// isDigitByte reports whether b is an ASCII digit.
+func isDigitByte(character byte) bool { return cyphertext.IsDigit(character) }
+
+// wordIsName reports whether the word starting at wordStart is in a name
+// position: after AS, or after '.', ':' or '$'. After a separator, an
+// operator or a keyword an expression follows (WITH, RETURN, BY, WHERE, AND,
+// OR, XOR, NOT, IN), a word other than NOT, CASE and DISTINCT is a name too
+// (WITH x, where RETURN where, WITH where WHERE where = 3, RETURN by ORDER BY
+// by, WHERE x AND not RETURN â€¦; #894).
+func wordIsName(s string, wordStart int) bool {
+	if useGraphNameAt(s, wordStart) {
+		return true
+	}
+	i := lastLiveByte(s, wordStart)
+	if i < 0 {
+		return false
+	}
+	switch s[i] {
+	case '.', ':', '$':
+		return true
+	case ',', '(', '[', '+', '-', '*', '/', '%', '^', '=', '<', '>':
+		return !wordStartsExpression(s[wordStart:])
+	}
+	end := i + 1
+	for i >= 0 && cyphertext.NamePartAt(s, i) {
+		i--
+	}
+	// The word before must be the keyword, not a name spelled the same
+	// (WITH 3 AS as WITH as RETURN as, WITH 3 AS with WITH with WHERE â€¦).
+	switch word := s[i+1 : end]; {
+	case strings.EqualFold(word, "AS"):
+		return !wordIsName(s, i+1)
+	case expressionFollowsKeyword(word):
+		return !wordStartsExpression(s[wordStart:]) && !wordIsName(s, i+1)
+	}
+	return false
+}
+
+// expressionFollowsKeyword reports whether word is a keyword an expression
+// follows: a projection (WITH, RETURN, ORDER BY), a predicate (WHERE) or an
+// operand of a boolean or membership operator (AND, OR, XOR, NOT, IN).
+func expressionFollowsKeyword(word string) bool {
+	for _, keyword := range [...]string{"WITH", "RETURN", "BY", "WHERE", "AND", "OR", "XOR", "NOT", "IN", "DISTINCT", "UNWIND"} {
+		if equalFoldASCII(word, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// wordStartsExpression reports whether text starts with a keyword that
+// starts an expression or a projection where a name could stand: DISTINCT,
+// or NOT or CASE unless a clause follows it (WITH case WHERE case = 1: case
+// is a variable).
+func wordStartsExpression(text string) bool {
+	if matchKeywordAt(text, 0, "DISTINCT") {
+		return true
+	}
+	for _, keyword := range [...]string{"NOT", "CASE"} {
+		if matchKeywordAt(text, 0, keyword) {
+			return !startsWithClauseAfterName(strings.TrimSpace(text[len(keyword):]))
+		}
+	}
+	return false
+}
+
+// isNameableClauseKeyword reports whether keyword (its first word) starts a
+// clause that a name spelled the same can be mistaken for.
+func isNameableClauseKeyword(keyword string) bool {
+	start, end := trimKeywordWSBounds(keyword)
+	word := keyword[start:end]
+	if space := strings.IndexFunc(word, cyphertext.IsWhitespace); space >= 0 {
+		word = word[:space]
+	}
+	var candidates []string
+	switch len(word) {
+	case 3:
+		candidates = nameableClauseKeywords3[:]
+	case 4:
+		candidates = nameableClauseKeywords4[:]
+	case 5:
+		candidates = nameableClauseKeywords5[:]
+	case 6:
+		candidates = nameableClauseKeywords6[:]
+	case 7:
+		candidates = nameableClauseKeywords7[:]
+	case 8:
+		candidates = nameableClauseKeywords8[:]
+	default:
+		return false
+	}
+	first := asciiUpper(word[0])
+	for _, clause := range candidates {
+		if clause[0] == first && equalFoldASCII(word, clause) {
+			return true
+		}
+	}
+	return false
+}
+
+// The clause keywords a name can be spelled as (isNameableClauseKeyword),
+// by length.
+var (
+	nameableClauseKeywords3 = [...]string{"SET", "LET", "FOR", "USE"}
+	nameableClauseKeywords4 = [...]string{"WITH", "SKIP", "CALL"}
+	nameableClauseKeywords5 = [...]string{"MATCH", "MERGE", "UNION", "LIMIT", "ORDER", "WHERE"}
+	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND", "FINISH", "FILTER"}
+	nameableClauseKeywords7 = [...]string{"FOREACH"}
+	nameableClauseKeywords8 = [...]string{"OPTIONAL"}
+)
+
+// prevWordStart returns the start of the word that precedes pos (after
+// skipping whitespace), for a pos where prevWordEqualsIgnoreCase matched.
+func prevWordStart(s string, pos int) int {
+	i := lastLiveByte(s, pos)
+	for i >= 0 && cyphertext.NamePartAt(s, i) {
+		i--
+	}
+	return i + 1
+}
+
+// lastLiveByte returns the index of the last byte before pos that is live
+// statement text — not whitespace and not inside a line comment or a block
+// comment — or -1 when none is. Quoted spans are tracked so a comment-like
+// sequence inside a string is not a comment; their quote bytes are live
+// (they end expressions, so a clause keyword after a string literal follows
+// a quote, not the operator the string belongs to). Backward word lookups
+// (prevWordStart, prevWordEqualsIgnoreCase, clauseKeywordUsedAsName,
+// wordIsName, isOperatorWith) must start from it: a plain whitespace skip
+// would land inside a preceding comment and read the comment's last word as
+// code (RETURN 1 // WITH\nWITH … read the comment's WITH as the previous
+// word).
+// labelWildcardAt reports whether the % at s[i] is the label expression
+// wildcard (n:%, n:A|%, n:!%, n:(%)) rather than the remainder operator, which
+// always follows an operand.
+func labelWildcardAt(s string, i int) bool {
+	j := lastLiveByte(s, i)
+	return j >= 0 && strings.IndexByte(":|&!(", s[j]) >= 0
+}
+
+func lastLiveByte(text string, position int) int {
+	last := -1
+	for index := 0; index < position && index < len(text); {
+		if end := cyphertext.CommentEnd(text, index); end >= 0 {
+			index = end
+			continue
+		}
+		if cyphertext.IsQuote(text[index]) {
+			end, closed := cyphertext.ScanQuotedText(text, index)
+			last = index
+			if closed && end <= position {
+				last = end - 1
+			}
+			index = end
+			continue
+		}
+		if !cyphertext.IsWhitespaceAt(text, index) {
+			last = index
+		}
+		index++
+	}
+	return last
+}
+
+// isExpressionBoundaryWord reports whether word is a keyword after which an
+// expression starts (so a following starts / ends is a variable, not the end
+// of an expression).
+func isExpressionBoundaryWord(word string) bool {
+	switch len(word) {
+	case 2, 3, 4, 5, 6, 8:
+	default:
+		return false
+	}
+	for _, keyword := range [...]string{"AS", "MATCH", "CREATE", "MERGE", "REMOVE", "CALL", "WITH", "RETURN", "WHERE", "BY", "DISTINCT", "AND", "OR", "XOR", "NOT", "IN", "CASE", "WHEN", "THEN", "ELSE", "UNWIND", "SET", "YIELD", "DELETE", "LET", "FOR", "FILTER"} {
+		if len(keyword) != len(word) {
+			continue
+		}
+		match := true
+		for j := 0; j < len(word); j++ {
+			if asciiUpper(word[j]) != keyword[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// keywordIndexFrom finds keyword from `from` on. When the keyword is WITH, the
+// WITH of STARTS WITH / ENDS WITH is skipped (isOperatorWith, checked at each
+// match in both scan loops, so cached results already exclude it).
+func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
+	if isDefaultKeywordScanOpts(opts) {
+		return cachedKeywordIndexFromDefault(s, keyword, from)
+	}
+
+	ks, ke := trimKeywordWSBounds(keyword)
+	if ks >= ke {
+		return -1
+	}
+	if from < 0 {
+		from = 0
+	}
+	if from >= len(s) {
+		return -1
+	}
+
+	first := asciiUpper(keyword[ks])
+
+	var (
+		parenDepth   int
+		bracketDepth int
+		braceDepth   int
+	)
+
+	for i := from; i < len(s); i++ {
+		c := s[i]
+		if opts.SkipComments {
+			if end := cyphertext.CommentEnd(s, i); end >= 0 {
+				i = end - 1
+				continue
+			}
+		}
+		if opts.SkipStrings && cyphertext.IsStringQuote(c) || opts.SkipBackticks && cyphertext.IsBacktick(c) {
+			end, _ := cyphertext.ScanQuotedText(s, i)
+			i = end - 1
+			continue
+		}
+
+		switch c {
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '{':
+			braceDepth++
+		case '}':
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		}
+
+		if (opts.SkipParens && parenDepth > 0) ||
+			(opts.SkipBrackets && bracketDepth > 0) ||
+			(opts.SkipBraces && braceDepth > 0) {
+			continue
+		}
+
+		if asciiUpper(c) != first {
+			continue
+		}
+
+		if !keywordBoundaryOK(s, i, opts.Boundary, keywordBefore) {
+			continue
+		}
+
+		endPos, ok := keywordMatchAt(s, i, keyword, ks, ke)
+		if !ok {
+			continue
+		}
+		if !keywordBoundaryOK(s, endPos, opts.Boundary, keywordAfter) {
+			continue
+		}
+		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
+			continue
+		}
+		if clauseKeywordUsedAsName(s, i, endPos, keyword) {
+			continue
+		}
+		return i
+	}
+
+	return -1
+}
+
+func cachedKeywordIndexFromDefault(s, keyword string, from int) int {
+	key := keywordIndexCacheKey{s: s, keyword: keyword, from: from}
+	if idx, ok := defaultKeywordIndexCache.get(key); ok {
+		return idx
+	}
+	idx := keywordIndexFromDefault(s, keyword, from)
+	defaultKeywordIndexCache.put(key, idx)
+	return idx
+}
+
+func keywordIndexFromDefault(s, keyword string, from int) int {
+	return firstKeywordIndexFromDefault(s, from, keyword)
+}
+
+// maxKeywordSet is the most keywords firstKeywordIndexFromDefault takes.
+const maxKeywordSet = 16
+
+// firstKeywordIndexFromDefault is the position of the earliest of keywords
+// in s at or after from, with the default scan options (keywordIndex: the
+// same strings, comments, nesting and name rules), or -1. A set of clause
+// keywords is found in one scan rather than one scan per keyword. It takes
+// at most maxKeywordSet keywords.
+func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
+	if len(keywords) > maxKeywordSet {
+		panic("firstKeywordIndexFromDefault: more than maxKeywordSet keywords")
+	}
+	type keywordBounds struct {
+		ks, ke int
+		first  byte
+	}
+	var bounds [maxKeywordSet]keywordBounds
+	for k, keyword := range keywords {
+		ks, ke := trimKeywordWSBounds(keyword)
+		if ks < ke {
+			bounds[k] = keywordBounds{ks: ks, ke: ke, first: asciiUpper(keyword[ks])}
+		}
+	}
+	if from < 0 {
+		from = 0
+	}
+	if from >= len(s) {
+		return -1
+	}
+
+	var (
+		parenDepth   int
+		bracketDepth int
+		braceDepth   int
+	)
+
+	for i := from; i < len(s); i++ {
+		c := s[i]
+		if end, opaque := cyphertext.SkipToken(s, i); opaque {
+			i = end - 1
+			continue
+		}
+
+		switch c {
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '{':
+			braceDepth++
+		case '}':
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		}
+
+		if parenDepth > 0 || bracketDepth > 0 {
+			continue
+		}
+
+		upper := asciiUpper(c)
+		leftChecked := false
+		for k, keyword := range keywords {
+			b := bounds[k]
+			if b.first != upper || b.ks >= b.ke {
+				continue
+			}
+			if !leftChecked {
+				if !keywordBoundaryOK(s, i, keywordBoundaryWord, keywordBefore) {
+					break
+				}
+				leftChecked = true
+			}
+			endPos, ok := keywordMatchAt(s, i, keyword, b.ks, b.ke)
+			if !ok {
+				continue
+			}
+			if !keywordBoundaryOK(s, endPos, keywordBoundaryWord, keywordAfter) {
+				continue
+			}
+			if b.ke-b.ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
+				continue
+			}
+			if clauseKeywordUsedAsName(s, i, endPos, keyword) {
+				continue
+			}
+			return i
+		}
+	}
+
+	return -1
+}
+
+func isDefaultKeywordScanOpts(opts keywordScanOpts) bool {
+	return opts.SkipParens &&
+		opts.SkipBrackets &&
+		!opts.SkipBraces &&
+		opts.SkipStrings &&
+		opts.SkipBackticks &&
+		opts.SkipComments &&
+		opts.Boundary == keywordBoundaryWord
+}
+
+func keywordMatchAt(s string, pos int, keyword string, ks, ke int) (endPos int, ok bool) {
+	j := pos
+	k := ks
+
+	for k < ke {
+		ck := keyword[k]
+		if cyphertext.IsWhitespaceAt(keyword, k) {
+			for k < ke && cyphertext.IsWhitespaceAt(keyword, k) {
+				k++
+			}
+			next, unfinished := cyphertext.GapEnd(s, j)
+			if next <= j || unfinished >= 0 {
+				return 0, false
+			}
+			j = next
+			continue
+		}
+		if j >= len(s) {
+			return 0, false
+		}
+		if asciiUpper(s[j]) != asciiUpper(ck) {
+			return 0, false
+		}
+		j++
+		k++
+	}
+
+	return j, true
+}
+
+func trimKeywordWSBounds(s string) (start, end int) {
+	start = 0
+	end = len(s)
+	for start < end && cyphertext.IsWhitespaceAt(s, start) {
+		start++
+	}
+	for end > start && cyphertext.IsWhitespaceAt(s, end-1) {
+		end--
+	}
+	return start, end
+}
+
+type keywordBoundarySide uint8
+
+const (
+	keywordBefore keywordBoundarySide = iota
+	keywordAfter
+)
+
+func keywordBoundaryOK(s string, pos int, boundary keywordBoundaryMode, side keywordBoundarySide) bool {
+	if side == keywordBefore {
+		pos--
+	}
+	if pos < 0 || pos >= len(s) {
+		return true
+	}
+	if boundary == keywordBoundaryWhitespace {
+		return cyphertext.IsWhitespaceAt(s, pos)
+	}
+	if s[pos] == ':' || (side == keywordBefore && s[pos] == '$') {
+		return false
+	}
+	return !cyphertext.NamePartAt(s, pos)
+}
+
+func asciiUpper(b byte) byte {
+	if b >= 'a' && b <= 'z' {
+		return b - ('a' - 'A')
+	}
+	return b
+}
+
+// upperASCII upper-cases the ASCII letters of statement text and leaves every
+// other byte as it is, so the result has the same length as the text and a
+// position found in it (a keyword's offset) indexes the text itself. Cypher
+// keywords are ASCII, so it is the upper-casing for finding them.
+// strings.ToUpper is not: a non-ASCII letter can change length ('ı' is two
+// bytes, its 'I' one), which shifted every later position and cut the text
+// in the wrong place (#748). Cypher's toUpper() on data keeps
+// strings.ToUpper.
+func upperASCII(text string) string {
+	for i := 0; i < len(text); i++ {
+		if c := text[i]; c >= 'a' && c <= 'z' {
+			// One allocation, as strings.ToUpper's ASCII path.
+			var out strings.Builder
+			out.Grow(len(text))
+			out.WriteString(text[:i])
+			for j := i; j < len(text); j++ {
+				out.WriteByte(asciiUpper(text[j]))
+			}
+			return out.String()
+		}
+	}
+	return text
+}
+
+// lowerASCII is upperASCII's lower-case counterpart: ASCII letters only, same
+// length and positions as the text ('İ' lower-cases to three bytes with
+// strings.ToLower). Cypher's toLower() on data keeps strings.ToLower.
+func lowerASCII(text string) string {
+	for i := 0; i < len(text); i++ {
+		if c := text[i]; c >= 'A' && c <= 'Z' {
+			var out strings.Builder
+			out.Grow(len(text))
+			out.WriteString(text[:i])
+			for j := i; j < len(text); j++ {
+				c := text[j]
+				if c >= 'A' && c <= 'Z' {
+					c += 'a' - 'A'
+				}
+				out.WriteByte(c)
+			}
+			return out.String()
+		}
+	}
+	return text
+}
+
+// indexASCIIFold returns the first index at which the lower-case ASCII
+// substring occurs in text, compared case-insensitively, or -1. Zero
+// allocations on the miss path; shares equalFoldASCII with the other ASCII
+// keyword comparisons.
+func indexASCIIFold(text, lowerSub string) int {
+	if lowerSub == "" {
+		return 0
+	}
+	first := lowerSub[0]
+	for i := 0; i+len(lowerSub) <= len(text); i++ {
+		if asciiLowerByte(text[i]) != first {
+			continue
+		}
+		if equalFoldASCII(text[i:i+len(lowerSub)], lowerSub) {
+			return i
+		}
+	}
+	return -1
+}
+
+// isParameterStart reports whether the '$' at query[index] starts a
+// parameter ($name, $0, $`name`): it doesn't continue a name (a$b).
+func isParameterStart(query string, index int) bool {
+	return index == 0 || !cyphertext.NamePartAt(query, index-1)
+}
+
+func startsWithKeywordFold(s string, keywordUpper string) bool {
+	if len(s) < len(keywordUpper) {
+		return false
+	}
+	for i := 0; i < len(keywordUpper); i++ {
+		if asciiUpper(s[i]) != keywordUpper[i] {
+			return false
+		}
+	}
+	if len(s) == len(keywordUpper) {
+		return true
+	}
+	// Require a boundary so "MATCHX" doesn't count as "MATCH".
+	return !cyphertext.NamePartAt(s, len(keywordUpper))
+}
+
+// ---- query text canonicalization ----
+//
+// Cypher gives whitespace no meaning outside string literals and quoted
+// names: ORDER  BY, ORDER /* c */ BY and ORDER<newline>BY are ORDER BY, and
+// n.p<newline>= 1 is n.p = 1. The executor's clause routing and parsing read
+// the statement as text, so canonicalizeQueryText rewrites it once, where it
+// enters the executor, into one form: every run of whitespace and comments
+// outside string literals and quoted names becomes one space. Whitespace is
+// anything Neo4j accepts: space, tab, CR, LF, form feed, vertical tab and
+// the Unicode spaces. Inside a relationship arrow of a MATCH, MERGE or
+// CREATE pattern, (b) <- [r] - (a) and (a)-[r]- >(b), a gap is removed
+// instead: (b)<-[r]-(a), (a)-[r]->(b) (arrowGap, inPatternClause).
+//
+// NornicDB's statements with a syntax of its own (hasOwnStatementSyntax), and
+// the shell command lines that can start a statement (:USE db), keep their
+// text; only their comments go, as they always have.
+//
+// The rewrite records its edits, so what a client sees is the text it sent
+// (queryRewrite.restore): unaliased column names, error messages and
+// EXPLAIN / PROFILE text. Routing and the query caches use the canonical
+// text, so the formatting of a statement doesn't change how it runs (#740).
+
+// queryRewrite maps a canonical statement back to the text the client sent.
+type queryRewrite struct {
+	cyphertext.Source
+	// verbatimColumns: a column whose text the client wrote is kept as is.
+	// The label-expression rewrite inserts predicates, in which a short
+	// column name (r) can occur last (#860).
+	verbatimColumns bool
+
+	// Admission is a fact of exact source text, retained by its existing rewrite.
+	commentsAdmitted bool
+}
+
+// queryWhitespaceAt returns the length of the whitespace character at
+// query[index] (ASCII or a Unicode space), 0 when there is none.
+func queryWhitespaceAt(query string, index int) int { return cyphertext.WhitespaceAt(query, index) }
+
+// queryCommentEnd returns the end of the comment that starts at
+// query[index], or -1 when none starts there. A line comment ends before
+// its line break.
+func queryCommentEnd(query string, index int) int {
+	return cyphertext.CommentEnd(query, index)
+}
+
+// queryGapEnd returns the end of the run of whitespace and comments that
+// starts at index, index itself when none does.
+func queryGapEnd(query string, index int) int {
+	end, _ := readQueryGap(query, index)
+	return end
+}
+
+// hasOwnStatementSyntax reports whether query is one of NornicDB's
+// statements with a syntax of its own, which canonicalizeQueryText leaves as
+// written but for its comments: the knowledge-policy DDL (CREATE / ALTER /
+// DROP / SHOW DECAY, PROMOTION or RETENTION …), whose bodies separate
+// settings and statements by lines; constraint contracts (CREATE CONSTRAINT
+// … REQUIRE { … }, one predicate per line); and CREATE [OR REPLACE]
+// PROCEDURE, which stores its body's text.
+func hasOwnStatementSyntax(query string) bool {
+	var words [3]string
+	count := 0
+	for index := queryGapEnd(query, 0); index < len(query) && count < len(words); index = queryGapEnd(query, index) {
+		end := index
+		end = cyphertext.NamePartEnd(query, end)
+		if end == index {
+			break
+		}
+		words[count] = query[index:end]
+		count++
+		index = end
+	}
+	switch {
+	case strings.EqualFold(words[0], "CREATE") && (strings.EqualFold(words[1], "PROCEDURE") ||
+		strings.EqualFold(words[1], "OR") && strings.EqualFold(words[2], "REPLACE")):
+		return true
+	case strings.EqualFold(words[0], "CREATE") && strings.EqualFold(words[1], "CONSTRAINT"):
+		// A constraint contract: REQUIRE { one predicate per line }.
+		if require := keywordIndex(query, "REQUIRE"); require >= 0 {
+			if open := queryGapEnd(query, require+len("REQUIRE")); open < len(query) && query[open] == '{' {
+				return true
+			}
+		}
+		return false
+	case strings.EqualFold(words[0], "CREATE"), strings.EqualFold(words[0], "ALTER"),
+		strings.EqualFold(words[0], "DROP"), strings.EqualFold(words[0], "SHOW"):
+		return strings.EqualFold(words[1], "DECAY") || strings.EqualFold(words[1], "PROMOTION") ||
+			strings.EqualFold(words[1], "RETENTION")
+	}
+	return false
+}
+
+// leadingShellCommandsEnd returns the end of the shell command lines
+// (:USE db, :param x => 1, …) that start query: the start of the line after
+// the last one, 0 when query starts with none.
+func leadingShellCommandsEnd(query string) int {
+	end := 0
+	for index := 0; ; {
+		for index < len(query) {
+			if commentEnd := queryCommentEnd(query, index); commentEnd >= 0 {
+				index = commentEnd
+				continue
+			}
+			if size := queryWhitespaceAt(query, index); size > 0 {
+				index += size
+				continue
+			}
+			break
+		}
+		if index >= len(query) || query[index] != ':' {
+			return end
+		}
+		lineEnd := strings.IndexAny(query[index:], "\r\n")
+		if lineEnd < 0 {
+			return len(query)
+		}
+		index += lineEnd + 1
+		if query[index-1] == '\r' && index < len(query) && query[index] == '\n' {
+			index++
+		}
+		end = index
+	}
+}
+
+// canonicalRewrites memoizes the rewrites of formatted statements, which
+// are immutable: a statement sent again with the same text gets the same
+// rewrite without building it again (no allocation). Each slot holds the
+// last statement whose text hashed to it, so a collision only replaces an
+// entry; statements longer than canonicalRewriteMemoMaxLen (one-off batches
+// with inline data) are not kept.
+var canonicalRewrites = &canonicalRewriteMemo{seed: maphash.MakeSeed()}
+
+const canonicalRewriteMemoMaxLen = 64 << 10
+
+type canonicalRewriteMemo struct {
+	seed  maphash.Seed
+	slots [256]atomic.Pointer[queryRewrite]
+}
+
+func (m *canonicalRewriteMemo) slot(query string) *atomic.Pointer[queryRewrite] {
+	return &m.slots[maphash.String(m.seed, query)%uint64(len(m.slots))]
+}
+
+// classificationText is the text a statement's permission and routing
+// decisions read (read / write / schema / admin, cacheability, write
+// detection): its canonical form, whatever NORNICDB_CYPHER_QUERY_NORMALIZATION
+// says, so a comment or unusual spacing never changes them. A statement that
+// is canonical already is returned as is, without allocating.
+func classificationText(query string) string {
+	canonical, _ := canonicalizeQueryText(query)
+	return canonical
+}
+
+// queryMayNeedCanonicalRewrite reports whether query holds anything the
+// canonical pass could rewrite: an ASCII whitespace other than a single
+// space, two spaces in a row, the start of a comment, or a non-ASCII byte (a
+// possible Unicode space). It doesn't read quotes, so it may answer true for
+// text that needs no rewrite (two spaces in a string literal), never false
+// for text that does. Most statements are canonical and leave the pass here,
+// in one pass over their bytes.
+func queryMayNeedCanonicalRewrite(query string) bool {
+	for i := 0; i < len(query); i++ {
+		switch c := query[i]; {
+		case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
+			if aliasKeywordAt(query, i+1, aliasAfterValue) || c == '`' && aliasKeywordAt(query, i, aliasBeforeQuotedName) {
+				return true
+			}
+		case cyphertext.CanonicalSpaceAt(query, i):
+			if i+1 < len(query) && (cyphertext.CanonicalSpaceAt(query, i+1) || arrowGapClass[query[i+1]]&arrowGapAfter != 0 && i > 0 && arrowGap(query[i-1], query[i+1])) {
+				return true
+			}
+		case c == '/':
+			if i+1 < len(query) && (query[i+1] == '/' || query[i+1] == '*') {
+				return true
+			}
+		case c < ' ' || c >= utf8.RuneSelf:
+			return true
+		}
+	}
+	return false
+}
+
+type aliasKeywordPosition uint8
+
+const (
+	aliasAfterValue aliasKeywordPosition = iota
+	aliasBeforeQuotedName
+)
+
+// aliasKeywordAt reads AS at the selected boundary. After-value positions point
+// to the keyword start and require whitespace, a backtick or end on its right;
+// the caller owns the closing value token. Before-name positions point to the
+// keyword end and require a non-name byte on its left; the caller owns the
+// following quoted name.
+func aliasKeywordAt(query string, at int, position aliasKeywordPosition) bool {
+	if position == aliasBeforeQuotedName {
+		at -= len("AS")
+	}
+	if at < 0 || at+len("AS") > len(query) || !equalFoldASCII(query[at:at+len("AS")], "AS") {
+		return false
+	}
+	if position == aliasBeforeQuotedName {
+		return at == 0 || !cyphertext.NamePartAt(query, at-1)
+	}
+	end := at + len("AS")
+	return end == len(query) || cyphertext.IsWhitespaceAt(query, end) || query[end] == '`'
+}
+
+// canonicalizeQueryText returns the canonical form of query (see above) and
+// the rewrite that maps it back, or query and nil when it is canonical
+// already; it doesn't allocate then, nor for a formatted statement whose
+// rewrite is memoized (canonicalRewrites).
+func canonicalizeQueryText(query string) (string, *queryRewrite) {
+	if !queryMayNeedCanonicalRewrite(query) {
+		return query, nil
+	}
+	return scanCanonicalQueryText(query)
+}
+
+// scanCanonicalQueryText is canonicalizeQueryText's full scan, for a query
+// the quick check couldn't clear.
+func scanCanonicalQueryText(query string) (string, *queryRewrite) {
+	canonical, rewrite, _ := readCanonicalQueryText(query, false)
+	return canonical, rewrite
+}
+
+func readCanonicalQueryText(query string, admit bool) (string, *queryRewrite, error) {
+	var (
+		rewrite  *queryRewrite
+		memoized *queryRewrite
+		out      strings.Builder
+		last     int
+	)
+	replace := func(start, end int, replacement string) {
+		if rewrite == nil {
+			if len(query) <= canonicalRewriteMemoMaxLen {
+				if cached := canonicalRewrites.slot(query).Load(); cached != nil && cached.Original == query && (!admit || cached.commentsAdmitted) {
+					memoized = cached
+					return
+				}
+			}
+			rewrite = &queryRewrite{Source: cyphertext.Source{Original: query}}
+			out.Grow(len(query))
+		}
+		out.WriteString(query[last:start])
+		canonStart := out.Len()
+		out.WriteString(replacement)
+		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: start, End: end}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
+		last = end
+	}
+	// query[:verbatimEnd] keeps its text but for its comments: the whole of
+	// a statement with its own syntax, or the leading shell command lines
+	// (:USE db, :param …), which end at their line breaks.
+	verbatimEnd := leadingShellCommandsEnd(query)
+	if hasOwnStatementSyntax(query[verbatimEnd:]) {
+		verbatimEnd = len(query)
+	}
+	for index := 0; index < len(query); {
+		c := query[index]
+		if c == '\'' || c == '"' || c == '`' {
+			if c == '`' && index >= verbatimEnd && aliasKeywordAt(query, index, aliasBeforeQuotedName) {
+				replace(index, index, " ")
+				if memoized != nil {
+					return memoized.Text, memoized, nil
+				}
+			}
+			index = skipCypherQuotedText(query, index, c)
+			if index >= verbatimEnd && aliasKeywordAt(query, index, aliasAfterValue) {
+				replace(index, index, " ")
+				if memoized != nil {
+					return memoized.Text, memoized, nil
+				}
+			}
+			continue
+		}
+		if (c == ')' || c == ']' || c == '}') && index >= verbatimEnd && aliasKeywordAt(query, index+1, aliasAfterValue) {
+			// [1, 2][0]AS x: AS is the alias keyword, spaced as every
+			// clause reader expects.
+			replace(index+1, index+1, " ")
+			if memoized != nil {
+				return memoized.Text, memoized, nil
+			}
+			index++
+			continue
+		}
+		if c > ' ' && c != '/' && c < utf8.RuneSelf {
+			// Can't start a comment or a run of whitespace.
+			index++
+			continue
+		}
+		if index < verbatimEnd {
+			if end := queryCommentEnd(query, index); end >= 0 {
+				if _, closed := cyphertext.CommentEndStatus(query, index); admit && !closed {
+					return query, nil, unclosedCommentError(query, index, ModeNormal)
+				}
+				replacement, _ := cyphertext.CommentReplacement(query[index:end], nil)
+				replace(index, end, replacement)
+				if memoized != nil {
+					return memoized.Text, memoized, nil
+				}
+				index = end
+				continue
+			}
+			index++
+			continue
+		}
+		if end, unclosed := readQueryGap(query, index); end > index {
+			if admit && unclosed >= 0 {
+				return query, nil, unclosedCommentError(query, unclosed, ModeNormal)
+			}
+			if index > 0 && end < len(query) && arrowGap(query[index-1], query[end]) && inPatternClause(query, index) {
+				replace(index, end, "")
+				if memoized != nil {
+					return memoized.Text, memoized, nil
+				}
+			} else if end != index+1 || !cyphertext.CanonicalSpaceAt(query, index) {
+				replace(index, end, " ")
+				if memoized != nil {
+					return memoized.Text, memoized, nil
+				}
+			}
+			index = end
+			continue
+		}
+		index++
+	}
+	if rewrite == nil {
+		return query, nil, nil
+	}
+	out.WriteString(query[last:])
+	rewrite.Text = out.String()
+	rewrite.commentsAdmitted = admit
+	if len(query) <= canonicalRewriteMemoMaxLen {
+		canonicalRewrites.slot(query).Store(rewrite)
+	}
+	return rewrite.Text, rewrite, nil
+}
+
+// arrowGap reports whether a gap between before and after can be inside a
+// relationship arrow: one side is a dash or an arrowhead, the other a node or
+// relationship bracket, a dash or a head ((b) <-, - [, ] -, - >, -> ().
+func arrowGap(before, after byte) bool {
+	b, a := arrowGapClass[before], arrowGapClass[after]
+	return b&arrowGapBefore != 0 && a&arrowGapAfter != 0 && (b|a)&arrowGapPart != 0
+}
+
+// arrowGapClass classifies the bytes arrowGap reads: one that can end the
+// text before a gap in an arrow, one that can start the text after it, and
+// an arrow's own dash or head. A table, so the quick check that runs on
+// every space of a statement (queryMayNeedCanonicalRewrite) costs two loads.
+var arrowGapClass = [256]uint8{
+	')': arrowGapBefore, ']': arrowGapBefore, '(': arrowGapAfter, '[': arrowGapAfter,
+	'-': arrowGapBefore | arrowGapAfter | arrowGapPart,
+	'<': arrowGapBefore | arrowGapAfter | arrowGapPart,
+	'>': arrowGapBefore | arrowGapAfter | arrowGapPart,
+}
+
+const (
+	arrowGapBefore uint8 = 1 << iota
+	arrowGapAfter
+	arrowGapPart
+)
+
+// inPatternClause reports whether query[index] is between the elements of a
+// MATCH, MERGE or CREATE pattern: the nearest clause keyword before it, in
+// its subquery or braces, is one of those (not ON CREATE or ON MATCH), and it
+// is inside no parenthesis or bracket of that clause. There a dash or an
+// arrowhead is part of an arrow; in an expression, x < - -1 and (2) - [3][0]
+// keep their spaces.
+func inPatternClause(query string, index int) bool {
+	type frame struct {
+		keyword string
+		depth   int
+	}
+	frames := []frame{{}}
+	previous := ""
+	for i := 0; i < index; {
+		c := query[i]
+		switch {
+		case c == '\'' || c == '"' || c == '`':
+			i = skipCypherQuotedText(query, i, c)
+			continue
+		case c == '/':
+			if end := queryCommentEnd(query, i); end >= 0 {
+				i = end
+				continue
+			}
+		case c == '{':
+			frames = append(frames, frame{})
+		case c == '}':
+			if len(frames) > 1 {
+				frames = frames[:len(frames)-1]
+			}
+		case c == '(' || c == '[':
+			frames[len(frames)-1].depth++
+		case c == ')' || c == ']':
+			frames[len(frames)-1].depth--
+		case cyphertext.NamePartAt(query, i) && !cyphertext.IsDigit(c) && (i == 0 || !cyphertext.NamePartAt(query, i-1) && query[i-1] != '.' && query[i-1] != '$'):
+			end := i + 1
+			end = cyphertext.NamePartEnd(query, end)
+			word := upperASCII(query[i:end])
+			switch word {
+			case "MATCH", "MERGE", "CREATE":
+				if previous == "ON" {
+					word = "ON"
+				}
+				frames[len(frames)-1].keyword = word
+			case "ON", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "FOREACH", "CALL", "YIELD",
+				"ORDER", "SKIP", "LIMIT", "UNION", "FINISH", "LET", "FILTER", "USE", "LOAD", "OFFSET":
+				frames[len(frames)-1].keyword = word
+			}
+			previous = word
+			i = end
+			continue
+		}
+		i++
+	}
+	top := frames[len(frames)-1]
+	return top.depth == 0 && (top.keyword == "MATCH" || top.keyword == "MERGE" || top.keyword == "CREATE")
+}
+
+// StripComments returns query without its Cypher comments: // to the end of
+// the line, and /* … */ (replaced by a space, keeping its line breaks), as
+// cyphertext.CommentReplacement. // and /* inside string literals and quoted names are
+// text. A query without comments is returned as is, without allocating. It
+// is the comment rule the HTTP server's statement checks use (#683).
+func StripComments(query string) string {
+	return stripCommentText(query, nil)
+}
+
+// stripCommentText is the single comment-removal traversal. Advisory source
+// consumers request edit extents; string-only execution consumers retain the
+// no-comment identity and allocation behavior.
+func stripCommentText(query string, edits *[]cyphertext.SourceEdit) string {
+	var out strings.Builder
+	last := 0
+	for index := 0; index < len(query); index++ {
+		switch c := query[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(query, index, c) - 1
+		case '/':
+			if end := queryCommentEnd(query, index); end >= 0 {
+				out.WriteString(query[last:index])
+				replacement, _ := cyphertext.CommentReplacement(query[index:end], nil)
+				begin := out.Len()
+				out.WriteString(replacement)
+				if edits != nil {
+					*edits = append(*edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: index, End: end}, Accepted: cyphertext.Span{Start: begin, End: out.Len()}})
+				}
+				last = end
+				index = end - 1
+			}
+		}
+	}
+	if last == 0 {
+		return query
+	}
+	out.WriteString(query[last:])
+	return out.String()
+}
+
+// originalText returns the text the client wrote for text, a part of the
+// canonical statement (its last occurrence: the final RETURN names the
+// columns); text itself when it isn't one or holds no replacement.
+func (r *queryRewrite) originalText(text string) string {
+	if text == "" || r.verbatimColumns && strings.Contains(r.Original, text) {
+		return text
+	}
+	// The last whole-token occurrence: a column c is not the c inside
+	// percentileCont, which a rewrite may have written.
+	start := strings.LastIndex(r.Text, text)
+	for start >= 0 && !wholeTokenAt(r.Text, start, start+len(text)) {
+		start = strings.LastIndex(r.Text[:start], text)
+	}
+	if start < 0 || !r.HasRewrite(cyphertext.RewriteMatch{Policy: cyphertext.RewriteSpanOverlap, Span: cyphertext.Span{Start: start, End: start + len(text)}}) {
+		return text
+	}
+	span, _ := r.OriginalSpan(cyphertext.Span{Start: start, End: start + len(text)}, cyphertext.SourceExtent)
+	return r.Original[span.Start:span.End]
+}
+
+// wholeTokenAt reports whether text[start:end] doesn't continue a name on
+// either side: the bytes around it aren't both name characters.
+func wholeTokenAt(text string, start, end int) bool {
+	return (start == 0 || !cyphertext.NamePartAt(text, start-1) || !cyphertext.NamePartAt(text, start)) &&
+		(end == len(text) || !cyphertext.NamePartAt(text, end) || !cyphertext.NamePartAt(text, end-1))
+}
+
+// parseLineColumn reads "<line>:<column>" at message[start:], as the parser
+// reports a position (line from 1, column from 0).
+func parseLineColumn(message string, start int) (line, column, end int, ok bool) {
+	number := func(index int) (int, int, bool) {
+		value, next := 0, index
+		for next < len(message) && message[next] >= '0' && message[next] <= '9' {
+			value = value*10 + int(message[next]-'0')
+			next++
+		}
+		return value, next, next > index
+	}
+	line, next, ok := number(start)
+	if !ok || next >= len(message) || message[next] != ':' {
+		return 0, 0, 0, false
+	}
+	column, end, ok = number(next + 1)
+	return line, column, end, ok
+}
+
+// isExplainOrProfileText reports whether a canonical statement starts with
+// EXPLAIN or PROFILE.
+func isExplainOrProfileText(query string) bool {
+	query = strings.TrimLeft(query, " ")
+	return startsWithKeywordFold(query, "EXPLAIN") || startsWithKeywordFold(query, "PROFILE")
+}
+
+type sourceRestorationPurpose uint8
+
+const (
+	sourceValueText sourceRestorationPurpose = iota
+	sourceDiagnosticText
+)
+
+// skipCypherQuotedText returns the end of the string literal or quoted name
+// that starts at query[start] (quote): a doubled quote, or a backslash escape
+// in a string, doesn't end it.
+func skipCypherQuotedText(query string, start int, quote byte) int {
+	end, _ := scanCypherQuotedText(query, start, quote)
+	return end
+}
+
+func scanCypherQuotedText(query string, start int, quote byte) (int, bool) {
+	if start < 0 || start >= len(query) || query[start] != quote {
+		return start, false
+	}
+	return cyphertext.ScanQuotedText(query, start)
+}
+
+func skipCypherLexicalToken(text string, index int) (int, bool) {
+	return cyphertext.SkipToken(text, index)
+}
+
+func isCypherQuoteByte(character byte) bool       { return cyphertext.IsQuote(character) }
+func isCypherStringQuoteByte(character byte) bool { return cyphertext.IsStringQuote(character) }
+func isCypherSingleQuoteByte(character byte) bool { return cyphertext.IsSingleQuote(character) }
+func isCypherDoubleQuoteByte(character byte) bool { return cyphertext.IsDoubleQuote(character) }
+func isCypherBacktickByte(character byte) bool    { return cyphertext.IsBacktick(character) }
+
+const (
+	cypherQuoteClass       = -1
+	cypherStringQuoteClass = -2
+)
+
+// cypherLexicalByte lets grammar-specific switch statements classify every
+// quote kind through the canonical owner while retaining their local handling
+// of parentheses, brackets and operators.
+func cypherLexicalByte(character byte) int {
+	if isCypherQuoteByte(character) {
+		return cypherQuoteClass
+	}
+	return int(character)
+}
+
+func cypherStringLexicalByte(character byte) int {
+	if isCypherStringQuoteByte(character) {
+		return cypherStringQuoteClass
+	}
+	return int(character)
+}
+
+func parseIdentifierToken(text string) (string, string, bool) {
+	text = strings.TrimSpace(text)
+	name, ok := cyphertext.ScanIdentifier(text, 0)
+	if !ok {
+		return "", "", false
+	}
+	return name.Value, text[name.End:], true
+}
+
+func extractDelimitedSection(text string, opener, closer rune) (string, string, bool) {
+	end := cyphertext.FindMatchingDelimiter(text, 0, opener, closer, cyphertext.OpeningDelimiter)
+	if end < 0 {
+		return "", "", false
+	}
+	return text[1:end], text[end+1:], true
+}
+
+func extractParenSection(text string) (string, string, bool) {
+	return extractDelimitedSection(text, '(', ')')
+}
+
+func extractBracketSection(text string) (string, string, bool) {
+	return extractDelimitedSection(text, '[', ']')
+}
+
+// followedByTimeZone reports whether the words TIME ZONE follow position pos.
+func followedByTimeZone(s string, pos int) bool {
+	for _, word := range []string{"TIME", "ZONE"} {
+		pos = skipSpaces(s, pos)
+		if pos+len(word) > len(s) || !strings.EqualFold(s[pos:pos+len(word)], word) ||
+			(pos+len(word) < len(s) && cyphertext.NamePartAt(s, pos+len(word))) {
+			return false
+		}
+		pos += len(word)
+	}
+	return true
+}
+
+// keywordEndAt preserves the source width of a compound keyword's trivia.
+func keywordEndAt(source string, at int, keyword string) int {
+	start, end := trimKeywordWSBounds(keyword)
+	if next, ok := keywordMatchAt(source, at, keyword, start, end); ok {
+		return next
+	}
+	return at
+}

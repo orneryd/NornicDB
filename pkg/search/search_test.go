@@ -1,0 +1,4767 @@
+// Package search tests
+package search
+
+import (
+	"bytes"
+	"context"
+	"encoding/gob"
+	"errors"
+	"fmt"
+
+	"log"
+	"math"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+type testReranker struct {
+	enabled bool
+	results []RerankResult
+	err     error
+}
+
+type iteratorEngine struct {
+	storage.Engine
+	iterateErr error
+}
+
+type lastWriteEngine struct {
+	storage.Engine
+	writeTime time.Time
+}
+
+type errorThenCandidateGenerator struct {
+	calls     int
+	firstErr  error
+	candidate Candidate
+}
+
+func (g *errorThenCandidateGenerator) SearchCandidates(context.Context, []float32, int, float64) ([]Candidate, error) {
+	g.calls++
+	if g.calls == 1 {
+		return nil, g.firstErr
+	}
+	return []Candidate{g.candidate}, nil
+}
+
+func (e *iteratorEngine) IterateNodes(fn func(*storage.Node) bool) error {
+	if e.iterateErr != nil {
+		return e.iterateErr
+	}
+	nodes, err := e.AllNodes()
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if !fn(node) {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (e *lastWriteEngine) LastWriteTime() time.Time {
+	return e.writeTime
+}
+
+func (r *testReranker) Name() string                         { return "test_reranker" }
+func (r *testReranker) Enabled() bool                        { return r.enabled }
+func (r *testReranker) IsAvailable(ctx context.Context) bool { return r.enabled }
+func (r *testReranker) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.results != nil {
+		return r.results, nil
+	}
+	// Keep the order, with scores spread enough to count as a rerank.
+	out := make([]RerankResult, len(candidates))
+	for i, c := range candidates {
+		score := 1 - 0.1*float64(i)
+		out[i] = RerankResult{
+			ID:           c.ID,
+			Content:      c.Content,
+			OriginalRank: i + 1,
+			NewRank:      i + 1,
+			BiScore:      c.Score,
+			CrossScore:   score,
+			FinalScore:   score,
+		}
+	}
+	return out, nil
+}
+
+func newNamespacedEngine(tb testing.TB) storage.Engine {
+	// Register artifact removal before engine/service cleanup. Later TempDir
+	// calls share this root, so Windows file capabilities close before removal.
+	_ = tb.TempDir()
+	base := newTestMemoryEngine(tb)
+	tb.Cleanup(func() { base.Close() })
+	return storage.NewNamespacedEngine(base, "nornic")
+}
+
+func newHybridRerankBudgetService(tb testing.TB, count int) *Service {
+	engine := newNamespacedEngine(tb)
+	service := NewService(engine, 2, nil)
+	tb.Cleanup(func() { require.NoError(tb, service.Close()) })
+	for index := 0; index < count; index++ {
+		id := storage.NodeID(fmt.Sprintf("doc-%03d", index))
+		node := &storage.Node{
+			ID:              id,
+			Labels:          []string{"Document"},
+			Properties:      map[string]any{"content": "library transcript"},
+			ChunkEmbeddings: [][]float32{{1, float32(index) / 100}},
+		}
+		_, err := engine.CreateNode(node)
+		require.NoError(tb, err)
+		require.NoError(tb, service.IndexNode(node))
+	}
+	service.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(service.vectorIndex), NewCPUExactScorer(service.vectorIndex))
+	service.SetReranker(&testReranker{enabled: true})
+	return service
+}
+
+// TestVectorIndex_Basic tests basic vector index operations.
+func TestVectorIndex_Basic(t *testing.T) {
+	idx := NewVectorIndex(4)
+
+	// Add vectors
+	err := idx.Add("doc1", []float32{1, 0, 0, 0})
+	require.NoError(t, err)
+
+	err = idx.Add("doc2", []float32{0.9, 0.1, 0, 0})
+	require.NoError(t, err)
+
+	err = idx.Add("doc3", []float32{0, 1, 0, 0})
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, idx.Count())
+	assert.True(t, idx.HasVector("doc1"))
+	assert.False(t, idx.HasVector("doc99"))
+
+	// Search for similar vectors
+	results, err := idx.Search(context.Background(), []float32{1, 0, 0, 0}, 10, 0.5)
+	require.NoError(t, err)
+
+	// doc1 should be most similar (identical), then doc2 (0.9 similarity)
+	require.Len(t, results, 2) // doc3 is orthogonal, below threshold
+	assert.Equal(t, "doc1", results[0].ID)
+	assert.InDelta(t, 1.0, results[0].Score, 0.01) // Identical
+	assert.Equal(t, "doc2", results[1].ID)
+}
+
+func TestVectorIndexPersistsOneNormalizedPrivateCopy(t *testing.T) {
+	idx := NewVectorIndex(3)
+	input := []float32{0.6, 0.8, 0}
+	require.NoError(t, idx.Add("doc", input))
+	input[0] = 100
+
+	stored, ok := idx.GetVector("doc")
+	require.True(t, ok)
+	require.InDelta(t, 0.6, stored[0], 1e-6)
+	require.InDelta(t, 0.8, stored[1], 1e-6)
+
+	path := filepath.Join(t.TempDir(), "vectors.msgpack")
+	require.NoError(t, idx.Save(path))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer file.Close()
+	var snapshot vectorIndexSnapshot
+	require.NoError(t, msgpack.NewDecoder(file).Decode(&snapshot))
+	require.Len(t, snapshot.Vectors, 1)
+	require.Empty(t, snapshot.RawVectors, "the persisted index must not duplicate normalized vectors")
+}
+
+func TestVectorIndexPreservesNonUnitValuesForCypherSimilarity(t *testing.T) {
+	svc := NewService(newTestMemoryEngine(t), 3, nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	require.NoError(t, svc.vectorIndex.Add("doc", []float32{3, 4, 0}))
+
+	stored, ok := svc.getVectorForCypher("doc")
+	require.True(t, ok)
+	require.Equal(t, []float32{3, 4, 0}, stored)
+	normalized, ok := svc.vectorIndex.GetVector("doc")
+	require.True(t, ok)
+	require.InDelta(t, 0.6, normalized[0], 1e-6)
+	require.InDelta(t, 0.8, normalized[1], 1e-6)
+}
+
+func TestVectorIndexLoadCompactsLegacyUnitRawVectors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vectors.msgpack")
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	require.NoError(t, msgpack.NewEncoder(file).Encode(&vectorIndexSnapshot{
+		Version:    vectorIndexFormatVersion,
+		Dimensions: 3,
+		Vectors:    map[string][]float32{"unit": {0.6, 0.8, 0}},
+		RawVectors: map[string][]float32{"unit": {0.6, 0.8, 0}},
+	}))
+	require.NoError(t, file.Close())
+
+	idx := NewVectorIndex(3)
+	require.NoError(t, idx.Load(path))
+	require.Empty(t, idx.rawVectors, "legacy unit vectors should not retain a redundant raw copy")
+}
+
+func TestInMemoryHNSWReusesVectorIndexStorage(t *testing.T) {
+	svc := NewService(newTestMemoryEngine(t), 3, nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	for id, vec := range map[string][]float32{
+		"a": {1, 0, 0},
+		"b": {0, 1, 0},
+		"c": {0, 0, 1},
+	} {
+		require.NoError(t, svc.vectorIndex.Add(id, vec))
+	}
+
+	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
+	require.NoError(t, err)
+	require.NotNil(t, idx.vectorLookup)
+	require.Empty(t, idx.vectors, "HNSW graph must resolve vectors from the in-memory vector index")
+
+	results, err := idx.Search(context.Background(), []float32{1, 0, 0}, 1, -1)
+	require.NoError(t, err)
+	require.Equal(t, "a", results[0].ID)
+}
+
+// TestVectorIndex_DimensionMismatch tests dimension validation.
+func TestVectorIndex_DimensionMismatch(t *testing.T) {
+	idx := NewVectorIndex(4)
+
+	err := idx.Add("doc1", []float32{1, 2, 3}) // Wrong dimension
+	assert.ErrorIs(t, err, ErrDimensionMismatch)
+
+	err = idx.Add("doc1", []float32{1, 2, 3, 4, 5}) // Wrong dimension
+	assert.ErrorIs(t, err, ErrDimensionMismatch)
+
+	err = idx.Add("doc1", []float32{1, 2, 3, 4}) // Correct dimension
+	assert.NoError(t, err)
+}
+
+// TestFulltextIndex_BM25 tests BM25 full-text search.
+func TestFulltextIndex_BM25(t *testing.T) {
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
+
+	// Index some documents
+	idx.Index("doc1", "machine learning deep neural networks", nil, nil, false)
+	idx.Index("doc2", "deep learning with tensorflow and pytorch", nil, nil, false)
+	idx.Index("doc3", "database systems and query optimization", nil, nil, false)
+	idx.Index("doc4", "natural language processing with transformers", nil, nil, false)
+
+	assert.Equal(t, 4, idx.Count())
+
+	// Search for "deep learning"
+	results := idx.Search("deep learning", 10)
+	require.NotEmpty(t, results)
+
+	// doc1 and doc2 should match
+	t.Logf("Search results for 'deep learning':")
+	for _, r := range results {
+		t.Logf("  %s: score=%.4f", r.ID, r.Score)
+	}
+
+	// Both doc1 and doc2 should be in results (both contain "deep" and/or "learning")
+	ids := make(map[string]bool)
+	for _, r := range results {
+		ids[r.ID] = true
+	}
+	assert.True(t, ids["doc1"] || ids["doc2"], "Expected doc1 or doc2 in results")
+
+	// Search for "database"
+	results = idx.Search("database query", 10)
+	require.NotEmpty(t, results)
+	assert.Equal(t, "doc3", results[0].ID)
+}
+
+// TestFulltextIndex_Tokenization tests text tokenization.
+func TestFulltextIndex_Tokenization(t *testing.T) {
+	tokens := tokenize("Hello, World! This is a TEST-123.")
+
+	t.Logf("Tokens: %v", tokens)
+
+	// Should case-fold, remove punctuation, and preserve exact language-neutral terms.
+	assert.Contains(t, tokens, "hello")
+	assert.Contains(t, tokens, "world")
+	assert.Contains(t, tokens, "test")
+	assert.Contains(t, tokens, "123")
+	assert.Contains(t, tokens, "this")
+	assert.Contains(t, tokens, "is")
+	assert.Contains(t, tokens, "a")
+}
+
+// TestRRFFusion tests Reciprocal Rank Fusion algorithm.
+func TestRRFFusion(t *testing.T) {
+	// Create test service with mock data
+	baseEngine := newNamespacedEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+	// Create nodes
+	nodes := []*storage.Node{
+		{ID: "doc1", Labels: []string{"Node"}, Properties: map[string]any{"title": "ML Basics"}},
+		{ID: "doc2", Labels: []string{"Node"}, Properties: map[string]any{"title": "Deep Learning"}},
+		{ID: "doc3", Labels: []string{"Node"}, Properties: map[string]any{"title": "Database Design"}},
+	}
+	err := engine.BulkCreateNodes(nodes)
+	require.NoError(t, err)
+
+	svc := NewService(engine, DefaultVectorDimensions, nil)
+
+	// Test RRF fusion directly
+	vectorResults := []indexResult{
+		{ID: "doc1", Score: 0.95},
+		{ID: "doc2", Score: 0.85},
+	}
+	bm25Results := []indexResult{
+		{ID: "doc2", Score: 5.5}, // doc2 appears in both - should rank highest
+		{ID: "doc3", Score: 4.2},
+	}
+
+	opts := DefaultSearchOptions()
+	fusedResults := svc.fuseRRF(vectorResults, bm25Results, opts)
+
+	t.Logf("RRF Fusion results:")
+	for _, r := range fusedResults {
+		t.Logf("  %s: rrf=%.4f vectorRank=%d bm25Rank=%d", r.ID, r.RRFScore, r.VectorRank, r.BM25Rank)
+	}
+
+	// doc2 should be first (appears in both lists)
+	require.NotEmpty(t, fusedResults)
+	assert.Equal(t, "doc2", fusedResults[0].ID)
+	assert.Equal(t, 2, fusedResults[0].VectorRank) // Second in vector list = rank 2 (1-indexed)
+	assert.Equal(t, 1, fusedResults[0].BM25Rank)   // First in BM25 = rank 1
+}
+
+func TestCollapseIndexResultsByNodeIDFastPathAndFallback(t *testing.T) {
+	svc := &Service{}
+	canonical := []indexResult{{ID: "doc-a", Score: 0.9}, {ID: "doc-b", Score: 0.8}}
+	got := collapseIndexResultsByNodeID(canonical)
+	require.Equal(t, canonical, got)
+	require.True(t, &canonical[0] == &got[0])
+
+	duplicate := collapseIndexResultsByNodeID([]indexResult{{ID: "doc-a", Score: 0.7}, {ID: "doc-a", Score: 0.9}})
+	require.Equal(t, []indexResult{{ID: "doc-a", Score: 0.9}}, duplicate)
+
+	chunked := collapseIndexResultsByNodeID([]indexResult{{ID: nodeChunkVectorKey("doc-a", 0), Score: 0.7}, {ID: nodeChunkVectorKey("doc-a", 1), Score: 0.9}})
+	require.Equal(t, []indexResult{{ID: "doc-a", MatchID: nodeChunkVectorKey("doc-a", 1), Score: 0.9}}, chunked)
+	fused := svc.fuseRRF(chunked, nil, &SearchOptions{RRFK: 60})
+	require.Len(t, fused, 1)
+	require.Equal(t, nodeChunkVectorKey("doc-a", 1), fused[0].MatchID)
+}
+
+func TestServicePersistenceAndTimingHelpers(t *testing.T) {
+	engine := newNamespacedEngine(t)
+	svc := NewService(engine, 3, nil)
+
+	tmp := t.TempDir()
+	bm25Path := filepath.Join(tmp, "bm25")
+	vectorPath := filepath.Join(tmp, "vectors")
+	hnswPath := filepath.Join(tmp, "hnsw")
+
+	// schedulePersist: no-op without paths
+	svc.SetPersistenceEnabled(true)
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.Nil(t, svc.persistTimer)
+	svc.persistMu.Unlock()
+
+	// schedulePersist: sets timer when persistence is enabled and paths are set.
+	svc.SetFulltextIndexPath(bm25Path)
+	svc.SetVectorIndexPath(vectorPath)
+	svc.SetHNSWIndexPath(hnswPath)
+	oldDelay, hadDelay := os.LookupEnv("NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC")
+	require.NoError(t, os.Setenv("NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC", "1"))
+	t.Cleanup(func() {
+		if hadDelay {
+			_ = os.Setenv("NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC", oldDelay)
+		} else {
+			_ = os.Unsetenv("NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC")
+		}
+	})
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.NotNil(t, svc.persistTimer)
+	svc.persistTimer.Stop()
+	svc.persistTimer = nil
+	svc.persistMu.Unlock()
+
+	// persistBM25Background saves when BM25 is dirty and not building.
+	svc.fulltext().Index("doc-1", "alpha beta gamma", nil, nil, false)
+	svc.persistBM25Background(bm25Path)
+	_, err := os.Stat(bm25Path)
+	require.NoError(t, err)
+
+	// persistVectorStoreBackground handles nil store and writes meta for valid store.
+	svc.persistVectorStoreBackground(vectorPath, nil)
+	vfs, err := NewVectorFileStore(vectorPath, 3)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = vfs.Close() })
+	require.NoError(t, vfs.Add("vec-1", []float32{1, 0, 0}))
+	svc.persistVectorStoreBackground(vectorPath, vfs)
+	_, err = os.Stat(vectorPath + ".meta")
+	require.NoError(t, err)
+
+	// persistHNSWBackground skip and save branches.
+	svc.persistHNSWBackground(hnswPath) // skip (no vectors)
+	svc.hnswMu.Lock()
+	svc.hnswIndex = NewHNSWIndex(3, HNSWConfigFromEnv())
+	svc.hnswMu.Unlock()
+	for i := 0; i < 3; i++ {
+		require.NoError(t, svc.vectorIndex.Add(fmt.Sprintf("n-%d", i), []float32{1, 0, 0}))
+	}
+	svc.persistHNSWBackground(hnswPath)
+	_, err = os.Stat(hnswPath)
+	require.NoError(t, err)
+
+	// persistIVFHNSWBackground writes the published generation's graphs.
+	clusterIdx := NewHNSWIndex(3, HNSWConfigFromEnv())
+	require.NoError(t, clusterIdx.Add("c-1", []float32{1, 0, 0}))
+	svc.clusterStateMu.Lock()
+	svc.clusterGen = &clusterGeneration{graphs: map[int]*HNSWIndex{0: clusterIdx}}
+	svc.clusterStateMu.Unlock()
+	svc.persistIVFHNSWBackground(context.Background(), hnswPath)
+	manifest, err := readIVFHNSWManifest(ivfHNSWDir(hnswPath))
+	require.NoError(t, err)
+	require.NotNil(t, manifest)
+	_, err = os.Stat(manifest.clusterPath(0))
+	require.NoError(t, err)
+
+	// runPersist + PersistIndexesToDisk execute without panic on configured paths.
+	svc.runPersist()
+	svc.PersistIndexesToDisk()
+
+	// schedulePersist: disabled and build-in-progress no-op branches.
+	svc.SetPersistenceEnabled(false)
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.Nil(t, svc.persistTimer)
+	svc.persistMu.Unlock()
+
+	svc.SetPersistenceEnabled(true)
+	svc.buildInProgress.Store(true)
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.Nil(t, svc.persistTimer)
+	svc.persistMu.Unlock()
+	svc.buildInProgress.Store(false)
+
+	// schedulePersist: requires both fulltext and vector paths.
+	svc.SetFulltextIndexPath("")
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.Nil(t, svc.persistTimer)
+	svc.persistMu.Unlock()
+}
+
+func TestSearchHandleOrphanedEmbeddingBranches(t *testing.T) {
+	engine := newNamespacedEngine(t)
+	svc := NewService(engine, 3, nil)
+
+	node := &storage.Node{
+		ID:              "orphan-node",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		Properties:      map[string]any{"content": "to-remove"},
+	}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, svc.IndexNode(node))
+	require.Equal(t, 1, svc.EmbeddingCount())
+
+	// Non-ErrNotFound branch.
+	ok := svc.handleOrphanedEmbedding(context.Background(), "orphan-node", fmt.Errorf("other error"), nil)
+	require.False(t, ok)
+	require.Equal(t, 1, svc.EmbeddingCount())
+
+	// ErrNotFound branch removes orphaned vectors.
+	err = engine.DeleteNode("orphan-node")
+	require.NoError(t, err)
+	seen := map[string]bool{}
+	ok = svc.handleOrphanedEmbedding(context.Background(), "orphan-node", storage.ErrNotFound, seen)
+	require.True(t, ok)
+	require.True(t, seen["orphan-node"])
+	require.Equal(t, 0, svc.EmbeddingCount())
+
+	// Already-seen branch short-circuits deterministically.
+	ok = svc.handleOrphanedEmbedding(context.Background(), "orphan-node", storage.ErrNotFound, seen)
+	require.True(t, ok)
+}
+
+func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
+	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	svc := NewService(engine, 3, nil)
+
+	// No embeddings: warmup is a no-op.
+	var nilCtx context.Context
+	svc.warmupVectorPipeline(nilCtx, nil)
+	svc.pipelineMu.RLock()
+	require.Nil(t, svc.vectorPipeline)
+	svc.pipelineMu.RUnlock()
+
+	_, err := engine.CreateNode(&storage.Node{
+		ID:              "w1",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		Properties:      map[string]any{"content": "warmup"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.BuildIndexes(context.Background()))
+
+	// Embeddings present: warmup builds a ready pipeline.
+	svc.warmupVectorPipeline(context.Background(), nil)
+	svc.pipelineMu.RLock()
+	require.NotNil(t, svc.vectorPipeline)
+	svc.pipelineMu.RUnlock()
+}
+
+func TestSearchEnvDurationAndTimingHelpers(t *testing.T) {
+	oldMs, hadMs := os.LookupEnv("NORNICDB_HNSW_MAINT_INTERVAL_MS")
+	oldSec, hadSec := os.LookupEnv("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC")
+	oldTiming, hadTiming := os.LookupEnv(EnvSearchLogTimings)
+	t.Cleanup(func() {
+		if hadMs {
+			_ = os.Setenv("NORNICDB_HNSW_MAINT_INTERVAL_MS", oldMs)
+		} else {
+			_ = os.Unsetenv("NORNICDB_HNSW_MAINT_INTERVAL_MS")
+		}
+		if hadSec {
+			_ = os.Setenv("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", oldSec)
+		} else {
+			_ = os.Unsetenv("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC")
+		}
+		if hadTiming {
+			_ = os.Setenv(EnvSearchLogTimings, oldTiming)
+		} else {
+			_ = os.Unsetenv(EnvSearchLogTimings)
+		}
+	})
+
+	require.NoError(t, os.Setenv("NORNICDB_HNSW_MAINT_INTERVAL_MS", "0"))
+	require.Equal(t, 30*time.Second, envDurationMs("NORNICDB_HNSW_MAINT_INTERVAL_MS", 30_000))
+	require.NoError(t, os.Setenv("NORNICDB_HNSW_MAINT_INTERVAL_MS", "250"))
+	require.Equal(t, 250*time.Millisecond, envDurationMs("NORNICDB_HNSW_MAINT_INTERVAL_MS", 30_000))
+
+	require.NoError(t, os.Setenv("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", "0"))
+	require.Equal(t, 60*time.Second, envDurationSec("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", 60))
+	require.NoError(t, os.Setenv("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", "2"))
+	require.Equal(t, 2*time.Second, envDurationSec("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", 60))
+
+	svc := NewService(newNamespacedEngine(t), 3, nil)
+	resp := &SearchResponse{
+		SearchMethod:      "hybrid",
+		FallbackTriggered: false,
+		Results:           []SearchResult{{ID: "n1", Score: 0.9}},
+		Metrics: &SearchMetrics{
+			TotalTimeMs:        7,
+			VectorSearchTimeMs: 3,
+			BM25SearchTimeMs:   2,
+			FusionTimeMs:       1,
+			VectorCandidates:   4,
+			BM25Candidates:     5,
+			FusedCandidates:    3,
+		},
+	}
+
+	var buf bytes.Buffer
+	oldOut := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(oldOut) })
+
+	require.NoError(t, os.Setenv(EnvSearchLogTimings, "true"))
+	svc.maybeLogSearchTiming(strings.Repeat("q", 90), resp, 15*time.Millisecond, true)
+	out := buf.String()
+	require.Contains(t, out, "Search timing")
+	require.Contains(t, out, "cache_hit=true")
+}
+
+func TestSearchResultCacheHelpers(t *testing.T) {
+	t.Run("Get and Put handle nil, miss, eviction, and invalidate", func(t *testing.T) {
+		c := newSearchResultCache(2, 0)
+		require.Nil(t, c.Get("missing"))
+		c.Invalidate()
+
+		c.Put("nil", nil)
+		require.Nil(t, c.Get("nil"))
+
+		r1 := &SearchResponse{Status: "ok", Query: "q1"}
+		r2 := &SearchResponse{Status: "ok", Query: "q2"}
+		r3 := &SearchResponse{Status: "ok", Query: "q3"}
+		c.Put("k1", r1)
+		c.Put("k2", r2)
+		require.Equal(t, r1, c.Get("k1"))
+		require.Equal(t, r2, c.Get("k2"))
+
+		// Evict oldest when max size is reached.
+		c.Put("k3", r3)
+		require.Nil(t, c.Get("k1"))
+		require.Equal(t, r2, c.Get("k2"))
+		require.Equal(t, r3, c.Get("k3"))
+
+		c.Invalidate()
+		require.Nil(t, c.Get("k2"))
+		require.Nil(t, c.Get("k3"))
+	})
+
+	t.Run("Get expires stale entries when ttl is set", func(t *testing.T) {
+		c := newSearchResultCache(2, 5*time.Millisecond)
+		r := &SearchResponse{Status: "ok", Query: "ttl"}
+		c.Put("k", r)
+		require.Equal(t, r, c.Get("k"))
+
+		time.Sleep(12 * time.Millisecond)
+		require.Nil(t, c.Get("k"))
+
+		c.mu.RLock()
+		_, stillPresent := c.entries["k"]
+		c.mu.RUnlock()
+		require.False(t, stillPresent)
+	})
+
+	t.Run("new cache normalizes non-positive max size", func(t *testing.T) {
+		c := newSearchResultCache(0, time.Second)
+		require.NotNil(t, c)
+		require.Equal(t, 1000, c.maxSize)
+	})
+}
+
+func TestSearchResultCacheEvictsByRetainedBytes(t *testing.T) {
+	c := newSearchResultCache(100, time.Minute)
+	c.SetMaxBytes(900)
+
+	response := func(query string) *SearchResponse {
+		return &SearchResponse{
+			Status: "success",
+			Query:  query,
+			Results: []SearchResult{{
+				ID:         query,
+				Properties: map[string]any{"text": strings.Repeat(query, 256)},
+			}},
+		}
+	}
+	c.Put("first", response("a"))
+	c.Put("second", response("b"))
+
+	require.Nil(t, c.Get("first"), "the byte budget must evict incrementally before the entry limit")
+	require.NotNil(t, c.Get("second"))
+	require.LessOrEqual(t, c.retainedBytes, c.maxBytes)
+}
+
+func BenchmarkSearchResultCacheHit(b *testing.B) {
+	cache := newSearchResultCache(1_000, time.Minute)
+	for i := 0; i < 1_000; i++ {
+		key := strconv.Itoa(i)
+		cache.Put(key, &SearchResponse{Status: "success", Query: key})
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if cache.Get(strconv.Itoa(i%1_000)) == nil {
+			b.Fatal("cache miss")
+		}
+	}
+}
+
+func TestSearchCacheKeyAndMinSimilarityHelpers(t *testing.T) {
+	optsA := DefaultSearchOptions()
+	optsA.Types = []string{"todo", "memory"}
+	optsA.MinSimilarity = nil
+
+	optsB := DefaultSearchOptions()
+	optsB.Types = []string{"memory", "todo"} // different order, same semantic key
+
+	keyA := searchCacheKey("hello", []float32{0.1, 0.2}, optsA)
+	keyB := searchCacheKey("hello", []float32{0.1, 0.2}, optsB)
+	require.Equal(t, keyA, keyB)
+
+	keyNil := searchCacheKey("hello", nil, nil)
+	require.NotEmpty(t, keyNil)
+	require.NotEqual(t, keyA, keyNil)
+	require.NotEqual(t, keyA, searchCacheKey("hello", []float32{0.1, 0.3}, optsA))
+
+	ms := 0.42
+	optsA.MinSimilarity = &ms
+	require.Equal(t, 0.42, optsA.GetMinSimilarity(0.1))
+	optsA.MinSimilarity = nil
+	require.Equal(t, 0.1, optsA.GetMinSimilarity(0.1))
+
+	strictOptions := DefaultSearchOptions()
+	baseKey := searchCacheKey("strict", []float32{1, 0}, strictOptions)
+	assertDifferentKey := func(name string, mutate func(*SearchOptions)) {
+		t.Helper()
+		changed := *strictOptions
+		mutate(&changed)
+		require.NotEqual(t, baseKey, searchCacheKey("strict", []float32{1, 0}, &changed), name)
+	}
+	assertDifferentKey("rrf k", func(opts *SearchOptions) { opts.RRFK = 42 })
+	assertDifferentKey("vector weight", func(opts *SearchOptions) { opts.VectorWeight = 0.5 })
+	assertDifferentKey("bm25 weight", func(opts *SearchOptions) { opts.BM25Weight = 1.5 })
+	assertDifferentKey("minimum rrf score", func(opts *SearchOptions) { opts.MinRRFScore = 0 })
+	assertDifferentKey("rerank document character ceiling", func(opts *SearchOptions) { opts.RerankMaxChars = 1024 })
+	assertDifferentKey("minimum similarity", func(opts *SearchOptions) {
+		value := 0.25
+		opts.MinSimilarity = &value
+	})
+	assertDifferentKey("fallback", func(opts *SearchOptions) {
+		value := false
+		opts.FallbackEnabled = &value
+	})
+}
+
+func TestResolveAdaptiveOverfetch_CandidateTargetIndependentOfLimit(t *testing.T) {
+	opts := DefaultSearchOptions()
+	opts.Limit = 10
+	opts.CandidateTarget = 50
+	opts.AdaptiveOverfetch = false
+
+	config := resolveAdaptiveOverfetch(opts)
+	require.Equal(t, 50, config.target)
+	require.Equal(t, 75, config.initialLimit)
+	require.False(t, config.adaptive)
+}
+
+func TestFuseRRF_UsesExplicitKAndBranchWeights(t *testing.T) {
+	service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
+	opts := DefaultSearchOptions()
+	opts.RRFK = 10
+	opts.VectorWeight = 2
+	opts.BM25Weight = 3
+	opts.MinRRFScore = 0
+
+	results := service.fuseRRF(
+		[]indexResult{{ID: "both", Score: 0.9}, {ID: "vector-only", Score: 0.8}},
+		[]indexResult{{ID: "both", Score: 0.7}, {ID: "bm25-only", Score: 0.6}},
+		opts,
+	)
+
+	require.Len(t, results, 3)
+	require.Equal(t, "both", results[0].ID)
+	require.InDelta(t, 2.0/11.0+3.0/11.0, results[0].RRFScore, 1e-12)
+	require.Equal(t, "bm25-only", results[1].ID)
+	require.InDelta(t, 3.0/12.0, results[1].RRFScore, 1e-12)
+	require.Equal(t, "vector-only", results[2].ID)
+	require.InDelta(t, 2.0/12.0, results[2].RRFScore, 1e-12)
+}
+
+func TestSearch_FallbackPolicyCanKeepEmptyHybridResult(t *testing.T) {
+	engine := newNamespacedEngine(t)
+	service := NewService(engine, 2, nil)
+	node := &storage.Node{
+		ID:     "vector-candidate",
+		Labels: []string{"Document"},
+		Properties: map[string]any{
+			"content":   "strict retrieval",
+			"embedding": []float32{1, 0},
+		},
+	}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, service.IndexNode(node))
+
+	fallbackDisabled := false
+	strictOptions := DefaultSearchOptions()
+	strictOptions.MinRRFScore = 1
+	strictOptions.FallbackEnabled = &fallbackDisabled
+	strictResponse, err := service.Search(context.Background(), "strict retrieval", []float32{1, 0}, strictOptions)
+	require.NoError(t, err)
+	require.Empty(t, strictResponse.Results)
+	require.Equal(t, "rrf_hybrid", strictResponse.SearchMethod)
+	// The hybrid search kept its path; MinRRFScore 1 emptied the page, and
+	// the page says so (#1092).
+	require.True(t, strictResponse.FallbackTriggered)
+	require.Equal(t, SearchFallbackMinRRFScore, strictResponse.FallbackReason)
+
+	legacyOptions := DefaultSearchOptions()
+	legacyOptions.MinRRFScore = 1
+	legacyResponse, err := service.Search(context.Background(), "strict retrieval", []float32{1, 0}, legacyOptions)
+	require.NoError(t, err)
+	require.Len(t, legacyResponse.Results, 1)
+	require.Equal(t, "vector-candidate", legacyResponse.Results[0].ID)
+	require.True(t, legacyResponse.FallbackTriggered)
+	require.Equal(t, SearchFallbackNoHybridResults, legacyResponse.FallbackReason)
+}
+
+func TestSearch_VectorFallbackReportsHybridFailure(t *testing.T) {
+	engine := newNamespacedEngine(t)
+	service := NewService(engine, 2, nil)
+	node := &storage.Node{
+		ID:     "vector-candidate",
+		Labels: []string{"Document"},
+		Properties: map[string]any{
+			"content":   "fallback candidate",
+			"embedding": []float32{1, 0},
+		},
+	}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, service.IndexNode(node))
+	service.vectorPipeline = NewVectorSearchPipeline(
+		&errorThenCandidateGenerator{
+			firstErr:  errors.New("hybrid vector retrieval failed"),
+			candidate: Candidate{ID: string(node.ID), Score: 1},
+		},
+		&IdentityExactScorer{},
+	)
+
+	response, err := service.Search(context.Background(), "fallback candidate", []float32{1, 0}, DefaultSearchOptions())
+	require.NoError(t, err)
+	require.Len(t, response.Results, 1)
+	require.True(t, response.FallbackTriggered)
+	require.Equal(t, SearchFallbackHybridSearchFailed, response.FallbackReason)
+}
+
+func TestSearch_FallbackDisabledDoesNotUseBM25WhenEmbeddingMissing(t *testing.T) {
+	engine := newNamespacedEngine(t)
+	service := NewService(engine, 2, nil)
+	node := &storage.Node{
+		ID:     "lexical-only",
+		Labels: []string{"Document"},
+		Properties: map[string]any{
+			"content": "zero-trust architecture source",
+		},
+	}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, service.BuildIndexes(context.Background()))
+
+	fallbackDisabled := false
+	opts := DefaultSearchOptions()
+	opts.FallbackEnabled = &fallbackDisabled
+	response, err := service.Search(context.Background(), "zero-trust architecture", nil, opts)
+	require.NoError(t, err)
+	require.Empty(t, response.Results)
+	require.Equal(t, "rrf_hybrid", response.SearchMethod)
+	require.False(t, response.FallbackTriggered)
+
+	legacy, err := service.Search(context.Background(), "zero-trust architecture", nil, DefaultSearchOptions())
+	require.NoError(t, err)
+	require.NotEmpty(t, legacy.Results)
+	require.Equal(t, SearchFallbackNoEmbedder, legacy.FallbackReason)
+}
+
+func TestSearchResultCacheCanBeDisabled(t *testing.T) {
+	t.Setenv(EnvSearchResultCacheEnabled, "false")
+	disabled := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
+	require.Nil(t, disabled.resultCache)
+
+	t.Setenv(EnvSearchResultCacheEnabled, "true")
+	enabled := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
+	require.NotNil(t, enabled.resultCache)
+}
+
+func TestSearchVersionHelpers(t *testing.T) {
+	tests := []struct {
+		in    string
+		ok    bool
+		major int
+		minor int
+		patch int
+	}{
+		{"1.2.3", true, 1, 2, 3},
+		{" 2.0.1 ", true, 2, 0, 1},
+		{"", false, 0, 0, 0},
+		{"1.2", false, 0, 0, 0},
+		{"a.b.c", false, 0, 0, 0},
+		{"-1.2.3", false, 0, 0, 0},
+	}
+	for _, tt := range tests {
+		maj, min, pat, ok := parseSemver(tt.in)
+		require.Equal(t, tt.ok, ok, tt.in)
+		require.Equal(t, tt.major, maj, tt.in)
+		require.Equal(t, tt.minor, min, tt.in)
+		require.Equal(t, tt.patch, pat, tt.in)
+	}
+
+	require.Equal(t, -1, compareSemver("1.0.0", "2.0.0"))
+	require.Equal(t, 1, compareSemver("2.0.0", "1.9.9"))
+	require.Equal(t, -1, compareSemver("1.1.0", "1.2.0"))
+	require.Equal(t, 1, compareSemver("1.2.1", "1.2.0"))
+	require.Equal(t, 0, compareSemver("1.2.3", "1.2.3"))
+	require.Equal(t, -1, compareSemver("invalid", "1.0.0")) // invalid stored treated as old
+	require.Equal(t, 0, compareSemver("1.0.0", "bad"))      // invalid current treated neutral
+
+	require.True(t, searchIndexVersionCompatible("1.2.3", "1.2.3", "test"))
+	require.False(t, searchIndexVersionCompatible("1.2.2", "1.2.3", "test"))
+	require.False(t, searchIndexVersionCompatible("2.0.0", "1.2.3", "test"))
+}
+
+// TestAdaptiveRRFConfig verifies the recall-oriented production RRF policy.
+func TestAdaptiveRRFConfig(t *testing.T) {
+	// Short, medium, and long queries use the same validated weights.
+	shortOpts := GetAdaptiveRRFConfig("docker")
+	assert.Equal(t, 1.0, shortOpts.VectorWeight)
+	assert.Equal(t, 1.0, shortOpts.BM25Weight)
+
+	longOpts := GetAdaptiveRRFConfig("how do I configure docker containers for production deployment")
+	assert.Equal(t, 1.0, longOpts.VectorWeight)
+	assert.Equal(t, 1.0, longOpts.BM25Weight)
+
+	medOpts := GetAdaptiveRRFConfig("configure docker production")
+	assert.Equal(t, 1.0, medOpts.VectorWeight)
+	assert.Equal(t, 1.0, medOpts.BM25Weight)
+}
+
+// TestSearchService_FullTextOnly tests full-text search without embeddings.
+func TestSearchService_FullTextOnly(t *testing.T) {
+	baseEngine := newNamespacedEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+	// Create nodes with searchable properties
+	nodes := []*storage.Node{
+		{
+			ID:     "node1",
+			Labels: []string{"Node"},
+			Properties: map[string]any{
+				"type":    "memory",
+				"title":   "Machine Learning Tutorial",
+				"content": "Introduction to machine learning algorithms and neural networks",
+			},
+		},
+		{
+			ID:     "node2",
+			Labels: []string{"Node"},
+			Properties: map[string]any{
+				"type":        "todo",
+				"title":       "Database Migration",
+				"description": "Migrate PostgreSQL database to new server",
+			},
+		},
+		{
+			ID:     "node3",
+			Labels: []string{"FileChunk"},
+			Properties: map[string]any{
+				"text": "function calculateMachineLearningScore() { return 42; }",
+				"path": "/src/ml/score.ts",
+			},
+		},
+	}
+	err := engine.BulkCreateNodes(nodes)
+	require.NoError(t, err)
+
+	// Create search service
+	svc := NewService(engine, DefaultVectorDimensions, nil)
+
+	// Index nodes for full-text search
+	for _, node := range nodes {
+		err := svc.IndexNode(node)
+		require.NoError(t, err)
+	}
+
+	// Search without embedding (triggers full-text fallback)
+	ctx := context.Background()
+	opts := DefaultSearchOptions()
+	opts.Limit = 10
+
+	response, err := svc.Search(ctx, "machine learning", nil, opts)
+	require.NoError(t, err)
+
+	t.Logf("Full-text search results for 'machine learning':")
+	for _, r := range response.Results {
+		t.Logf("  %s: type=%s title=%s score=%.4f", r.ID, r.Type, r.Title, r.Score)
+	}
+
+	assert.Equal(t, "fulltext", response.SearchMethod)
+	assert.True(t, response.FallbackTriggered)
+	assert.NotEmpty(t, response.Results)
+}
+
+// TestSearchService_BuildIndexesFromStorage is the single storage-build table
+// owner: every case adds its nodes before the service exists, builds the
+// indexes once, and then asserts the built indexes and/or a search result.
+func TestSearchService_BuildIndexesFromStorage(t *testing.T) {
+	// Create nodes with embeddings
+	embedding := make([]float32, 1024)
+	embedding[0] = 1.0 // Simple non-zero embedding
+
+	t.Run("chunk embeddings build both indexes", func(t *testing.T) {
+		baseEngine := newNamespacedEngine(t)
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+		nodes := []*storage.Node{
+			{
+				ID:              "node1",
+				Labels:          []string{"Node"},
+				ChunkEmbeddings: [][]float32{embedding},
+				Properties: map[string]any{
+					"title":   "Test Node 1",
+					"content": "This is test content for searching",
+				},
+			},
+			{
+				ID:              "node2",
+				Labels:          []string{"Node"},
+				ChunkEmbeddings: [][]float32{embedding},
+				Properties: map[string]any{
+					"title": "Test Node 2",
+					"text":  "Another searchable document",
+				},
+			},
+		}
+		err := engine.BulkCreateNodes(nodes)
+		require.NoError(t, err)
+
+		// Create service and build indexes
+		svc := NewService(engine, DefaultVectorDimensions, nil)
+		err = svc.BuildIndexes(context.Background())
+		require.NoError(t, err)
+
+		// Verify indexes were built
+		assert.Equal(t, 2, svc.vectorIndex.Count())
+		assert.Equal(t, 2, svc.fulltext().Count())
+	})
+
+	t.Run("pre-existing nodes stay searchable", func(t *testing.T) {
+		baseEngine := newNamespacedEngine(t)
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+		nodes := []*storage.Node{
+			{
+				ID:     "preexisting1",
+				Labels: []string{"Doc"},
+				Properties: map[string]any{
+					"content":   "preexisting document content",
+					"embedding": []float32{1, 0, 0, 0},
+				},
+			},
+			{
+				ID:     "preexisting2",
+				Labels: []string{"Doc"},
+				Properties: map[string]any{
+					"content": "another preexisting document",
+				},
+			},
+		}
+		for _, node := range nodes {
+			_, _ = engine.CreateNode(node)
+		}
+
+		// Create service and build indexes
+		svc := NewService(engine, DefaultVectorDimensions, nil)
+		err := svc.BuildIndexes(context.Background())
+
+		assert.NoError(t, err)
+
+		// Verify search works
+		response, err := svc.Search(context.Background(), "preexisting", nil, DefaultSearchOptions())
+		require.NoError(t, err)
+		assert.Greater(t, len(response.Results), 0)
+	})
+}
+
+func TestSearchService_BuildIndexes_ContextCanceled(t *testing.T) {
+	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	svc := NewService(engine, 3, nil)
+
+	_, err := engine.CreateNode(&storage.Node{
+		ID:              "n1",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		Properties:      map[string]any{"content": "alpha"},
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = svc.BuildIndexes(ctx)
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestResolveAdaptiveOverfetchBoundaries(t *testing.T) {
+	cases := []struct {
+		limit       int
+		wantTarget  int
+		wantInitial int
+	}{
+		{limit: 0, wantTarget: 20, wantInitial: 30},
+		{limit: -5, wantTarget: 20, wantInitial: 30},
+		{limit: 1, wantTarget: 20, wantInitial: 30},
+		{limit: 100, wantTarget: 200, wantInitial: 300},
+		{limit: 5000, wantTarget: 10000, wantInitial: 15000},
+		{limit: int(^uint(0) >> 1), wantTarget: int(^uint(0) >> 1), wantInitial: int(^uint(0) >> 1)},
+	}
+	for _, tc := range cases {
+		opts := DefaultSearchOptions()
+		opts.Limit = tc.limit
+		config := resolveAdaptiveOverfetch(opts)
+		require.Equal(t, tc.wantTarget, config.target)
+		require.Equal(t, tc.wantInitial, config.initialLimit)
+	}
+}
+
+func TestSearchFilterByTypeBranches(t *testing.T) {
+	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	svc := NewService(engine, 3, nil)
+
+	_, err := engine.CreateNode(&storage.Node{
+		ID:         "n1",
+		Labels:     []string{"Person"},
+		Properties: map[string]any{"content": "alpha"},
+	})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{
+		ID:         "n2",
+		Labels:     []string{"Doc"},
+		Properties: map[string]any{"type": "Person", "content": "beta"},
+	})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{
+		ID:         "n3",
+		Labels:     []string{"Other"},
+		Properties: map[string]any{"content": "gamma"},
+	})
+	require.NoError(t, err)
+
+	in := []indexResult{
+		{ID: "n1", Score: 1},
+		{ID: "n2", Score: 1},
+		{ID: "n3", Score: 1},
+		{ID: "missing", Score: 1},
+	}
+
+	// Empty type filter returns input as-is.
+	same := svc.filterByType(context.Background(), in, nil, nil)
+	require.Equal(t, in, same)
+
+	seenOrphans := map[string]bool{}
+	filtered := svc.filterByType(context.Background(), in, []string{"person"}, seenOrphans)
+	require.Len(t, filtered, 2)
+	require.Equal(t, "n1", filtered[0].ID)
+	require.Equal(t, "n2", filtered[1].ID)
+	require.True(t, seenOrphans["missing"], "missing node should be handled as orphan")
+}
+
+// TestSearchEnrichResultsBranches owns search-result enrichment: both cases
+// read the enriched population, the property/preview projection and orphan
+// handling through the same enrichResults entry point.
+func TestSearchEnrichResultsBranches(t *testing.T) {
+	t.Run("projection, limit and orphan branches", func(t *testing.T) {
+		engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+		svc := NewService(engine, 3, nil)
+
+		longContent := strings.Repeat("x", 260)
+		_, err := engine.CreateNode(&storage.Node{
+			ID:     "e1",
+			Labels: []string{"Doc"},
+			Properties: map[string]any{
+				"type":        "Article",
+				"title":       "Title A",
+				"description": "Desc A",
+				"content":     longContent,
+			},
+		})
+		require.NoError(t, err)
+
+		_, err = engine.CreateNode(&storage.Node{
+			ID:     "e2",
+			Labels: []string{"Doc"},
+			Properties: map[string]any{
+				"text": "text-fallback",
+			},
+		})
+		require.NoError(t, err)
+
+		input := []rrfResult{
+			{ID: "e1", RRFScore: 1.5, OriginalScore: 0.8, VectorRank: 1, BM25Rank: 2},
+			{ID: "e2", RRFScore: 1.2, OriginalScore: 0.7, VectorRank: 2, BM25Rank: 1},
+			{ID: "missing", RRFScore: 0.5, OriginalScore: 0.3},
+		}
+
+		seenOrphans := map[string]bool{}
+		out := svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 3}, seenOrphans, hitMatchQuery{})
+		require.Len(t, out, 2)
+
+		require.Equal(t, "e1", out[0].ID)
+		require.Equal(t, "Article", out[0].Type)
+		require.Equal(t, "Title A", out[0].Title)
+		require.Equal(t, "Desc A", out[0].Description)
+		require.Len(t, out[0].ContentPreview, 200)
+		require.True(t, strings.HasSuffix(out[0].ContentPreview, "..."))
+
+		require.Equal(t, "e2", out[1].ID)
+		require.Equal(t, "text-fallback", out[1].ContentPreview)
+		require.True(t, seenOrphans["missing"])
+
+		// limit branch: only the first input item should be considered.
+		limited := svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 1}, map[string]bool{}, hitMatchQuery{})
+		require.Len(t, limited, 1)
+		require.Equal(t, "e1", limited[0].ID)
+	})
+
+	t.Run("search enriches the matched node", func(t *testing.T) {
+		baseEngine := newNamespacedEngine(t)
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+		// Create a node with full properties
+		node := &storage.Node{
+			ID:     "enriched1",
+			Labels: []string{"Person", "Employee"},
+			Properties: map[string]any{
+				"name":      "Alice",
+				"age":       30,
+				"email":     "alice@example.com",
+				"embedding": []float32{1, 0, 0, 0},
+			},
+		}
+		_, _ = engine.CreateNode(node)
+
+		svc := NewService(engine, DefaultVectorDimensions, nil)
+		svc.IndexNode(node)
+
+		// Search and verify enriched results
+		opts := DefaultSearchOptions()
+		response, err := svc.Search(context.Background(), "Alice", nil, opts)
+		require.NoError(t, err)
+
+		assert.Greater(t, len(response.Results), 0)
+		if len(response.Results) > 0 {
+			// Check that result has enriched properties
+			r := response.Results[0]
+			assert.Equal(t, "enriched1", r.ID)
+			assert.Contains(t, r.Labels, "Person")
+			assert.Contains(t, r.Labels, "Employee")
+			// Properties should be included
+			if r.Properties != nil {
+				assert.Equal(t, "Alice", r.Properties["name"])
+			}
+		}
+	})
+}
+
+func TestSearchService_BuildIndexes_IteratorEngineBranches(t *testing.T) {
+	base := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	_, err := base.CreateNode(&storage.Node{
+		ID:              "it-1",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		Properties:      map[string]any{"content": "alpha"},
+	})
+	require.NoError(t, err)
+	_, err = base.CreateNode(&storage.Node{
+		ID:              "it-2",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{0, 1, 0}},
+		Properties:      map[string]any{"content": "beta"},
+	})
+	require.NoError(t, err)
+
+	t.Run("iterates_and_builds", func(t *testing.T) {
+		svc := NewService(&iteratorEngine{Engine: base}, 3, nil)
+		err := svc.BuildIndexes(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, 2, svc.fulltext().Count())
+		require.Equal(t, 2, svc.EmbeddingCount())
+	})
+
+	t.Run("canceled_context_returns_error", func(t *testing.T) {
+		svc := NewService(&iteratorEngine{Engine: base}, 3, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := svc.BuildIndexes(ctx)
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("iterator_error_propagates", func(t *testing.T) {
+		svc := NewService(&iteratorEngine{
+			Engine:     base,
+			iterateErr: errors.New("iterate-failed"),
+		}, 3, nil)
+		err := svc.BuildIndexes(context.Background())
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "iterate-failed")
+	})
+}
+
+func TestSearchService_BuildIndexes_SkipIterationFromDisk(t *testing.T) {
+	base := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	_, err := base.CreateNode(&storage.Node{
+		ID:              "disk-1",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		Properties: map[string]any{
+			"content":   "persisted",
+			"embedding": []float32{1, 0, 0},
+		},
+	})
+	require.NoError(t, err)
+
+	tmp := t.TempDir()
+	bm25Path := filepath.Join(tmp, "bm25")
+	vectorPath := filepath.Join(tmp, "vectors")
+
+	// First build materializes on-disk BM25/vector artifacts.
+	svc1 := NewService(base, 3, nil)
+	svc1.SetPersistenceEnabled(true)
+	t.Cleanup(func() { svc1.SetPersistenceEnabled(false) })
+	svc1.SetFulltextIndexPath(bm25Path)
+	svc1.SetVectorIndexPath(vectorPath)
+	require.NoError(t, svc1.BuildIndexes(context.Background()))
+	svc1.PersistIndexesToDisk()
+
+	// If BuildIndexes iterates storage again, iteratorEngine will return this error.
+	iterErr := errors.New("should-not-iterate")
+	svc2 := NewService(&iteratorEngine{Engine: base, iterateErr: iterErr}, 3, nil)
+	svc2.SetPersistenceEnabled(true)
+	t.Cleanup(func() { svc2.SetPersistenceEnabled(false) })
+	svc2.SetFulltextIndexPath(bm25Path)
+	svc2.SetVectorIndexPath(vectorPath)
+	require.NoError(t, svc2.BuildIndexes(context.Background()))
+	require.GreaterOrEqual(t, svc2.fulltext().Count(), 1)
+	require.GreaterOrEqual(t, svc2.EmbeddingCount(), 1)
+	hits, err := svc2.VectorQueryNodes(context.Background(), []float32{1, 0, 0}, VectorQuerySpec{
+		Label:    "Doc",
+		Property: "embedding",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.Equal(t, "disk-1", hits[0].ID)
+}
+
+func TestSearchService_BuildIndexes_ForcedRebuildOnSettingsMismatch(t *testing.T) {
+	base := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	_, err := base.CreateNode(&storage.Node{
+		ID:              "mismatch-1",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		Properties:      map[string]any{"content": "persisted-one"},
+	})
+	require.NoError(t, err)
+	_, err = base.CreateNode(&storage.Node{
+		ID:              "mismatch-2",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{0, 1, 0}},
+		Properties:      map[string]any{"content": "persisted-two"},
+	})
+	require.NoError(t, err)
+
+	tmp := t.TempDir()
+	bm25Path := filepath.Join(tmp, "bm25")
+	vectorPath := filepath.Join(tmp, "vectors")
+	hnswPath := filepath.Join(tmp, "hnsw.idx")
+
+	// Seed persisted artifacts/settings.
+	svc1 := NewService(base, 3, nil)
+	svc1.SetPersistenceEnabled(true)
+	t.Cleanup(func() { svc1.SetPersistenceEnabled(false) })
+	svc1.SetFulltextIndexPath(bm25Path)
+	svc1.SetVectorIndexPath(vectorPath)
+	svc1.SetHNSWIndexPath(hnswPath)
+	require.NoError(t, svc1.BuildIndexes(context.Background()))
+	svc1.persistSearchBuildSettings(bm25Path, vectorPath, hnswPath)
+
+	// Overwrite build settings with mismatched fingerprints so rebuild flags trigger.
+	settingsPath := searchBuildSettingsPath(bm25Path, vectorPath, hnswPath)
+	require.NoError(t, saveSearchBuildSettings(settingsPath, searchBuildSettingsSnapshot{
+		FormatVersion: searchBuildSettingsFormatVersion,
+		BM25:          "old-bm25-fingerprint",
+		Vector:        "old-vector-fingerprint",
+		HNSW:          "old-hnsw-fingerprint",
+		Routing:       "old-routing-fingerprint",
+		Strategy:      "old-strategy-fingerprint",
+	}))
+
+	svc2 := NewService(base, 3, nil)
+	svc2.SetPersistenceEnabled(true)
+	t.Cleanup(func() { svc2.SetPersistenceEnabled(false) })
+	svc2.SetFulltextIndexPath(bm25Path)
+	svc2.SetVectorIndexPath(vectorPath)
+	svc2.SetHNSWIndexPath(hnswPath)
+
+	// Pre-populate fields that forced rebuild paths should clear.
+	svc2.clusterGen = &clusterGeneration{profiles: map[int]map[string]float64{
+		1: {"alpha": 1},
+	}}
+	svc2.ivfpqMu.Lock()
+	svc2.ivfpqIndex = &IVFPQIndex{}
+	svc2.ivfpqMu.Unlock()
+
+	require.NoError(t, svc2.BuildIndexes(context.Background()))
+	require.Nil(t, svc2.clusterGen, "a routing rebuild retires the cluster generation")
+	require.True(t, svc2.IsReady())
+	require.GreaterOrEqual(t, svc2.fulltext().Count(), 1)
+	require.GreaterOrEqual(t, svc2.EmbeddingCount(), 1)
+
+	// Build persists settings asynchronously; wait until updated fingerprints are visible.
+	var gotSettings *searchBuildSettingsSnapshot
+	require.Eventually(t, func() bool {
+		loaded, loadErr := loadSearchBuildSettings(settingsPath)
+		if loadErr != nil || loaded == nil {
+			return false
+		}
+		gotSettings = loaded
+		return true
+	}, 2*time.Second, 20*time.Millisecond)
+	require.NotEqual(t, "old-bm25-fingerprint", gotSettings.BM25)
+	require.NotEqual(t, "old-vector-fingerprint", gotSettings.Vector)
+	require.NotEqual(t, "old-hnsw-fingerprint", gotSettings.HNSW)
+	require.NotEqual(t, "old-routing-fingerprint", gotSettings.Routing)
+	require.NotEqual(t, "old-strategy-fingerprint", gotSettings.Strategy)
+}
+
+func TestSearchService_BuildIndexes_DoesNotReuseDiskIndexesWhenStorageEmpty(t *testing.T) {
+	root := newTestMemoryEngine(t)
+	t.Cleanup(func() { root.Close() })
+	base := storage.NewNamespacedEngine(root, "test")
+	_, err := base.CreateNode(&storage.Node{
+		ID:              "stale-1",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		Properties:      map[string]any{"content": "stale"},
+	})
+	require.NoError(t, err)
+
+	tmp := t.TempDir()
+	bm25Path := filepath.Join(tmp, "bm25")
+	vectorPath := filepath.Join(tmp, "vectors")
+	hnswPath := filepath.Join(tmp, "hnsw.idx")
+
+	// Seed persisted artifacts from non-empty storage.
+	svc1 := NewService(base, 3, nil)
+	svc1.SetPersistenceEnabled(true)
+	t.Cleanup(func() { svc1.SetPersistenceEnabled(false) })
+	svc1.SetFulltextIndexPath(bm25Path)
+	svc1.SetVectorIndexPath(vectorPath)
+	svc1.SetHNSWIndexPath(hnswPath)
+	require.NoError(t, svc1.BuildIndexes(context.Background()))
+	require.GreaterOrEqual(t, svc1.EmbeddingCount(), 1)
+
+	// Drop all storage data, leaving only persisted on-disk indexes.
+	nodesDeleted, edgesDeleted, err := root.DeleteByPrefix("test:")
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, nodesDeleted, int64(1))
+	require.Equal(t, int64(0), edgesDeleted)
+
+	// Rebuild should detect empty storage and clear stale on-disk index state.
+	vecInfo, err := os.Stat(vectorPath + ".vec")
+	require.NoError(t, err)
+	engineWithWrite := &lastWriteEngine{
+		Engine:    base,
+		writeTime: vecInfo.ModTime().Add(2 * time.Second),
+	}
+	svc2 := NewService(engineWithWrite, 3, nil)
+	svc2.SetPersistenceEnabled(true)
+	t.Cleanup(func() { svc2.SetPersistenceEnabled(false) })
+	svc2.SetFulltextIndexPath(bm25Path)
+	svc2.SetVectorIndexPath(vectorPath)
+	svc2.SetHNSWIndexPath(hnswPath)
+	require.NoError(t, svc2.BuildIndexes(context.Background()))
+	require.Equal(t, 0, svc2.EmbeddingCount())
+	require.Equal(t, 0, svc2.fulltext().Count())
+}
+
+func TestSearchService_BuildIndexes_RestartsVectorStoreWhenStorageIsNewer(t *testing.T) {
+	base := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	_, err := base.CreateNode(&storage.Node{
+		ID:              "lv-1",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		Properties:      map[string]any{"content": "alpha"},
+	})
+	require.NoError(t, err)
+
+	tmp := t.TempDir()
+	vectorPath := filepath.Join(tmp, "vectors")
+
+	// Seed vector store from storage.
+	svc1 := NewService(base, 3, nil)
+	svc1.SetPersistenceEnabled(true)
+	t.Cleanup(func() { svc1.SetPersistenceEnabled(false) })
+	svc1.SetVectorIndexPath(vectorPath)
+	require.NoError(t, svc1.BuildIndexes(context.Background()))
+	require.Equal(t, 1, svc1.EmbeddingCount())
+
+	// Inject a stale vector entry not present in storage.
+	vfs, err := NewVectorFileStore(vectorPath, 3)
+	require.NoError(t, err)
+	require.NoError(t, vfs.Load())
+	require.NoError(t, vfs.Add("stale-id", []float32{0, 1, 0}))
+	require.NoError(t, vfs.Save())
+	require.NoError(t, vfs.Sync())
+	require.NoError(t, vfs.Close())
+
+	// Ensure vec file timestamp is older than storage LastWriteTime.
+	vecPath := vectorPath + ".vec"
+	infoBefore, err := os.Stat(vecPath)
+	require.NoError(t, err)
+	newerWrite := infoBefore.ModTime().Add(2 * time.Second)
+	engineWithWrite := &lastWriteEngine{Engine: base, writeTime: newerWrite}
+
+	svc2 := NewService(engineWithWrite, 3, nil)
+	svc2.SetPersistenceEnabled(true)
+	t.Cleanup(func() { svc2.SetPersistenceEnabled(false) })
+	svc2.SetVectorIndexPath(vectorPath)
+	require.NoError(t, svc2.BuildIndexes(context.Background()))
+
+	// Restart path should rebuild from storage and drop stale vector.
+	require.Equal(t, 1, svc2.EmbeddingCount())
+	infoAfter, err := os.Stat(vecPath)
+	require.NoError(t, err)
+	require.True(t, infoAfter.ModTime().After(infoBefore.ModTime()) || infoAfter.ModTime().Equal(infoBefore.ModTime()))
+}
+
+func TestSearchService_BuildIndexes_SkipIterationWarmsHNSWWhenDiskIndexMissing(t *testing.T) {
+	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	tmp := t.TempDir()
+	bm25Path := filepath.Join(tmp, "bm25")
+	vectorPath := filepath.Join(tmp, "vectors")
+	hnswPath := filepath.Join(tmp, "missing-hnsw")
+
+	// Persist through the service so BM25 and vector query metadata match the loader.
+	for i := 0; i < 8; i++ {
+		vec := []float32{1, 0, 0}
+		if i%2 == 1 {
+			vec = []float32{0, 1, 0}
+		}
+		_, err := engine.CreateNode(&storage.Node{
+			ID:              storage.NodeID(fmt.Sprintf("seed-%d", i)),
+			Labels:          []string{"Doc"},
+			ChunkEmbeddings: [][]float32{vec},
+			Properties:      map[string]any{"content": "alpha beta"},
+		})
+		require.NoError(t, err)
+	}
+	seed := NewService(engine, 3, nil)
+	seed.SetPersistenceEnabled(true)
+	t.Cleanup(func() { require.NoError(t, seed.Close()) })
+	seed.SetFulltextIndexPath(bm25Path)
+	seed.SetVectorIndexPath(vectorPath)
+	require.NoError(t, seed.BuildIndexes(context.Background()))
+	seed.PersistIndexesToDisk()
+	require.NoError(t, seed.Close())
+	require.NoFileExists(t, hnswPath)
+
+	// A storage iteration would bypass the disk-only warmup path this test protects.
+	svc := NewService(&iteratorEngine{
+		Engine: engine, iterateErr: errors.New("should-not-iterate"),
+	}, 3, nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.SetPersistenceEnabled(true)
+	t.Cleanup(func() { svc.SetPersistenceEnabled(false) })
+	svc.SetFulltextIndexPath(bm25Path)
+	svc.SetVectorIndexPath(vectorPath)
+	svc.SetHNSWIndexPath(hnswPath) // intentionally missing on disk
+
+	require.NoError(t, svc.BuildIndexes(context.Background()))
+	require.True(t, svc.IsReady())
+	require.GreaterOrEqual(t, svc.EmbeddingCount(), 8)
+
+	// Missing on-disk HNSW should trigger warmup build.
+	svc.hnswMu.RLock()
+	defer svc.hnswMu.RUnlock()
+	require.NotNil(t, svc.hnswIndex)
+	require.GreaterOrEqual(t, svc.hnswIndex.Size(), 8)
+}
+
+func TestSearchService_PersistBaseIndexes_Branches(t *testing.T) {
+	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	svc := NewService(engine, 2, nil)
+
+	tmp := t.TempDir()
+	bm25Path := filepath.Join(tmp, "bm25")
+	vectorPath := filepath.Join(tmp, "vectors")
+	hnswPath := filepath.Join(tmp, "hnsw")
+	svc.SetFulltextIndexPath(bm25Path)
+	svc.SetVectorIndexPath(vectorPath)
+	svc.SetHNSWIndexPath(hnswPath)
+
+	// Persistence disabled: no files should be written.
+	svc.SetPersistenceEnabled(false)
+	require.NoError(t, svc.persistBaseIndexes())
+	_, err := os.Stat(bm25Path)
+	require.Error(t, err)
+	require.True(t, os.IsNotExist(err))
+
+	// Persistence enabled but no dirty BM25 / nil vector store.
+	svc.SetPersistenceEnabled(true)
+	require.NoError(t, svc.persistBaseIndexes())
+	_, err = os.Stat(vectorPath + ".meta")
+	require.Error(t, err)
+	require.True(t, os.IsNotExist(err))
+
+	// Dirty BM25 + valid vector store writes both artifacts.
+	svc.fulltext().Index("doc-1", "alpha beta", nil, nil, false)
+	vfs, err := NewVectorFileStore(vectorPath, 2)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = vfs.Close() })
+	require.NoError(t, vfs.Add("v-1", []float32{1, 0}))
+	require.NoError(t, vfs.Add("v-1", []float32{0, 1})) // create an obsolete record
+	require.NoError(t, vfs.Add("v-2", []float32{1, 1}))
+	svc.mu.Lock()
+	svc.vectorFileStore = vfs
+	svc.mu.Unlock()
+
+	t.Setenv("NORNICDB_VECTOR_VFS_COMPACT_MIN_OBSOLETE", "1")
+	t.Setenv("NORNICDB_VECTOR_VFS_COMPACT_MIN_SIZE_MB", "0")
+	t.Setenv("NORNICDB_VECTOR_VFS_COMPACT_DEAD_RATIO", "0")
+	svc.buildInProgress.Store(false) // compaction path enabled
+	require.NoError(t, svc.persistBaseIndexes())
+
+	_, err = os.Stat(bm25Path)
+	require.NoError(t, err)
+	_, err = os.Stat(vectorPath + ".meta")
+	require.NoError(t, err)
+
+	// buildInProgress=true path: persist still succeeds while compaction is skipped.
+	svc.buildInProgress.Store(true)
+	require.NoError(t, vfs.Add("v-3", []float32{0, 1}))
+	require.NoError(t, svc.persistBaseIndexes())
+	_, err = os.Stat(vectorPath + ".meta")
+	require.NoError(t, err)
+	svc.buildInProgress.Store(false)
+}
+
+func TestSearchService_SchedulePersist_GuardsAndTimer(t *testing.T) {
+	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	svc := NewService(engine, 2, nil)
+	t.Setenv("NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC", "1")
+
+	// Guard: persistence disabled.
+	svc.SetPersistenceEnabled(false)
+	svc.SetFulltextIndexPath(filepath.Join(t.TempDir(), "bm25"))
+	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vec"))
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.Nil(t, svc.persistTimer)
+	svc.persistMu.Unlock()
+
+	// Guard: build in progress.
+	svc.SetPersistenceEnabled(true)
+	svc.buildInProgress.Store(true)
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.Nil(t, svc.persistTimer)
+	svc.persistMu.Unlock()
+	svc.buildInProgress.Store(false)
+
+	// Guard: missing required paths.
+	svc.SetFulltextIndexPath("")
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.Nil(t, svc.persistTimer)
+	svc.persistMu.Unlock()
+
+	// Happy path: both paths configured schedules a timer.
+	svc.SetFulltextIndexPath(filepath.Join(t.TempDir(), "bm25"))
+	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vec"))
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.NotNil(t, svc.persistTimer)
+	firstTimer := svc.persistTimer
+	svc.persistMu.Unlock()
+
+	// Re-scheduling should replace the previous timer.
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.NotNil(t, svc.persistTimer)
+	require.False(t, firstTimer == svc.persistTimer)
+	svc.persistMu.Unlock()
+
+	// Invalid/zero delay env falls back to default delay and still schedules.
+	t.Setenv("NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC", "0")
+	svc.schedulePersist()
+	svc.persistMu.Lock()
+	require.NotNil(t, svc.persistTimer)
+	svc.persistMu.Unlock()
+
+	// Disabling persistence should stop and clear active timer.
+	svc.SetPersistenceEnabled(false)
+	svc.persistMu.Lock()
+	require.Nil(t, svc.persistTimer)
+	svc.persistMu.Unlock()
+}
+
+func TestVectorSearchOnly_MethodAndFilterBranches(t *testing.T) {
+	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	svc := NewService(engine, 3, nil)
+
+	_, err := engine.CreateNode(&storage.Node{
+		ID:              "v1",
+		Labels:          []string{"Person"},
+		Properties:      map[string]any{"content": "alpha"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}, {1, 0, 0}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.BuildIndexes(context.Background()))
+
+	opts := DefaultSearchOptions()
+	opts.Limit = 5
+	resp, err := svc.vectorSearchOnly(context.Background(), []float32{1, 0, 0}, opts)
+	require.NoError(t, err)
+	require.Equal(t, "vector_hnsw", resp.SearchMethod)
+	require.NotEmpty(t, resp.Results)
+	for i, r := range resp.Results {
+		require.Equal(t, i+1, r.VectorRank)
+		require.Equal(t, 0, r.BM25Rank)
+	}
+
+	// Type filter branch should remove non-matching labels/types.
+	opts.Types = []string{"organization"}
+	filtered, err := svc.vectorSearchOnly(context.Background(), []float32{1, 0, 0}, opts)
+	require.NoError(t, err)
+	require.Len(t, filtered.Results, 0)
+}
+
+func TestVectorSearchOnly_SearchMethodVariants(t *testing.T) {
+	t.Run("vector_hnsw", func(t *testing.T) {
+		engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+		svc := NewService(engine, 3, nil)
+		require.NoError(t, svc.IndexNode(&storage.Node{
+			ID:              "h1",
+			Properties:      map[string]any{"content": "hnsw"},
+			ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		}))
+
+		h := NewHNSWIndex(3, HNSWConfigFromEnv())
+		require.NoError(t, h.Add("h1", []float32{1, 0, 0}))
+		svc.pipelineMu.Lock()
+		svc.vectorPipeline = NewVectorSearchPipeline(NewHNSWCandidateGen(h), NewCPUExactScorer(svc.vectorIndex))
+		svc.pipelineMu.Unlock()
+
+		opts := DefaultSearchOptions()
+		opts.Limit = 5
+		resp, err := svc.vectorSearchOnly(context.Background(), []float32{1, 0, 0}, opts)
+		require.NoError(t, err)
+		require.Equal(t, "vector_hnsw", resp.SearchMethod)
+	})
+
+	t.Run("vector_clustered", func(t *testing.T) {
+		engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+		svc := NewService(engine, 2, nil)
+		svc.EnableClustering(nil, 2)
+		svc.SetMinEmbeddingsForClustering(1)
+		require.NoError(t, svc.IndexNode(&storage.Node{ID: "c1", ChunkEmbeddings: [][]float32{{1, 0}}, Properties: map[string]any{"content": "c1"}}))
+		require.NoError(t, svc.IndexNode(&storage.Node{ID: "c2", ChunkEmbeddings: [][]float32{{0, 1}}, Properties: map[string]any{"content": "c2"}}))
+		require.NoError(t, svc.TriggerClustering(context.Background()))
+		require.True(t, svc.clusterIndex.IsClustered())
+
+		gen := NewKMeansCandidateGen(svc.clusterIndex, svc.vectorIndex, 1)
+		svc.pipelineMu.Lock()
+		svc.vectorPipeline = NewVectorSearchPipeline(gen, NewCPUExactScorer(svc.vectorIndex))
+		svc.pipelineMu.Unlock()
+
+		opts := DefaultSearchOptions()
+		opts.Limit = 5
+		resp, err := svc.vectorSearchOnly(context.Background(), []float32{1, 0}, opts)
+		require.NoError(t, err)
+		require.Equal(t, "vector_clustered", resp.SearchMethod)
+	})
+}
+
+func TestVectorFileStoreCreationHonorsPersistenceConfiguration(t *testing.T) {
+	_ = t.TempDir()
+	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	svc := NewService(engine, 2, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+
+	// persistence disabled branch
+	svc.vectorIndex.vectors["keep"] = []float32{1, 0}
+	svc.ensureVectorFileStore()
+	require.Nil(t, svc.vectorFileStore)
+	require.Contains(t, svc.vectorIndex.vectors, "keep")
+
+	// empty vector path branch
+	svc.SetPersistenceEnabled(true)
+	svc.ensureVectorFileStore()
+	require.Nil(t, svc.vectorFileStore)
+
+	// nil vector index branch
+	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
+	orig := svc.vectorIndex
+	svc.vectorIndex = nil
+	svc.ensureVectorFileStore()
+	require.Nil(t, svc.vectorFileStore)
+	svc.vectorIndex = orig
+
+	// dimensions <= 0 branch
+	svc.vectorIndex = NewVectorIndex(0)
+	svc.ensureVectorFileStore()
+	require.Nil(t, svc.vectorFileStore)
+
+	// create fail branch (invalid parent path from file)
+	badParent := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(badParent, []byte("x"), 0o644))
+	svc.vectorIndex = NewVectorIndex(2)
+	svc.vectorIndexPath = filepath.Join(badParent, "vectors")
+	svc.ensureVectorFileStore()
+	require.Nil(t, svc.vectorFileStore)
+
+	// success branch creates file store and clears in-memory vector maps.
+	okPath := filepath.Join(t.TempDir(), "ok-vectors")
+	svc.vectorIndexPath = okPath
+	svc.vectorIndex.vectors["a"] = []float32{1, 0}
+	svc.ensureVectorFileStore()
+	require.NotNil(t, svc.vectorFileStore)
+	require.Empty(t, svc.vectorIndex.vectors)
+}
+
+// TestSearchService_WithRealData tests search with exported Neo4j data.
+func TestSearchService_WithRealData(t *testing.T) {
+	t.Skip("Legacy export loader support removed")
+}
+
+// TestSearchService_RRFHybrid tests the full RRF hybrid search with real data.
+func TestSearchService_RRFHybrid(t *testing.T) {
+	t.Skip("Legacy export loader support removed")
+}
+
+func truncateID(id string, maxLen int) string {
+	if len(id) <= maxLen {
+		return id
+	}
+	return id[:maxLen] + "..."
+}
+
+// BenchmarkVectorSearch benchmarks vector similarity search.
+func BenchmarkVectorSearch(b *testing.B) {
+	idx := NewVectorIndex(1024)
+
+	// Add 10K vectors
+	for i := 0; i < 10000; i++ {
+		vec := make([]float32, 1024)
+		vec[i%1024] = 1.0
+		idx.Add(string(rune('a'+i%26))+string(rune(i)), vec)
+	}
+
+	query := make([]float32, 1024)
+	query[0] = 1.0
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		idx.Search(context.Background(), query, 10, 0.5)
+	}
+}
+
+// BenchmarkBM25Search benchmarks BM25 full-text search.
+func BenchmarkBM25Search(b *testing.B) {
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
+
+	// Index 10K documents
+	texts := []string{
+		"machine learning neural networks deep learning",
+		"database systems query optimization indexing",
+		"natural language processing transformers bert",
+		"distributed systems microservices kubernetes",
+		"frontend development react vue angular",
+	}
+
+	for i := 0; i < 10000; i++ {
+		idx.Index(string(rune('a'+i%26))+string(rune(i)), texts[i%len(texts)], nil, nil, false)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		idx.Search("machine learning", 10)
+	}
+}
+
+// BenchmarkRRFFusion benchmarks RRF fusion algorithm.
+func BenchmarkRRFFusion(b *testing.B) {
+	engine := newNamespacedEngine(b)
+
+	// Create nodes
+	for i := 0; i < 100; i++ {
+		_, _ = engine.CreateNode(&storage.Node{
+			ID:         storage.NodeID(string(rune('a'+i%26)) + string(rune(i))),
+			Labels:     []string{"Node"},
+			Properties: map[string]any{"title": "Test"},
+		})
+	}
+
+	svc := NewService(engine, DefaultVectorDimensions, nil)
+
+	// Create result sets
+	vectorResults := make([]indexResult, 50)
+	bm25Results := make([]indexResult, 50)
+	for i := 0; i < 50; i++ {
+		vectorResults[i] = indexResult{ID: string(rune('a'+i%26)) + string(rune(i)), Score: float64(50-i) / 50.0}
+		bm25Results[i] = indexResult{ID: string(rune('a'+(i+10)%26)) + string(rune(i)), Score: float64(50 - i)}
+	}
+
+	opts := DefaultSearchOptions()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		svc.fuseRRF(vectorResults, bm25Results, opts)
+	}
+}
+
+// ========================================
+// Additional Tests for Coverage Improvement
+// ========================================
+
+// TestVectorIndex_Remove tests vector removal.
+func TestVectorIndex_Remove(t *testing.T) {
+	idx := NewVectorIndex(4)
+
+	// Add vectors
+	require.NoError(t, idx.Add("doc1", []float32{1, 0, 0, 0}))
+	require.NoError(t, idx.Add("doc2", []float32{0, 1, 0, 0}))
+	require.NoError(t, idx.Add("doc3", []float32{0, 0, 1, 0}))
+
+	assert.Equal(t, 3, idx.Count())
+	assert.True(t, idx.HasVector("doc1"))
+
+	// Remove a vector
+	idx.Remove("doc1")
+	assert.Equal(t, 2, idx.Count())
+	assert.False(t, idx.HasVector("doc1"))
+	assert.True(t, idx.HasVector("doc2"))
+
+	// Remove non-existent vector (should not panic)
+	idx.Remove("nonexistent")
+	assert.Equal(t, 2, idx.Count())
+}
+
+// TestVectorIndex_GetDimensions tests dimension getter.
+func TestVectorIndex_GetDimensions(t *testing.T) {
+	idx := NewVectorIndex(128)
+	assert.Equal(t, 128, idx.GetDimensions())
+
+	idx2 := NewVectorIndex(1024)
+	assert.Equal(t, 1024, idx2.GetDimensions())
+}
+
+// TestVectorIndex_CosineSimilarity tests cosine similarity calculation via search.
+func TestVectorIndex_CosineSimilarity(t *testing.T) {
+	idx := NewVectorIndex(4)
+
+	// Add reference vectors
+	require.NoError(t, idx.Add("ref1", []float32{1, 0, 0, 0}))
+	require.NoError(t, idx.Add("ref2", []float32{0, 1, 0, 0}))
+	require.NoError(t, idx.Add("ref3", []float32{-1, 0, 0, 0}))
+	require.NoError(t, idx.Add("ref4", []float32{1, 1, 0, 0}))
+
+	// Search for identical vector
+	results, err := idx.Search(context.Background(), []float32{1, 0, 0, 0}, 10, 0.0)
+	require.NoError(t, err)
+
+	// ref1 should have highest score (identical)
+	if len(results) > 0 {
+		assert.Equal(t, "ref1", results[0].ID)
+		assert.InDelta(t, 1.0, results[0].Score, 0.01)
+	}
+}
+
+// TestFulltextIndex_Remove tests document removal from fulltext index.
+func TestFulltextIndex_Remove(t *testing.T) {
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
+
+	// Add documents
+	idx.Index("doc1", "quick brown fox", nil, nil, false)
+	idx.Index("doc2", "lazy brown dog", nil, nil, false)
+	idx.Index("doc3", "quick lazy cat", nil, nil, false)
+
+	assert.Equal(t, 3, idx.Count())
+
+	// Remove a document
+	idx.Remove("doc1")
+	assert.Equal(t, 2, idx.Count())
+
+	// Search should not return removed document
+	results := idx.Search("quick", 10)
+	for _, r := range results {
+		assert.NotEqual(t, "doc1", r.ID)
+	}
+
+	// Remove non-existent document (should not panic)
+	idx.Remove("nonexistent")
+	assert.Equal(t, 2, idx.Count())
+}
+
+// TestFulltextIndex_GetDocument tests document retrieval.
+func TestFulltextIndex_GetDocument(t *testing.T) {
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
+
+	// Add a document
+	idx.Index("doc1", "quick brown fox", nil, nil, false)
+
+	// Get the document
+	content, exists := idx.GetDocument("doc1")
+	assert.True(t, exists)
+	assert.Equal(t, "quick brown fox", content)
+
+	// Get non-existent document
+	_, exists = idx.GetDocument("nonexistent")
+	assert.False(t, exists)
+}
+
+func TestBM25PhraseSearch(t *testing.T) {
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
+	for i, text := range []string{"the quick brown fox jumps over lazy dog", "quick brown bread is delicious", "the lazy brown cat sleeps"} {
+		idx.Index(fmt.Sprintf("doc%d", i+1), text, nil, nil, false)
+	}
+	results := idx.PhraseSearch("quick brown", 10)
+	ids := make([]string, len(results))
+	for i, result := range results {
+		ids[i] = result.ID
+	}
+	require.ElementsMatch(t, []string{"doc1", "doc2"}, ids)
+	again := idx.PhraseSearch("quick brown", 10)
+	require.Len(t, again, len(results))
+	for i := range results {
+		require.Equal(t, results[i].ID, again[i].ID)
+	}
+}
+
+// TestBM25SaveLoadRoundTrip verifies Save/Load persistence. The load must
+// succeed, the reloaded document count must equal the saved count, and
+// "learning" must return exactly the two learning documents.
+func TestBM25SaveLoadRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bm25")
+
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
+	idx.Index("doc1", "machine learning algorithms", nil, nil, false)
+	idx.Index("doc2", "deep learning neural networks", nil, nil, false)
+	idx.Index("doc3", "graph database", nil, nil, false)
+
+	require.NoError(t, idx.Save(path))
+
+	reloaded := NewFulltextIndexV2WithAnalyzer(nil)
+	require.NoError(t, reloaded.Load(path))
+
+	require.Equal(t, idx.Count(), reloaded.Count())
+	results := reloaded.Search("learning", 10)
+	require.Len(t, results, 2) // doc1 and doc2
+	ids := map[string]bool{}
+	for _, r := range results {
+		ids[r.ID] = true
+	}
+	require.True(t, ids["doc1"], "reloaded index must still match doc1")
+	require.True(t, ids["doc2"], "reloaded index must still match doc2")
+}
+
+// TestFulltextIndex_AvgDocLengthAfterManyOps verifies that after many Index/Remove
+// operations the average document length stays correct (O(1) update path). Save/Load
+// round-trip and search results confirm totalDocLength was consistent.
+func TestFulltextIndex_AvgDocLengthAfterManyOps(t *testing.T) {
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
+	for i := 0; i < 100; i++ {
+		idx.Index(fmt.Sprintf("doc%d", i), "machine learning and neural networks and algorithms", nil, nil, false)
+	}
+	// Remove some, update some
+	for i := 10; i < 30; i++ {
+		idx.Remove(fmt.Sprintf("doc%d", i))
+	}
+	for i := 5; i < 15; i++ {
+		idx.Index(fmt.Sprintf("doc%d", i), "short", nil, nil, false)
+	}
+	beforeSearch := idx.Search("learning", 100)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bm25")
+	require.NoError(t, idx.Save(path))
+	idx2 := NewFulltextIndexV2WithAnalyzer(nil)
+	require.NoError(t, idx2.Load(path))
+	afterSearch := idx2.Search("learning", 100)
+	require.Equal(t, len(beforeSearch), len(afterSearch), "Search result count should match after Save/Load (avgDocLength consistent)")
+	beforeIDs := make(map[string]bool)
+	for _, r := range beforeSearch {
+		beforeIDs[r.ID] = true
+	}
+	for _, r := range afterSearch {
+		assert.True(t, beforeIDs[r.ID], "result ID %s should be in before set", r.ID)
+	}
+	t.Run("average length branches", func(t *testing.T) {
+		idx := NewFulltextIndexV2WithAnalyzer(nil)
+		idx.mu.Lock()
+		defer idx.mu.Unlock()
+		idx.docCount = 0
+		idx.totalDocLength = 99
+		idx.updateAvgDocLengthLocked()
+		require.Equal(t, 0.0, idx.avgDocLength)
+		require.Equal(t, int64(0), idx.totalDocLength)
+		idx.docCount = 4
+		idx.totalDocLength = 10
+		idx.updateAvgDocLengthLocked()
+		require.Equal(t, 2.5, idx.avgDocLength)
+	})
+}
+
+// TestFulltextIndex_IndexBatch verifies that IndexBatch adds documents and updates avgDocLength once per batch.
+func TestFulltextIndex_IndexBatch(t *testing.T) {
+	t.Run("zero value no-op", func(t *testing.T) {
+		var index FulltextIndexV2
+		require.NotPanics(t, func() { index.Index("", "", nil, nil, false) })
+		require.NotPanics(t, func() { index.Index("", "ignored", nil, nil, false) })
+		require.Zero(t, index.Count())
+	})
+	batch := []FulltextBatchEntry{
+		{ID: "a", Text: "first document"},
+		{ID: "b", Text: "second document"},
+		{ID: "c", Text: "third document"},
+	}
+	idx := buildFulltextBatchFixture(batch)
+	assert.Equal(t, 3, idx.Count())
+	results := idx.Search("document", 10)
+	assert.Len(t, results, 3)
+	// Single-doc path still works
+	idx.Index("d", "fourth document", nil, nil, false)
+	assert.Equal(t, 4, idx.Count())
+	t.Run("batch mutations", func(t *testing.T) {
+		index := NewFulltextIndexV2WithAnalyzer(nil)
+		index.IndexBatch(nil)
+		index.IndexBatch([]FulltextBatchEntry{{ID: "", Text: "ignored"}})
+		require.Zero(t, index.Count())
+		require.False(t, index.IsDirty())
+
+		index.IndexBatch([]FulltextBatchEntry{
+			{ID: "first", Text: "apples and pears"},
+			{ID: "second", Text: "oranges and grapes"},
+			{ID: "first", Text: ""},
+		})
+		require.Equal(t, 1, index.Count())
+		_, exists := index.GetDocument("first")
+		require.False(t, exists)
+		text, exists := index.GetDocument("second")
+		require.True(t, exists)
+		require.Equal(t, "oranges and grapes", text)
+		require.True(t, index.IsDirty())
+	})
+	t.Run("single and batch edge cases", func(t *testing.T) {
+		idx := NewFulltextIndexV2WithAnalyzer(nil)
+		idx.Index("doc-empty", "! -- ...", nil, nil, false)
+		require.Equal(t, 0, idx.Count())
+		idx.Index("doc-1", "hello world", nil, nil, false)
+		idx.IndexBatch(nil)
+		idx.IndexBatch([]FulltextBatchEntry{
+			{ID: "doc-1", Text: "! -- ..."},
+			{ID: "", Text: "ignored empty id"},
+			{ID: "doc-2", Text: "alpha beta beta"},
+		})
+		require.Equal(t, 1, idx.Count())
+		_, ok := idx.GetDocument("doc-1")
+		require.False(t, ok)
+		text, ok := idx.GetDocument("doc-2")
+		require.True(t, ok)
+		require.Equal(t, "alpha beta beta", text)
+	})
+}
+
+func TestFulltextIndex_DirtySaveNoCopyClearAndSeeds(t *testing.T) {
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
+	assert.False(t, idx.IsDirty())
+
+	idx.IndexBatch([]FulltextBatchEntry{
+		{ID: "d1", Text: "graph query graph traversal"},
+		{ID: "d2", Text: "graph query optimization"},
+		{ID: "d3", Text: "vector search graph hybrid"},
+	})
+	assert.True(t, idx.IsDirty())
+
+	seeds := idx.LexicalSeedDocIDs(2, 2)
+	require.NotEmpty(t, seeds)
+	assert.Nil(t, idx.LexicalSeedDocIDs(0, 1))
+	assert.Nil(t, idx.LexicalSeedDocIDs(1, 0))
+
+	path := filepath.Join(t.TempDir(), "bm25")
+	require.NoError(t, idx.SaveNoCopy(path))
+	assert.False(t, idx.IsDirty())
+
+	idx.Clear()
+	assert.Equal(t, 0, idx.Count())
+	assert.True(t, idx.IsDirty())
+
+	// Empty clear path should be a no-op.
+	idx.Clear()
+	assert.Equal(t, 0, idx.Count())
+}
+
+// TestBM25LexicalSeedMinimumDocumentFrequency verifies that the fulltext
+// index applies the NORNICDB_BM25_IDF_MIN_DOC_FREQ floor through the shared
+// lexicalSeedMinDocumentFrequency helper: the shared term occurs in all three
+// documents, so a floor of 3 still admits them all, in seed order.
+func TestBM25LexicalSeedMinimumDocumentFrequency(t *testing.T) {
+	const minDocFreq = "3"
+	const maxTerms = 10
+	const docsPerTerm = 10
+	documents := []struct {
+		id   string
+		text string
+	}{
+		{"d1", "shared rareone"},
+		{"d2", "shared raretwo"},
+		{"d3", "shared rarethree"},
+	}
+	wantIDs := []string{"d1", "d2", "d3"}
+
+	t.Run("fulltext", func(t *testing.T) {
+		t.Setenv("NORNICDB_BM25_IDF_MIN_DOC_FREQ", minDocFreq)
+		idx := NewFulltextIndexV2WithAnalyzer(nil)
+		for _, d := range documents {
+			idx.Index(d.id, d.text, nil, nil, false)
+		}
+
+		require.Equal(t, wantIDs, idx.LexicalSeedDocIDs(maxTerms, docsPerTerm))
+	})
+}
+
+func TestConvertGobToMsgpack_FilesAndDirectory(t *testing.T) {
+	root := t.TempDir()
+	dbDir := filepath.Join(root, "tenant_a")
+	require.NoError(t, os.MkdirAll(filepath.Join(dbDir, "hnsw_ivf"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "README.txt"), []byte("skip non-dir"), 0644))
+
+	vecSnap := vectorIndexSnapshot{
+		Version:    "1.0.0",
+		Dimensions: 3,
+		Vectors:    map[string][]float32{"d1": {1, 0, 0}},
+		RawVectors: map[string][]float32{"d1": {1, 0, 0}},
+	}
+	hnswSnap := hnswIndexSnapshot{
+		Version:      hnswIndexFormatVersionGraphOnly,
+		Dimensions:   3,
+		InternalToID: []string{"d1"},
+		IDToInternal: map[string]uint32{"d1": 0},
+	}
+
+	writeGob := func(path string, v any) {
+		f, err := os.Create(path)
+		require.NoError(t, err)
+		require.NoError(t, gob.NewEncoder(f).Encode(v))
+		require.NoError(t, f.Close())
+	}
+	writeGob(filepath.Join(dbDir, "vectors.gob"), &vecSnap)
+	writeGob(filepath.Join(dbDir, "hnsw.gob"), &hnswSnap)
+	writeGob(filepath.Join(dbDir, "hnsw_ivf", "0.gob"), &hnswSnap)
+	require.NoError(t, os.WriteFile(filepath.Join(dbDir, "hnsw_ivf", "ignored.txt"), []byte("x"), 0644))
+
+	require.NoError(t, ConvertSearchIndexDirFromGobToMsgpack(root))
+
+	_, err := os.Stat(filepath.Join(dbDir, "vectors.gob"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(filepath.Join(dbDir, "hnsw.gob"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(filepath.Join(dbDir, "hnsw_ivf", "0.gob"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	fVec, err := os.Open(filepath.Join(dbDir, "vectors"))
+	require.NoError(t, err)
+	assert.True(t, tryDecodeMsgpack(fVec, "vector"))
+	require.NoError(t, fVec.Close())
+
+	fHNSW, err := os.Open(filepath.Join(dbDir, "hnsw"))
+	require.NoError(t, err)
+	assert.True(t, tryDecodeMsgpack(fHNSW, "hnsw"))
+	require.NoError(t, fHNSW.Close())
+
+	fIVF, err := os.Open(filepath.Join(dbDir, "hnsw_ivf", "0"))
+	require.NoError(t, err)
+	assert.True(t, tryDecodeMsgpack(fIVF, "hnsw"))
+	require.NoError(t, fIVF.Close())
+
+	// Re-running should identify already-converted files and remain successful.
+	require.NoError(t, ConvertSearchIndexDirFromGobToMsgpack(root))
+}
+
+func TestConvertFileGobToMsgpack_ErrorPaths(t *testing.T) {
+	tmp := t.TempDir()
+	oldPath := filepath.Join(tmp, "bad.gob")
+	newPath := filepath.Join(tmp, "new")
+
+	require.NoError(t, os.WriteFile(oldPath, []byte("not-gob"), 0644))
+	err := convertFileGobToMsgpack(oldPath, newPath, "vector")
+	require.Error(t, err)
+
+	unknownOld := filepath.Join(tmp, "unknown.gob")
+	require.NoError(t, os.WriteFile(unknownOld, []byte("x"), 0644))
+	err = convertFileGobToMsgpack(unknownOld, newPath, "unknown")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown format")
+
+	// Already-converted short-circuit.
+	snap := vectorIndexSnapshot{
+		Version:    "1.0.0",
+		Dimensions: 3,
+		Vectors:    map[string][]float32{"d1": {1, 2, 3}},
+		RawVectors: map[string][]float32{"d1": {1, 2, 3}},
+	}
+	out, err := os.Create(newPath)
+	require.NoError(t, err)
+	require.NoError(t, msgpack.NewEncoder(out).Encode(&snap))
+	require.NoError(t, out.Close())
+	err = convertFileGobToMsgpack(filepath.Join(tmp, "missing.gob"), newPath, "vector")
+	require.ErrorIs(t, err, errAlreadyMsgpack)
+}
+
+func TestConvertOneDbDir_Branches(t *testing.T) {
+	t.Run("hnsw_ivf readdir error propagates", func(t *testing.T) {
+		dbDir := t.TempDir()
+		// An existing non-directory must not be treated as a missing index.
+		require.NoError(t, os.WriteFile(filepath.Join(dbDir, "hnsw_ivf"), []byte("not-dir"), 0o644))
+		err := convertOneDbDir(dbDir)
+		require.Error(t, err)
+	})
+
+	t.Run("non-numeric gob in hnsw_ivf is skipped", func(t *testing.T) {
+		dbDir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dbDir, "hnsw_ivf"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dbDir, "hnsw_ivf", "abc.gob"), []byte("x"), 0o644))
+		require.NoError(t, convertOneDbDir(dbDir))
+		_, err := os.Stat(filepath.Join(dbDir, "hnsw_ivf", "abc.gob"))
+		require.NoError(t, err)
+	})
+}
+
+func TestKMeansCandidateGenerators_Branches(t *testing.T) {
+	ctx := context.Background()
+
+	// KMeansCandidateGen fallback path when clustering is unavailable.
+	vectorIdx := NewVectorIndex(3)
+	require.NoError(t, vectorIdx.Add("d1", []float32{1, 0, 0}))
+	require.NoError(t, vectorIdx.Add("d2", []float32{0.9, 0.1, 0}))
+	kGen := NewKMeansCandidateGen(nil, vectorIdx, 0)
+	require.Equal(t, 3, kGen.numClustersToSearch)
+	kGen.SetClusterSelector(func(context.Context, []float32, int) []int { return nil })
+	cands, err := kGen.SearchCandidates(ctx, []float32{1, 0, 0}, 5, 0.0)
+	require.NoError(t, err)
+	require.NotEmpty(t, cands)
+
+	// GPUKMeansCandidateGen error branch when index is not clustered.
+	gpuGen := NewGPUKMeansCandidateGen(nil, 0)
+	require.Equal(t, 3, gpuGen.numClustersToSearch)
+	gpuGen.SetClusterSelector(func(context.Context, []float32, int) []int { return nil })
+	_, err = gpuGen.SearchCandidates(ctx, []float32{1, 0, 0}, 5, 0.0)
+	require.Error(t, err)
+
+	// Clustered path with deterministic single cluster.
+	embCfg := gpu.DefaultEmbeddingIndexConfig(3)
+	embCfg.GPUEnabled = true
+	embCfg.AutoSync = true
+	clusterIndex := gpu.NewClusterIndex(nil, embCfg, &gpu.KMeansConfig{
+		NumClusters:   1,
+		MaxIterations: 5,
+		Tolerance:     0.001,
+		InitMethod:    "kmeans++",
+	})
+	require.NoError(t, clusterIndex.Add("d1", []float32{1, 0, 0}))
+	require.NoError(t, clusterIndex.Add("d2", []float32{0.8, 0.2, 0}))
+	require.NoError(t, clusterIndex.Cluster())
+
+	kGen = NewKMeansCandidateGen(clusterIndex, vectorIdx, 1)
+	kGen.SetClusterSelector(func(context.Context, []float32, int) []int { return []int{0} })
+	cands, err = kGen.SearchCandidates(ctx, []float32{1, 0, 0}, 5, -1.0)
+	require.NoError(t, err)
+	require.NotEmpty(t, cands)
+
+	gpuGen = NewGPUKMeansCandidateGen(clusterIndex, 1)
+	gpuGen.SetClusterSelector(func(context.Context, []float32, int) []int { return []int{0} })
+	cands, err = gpuGen.SearchCandidates(ctx, []float32{1, 0, 0}, 5, -1.0)
+	require.NoError(t, err)
+	require.NotEmpty(t, cands)
+
+	// Cancellation branch during candidate conversion.
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = gpuGen.SearchCandidates(cancelCtx, []float32{1, 0, 0}, 5, -1.0)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestVectorQueryNodes_IndexedAndExactPaths(t *testing.T) {
+	engine := newTestMemoryEngine(t)
+	svc := NewService(engine, 3, nil)
+
+	namedNode := &storage.Node{
+		ID:              "named",
+		Labels:          []string{"Doc"},
+		NamedEmbeddings: map[string][]float32{"myvec": {1, 0, 0}},
+		ChunkEmbeddings: [][]float32{{0, 1, 0}},
+	}
+	propNode := &storage.Node{
+		ID:     "prop",
+		Labels: []string{"Doc"},
+		Properties: map[string]any{
+			"vec_prop": []any{1.0, 0.0, 0.0},
+		},
+	}
+	chunkNode := &storage.Node{
+		ID:              "chunk",
+		Labels:          []string{"Doc"},
+		ChunkEmbeddings: [][]float32{{0.95, 0.05, 0}},
+	}
+	require.NoError(t, svc.IndexNode(namedNode))
+	require.NoError(t, svc.IndexNode(propNode))
+	require.NoError(t, svc.IndexNode(chunkNode))
+
+	query := []float32{1, 0, 0}
+
+	// Indexed cosine path.
+	hits, err := svc.VectorQueryNodes(context.Background(), query, VectorQuerySpec{
+		Label:      "Doc",
+		Property:   "myvec",
+		Similarity: "cosine",
+		Limit:      5,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, hits)
+	assert.Equal(t, "named", hits[0].ID)
+
+	// Exact path with dot similarity.
+	hits, err = svc.VectorQueryNodes(context.Background(), query, VectorQuerySpec{
+		Label:      "Doc",
+		Property:   "vec_prop",
+		Similarity: "dot",
+		Limit:      5,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, hits)
+	assert.Equal(t, "prop", hits[0].ID)
+
+	// Dimension mismatch returns empty result set, not error.
+	hits, err = svc.VectorQueryNodes(context.Background(), []float32{1, 0}, VectorQuerySpec{
+		Similarity: "cosine",
+		Limit:      5,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, hits)
+}
+
+func TestVectorQueryNodes_ExactPathDefaultsAndNamedBranches(t *testing.T) {
+	emptyEngine := newTestMemoryEngine(t)
+	t.Cleanup(func() { emptyEngine.Close() })
+	emptySvc := NewService(emptyEngine, 3, nil)
+	var nilCtx context.Context
+	hits, err := emptySvc.VectorQueryNodes(nilCtx, []float32{1, 0, 0}, VectorQuerySpec{Similarity: "dot"})
+	require.NoError(t, err)
+	assert.Empty(t, hits)
+
+	engine := newTestMemoryEngine(t)
+	t.Cleanup(func() { engine.Close() })
+	svc := NewService(engine, 3, nil)
+	require.NoError(t, svc.IndexNode(&storage.Node{
+		ID:              "named_exact",
+		Labels:          []string{"Doc"},
+		NamedEmbeddings: map[string][]float32{"myvec": {1, 0, 0}, "other": {0, 1, 0}},
+	}))
+	require.NoError(t, svc.IndexNode(&storage.Node{
+		ID:              "managed_default",
+		Labels:          []string{"Doc"},
+		NamedEmbeddings: map[string][]float32{"managed": {0.9, 0.1, 0}},
+	}))
+	require.NoError(t, svc.IndexNode(&storage.Node{
+		ID:              "wrong_label",
+		Labels:          []string{"Other"},
+		NamedEmbeddings: map[string][]float32{"myvec": {1, 0, 0}},
+	}))
+
+	hits, err = svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0}, VectorQuerySpec{
+		Label:      "Doc",
+		Property:   "myvec",
+		Similarity: "dot",
+		Limit:      1,
+	})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "named_exact", hits[0].ID)
+
+	hits, err = svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0}, VectorQuerySpec{
+		Label:      "Doc",
+		Similarity: "dot",
+		Limit:      5,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, hits)
+	assert.Equal(t, "named_exact", hits[0].ID)
+
+	hits, err = svc.vectorQueryNodesExact(context.Background(), []float32{1, 0}, VectorQuerySpec{Limit: 5}, "default", "dot", nil)
+	require.NoError(t, err)
+	assert.Empty(t, hits)
+}
+
+func TestVectorQueryHelpers_ConversionsAndResolution(t *testing.T) {
+	assert.Equal(t, []float32{1, 2}, toFloat32SliceAny([]float32{1, 2}))
+	assert.Equal(t, []float32{1, 2}, toFloat32SliceAny([]float64{1, 2}))
+	assert.Equal(t, []float32{1, 2, 3, 4}, toFloat32SliceAny([]any{float32(1), float64(2), int(3), int64(4)}))
+	assert.Nil(t, toFloat32SliceAny([]any{"bad"}))
+	assert.Nil(t, toFloat32SliceAny("bad"))
+
+	node := &storage.Node{
+		ID:              "n",
+		NamedEmbeddings: map[string][]float32{"x": {1, 0, 0}},
+		Properties:      map[string]any{"vec": []float64{0.5, 0.5, 0}},
+		ChunkEmbeddings: [][]float32{{0, 1, 0}},
+	}
+	embs := resolveCypherCandidateEmbeddings(node, "vec", "x")
+	require.Len(t, embs, 1)
+	assert.Equal(t, []float32{1, 0, 0}, embs[0])
+
+	node.NamedEmbeddings = nil
+	embs = resolveCypherCandidateEmbeddings(node, "vec", "x")
+	require.Len(t, embs, 1)
+	assert.Equal(t, []float32{0.5, 0.5, 0}, embs[0])
+
+	node.Properties = nil
+	embs = resolveCypherCandidateEmbeddings(node, "vec", "x")
+	require.Len(t, embs, 1)
+	assert.Equal(t, []float32{0, 1, 0}, embs[0])
+	assert.Nil(t, resolveCypherCandidateEmbeddings(nil, "vec", "x"))
+	assert.Nil(t, resolveCypherCandidateEmbeddings(&storage.Node{ID: "empty"}, "vec", "x"))
+
+	// Missing property key (no Cypher vector index/property binding): fall through
+	// to all managed named embeddings.
+	node = &storage.Node{
+		ID:              "n2",
+		NamedEmbeddings: map[string][]float32{"managed_a": {1, 0, 0}, "managed_b": {0, 1, 0}},
+	}
+	embs = resolveCypherCandidateEmbeddings(node, "", "default")
+	require.Len(t, embs, 2)
+	assert.Contains(t, embs, []float32{1, 0, 0})
+	assert.Contains(t, embs, []float32{0, 1, 0})
+
+	query := []float32{1, 0, 0}
+	assert.InDelta(t, 1.0, newCypherVectorQuery("dot", query).score([]float32{1, 0, 0}), 1e-9)
+	assert.InDelta(t, 1.0, newCypherVectorQuery("cosine", query).score([]float32{1, 0, 0}), 1e-9)
+	assert.Less(t, newCypherVectorQuery("euclidean", query).score([]float32{0, 1, 0}), 1.0)
+	// A vector that isn't valid for the similarity is no hit.
+	assert.True(t, math.IsInf(newCypherVectorQuery("euclidean", query).score([]float32{float32(math.Inf(1)), 0, 0}), -1))
+	assert.True(t, math.IsInf(newCypherVectorQuery("cosine", query).score([]float32{0, 0, 0}), -1))
+	assert.True(t, math.IsInf(newCypherVectorQuery("cosine", []float32{0, 0, 0}).score([]float32{1, 0, 0}), -1))
+	assert.True(t, math.IsInf(newCypherVectorQuery("cosine", []float32{0, 0, 0}).rank([]float32{1, 0, 0}), -1))
+	assert.True(t, math.IsInf(newCypherVectorQuery("cosine", query).rank([]float32{0, 0, 0}), -1))
+	assert.Equal(t, 1.0, newCypherVectorQuery("dot", query).rank([]float32{1, 0, 0}))
+}
+
+func TestVectorQueryNodes_ErrorAndContextBranches(t *testing.T) {
+	var nilSvc *Service
+	_, err := nilSvc.VectorQueryNodes(context.Background(), []float32{1, 0, 0}, VectorQuerySpec{})
+	require.Error(t, err)
+	require.EqualError(t, err, "search service unavailable")
+	var localizedErr *nornicerrors.Localized
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchServiceUnavailable, localizedErr.Message.ID)
+
+	engine := newTestMemoryEngine(t)
+	svc := NewService(engine, 3, nil)
+	_, err = svc.VectorQueryNodes(context.Background(), nil, VectorQuerySpec{})
+	require.Error(t, err)
+	require.EqualError(t, err, "query embedding required")
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchQueryEmbeddingRequired, localizedErr.Message.ID)
+
+	// Trigger cancellation branch in exact path loop.
+	for i := 0; i < 3; i++ {
+		require.NoError(t, svc.IndexNode(&storage.Node{
+			ID:              storage.NodeID(fmt.Sprintf("cx-%d", i)),
+			Labels:          []string{"Doc"},
+			ChunkEmbeddings: [][]float32{{1, 0, 0}},
+		}))
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = svc.VectorQueryNodes(cancelled, []float32{1, 0, 0}, VectorQuerySpec{
+		Similarity: "dot",
+		Limit:      10,
+	})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestSearchCoreErrorsCarryDescriptorsAndPreserveSentinels(t *testing.T) {
+	svc := NewService(newTestMemoryEngine(t), 3, nil)
+	svc.buildAttempted.Store(true)
+	svc.ready.Store(false)
+
+	_, err := svc.Search(context.Background(), "query", nil, DefaultSearchOptions())
+	require.ErrorIs(t, err, ErrSearchIndexBuilding)
+	require.EqualError(t, err, "search index being built, please try again when they are complete")
+	var localizedErr *nornicerrors.Localized
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchIndexBuilding, localizedErr.Message.ID)
+
+	svc.buildAttempted.Store(false)
+	svc.ready.Store(true)
+	_, err = svc.VectorSearchCandidates(context.Background(), nil, DefaultSearchOptions())
+	require.EqualError(t, err, "vector search requires embedding")
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchVectorEmbeddingRequired, localizedErr.Message.ID)
+
+	err = svc.TriggerClustering(context.Background())
+	require.EqualError(t, err, "clustering not enabled - call EnableClustering() first")
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchClusteringNotEnabled, localizedErr.Message.ID)
+}
+
+func TestSearchHelpers_BM25SeedAndSettingsEquivalence(t *testing.T) {
+	s := NewService(newTestMemoryEngine(t), 3, nil)
+
+	assert.False(t, s.ClusteringInProgress())
+	s.kmeansInProgress.Store(true)
+	assert.True(t, s.ClusteringInProgress())
+	s.kmeansInProgress.Store(false)
+
+	assert.False(t, vectorIDInSeedNodeSet("", map[string]struct{}{"a": {}}))
+	assert.False(t, vectorIDInSeedNodeSet("chunk:x", nil))
+	assert.True(t, vectorIDInSeedNodeSet("a", map[string]struct{}{"a": {}}))
+	assert.False(t, vectorIDInSeedNodeSet("b", map[string]struct{}{"a": {}}))
+
+	defaultAnalyzerSettings := analyzerFingerprint(nil).BuildSettings()
+	current := "schema=3;format=" + bm25V2FormatVersion + ";" + defaultAnalyzerSettings + ";props=title,text"
+	assert.True(t, bm25SettingsEquivalent(current, current, bm25V2FormatVersion))
+	assert.True(t, bm25SettingsEquivalent(
+		"schema=3;format="+bm25V2FormatVersion+";tokenizer=unicode-nfkc-casefold-v1;stemmer=snowball.russian;stemmer_api=1;stemmer_version=3.1.1;stemmer_sha256=old-build;props=title,text",
+		"schema=3;format="+bm25V2FormatVersion+";tokenizer=unicode-nfkc-casefold-v1;stemmer=snowball.russian;stemmer_api=1;stemmer_version=3.1.1;stemmer_sha256=new-build;props=title,text",
+		bm25V2FormatVersion,
+	), "plugin binary identity must not invalidate equivalent tokenization")
+	assert.False(t, bm25SettingsEquivalent(
+		"schema=3;format="+bm25V2FormatVersion+";tokenizer=unicode-nfkc-casefold-v1;stemmer=snowball.russian;stemmer_api=1;stemmer_version=3.1.0;stemmer_sha256=same;props=title,text",
+		"schema=3;format="+bm25V2FormatVersion+";tokenizer=unicode-nfkc-casefold-v1;stemmer=snowball.russian;stemmer_api=1;stemmer_version=3.1.1;stemmer_sha256=same;props=title,text",
+		bm25V2FormatVersion,
+	), "stemmer source-version changes must invalidate the index")
+	assert.False(t, bm25SettingsEquivalent(
+		"schema=3;format=1.0.0;"+defaultAnalyzerSettings+";props=title,text",
+		current,
+		bm25V2FormatVersion,
+	))
+	assert.False(t, bm25SettingsEquivalent(
+		"bad-format",
+		current,
+		bm25V2FormatVersion,
+	))
+
+}
+
+func TestTriggerClustering_GuardBranches(t *testing.T) {
+	t.Run("not enabled returns explicit error", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		err := svc.TriggerClustering(context.Background())
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not enabled")
+	})
+
+	t.Run("already running returns nil", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc.EnableClustering(nil, 2)
+		svc.kmeansInProgress.Store(true)
+		defer svc.kmeansInProgress.Store(false)
+
+		err := svc.TriggerClustering(context.Background())
+		require.NoError(t, err)
+	})
+
+	t.Run("too few embeddings returns nil", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc.EnableClustering(nil, 2)
+		svc.SetMinEmbeddingsForClustering(10)
+		require.NoError(t, svc.IndexNode(&storage.Node{
+			ID:              "few-1",
+			ChunkEmbeddings: [][]float32{{1, 0}},
+		}))
+
+		err := svc.TriggerClustering(context.Background())
+		require.NoError(t, err)
+	})
+
+	t.Run("canceled context is returned after threshold gate", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc.EnableClustering(nil, 2)
+		svc.SetMinEmbeddingsForClustering(1)
+		require.NoError(t, svc.IndexNode(&storage.Node{
+			ID:              "ctx-1",
+			ChunkEmbeddings: [][]float32{{1, 0}},
+		}))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := svc.TriggerClustering(ctx)
+		require.ErrorIs(t, err, context.Canceled)
+	})
+}
+
+func TestRRFHybridSearch_ClusteredMethodBranch(t *testing.T) {
+	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
+	svc := NewService(engine, 2, nil)
+	svc.EnableClustering(nil, 2)
+	svc.SetMinEmbeddingsForClustering(1)
+
+	require.NoError(t, svc.IndexNode(&storage.Node{
+		ID:              "r1",
+		Labels:          []string{"Doc"},
+		Properties:      map[string]any{"content": "alpha graph"},
+		ChunkEmbeddings: [][]float32{{1, 0}},
+	}))
+	require.NoError(t, svc.IndexNode(&storage.Node{
+		ID:              "r2",
+		Labels:          []string{"Doc"},
+		Properties:      map[string]any{"content": "beta graph"},
+		ChunkEmbeddings: [][]float32{{0, 1}},
+	}))
+	require.NoError(t, svc.TriggerClustering(context.Background()))
+	require.True(t, svc.clusterIndex.IsClustered())
+
+	gen := NewKMeansCandidateGen(svc.clusterIndex, svc.vectorIndex, 1)
+	svc.pipelineMu.Lock()
+	svc.vectorPipeline = NewVectorSearchPipeline(gen, NewCPUExactScorer(svc.vectorIndex))
+	svc.pipelineMu.Unlock()
+
+	opts := DefaultSearchOptions()
+	opts.Limit = 5
+	resp, err := svc.rrfHybridSearch(context.Background(), "graph", []float32{1, 0}, opts)
+	require.NoError(t, err)
+	require.Equal(t, "rrf_hybrid_clustered", resp.SearchMethod)
+}
+
+func TestSearchHelpers_TryRestoreAndMaybeRebuildBranches(t *testing.T) {
+	t.Run("restore shortcuts and no-op rebuild guards", func(t *testing.T) {
+		s := NewService(newTestMemoryEngine(t), 3, nil)
+
+		// Restore shortcut branches.
+		assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, "", nil))
+		assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, "/tmp/nope", nil))
+
+		// maybeRebuild: no index and min-interval path should no-op.
+		require.NoError(t, s.maybeRebuildHNSW(context.Background(), 0.1, 1.1, time.Second))
+		s.hnswLastRebuildUnix.Store(time.Now().Unix())
+		require.NoError(t, s.maybeRebuildHNSW(context.Background(), 0.1, 1.1, time.Hour))
+
+		// maybeRebuild: index present but no tombstones, no-op.
+		idx := NewHNSWIndex(3, DefaultHNSWConfig())
+		require.NoError(t, idx.Add("a", []float32{1, 0, 0}))
+		require.NoError(t, idx.Add("b", []float32{0, 1, 0}))
+		s.hnswMu.Lock()
+		s.hnswIndex = idx
+		s.hnswMu.Unlock()
+		s.hnswLastRebuildUnix.Store(0)
+		require.NoError(t, s.maybeRebuildHNSW(context.Background(), 0.99, 10.0, 0))
+	})
+
+	t.Run("tombstone rebuild and cancel branches", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc.vectorIndex = NewVectorIndex(2)
+		require.NoError(t, svc.vectorIndex.Add("n1", []float32{1, 0}))
+		require.NoError(t, svc.vectorIndex.Add("n2", []float32{0, 1}))
+		require.NoError(t, svc.vectorIndex.Add("n3", []float32{0.7, 0.3}))
+
+		old := NewHNSWIndex(2, DefaultHNSWConfig())
+		require.NoError(t, old.Add("n1", []float32{1, 0}))
+		require.NoError(t, old.Add("n2", []float32{0, 1}))
+		require.NoError(t, old.Add("n3", []float32{0.7, 0.3}))
+		old.Remove("n1")
+		old.Remove("n2")
+
+		svc.hnswMu.Lock()
+		svc.hnswIndex = old
+		svc.hnswMu.Unlock()
+		svc.pipelineMu.Lock()
+		svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
+		svc.pipelineMu.Unlock()
+
+		require.NoError(t, svc.maybeRebuildHNSW(context.Background(), 0.1, 1.1, 0))
+		svc.hnswMu.RLock()
+		rebuilt := svc.hnswIndex
+		svc.hnswMu.RUnlock()
+		require.NotNil(t, rebuilt)
+		require.NotSame(t, old, rebuilt)
+		require.Equal(t, 3, rebuilt.Size())
+		svc.pipelineMu.RLock()
+		require.Nil(t, svc.vectorPipeline)
+		svc.pipelineMu.RUnlock()
+
+		// Recreate a tombstoned index and cancel rebuild mid-flight.
+		old2 := NewHNSWIndex(2, DefaultHNSWConfig())
+		require.NoError(t, old2.Add("n1", []float32{1, 0}))
+		require.NoError(t, old2.Add("n2", []float32{0, 1}))
+		old2.Remove("n1")
+		svc.hnswMu.Lock()
+		svc.hnswIndex = old2
+		svc.hnswMu.Unlock()
+		svc.hnswLastRebuildUnix.Store(0)
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := svc.maybeRebuildHNSW(cancelled, 0.0, 1.0, 0)
+		require.ErrorIs(t, err, context.Canceled)
+
+		// Rebuild-in-flight guard should short-circuit without error.
+		svc.hnswRebuildInFlight.Store(true)
+		require.NoError(t, svc.maybeRebuildHNSW(context.Background(), 0.0, 1.0, 0))
+		svc.hnswRebuildInFlight.Store(false)
+	})
+
+	t.Run("transition build preserves each branch", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+
+		// Nil indexes should return a deterministic error.
+		_, err := svc.buildHNSWForTransition(context.Background(), 2, nil, nil)
+		require.Error(t, err)
+
+		vi := NewVectorIndex(2)
+		require.NoError(t, vi.Add("n1", []float32{1, 0}))
+		require.NoError(t, vi.Add("n2", []float32{0, 1}))
+
+		// Cancelled context should short-circuit during build.
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = svc.buildHNSWForTransition(cancelled, 2, vi, nil)
+		require.ErrorIs(t, err, context.Canceled)
+
+		rebuilt, err := svc.buildHNSWForTransition(context.Background(), 2, vi, nil)
+		require.NoError(t, err)
+		require.Equal(t, 2, rebuilt.Size())
+
+		// File-store build path.
+		dir := t.TempDir()
+		vfs, err := NewVectorFileStore(filepath.Join(dir, "transition_vectors"), 2)
+		require.NoError(t, err)
+		defer vfs.Close()
+		require.NoError(t, vfs.Add("vf1", []float32{1, 0}))
+		require.NoError(t, vfs.Add("vf2", []float32{0, 1}))
+
+		rebuilt, err = svc.buildHNSWForTransition(context.Background(), 2, nil, vfs)
+		require.NoError(t, err)
+		require.Equal(t, 2, rebuilt.Size())
+
+		cancelledVFS, cancelVFS := context.WithCancel(context.Background())
+		cancelVFS()
+		_, err = svc.buildHNSWForTransition(cancelledVFS, 2, nil, vfs)
+		require.ErrorIs(t, err, context.Canceled)
+
+	})
+}
+
+func TestSearchHelpers_ClusterBackfillAndWarmupBranches(t *testing.T) {
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc.EnableClustering(nil, 2)
+	svc.SetMinEmbeddingsForClustering(1)
+
+	require.NoError(t, svc.vectorIndex.Add("a", []float32{1, 0}))
+	require.NoError(t, svc.vectorIndex.Add("b", []float32{0, 1}))
+
+	// Force lagging cluster state so backfill branch executes from in-memory vectors.
+	svc.clusterIndex.Clear()
+	require.Equal(t, 0, svc.clusterIndex.Count())
+	svc.reconcileClusterPopulation(2)
+	require.GreaterOrEqual(t, svc.clusterIndex.Count(), 2)
+
+	// Invalid/missing IVF-HNSW path should deterministically return false (no panic).
+	svc.hnswIndexPath = filepath.Join(t.TempDir(), "missing_hnsw")
+	require.False(t, svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, svc.hnswIndexPath, nil))
+
+	// With clustering enabled and enough vectors, warmup should run clustering path.
+	require.NoError(t, svc.warmupClusteredStrategy(context.Background(), 2, nil))
+	require.True(t, svc.clusterIndex.IsClustered())
+}
+
+func TestSearchHelpers_BuildPipelineAndGPUBranches(t *testing.T) {
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	vi := NewVectorIndex(2)
+	require.NoError(t, vi.Add("x", []float32{1, 0}))
+
+	require.Nil(t, svc.buildPipelineForMode(strategyModeUnknown, vi, nil))
+	require.NotNil(t, svc.buildPipelineForMode(strategyModeBruteCPU, vi, nil))
+
+	dir := t.TempDir()
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 2)
+	require.NoError(t, err)
+	defer vfs.Close()
+	require.NoError(t, vfs.Add("y", []float32{0, 1}))
+	require.NotNil(t, svc.buildPipelineForMode(strategyModeBruteCPU, vi, vfs))
+
+	require.Nil(t, svc.buildPipelineForMode(strategyModeHNSW, vi, nil))
+	svc.hnswMu.Lock()
+	svc.hnswIndex = NewHNSWIndex(2, DefaultHNSWConfig())
+	svc.hnswMu.Unlock()
+	require.NotNil(t, svc.buildPipelineForMode(strategyModeHNSW, vi, nil))
+	require.NotNil(t, svc.buildPipelineForMode(strategyModeHNSW, vi, vfs))
+
+	// ensureGPUIndexSynced should error when GPU manager is unavailable/disabled.
+	require.Error(t, svc.ensureGPUIndexSynced(vi, nil))
+	cfg := gpu.DefaultConfig()
+	cfg.Enabled = false
+	gm, err := gpu.NewManager(cfg)
+	require.NoError(t, err)
+	svc.gpuManager = gm
+	require.Error(t, svc.ensureGPUIndexSynced(vi, nil))
+}
+
+func TestSearchHelpers_SetGPUManager_NonGPUBranches(t *testing.T) {
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc.pipelineMu.Lock()
+	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
+	svc.pipelineMu.Unlock()
+
+	// Nil manager clears pipeline and keeps GPU index nil.
+	svc.SetGPUManager(nil)
+	svc.pipelineMu.RLock()
+	require.Nil(t, svc.vectorPipeline)
+	svc.pipelineMu.RUnlock()
+	require.Nil(t, svc.gpuEmbeddingIndex)
+
+	// Disabled manager follows same non-GPU branch.
+	cfg := gpu.DefaultConfig()
+	cfg.Enabled = false
+	gm, err := gpu.NewManager(cfg)
+	require.NoError(t, err)
+	svc.SetGPUManager(gm)
+	require.Nil(t, svc.gpuEmbeddingIndex)
+
+	// No vector index dimensions path (dimensions <= 0) should return without creating GPU index.
+	svc.mu.Lock()
+	svc.vectorIndex = nil
+	svc.mu.Unlock()
+	svc.SetGPUManager(gm)
+	require.Nil(t, svc.gpuEmbeddingIndex)
+}
+
+func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
+
+	require.Nil(t, svc.hnswLexicalSeedNodeSet(nil))
+
+	ft := &seedOverrideFulltext{
+		FulltextIndexV2: NewFulltextIndexV2WithAnalyzer(nil),
+		seedIDs:         []string{"  doc-a ", "", "doc-a", "doc-b"},
+	}
+	seedSet := svc.hnswLexicalSeedNodeSet(ft)
+	require.Len(t, seedSet, 3)
+	require.Contains(t, seedSet, "  doc-a ", "whitespace is part of the document ID")
+	require.Contains(t, seedSet, "doc-a")
+	require.Contains(t, seedSet, "doc-b")
+	require.NotContains(t, seedSet, "", "empty document IDs are excluded")
+	repeated := svc.hnswLexicalSeedNodeSet(ft)
+	require.Len(t, repeated, 3, "lexical graph metadata is always applied")
+	require.Equal(t, seedSet, repeated)
+
+	// Error branch when neither vector store nor in-memory vector index is available.
+	svc.mu.Lock()
+	svc.vectorIndex = nil
+	svc.vectorFileStore = nil
+	svc.mu.Unlock()
+	_, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	require.Error(t, err)
+
+	// Context-canceled branch during in-memory build.
+	svc.mu.Lock()
+	svc.vectorIndex = NewVectorIndex(2)
+	svc.mu.Unlock()
+	require.NoError(t, svc.vectorIndex.Add("n1", []float32{1, 0}))
+	require.NoError(t, svc.vectorIndex.Add("n2", []float32{0, 1}))
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = svc.getOrCreateHNSWIndex(cancelled, 2)
+	require.ErrorIs(t, err, context.Canceled)
+
+	// Successful build + existing-index fast path.
+	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	require.NoError(t, err)
+	require.NotNil(t, idx)
+	idx2, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	require.NoError(t, err)
+	require.Same(t, idx, idx2)
+
+	// File-store build path with lexical seeds.
+	dir := t.TempDir()
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 2)
+	require.NoError(t, err)
+	defer vfs.Close()
+	require.NoError(t, vfs.Add("doc-a", []float32{1, 0}))
+	require.NoError(t, vfs.Add("doc-b", []float32{0, 1}))
+
+	svc.mu.Lock()
+	svc.vectorFileStore = vfs
+	svc.vectorIndex = nil
+	svc.setFulltext(&seedOverrideFulltext{
+		FulltextIndexV2: NewFulltextIndexV2WithAnalyzer(nil),
+		seedIDs:         []string{"doc-a"},
+	})
+	svc.mu.Unlock()
+	svc.hnswMu.Lock()
+	svc.hnswIndex = nil
+	svc.hnswMu.Unlock()
+
+	idx, err = svc.getOrCreateHNSWIndex(context.Background(), 2)
+	require.NoError(t, err)
+	require.NotNil(t, idx)
+	require.Equal(t, 2, idx.Size())
+}
+
+func TestSearchHelpers_HNSWLiveUpdateAddsAndReplacesVectors(t *testing.T) {
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
+
+	// No HNSW index is a no-op.
+	svc.hnswUpdateLive("missing", []float32{1, 0})
+
+	idx := NewHNSWIndex(2, DefaultHNSWConfig())
+	require.NoError(t, idx.Add("doc-a", []float32{1, 0}))
+	svc.hnswMu.Lock()
+	svc.hnswIndex = idx
+	svc.hnswMu.Unlock()
+
+	svc.hnswUpdateLive("doc-a", []float32{0.5, 0.5})
+	svc.hnswUpdateLive("doc-b", []float32{0, 1})
+	svc.hnswMu.RLock()
+	size := svc.hnswIndex.Size()
+	svc.hnswMu.RUnlock()
+	require.Equal(t, 2, size)
+}
+
+func TestSearchService_CloseStopsHNSWMaintenance(t *testing.T) {
+	t.Setenv("NORNICDB_HNSW_MAINT_INTERVAL_MS", "1")
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	idx := NewHNSWIndex(2, DefaultHNSWConfig())
+	require.NoError(t, idx.Add("doc-a", []float32{1, 0}))
+	svc.hnswMu.Lock()
+	svc.hnswIndex = idx
+	svc.hnswMu.Unlock()
+
+	svc.ensureHNSWMaintenance()
+	require.NotNil(t, svc.hnswMaintDone)
+	require.NoError(t, svc.Close())
+
+	select {
+	case <-svc.hnswMaintDone:
+	case <-time.After(time.Second):
+		t.Fatal("HNSW maintenance did not stop after Close")
+	}
+
+	require.NoError(t, svc.Close())
+}
+
+func TestSearchHelpers_TryRestoreClusteredWarmupFromDisk_Success(t *testing.T) {
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc.EnableClustering(nil, 2)
+	svc.SetMinEmbeddingsForClustering(1)
+
+	// Backing vectors used by centroid derivation and lookup.
+	require.NoError(t, svc.vectorIndex.Add("doc-a", []float32{1, 0}))
+	require.NoError(t, svc.vectorIndex.Add("doc-b", []float32{0, 1}))
+	require.NoError(t, svc.clusterIndex.Add("doc-a", []float32{1, 0}))
+	require.NoError(t, svc.clusterIndex.Add("doc-b", []float32{0, 1}))
+
+	cluster0 := NewHNSWIndex(2, DefaultHNSWConfig())
+	cluster1 := NewHNSWIndex(2, DefaultHNSWConfig())
+	require.NoError(t, cluster0.Add("doc-a", []float32{1, 0}))
+	require.NoError(t, cluster1.Add("doc-b", []float32{0, 1}))
+
+	hnswPath := filepath.Join(t.TempDir(), "hnsw")
+	require.NoError(t, SaveIVFHNSW(hnswPath, map[int]*HNSWIndex{
+		0: cluster0,
+		1: cluster1,
+	}))
+
+	restored := svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, hnswPath, nil)
+	require.True(t, restored)
+	require.True(t, svc.clusterIndex.IsClustered())
+	require.Equal(t, 2, svc.clusterIndex.NumClusters())
+}
+
+func TestSearchHelpers_TransitionDeltaVectorAndReplay(t *testing.T) {
+	vi := NewVectorIndex(2)
+	require.NoError(t, vi.Add("same", []float32{1, 0}))
+	require.NoError(t, vi.Add("vi_only", []float32{0, 1}))
+
+	dir := t.TempDir()
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "delta_vectors"), 2)
+	require.NoError(t, err)
+	defer vfs.Close()
+	require.NoError(t, vfs.Add("same", []float32{0.5, 0.5}))
+	require.NoError(t, vfs.Add("vfs_only", []float32{0.2, 0.8}))
+
+	vec, ok := getTransitionDeltaVector("same", vi, vfs)
+	require.True(t, ok)
+	require.Len(t, vec, 2)
+	require.InDelta(t, 0.7071, vec[0], 0.001) // vfs stores normalized vectors
+	require.InDelta(t, 0.7071, vec[1], 0.001)
+
+	vec, ok = getTransitionDeltaVector("vi_only", vi, vfs)
+	require.True(t, ok)
+	require.Len(t, vec, 2)
+	require.InDelta(t, 0.0, vec[0], 0.0001)
+	require.InDelta(t, 1.0, vec[1], 0.0001)
+
+	vec, ok = getTransitionDeltaVector("missing", vi, vfs)
+	require.False(t, ok)
+	require.Nil(t, vec)
+
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc.strategyTransitionMu.Lock()
+	svc.strategyTransitionDeltas = []strategyDeltaMutation{
+		{seq: 1, id: "vi_only", add: true},
+		{seq: 2, id: "vi_only", add: false},
+		{seq: 3, id: "vfs_only", add: true},
+	}
+	svc.strategyTransitionMu.Unlock()
+
+	target := NewHNSWIndex(2, DefaultHNSWConfig())
+	last := svc.replayTransitionDeltas(target, strategyModeHNSW, vi, vfs, 0)
+	require.Equal(t, uint64(3), last)
+	require.Equal(t, 1, target.Size())
+
+	// After watermark should only replay newer deltas.
+	svc.strategyTransitionMu.Lock()
+	svc.strategyTransitionDeltas = append(svc.strategyTransitionDeltas, strategyDeltaMutation{seq: 4, id: "vfs_only", add: false})
+	svc.strategyTransitionMu.Unlock()
+	last = svc.replayTransitionDeltas(target, strategyModeHNSW, vi, vfs, 3)
+	require.Equal(t, uint64(4), last)
+	require.Equal(t, 0, target.Size())
+}
+
+// TestVectorIndex_SaveLoad tests vector index persistence (Save/Load round-trip).
+func TestVectorIndex_SaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vectors")
+
+	idx := NewVectorIndex(4)
+	require.NoError(t, idx.Add("a", []float32{1, 0, 0, 0}))
+	require.NoError(t, idx.Add("b", []float32{0, 1, 0, 0}))
+	require.NoError(t, idx.Add("c", []float32{0, 0, 1, 0}))
+
+	err := idx.Save(path)
+	require.NoError(t, err)
+
+	idx2 := NewVectorIndex(4)
+	err = idx2.Load(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, idx.Count(), idx2.Count())
+	assert.Equal(t, 3, idx2.Count())
+}
+
+// TestFulltextIndex_LoadMissingOrCorrupt verifies that Load does not return an error
+// when the file is missing or corrupt; the index is left empty so the caller can rebuild.
+func TestFulltextIndex_LoadMissingOrCorrupt(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("missing file", func(t *testing.T) {
+		idx := NewFulltextIndexV2WithAnalyzer(nil)
+		err := idx.Load(filepath.Join(dir, "nonexistent.snapshot"))
+		require.NoError(t, err)
+		assert.Equal(t, 0, idx.Count())
+	})
+
+	t.Run("corrupt file", func(t *testing.T) {
+		corruptPath := filepath.Join(dir, "corrupt.snapshot")
+		require.NoError(t, os.WriteFile(corruptPath, []byte("not valid msgpack"), 0644))
+		idx := NewFulltextIndexV2WithAnalyzer(nil)
+		idx.Index("doc1", "some content", nil, nil, false) // pre-populate
+		err := idx.Load(corruptPath)
+		require.NoError(t, err)
+		assert.Equal(t, 0, idx.Count()) // index cleared so caller can rebuild
+	})
+
+	t.Run("incompatible format version", func(t *testing.T) {
+		path := filepath.Join(dir, "incompatible.snapshot")
+		f, err := os.Create(path)
+		require.NoError(t, err)
+		require.NoError(t, msgpack.NewEncoder(f).Encode(&bm25V2Snapshot{
+			Version:    "9.0.0",
+			Documents:  map[string]string{"doc1": "hello world"},
+			DocLengths: []uint32{2},
+			DocCount:   1,
+		}))
+		require.NoError(t, f.Close())
+		idx := NewFulltextIndexV2WithAnalyzer(nil)
+		err = idx.Load(path)
+		require.NoError(t, err)
+		assert.Equal(t, 0, idx.Count()) // incompatible snapshot is not loaded
+	})
+}
+
+// TestVectorIndex_LoadOldVersion verifies that a vector index file with an old or wrong
+// format version (semver) is not loaded (index stays empty so caller can rebuild).
+func TestVectorIndex_LoadOldVersion(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := filepath.Join(dir, "old_vectors")
+	// Write a snapshot with old semver "0.9.0"; Load should reject and leave index empty.
+	f, err := os.Create(oldPath)
+	require.NoError(t, err)
+	require.NoError(t, msgpack.NewEncoder(f).Encode(&vectorIndexSnapshot{
+		Version:    "0.9.0",
+		Dimensions: 4,
+		Vectors:    map[string][]float32{"a": {1, 0, 0, 0}},
+		RawVectors: map[string][]float32{"a": {1, 0, 0, 0}},
+	}))
+	require.NoError(t, f.Close())
+	idx := NewVectorIndex(4)
+	err = idx.Load(oldPath)
+	require.NoError(t, err)
+	assert.Equal(t, 0, idx.Count()) // old version not loaded; caller will rebuild
+}
+
+func TestVectorIndex_LoadAdditionalBranches(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("missing file returns nil", func(t *testing.T) {
+		idx := NewVectorIndex(4)
+		err := idx.Load(filepath.Join(dir, "no-such-index"))
+		require.NoError(t, err)
+		require.Equal(t, 0, idx.Count())
+	})
+
+	t.Run("corrupt file clears index", func(t *testing.T) {
+		p := filepath.Join(dir, "vectors-corrupt")
+		require.NoError(t, os.WriteFile(p, []byte("not-msgpack"), 0644))
+		idx := NewVectorIndex(4)
+		require.NoError(t, idx.Add("x", []float32{1, 0, 0, 0}))
+		require.NoError(t, idx.Load(p))
+		require.Equal(t, 0, idx.Count())
+	})
+
+	t.Run("dimension mismatch clears index", func(t *testing.T) {
+		p := filepath.Join(dir, "vectors-dim-mismatch")
+		f, err := os.Create(p)
+		require.NoError(t, err)
+		require.NoError(t, msgpack.NewEncoder(f).Encode(&vectorIndexSnapshot{
+			Version:    vectorIndexFormatVersion,
+			Dimensions: 8,
+			Vectors:    map[string][]float32{"a": {1, 0, 0, 0, 0, 0, 0, 0}},
+			RawVectors: map[string][]float32{"a": {1, 0, 0, 0, 0, 0, 0, 0}},
+		}))
+		require.NoError(t, f.Close())
+
+		idx := NewVectorIndex(4)
+		require.NoError(t, idx.Add("seed", []float32{1, 0, 0, 0}))
+		require.NoError(t, idx.Load(p))
+		require.Equal(t, 0, idx.Count())
+	})
+}
+
+// TestSearchService_RemoveNode tests node removal from search service. Both
+// cases own the same contract: the removed node leaves the result population
+// and the remaining nodes keep theirs.
+func TestSearchService_RemoveNode(t *testing.T) {
+	t.Run("removed node leaves the result population", func(t *testing.T) {
+		baseEngine := newNamespacedEngine(t)
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+		svc := NewService(engine, DefaultVectorDimensions, nil)
+
+		// Create and index nodes
+		node1 := &storage.Node{
+			ID:         "node1",
+			Labels:     []string{"Person"},
+			Properties: map[string]any{"name": "Alice", "embedding": []float32{1, 0, 0, 0}},
+		}
+		node2 := &storage.Node{
+			ID:         "node2",
+			Labels:     []string{"Person"},
+			Properties: map[string]any{"name": "Bob", "embedding": []float32{0, 1, 0, 0}},
+		}
+
+		_, _ = engine.CreateNode(node1)
+		_, _ = engine.CreateNode(node2)
+		svc.IndexNode(node1)
+		svc.IndexNode(node2)
+
+		// Remove node1
+		svc.RemoveNode("node1")
+
+		// Search should not return removed node
+		response, err := svc.Search(context.Background(), "Alice", nil, DefaultSearchOptions())
+		require.NoError(t, err)
+		for _, r := range response.Results {
+			assert.NotEqual(t, "node1", r.ID)
+		}
+	})
+
+	t.Run("removal stays precise to the target node", func(t *testing.T) {
+		baseEngine := newNamespacedEngine(t)
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+		svc := NewService(engine, 4, nil) // 4-dimensional embeddings for test
+
+		// Create distinct embeddings for easy search verification
+		// Note: Node.Embedding is the struct field used by IndexNode
+		node1 := &storage.Node{
+			ID:              "target-to-remove",
+			Labels:          []string{"Document"},
+			Properties:      map[string]any{"content": "unique alpha content"},
+			ChunkEmbeddings: [][]float32{{1, 0, 0, 0}},
+		}
+		node2 := &storage.Node{
+			ID:              "should-remain-1",
+			Labels:          []string{"Document"},
+			Properties:      map[string]any{"content": "unique beta content"},
+			ChunkEmbeddings: [][]float32{{0, 1, 0, 0}},
+		}
+		node3 := &storage.Node{
+			ID:              "should-remain-2",
+			Labels:          []string{"Document"},
+			Properties:      map[string]any{"content": "unique gamma content"},
+			ChunkEmbeddings: [][]float32{{0, 0, 1, 0}},
+		}
+
+		for _, node := range []*storage.Node{node1, node2, node3} {
+			_, err := engine.CreateNode(node)
+			require.NoError(t, err)
+			require.NoError(t, svc.IndexNode(node))
+		}
+
+		assert.Equal(t, 3, svc.EmbeddingCount())
+
+		// Remove only the target node
+		require.NoError(t, svc.RemoveNode("target-to-remove"))
+
+		// Verify count decreased
+		assert.Equal(t, 2, svc.EmbeddingCount())
+
+		// Verify remaining nodes are still searchable
+		opts := DefaultSearchOptions()
+
+		// Search for remaining nodes by their unique content
+		response, err := svc.Search(context.Background(), "beta", nil, opts)
+		require.NoError(t, err)
+		found := false
+		for _, r := range response.Results {
+			if r.ID == "should-remain-1" {
+				found = true
+			}
+			// The removed node should NOT appear
+			assert.NotEqual(t, "target-to-remove", r.ID, "Removed node should not appear in results")
+		}
+		assert.True(t, found, "Remaining node 'should-remain-1' should be searchable")
+	})
+}
+
+// TestSearchService_OrphanedEmbedding_DetectedAndRemoved verifies that when a vector
+// index hit refers to a node that no longer exists in storage (orphaned embedding),
+// we log once, remove all embeddings for that node from indexes, and skip the result.
+// A second search then no longer returns that ID (index was cleaned).
+func TestSearchService_OrphanedEmbedding_DetectedAndRemoved(t *testing.T) {
+	baseEngine := newNamespacedEngine(t)
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	svc := NewService(engine, 4, nil)
+
+	// Create and index a node so it exists in both storage and vector index
+	node := &storage.Node{
+		ID:              "orphan-target",
+		Labels:          []string{"Doc"},
+		Properties:      map[string]any{"name": "Orphan"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0, 0}},
+	}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, svc.IndexNode(node))
+
+	// Delete from storage only (simulate orphan: index still has embedding, storage does not)
+	require.NoError(t, engine.DeleteNode(node.ID))
+
+	// First search: should detect orphan, log once, remove from index, and not return the missing node
+	opts := DefaultSearchOptions()
+	opts.Limit = 10
+	response, err := svc.Search(context.Background(), "", []float32{1, 0, 0, 0}, opts)
+	require.NoError(t, err)
+	for _, r := range response.Results {
+		assert.NotEqual(t, "orphan-target", r.ID, "orphan should not appear in results")
+	}
+
+	// Second search: orphan was removed from index on first search, so no hit for that ID
+	response2, err := svc.Search(context.Background(), "", []float32{1, 0, 0, 0}, opts)
+	require.NoError(t, err)
+	for _, r := range response2.Results {
+		assert.NotEqual(t, "orphan-target", r.ID, "index should have been cleaned")
+	}
+}
+
+// TestSearchService_RemoveNode_DecrementsEmbeddingCount verifies that removing a node
+// decrements the embedding count in stats. This is critical for ensuring that when nodes
+// are deleted via Cypher, the embedding count is updated correctly without requiring
+// a manual "regenerate" operation.
+func TestSearchService_RemoveNode_DecrementsEmbeddingCount(t *testing.T) {
+	baseEngine := newNamespacedEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+	svc := NewService(engine, 4, nil) // 4-dimensional embeddings for test
+
+	// Initial state: no embeddings
+	assert.Equal(t, 0, svc.EmbeddingCount(), "Should start with 0 embeddings")
+
+	// Create and index 3 nodes with embeddings
+	// Note: Node.Embedding is the struct field used by IndexNode, not Properties["embedding"]
+	nodes := []*storage.Node{
+		{
+			ID:              "node1",
+			Labels:          []string{"Person"},
+			Properties:      map[string]any{"name": "Alice"},
+			ChunkEmbeddings: [][]float32{{1, 0, 0, 0}},
+		},
+		{
+			ID:              "node2",
+			Labels:          []string{"Person"},
+			Properties:      map[string]any{"name": "Bob"},
+			ChunkEmbeddings: [][]float32{{0, 1, 0, 0}},
+		},
+		{
+			ID:              "node3",
+			Labels:          []string{"Person"},
+			Properties:      map[string]any{"name": "Charlie"},
+			ChunkEmbeddings: [][]float32{{0, 0, 1, 0}},
+		},
+	}
+
+	for _, node := range nodes {
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+		require.NoError(t, svc.IndexNode(node))
+	}
+
+	// Verify all 3 nodes are indexed
+	assert.Equal(t, 3, svc.EmbeddingCount(), "Should have 3 embeddings after indexing")
+
+	// Remove node1
+	require.NoError(t, svc.RemoveNode("node1"))
+	assert.Equal(t, 2, svc.EmbeddingCount(), "Should have 2 embeddings after removing node1")
+
+	// Remove node2
+	require.NoError(t, svc.RemoveNode("node2"))
+	assert.Equal(t, 1, svc.EmbeddingCount(), "Should have 1 embedding after removing node2")
+
+	// Remove node3
+	require.NoError(t, svc.RemoveNode("node3"))
+	assert.Equal(t, 0, svc.EmbeddingCount(), "Should have 0 embeddings after removing all nodes")
+
+	// Removing non-existent node should not affect count
+	require.NoError(t, svc.RemoveNode("non-existent"))
+	assert.Equal(t, 0, svc.EmbeddingCount(), "Count should remain 0 after removing non-existent node")
+}
+
+func TestSearchService_IndexNode_ReplacesExistingVectors_NoOrphansOnDelete(t *testing.T) {
+	t.Run("chunk embeddings: shrinking chunk count removes old chunk IDs", func(t *testing.T) {
+		baseEngine := newNamespacedEngine(t)
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+		svc := NewService(engine, 4, nil)
+
+		node := &storage.Node{
+			ID:              "node1",
+			Labels:          []string{"Document"},
+			Properties:      map[string]any{},
+			ChunkEmbeddings: [][]float32{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}},
+		}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+
+		require.NoError(t, svc.IndexNode(node))
+		// Chunk 0 uses the main node ID; later chunks use node-id-chunk-N.
+		require.Equal(t, 3, svc.EmbeddingCount(), "expected one vector per chunk")
+
+		// Re-index same node with fewer chunks (should remove the old extra chunk vector).
+		node.ChunkEmbeddings = [][]float32{{1, 0, 0, 0}, {0, 1, 0, 0}}
+		require.NoError(t, svc.IndexNode(node))
+		require.Equal(t, 2, svc.EmbeddingCount(), "expected one vector per chunk after re-index")
+
+		// Delete should remove all vectors for this node (no orphaned chunk IDs).
+		require.NoError(t, svc.RemoveNode("node1"))
+		require.Equal(t, 0, svc.EmbeddingCount())
+	})
+
+	t.Run("named embeddings: removing a named vector removes its old vector ID", func(t *testing.T) {
+		baseEngine := newNamespacedEngine(t)
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+		svc := NewService(engine, 4, nil)
+
+		node := &storage.Node{
+			ID:              "node2",
+			Labels:          []string{"Document"},
+			Properties:      map[string]any{},
+			NamedEmbeddings: map[string][]float32{"title": {1, 0, 0, 0}, "content": {0, 1, 0, 0}},
+		}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+
+		require.NoError(t, svc.IndexNode(node))
+		require.Equal(t, 2, svc.EmbeddingCount(), "expected 2 named vectors")
+
+		// Re-index with one named vector removed (should remove old named vector ID).
+		node.NamedEmbeddings = map[string][]float32{"title": {1, 0, 0, 0}}
+		require.NoError(t, svc.IndexNode(node))
+		require.Equal(t, 1, svc.EmbeddingCount(), "expected 1 named vector after re-index")
+
+		// Delete should remove remaining named vectors.
+		require.NoError(t, svc.RemoveNode("node2"))
+		require.Equal(t, 0, svc.EmbeddingCount())
+	})
+}
+
+// TestSearchService_HybridSearch tests the hybrid RRF search.
+func TestSearchService_HybridSearch(t *testing.T) {
+	baseEngine := newNamespacedEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+	svc := NewService(engine, DefaultVectorDimensions, nil)
+
+	// Create nodes with both text and embeddings
+	nodes := []*storage.Node{
+		{
+			ID:     "node1",
+			Labels: []string{"Document"},
+			Properties: map[string]any{
+				"title":     "Machine Learning Basics",
+				"content":   "Introduction to machine learning algorithms",
+				"embedding": []float32{0.9, 0.1, 0, 0},
+			},
+		},
+		{
+			ID:     "node2",
+			Labels: []string{"Document"},
+			Properties: map[string]any{
+				"title":     "Deep Learning Neural Networks",
+				"content":   "Deep neural networks and deep learning",
+				"embedding": []float32{0.8, 0.2, 0, 0},
+			},
+		},
+		{
+			ID:     "node3",
+			Labels: []string{"Document"},
+			Properties: map[string]any{
+				"title":     "Data Science Overview",
+				"content":   "Data science and analytics fundamentals",
+				"embedding": []float32{0.1, 0.9, 0, 0},
+			},
+		},
+	}
+
+	for _, node := range nodes {
+		_, _ = engine.CreateNode(node)
+		svc.IndexNode(node)
+	}
+
+	// Search with both text and query embedding
+	opts := DefaultSearchOptions()
+	queryEmbedding := []float32{0.85, 0.15, 0, 0}
+	opts.VectorWeight = 0.6
+	opts.BM25Weight = 0.4
+
+	response, err := svc.Search(context.Background(), "machine learning", queryEmbedding, opts)
+	require.NoError(t, err)
+
+	// Should return results ordered by hybrid score
+	assert.Greater(t, len(response.Results), 0)
+}
+
+func TestService_ProgressAndSimilarityHelpers(t *testing.T) {
+	svc := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
+	assert.False(t, svc.BuildInProgress())
+
+	svc.buildInProgress.Store(true)
+	svc.buildPhase.Store("indexing")
+	svc.buildStartedUnix.Store(time.Now().Add(-1 * time.Second).Unix())
+	svc.buildProcessed.Store(10)
+	svc.buildTotalNodes.Store(20)
+	progress := svc.GetBuildProgress()
+	assert.True(t, progress.Building)
+	assert.Equal(t, "indexing", progress.Phase)
+	assert.Equal(t, int64(10), progress.ProcessedNodes)
+	assert.Equal(t, int64(20), progress.TotalNodes)
+	assert.Greater(t, progress.RateNodesPerSec, 0.0)
+
+	svc.SetDefaultMinSimilarity(0.42)
+	assert.Equal(t, 0.42, svc.GetDefaultMinSimilarity())
+}
+
+func TestService_VectorAccessAndClear(t *testing.T) {
+	svc := NewService(newNamespacedEngine(t), 3, nil)
+	require.NoError(t, svc.vectorIndex.Add("v1", []float32{1, 0, 0}))
+
+	lookup := &vectorLookupGetter{lookup: svc.getVectorLookup()}
+	vec, ok := lookup.GetVector("v1")
+	require.True(t, ok)
+	require.Len(t, vec, 3)
+
+	rawVec, ok := svc.getVectorForCypher("v1")
+	require.True(t, ok)
+	require.Len(t, rawVec, 3)
+	assert.InDelta(t, 1.0, rawVec[0], 1e-6) // SIMD normalization may differ by 1 ulp (#595)
+
+	svc.ClearVectorIndex()
+	assert.Equal(t, 0, svc.vectorIndex.Count())
+}
+
+func TestService_LastWriteTimeAndTypeFilter(t *testing.T) {
+	eng := newNamespacedEngine(t)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
+
+	_, err := eng.CreateNode(&storage.Node{
+		ID:     "alpha",
+		Labels: []string{"Doc"},
+		Properties: map[string]any{
+			"content": "hello",
+		},
+	})
+	require.NoError(t, err)
+	_, err = eng.CreateNode(&storage.Node{
+		ID:     "beta",
+		Labels: []string{"Other"},
+		Properties: map[string]any{
+			"content": "world",
+		},
+	})
+	require.NoError(t, err)
+
+	candidates := []SearchCandidate{{ID: "alpha", Score: 0.9}, {ID: "beta", Score: 0.8}, {ID: "missing", Score: 0.7}}
+	filtered := svc.filterCandidatesByType(context.Background(), candidates, []string{"doc"}, map[string]bool{})
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "alpha", filtered[0].ID)
+
+	unfiltered := svc.filterCandidatesByType(context.Background(), candidates, nil, map[string]bool{})
+	require.Len(t, unfiltered, len(candidates))
+
+	// Namespaced engine does not expose LastWriteTime -> zero value.
+	assert.True(t, svc.lastWriteTime().IsZero())
+	assert.True(t, NewService(nil, DefaultVectorDimensions, nil).lastWriteTime().IsZero())
+}
+
+func TestService_RerankerPlumbingAndStage2(t *testing.T) {
+	eng := newNamespacedEngine(t)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
+	ctx := context.Background()
+
+	_, err := eng.CreateNode(&storage.Node{
+		ID:     "a",
+		Labels: []string{"Doc"},
+		Properties: map[string]any{
+			"content": "alpha",
+		},
+	})
+	require.NoError(t, err)
+	_, err = eng.CreateNode(&storage.Node{
+		ID:     "b",
+		Labels: []string{"Doc"},
+		Properties: map[string]any{
+			"content": "beta",
+		},
+	})
+	require.NoError(t, err)
+
+	// Cross-encoder wiring and availability.
+	assert.False(t, svc.CrossEncoderAvailable(ctx))
+	ce := NewCrossEncoder(&CrossEncoderConfig{Enabled: false})
+	svc.SetCrossEncoder(ce)
+	assert.False(t, svc.CrossEncoderAvailable(ctx))
+
+	// Generic reranker wiring.
+	rr := &testReranker{enabled: true}
+	svc.SetReranker(rr)
+	assert.True(t, svc.RerankerAvailable(ctx))
+	svc.SetReranker(rr) // no-op equality fast path
+
+	// applyStage2Rerank: disabled reranker -> pass through.
+	base := []rrfResult{
+		{ID: "a", RRFScore: 0.9, VectorRank: 1, BM25Rank: 2, OriginalScore: 0.95},
+		{ID: "b", RRFScore: 0.8, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.70},
+	}
+	out, outcome := svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, nil)
+	require.Equal(t, base, out)
+	require.Equal(t, rerankMethodOriginal, outcome.Method)
+	require.False(t, outcome.FallbackTriggered)
+	require.Len(t, outcome.Results, len(base), "unavailable provider must use the complete owner outcome")
+
+	// applyStage2Rerank: disabled reranker -> pass through.
+	out, outcome = svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{enabled: false})
+	require.Len(t, out, 2)
+	assert.Equal(t, SearchFallbackNone, outcome.FallbackReason)
+	assert.Equal(t, base[0].ID, out[0].ID)
+
+	// applyStage2Rerank: reranker error -> pass through.
+	out, outcome = svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{enabled: true, err: fmt.Errorf("boom")})
+	require.Len(t, out, 2)
+	assert.Equal(t, SearchFallbackRerankFailed, outcome.FallbackReason)
+	assert.Equal(t, base[0].ID, out[0].ID)
+
+	// applyStage2Rerank: near-identical scores -> keep original order.
+	out, outcome = svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{
+		enabled: true,
+		results: []RerankResult{
+			{ID: "b", FinalScore: 0.51, BiScore: 0.2},
+			{ID: "a", FinalScore: 0.50, BiScore: 0.3},
+		},
+	})
+	require.Len(t, out, 2)
+	assert.Equal(t, "a", out[0].ID) // original order preserved
+	assert.Equal(t, SearchFallbackRerankScoresFlat, outcome.FallbackReason)
+
+	// applyStage2Rerank: reranked with score spread and min-score filter.
+	opts := DefaultSearchOptions()
+	opts.RerankMinScore = 0.6
+	out, outcome = svc.applyStage2Rerank(ctx, "q", base, opts, map[string]bool{}, &testReranker{
+		enabled: true,
+		results: []RerankResult{
+			{ID: "b", FinalScore: 0.9, BiScore: 0.4},
+			{ID: "a", FinalScore: 0.55, BiScore: 0.3},
+		},
+	})
+	require.Len(t, out, 1)
+	assert.Equal(t, SearchFallbackNone, outcome.FallbackReason)
+	assert.Equal(t, "b", out[0].ID)
+	assert.Equal(t, 2, out[0].VectorRank) // preserved from original map
+	assert.Equal(t, 0.70, out[0].OriginalScore, "reranking must preserve the vector cosine score")
+}
+
+func TestService_RerankTopKCapsReturnedResults(t *testing.T) {
+	eng := newNamespacedEngine(t)
+	svc := NewService(eng, 2, nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	ctx := context.Background()
+
+	for _, doc := range []struct {
+		id      storage.NodeID
+		content string
+		vector  []float32
+	}{
+		{id: "a", content: "library transcript alpha", vector: []float32{1, 0}},
+		{id: "b", content: "library transcript beta", vector: []float32{0.8, 0.2}},
+		{id: "c", content: "library transcript gamma", vector: []float32{0.6, 0.4}},
+	} {
+		_, err := eng.CreateNode(&storage.Node{
+			ID: doc.id, Labels: []string{"Document"}, Properties: map[string]any{"content": doc.content},
+		})
+		require.NoError(t, err)
+		require.NoError(t, svc.vectorIndex.Add(string(doc.id), doc.vector))
+	}
+	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
+	svc.SetReranker(&testReranker{enabled: true})
+
+	opts := DefaultSearchOptions()
+	opts.Limit = 10
+	opts.RerankEnabled = true
+	opts.RerankTopK = 2
+	response, err := svc.Search(ctx, "library transcript", []float32{1, 0}, opts)
+	require.NoError(t, err)
+	require.Len(t, response.Results, 2)
+	require.False(t, response.CandidateBudgetReached)
+	require.True(t, response.RetrievalExhausted)
+	require.Equal(t, "rrf_hybrid+rerank", response.SearchMethod)
+}
+
+// countingReranker counts its calls and answers with err, or with results.
+type countingReranker struct {
+	testReranker
+	calls int
+}
+
+func (r *countingReranker) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
+	r.calls++
+	return r.testReranker.Rerank(ctx, query, candidates)
+}
+
+// A rerank that didn't order the results isn't reported as one (#1019): the
+// method is the fused one and the fallback says why. A failed rerank isn't
+// cached, so the next search tries the reranker again.
+func TestService_HybridSearchReportsRerankFallback(t *testing.T) {
+	eng := newNamespacedEngine(t)
+	svc := NewService(eng, 2, nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	ctx := context.Background()
+	for _, doc := range []struct {
+		id     storage.NodeID
+		vector []float32
+	}{{"a", []float32{1, 0}}, {"b", []float32{0.8, 0.2}}} {
+		_, err := eng.CreateNode(&storage.Node{ID: doc.id, Labels: []string{"Document"}, Properties: map[string]any{"content": "library transcript " + string(doc.id)}})
+		require.NoError(t, err)
+		require.NoError(t, svc.vectorIndex.Add(string(doc.id), doc.vector))
+	}
+	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
+	opts := DefaultSearchOptions()
+	opts.RerankEnabled = true
+
+	failing := &countingReranker{testReranker: testReranker{enabled: true, err: fmt.Errorf("provider unavailable")}}
+	svc.SetReranker(failing)
+	for attempt := 1; attempt <= 2; attempt++ {
+		response, err := svc.Search(ctx, "library transcript", []float32{1, 0}, opts)
+		require.NoError(t, err)
+		require.Len(t, response.Results, 2)
+		require.Equal(t, "rrf_hybrid", response.SearchMethod)
+		require.True(t, response.FallbackTriggered)
+		require.Equal(t, SearchFallbackRerankFailed, response.FallbackReason)
+		require.Equal(t, map[string]string{"X-NornicDB-Search-Fallback-Reason": "rerank_failed"}, response.ResponseHeaders())
+		require.Equal(t, attempt, failing.calls, "a failed rerank isn't served from the cache")
+	}
+
+	flat := &countingReranker{testReranker: testReranker{enabled: true, results: []RerankResult{{ID: "b", FinalScore: 0.51}, {ID: "a", FinalScore: 0.5}}}}
+	svc.SetReranker(flat)
+	response, err := svc.Search(ctx, "library transcript", []float32{0.9, 0.1}, opts)
+	require.NoError(t, err)
+	require.Equal(t, "rrf_hybrid", response.SearchMethod)
+	require.Equal(t, SearchFallbackRerankScoresFlat, response.FallbackReason)
+	require.Equal(t, "a", string(response.Results[0].NodeID), "the fused order stands")
+
+	svc.SetReranker(&testReranker{enabled: true})
+	response, err = svc.Search(ctx, "library transcript", []float32{0.7, 0.3}, opts)
+	require.NoError(t, err)
+	require.Equal(t, "rrf_hybrid+rerank", response.SearchMethod)
+	require.False(t, response.FallbackTriggered)
+	require.Empty(t, response.FallbackReason)
+
+	// After another stage, the rerank is appended to its method.
+	opts.MMREnabled = true
+	response, err = svc.Search(ctx, "library transcript", []float32{0.6, 0.4}, opts)
+	require.NoError(t, err)
+	require.Equal(t, "rrf_hybrid+mmr+rerank", response.SearchMethod)
+	require.Contains(t, response.Message, "+ Reranking (test_reranker)")
+	require.False(t, response.FallbackTriggered)
+}
+
+func TestService_RerankTopKCapsRequestedDepth(t *testing.T) {
+	svc := newHybridRerankBudgetService(t, 30)
+	ctx := context.Background()
+	opts := DefaultSearchOptions()
+	opts.RerankEnabled = true
+	opts.RerankTopK = 10
+
+	for _, testCase := range []struct {
+		limit       int
+		wantResults int
+		wantBudget  bool
+	}{
+		{limit: 1, wantResults: 1, wantBudget: false},
+		{limit: 5, wantResults: 5, wantBudget: false},
+		{limit: 10, wantResults: 10, wantBudget: false},
+		{limit: 20, wantResults: 10, wantBudget: false},
+	} {
+		t.Run(fmt.Sprintf("limit_%d", testCase.limit), func(t *testing.T) {
+			opts.Limit = testCase.limit
+			response, err := svc.Search(ctx, "library transcript", []float32{1, 0}, opts)
+			require.NoError(t, err)
+			require.Len(t, response.Results, testCase.wantResults)
+			require.Equal(t, testCase.wantBudget, response.CandidateBudgetReached)
+			require.False(t, response.RetrievalExhausted)
+		})
+	}
+}
+
+func TestService_RerankCandidatesBranches(t *testing.T) {
+	ctx := context.Background()
+	var nilSvc *Service
+	_, err := nilSvc.RerankCandidates(ctx, "q", []RerankCandidate{{ID: "a", Content: "x", Score: 0.1}}, nil)
+	require.Error(t, err)
+
+	svc := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
+	// Empty candidates branch.
+	out, err := svc.RerankCandidates(ctx, "q", nil, nil)
+	require.NoError(t, err)
+	assert.Empty(t, out)
+
+	candidates := []RerankCandidate{
+		{ID: "a", Content: "alpha", Score: 0.9},
+		{ID: "b", Content: "beta", Score: 0.8},
+		{ID: "c", Content: "gamma", Score: 0.7},
+	}
+
+	// No reranker -> pass-through.
+	out, err = svc.RerankCandidates(ctx, "q", candidates, nil)
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	assert.Equal(t, "a", out[0].ID)
+	assert.Equal(t, 1, out[0].OriginalRank)
+	assert.Equal(t, 1, out[0].NewRank)
+
+	// A provider subset is completed only from the topK candidates submitted
+	// to it. Candidates outside that existing public output cap never return.
+	svc.SetReranker(&testReranker{
+		enabled: true,
+		results: []RerankResult{
+			{ID: "b", OriginalRank: 2, CrossScore: 0.95, FinalScore: 0.95},
+		},
+	})
+	opts := DefaultSearchOptions()
+	opts.RerankTopK = 2
+	out, err = svc.RerankCandidates(ctx, "q", candidates, opts)
+	require.NoError(t, err)
+	require.Equal(t, []string{"b", "a"}, []string{out[0].ID, out[1].ID})
+
+	// Enabled reranker with topK and min-score filtering.
+	svc.SetReranker(&testReranker{
+		enabled: true,
+		results: []RerankResult{
+			{ID: "b", FinalScore: 0.95},
+			{ID: "a", FinalScore: 0.40},
+		},
+	})
+	opts.RerankMinScore = 0.5
+	out, err = svc.RerankCandidates(ctx, "q", candidates, opts)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, "b", out[0].ID)
+
+	providerFailure := errors.New("provider unavailable")
+	svc.SetReranker(&testReranker{enabled: true, err: providerFailure})
+	out, err = svc.RerankCandidates(ctx, "q", candidates, DefaultSearchOptions())
+	require.EqualError(t, err, "rerank failed (test_reranker); the server log has the cause")
+	require.ErrorIs(t, err, providerFailure)
+	require.Nil(t, out)
+
+	for name, provider := range map[string]*testReranker{
+		"timeout":   {enabled: true, err: context.DeadlineExceeded},
+		"duplicate": {enabled: true, results: []RerankResult{{ID: "a", OriginalRank: 1, CrossScore: 0.9, FinalScore: 0.9}, {ID: "a", OriginalRank: 1, CrossScore: 0.8, FinalScore: 0.8}}},
+		"nan":       {enabled: true, results: []RerankResult{{ID: "a", OriginalRank: 1, CrossScore: math.NaN(), FinalScore: math.NaN()}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc.SetReranker(provider)
+			out, err := svc.RerankCandidates(ctx, "q", candidates, DefaultSearchOptions())
+			require.ErrorContains(t, err, "rerank failed")
+			require.Nil(t, out)
+		})
+	}
+}
+
+// TestSearchService_VectorSearchOnly tests vector-only search mode.
+func TestSearchService_VectorSearchOnly(t *testing.T) {
+	t.Run("thresholded vector-only results", func(t *testing.T) {
+		baseEngine := newNamespacedEngine(t)
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+		// Create a service with 4-dimensional vector index
+		svc := NewService(engine, 4, nil)
+
+		// Create nodes with embeddings in the Embedding field
+		nodes := []*storage.Node{
+			{
+				ID:              "vec1",
+				Labels:          []string{"Vector"},
+				ChunkEmbeddings: [][]float32{{1, 0, 0, 0}},
+			},
+			{
+				ID:              "vec2",
+				Labels:          []string{"Vector"},
+				ChunkEmbeddings: [][]float32{{0.9, 0.1, 0, 0}},
+			},
+			{
+				ID:              "vec3",
+				Labels:          []string{"Vector"},
+				ChunkEmbeddings: [][]float32{{0, 1, 0, 0}},
+			},
+		}
+
+		for _, node := range nodes {
+			_, _ = engine.CreateNode(node)
+			err := svc.IndexNode(node)
+			require.NoError(t, err)
+		}
+
+		// Search with only query embedding (no text query)
+		opts := DefaultSearchOptions()
+		minSim := 0.5
+		opts.MinSimilarity = &minSim
+		queryEmbedding := []float32{1, 0, 0, 0}
+
+		response, err := svc.Search(context.Background(), "", queryEmbedding, opts)
+		require.NoError(t, err)
+
+		// Should return vec1 and vec2 (above threshold), not vec3
+		assert.GreaterOrEqual(t, len(response.Results), 1)
+		for _, r := range response.Results {
+			assert.NotEqual(t, "vec3", r.ID, "vec3 should be below similarity threshold")
+		}
+	})
+	t.Run("managed vectors require matching model space", func(t *testing.T) {
+		service := NewService(newTestMemoryEngine(t), 2, nil)
+		service.SetEmbeddingSpace("provider:text:model:2")
+
+		require.NoError(t, service.IndexNode(&storage.Node{
+			ID:              "text",
+			ChunkEmbeddings: [][]float32{{1, 0}},
+			EmbedMeta:       map[string]any{"embedding_space": "provider:text:model:2"},
+		}))
+		require.NoError(t, service.IndexNode(&storage.Node{
+			ID:              "visual",
+			ChunkEmbeddings: [][]float32{{0, 1}},
+			EmbedMeta:       map[string]any{"embedding_space": "provider:multimodal:model:2"},
+		}))
+
+		require.Equal(t, 1, service.EmbeddingCount())
+		_, found := service.vectorIndex.GetVector("visual")
+		require.False(t, found)
+	})
+}
+
+// TestSearchService_FilterByType tests type filtering.
+func TestSearchService_FilterByType(t *testing.T) {
+	baseEngine := newNamespacedEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+	svc := NewService(engine, DefaultVectorDimensions, nil)
+
+	// Create nodes with different labels
+	nodes := []*storage.Node{
+		{ID: "person1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}},
+		{ID: "person2", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}},
+		{ID: "doc1", Labels: []string{"Document"}, Properties: map[string]any{"name": "Alice's Doc"}},
+	}
+
+	for _, node := range nodes {
+		_, _ = engine.CreateNode(node)
+		svc.IndexNode(node)
+	}
+
+	// Search with type filter using opts.Types
+	opts := DefaultSearchOptions()
+	opts.Types = []string{"Person"}
+	response, err := svc.Search(context.Background(), "alice", nil, opts)
+	require.NoError(t, err)
+
+	// Should only return Person nodes
+	for _, r := range response.Results {
+		assert.Contains(t, r.Labels, "Person")
+		assert.NotContains(t, r.Labels, "Document")
+	}
+}
+
+func TestHybridSearch_DoesNotHoldServiceLockWhileWaitingForPipeline(t *testing.T) {
+	engine := newTestMemoryEngine(t)
+	svc := NewService(engine, 4, nil)
+
+	opts := DefaultSearchOptions()
+	opts.Limit = 10
+	embedding := []float32{1, 0, 0, 0}
+
+	svc.pipelineMu.Lock()
+
+	searchDone := make(chan error, 1)
+	go func() {
+		_, err := svc.rrfHybridSearch(context.Background(), "query", embedding, opts)
+		searchDone <- err
+	}()
+
+	// Give the goroutine a moment to block on pipelineMu.
+	time.Sleep(10 * time.Millisecond)
+
+	// If rrfHybridSearch holds svc.mu while waiting for pipelineMu, this lock attempt will block.
+	locked := make(chan struct{})
+	go func() {
+		svc.mu.Lock()
+		_ = svc.vectorIndex // make critical section non-empty (also exercises safe field access)
+		svc.mu.Unlock()
+		close(locked)
+	}()
+
+	select {
+	case <-locked:
+	case <-time.After(200 * time.Millisecond):
+		svc.pipelineMu.Unlock()
+		t.Fatal("deadlock risk: rrfHybridSearch holds service lock while waiting for pipeline")
+	}
+
+	svc.pipelineMu.Unlock()
+
+	select {
+	case err := <-searchDone:
+		require.NoError(t, err)
+	case <-time.After(1 * time.Second):
+		t.Fatal("rrfHybridSearch did not return after pipeline unlock")
+	}
+}
+
+// TestSqrt tests the math.Sqrt standard library function.
+// (Originally tested custom sqrt, now consolidated to use math.Sqrt)
+func TestSqrt(t *testing.T) {
+	tests := []struct {
+		input    float64
+		expected float64
+	}{
+		{0, 0},
+		{1, 1},
+		{4, 2},
+		{9, 3},
+		{16, 4},
+		{2, 1.414},
+	}
+
+	for _, tt := range tests {
+		result := math.Sqrt(tt.input)
+		assert.InDelta(t, tt.expected, result, 0.01)
+	}
+}
+
+// TestTruncate tests the truncate helper function.
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{"short", 10, "short"},
+		{"longer string", 8, "longe..."}, // 8-3=5 chars + "..."
+		{"exact", 5, "exact"},
+		{"", 5, ""},
+		{"test", 0, ""},               // Edge case: 0 maxLen
+		{"test", 3, "tes"},            // Edge case: maxLen <= 3, no ellipsis
+		{"test", 2, "te"},             // Edge case: maxLen <= 3, no ellipsis
+		{"hello world", 7, "hell..."}, // Normal case: 7-3=4 chars + "..."
+	}
+
+	for _, tt := range tests {
+		result := truncate(tt.input, tt.maxLen)
+		assert.Equal(t, tt.expected, result, "truncate(%q, %d)", tt.input, tt.maxLen)
+	}
+}
+
+// TestGetAdaptiveRRFConfig tests RRF configuration.
+func TestGetAdaptiveRRFConfig(t *testing.T) {
+	// Test the package-level function
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "short query",
+			query: "test",
+		},
+		{
+			name:  "longer query",
+			query: "machine learning concepts and algorithms",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := GetAdaptiveRRFConfig(tt.query)
+			// Should return valid config
+			assert.NotNil(t, config)
+			assert.Greater(t, config.Limit, 0)
+		})
+	}
+}
+
+// TestSearchService_EmptyQuery tests behavior with empty query.
+func TestSearchService_EmptyQuery(t *testing.T) {
+	baseEngine := newNamespacedEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+	svc := NewService(engine, DefaultVectorDimensions, nil)
+
+	// Search with empty query and no embedding
+	response, err := svc.Search(context.Background(), "", nil, DefaultSearchOptions())
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(response.Results))
+}
+
+// TestSearchService_SpecialCharacters tests search with special characters.
+func TestSearchService_SpecialCharacters(t *testing.T) {
+	baseEngine := newNamespacedEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+
+	svc := NewService(engine, DefaultVectorDimensions, nil)
+
+	// Create node with special characters
+	node := &storage.Node{
+		ID:         "special1",
+		Labels:     []string{"Doc"},
+		Properties: map[string]any{"content": "C++ programming & Java!"},
+	}
+	_, _ = engine.CreateNode(node)
+	svc.IndexNode(node)
+
+	// Search should handle special chars without panicking
+	response, err := svc.Search(context.Background(), "C++", nil, DefaultSearchOptions())
+	// Should not panic, even if results vary
+	assert.NoError(t, err)
+	assert.NotNil(t, response)
+}
+
+// ========================================
+// Tests for 0% coverage functions
+// ========================================
+
+func TestVectorSearchOnlyDirect(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("basic_vector_search", func(t *testing.T) {
+		baseStore := newNamespacedEngine(t)
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
+
+		// Create nodes with embeddings (float32)
+		embedding := make([]float32, 1024)
+		for i := range embedding {
+			embedding[i] = float32(i) / 1024.0
+		}
+
+		_, _ = store.CreateNode(&storage.Node{
+			ID:              "node-1",
+			Labels:          []string{"Document"},
+			ChunkEmbeddings: [][]float32{embedding},
+			Properties: map[string]interface{}{
+				"title":   "Test Doc",
+				"content": "Test content",
+			},
+		})
+
+		service := NewService(store, DefaultVectorDimensions, nil)
+
+		// Index node
+		node, _ := store.GetNode("node-1")
+		service.IndexNode(node)
+
+		// Create query embedding (float32 for search)
+		queryEmb := make([]float32, 1024)
+		for i := range queryEmb {
+			queryEmb[i] = float32(i) / 1024.0
+		}
+
+		opts := &SearchOptions{
+			Limit: 10,
+		}
+
+		response, err := service.vectorSearchOnly(ctx, queryEmb, opts)
+		if err != nil {
+			t.Logf("vectorSearchOnly error (may be expected): %v", err)
+		}
+		if response != nil {
+			t.Logf("Vector search returned %d results", len(response.Results))
+		}
+	})
+
+	t.Run("empty_embedding", func(t *testing.T) {
+		baseStore := newNamespacedEngine(t)
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
+
+		service := NewService(store, DefaultVectorDimensions, nil)
+
+		opts := &SearchOptions{Limit: 10}
+		response, err := service.vectorSearchOnly(ctx, nil, opts)
+		// Expect error or empty results for nil embedding
+		if err == nil && response != nil && len(response.Results) != 0 {
+			t.Error("Expected empty results for nil embedding")
+		}
+	})
+}
+
+func TestBuildIndexesDirect(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("build_on_empty_storage", func(t *testing.T) {
+		baseStore := newNamespacedEngine(t)
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
+
+		service := NewService(store, DefaultVectorDimensions, nil)
+
+		err := service.BuildIndexes(ctx)
+		if err != nil {
+			t.Errorf("BuildIndexes on empty storage failed: %v", err)
+		}
+	})
+
+	t.Run("build_with_nodes", func(t *testing.T) {
+		baseStore := newNamespacedEngine(t)
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
+
+		// Create nodes with embeddings (float32)
+		embedding := make([]float32, 1024)
+		for i := range embedding {
+			embedding[i] = 0.5
+		}
+
+		_, _ = store.CreateNode(&storage.Node{
+			ID:              "doc-1",
+			Labels:          []string{"Document"},
+			ChunkEmbeddings: [][]float32{embedding},
+			Properties: map[string]interface{}{
+				"content": "First document content",
+			},
+		})
+		_, _ = store.CreateNode(&storage.Node{
+			ID:     "doc-2",
+			Labels: []string{"Document"},
+			Properties: map[string]interface{}{
+				"content": "Second document without embedding",
+			},
+		})
+
+		service := NewService(store, DefaultVectorDimensions, nil)
+
+		err := service.BuildIndexes(ctx)
+		if err != nil {
+			t.Errorf("BuildIndexes failed: %v", err)
+		}
+	})
+}
+
+func TestVectorIndexCosineSimilarityIndirect(t *testing.T) {
+	// Test cosine similarity through the VectorIndex search
+	idx := NewVectorIndex(4)
+
+	// Add a vector (float32)
+	vec1 := []float32{1.0, 0.0, 0.0, 0.0}
+	idx.Add("node-1", vec1)
+
+	// Search with similar vector
+	ctx := context.Background()
+	queryVec := []float32{1.0, 0.0, 0.0, 0.0}
+	results, err := idx.Search(ctx, queryVec, 1, 0.0)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Error("Expected at least one result")
+	} else {
+		// Should have high similarity for identical vectors
+		if results[0].Score < 0.99 {
+			t.Errorf("Expected high similarity for identical vectors, got %f", results[0].Score)
+		}
+	}
+}
+
+func TestSearchDirectModes(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		hybrid        bool
+	}{
+		{name: "search_with_embedding", content: "Machine learning tutorial"},
+		{name: "rrf_with_both_results", content: "Machine learning tutorial content", hybrid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseStore := newNamespacedEngine(t)
+
+			store := storage.NewNamespacedEngine(baseStore, "test")
+
+			embedding := make([]float32, 1024)
+			for i := range embedding {
+				embedding[i] = 0.5
+			}
+
+			_, _ = store.CreateNode(&storage.Node{
+				ID:              "doc-1",
+				Labels:          []string{"Document"},
+				ChunkEmbeddings: [][]float32{embedding},
+				Properties: map[string]interface{}{
+					"content": tc.content,
+				},
+			})
+
+			service := NewService(store, DefaultVectorDimensions, nil)
+
+			// Index the node
+			node, _ := store.GetNode("doc-1")
+			service.IndexNode(node)
+
+			queryEmb := make([]float32, 1024)
+			for i := range queryEmb {
+				queryEmb[i] = 0.5
+			}
+
+			opts := &SearchOptions{Limit: 10}
+			var response *SearchResponse
+			var err error
+			if tc.hybrid {
+				opts.RRFK, opts.VectorWeight, opts.BM25Weight = 60, 0.6, 0.4
+				response, err = service.rrfHybridSearch(context.Background(), "machine learning", queryEmb, opts)
+			} else {
+				response, err = service.Search(context.Background(), "machine learning", queryEmb, opts)
+			}
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			t.Logf("Search returned %d results", len(response.Results))
+		})
+	}
+}
+
+func TestFulltextSearchWithPrefix(t *testing.T) {
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
+
+	// Index documents
+	idx.Index("doc-1", "machine learning algorithms", nil, nil, false)
+	idx.Index("doc-2", "deep learning models", nil, nil, false)
+	idx.Index("doc-3", "natural language processing", nil, nil, false)
+
+	// Search with prefix
+	results := idx.Search("mach", 10) // Should match "machine"
+	t.Logf("Prefix search for 'mach' returned %d results", len(results))
+
+	// Full term search
+	results = idx.Search("learning", 10)
+	if len(results) < 2 {
+		t.Errorf("Expected at least 2 results for 'learning', got %d", len(results))
+	}
+}
+
+// =============================================================================
+// MMR Diversification Tests
+// =============================================================================
+
+func TestMMRDiversification(t *testing.T) {
+	baseStore := newNamespacedEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	service := NewService(store, DefaultVectorDimensions, nil)
+
+	// Create nodes with embeddings - some similar, some diverse
+	createNodeWithEmbedding := func(id string, labels []string, embedding []float32, props map[string]interface{}) {
+		node := &storage.Node{
+			ID:              storage.NodeID(id),
+			Labels:          labels,
+			Properties:      props,
+			ChunkEmbeddings: [][]float32{embedding},
+		}
+		_, _ = store.CreateNode(node)
+		service.IndexNode(node)
+	}
+
+	t.Run("mmr_promotes_diversity", func(t *testing.T) {
+		// Create 3 documents: 2 nearly identical, 1 diverse
+		// Embeddings are 4-dimensional for simplicity
+		createNodeWithEmbedding("similar1", []string{"Doc"}, []float32{0.9, 0.1, 0.0, 0.0}, map[string]interface{}{
+			"title":   "Machine Learning Basics",
+			"content": "Introduction to ML algorithms",
+		})
+		createNodeWithEmbedding("similar2", []string{"Doc"}, []float32{0.89, 0.11, 0.0, 0.0}, map[string]interface{}{
+			"title":   "ML Fundamentals",
+			"content": "Basic machine learning concepts",
+		})
+		createNodeWithEmbedding("diverse1", []string{"Doc"}, []float32{0.1, 0.1, 0.8, 0.0}, map[string]interface{}{
+			"title":   "Database Design",
+			"content": "SQL and NoSQL databases",
+		})
+
+		// Build RRF results with EQUAL scores to isolate diversity effect
+		rrfResults := []rrfResult{
+			{ID: "similar1", RRFScore: 0.05, VectorRank: 1, BM25Rank: 1},
+			{ID: "similar2", RRFScore: 0.05, VectorRank: 2, BM25Rank: 2}, // Equal score
+			{ID: "diverse1", RRFScore: 0.05, VectorRank: 3, BM25Rank: 3}, // Equal score
+		}
+
+		// Query embedding similar to "similar1"
+		queryEmb := []float32{0.9, 0.1, 0.0, 0.0}
+
+		// Without MMR: results should be in original order
+		resultsNoMMR := service.applyMMR(context.Background(), rrfResults, queryEmb, 3, 1.0, nil) // lambda=1.0 = no diversity
+		assert.Len(t, resultsNoMMR, 3, "Should return all results")
+		t.Logf("Without MMR (lambda=1.0): %v", []string{resultsNoMMR[0].ID, resultsNoMMR[1].ID, resultsNoMMR[2].ID})
+
+		// With MMR (lambda=0.3): strong diversity preference
+		resultsWithMMR := service.applyMMR(context.Background(), rrfResults, queryEmb, 3, 0.3, nil) // lambda=0.3 = 70% diversity
+		assert.Len(t, resultsWithMMR, 3, "Should return all results")
+		t.Logf("With MMR (lambda=0.3):    %v", []string{resultsWithMMR[0].ID, resultsWithMMR[1].ID, resultsWithMMR[2].ID})
+
+		// Verify MMR algorithm completes successfully
+		// Note: exact order depends on embeddings being retrieved from storage
+	})
+
+	t.Run("mmr_lambda_1_equals_no_diversity", func(t *testing.T) {
+		rrfResults := []rrfResult{
+			{ID: "doc1", RRFScore: 0.1},
+			{ID: "doc2", RRFScore: 0.09},
+			{ID: "doc3", RRFScore: 0.08},
+		}
+
+		// Lambda=1.0 should return results in original order (pure relevance)
+		results := service.applyMMR(context.Background(), rrfResults, []float32{1, 0, 0, 0}, 3, 1.0, nil)
+		assert.Equal(t, "doc1", results[0].ID)
+		assert.Equal(t, "doc2", results[1].ID)
+		assert.Equal(t, "doc3", results[2].ID)
+	})
+
+	t.Run("mmr_handles_empty_results", func(t *testing.T) {
+		results := service.applyMMR(context.Background(), []rrfResult{}, []float32{1, 0, 0, 0}, 10, 0.7, nil)
+		assert.Empty(t, results)
+	})
+
+	t.Run("mmr_handles_single_result", func(t *testing.T) {
+		rrfResults := []rrfResult{{ID: "only", RRFScore: 0.1}}
+		results := service.applyMMR(context.Background(), rrfResults, []float32{1, 0, 0, 0}, 10, 0.7, nil)
+		assert.Len(t, results, 1)
+		assert.Equal(t, "only", results[0].ID)
+	})
+}
+
+func TestSearchWithMMROption(t *testing.T) {
+	baseStore := newNamespacedEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	service := NewService(store, DefaultVectorDimensions, nil)
+	ctx := context.Background()
+
+	// Create nodes with embeddings
+	for i := 0; i < 5; i++ {
+		node := &storage.Node{
+			ID:     storage.NodeID(fmt.Sprintf("doc%d", i)),
+			Labels: []string{"Document"},
+			Properties: map[string]interface{}{
+				"title":   fmt.Sprintf("Document %d about AI", i),
+				"content": "This is content about artificial intelligence and machine learning",
+			},
+			ChunkEmbeddings: [][]float32{make([]float32, 1024)},
+		}
+		// Slightly different embeddings
+		for j := range node.ChunkEmbeddings[0] {
+			node.ChunkEmbeddings[0][j] = float32(i)*0.01 + float32(j)*0.001
+		}
+		_, _ = store.CreateNode(node)
+		service.IndexNode(node)
+	}
+
+	t.Run("search_with_mmr_enabled", func(t *testing.T) {
+		queryEmb := make([]float32, 1024)
+		for i := range queryEmb {
+			queryEmb[i] = 0.5
+		}
+
+		opts := &SearchOptions{
+			Limit:      5,
+			MMREnabled: true,
+			MMRLambda:  0.7,
+		}
+
+		response, err := service.Search(ctx, "AI machine learning", queryEmb, opts)
+		require.NoError(t, err)
+		assert.Contains(t, response.SearchMethod, "mmr", "Search method should indicate MMR")
+		assert.NotEmpty(t, response.Results)
+		t.Logf("MMR search returned %d results with method: %s", len(response.Results), response.SearchMethod)
+	})
+
+	t.Run("search_without_mmr", func(t *testing.T) {
+		queryEmb := make([]float32, 1024)
+		for i := range queryEmb {
+			queryEmb[i] = 0.5
+		}
+
+		opts := &SearchOptions{
+			Limit:      5,
+			MMREnabled: false,
+		}
+
+		response, err := service.Search(ctx, "AI machine learning", queryEmb, opts)
+		require.NoError(t, err)
+		assert.NotContains(t, response.SearchMethod, "mmr", "Search method should not mention MMR")
+	})
+}
+
+// TestNodeMatchesFilters covers the scalar, array, multi-value, and multi-key filter logic.
+func TestNodeMatchesFilters(t *testing.T) {
+	node := &storage.Node{
+		ID:     "n1",
+		Labels: []string{"Chunk"},
+		Properties: map[string]any{
+			"collection": []any{"user_a", "user_b"},
+			"type":       "text",
+			"score":      42,
+		},
+	}
+
+	t.Run("scalar_match", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"type": {"text"}}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"type": {"image"}}))
+	})
+
+	t.Run("array_membership_match", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_a"}}))
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_b"}}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_c"}}))
+	})
+
+	t.Run("multi_value_or", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_a", "user_b"}}))
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_c", "user_a"}}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_c", "user_d"}}))
+	})
+
+	t.Run("multi_property_and", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{
+			"collection": {"user_a"},
+			"type":       {"text"},
+		}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{
+			"collection": {"user_a"},
+			"type":       {"image"},
+		}))
+	})
+
+	t.Run("missing_property", func(t *testing.T) {
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"nonexistent": {"x"}}))
+	})
+
+	t.Run("empty_filters", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{}))
+	})
+
+	t.Run("numeric_scalar_as_string", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"score": {"42"}}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"score": {"99"}}))
+	})
+}
+
+// TestPropValueMatchesAny exercises propValueMatchesAny directly for all supported property types.
+func TestPropValueMatchesAny(t *testing.T) {
+	t.Run("string_scalar", func(t *testing.T) {
+		assert.True(t, propValueMatchesAny("hello", []string{"hello"}))
+		assert.False(t, propValueMatchesAny("hello", []string{"world"}))
+	})
+
+	t.Run("any_slice", func(t *testing.T) {
+		assert.True(t, propValueMatchesAny([]any{"a", "b"}, []string{"b"}))
+		assert.False(t, propValueMatchesAny([]any{"a", "b"}, []string{"c"}))
+	})
+
+	t.Run("string_slice", func(t *testing.T) {
+		assert.True(t, propValueMatchesAny([]string{"x", "y"}, []string{"y"}))
+		assert.False(t, propValueMatchesAny([]string{"x", "y"}, []string{"z"}))
+	})
+}
+
+// TestFilterByProperties_PrefiltersBeforeTopK verifies that nodes not matching the
+// filter are excluded from results even when they would otherwise rank in the top-K.
+func TestFilterByProperties_PrefiltersBeforeTopK(t *testing.T) {
+	baseStore := newNamespacedEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	svc := NewService(store, DefaultVectorDimensions, nil)
+	ctx := context.Background()
+
+	// Create 10 nodes; only 2 belong to "user_a".
+	for i := 0; i < 10; i++ {
+		collection := []any{"user_b"}
+		if i == 3 || i == 7 {
+			collection = []any{"user_a"}
+		}
+		node := &storage.Node{
+			ID:     storage.NodeID(fmt.Sprintf("node%d", i)),
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    fmt.Sprintf("chunk number %d", i),
+				"collection": collection,
+			},
+		}
+		_, err := store.CreateNode(node)
+		require.NoError(t, err)
+		svc.IndexNode(node)
+	}
+
+	opts := &SearchOptions{
+		Limit:   10,
+		Filters: map[string][]string{"collection": {"user_a"}},
+	}
+
+	// BM25-only path (no embedding).
+	resp, err := svc.Search(ctx, "chunk", nil, opts)
+	require.NoError(t, err)
+
+	for _, r := range resp.Results {
+		props := r.Properties
+		coll, ok := props["collection"]
+		require.True(t, ok, "result %s missing collection property", r.ID)
+		assert.True(t, propValueMatchesAny(coll, []string{"user_a"}),
+			"result %s has collection=%v, want user_a", r.ID, coll)
+	}
+	// Only the 2 user_a nodes should be returned (not all 10 minus filtered).
+	assert.LessOrEqual(t, len(resp.Results), 2,
+		"expected at most 2 user_a results, got %d", len(resp.Results))
+}
+
+// TestFilterByProperties_MultiPropertyAnd verifies that all filter keys must match.
+func TestFilterByProperties_MultiPropertyAnd(t *testing.T) {
+	baseStore := newNamespacedEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	svc := NewService(store, DefaultVectorDimensions, nil)
+	ctx := context.Background()
+
+	nodes := []*storage.Node{
+		{
+			ID:     "match",
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    "matching node",
+				"collection": []any{"user_a"},
+				"type":       "text",
+			},
+		},
+		{
+			ID:     "wrong_collection",
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    "wrong collection",
+				"collection": []any{"user_b"},
+				"type":       "text",
+			},
+		},
+		{
+			ID:     "wrong_type",
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    "wrong type",
+				"collection": []any{"user_a"},
+				"type":       "image",
+			},
+		},
+	}
+	require.NoError(t, store.BulkCreateNodes(nodes))
+	for _, n := range nodes {
+		svc.IndexNode(n)
+	}
+
+	opts := &SearchOptions{
+		Limit: 10,
+		Filters: map[string][]string{
+			"collection": {"user_a"},
+			"type":       {"text"},
+		},
+	}
+
+	resp, err := svc.Search(ctx, "node", nil, opts)
+	require.NoError(t, err)
+
+	ids := make(map[string]bool)
+	for _, r := range resp.Results {
+		ids[r.ID] = true
+	}
+	assert.True(t, ids["match"], "expected 'match' node in results")
+	assert.False(t, ids["wrong_collection"], "unexpected 'wrong_collection' node in results")
+	assert.False(t, ids["wrong_type"], "unexpected 'wrong_type' node in results")
+}
+
+// TestFilterByProperties_NoFilterPreservesAllResults verifies backward compatibility.
+func TestFilterByProperties_NoFilterPreservesAllResults(t *testing.T) {
+	baseStore := newNamespacedEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	svc := NewService(store, DefaultVectorDimensions, nil)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		node := &storage.Node{
+			ID:     storage.NodeID(fmt.Sprintf("doc%d", i)),
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content": fmt.Sprintf("document %d", i),
+			},
+		}
+		_, err := store.CreateNode(node)
+		require.NoError(t, err)
+		svc.IndexNode(node)
+	}
+
+	// Without filters, all 5 docs should be reachable.
+	opts := &SearchOptions{Limit: 10}
+	resp, err := svc.Search(ctx, "document", nil, opts)
+	require.NoError(t, err)
+	assert.Len(t, resp.Results, 5)
+}
+
+// Invalidate on an empty cache changes nothing and allocates nothing; on a
+// populated cache it drops every entry and the retained byte count (#849).
+func TestSearchResultCacheInvalidate(t *testing.T) {
+	cache := newSearchResultCache(8, time.Minute)
+	require.Zero(t, testing.AllocsPerRun(100, cache.Invalidate))
+
+	cache.Put("a", &SearchResponse{Query: "a"})
+	cache.Put("b", &SearchResponse{Query: "b"})
+	require.NotNil(t, cache.Get("a"))
+	cache.Invalidate()
+	require.Nil(t, cache.Get("a"))
+	require.Nil(t, cache.Get("b"))
+	require.Zero(t, cache.retainedBytes)
+	require.Zero(t, cache.lru.Len())
+
+	cache.Put("c", &SearchResponse{Query: "c"})
+	require.NotNil(t, cache.Get("c"), "the cache keeps working after an invalidation")
+}

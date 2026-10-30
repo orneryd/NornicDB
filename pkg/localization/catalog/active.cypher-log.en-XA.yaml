@@ -1,0 +1,24 @@
+- id: cypher.log.slow_query
+  description: Expanded pseudo-locale slow-query warning.
+  other: "[!! slow query !!]"
+- id: cypher.log.create_database_invoked
+  description: Expanded pseudo-locale CREATE DATABASE entry record.
+  other: "[!! executeCreateDatabase invoked !!]"
+- id: cypher.log.create_database_failed
+  description: Expanded pseudo-locale CREATE DATABASE failure.
+  other: "[!! CreateDatabase failed !!]"
+- id: cypher.log.create_database_succeeded
+  description: Expanded pseudo-locale CREATE DATABASE success.
+  other: "[!! CreateDatabase succeeded !!]"
+- id: cypher.log.vector_search_disabled
+  description: Expanded pseudo-locale vector-disabled warning.
+  other: "[!! db.index.vector.queryNodes called against vector-disabled database — returning empty result !!]"
+- id: cypher.log.orphaned_embedding_detected
+  description: Expanded pseudo-locale orphaned-embedding warning.
+  other: "[!! orphaned embedding detected, removing from indexes !!]"
+- id: cypher.log.orphaned_embedding_removal_failed
+  description: Expanded pseudo-locale orphaned-embedding removal failure.
+  other: "[!! failed to remove orphaned embedding !!]"
+- id: cypher.log.decay_subsystem_disabled
+  description: Expanded pseudo-locale decay-disabled warning.
+  other: "[!! decay function called but decay subsystem is disabled; returning neutral scores !!]"

@@ -1,0 +1,380 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"reflect"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+// Runtime type errors.
+//
+// An operand whose type is only known from the data (a property, a value a
+// row carries) and that an operator can't take is a Neo4j TypeError at run
+// time, worded by the operator: "Cannot add `Long` and `Map`", "Cannot
+// subtract `Long` from `String`", "Type mismatch: expected a map but was
+// Long(1)". Operands whose type is known when the statement is compiled
+// (literals, pattern variables) are rejected before it runs, with a
+// SyntaxError (validateStaticOperatorTypes). Names and value renderings are
+// Neo4j's own (its storage value classes: Long, Double, String, Boolean, Map,
+// LongArray for a stored list of integers, …).
+
+// runtimeTypeError is a Neo4j TypeError raised while a statement runs.
+func runtimeTypeError(message string) error {
+	return newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", message)
+}
+
+// cypherPredicateTruth is a value read as a predicate, as Neo4j reads a
+// WHERE, a CASE WHEN, a list predicate's WHERE and the operands of AND, OR,
+// XOR and NOT (evaluateLogicalExpression): a Boolean is itself, null is
+// unknown, and a list or a path is true when it isn't empty (a conversion
+// Neo4j 5 deprecates but still makes). Any other value is a TypeError (#907).
+func cypherPredicateTruth(value interface{}) (cypherTruth, error) {
+	switch boolean := value.(type) {
+	case bool:
+		return truthOf(boolean), nil
+	case nil:
+		return truthUnknown, nil
+	case *PathResult:
+		return truthOf(boolean != nil), nil
+	case []byte:
+	default:
+		if kind := reflect.TypeOf(value).Kind(); kind == reflect.Slice || kind == reflect.Array {
+			return truthOf(reflect.ValueOf(value).Len() > 0), nil
+		}
+	}
+	return truthFalse, newSemanticError(
+		"Neo.ClientError.Statement.TypeError",
+		"TypeMismatch",
+		fmt.Sprintf("Type mismatch: expected Boolean but was %s", cypherTypeName(value)),
+	)
+}
+
+func predicateValueIsTrue(ctx context.Context, value interface{}, expression string) bool {
+	return predicateValueHolds(ctx, value, predicateIsArithmetic(expression))
+}
+
+// predicateIsArithmetic reports a predicate whose top level is arithmetic:
+// its value holds only when it is true, and any other value is no type
+// error (predicateValueIsTrue). It reads only the text, so a compiled
+// predicate decides it once.
+func predicateIsArithmetic(expression string) bool {
+	if !mayContainArithmetic(expression) {
+		return false
+	}
+	for {
+		inner, enclosed := stripEnclosingExpressionParentheses(expression)
+		if !enclosed {
+			break
+		}
+		expression = inner
+	}
+	_, _, _, arithmetic := splitRowArithmeticTier(expression, "+-*/%^")
+	return arithmetic
+}
+
+// predicateValueHolds is predicateValueIsTrue for a predicate whose
+// arithmetic shape (predicateIsArithmetic) is known.
+func predicateValueHolds(ctx context.Context, value interface{}, arithmetic bool) bool {
+	if arithmetic {
+		boolean, _ := value.(bool)
+		return boolean
+	}
+	truth, err := cypherPredicateTruth(value)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
+	return truth == truthTrue
+}
+
+// neo4jValueRepr renders a value the way Neo4j's runtime errors show it:
+// Long(1), Double(1.500000e+00), String("x"), Boolean('true'),
+// LongArray[1, 2], List{Long(1), String("a")}; a temporal value or a point
+// as its text (2020-01-02, P1D, point({x: 1.0, y: 2.0, crs: 'cartesian'})).
+func neo4jValueRepr(value interface{}) string {
+	switch v := value.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("Long(%d)", v)
+	case float32, float64:
+		return fmt.Sprintf("Double(%e)", v)
+	case string:
+		return fmt.Sprintf("String(%q)", v)
+	case bool:
+		return fmt.Sprintf("Boolean('%t')", v)
+	case *storage.Node:
+		if v != nil {
+			return "(" + string(v.ID) + ")"
+		}
+	case *storage.Edge:
+		if v != nil {
+			return "-[" + string(v.ID) + "]-"
+		}
+	}
+	if value == nil {
+		return "NO_VALUE"
+	}
+	if m, isMap := value.(map[string]interface{}); isMap {
+		keys := make([]string, 0, len(m))
+		for key := range m {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for index, key := range keys {
+			parts[index] = key + " -> " + neo4jValueRepr(m[key])
+		}
+		return "Map{" + strings.Join(parts, ", ") + "}"
+	}
+	if kind := reflect.TypeOf(value).Kind(); kind == reflect.Slice || kind == reflect.Array {
+		items := toAnySlice(value)
+		typeName := neo4jValueTypeName(value)
+		parts := make([]string, len(items))
+		for index, item := range items {
+			if typeName == "List" {
+				parts[index] = neo4jValueRepr(item)
+			} else {
+				parts[index] = fmt.Sprint(item)
+			}
+		}
+		if typeName == "List" {
+			return "List{" + strings.Join(parts, ", ") + "}"
+		}
+		return typeName + "[" + strings.Join(parts, ", ") + "]"
+	}
+	switch value.(type) {
+	case CypherDate, *CypherDate, CypherLocalTime, *CypherLocalTime, CypherTime, *CypherTime,
+		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime,
+		CypherDuration, *CypherDuration, CypherPoint, *CypherPoint, time.Time, *time.Time:
+		return formatCypherValueString(value)
+	}
+	return neo4jValueTypeName(value)
+}
+
+// isRuntimeNumber reports whether v is a Cypher INTEGER or FLOAT value.
+func isRuntimeNumber(v interface{}) bool {
+	_, ok := valueconvert.ReadNumber(v)
+	return ok
+}
+
+// joinsString reports whether a string + v at run time is the string joined
+// with v's text, as in Neo4j 5.26 and 2026.09: a number, a boolean, a point,
+// a temporal value, a duration or a VECTOR does ('a' + true is 'atrue'); a
+// map, a node, a relationship or a path doesn't (TypeError), and a list
+// makes the operation list concatenation. Neo4j rejects the same operands
+// when their types are known as the statement compiles (static checks).
+func joinsString(v interface{}) bool {
+	switch v.(type) {
+	case bool, CypherVector, *CypherVector, CypherPoint, *CypherPoint:
+		return true
+	}
+	return isRuntimeNumber(v) || isRuntimeTemporal(v) || isRuntimeDuration(v)
+}
+
+func isRuntimeDuration(v interface{}) bool {
+	switch v.(type) {
+	case CypherDuration, *CypherDuration:
+		return true
+	}
+	return false
+}
+
+// isRuntimeTemporal reports whether v is a date, time or datetime. A
+// time.Time, as typed parameters carry a datetime, is a zoned datetime, as
+// evaluateTemporalProperty reads it.
+func isRuntimeTemporal(v interface{}) bool {
+	switch v.(type) {
+	case CypherDate, *CypherDate, CypherTime, *CypherTime, CypherLocalTime, *CypherLocalTime,
+		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime, time.Time, *time.Time:
+		return true
+	}
+	return false
+}
+
+func isRuntimeList(v interface{}) bool { return cypherValueKindOf(v) == valueKindList }
+
+// runtimeArithmeticTypeError is the TypeError of left op right when an
+// operand is of a type the operator can't take, or nil. Null operands make the
+// result null and are never an error. A String next to a temporal or duration
+// operand is left alone: NornicDB can carry temporal values as strings.
+func runtimeArithmeticTypeError(op byte, left, right interface{}) error {
+	if left == nil || right == nil {
+		return nil
+	}
+	_, leftString := left.(string)
+	_, rightString := right.(string)
+	temporalOperand := isRuntimeTemporal(left) || isRuntimeTemporal(right) || isRuntimeDuration(left) || isRuntimeDuration(right)
+	if (leftString || rightString) && temporalOperand {
+		return nil
+	}
+	leftNumber, rightNumber := isRuntimeNumber(left), isRuntimeNumber(right)
+	valid := false
+	switch op {
+	case '+':
+		valid = (leftNumber && rightNumber) ||
+			(leftString && (rightString || rightNumber)) || (rightString && leftNumber) ||
+			isRuntimeList(left) || isRuntimeList(right) ||
+			(isRuntimeDuration(left) && (isRuntimeDuration(right) || isRuntimeTemporal(right))) ||
+			(isRuntimeTemporal(left) && isRuntimeDuration(right)) ||
+			(leftString && joinsString(right)) || (rightString && joinsString(left))
+	case '-':
+		valid = (leftNumber && rightNumber) ||
+			((isRuntimeDuration(left) || isRuntimeTemporal(left)) && isRuntimeDuration(right))
+	case '*':
+		valid = (leftNumber && rightNumber) || (isRuntimeDuration(left) && rightNumber) || (leftNumber && isRuntimeDuration(right))
+	case '/':
+		valid = (leftNumber && rightNumber) || (isRuntimeDuration(left) && rightNumber)
+	case '%', '^':
+		valid = leftNumber && rightNumber
+	default:
+		return nil
+	}
+	if valid {
+		return nil
+	}
+	leftName, rightName := neo4jValueTypeName(left), neo4jValueTypeName(right)
+	switch op {
+	case '+':
+		return runtimeTypeError(fmt.Sprintf("Cannot add `%s` and `%s`", leftName, rightName))
+	case '-':
+		return runtimeTypeError(fmt.Sprintf("Cannot subtract `%s` from `%s`", rightName, leftName))
+	case '*':
+		return runtimeTypeError(fmt.Sprintf("Cannot multiply `%s` and `%s`", leftName, rightName))
+	case '/':
+		return runtimeTypeError(fmt.Sprintf("Cannot divide `%s` by `%s`", leftName, rightName))
+	case '%':
+		return runtimeTypeError(fmt.Sprintf("Cannot calculate modulus of `%s` and `%s`", leftName, rightName))
+	default:
+		return runtimeTypeError(fmt.Sprintf("Cannot raise `%s` to the power of `%s`", leftName, rightName))
+	}
+}
+
+// unaryMinusTypeError is the TypeError of -value (0 - value in Neo4j) for a
+// non-null value that isn't a number or a duration, or nil.
+func unaryMinusTypeError(value interface{}) error {
+	if value == nil || isRuntimeNumber(value) || isRuntimeDuration(value) {
+		return nil
+	}
+	return runtimeTypeError(fmt.Sprintf("Cannot subtract `%s` from `Long`", neo4jValueTypeName(value)))
+}
+
+// propertyAccessTypeError is the TypeError of value.key for a non-null value
+// that has no properties (a number, a string, a boolean, a list), or nil.
+func propertyAccessTypeError(value interface{}) error {
+	switch value.(type) {
+	case nil, *storage.Node, *storage.Edge, map[string]interface{}:
+		return nil
+	}
+	if isRuntimeTemporal(value) || isRuntimeDuration(value) {
+		return nil
+	}
+	if _, isMap := toStringAnyMap(value); isMap {
+		return nil
+	}
+	return runtimeTypeError(fmt.Sprintf("Type mismatch: expected a map but was %s", neo4jValueRepr(value)))
+}
+
+// temporalNoSuchFieldError is the TypeError of reading a field a temporal
+// value or duration doesn't have (d.a, d['a'], d{.a}), as Neo4j reports it.
+func temporalNoSuchFieldError(field string) error {
+	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+		localization.CypherCoreTemporalNoSuchField(field))
+}
+
+// subscriptReceiverError is the TypeError of base[index] for a base that is
+// neither a list nor a map.
+func subscriptReceiverError(base, index interface{}) error {
+	repr := neo4jValueRepr(base)
+	return runtimeTypeError(fmt.Sprintf("`%s` is not a collection or a map. Element access is only possible by performing a collection lookup using an integer index, or by performing a map lookup using a string key (found: %s[%s])", repr, repr, neo4jValueRepr(index)))
+}
+
+// expressionTextPolicy separates operator-bearing syntax from whole operands.
+// Lists/maps are operands but do not themselves expose arithmetic operators.
+type expressionTextPolicy uint8
+
+const (
+	expressionTextOperator expressionTextPolicy = iota
+	expressionTextOperand
+)
+
+// expressionTextAccepted owns shared pattern/map-projection exclusion and the
+// whole-operand grammar required by subscript and static operand validation.
+func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
+	text = strings.TrimSpace(text)
+	if text == "" && policy == expressionTextOperand {
+		return false
+	}
+	// A list or map literal is a value, not an operator expression, even
+	// when its elements are.
+	if _, enclosed := stripEnclosingRowDelimiter(text, '[', ']'); enclosed {
+		return policy == expressionTextOperand
+	}
+	if strings.HasPrefix(text, "{") && cyphertext.FindMatchingDelimiter(text, 0, '{', '}', cyphertext.OpeningDelimiter) == len(text)-1 {
+		return policy == expressionTextOperand
+	}
+	// -[1] is a unary minus of a list, not a relationship.
+	if strings.HasPrefix(text, "-") {
+		if _, enclosed := stripEnclosingRowDelimiter(strings.TrimSpace(text[1:]), '[', ']'); enclosed {
+			return true
+		}
+	}
+	// <-- and <-[ (covered by "--" and "-[") start an incoming arrow; a bare <-
+	// is a comparison with a negative operand.
+	for _, token := range []string{"->", "-[", "]-", "--", "{."} {
+		if containsOutsideStrings(text, token) {
+			return false
+		}
+	}
+	// A brace after a variable (n {k: 1}) is a map projection; after a
+	// keyword (t AND {a: 2}) it opens a map literal.
+	for brace := strings.IndexByte(text, '{'); brace > 0; {
+		before := strings.TrimSpace(text[:brace])
+		word := len(before)
+		for word > 0 && cyphertext.NamePartAt(before, word-1) {
+			word--
+		}
+		if word < len(before) && !isCypherKeyword(before[word:]) {
+			return false
+		}
+		next := strings.IndexByte(text[brace+1:], '{')
+		if next < 0 {
+			break
+		}
+		brace += next + 1
+	}
+	if policy == expressionTextOperator {
+		return true
+	}
+	if _, literal := parseLiteralValueFromComputedRow(text); literal {
+		return true
+	}
+	if text[0] == '-' || text[0] == '+' {
+		return expressionTextAccepted(text[1:], expressionTextOperand)
+	}
+	if text[0] == '$' {
+		return simpleSemanticIdentifier(text[1:]) != ""
+	}
+	if _, _, chain := rowPropertyChainShape(text); simpleSemanticIdentifier(text) != "" || chain {
+		return true
+	}
+	if _, enclosed := stripEnclosingExpressionParentheses(text); enclosed {
+		return true
+	}
+	if call := inspectFunctionCall(text, qualifiedFunctionCall, "", nil); call {
+		return true
+	}
+	for _, tier := range []string{"+-", "*/%", "^"} {
+		if left, right, _, arithmetic := splitRowArithmeticTier(text, tier); arithmetic {
+			return expressionTextAccepted(left, expressionTextOperand) && expressionTextAccepted(right, expressionTextOperand)
+		}
+	}
+	return false
+}

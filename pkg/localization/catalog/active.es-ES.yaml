@@ -1,0 +1,280 @@
+- id: localization.os_language_undetected
+  description: Aviso de inicio cuando no se puede detectar el idioma del sistema operativo.
+  other: "No se pudo determinar el idioma del sistema operativo; se usará inglés (Estados Unidos)"
+- id: localization.language_pack_missing
+  description: Aviso cuando el paquete de idioma solicitado no está disponible.
+  other: "El paquete de idioma {{.RequestedLanguage}} no está disponible; se usará {{.ResolvedLanguage}} (origen: {{.Source}})"
+- id: localization.catalog_entry_missing
+  description: Aviso cuando una entrada no está disponible en un catálogo instalado.
+  other: "El mensaje {{.MessageID}} no está disponible en {{.Language}}; se usará inglés (Estados Unidos)"
+- id: server.invalid_request_body
+  description: Respuesta HTTP para un cuerpo de solicitud no válido.
+  other: cuerpo de solicitud no válido
+- id: server.invalid_json_body
+  description: Respuesta HTTP de Neo4j para un cuerpo JSON no válido.
+  other: cuerpo JSON no válido
+- id: server.method_post_required
+  description: Respuesta HTTP para un endpoint que solo acepta solicitudes POST.
+  other: se requiere POST
+- id: server.method_get_required
+  description: Respuesta HTTP para un endpoint que solo acepta solicitudes GET.
+  other: se requiere GET
+- id: server.method_get_or_post_required
+  description: Respuesta HTTP para un endpoint que acepta solicitudes GET o POST.
+  other: se requiere GET o POST
+- id: server.method_get_or_put_required
+  description: Respuesta HTTP para un endpoint que acepta solicitudes GET o PUT.
+  other: se requiere GET o PUT
+- id: server.method_get_put_or_delete_required
+  description: Respuesta HTTP para un endpoint que acepta solicitudes GET, PUT o DELETE.
+  other: se requiere GET, PUT o DELETE
+- id: server.method_post_or_delete_required
+  description: Respuesta HTTP para un endpoint que acepta solicitudes POST o DELETE.
+  other: se requiere POST o DELETE
+- id: server.method_not_allowed
+  description: Respuesta HTTP cuando un endpoint no acepta el método de la solicitud.
+  other: método no permitido
+- id: request.body_read_failed
+  description: Respuesta HTTP cuando no se puede leer el cuerpo de la solicitud.
+  other: no se pudo leer el cuerpo de la solicitud
+- id: mcp.parse_error
+  description: Error JSON-RPC para un documento de solicitud MCP no válido.
+  other: Error de análisis
+- id: mcp.method_not_found
+  description: Error JSON-RPC para un método MCP no compatible.
+  other: Método no encontrado
+- id: mcp.tool_execution_failed
+  description: Error JSON-RPC cuando falla una herramienta MCP.
+  other: Error de ejecución de herramienta
+- id: qdrant.collection_name_required
+  description: Error de validación de Qdrant gRPC cuando falta collection_name.
+  other: se requiere collection_name
+- id: qdrant.field_required
+  description: Error de validación de Qdrant gRPC cuando falta un campo. Field es un identificador que no se traduce.
+  other: "se requiere {{.Field}}"
+- id: qdrant.fields_required
+  description: Error de validación de Qdrant gRPC cuando faltan campos o valores. Fields no se traduce.
+  other: "se requieren {{.Fields}}"
+- id: qdrant.database_access_denied
+  description: Error de autorización de Qdrant gRPC cuando no se permite acceder a una base de datos.
+  other: 'no se permite el acceso a la base de datos "{{.Name}}"'
+- id: qdrant.database_write_denied
+  description: Error de autorización de Qdrant gRPC cuando no se permite escribir en una base de datos.
+  other: 'no se permite escribir en la base de datos "{{.Name}}"'
+- id: qdrant.permission_denied
+  description: Error de autorización de Qdrant gRPC cuando faltan permisos para un método RPC.
+  other: permiso denegado
+- id: qdrant.authentication_required
+  description: Error de autenticación de Qdrant gRPC cuando faltan credenciales. Cause no se traduce.
+  other: "se requiere autenticación: {{.Cause}}"
+- id: qdrant.invalid_or_expired_token
+  description: Error de autenticación de Qdrant gRPC cuando el token no es válido.
+  other: token no válido o caducado
+- id: qdrant.collection_not_found
+  description: Error de Qdrant gRPC cuando no existe una colección.
+  other: 'no se encontró la colección "{{.Name}}"'
+- id: qdrant.snapshot_not_found
+  description: Error de Qdrant gRPC cuando no existe una instantánea.
+  other: 'no se encontró la instantánea "{{.Name}}"'
+- id: qdrant.vector_dimension_mismatch
+  description: Error de validación de Qdrant gRPC cuando la dimensión del vector es incorrecta.
+  other: "la dimensión del vector no coincide: se obtuvo {{.Got}}, se esperaba {{.Expected}}"
+- id: qdrant.vector_mutations_disabled
+  description: Respuesta de Qdrant gRPC cuando los embeddings administrados impiden modificar vectores directamente.
+  other: las mutaciones de vectores están deshabilitadas porque los embeddings administrados por NornicDB están habilitados; establezca NORNICDB_EMBEDDING_ENABLED=false para administrar vectores mediante Qdrant gRPC
+- id: qdrant.limit_too_large
+  description: Error de validación de Qdrant gRPC cuando Limit supera Maximum.
+  other: "el límite es demasiado grande: {{.Limit}} > {{.Maximum}}"
+- id: qdrant.text_query_embeddings_required
+  description: Respuesta de Qdrant gRPC cuando se usa una consulta de texto sin embeddings.
+  other: la consulta de texto requiere embeddings; habilite los embeddings de NornicDB y configure EmbedQuery
+- id: qdrant.get_points_failed
+  description: Error de almacenamiento de Qdrant gRPC al obtener puntos. Cause no se traduce.
+  other: "no se pudieron obtener los puntos: {{.Cause}}"
+- id: qdrant.embed_query_failed
+  description: Error de Qdrant gRPC al generar el embedding de una consulta. Cause no se traduce.
+  other: "no se pudo generar el embedding de la consulta: {{.Cause}}"
+- id: qdrant.collection_not_found_with_cause
+  description: Error de Qdrant gRPC al buscar una colección. Cause no se traduce.
+  other: "no se encontró la colección: {{.Cause}}"
+- id: qdrant.snapshot_directory_create_failed
+  description: Error de Qdrant gRPC al crear el directorio de instantáneas. Cause no se traduce.
+  other: "no se pudo crear el directorio de instantáneas: {{.Cause}}"
+- id: qdrant.snapshot_save_failed
+  description: Error de Qdrant gRPC al guardar una instantánea. Cause no se traduce.
+  other: "no se pudo guardar la instantánea: {{.Cause}}"
+- id: qdrant.snapshot_list_failed
+  description: Error de Qdrant gRPC al enumerar instantáneas. Cause no se traduce.
+  other: "no se pudieron enumerar las instantáneas: {{.Cause}}"
+- id: qdrant.snapshot_delete_failed
+  description: Error de Qdrant gRPC al eliminar una instantánea. Cause no se traduce.
+  other: "no se pudo eliminar la instantánea: {{.Cause}}"
+- id: heimdall.method_not_allowed
+  description: Respuesta HTTP de texto de Heimdall cuando no se acepta el método de la solicitud.
+  other: Método no permitido
+- id: heimdall.invalid_request_body
+  description: Respuesta HTTP de texto de Heimdall para un cuerpo de solicitud no válido.
+  other: Cuerpo de solicitud no válido
+- id: heimdall.streaming_not_supported
+  description: Respuesta HTTP de texto de Heimdall cuando no se puede transmitir por SSE.
+  other: Transmisión no compatible
+- id: heimdall.bifrost_not_enabled
+  description: Respuesta HTTP de texto de Heimdall cuando Bifrost no está disponible.
+  other: Bifrost no está habilitado
+- id: heimdall.query_parameter_required
+  description: Respuesta de validación de autocompletado cuando falta el parámetro query.
+  other: se requiere el parámetro query
+- id: heimdall.autocomplete_failed
+  description: Error de autocompletado de Heimdall. Cause no se traduce.
+  other: "Error de autocompletado: {{.Cause}}"
+- id: heimdall.generation_failed
+  description: Error de generación de respuesta de Heimdall. Cause no se traduce.
+  other: "Error de generación: {{.Cause}}"
+- id: retention.manager_disabled
+  description: Respuesta HTTP cuando el subsistema de retención no está disponible.
+  other: el administrador de retención está deshabilitado
+- id: retention.policy_id_required
+  description: Respuesta HTTP cuando falta el ID de una política de retención.
+  other: se requiere el id de la política
+- id: retention.hold_id_required
+  description: Respuesta HTTP cuando falta el ID de una retención legal.
+  other: se requiere el id de la retención legal
+- id: retention.erasure_id_required
+  description: Respuesta HTTP cuando falta el ID de una solicitud de borrado.
+  other: se requiere el id de borrado
+- id: server.method_delete_required
+  description: Respuesta HTTP para un endpoint que solo acepta solicitudes DELETE.
+  other: se requiere DELETE
+- id: gdpr.own_data_export_only
+  description: Respuesta HTTP cuando un usuario intenta exportar datos de otro usuario.
+  other: solo puede exportar sus propios datos
+- id: gdpr.confirmation_required
+  description: Respuesta HTTP cuando no se confirma una solicitud destructiva.
+  other: se requiere confirmación
+- id: gdpr.own_data_delete_only
+  description: Respuesta HTTP cuando un usuario intenta eliminar datos de otro usuario.
+  other: solo puede eliminar sus propios datos
+- id: gdpr.legal_hold_prevents_deletion
+  description: Respuesta HTTP cuando una retención legal impide eliminar datos del usuario.
+  other: los datos del usuario están sujetos a retención legal y no se pueden eliminar
+- id: localization.items_processed
+  description: Mensaje de progreso con el numero de elementos procesados.
+  one: "{{.Count}} elemento procesado"
+  other: "{{.Count}} elementos procesados"
+- id: security.not_authenticated
+  description: Error de Bolt cuando la autenticación no se ha completado.
+  other: Sin autenticar
+- id: security.schema_permission_required
+  description: Error de autorización para operaciones de esquema.
+  other: Las operaciones de esquema requieren permiso de esquema
+- id: security.admin_permission_required
+  description: Error de autorización para operaciones administrativas.
+  other: Las operaciones administrativas requieren permiso de administrador
+- id: security.write_permission_required
+  description: Error de autorización para operaciones de escritura.
+  other: Las operaciones de escritura requieren permiso de escritura
+- id: security.read_permission_required
+  description: Error de autorización para operaciones de lectura.
+  other: Las operaciones de lectura requieren permiso de lectura
+- id: database.not_found
+  description: Error de búsqueda de base de datos.
+  other: "La base de datos '{{.Name}}' no existe"
+- id: server.database_not_found
+  description: Respuesta HTTP y Neo4j cuando no existe la base de datos solicitada.
+  other: "No se encontró la base de datos '{{.Name}}'"
+- id: security.database_access_denied
+  description: Respuesta de autorización cuando no se permite acceder a una base de datos.
+  other: "No se permite el acceso a la base de datos '{{.Name}}'."
+- id: security.database_write_denied
+  description: Respuesta de autorización cuando no se permite escribir en una base de datos.
+  other: "No se permite escribir en la base de datos '{{.Name}}'."
+- id: server.authentication_not_configured
+  description: Respuesta HTTP cuando los servicios de autenticación no están disponibles.
+  other: autenticación no configurada
+- id: server.oauth_not_configured
+  description: Respuesta HTTP cuando se usa un endpoint de OAuth sin configuración.
+  other: OAuth no configurado
+- id: server.not_authenticated
+  description: Respuesta HTTP cuando la solicitud no tiene un usuario autenticado.
+  other: sin autenticar
+- id: server.user_not_found
+  description: Respuesta HTTP cuando no existe el usuario solicitado.
+  other: usuario no encontrado
+- id: server.transaction_not_found
+  description: Respuesta HTTP de Neo4j cuando no existe la transacción solicitada.
+  other: transacción no encontrada
+- id: server.request_field_required
+  description: Respuesta HTTP cuando falta un campo. Field es un identificador que no se traduce.
+  other: "se requiere {{.Field}}"
+- id: server.not_found
+  description: Respuesta HTTP genérica de Neo4j cuando no se encuentra una ruta o recurso.
+  other: no encontrado
+- id: server.invalid_gpu_manager_type
+  description: Respuesta HTTP cuando el gestor de GPU tiene un tipo incompatible.
+  other: tipo de gestor de GPU no válido
+- id: server.gpu_manager_not_initialized
+  description: Respuesta HTTP cuando el gestor de GPU todavía no está inicializado.
+  other: gestor de GPU no inicializado
+- id: server.temporal_graph_reconstruction_unsupported
+  description: Respuesta HTTP cuando el motor de almacenamiento no admite la reconstrucción temporal del grafo.
+  other: el motor de almacenamiento configurado no admite la reconstrucción temporal del grafo
+- id: server.temporal_graph_diff_unsupported
+  description: Respuesta HTTP cuando el motor de almacenamiento no admite diferencias temporales del grafo.
+  other: el motor de almacenamiento configurado no admite diferencias temporales del grafo
+- id: security.no_authentication_provided
+  description: Respuesta de autenticación HTTP de Neo4j cuando no se proporcionan credenciales.
+  other: No se proporcionó autenticación
+- id: security.insufficient_permissions
+  description: Respuesta de autorización HTTP de Neo4j cuando faltan permisos.
+  other: permisos insuficientes
+- id: server.internal_error
+  description: Respuesta HTTP genérica después de un fallo inesperado sin detalles internos.
+  other: error interno del servidor
+- id: bolt.authentication_required
+  description: Error de Bolt HELLO cuando se requiere autenticación y faltan credenciales.
+  other: Se requiere autenticación
+- id: bolt.invalid_credentials
+  description: Error de Bolt HELLO cuando se rechazan las credenciales básicas.
+  other: Credenciales no válidas
+- id: bolt.invalid_or_expired_token
+  description: Error de Bolt HELLO cuando se rechaza un token.
+  other: Token no válido o caducado
+- id: bolt.authentication_not_configured
+  description: Error de Bolt HELLO cuando se requiere autenticación pero no está configurada.
+  other: Se requiere autenticación, pero no está configurada
+- id: bolt.unsupported_auth_scheme
+  description: Error de Bolt HELLO para un esquema de autenticación no compatible. Scheme no se traduce.
+  other: "Esquema de autenticación no compatible: {{.Scheme}}"
+- id: bolt.database_not_found_with_cause
+  description: Error de Bolt al buscar una base de datos. Name y Cause no se traducen.
+  other: "No se encontró la base de datos '{{.Name}}': {{.Cause}}"
+- id: bolt.no_transaction_to_commit
+  description: Error de Bolt COMMIT cuando la sesión no tiene una transacción activa.
+  other: No hay ninguna transacción que confirmar
+- id: bolt.run_message_parse_failed
+  description: Error de Bolt RUN para una entrada PackStream no válida. Cause no se traduce.
+  other: "No se pudo analizar el mensaje RUN: {{.Cause}}"
+- id: bolt.bookmark_validation_failed
+  description: Error de Bolt RUN para un marcador no válido. Cause no se traduce.
+  other: "Error de validación del marcador: {{.Cause}}"
+- id: search.searcher_required
+  description: Error de configuración cuando falta el servicio de búsqueda.
+  other: se requiere un servicio de búsqueda
+- id: request.required
+  description: Error de validación cuando falta la solicitud.
+  other: se requiere una solicitud
+- id: search.query_required
+  description: Error de validación cuando falta la consulta.
+  other: se requiere una consulta
+- id: search.query_chunk_failed
+  description: Error al dividir la consulta.
+  other: "no se pudo dividir la consulta: {{.Cause}}"
+- id: search.failed
+  description: Error de ejecución de búsqueda.
+  other: "búsqueda fallida: {{.Cause}}"
+- id: grpc.localization_initialization_failed
+  description: Error de inicio de gRPC al inicializar la localización. Cause no se traduce.
+  other: "no se pudo inicializar la localización: {{.Cause}}"
+- id: localization.external_diagnostic
+  description: Texto de diagnóstico fuera de la localización. Cause no se traduce.
+  other: "{{.Cause}}"

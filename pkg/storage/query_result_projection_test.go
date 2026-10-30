@@ -1,0 +1,112 @@
+package storage
+
+import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/stretchr/testify/require"
+	"testing"
+	"time"
+)
+
+func TestQueryResultProjectionDisabledAndNil(t *testing.T) {
+	event := NewNormalEventResultProjection(newTestMemoryEngine(t))
+	require.Nil(t, event.Node(nil))
+	require.Nil(t, event.Edge(nil))
+
+	view, release := BeginQueryResultProjection(newTestMemoryEngine(t))
+	defer release()
+	require.Nil(t, view.Node(nil))
+	require.Nil(t, view.Edge(nil))
+	require.Nil(t, view.NodeProperties(nil))
+	require.Nil(t, view.NodeProperties(nil, nil))
+	require.Nil(t, view.NodeProperties(nil, []string{}))
+	require.Nil(t, view.EdgeProperties(nil))
+	n := &Node{Properties: map[string]interface{}{"x": "raw"}}
+	e := &Edge{Properties: n.Properties}
+	require.Same(t, n, event.Node(n))
+	require.Same(t, e, event.Edge(e))
+	require.Same(t, n, view.Node(n))
+	require.Same(t, e, view.Edge(e))
+	require.Equal(t, map[string]interface{}{"x": "raw"}, view.NodeProperties(n, []string{"x", "missing"}))
+	require.Empty(t, view.NodeProperties(n, []string{}))
+	require.Zero(t, testing.AllocsPerRun(100, func() { view.Node(n); view.Edge(e) }))
+	t.Run("selection disabled", func(t *testing.T) {
+		view := NewQueryResultProjection(newTestMemoryEngine(t))
+		properties := map[string]interface{}{"a": 1, "b": 2}
+		n := &Node{ID: "n:1", Labels: []string{"Doc"}, Properties: properties}
+
+		// No selection returns the same original map without allocating.
+		require.Equal(t, map[string]interface{}{"a": 1, "b": 2}, view.NodeProperties(n))
+		require.Equal(t, map[string]interface{}{"a": 1, "b": 2}, view.NodeProperties(n, nil))
+		require.Zero(t, testing.AllocsPerRun(100, func() { view.NodeProperties(n) }))
+		require.Zero(t, testing.AllocsPerRun(100, func() { view.NodeProperties(n, nil) }))
+		original := view.NodeProperties(n)
+		original["sentinel"] = true
+		require.Equal(t, map[string]interface{}{"a": 1, "b": 2, "sentinel": true}, properties,
+			"no selection must return the node's own property map, not a copy")
+
+		// A selection allocates a detached subset and leaves the source untouched.
+		require.Equal(t, map[string]interface{}{"a": 1}, view.NodeProperties(n, []string{"a", "missing"}))
+		require.Empty(t, view.NodeProperties(n, []string{}))
+		delete(original, "sentinel")
+		require.Equal(t, map[string]interface{}{"a": 1, "b": 2}, properties)
+	})
+}
+
+func TestQueryResultProjectionNamespaceDetachedAndRevealIsolation(t *testing.T) {
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	require.NoError(t, err)
+	defer be.Close()
+	schema := be.GetSchemaForNamespace("tenant")
+	for _, edge := range []bool{false, true} {
+		scope := knowledgepolicy.ScopeNode
+		name := "doc"
+		if edge {
+			scope = knowledgepolicy.ScopeEdge
+			name = "link"
+		}
+		require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{Name: name, Scope: scope, Function: knowledgepolicy.DecayFunctionExponential, HalfLifeSeconds: 3600 * 24 * 365, VisibilityThreshold: 0.1, ScoreFrom: knowledgepolicy.ScoreFromCreated, Enabled: true, DecayEnabled: true}))
+		require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{Name: name + "binding", ProfileRef: name, TargetLabels: []string{"Doc"}, TargetEdgeType: "LINK", IsEdge: edge, PropertyRules: []knowledgepolicy.DecayProfilePropertyRule{{PropertyPath: "secret", HalfLifeSeconds: 1}}}))
+	}
+	be.SetDecayEnabled(true)
+	engine := NewNamespacedEngine(be, "tenant")
+	old := time.Now().Add(-time.Hour)
+	n := &Node{ID: "a:b", Labels: []string{"Doc"}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, CreatedAt: old}
+	e := &Edge{ID: "a:b", Type: "LINK", Properties: n.Properties, CreatedAt: old}
+	view, release := BeginQueryResultProjection(engine)
+	require.NotContains(t, view.Node(n).Properties, "secret")
+	require.NotContains(t, view.Edge(e).Properties, "secret")
+	require.Equal(t, map[string]interface{}{"public": "yes"}, view.NodeProperties(n, []string{"public", "secret", "missing"}))
+	require.Empty(t, view.NodeProperties(n, []string{}))
+	require.Equal(t, view.NodeProperties(n), view.NodeProperties(n, nil))
+	require.Contains(t, n.Properties, "secret")
+	require.Contains(t, e.Properties, "secret")
+	require.NotContains(t, view.Node(&Node{ID: "tenant:a:b", Labels: n.Labels, Properties: n.Properties, CreatedAt: old, UpdatedAt: old}).Properties, "secret")
+	started, entered := make(chan struct{}), make(chan struct{})
+	done := make(chan struct{})
+	go func() { close(started); end := be.BeginQueryRevealScope(true); close(entered); end(); close(done) }()
+	<-started
+	select {
+	case <-entered:
+		t.Fatal("REVEAL entered an active normal query projection")
+	case <-time.After(20 * time.Millisecond):
+	}
+	release()
+	<-done
+	end := be.BeginQueryRevealScope(true)
+	require.Contains(t, NewQueryResultProjection(engine).Node(n).Properties, "secret")
+	require.Equal(t, map[string]interface{}{"secret": "hidden"}, NewQueryResultProjection(engine).NodeProperties(n, []string{"secret"}))
+	// A normal event must ignore the producer's REVEAL without acquiring another
+	// lock; qualified source IDs still select the original namespace's policy.
+	event := NewNormalEventResultProjection(be)
+	eventNode := *n
+	eventNode.ID = "tenant:a:b"
+	eventEdge := *e
+	eventEdge.ID = "tenant:a:b"
+	require.NotContains(t, event.Node(&eventNode).Properties, "secret")
+	require.NotContains(t, event.Edge(&eventEdge).Properties, "secret")
+	require.Contains(t, n.Properties, "secret")
+	require.Contains(t, e.Properties, "secret")
+	end()
+}

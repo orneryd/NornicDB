@@ -1,0 +1,258 @@
+package cypher
+
+import (
+	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+type cypherVisibleMemoryEngine struct {
+	*storage.MemoryEngine
+	nodes []*storage.Node
+	edges []*storage.Edge
+}
+
+func (e *cypherVisibleMemoryEngine) GetNodesByLabelVisibleAt(label string, version storage.MVCCVersion) ([]*storage.Node, error) {
+	return e.nodes, nil
+}
+
+func (e *cypherVisibleMemoryEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	return e.edges, nil
+}
+
+func (e *cypherVisibleMemoryEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	return e.edges, nil
+}
+
+func (e *cypherVisibleMemoryEngine) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	return e.edges, nil
+}
+
+func (e *cypherVisibleMemoryEngine) GetEdgesBetweenVisibleAt(startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	return e.edges, nil
+}
+
+func TestAggregateExpressionHelpers(t *testing.T) {
+	cases := []struct {
+		expr        string
+		isAggregate bool
+		identity    interface{}
+	}{
+		{expr: "collect(n)", isAggregate: true, identity: []interface{}{}},
+		{expr: " COUNT (*)", isAggregate: true, identity: int64(0)},
+		{expr: "sum (n.score)", isAggregate: true, identity: int64(0)},
+		{expr: "avg(n.score)", isAggregate: true, identity: nil},
+		{expr: "n.name", isAggregate: false, identity: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.expr, func(t *testing.T) {
+			require.Equal(t, tc.isAggregate, isAggregateExpression(tc.expr))
+			require.Equal(t, tc.identity, aggregateIdentity(tc.expr))
+		})
+	}
+
+	require.True(t, rowHasAggregate([]returnItem{{expr: "n.name"}, {expr: "max(n.age)"}}))
+	require.False(t, rowHasAggregate([]returnItem{{expr: "n.name"}, {expr: "n.age"}}))
+}
+
+func TestSmallCypherHelperBranches(t *testing.T) {
+	require.Equal(t, []string{"Memory", "Evidence", "Session"}, splitCSVLabels(" Memory, Evidence ,, Session "))
+	require.Empty(t, splitCSVLabels(" , , "))
+
+	policy := minimalPolicyMap("node-1")
+	require.Equal(t, "node-1", policy["targetId"])
+	require.Equal(t, string(knowledgepolicy.ScopeNode), policy["targetScope"])
+
+	writeQueries := []string{
+		"CREATE (n)",
+		"match (n) merge (m)",
+		"MATCH (n) DELETE n",
+		"MATCH (n) SET n.name = 'a'",
+		"MATCH (n) REMOVE n.name",
+	}
+	for _, query := range writeQueries {
+		require.True(t, looksLikeWriteQuery(query), query)
+	}
+	require.False(t, looksLikeWriteQuery("MATCH (n) RETURN n"))
+}
+
+func TestSliceAndNumericCoercionHelpers(t *testing.T) {
+	input := []map[string]interface{}{{"a": 1}, {"b": "two"}}
+	converted := toAnySlice(input)
+	require.Len(t, converted, 2)
+	require.Equal(t, map[string]interface{}{"a": 1}, converted[0])
+	require.Equal(t, []interface{}{1, "two"}, toAnySlice([]interface{}{1, "two"}))
+	require.Nil(t, toAnySlice("not a slice"))
+
+	intCases := []interface{}{int(1), int8(2), int16(3), int32(4), int64(5), uint(6), uint8(7), uint16(8), uint32(9), uint64(10)}
+	for i, v := range intCases {
+		got, ok := coerceInt64(v)
+		require.True(t, ok)
+		require.Equal(t, int64(i+1), got)
+	}
+	_, ok := coerceInt64("1")
+	require.False(t, ok)
+
+	gotFloat, ok := coerceFloat64(float32(1.5))
+	require.True(t, ok)
+	require.InDelta(t, 1.5, gotFloat, 0.00001)
+	gotFloat, ok = coerceFloat64(int64(2))
+	require.True(t, ok)
+	require.Equal(t, float64(2), gotFloat)
+	_, ok = coerceFloat64("2")
+	require.False(t, ok)
+}
+
+func TestQueryPatternIdentifierHelpers(t *testing.T) {
+	require.Equal(t, []string{"a", "b_2", "c"}, extractNodeVariables("MATCH (a:Person)-[:KNOWS]->(b_2 {id: 1}), (c)"))
+	require.Equal(t, []string{"_anon"}, extractNodeVariables("MATCH (_anon)"))
+	require.Empty(t, extractNodeVariables("MATCH (:Label)-[]->()"))
+
+	name, ok := cyphertext.ScanIdentifier("abc_123 rest", 0)
+	require.True(t, ok)
+	require.Equal(t, "abc_123", name.Value)
+	require.Equal(t, len("abc_123"), name.End)
+
+	_, ok = cyphertext.ScanIdentifier("1abc", 0)
+	require.False(t, ok)
+	_, ok = cyphertext.ScanIdentifier("abc", -1)
+	require.False(t, ok)
+}
+
+func TestRedactLexicalErrorsFailClosed(t *testing.T) {
+	for _, query := range []string{"RETURN '\"secret", "RETURN \x00", "MATCH ("} {
+		_, ok := redactLexCheckedContext(t.Context(), query)
+		require.False(t, ok)
+		exec := NewStorageExecutor(newTestMemoryEngine(t))
+		require.Equal(t, RedactedPlaceholder, exec.redactForLog(t.Context(), query))
+	}
+}
+
+func TestNormalizeInterfaceMap(t *testing.T) {
+	got := normalizeInterfaceMap(map[interface{}]interface{}{1: "one", "two": 2, true: "yes"})
+	want := map[string]interface{}{"1": "one", "two": 2, "true": "yes"}
+	require.True(t, reflect.DeepEqual(want, got), "got %#v", got)
+}
+
+func TestCypherCoverage_ExecutorAccessorsAndFulltextExtraction(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	exec.SetLogger(nil)
+	require.NotNil(t, exec.Logger())
+
+	exec.SetSlowQueryThreshold(25 * time.Millisecond)
+	require.Equal(t, 25*time.Millisecond, exec.SlowQueryThreshold())
+
+	exec.SetCypherMetrics(nil, "tenant-a")
+	require.Nil(t, exec.CypherMetrics())
+	require.Equal(t, "tenant-a", exec.Database())
+
+	exec.SetCacheMetrics(nil)
+	exec.cache = nil
+	exec.SetCacheMetrics(nil)
+}
+
+func TestCypherCoverage_WhereAndComparableHelpers(t *testing.T) {
+	require.True(t, isComparableInterfaceValue(nil))
+	require.True(t, isComparableInterfaceValue("x"))
+	require.False(t, isComparableInterfaceValue([]string{"x"}))
+}
+
+func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
+	node := &storage.Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "Ada"}}
+	edge := &storage.Edge{ID: "e1", Type: "LINKS", StartNode: "nornic:n1", EndNode: "nornic:n2", Properties: map[string]interface{}{"rank": 1}}
+	visibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: newTestMemoryEngine(t), nodes: []*storage.Node{node}, edges: []*storage.Edge{edge}}
+	wrapper := &transactionStorageWrapper{underlying: visibleEngine}
+
+	nodes, err := wrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Equal(t, []*storage.Node{node}, nodes)
+	outgoing, err := wrapper.GetOutgoingEdgesVisibleAt("nornic:n1", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Equal(t, []*storage.Edge{edge}, outgoing)
+	incoming, err := wrapper.GetIncomingEdgesVisibleAt("nornic:n2", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Equal(t, []*storage.Edge{edge}, incoming)
+	edges, err := wrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Equal(t, []*storage.Edge{edge}, edges)
+	edges, err = wrapper.GetEdgesBetweenVisibleAt("nornic:n1", "nornic:n2", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Equal(t, []*storage.Edge{edge}, edges)
+
+	nsNode := &storage.Node{ID: "tenant:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "Ada"}}
+	nsEdge := &storage.Edge{ID: "tenant:e1", Type: "LINKS", StartNode: "tenant:n1", EndNode: "tenant:n2", Properties: map[string]interface{}{"rank": 1}}
+	otherTenantEdge := &storage.Edge{ID: "other:e2", Type: "LINKS", StartNode: "other:n1", EndNode: "other:n2", Properties: map[string]interface{}{"rank": 2}}
+	otherTenantNode := &storage.Node{ID: "other:n1", Labels: []string{"Doc"}}
+	nsVisibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: newTestMemoryEngine(t), nodes: []*storage.Node{nsNode, otherTenantNode}, edges: []*storage.Edge{nsEdge, otherTenantEdge}}
+	nsWrapper := &transactionStorageWrapper{underlying: nsVisibleEngine, namespace: "tenant", separator: ":"}
+	nodes, err = nsWrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
+	edges, err = nsWrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, storage.EdgeID("e1"), edges[0].ID)
+	edges, err = nsWrapper.GetEdgesBetweenVisibleAt("n1", "n2", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, storage.EdgeID("e1"), edges[0].ID)
+
+	scopedWrapper := &transactionStorageWrapper{underlying: storage.NewNamespacedEngine(nsVisibleEngine, "tenant"), namespace: "tenant", separator: ":"}
+	edges, err = scopedWrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, storage.EdgeID("e1"), edges[0].ID)
+	outgoing, err = scopedWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, outgoing, 1)
+	require.Equal(t, storage.EdgeID("e1"), outgoing[0].ID)
+
+	outgoing, err = nsWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, outgoing, 1)
+	require.Equal(t, storage.EdgeID("e1"), outgoing[0].ID)
+	require.Equal(t, storage.NodeID("n1"), outgoing[0].StartNode)
+	require.Equal(t, storage.NodeID("n2"), outgoing[0].EndNode)
+
+	incoming, err = nsWrapper.GetIncomingEdgesVisibleAt("n2", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, incoming, 1)
+	require.Equal(t, storage.EdgeID("e1"), incoming[0].ID)
+	require.Equal(t, storage.NodeID("n1"), incoming[0].StartNode)
+	require.Equal(t, storage.NodeID("n2"), incoming[0].EndNode)
+
+	plainWrapper := &transactionStorageWrapper{}
+	_, err = plainWrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
+	require.ErrorIs(t, err, storage.ErrNotImplemented)
+	_, err = plainWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	require.ErrorIs(t, err, storage.ErrNotImplemented)
+	_, err = plainWrapper.GetIncomingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	require.ErrorIs(t, err, storage.ErrNotImplemented)
+	_, err = plainWrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
+	require.ErrorIs(t, err, storage.ErrNotImplemented)
+	_, err = plainWrapper.GetEdgesBetweenVisibleAt("n1", "n2", storage.MVCCVersion{})
+	require.ErrorIs(t, err, storage.ErrNotImplemented)
+
+	value := nodeToValue(node)
+	require.Equal(t, map[string]interface{}{
+		"elementId":  "nornic:n1",
+		"labels":     []interface{}{"Doc"},
+		"properties": map[string]interface{}{"name": "Ada"},
+	}, value)
+	require.Equal(t, []interface{}{"a", "b"}, labelStringSlice([]string{"a", "b"}))
+
+	exec := &StorageExecutor{}
+	before := idCounter
+	require.Greater(t, exec.idCounter(), before)
+
+	require.True(t, mergeCreateConflict(storage.ErrAlreadyExists))
+	require.True(t, mergeCreateConflict(errors.New("node already exists")))
+	require.False(t, mergeCreateConflict(errors.New("other failure")))
+}

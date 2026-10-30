@@ -1,0 +1,125 @@
+name: Cypher Conformance
+
+# Actions minutes are budgeted: nothing runs automatically on pushes or pull
+# requests. Run checks locally with `make verify`; manual GitHub runs require
+# approval through the admin-approved-actions environment before jobs start.
+# See CONTRIBUTING.md, "Development workflow".
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to check"
+        required: true
+        type: string
+      allocation_base:
+        description: "Allocation baseline ref"
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      allocation_base:
+        description: "Allocation baseline ref, e.g. main for a release branch (default: the pull request base, or the parent commit)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conformance-${{ inputs.ref || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  allocations:
+    name: Allocation ratchet (${{ matrix.parser }})
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        parser: [nornic]
+    steps:
+      - name: Checkout head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: head
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 2
+
+      - name: Resolve allocation baseline
+        id: allocation-base
+        env:
+          BASE_REF: ${{ inputs.allocation_base || github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          python3 head/scripts/cypher-tck/allocation_ratchet.py \
+            --resolve-baseline --head head --reference "$BASE_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: base
+          ref: ${{ steps.allocation-base.outputs.sha }}
+          fetch-depth: 2
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache-dependency-path: head/go.sum
+
+      - name: Verify allocation gate and compare fixed-count workloads
+        run: |
+          python3 head/scripts/cypher-tck/allocation_ratchet.py --self-test
+          python3 head/scripts/cypher-tck/allocation_ratchet.py \
+            --base base --head head --parser ${{ matrix.parser }} \
+            --operations 1000 --samples 5 --tolerance-bytes-pct 1.0 \
+            --artifacts artifacts
+
+      - name: Upload allocation results and CPU profiles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allocations-${{ matrix.parser }}-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+
+  conformance:
+    name: Cypher conformance
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify pinned corpus and run conformance regressions
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          make cypher-conformance 2>&1 | tee artifacts/conformance.log
+
+      - name: Compare fixed corpus with pinned Neo4j
+        run: |
+          set -o pipefail
+          make cypher-differential 2>&1 | tee artifacts/differential.log
+
+      - name: Upload conformance diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypher-conformance-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn

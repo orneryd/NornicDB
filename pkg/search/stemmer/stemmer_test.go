@@ -1,0 +1,165 @@
+package stemmer
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestPluginDirectoryQuarantinesInvalidArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "broken.stemmer.json"), []byte(`{"schema_version":0}`), 0o644))
+
+	missingLibrary := Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		APIVersion:    APIVersion,
+		Type:          ManifestType,
+		ID:            "snowball.missing",
+		Version:       "1.0.0",
+		Library:       "missing.so",
+		SHA256:        strings.Repeat("a", 64),
+		Entrypoint:    EntrypointSymbol,
+	}
+	raw, err := json.Marshal(missingLibrary)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "missing.stemmer.json"), raw, 0o644))
+
+	diagnostics, err := LoadDirBestEffort(dir)
+	require.NoError(t, err)
+	require.Len(t, diagnostics, 2)
+	require.Error(t, LoadDir(dir), "strict loading should retain its fail-fast contract")
+}
+
+type suffixPlugin struct{}
+
+func (suffixPlugin) Stem(token string) string { return token + "-stem" }
+
+func TestManifestValidationRequiresMinimalContractFields(t *testing.T) {
+	valid := Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		APIVersion:    APIVersion,
+		Type:          ManifestType,
+		ID:            "snowball.ukrainian",
+		Version:       "1.0.0",
+		Language:      "ukrainian",
+		Library:       "snowball-ukrainian.so",
+		SHA256:        strings.Repeat("a", 64),
+		Entrypoint:    EntrypointSymbol,
+	}
+	require.NoError(t, ValidateManifest(valid))
+
+	for _, test := range []struct {
+		name     string
+		mutate   func(*Manifest)
+		wantText string
+	}{
+		{name: "path library", mutate: func(m *Manifest) { m.Library = "../snowball.so" }, wantText: "adjacent basename"},
+		{name: "path id", mutate: func(m *Manifest) { m.ID = "./snowball.so" }, wantText: "invalid stemmer plugin id"},
+		{name: "bad digest", mutate: func(m *Manifest) { m.SHA256 = "ABC" }, wantText: "sha256"},
+		{name: "wrong type", mutate: func(m *Manifest) { m.Type = "function" }, wantText: "unsupported stemmer type"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := valid
+			test.mutate(&manifest)
+			require.ErrorContains(t, ValidateManifest(manifest), test.wantText)
+		})
+	}
+}
+
+func TestVerifyLibraryChecksAdjacentDigest(t *testing.T) {
+	dir := t.TempDir()
+	library := filepath.Join(dir, "snowball-ukrainian.so")
+	require.NoError(t, os.WriteFile(library, []byte("fixture plugin bytes"), 0o644))
+	digest, err := SHA256File(library)
+	require.NoError(t, err)
+
+	manifest := Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		APIVersion:    APIVersion,
+		Type:          ManifestType,
+		ID:            "snowball.ukrainian",
+		Version:       "1.0.0",
+		Library:       filepath.Base(library),
+		SHA256:        digest,
+		Entrypoint:    EntrypointSymbol,
+	}
+	manifestPath := filepath.Join(dir, "snowball-ukrainian.stemmer.json")
+	got, err := VerifyLibrary(manifestPath, manifest)
+	require.NoError(t, err)
+	require.Equal(t, library, got)
+
+	manifest.SHA256 = strings.Repeat("b", 64)
+	_, err = VerifyLibrary(manifestPath, manifest)
+	require.ErrorContains(t, err, "digest mismatch")
+}
+
+func TestVerifyLibraryRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.so")
+	require.NoError(t, os.WriteFile(target, []byte("fixture plugin bytes"), 0o644))
+	library := filepath.Join(dir, "linked.so")
+	linkErr := os.Symlink(target, library)
+	if runtime.GOOS == "windows" && errors.Is(linkErr, syscall.Errno(1314)) {
+		t.Skip("Windows account lacks symlink creation privilege; run on Linux or with Windows Developer Mode enabled")
+	}
+	require.NoError(t, linkErr)
+	digest, err := SHA256File(target)
+	require.NoError(t, err)
+
+	manifest := Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		APIVersion:    APIVersion,
+		Type:          ManifestType,
+		ID:            "snowball.linked",
+		Version:       "1.0.0",
+		Library:       filepath.Base(library),
+		SHA256:        digest,
+		Entrypoint:    EntrypointSymbol,
+	}
+	_, err = VerifyLibrary(filepath.Join(dir, "linked.stemmer.json"), manifest)
+	require.ErrorContains(t, err, "symlink")
+}
+
+func TestRegistryRejectsDuplicateIDs(t *testing.T) {
+	ResetForTest()
+	t.Cleanup(ResetForTest)
+	reg := Registration{
+		APIVersion: APIVersion,
+		ID:         "snowball.ukrainian",
+		Version:    "1.0.0",
+		Digest:     strings.Repeat("c", 64),
+		Stem:       suffixPlugin{}.Stem,
+	}
+	require.NoError(t, Register(reg))
+	conflict := reg
+	conflict.Digest = strings.Repeat("d", 64)
+	require.ErrorContains(t, Register(conflict), "duplicate")
+
+	got, ok := Lookup("snowball.ukrainian")
+	require.True(t, ok)
+	require.Equal(t, "word-stem", got.Stem("word"))
+	require.Len(t, Available(), 1)
+}
+
+func TestRegistryAllowsIdenticalRegistration(t *testing.T) {
+	ResetForTest()
+	t.Cleanup(ResetForTest)
+	reg := Registration{
+		APIVersion: APIVersion,
+		ID:         "snowball.ukrainian",
+		Version:    "1.0.0",
+		Language:   "ukrainian",
+		Digest:     strings.Repeat("c", 64),
+		Path:       "/plugins/snowball-ukrainian.so",
+		Stem:       suffixPlugin{}.Stem,
+	}
+	require.NoError(t, Register(reg))
+	require.NoError(t, Register(reg), "loading the same artifact twice must be idempotent")
+}

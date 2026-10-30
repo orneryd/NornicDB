@@ -1,0 +1,12 @@
+- id: security.invalid_header
+  description: Pseudo-locale invalid header response.
+  other: "[!! Invalid header {{.Name}}: {{.Cause}} !!]"
+- id: security.invalid_authorization_token
+  description: Pseudo-locale invalid authorization token response.
+  other: "[!! Invalid authorization token: {{.Cause}} !!]"
+- id: security.invalid_token_parameter
+  description: Pseudo-locale invalid token parameter response.
+  other: "[!! Invalid token parameter: {{.Cause}} !!]"
+- id: security.invalid_url_parameter
+  description: Pseudo-locale invalid URL parameter response.
+  other: "[!! Invalid {{.Name}} parameter: {{.Cause}} !!]"

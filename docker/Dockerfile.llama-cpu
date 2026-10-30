@@ -1,0 +1,58 @@
+# Prebuilt llama.cpp CPU/static libraries for Linux app images.
+#
+# This image is used as a shared prerequisite for NornicDB targets that build
+# with `localllm` but do not use the CUDA-specific `llama-cuda-libs` base.
+
+FROM debian:bookworm-slim AS builder
+
+ARG TARGETARCH
+ARG LLAMA_VERSION=v0.7.0
+ARG LLAMA_BUILD_JOBS=2
+
+WORKDIR /llama
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git ca-certificates && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      arm64) \
+        C_FLAGS="-mcpu=generic -fPIC"; \
+        CXX_FLAGS="-mcpu=generic -fPIC"; \
+        ;; \
+      amd64) \
+        C_FLAGS="-O3 -fPIC"; \
+        CXX_FLAGS="-O3 -fPIC"; \
+        ;; \
+      *) \
+        echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
+        exit 1; \
+        ;; \
+    esac; \
+    git clone --depth 1 --branch "${LLAMA_VERSION}" https://github.com/ggml-org/llama.cpp.git .; \
+    cmake -B build \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF \
+      -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_CURL=OFF \
+      -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DCMAKE_C_FLAGS="${C_FLAGS}" -DCMAKE_CXX_FLAGS="${CXX_FLAGS}"; \
+    cmake --build build --config Release --target llama --target ggml -j"${LLAMA_BUILD_JOBS}"
+
+RUN mkdir -p /output/lib /output/include && \
+    find build -name "*.a" -exec cp {} /output/lib/ \; && \
+    echo "Libraries found:" && ls -la /output/lib/*.a && \
+    echo "CREATE /output/lib/libllama_combined.a" > /tmp/ar.mri && \
+    for lib in /output/lib/lib*.a; do echo "ADDLIB $lib" >> /tmp/ar.mri; done && \
+    echo "SAVE" >> /tmp/ar.mri && \
+    echo "END" >> /tmp/ar.mri && \
+    ar -M < /tmp/ar.mri && \
+    cp include/llama.h ggml/include/*.h /output/include/ && \
+    ls -lh /output/lib/libllama_combined.a
+
+COPY lib/llama/REVISION /llama-expected-revision
+RUN test "$(git rev-parse HEAD)" = "$(tr -d '\r\n' < /llama-expected-revision)"
+
+FROM debian:bookworm-slim
+
+COPY --from=builder /output /output

@@ -1,0 +1,131 @@
+# NornicDB AMD64 Vulkan
+# GPU-accelerated build using Vulkan (no CUDA dependencies)
+# Works with any Vulkan-capable GPU: NVIDIA, AMD, Intel
+#
+# Build:  docker build -f docker/Dockerfile.amd64-vulkan -t nornicdb-amd64-vulkan .
+# With BGE model embedded:
+#         docker build -f docker/Dockerfile.amd64-vulkan --build-arg EMBED_MODEL=true -t nornicdb-amd64-vulkan-bge .
+# Headless (no UI):
+#         docker build -f docker/Dockerfile.amd64-vulkan --build-arg HEADLESS=true -t nornicdb-amd64-vulkan-headless .
+
+# =============================================================================
+# Stage 1: UI (skipped in headless mode)
+# =============================================================================
+FROM node:26-alpine AS ui
+ARG HEADLESS=false
+WORKDIR /ui
+COPY ui/package*.json ./
+RUN if [ "$HEADLESS" != "true" ]; then \
+      npm ci 2>/dev/null || npm install --legacy-peer-deps; \
+    fi
+COPY ui/ .
+RUN if [ "$HEADLESS" != "true" ]; then \
+      npm run build; \
+    else \
+      mkdir -p dist && echo "Headless mode - UI skipped" > dist/HEADLESS; \
+    fi
+
+# =============================================================================
+# Stage 2: Go build with Vulkan support (no CUDA)
+# =============================================================================
+FROM golang:1.27.1-bookworm AS builder
+ARG HEADLESS=false
+WORKDIR /build
+
+# Install Vulkan SDK and development dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libvulkan1 \
+    libvulkan-dev \
+    vulkan-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Go dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Source + UI
+COPY . .
+COPY --from=ui /ui/dist ./ui/dist
+
+# Build with Vulkan support (no CUDA, uses purego Vulkan bindings)
+# Note: This uses the pure-Go Vulkan implementation via purego FFI
+RUN COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") && \
+    BUILD_TIME=$(date -u +%Y%m%d-%H%M%S) && \
+    if [ "$HEADLESS" = "true" ]; then \
+      echo "Building headless Vulkan (no UI, no localllm)..." && \
+      CGO_ENABLED=1 go build -tags "nolocalllm noui" \
+        -ldflags="-s -w -X main.buildTime=${BUILD_TIME} -X main.commit=${COMMIT_HASH}" \
+        -o nornicdb ./cmd/nornicdb; \
+    else \
+      echo "Building with Vulkan support and UI (no localllm)..." && \
+      CGO_ENABLED=1 go build -tags "nolocalllm" \
+        -ldflags="-s -w -X main.buildTime=${BUILD_TIME} -X main.commit=${COMMIT_HASH}" \
+        -o nornicdb ./cmd/nornicdb; \
+    fi
+
+# Build APOC plugin
+RUN echo "Building APOC plugin..." && \
+    mkdir -p apoc/built-plugins && \
+    cd apoc/plugin-src/apoc && go build -buildmode=plugin -o ../../../apoc/built-plugins/apoc.so apoc_plugin.go && \
+    echo "✓ Built plugin:" && ls -lh /build/apoc/built-plugins/*.so
+
+# =============================================================================
+# Stage 3: Runtime (Vulkan-enabled)
+# =============================================================================
+FROM debian:bookworm-slim
+WORKDIR /app
+
+# Install Vulkan runtime libraries (no CUDA)
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata wget \
+    libvulkan1 \
+    mesa-vulkan-drivers \
+    && rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /data /app/models
+
+COPY --from=builder /build/nornicdb /app/
+COPY --from=builder /build/apoc/built-plugins /app/plugins/
+COPY docker/entrypoint.sh /app/
+COPY docker/healthcheck.sh /app/
+RUN chmod +x /app/entrypoint.sh /app/healthcheck.sh
+
+# Model embedding: download during build when EMBED_MODEL=true.
+ARG EMBED_MODEL=false
+ARG HEADLESS=false
+ARG BGE_MODEL_URL=https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf
+ARG BGE_RERANKER_URL=https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf
+RUN \
+    if [ "$EMBED_MODEL" = "true" ]; then \
+      echo "Downloading BGE-M3 model from Hugging Face..." && \
+      wget -q --show-progress -O /app/models/bge-m3.gguf "$BGE_MODEL_URL" && \
+      echo "✓ Downloaded bge-m3.gguf ($(du -h /app/models/bge-m3.gguf | cut -f1))" && \
+      echo "Downloading BGE reranker model from Hugging Face..." && \
+      wget -q --show-progress -O /app/models/bge-reranker-v2-m3.gguf "$BGE_RERANKER_URL" && \
+      echo "✓ Downloaded bge-reranker-v2-m3.gguf ($(du -h /app/models/bge-reranker-v2-m3.gguf | cut -f1))"; \
+    else \
+      echo "→ BYOM mode (no embedded model)"; \
+    fi && \
+    if [ "$HEADLESS" = "true" ]; then \
+      echo "✓ Headless mode enabled (no UI)"; \
+    fi
+
+EXPOSE 7473 7474 7687 6334 9091
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD /app/healthcheck.sh
+
+ENV NORNICDB_DATA_DIR=/data \
+  NORNICDB_ADDRESS=0.0.0.0 \
+    NORNICDB_HTTP_PORT=7474 \
+    NORNICDB_BOLT_PORT=7687 \
+    NORNICDB_NO_AUTH=true \
+    NORNICDB_GPU_ENABLED=true \
+    NORNICDB_GPU_BACKEND=vulkan \
+    NORNICDB_HEADLESS=${HEADLESS} \
+    NORNICDB_PLUGINS_DIR=/app/plugins \
+    NORNICDB_SEARCH_RERANK_ENABLED=false \
+    NORNICDB_SEARCH_RERANK_PROVIDER=local \
+    NORNICDB_SEARCH_RERANK_MODEL=bge-reranker-v2-m3.gguf
+
+ENTRYPOINT ["/app/entrypoint.sh"]

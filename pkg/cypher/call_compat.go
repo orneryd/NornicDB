@@ -1,0 +1,1026 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"slices"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/buildinfo"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/search/stemmer"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+// ===== Additional Neo4j Compatibility Procedures =====
+
+// callDbInfo returns database information - Neo4j db.info()
+func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
+	nodeCount, _ := e.storage.NodeCount()
+	edgeCount, _ := e.storage.EdgeCount()
+	name := e.currentDatabaseName()
+	if selected := GetUseDatabaseFromContext(ctx); selected != "" {
+		name = selected
+	}
+	var id, creationDate interface{}
+	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
+		databaseID, createdAt := provider.DatabaseIdentity(name)
+		if databaseID != "" {
+			id = databaseID
+		}
+		if !createdAt.IsZero() {
+			creationDate = createdAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"id", "name", "creationDate", "nodeCount", "relationshipCount"},
+		Rows: [][]interface{}{
+			{id, name, creationDate, nodeCount, edgeCount},
+		},
+	}, nil
+}
+
+// callDbPing checks database connectivity - Neo4j db.ping()
+func (e *StorageExecutor) callDbPing() (*ExecuteResult, error) {
+	return &ExecuteResult{
+		Columns: []string{"success"},
+		Rows:    [][]interface{}{{true}},
+	}, nil
+}
+
+// callDbmsInfo returns DBMS information - Neo4j dbms.info()
+func (e *StorageExecutor) callDbmsInfo() (*ExecuteResult, error) {
+	name := "system"
+	if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
+		name = manager.SystemDatabaseName()
+	}
+	var id, creationDate interface{}
+	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
+		databaseID, createdAt := provider.DatabaseIdentity(name)
+		if databaseID != "" {
+			id = databaseID
+		}
+		if !createdAt.IsZero() {
+			creationDate = createdAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	return &ExecuteResult{
+		Columns: []string{"id", "name", "creationDate"},
+		Rows: [][]interface{}{
+			{id, name, creationDate},
+		},
+	}, nil
+}
+
+// callDbmsListConfig lists DBMS configuration - Neo4j dbms.listConfig()
+func (e *StorageExecutor) callDbmsListConfig() (*ExecuteResult, error) {
+	return e.callDbmsListConfigArguments(context.Background(), nil)
+}
+
+func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+	searchString := ""
+	if len(arguments) > 0 {
+		var valid bool
+		searchString, valid = arguments[0].(string)
+		if !valid {
+			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "dbms.listConfig requires a STRING search filter")
+		}
+	}
+	settings, err := e.executeShowSettings(ctx, "SHOW SETTINGS")
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]interface{}, 0, len(settings.Rows)+3)
+	for _, setting := range settings.Rows {
+		validValues, _ := setting[7].([]string)
+		rows = append(rows, []interface{}{setting[0], setting[4], setting[1], setting[2], setting[3], setting[5], setting[6], strings.Join(validValues, ", ")})
+	}
+	version := buildinfo.Version()
+	rows = append(rows,
+		[]interface{}{"nornicdb.version", "NornicDB version", version, false, version, version, false, "Build version"},
+		[]interface{}{"nornicdb.bolt.enabled", "Bolt protocol enabled", nil, false, nil, nil, nil, "true, false"},
+		[]interface{}{"nornicdb.http.enabled", "HTTP API enabled", nil, false, nil, nil, nil, "true, false"},
+	)
+	sort.Slice(rows, func(first, second int) bool { return rows[first][0].(string) < rows[second][0].(string) })
+	result := &ExecuteResult{
+		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
+		Rows:    [][]interface{}{},
+	}
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), searchString) {
+			result.Rows = append(result.Rows, row)
+		}
+	}
+	return result, nil
+}
+
+// callDbmsClientConfig lists client-visible configuration - Neo4j dbms.clientConfig()
+func (e *StorageExecutor) callDbmsClientConfig() (*ExecuteResult, error) {
+	return &ExecuteResult{
+		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
+		Rows: [][]interface{}{
+			{"server.bolt.advertised_address", "Bolt connector advertised address", "localhost:7687", false, nil, nil, false, "localhost:7687"},
+			{"server.http.advertised_address", "HTTP connector advertised address", "localhost:7474", false, nil, nil, false, "localhost:7474"},
+		},
+	}, nil
+}
+
+// callDbmsListConnections lists active connections - Neo4j dbms.listConnections()
+func (e *StorageExecutor) callDbmsListConnections() (*ExecuteResult, error) {
+	return e.callDbmsListConnectionsWithContext(context.Background())
+}
+
+func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context) (*ExecuteResult, error) {
+	result := &ExecuteResult{
+		Columns: []string{"connectionId", "connectTime", "connector", "username", "userAgent", "serverAddress", "clientAddress"},
+		Rows:    [][]interface{}{},
+	}
+	identity := requestIdentityFromContext(ctx)
+	if identity == nil || identity.Connections == nil {
+		return result, nil
+	}
+	// A principal holding the admin entitlement (whatever its role is
+	// called) sees every connection; any other sees its own, as in Neo4j.
+	// The principal's permissions are principalPermissions; a statement with
+	// neither a resolver nor a signed-in user (an embedded caller) lists
+	// every connection.
+	viewAll := true
+	if allows := principalPermissions(ctx); allows != nil {
+		viewAll = allows("admin")
+	}
+	for _, connection := range identity.Connections() {
+		if !viewAll && (identity.User == nil || connection.Username != identity.User.Name) {
+			continue
+		}
+		result.Rows = append(result.Rows, []interface{}{connection.ConnectionID, connection.ConnectTime, connection.Connector, connection.Username, connection.UserAgent, connection.ServerAddress, connection.ClientAddress})
+	}
+	sort.Slice(result.Rows, func(first, second int) bool { return result.Rows[first][0].(string) < result.Rows[second][0].(string) })
+	return result, nil
+}
+
+// callDbIndexFulltextListAvailableAnalyzers lists fulltext analyzers - Neo4j db.index.fulltext.listAvailableAnalyzers()
+func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteResult, error) {
+	rows := [][]interface{}{{"none", "Language-neutral Unicode analyzer", []string{}, "exact", "", "", false, []string{}}}
+	for _, registration := range stemmer.Available() {
+		digest := registration.Digest
+		if len(digest) > 12 {
+			digest = digest[:12]
+		}
+		rows = append(rows, []interface{}{
+			registration.ID,
+			"Registered BM25 stemmer plugin",
+			nil,
+			"stemmer",
+			registration.Version,
+			digest,
+			stemmer.DynamicLoadSupported(),
+			[]string{},
+		})
+	}
+	return &ExecuteResult{
+		Columns: []string{"analyzer", "description", "stopwords", "kind", "version", "digest", "dynamicLoad", "selectedDatabases"},
+		Rows:    rows,
+	}, nil
+}
+
+// callDbIndexFulltextQueryRelationships searches relationships using a
+// fulltext index — Neo4j db.index.fulltext.queryRelationships(). The
+// resolution mirrors the queryNodes path:
+//
+//   - Look up the named index in the schema.
+//   - Scope the edge scan to the index's declared RelationshipTypes
+//     (a backwards-compatible nil/empty slice means "every edge",
+//     matching pre-PR behavior so legacy databases keep working).
+//   - When the query is the Lucene match-all wildcard ("*" or "*:*"),
+//     return every in-scope edge with score 1.0.
+//   - Otherwise, score indexed relationship text with the same
+//     tokenized BM25-like matching used by queryNodes.
+//
+// Returns one row per matching edge with columns [relationship, score].
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+	result := &ExecuteResult{
+		Columns: []string{"relationship", "score"},
+		Rows:    [][]interface{}{},
+	}
+	indexName, query, opts, err := fulltextQueryArguments("db.index.fulltext.queryRelationships", args)
+	if err != nil {
+		return nil, err
+	}
+	if query == "" {
+		return result, nil
+	}
+
+	// Look up the index's declared scope. A missing index fails as for
+	// queryNodes (requireFulltextIndex); a built-in name, or a node-only index
+	// (no relationship_types declared), falls through to the unscoped scan.
+	var targetTypes []string
+	var targetProperties []string
+	declared := false
+	if schema := e.storage.GetSchema(); schema != nil {
+		if ftIdx, exists := schema.GetFulltextIndex(indexName); exists {
+			targetTypes = ftIdx.RelationshipTypes
+			targetProperties = ftIdx.Properties
+			declared = true
+		}
+	}
+	if err := requireFulltextIndex(indexName, declared); err != nil {
+		return nil, err
+	}
+
+	wildcard := isFulltextWildcard(query)
+	presenceProp, isPresenceQuery := fulltextFieldPresenceQuery(query)
+
+	// If the query asks for `<prop>:*` against a field the index didn't
+	// declare, mirror Neo4j-Lucene: empty result set (no postings list).
+	if isPresenceQuery && len(targetProperties) > 0 && !containsString(targetProperties, presenceProp) {
+		return result, nil
+	}
+
+	if wildcard || isPresenceQuery {
+		if opts.limit == 0 {
+			return result, nil
+		}
+		seen := 0
+		err := storage.StreamEdgesWithFallback(context.Background(), e.storage, 1024, func(edge *storage.Edge) error {
+			if !matchesRelationshipTypes(edge, targetTypes) {
+				return nil
+			}
+			if wildcard {
+				// As for nodes (and in Neo4j), a relationship with none of the
+				// indexed properties has no document, so the wildcard skips it
+				// (#547).
+				if len(targetProperties) > 0 && !edgeHasAnyNonEmptyProperty(edge, targetProperties) {
+					return nil
+				}
+				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{e.procedureRelationship(edge), 1.0}) {
+					return storage.ErrIterationStopped
+				}
+				return nil
+			}
+			if edgeHasNonEmptyProperty(edge, presenceProp) {
+				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{e.procedureRelationship(edge), 1.0}) {
+					return storage.ErrIterationStopped
+				}
+			}
+			return nil
+		})
+		if err != nil && err != storage.ErrIterationStopped {
+			return nil, err
+		}
+		return result, nil
+	}
+
+	edges, err := e.storage.AllEdges()
+	if err != nil {
+		return nil, err
+	}
+
+	parsed, err := ParseFulltextQuery(query)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.IsEmpty() {
+		return result, nil
+	}
+
+	type edgeDoc struct {
+		edge *storage.Edge
+		doc  *ftDoc
+	}
+	docs := make([]edgeDoc, 0, len(edges))
+	docFreq := make(map[string]int, len(parsed.PrimaryTerms()))
+	var totalDocLen int64
+	for _, edge := range edges {
+		if !matchesRelationshipTypes(edge, targetTypes) {
+			continue
+		}
+		doc := buildEdgeFulltextDoc(edge, targetProperties)
+		if doc == nil {
+			continue
+		}
+		docs = append(docs, edgeDoc{edge: edge, doc: doc})
+		totalDocLen += int64(doc.contentTokenN)
+		for _, term := range parsed.PrimaryTerms() {
+			if strings.Contains(doc.contentLower, term) {
+				docFreq[term]++
+			}
+		}
+	}
+	totalDocs := len(docs)
+	avgDocLen := 100.0
+	if totalDocs > 0 {
+		avgDocLen = float64(totalDocLen) / float64(totalDocs)
+	}
+
+	ctx := &ftEvalCtx{
+		DefaultFields: targetProperties,
+		avgDocLen:     avgDocLen,
+		totalDocs:     totalDocs,
+		docFreq:       docFreq,
+	}
+
+	type scoredEdge struct {
+		edge  *storage.Edge
+		score float64
+	}
+	scored := make([]scoredEdge, 0, len(docs))
+	for _, d := range docs {
+		matched, score := parsed.Match(ctx, d.doc)
+		if !matched {
+			continue
+		}
+		if score <= 0 {
+			score = 1.0
+		}
+		scored = append(scored, scoredEdge{edge: d.edge, score: score})
+	}
+
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].score == scored[j].score {
+			return scored[i].edge.ID < scored[j].edge.ID
+		}
+		return scored[i].score > scored[j].score
+	})
+	result.Rows = make([][]interface{}, 0, len(scored))
+	for _, s := range scored {
+		result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(s.edge), s.score})
+	}
+	applyFulltextOptions(result, opts)
+
+	return result, nil
+}
+
+// buildEdgeFulltextDoc mirrors buildNodeFulltextDoc for relationships.
+func buildEdgeFulltextDoc(edge *storage.Edge, properties []string) *ftDoc {
+	if edge == nil {
+		return nil
+	}
+	return buildFulltextDocFromProperties(edge.Properties, extractEdgeTextContent(edge, properties))
+}
+
+// edgeHasNonEmptyProperty mirrors nodeHasNonEmptyProperty: the
+// `<prop>:*` Lucene field-presence query treats empty strings as
+// missing values.
+// edgeHasAnyNonEmptyProperty reports whether edge has a non-empty value for
+// any of props (the relationship has a fulltext document for an index on
+// them).
+func edgeHasAnyNonEmptyProperty(edge *storage.Edge, props []string) bool {
+	for _, prop := range props {
+		if edgeHasNonEmptyProperty(edge, prop) {
+			return true
+		}
+	}
+	return false
+}
+
+func edgeHasNonEmptyProperty(edge *storage.Edge, propName string) bool {
+	if edge == nil {
+		return false
+	}
+	val, ok := edge.Properties[propName]
+	if !ok || val == nil {
+		return false
+	}
+	if s, ok := val.(string); ok && s == "" {
+		return false
+	}
+	return true
+}
+
+// matchesRelationshipTypes reports whether edge.Type is in the
+// target list. An empty target list means "every type" — the legacy
+// behavior for indexes that don't carry a RelationshipTypes scope.
+func matchesRelationshipTypes(edge *storage.Edge, targetTypes []string) bool {
+	if len(targetTypes) == 0 {
+		return true
+	}
+	for _, t := range targetTypes {
+		if edge.Type == t {
+			return true
+		}
+	}
+	return false
+}
+
+// edgePropertiesContain reports whether any of the edge's declared
+// properties (or every property, when targetProperties is empty)
+// contains lowerQuery as a case-insensitive substring.
+func edgePropertiesContain(edge *storage.Edge, targetProperties []string, lowerQuery string) bool {
+	if len(targetProperties) > 0 {
+		for _, prop := range targetProperties {
+			val, ok := edge.Properties[prop]
+			if !ok {
+				continue
+			}
+			if str, ok := val.(string); ok {
+				if strings.Contains(lowerASCII(str), lowerQuery) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, val := range edge.Properties {
+		if str, ok := val.(string); ok {
+			if strings.Contains(lowerASCII(str), lowerQuery) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func extractEdgeTextContent(edge *storage.Edge, properties []string) string {
+	if edge == nil {
+		return ""
+	}
+	var content strings.Builder
+	if len(properties) > 0 {
+		for _, propName := range properties {
+			if val, ok := edge.Properties[propName]; ok {
+				writeFulltextValue(&content, val)
+			}
+		}
+		return strings.TrimSpace(content.String())
+	}
+	for _, val := range edge.Properties {
+		writeFulltextValue(&content, val)
+	}
+	return strings.TrimSpace(content.String())
+}
+
+func writeFulltextValue(content *strings.Builder, val interface{}) {
+	if content == nil || val == nil {
+		return
+	}
+	if s, ok := val.(string); ok {
+		content.WriteString(s)
+		content.WriteByte(' ')
+		return
+	}
+	content.WriteString(fmt.Sprint(val))
+	content.WriteByte(' ')
+}
+
+// edgeToMap returns the result-row map representation of an edge. Held
+// in one place so the queryRelationships scan and any future relationship
+// surface emit identical shapes.
+func edgeToMap(edge *storage.Edge) map[string]interface{} {
+	result := map[string]interface{}{
+		"_id":        string(edge.ID),
+		"_type":      edge.Type,
+		"_start":     string(edge.StartNode),
+		"_end":       string(edge.EndNode),
+		"properties": edge.Properties,
+	}
+	for key, value := range edge.Properties {
+		if _, exists := result[key]; !exists {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+// callDbIndexVectorQueryRelationships searches relationships using vector similarity - Neo4j db.index.vector.queryRelationships()
+// Syntax: CALL db.index.vector.queryRelationships('indexName', k, queryInput)
+// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
+func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Parse parameters from: CALL db.index.vector.queryRelationships('indexName', k, queryInput)
+	// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
+	indexName, k, input, err := e.parseVectorQueryParams(cypher)
+	if err != nil {
+		return nil, localizedError(localization.CypherProceduresVectorQueryParseFailed(err), err)
+	}
+	return e.callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
+}
+
+func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+	// Resolve the query vector (same logic as queryNodes)
+	var queryVector []float32
+
+	if len(input.vector) > 0 {
+		// Direct vector provided (Neo4j compatible)
+		queryVector = input.vector
+	} else if input.stringQuery != "" {
+		// String query - embed server-side (NornicDB enhancement)
+		if e.queryEmbedderForStatement(ctx) == nil {
+			return nil, localizedError(localization.CypherProceduresStringQueryEmbedderRequired(), nil)
+		}
+		embedded, embedErr := e.embedVectorQueryText(ctx, input.stringQuery)
+		if embedErr != nil {
+			return nil, localizedError(localization.CypherProceduresEmbedQueryFailed(input.stringQuery, embedErr), embedErr)
+		}
+		queryVector = embedded
+	} else if input.hasValue || input.paramName != "" {
+		// Parameter reference - resolve from context parameters
+		paramValue := input.value
+		if !input.hasValue {
+			params := getParamsFromContext(ctx)
+			if params == nil {
+				return &ExecuteResult{Columns: []string{"relationship", "score"}, Rows: [][]interface{}{}}, nil
+			}
+			var exists bool
+			paramValue, exists = params[input.paramName]
+			if !exists {
+				return nil, localizedError(localization.CypherProceduresParameterNotProvided(input.paramName), nil)
+			}
+		}
+
+		if text, isText := paramValue.(string); isText {
+			// String parameter - embed it
+			if e.queryEmbedderForStatement(ctx) == nil {
+				return nil, localizedError(localization.CypherProceduresParameterStringEmbedderRequired(input.paramName), nil)
+			}
+			embedded, embedErr := e.embedVectorQueryText(ctx, text)
+			if embedErr != nil {
+				return nil, localizedError(localization.CypherProceduresEmbedParameterFailed(input.paramName, text, embedErr), embedErr)
+			}
+			queryVector = embedded
+		} else {
+			list, ok := valueconvert.ReadList(paramValue)
+			if !ok {
+				return nil, localizedError(localization.CypherProceduresParameterUnsupportedType(input.paramName, cypherTypeName(paramValue)), nil)
+			}
+			var issue *valueconvert.NumberListIssue
+			queryVector, issue = list.Numbers32()
+			if issue != nil {
+				if issue.OutOfRange {
+					return nil, localizedError(localization.CypherCoreFunctionArgumentInvalid("vector query", "representable numeric coordinates", fmt.Sprint(issue.Value)), nil)
+				}
+				return nil, localizedError(localization.CypherProceduresParameterNonNumeric(input.paramName, fmt.Sprintf("%T", issue.Value)), nil)
+			}
+		}
+	} else {
+		// No query input provided - check if this might be a substituted invalid parameter
+		params := getParamsFromContext(ctx)
+		if params != nil {
+			// Parameters were provided, so if we have no input, it might be a substituted invalid type
+			// Check which parameters have unsupported types to provide a better error message
+			var unsupportedParams []string
+			for paramName, paramValue := range params {
+				// Check if this parameter has an unsupported type for vector queries
+				_, list := valueconvert.ReadList(paramValue)
+				_, text := paramValue.(string)
+				if !list && !text {
+					unsupportedParams = append(unsupportedParams, fmt.Sprintf("$%s (%T)", paramName, paramValue))
+				}
+			}
+
+			if len(unsupportedParams) > 0 {
+				// Found parameters with unsupported types - provide specific error
+				paramList := strings.Join(unsupportedParams, ", ")
+				return nil, localizedError(localization.CypherProceduresUnsupportedParameters(paramList), nil)
+			}
+			// Parameters exist but all have supported types - might be a different issue
+			return nil, localizedError(localization.CypherProceduresQueryInputPossiblyUnsupported(), nil)
+		}
+		return nil, localizedError(localization.CypherProceduresQueryInputRequired(), nil)
+	}
+
+	result := &ExecuteResult{
+		Columns: []string{"relationship", "score"},
+		Rows:    [][]interface{}{},
+	}
+
+	// Get vector index configuration (if it exists)
+	var targetRelType, targetProperty string
+	var similarityFunc string = "cosine"
+
+	schema := e.storage.GetSchema()
+	indexFound := false
+	if schema != nil {
+		if vectorIdx, exists := schema.GetVectorIndex(indexName); exists {
+			// For relationship indexes, Label field stores the relationship type
+			targetRelType = vectorIdx.Label
+			targetProperty = vectorIdx.Property
+			similarityFunc = vectorIdx.SimilarityFunc
+			indexFound = true
+		}
+	}
+	// Without an index there is no property to read vectors from: Neo4j's
+	// failure, as for queryNodes, not an empty result.
+	if !indexFound {
+		return nil, noSuchVectorIndexError(indexName)
+	}
+
+	if svc := e.search(); svc != nil && targetProperty != "" && svc.HasRelationshipVectorEntries(targetRelType, targetProperty) {
+		hits, err := svc.VectorQueryRelationships(ctx, queryVector, search.RelationshipVectorQuerySpec{
+			IndexName:  indexName,
+			Type:       targetRelType,
+			Property:   targetProperty,
+			Similarity: similarityFunc,
+			Limit:      k,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, hit := range hits {
+			edge, err := e.storage.GetEdge(storage.EdgeID(hit.ID))
+			if err != nil {
+				continue
+			}
+			result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(edge), hit.Score})
+		}
+		return result, nil
+	}
+
+	// Get all edges and filter to those with embeddings
+	edges, err := e.storage.AllEdges()
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect edges with embeddings and calculate similarities
+	type scoredEdge struct {
+		edge  *storage.Edge
+		score float64
+	}
+	var scoredEdges []scoredEdge
+
+	for _, edge := range edges {
+		// Check relationship type filter if index specifies one
+		if targetRelType != "" && edge.Type != targetRelType {
+			continue
+		}
+
+		// Get embedding from property
+		var edgeEmbedding []float32
+		if targetProperty != "" {
+			if emb, ok := edge.Properties[targetProperty]; ok {
+				edgeEmbedding = toFloat32Slice(emb)
+			}
+		}
+
+		if len(edgeEmbedding) == 0 {
+			continue
+		}
+
+		// Skip if dimensions don't match
+		if len(edgeEmbedding) != len(queryVector) {
+			continue
+		}
+
+		// Neo4j's score for the index's similarity (#907).
+		score, ok := scoreVectorForFastPath(queryVector, edgeEmbedding, similarityFunc)
+		if !ok {
+			continue
+		}
+
+		scoredEdges = append(scoredEdges, scoredEdge{edge: edge, score: score})
+	}
+
+	// Sort by score descending
+	sort.Slice(scoredEdges, func(i, j int) bool {
+		return scoredEdges[i].score > scoredEdges[j].score
+	})
+
+	// Limit to k results
+	if k > 0 && len(scoredEdges) > k {
+		scoredEdges = scoredEdges[:k]
+	}
+
+	// Convert to result rows
+	for _, se := range scoredEdges {
+		result.Rows = append(result.Rows, []interface{}{
+			e.procedureRelationship(se.edge),
+			se.score,
+		})
+	}
+
+	return result, nil
+}
+
+// vectorIndexProcedure names a vector index creation procedure and its
+// arguments: Neo4j's db.index.vector.createNodeIndex and NornicDB's kept
+// db.index.vector.createRelationshipIndex.
+type vectorIndexProcedure struct {
+	name, token, property, dimension, similarity string
+}
+
+var (
+	vectorNodeIndexProcedure         = vectorIndexProcedure{"db.index.vector.createNodeIndex", "label", "propertyKey", "vectorDimension", "vectorSimilarityFunction"}
+	vectorRelationshipIndexProcedure = vectorIndexProcedure{"db.index.vector.createRelationshipIndex", "relationshipType", "property", "dimension", "similarityFunction"}
+)
+
+// callDbIndexVectorCreateIndex creates a vector index on nodes or
+// relationships from the call's evaluated arguments: (indexName, label or
+// relationship type, property, dimension[, similarityFunction]). The
+// similarity function defaults to cosine; only a node index registers a
+// vector search space. The relationship procedure keeps NornicDB's row
+// describing the created index.
+func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args []interface{}, entity storage.ConstraintEntityType) (*ExecuteResult, error) {
+	procedure := vectorNodeIndexProcedure
+	if entity == storage.ConstraintEntityRelationship {
+		procedure = vectorRelationshipIndexProcedure
+	}
+	indexName, err := requiredProcedureString(procedure.name, args, 0, "indexName")
+	if err != nil {
+		return nil, err
+	}
+	token, err := requiredProcedureString(procedure.name, args, 1, procedure.token)
+	if err != nil {
+		return nil, err
+	}
+	property, err := requiredProcedureString(procedure.name, args, 2, procedure.property)
+	if err != nil {
+		return nil, err
+	}
+	dimension, err := requiredProcedureInteger(procedure.name, args, 3, procedure.dimension)
+	if err != nil {
+		return nil, err
+	}
+	similarity := "cosine"
+	if len(args) > 4 {
+		if similarity, err = requiredProcedureString(procedure.name, args, 4, procedure.similarity); err != nil {
+			return nil, err
+		}
+	}
+	similarity = strings.ToLower(similarity)
+	if dimension <= 0 || (similarity != "cosine" && similarity != "euclidean" && similarity != "dot") {
+		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
+	}
+	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
+			return err
+		}
+		if err := schema.AddVectorIndexForEntity(indexName, token, property, int(dimension), similarity, entity); err != nil {
+			return err
+		}
+		if entity == storage.ConstraintEntityNode {
+			e.afterSchemaCommit(ctx, func() {
+				e.registerVectorSpace(indexName, token, property, int(dimension), similarity)
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		failure := localization.CypherProceduresCreateVectorIndexFailed(err)
+		if entity == storage.ConstraintEntityRelationship {
+			failure = localization.CypherProceduresCreateRelationshipVectorIndexFailed(err)
+		}
+		return nil, &classifiedCypherError{
+			cause: localizedError(failure, err),
+			code:  "Neo.ClientError.Procedure.ProcedureCallFailed", detail: "ProcedureCallFailed",
+		}
+	}
+	if entity == storage.ConstraintEntityRelationship {
+		return &ExecuteResult{
+			Columns: legacyProcedureColumns("db.index.vector.createRelationshipIndex"),
+			Rows:    [][]interface{}{{indexName, token, property, int(dimension), similarity}},
+		}, nil
+	}
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+// callDbIndexFulltextCreateNodeIndex creates a fulltext index on nodes - Neo4j db.index.fulltext.createNodeIndex()
+// Syntax: CALL db.index.fulltext.createNodeIndex(indexName, labels, properties, config)
+func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "db.index.fulltext.createNodeIndex"
+	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+	if err != nil {
+		return nil, err
+	}
+	labels, err := requiredProcedureStringList(procedure, args, 1, "labels")
+	if err != nil {
+		return nil, err
+	}
+	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
+	if err != nil {
+		return nil, err
+	}
+
+	// Create fulltext index using schema manager
+	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode); err != nil {
+			return err
+		}
+		return schema.AddFulltextIndex(indexName, labels, properties)
+	})
+	if err != nil {
+		return nil, localizedError(localization.CypherProceduresCreateFulltextIndexFailed(err), err)
+	}
+
+	return &ExecuteResult{
+		Columns: legacyProcedureColumns("db.index.fulltext.createNodeIndex"),
+		Rows:    [][]interface{}{{indexName, labels, properties}},
+	}, nil
+}
+
+// callDbIndexFulltextCreateRelationshipIndex creates a fulltext index on relationships - Neo4j db.index.fulltext.createRelationshipIndex()
+// Syntax: CALL db.index.fulltext.createRelationshipIndex(indexName, relationshipTypes, properties, config)
+func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "db.index.fulltext.createRelationshipIndex"
+	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+	if err != nil {
+		return nil, err
+	}
+	relTypes, err := requiredProcedureStringList(procedure, args, 1, "relationshipTypes")
+	if err != nil {
+		return nil, err
+	}
+	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
+	if err != nil {
+		return nil, err
+	}
+
+	// Create fulltext index using schema manager
+	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship); err != nil {
+			return err
+		}
+		return schema.AddFulltextRelationshipIndex(indexName, relTypes, properties)
+	})
+	if err != nil {
+		return nil, localizedError(localization.CypherProceduresCreateRelationshipFulltextIndexFailed(err), err)
+	}
+
+	return &ExecuteResult{
+		Columns: legacyProcedureColumns("db.index.fulltext.createRelationshipIndex"),
+		Rows:    [][]interface{}{{indexName, relTypes, properties}},
+	}, nil
+}
+
+// callDbIndexFulltextDrop drops a fulltext index - Neo4j db.index.fulltext.drop()
+// Syntax: CALL db.index.fulltext.drop(indexName)
+func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteResult, error) {
+	indexName, err := requiredProcedureString("db.index.fulltext.drop", args, 0, "indexName")
+	if err != nil {
+		return nil, err
+	}
+
+	if err := e.dropIndexOfKind(indexName, "fulltext", func(schema *storage.SchemaManager) bool {
+		_, ok := schema.GetFulltextIndex(indexName)
+		return ok
+	}); err != nil {
+		return nil, err
+	}
+	return &ExecuteResult{
+		Columns: legacyProcedureColumns("db.index.fulltext.drop"),
+		Rows:    [][]interface{}{{indexName, true}},
+	}, nil
+}
+
+// callDbIndexVectorDrop drops a vector index - Neo4j db.index.vector.drop()
+// Syntax: CALL db.index.vector.drop(indexName)
+func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteResult, error) {
+	indexName, err := requiredProcedureString("db.index.vector.drop", args, 0, "indexName")
+	if err != nil {
+		return nil, err
+	}
+
+	if err := e.dropIndexOfKind(indexName, "vector", func(schema *storage.SchemaManager) bool {
+		_, ok := schema.GetVectorIndex(indexName)
+		return ok
+	}); err != nil {
+		return nil, err
+	}
+	return &ExecuteResult{
+		Columns: legacyProcedureColumns("db.index.fulltext.drop"),
+		Rows:    [][]interface{}{{indexName, true}},
+	}, nil
+}
+
+// dropIndexOfKind backs the db.index.<kind>.drop compatibility procedures: it
+// drops the named index through dropIndexByName (the DROP INDEX path) only when
+// an index of that kind exists under the name, and otherwise fails with
+// Neo.ClientError.Schema.IndexDropFailed, so a procedure never reports a drop
+// that did not happen and never drops an index of another kind.
+func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storage.SchemaManager) bool) error {
+	if isCompositeRoot(e.storage) {
+		return localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+	}
+	return e.mutateSchema(context.Background(), func(schema *storage.SchemaManager) error {
+		if schema == nil || !exists(schema) {
+			return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex",
+				fmt.Sprintf("there is no %s index named %q", kind, name))
+		}
+		return e.dropIndexByName(name, false)
+	})
+}
+
+// callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
+// Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
+func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setNodeVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
+	if err != nil {
+		return nil, err
+	}
+	return e.callSetVectorProperty(ctx, arguments, false)
+}
+
+// callDbCreateSetRelationshipVectorProperty sets a vector property on a relationship - Neo4j db.create.setRelationshipVectorProperty()
+// Syntax: CALL db.create.setRelationshipVectorProperty(relationship, propertyKey, vector)
+func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setRelationshipVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
+	if err != nil {
+		return nil, err
+	}
+	return e.callSetVectorProperty(ctx, arguments, true)
+}
+
+func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
+	if len(arguments) != 3 {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments", "vector property setter requires three arguments")
+	}
+	identifier, validID := arguments[0].(string)
+	switch entity := arguments[0].(type) {
+	case *storage.Node:
+		if !relationship && entity != nil {
+			identifier, validID = string(entity.ID), true
+		}
+	case *storage.Edge:
+		if relationship && entity != nil {
+			identifier, validID = string(entity.ID), true
+		}
+	}
+	propertyKey, validKey := arguments[1].(string)
+	if expression, raw := arguments[2].(string); raw && strings.HasPrefix(strings.TrimSpace(expression), "[") {
+		arguments[2] = e.evaluateExpressionWithContext(ctx, expression, nil, nil)
+	}
+	vector, validVector := toFloat64Slice(arguments[2])
+	if !validID || !validKey || !validVector {
+		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "vector property setter requires an entity, a STRING property key, and a numeric vector")
+	}
+	store := e.getStorage(ctx)
+	if relationship {
+		edge, err := store.GetEdge(storage.EdgeID(identifier))
+		if err != nil {
+			return nil, localizedError(localization.CypherProceduresRelationshipNotFound(identifier), nil)
+		}
+		if current, ok := toFloat64Slice(edge.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
+			edge.Properties[propertyKey] = vector
+			if err := updateMutatedEdge(ctx, store, edge); err != nil {
+				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
+			}
+			e.notifyEdgeMutated(string(edge.ID))
+		}
+		if entity, ok := arguments[0].(*storage.Edge); ok {
+			entity.Properties = edge.Properties
+			entity.UpdatedAt = edge.UpdatedAt
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+	node, err := store.GetNode(storage.NodeID(identifier))
+	if err != nil {
+		return nil, localizedError(localization.CypherProceduresNodeNotFound(identifier), nil)
+	}
+	if current, ok := toFloat64Slice(node.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
+		node.Properties[propertyKey] = vector
+		if err := updateMutatedNode(ctx, store, node); err != nil {
+			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
+		}
+		e.notifyNodeMutated(string(node.ID))
+	}
+	if entity, ok := arguments[0].(*storage.Node); ok {
+		entity.Properties = node.Properties
+		entity.UpdatedAt = node.UpdatedAt
+	}
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+// callTxSetMetadata sets transaction metadata - Neo4j tx.setMetaData()
+//
+// This procedure is used to attach metadata to transactions for logging/debugging.
+// Syntax: CALL tx.setMetaData({key: value})
+//
+// Uses the active explicit transaction or the statement's implicit transaction.
+// Metadata is stored with the transaction for logging, debugging, or audit trails.
+func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+	var tx *storage.BadgerTransaction
+	if e.txContext != nil && e.txContext.active {
+		var supported bool
+		tx, supported = e.txContext.tx.(*storage.BadgerTransaction)
+		if !supported {
+			return nil, localizedError(localization.CypherProceduresMetadataTransactionUnsupported(), nil)
+		}
+	} else if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+		tx = wrapper.tx
+	}
+	if tx == nil {
+		return nil, localizedError(localization.CypherProceduresMetadataActiveTransactionRequired(), nil)
+	}
+
+	if len(arguments) != 1 {
+		return nil, localizedError(localization.CypherProceduresMetadataObjectRequired(), nil)
+	}
+
+	metadata, valid := toStringAnyMap(arguments[0])
+	if expression, raw := arguments[0].(string); raw {
+		metadata, valid = toStringAnyMap(e.evaluateExpressionWithContext(ctx, expression, nil, nil))
+	}
+	if !valid {
+		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "tx.setMetaData requires a MAP")
+	}
+
+	err := tx.SetMetadata(metadata)
+	if err != nil {
+		return nil, localizedError(localization.CypherProceduresSetMetadataFailed(err), err)
+	}
+
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}

@@ -1,0 +1,222 @@
+- id: server.application_memory_pressure
+  description: Respuesta HTTP cuando se alcanza el límite flexible de memoria de la aplicación.
+  other: Se alcanzó el límite flexible de memoria de la aplicación; inténtelo de nuevo cuando se libere memoria.
+- id: server.application_memory_unavailable
+  description: Respuesta HTTP cuando no hay una lectura reciente de memoria.
+  other: Las lecturas de uso de memoria no están disponibles; inténtelo de nuevo cuando se recupere la supervisión.
+- id: server.role_entitlements_unavailable
+  description: Respuesta cuando no se pueden configurar derechos de rol.
+  other: Los derechos de rol no están configurados (autenticación deshabilitada o base de datos del sistema no disponible).
+- id: server.role_entitlements_body_invalid
+  description: Respuesta de validación para derechos de rol.
+  other: el cuerpo debe contener role y entitlements o una matriz mappings
+- id: server.roles_unavailable_detailed
+  description: Respuesta cuando no está disponible la configuración de roles.
+  other: Los roles no están configurados (autenticación deshabilitada o base de datos del sistema no disponible).
+- id: server.role_already_exists
+  description: Conflicto cuando ya existe un rol.
+  other: el rol ya existe
+- id: server.roles_unavailable
+  description: Respuesta cuando no están configurados los roles.
+  other: Los roles no están configurados.
+- id: server.new_role_already_exists
+  description: Conflicto cuando ya existe el nuevo nombre de rol.
+  other: el nuevo nombre de rol ya existe
+- id: server.method_patch_or_delete_required
+  description: Respuesta para un endpoint que acepta PATCH o DELETE.
+  other: se requiere PATCH o DELETE
+- id: server.database_allowlist_unavailable
+  description: Respuesta cuando no está disponible la lista de acceso a bases de datos.
+  other: La lista de acceso a bases de datos no está configurada (autenticación deshabilitada o base de datos del sistema no disponible).
+- id: server.database_privileges_unavailable
+  description: Respuesta cuando no están disponibles los privilegios de bases de datos.
+  other: Los privilegios de acceso a bases de datos no están configurados (autenticación deshabilitada o base de datos del sistema no disponible).
+- id: server.database_name_required
+  description: Respuesta cuando falta el nombre de la base de datos.
+  other: se requiere el nombre de la base de datos
+- id: server.unknown_endpoint
+  description: Respuesta para un endpoint de base de datos desconocido.
+  other: endpoint desconocido
+- id: server.unknown_transaction_endpoint
+  description: Respuesta para un endpoint de transacción desconocido.
+  other: endpoint de transacción desconocido
+- id: server.gpu_unavailable
+  description: Error de operación de GPU. Cause no se traduce.
+  other: "GPU no disponible: {{.Cause}}"
+- id: server.heimdall_disabled
+  description: Respuesta cuando Heimdall está deshabilitado.
+  other: Heimdall está deshabilitado por la configuración
+- id: server.heimdall_initializing
+  description: Respuesta mientras Heimdall se inicializa.
+  other: Heimdall se está inicializando; inténtelo de nuevo en breve
+- id: server.gpu_acceleration_enabled
+  description: Confirmación después de habilitar la aceleración por GPU.
+  other: aceleración por GPU habilitada
+- id: server.gpu_acceleration_disabled
+  description: Confirmación después de deshabilitar la aceleración por GPU.
+  other: aceleración por GPU deshabilitada (respaldo de CPU activo)
+- id: server.embedding_regeneration_started
+  description: Confirmación del inicio de la regeneración de incrustaciones.
+  other: Regeneración iniciada; se borrarán y regenerarán las incrustaciones en segundo plano. Consulte /nornicdb/embed/stats para ver el progreso.
+- id: server.embedding_worker_already_running
+  description: Estado cuando el procesador de incrustaciones ya está activo.
+  other: El procesador de incrustaciones ya está activo y continuará procesando
+- id: server.embedding_worker_triggered
+  description: Confirmación del inicio del procesamiento de incrustaciones.
+  other: Procesador de incrustaciones activado; los nodos se procesarán en segundo plano
+- id: server.retention_policy_deleted
+  description: Confirmación después de eliminar una directiva de retención.
+  other: eliminada
+- id: server.retention_hold_released
+  description: Confirmación después de liberar una retención.
+  other: liberada
+- id: server.retention_sweep_triggered
+  description: Confirmación después de activar un barrido de retención.
+  other: barrido activado
+- id: server.backup_complete
+  description: Confirmación después de completar una copia de seguridad.
+  other: copia de seguridad completada
+- id: server.log.mcp_disabled
+  description: Registro de inicio cuando MCP está deshabilitado por la configuración.
+  other: servidor MCP deshabilitado mediante la configuración
+- id: server.log.search_reconcile_storage_unavailable
+  description: Advertencia de inicio cuando la reconciliación de búsqueda no puede acceder al almacenamiento de una base de datos.
+  other: "reconciliación de búsqueda al inicio: almacenamiento no disponible"
+- id: server.log.search_reconcile_failed
+  description: Advertencia de inicio cuando falla la reconciliación del índice de búsqueda de una base de datos.
+  other: error en la reconciliación de búsqueda al inicio
+- id: server.log.remote_credentials_key_fallback
+  description: Advertencia de inicio cuando se reutiliza otro secreto configurado para cifrar credenciales remotas.
+  other: respaldo de clave de cifrado de credenciales remotas en uso
+- id: server.log.ui_headless
+  description: Registro de inicio cuando la interfaz de navegador está deshabilitada en modo sin interfaz.
+  other: "modo sin interfaz: UI deshabilitada"
+- id: server.log.authentication_disabled
+  description: Advertencia de inicio cuando la autenticación está deshabilitada.
+  other: autenticación deshabilitada
+- id: server.log.ui_initialization_failed
+  description: Advertencia de inicio cuando no se pueden inicializar los recursos de la UI. Error no se traduce.
+  other: error al inicializar la UI
+- id: server.log.ui_enabled
+  description: Registro de inicio cuando se registran las rutas de la UI.
+  other: navegador de UI habilitado
+- id: server.log.rate_limit_enabled
+  description: Registro de inicio cuando está habilitada la limitación de solicitudes por IP.
+  other: limitación de solicitudes habilitada
+- id: server.log.graphql_enabled
+  description: Registro de inicio después de registrar las rutas de GraphQL.
+  other: API GraphQL habilitada
+- id: server.log.heimdall_disabled
+  description: Registro de inicio cuando el asistente de IA Heimdall está deshabilitado.
+  other: sistema agéntico de Heimdall deshabilitado; los plugins configurados siguen disponibles
+- id: server.log.search_rerank_disabled
+  description: Registro de inicio cuando la reordenación de búsqueda de segunda etapa está deshabilitada.
+  other: reordenación de búsqueda deshabilitada
+- id: server.log.search_rerank_api_url_missing
+  description: Advertencia de inicio cuando la reordenación externa está habilitada sin una URL de API.
+  other: reordenación de búsqueda habilitada pero sin URL de API; reordenación de segunda etapa deshabilitada
+- id: server.log.search_reranker_ready
+  description: Registro de inicio cuando un reordenador de búsqueda local o externo está listo.
+  other: reordenador de búsqueda listo (reordenación de segunda etapa habilitada)
+- id: server.log.search_reranker_loading
+  description: Registro de inicio mientras un reordenador de búsqueda local se carga de forma asíncrona.
+  other: cargando modelo de reordenación de búsqueda
+- id: server.log.slow_query_logging_enabled
+  description: Registro de inicio cuando el registro interno de consultas lentas está habilitado.
+  other: registro de consultas lentas habilitado
+- id: server.log.slow_query_logging_configured
+  description: Registro de inicio cuando se configura el registro de consultas lentas en archivo.
+  other: registro de consultas lentas configurado
+- id: server.log.slow_query_log_open_failed
+  description: Advertencia de inicio cuando no se puede abrir el archivo de consultas lentas.
+  other: no se pudo abrir el archivo de registro de consultas lentas
+- id: server.log.http2_enabled
+  description: Registro de inicio cuando el transporte HTTP/2 está habilitado.
+  other: HTTP/2 habilitado
+- id: server.log.heimdall_initializing
+  description: Inicio de la inicialización asíncrona de Heimdall.
+  other: inicializando de forma asíncrona el asistente de IA Heimdall
+- id: server.log.heimdall_provider_resolved
+  description: Proveedor de Heimdall resuelto.
+  other: proveedor de Heimdall resuelto
+- id: server.log.heimdall_initialization_failed
+  description: Error de inicialización de Heimdall.
+  other: error al inicializar Heimdall
+- id: server.log.apoc_plugins_loading
+  description: Carga de complementos APOC.
+  other: cargando complementos APOC
+- id: server.log.apoc_plugins_load_failed
+  description: Error de carga de complementos APOC.
+  other: no se pudieron cargar los complementos APOC
+- id: server.log.heimdall_plugins_loading
+  description: Carga de complementos de Heimdall.
+  other: cargando complementos de Heimdall
+- id: server.log.heimdall_plugins_load_failed
+  description: Error de carga de complementos de Heimdall.
+  other: no se pudieron cargar los complementos de Heimdall
+- id: server.log.heimdall_plugins_directory_empty
+  description: Directorio de complementos de Heimdall vacío.
+  other: el directorio de complementos de Heimdall está vacío
+- id: server.log.heimdall_plugins_directory_duplicate
+  description: Directorios de complementos duplicados.
+  other: el directorio de complementos de Heimdall coincide con el directorio de complementos; se omite
+- id: server.log.heimdall_ready
+  description: Heimdall listo.
+  other: asistente de IA Heimdall listo
+- id: server.log.heimdall_plugins_missing
+  description: No se cargaron complementos de Heimdall.
+  other: no se cargaron complementos de Heimdall; no habrá registros del observador
+- id: server.log.heimdall_action_registered
+  description: Acción de Heimdall registrada.
+  other: acción de Heimdall registrada
+- id: server.log.search_reranker_model_unavailable
+  description: Modelo local de reordenación no disponible.
+  other: modelo de reordenación de búsqueda no disponible; reordenación de segunda etapa deshabilitada, solo orden RRF
+- id: server.log.search_reranker_health_check_failed
+  description: Error de comprobación de estado del reordenador.
+  other: error en la comprobación de estado del reordenador de búsqueda
+- id: server.log.embedding_model_loading
+  description: Carga del modelo de incrustaciones.
+  other: cargando modelo de incrustaciones
+- id: server.log.embedding_retry_loop_stopped
+  description: Detención de reintentos durante el cierre.
+  other: "bucle de reintentos de inicialización de incrustaciones detenido: el servidor se está cerrando"
+- id: server.log.embedding_cache_enabled
+  description: Caché de incrustaciones habilitada.
+  other: caché de incrustaciones habilitada
+- id: server.log.embeddings_ready
+  description: Proveedor de incrustaciones listo.
+  other: incrustaciones listas
+- id: server.log.embedding_initialization_attempt_failed
+  description: Error de inicialización de incrustaciones.
+  other: falló el intento de inicialización de incrustaciones
+- id: server.log.embedding_initialization_retrying
+  description: Reintento con espera exponencial.
+  other: reintentando la inicialización de incrustaciones (espera exponencial)
+- id: server.log.embedding_initialization_retry_interrupted
+  description: Reintento interrumpido por el cierre.
+  other: reintento de inicialización de incrustaciones interrumpido por el cierre del servidor
+- id: server.log.embedding_retry_interval_capped
+  description: Reintentos periódicos de inicialización.
+  other: el intervalo de reintento de inicialización de incrustaciones alcanzó el límite; continúan los reintentos periódicos
+- id: server.log.rbac_roles_load_failed
+  description: Error de carga de roles RBAC.
+  other: no se pudieron cargar los roles de RBAC
+- id: server.log.rbac_allowlist_load_failed
+  description: Error de carga de la lista de acceso RBAC.
+  other: no se pudo cargar la lista de acceso de RBAC
+- id: server.log.rbac_allowlist_seed_failed
+  description: Error de inicialización de la lista de acceso RBAC.
+  other: no se pudo inicializar la lista de acceso de RBAC
+- id: server.log.rbac_privileges_load_failed
+  description: Error de carga de privilegios RBAC.
+  other: no se pudieron cargar los privilegios de RBAC
+- id: server.log.rbac_role_entitlements_load_failed
+  description: Error de carga de derechos de rol RBAC.
+  other: no se pudieron cargar los derechos de rol de RBAC
+- id: server.log.database_config_store_load_failed
+  description: Error de carga del almacén de configuración por base de datos.
+  other: no se pudo cargar el almacén de configuración por base de datos
+- id: server.log.http_serve_failed
+  description: Error inesperado del servidor HTTP.
+  other: error del servidor HTTP

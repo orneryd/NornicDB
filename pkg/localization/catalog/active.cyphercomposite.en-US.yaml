@@ -1,0 +1,162 @@
+- id: cyphercomposite.constituent_alias_expected
+  description: Missing ALIAS keyword in a constituent definition.
+  other: "invalid constituent syntax: ALIAS expected"
+- id: cyphercomposite.constituent_alias_name_empty
+  description: Empty constituent alias name.
+  other: "invalid constituent syntax: alias name cannot be empty"
+- id: cyphercomposite.constituent_alias_name_invalid
+  description: Invalid constituent alias name. Cause is untranslated diagnostic text.
+  other: "invalid constituent syntax: alias name: {{.Cause}}"
+- id: cyphercomposite.constituent_for_database_expected
+  description: Missing FOR DATABASE clause in a constituent definition.
+  other: "invalid constituent syntax: FOR DATABASE expected"
+- id: cyphercomposite.constituent_database_name_empty
+  description: Empty constituent database name.
+  other: "invalid constituent syntax: database name cannot be empty"
+- id: cyphercomposite.constituent_database_name_invalid
+  description: Invalid constituent database name. Cause is untranslated diagnostic text.
+  other: "invalid constituent syntax: database name: {{.Cause}}"
+- id: cyphercomposite.constituent_remote_uri_expected
+  description: Missing remote URI after AT.
+  other: "invalid constituent syntax: remote URI expected after AT"
+- id: cyphercomposite.constituent_remote_uri_invalid
+  description: Invalid constituent remote URI. Cause is untranslated diagnostic text.
+  other: "invalid constituent syntax: remote URI: {{.Cause}}"
+- id: cyphercomposite.constituent_remote_uri_empty
+  description: Empty constituent remote URI.
+  other: "invalid constituent syntax: remote URI cannot be empty"
+- id: cyphercomposite.constituent_user_empty
+  description: Empty remote constituent user.
+  other: "invalid constituent syntax: user cannot be empty"
+- id: cyphercomposite.constituent_user_invalid
+  description: Invalid remote constituent user. Cause is untranslated diagnostic text.
+  other: "invalid constituent syntax: user: {{.Cause}}"
+- id: cyphercomposite.constituent_password_empty
+  description: Empty remote constituent password.
+  other: "invalid constituent syntax: password cannot be empty"
+- id: cyphercomposite.constituent_password_invalid
+  description: Invalid remote constituent password. Cause is untranslated diagnostic text.
+  other: "invalid constituent syntax: password: {{.Cause}}"
+- id: cyphercomposite.constituent_oidc_credential_forwarding_expected
+  description: Incomplete OIDC CREDENTIAL FORWARDING clause.
+  other: "invalid constituent syntax: OIDC CREDENTIAL FORWARDING expected"
+- id: cyphercomposite.constituent_secret_ref_expected
+  description: Missing REF keyword after SECRET.
+  other: "invalid constituent syntax: SECRET REF expected"
+- id: cyphercomposite.constituent_secret_ref_empty
+  description: Empty constituent secret reference.
+  other: "invalid constituent syntax: secret ref cannot be empty"
+- id: cyphercomposite.constituent_secret_ref_invalid
+  description: Invalid constituent secret reference. Cause is untranslated diagnostic text.
+  other: "invalid constituent syntax: secret ref: {{.Cause}}"
+- id: cyphercomposite.constituent_type_empty
+  description: Empty constituent type.
+  other: "invalid constituent syntax: type cannot be empty"
+- id: cyphercomposite.constituent_type_invalid
+  description: Invalid constituent type token. Cause is untranslated diagnostic text.
+  other: "invalid constituent syntax: type: {{.Cause}}"
+- id: cyphercomposite.constituent_type_unsupported
+  description: Unsupported constituent type.
+  other: "invalid constituent syntax: type must be local or remote"
+- id: cyphercomposite.constituent_type_contradicts_at
+  description: Local type contradicts a remote AT clause.
+  other: "invalid constituent syntax: TYPE local contradicts AT (remote URI already specified)"
+- id: cyphercomposite.constituent_access_mode_empty
+  description: Empty constituent access mode.
+  other: "invalid constituent syntax: access mode cannot be empty"
+- id: cyphercomposite.constituent_access_mode_invalid
+  description: Invalid constituent access mode token. Cause is untranslated diagnostic text.
+  other: "invalid constituent syntax: access mode: {{.Cause}}"
+- id: cyphercomposite.constituent_access_mode_unsupported
+  description: Unsupported constituent access mode.
+  other: "invalid constituent syntax: access mode must be read, write, or read_write"
+- id: cyphercomposite.constituent_unexpected_token
+  description: Unexpected constituent token. Token is untranslated Cypher syntax.
+  other: "invalid constituent syntax: unexpected token '{{.Token}}'"
+- id: cyphercomposite.constituent_auth_modes_conflict
+  description: Conflicting remote constituent authentication modes.
+  other: "invalid constituent syntax: cannot combine OIDC CREDENTIAL FORWARDING with USER/PASSWORD"
+- id: cyphercomposite.constituent_user_password_required
+  description: Incomplete user and password authentication.
+  other: "invalid constituent syntax: USER and PASSWORD must both be provided"
+- id: cyphercomposite.constituent_remote_required
+  description: Authentication supplied for a local constituent.
+  other: "invalid constituent syntax: USER/PASSWORD and OIDC CREDENTIAL FORWARDING require a remote constituent (AT '<url>' or TYPE remote)"
+- id: cyphercomposite.database_manager_unavailable
+  description: Composite command requires multi-database support. Command is untranslated syntax.
+  other: "database manager not available - {{.Command}} requires multi-database support"
+- id: cyphercomposite.create_invalid_syntax
+  description: Invalid CREATE COMPOSITE DATABASE syntax.
+  other: "invalid CREATE COMPOSITE DATABASE syntax"
+- id: cyphercomposite.create_database_name_expected
+  description: Missing composite database name during creation.
+  other: "invalid CREATE COMPOSITE DATABASE syntax: database name expected"
+- id: cyphercomposite.create_database_name_empty
+  description: Empty composite database name during creation.
+  other: "invalid CREATE COMPOSITE DATABASE syntax: database name cannot be empty"
+- id: cyphercomposite.create_tokenize_failed
+  description: CREATE COMPOSITE DATABASE tokenization failure. Cause is untranslated diagnostic text.
+  other: "invalid CREATE COMPOSITE DATABASE syntax: {{.Cause}}"
+- id: cyphercomposite.create_constituent_required
+  description: Composite database creation requires a constituent.
+  other: "invalid CREATE COMPOSITE DATABASE syntax: at least one constituent required"
+- id: cyphercomposite.create_database_failed
+  description: Composite database creation failure. Database and Cause are untranslated values.
+  other: "failed to create composite database '{{.Database}}': {{.Cause}}"
+- id: cyphercomposite.drop_invalid_syntax
+  description: Invalid DROP COMPOSITE DATABASE syntax.
+  other: "invalid DROP COMPOSITE DATABASE syntax"
+- id: cyphercomposite.drop_database_name_expected
+  description: Missing composite database name during deletion.
+  other: "invalid DROP COMPOSITE DATABASE syntax: database name expected"
+- id: cyphercomposite.drop_database_name_empty
+  description: Empty composite database name during deletion.
+  other: "invalid DROP COMPOSITE DATABASE syntax: database name cannot be empty"
+- id: cyphercomposite.drop_database_failed
+  description: Composite database deletion failure. Database and Cause are untranslated values.
+  other: "failed to drop composite database '{{.Database}}': {{.Cause}}"
+- id: cyphercomposite.show_constituents_invalid_syntax
+  description: Invalid SHOW CONSTITUENTS syntax.
+  other: "invalid SHOW CONSTITUENTS syntax"
+- id: cyphercomposite.show_constituents_name_expected
+  description: Missing composite database name for SHOW CONSTITUENTS.
+  other: "invalid SHOW CONSTITUENTS syntax: FOR COMPOSITE DATABASE name expected"
+- id: cyphercomposite.get_constituents_failed
+  description: Constituent lookup failure. Cause is untranslated diagnostic text.
+  other: "failed to get constituents: {{.Cause}}"
+- id: cyphercomposite.alter_invalid_syntax
+  description: Invalid ALTER COMPOSITE DATABASE syntax.
+  other: "invalid ALTER COMPOSITE DATABASE syntax"
+- id: cyphercomposite.alter_database_keyword_expected
+  description: Missing DATABASE keyword after ALTER COMPOSITE.
+  other: "invalid ALTER COMPOSITE DATABASE syntax: DATABASE expected after COMPOSITE"
+- id: cyphercomposite.alter_database_name_expected
+  description: Missing composite database name during alteration.
+  other: "invalid ALTER COMPOSITE DATABASE syntax: database name expected"
+- id: cyphercomposite.alter_database_name_empty
+  description: Empty composite database name during alteration.
+  other: "invalid ALTER COMPOSITE DATABASE syntax: database name cannot be empty"
+- id: cyphercomposite.alter_tokenize_failed
+  description: ALTER COMPOSITE DATABASE tokenization failure. Cause is untranslated diagnostic text.
+  other: "invalid ALTER COMPOSITE DATABASE syntax: {{.Cause}}"
+- id: cyphercomposite.alter_add_alias_expected
+  description: Missing ADD ALIAS action during alteration.
+  other: "invalid ALTER COMPOSITE DATABASE syntax: ADD ALIAS expected"
+- id: cyphercomposite.add_alias_unexpected_token
+  description: Unexpected ADD ALIAS token. Token is untranslated Cypher syntax.
+  other: "invalid ADD ALIAS syntax: unexpected token '{{.Token}}'"
+- id: cyphercomposite.add_constituent_failed
+  description: Constituent addition failure. Database and Cause are untranslated values.
+  other: "failed to add constituent to composite database '{{.Database}}': {{.Cause}}"
+- id: cyphercomposite.alter_drop_alias_expected
+  description: Missing DROP ALIAS action during alteration.
+  other: "invalid ALTER COMPOSITE DATABASE syntax: DROP ALIAS expected"
+- id: cyphercomposite.drop_alias_name_empty
+  description: Empty alias name during constituent deletion.
+  other: "invalid DROP ALIAS syntax: alias name cannot be empty"
+- id: cyphercomposite.remove_constituent_failed
+  description: Constituent removal failure. Database and Cause are untranslated values.
+  other: "failed to remove constituent from composite database '{{.Database}}': {{.Cause}}"
+- id: cyphercomposite.alter_action_expected
+  description: Missing supported ALTER COMPOSITE DATABASE action.
+  other: "invalid ALTER COMPOSITE DATABASE syntax: ADD ALIAS or DROP ALIAS expected"

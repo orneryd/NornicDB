@@ -1,0 +1,54 @@
+- id: search.vector_file_magic_invalid
+  description: Expanded pseudo-locale vector file signature error.
+  other: "[!! invalid vector file magic !!]"
+- id: search.vector_file_version_unsupported
+  description: Expanded pseudo-locale vector file version error.
+  other: "[!! unsupported vector file version {{.Version}} !!]"
+- id: search.vector_file_dimensions_mismatch
+  description: Expanded pseudo-locale vector file dimensions error.
+  other: "[!! vector file dimensions {{.FileDimensions}} != store dimensions {{.StoreDimensions}} !!]"
+- id: search.vector_meta_dimensions_mismatch
+  description: Expanded pseudo-locale vector metadata dimensions error.
+  other: "[!! meta dimensions {{.MetaDimensions}} != store dimensions {{.StoreDimensions}} !!]"
+- id: search.gpu_not_enabled
+  description: Expanded pseudo-locale GPU prerequisite error.
+  other: "[!! gpu not enabled !!]"
+- id: search.vector_dimensions_invalid
+  description: Expanded pseudo-locale vector dimensions error.
+  other: "[!! invalid vector dimensions !!]"
+- id: search.ivfpq_vector_store_required
+  description: Expanded pseudo-locale required vector store error.
+  other: "[!! vector file store is required !!]"
+- id: search.ivfpq_dimensions_invalid
+  description: Expanded pseudo-locale IVFPQ dimensions error.
+  other: "[!! invalid dimensions !!]"
+- id: search.ivfpq_segments_invalid
+  description: Expanded pseudo-locale IVFPQ segments error.
+  other: "[!! invalid pq segments: dimensions={{.Dimensions}} segments={{.Segments}} !!]"
+- id: search.ivfpq_training_vectors_insufficient
+  description: Expanded pseudo-locale IVFPQ training count error.
+  other: "[!! insufficient training vectors ({{.VectorCount}}) for ivf lists ({{.ListCount}}) !!]"
+- id: search.ivf_coarse_training_failed
+  description: Expanded pseudo-locale IVF coarse training failure.
+  other: "[!! ivf coarse training failed: {{.Cause}} !!]"
+- id: search.pq_codebook_training_failed
+  description: Expanded pseudo-locale PQ codebook training failure.
+  other: "[!! pq codebook training failed: {{.Cause}} !!]"
+- id: search.hnsw_gpu_build_dimension_invalid
+  description: Expanded pseudo-locale HNSW GPU dimensions error.
+  other: "[!! invalid HNSW GPU build dimension {{.Dimensions}} !!]"
+- id: search.gpu_accelerator_unavailable
+  description: Expanded pseudo-locale GPU accelerator error.
+  other: "[!! no GPU accelerator available !!]"
+- id: search.cuda_not_available
+  description: Expanded pseudo-locale CUDA availability error.
+  other: "[!! cuda: CUDA is not available on this system !!]"
+- id: search.vulkan_not_available
+  description: Expanded pseudo-locale Vulkan availability error.
+  other: "[!! vulkan: Vulkan is not available on this system !!]"
+- id: search.vulkan_device_not_initialized
+  description: Expanded pseudo-locale Vulkan device initialization error.
+  other: "[!! vulkan: device not initialized !!]"
+- id: search.ivfpq_vector_store_unavailable
+  description: Expanded pseudo-locale IVFPQ vector store availability error.
+  other: "[!! vector file store unavailable for IVFPQ build !!]"

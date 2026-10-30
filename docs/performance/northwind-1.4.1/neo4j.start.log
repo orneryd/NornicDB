@@ -1,0 +1,14 @@
+Directories in use:
+home:         /opt/homebrew/Cellar/neo4j/2026.09.0/libexec
+config:       /opt/homebrew/Cellar/neo4j/2026.09.0/libexec/conf
+logs:         /opt/homebrew/var/log/neo4j
+plugins:      /opt/homebrew/Cellar/neo4j/2026.09.0/libexec/plugins
+import:       /opt/homebrew/Cellar/neo4j/2026.09.0/libexec/import
+data:         /opt/homebrew/var/neo4j/data
+certificates: /opt/homebrew/Cellar/neo4j/2026.09.0/libexec/certificates
+licenses:     /opt/homebrew/Cellar/neo4j/2026.09.0/libexec/licenses
+run:          /opt/homebrew/Cellar/neo4j/2026.09.0/libexec/run
+Starting Neo4j.
+WARNING: Using incubator modules: jdk.incubator.vector
+Started neo4j (pid:47403). It is available at http://localhost:7474
+There may be a short delay until the server is ready.

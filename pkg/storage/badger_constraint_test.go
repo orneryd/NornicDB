@@ -1,0 +1,915 @@
+// Package storage - Comprehensive constraint enforcement tests.
+package storage
+
+import (
+	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"os"
+	"testing"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/stretchr/testify/assert"
+)
+
+// TestBadgerTransaction_FullScanUniqueConstraint tests UNIQUE constraint with full database scan.
+func TestBadgerTransaction_FullScanUniqueConstraint(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	// Create UNIQUE constraint
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "unique_email",
+		Type:       ConstraintUnique,
+		Label:      "User",
+		Properties: []string{"email"},
+	})
+
+	// Insert first user (should succeed)
+	tx1, err := engine.BeginTransaction()
+	if err != nil {
+		t.Fatalf("BeginTransaction failed: %v", err)
+	}
+
+	_, err = tx1.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-1")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "alice@example.com",
+			"name":  "Alice",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateNode failed: %v", err)
+	}
+
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Try to insert duplicate email in NEW transaction (should fail with full scan)
+	tx2, err := engine.BeginTransaction()
+	if err != nil {
+		t.Fatalf("BeginTransaction failed: %v", err)
+	}
+
+	_, err = tx2.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "alice@example.com", // DUPLICATE!
+			"name":  "Alice Clone",
+		},
+	})
+
+	if err == nil {
+		t.Fatal("Expected constraint violation error, got nil")
+	}
+
+	// Verify error is a ConstraintViolationError
+	if _, ok := err.(*ConstraintViolationError); !ok {
+		t.Errorf("Expected ConstraintViolationError, got %T: %v", err, err)
+	}
+
+	tx2.Rollback()
+
+	// Verify different email succeeds
+	tx3, _ := engine.BeginTransaction()
+	_, err = tx3.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-3")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "bob@example.com", // Different email
+			"name":  "Bob",
+		},
+	})
+
+	if err != nil {
+		t.Errorf("Should allow different email: %v", err)
+	}
+
+	tx3.Commit()
+}
+
+func TestBadgerTransactionUniqueConstraintUsesRegisteredValueIndex(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	schema := engine.GetSchemaForNamespace("test")
+	if err := schema.AddUniqueConstraint("unique_email", "User", "email"); err != nil {
+		t.Fatalf("AddUniqueConstraint failed: %v", err)
+	}
+
+	firstID := NodeID(prefixTestID("user-unique-index-1"))
+	tx1, err := engine.BeginTransaction()
+	if err != nil {
+		t.Fatalf("BeginTransaction failed: %v", err)
+	}
+	if _, err := tx1.CreateNode(&Node{
+		ID:     firstID,
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "alice@example.com",
+		},
+	}); err != nil {
+		t.Fatalf("CreateNode failed: %v", err)
+	}
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	if got, found, constrained := schema.LookupUniqueConstraintValue("User", "email", "alice@example.com"); !constrained || !found || got != firstID {
+		t.Fatalf("LookupUniqueConstraintValue() = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
+	}
+	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
+		t.Fatalf("rebuildUniqueConstraintValues failed: %v", err)
+	}
+
+	scanCalls := 0
+	restoreHook := setUniqueConstraintScanHook(func() {
+		scanCalls++
+	})
+	defer restoreHook()
+
+	// Delete the label index entry to prove duplicate detection comes from the
+	// registered unique-value index, not from a label scan.
+	if err := engine.db.Update(func(txn *badger.Txn) error {
+		key := engine.labelIndexKeyStringLookup("User", firstID)
+		if key == nil {
+			return nil
+		}
+		return txn.Delete(key)
+	}); err != nil {
+		t.Fatalf("delete label index: %v", err)
+	}
+
+	tx2, err := engine.BeginTransaction()
+	if err != nil {
+		t.Fatalf("BeginTransaction failed: %v", err)
+	}
+	_, err = tx2.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-unique-index-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "alice@example.com",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected unique constraint violation from registered value index")
+	}
+	if scanCalls != 0 {
+		t.Fatalf("unique validation used label scan %d time(s), want registered-value lookup only", scanCalls)
+	}
+	tx2.Rollback()
+}
+
+func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	schema := engine.GetSchemaForNamespace("test")
+	if err := schema.AddUniqueConstraint("unique_age", "User", "age"); err != nil {
+		t.Fatalf("AddUniqueConstraint failed: %v", err)
+	}
+
+	firstID := NodeID(prefixTestID("user-unique-age-1"))
+	tx1, err := engine.BeginTransaction()
+	if err != nil {
+		t.Fatalf("BeginTransaction failed: %v", err)
+	}
+	if _, err := tx1.CreateNode(&Node{
+		ID:     firstID,
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"age": int(1),
+		},
+	}); err != nil {
+		t.Fatalf("CreateNode failed: %v", err)
+	}
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
+		t.Fatalf("rebuildUniqueConstraintValues failed: %v", err)
+	}
+	if got, found, constrained := schema.LookupUniqueConstraintValue("User", "age", int(1)); !constrained || !found || got != firstID {
+		t.Fatalf("LookupUniqueConstraintValue(int) = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
+	}
+
+	if got, found, constrained := schema.LookupUniqueConstraintValue("User", "age", float64(1)); !constrained || !found || got != firstID {
+		t.Fatalf("LookupUniqueConstraintValue() = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
+	}
+	if got, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation("User", "age", float64(1)); !constrained || !cacheComplete || !found || got != firstID {
+		t.Fatalf("lookupUniqueConstraintValueForValidation() = (%q, %v, %v, %v), want (%q, true, true, true)", got, found, cacheComplete, constrained, firstID)
+	}
+	constraints := schema.GetConstraintsForLabels([]string{"User"})
+	if len(constraints) != 1 {
+		t.Fatalf("GetConstraintsForLabels(User) returned %d constraint(s), want 1", len(constraints))
+	}
+
+	scanCalls := 0
+	restoreHook := setUniqueConstraintScanHook(func() {
+		scanCalls++
+	})
+	defer restoreHook()
+
+	tx2, err := engine.BeginTransaction()
+	if err != nil {
+		t.Fatalf("BeginTransaction failed: %v", err)
+	}
+	duplicate := &Node{
+		ID:     NodeID(prefixTestID("user-unique-age-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"age": float64(1),
+		},
+	}
+	if err := tx2.validateNodeConstraints(duplicate); err == nil {
+		t.Fatal("expected direct unique constraint validation failure")
+	}
+	if err := tx2.checkUniqueConstraint(duplicate, constraints[0]); err == nil {
+		t.Fatal("expected direct unique constraint check failure")
+	}
+	_, err = tx2.CreateNode(duplicate)
+	if err == nil {
+		t.Fatal("expected unique constraint violation from numeric-equivalent registered value")
+	}
+	if scanCalls != 0 {
+		t.Fatalf("unique validation used label scan %d time(s), want registered-value lookup only", scanCalls)
+	}
+	tx2.Rollback()
+}
+
+func TestBadgerTransactionUniqueConstraintPendingMatchesNumericValueSemantics(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	schema := engine.GetSchemaForNamespace("test")
+	if err := schema.AddUniqueConstraint("unique_age", "User", "age"); err != nil {
+		t.Fatalf("AddUniqueConstraint failed: %v", err)
+	}
+
+	tx, err := engine.BeginTransaction()
+	if err != nil {
+		t.Fatalf("BeginTransaction failed: %v", err)
+	}
+	defer tx.Rollback()
+
+	firstID := NodeID(prefixTestID("user-unique-age-pending-1"))
+	if _, err := tx.CreateNode(&Node{
+		ID:     firstID,
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"age": int(1),
+		},
+	}); err != nil {
+		t.Fatalf("CreateNode(first) failed: %v", err)
+	}
+
+	duplicate := &Node{
+		ID:     NodeID(prefixTestID("user-unique-age-pending-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"age": float64(1),
+		},
+	}
+	_, err = tx.CreateNode(duplicate)
+	if err == nil {
+		t.Fatal("expected pending numeric-equivalent value to violate the unique constraint")
+	}
+	violation, ok := err.(*ConstraintViolationError)
+	if !ok {
+		t.Fatalf("CreateNode(duplicate) error = %T (%v), want *ConstraintViolationError", err, err)
+	}
+	if violation.Type != ConstraintUnique || violation.Label != "User" {
+		t.Fatalf("constraint violation = (%s, %s), want (%s, User)", violation.Type, violation.Label, ConstraintUnique)
+	}
+	if len(tx.pendingNodes) != 1 {
+		t.Fatalf("pending nodes after rejected duplicate = %d, want 1", len(tx.pendingNodes))
+	}
+}
+
+func TestBadgerTransactionUniqueConstraintPendingNonComparableValueDoesNotPanic(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	schema := engine.GetSchemaForNamespace("test")
+	if err := schema.AddUniqueConstraint("unique_tags", "User", "tags"); err != nil {
+		t.Fatalf("AddUniqueConstraint failed: %v", err)
+	}
+
+	tx, err := engine.BeginTransaction()
+	if err != nil {
+		t.Fatalf("BeginTransaction failed: %v", err)
+	}
+	defer tx.Rollback()
+
+	for _, entry := range []struct {
+		id   string
+		tags []string
+	}{
+		{id: "user-unique-tags-1", tags: []string{"one"}},
+		{id: "user-unique-tags-2", tags: []string{"two"}},
+	} {
+		_, err := tx.CreateNode(&Node{
+			ID:     NodeID(prefixTestID(entry.id)),
+			Labels: []string{"User"},
+			Properties: map[string]interface{}{
+				"tags": entry.tags,
+			},
+		})
+		if err != nil {
+			t.Fatalf("CreateNode(%s) failed: %v", entry.id, err)
+		}
+	}
+	if len(tx.pendingNodes) != 2 {
+		t.Fatalf("pending nodes = %d, want 2", len(tx.pendingNodes))
+	}
+}
+
+// TestBadgerTransaction_FullScanNodeKeyConstraint tests NODE KEY constraint across transactions.
+func TestBadgerTransaction_FullScanNodeKeyConstraint(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	// Create NODE KEY constraint on (username, domain)
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "user_key",
+		Type:       ConstraintNodeKey,
+		Label:      "User",
+		Properties: []string{"username", "domain"},
+	})
+
+	// Insert first user
+	tx1, _ := engine.BeginTransaction()
+	tx1.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-1")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"username": "alice",
+			"domain":   "example.com",
+		},
+	})
+	tx1.Commit()
+
+	// Try to insert duplicate composite key in NEW transaction
+	tx2, _ := engine.BeginTransaction()
+	_, err := tx2.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"username": "alice",
+			"domain":   "example.com", // Same composite key!
+		},
+	})
+
+	if err == nil {
+		t.Fatal("Expected NODE KEY violation, got nil")
+	}
+
+	tx2.Rollback()
+
+	// Different domain should succeed
+	tx3, _ := engine.BeginTransaction()
+	_, err = tx3.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-3")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"username": "alice",
+			"domain":   "other.com", // Different domain
+		},
+	})
+
+	if err != nil {
+		t.Errorf("Should allow different domain: %v", err)
+	}
+
+	tx3.Commit()
+}
+
+// TestBadgerEngine_ValidateConstraintOnCreation tests constraint validation when CREATE CONSTRAINT is executed.
+func TestBadgerEngine_ValidateConstraintOnCreation(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	// Insert data with duplicates
+	tx, _ := engine.BeginTransaction()
+	tx.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-1")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "duplicate@example.com",
+		},
+	})
+	tx.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "duplicate@example.com", // Duplicate!
+		},
+	})
+	tx.Commit()
+
+	// Try to create UNIQUE constraint (should fail - existing duplicates)
+	err := engine.ValidateConstraintOnCreation(Constraint{
+		Name:       "unique_email",
+		Type:       ConstraintUnique,
+		Label:      "User",
+		Properties: []string{"email"},
+	})
+
+	if err == nil {
+		t.Fatal("Expected validation error for existing duplicates, got nil")
+	}
+
+	constraintErr, ok := err.(*ConstraintViolationError)
+	if !ok {
+		t.Errorf("Expected ConstraintViolationError, got %T", err)
+	}
+
+	if constraintErr != nil && constraintErr.Type != ConstraintUnique {
+		t.Errorf("Expected UNIQUE constraint error, got %s", constraintErr.Type)
+	}
+}
+
+// TestBadgerEngine_ValidateExistenceConstraintOnCreation tests EXISTS constraint validation.
+func TestBadgerEngine_ValidateExistenceConstraintOnCreation(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	// Insert data with missing required property
+	tx, _ := engine.BeginTransaction()
+	tx.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("person-1")),
+		Labels: []string{"Person"},
+		Properties: map[string]interface{}{
+			"age": 30,
+			// Missing "name"
+		},
+	})
+	tx.Commit()
+
+	// Try to create EXISTS constraint (should fail)
+	err := engine.ValidateConstraintOnCreation(Constraint{
+		Name:       "require_name",
+		Type:       ConstraintExists,
+		Label:      "Person",
+		Properties: []string{"name"},
+	})
+
+	if err == nil {
+		t.Fatal("Expected validation error for missing property, got nil")
+	}
+}
+
+// TestBadgerTransaction_UniqueConstraintWithinTransaction tests UNIQUE within single transaction.
+func TestBadgerTransaction_UniqueConstraintWithinTransaction(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "unique_id",
+		Type:       ConstraintUnique,
+		Label:      "Node",
+		Properties: []string{"id"},
+	})
+
+	tx, _ := engine.BeginTransaction()
+
+	// First node - OK
+	tx.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("node-1")),
+		Labels: []string{"Node"},
+		Properties: map[string]interface{}{
+			"id": "unique-123",
+		},
+	})
+
+	// Second node with same ID - should fail immediately
+	_, err := tx.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("node-2")),
+		Labels: []string{"Node"},
+		Properties: map[string]interface{}{
+			"id": "unique-123", // Duplicate in same transaction!
+		},
+	})
+
+	if err == nil {
+		t.Fatal("Expected constraint violation within transaction, got nil")
+	}
+
+	tx.Rollback()
+}
+
+// TestBadgerTransaction_NullValuesAllowed tests that NULL values don't violate UNIQUE.
+func TestBadgerTransaction_NullValuesAllowed(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "unique_optional",
+		Type:       ConstraintUnique,
+		Label:      "Node",
+		Properties: []string{"optionalField"},
+	})
+
+	tx, _ := engine.BeginTransaction()
+
+	// Multiple nodes with NULL - should be allowed
+	tx.CreateNode(&Node{
+		ID:         NodeID(prefixTestID("node-1")),
+		Labels:     []string{"Node"},
+		Properties: map[string]interface{}{
+			// optionalField is NULL
+		},
+	})
+
+	_, err := tx.CreateNode(&Node{
+		ID:         NodeID(prefixTestID("node-2")),
+		Labels:     []string{"Node"},
+		Properties: map[string]interface{}{
+			// optionalField is NULL
+		},
+	})
+
+	if err != nil {
+		t.Errorf("NULL values should not violate UNIQUE: %v", err)
+	}
+
+	tx.Commit()
+}
+
+// TestBadgerTransaction_NodeKeyRequiresAllProperties tests NODE KEY rejects NULL.
+func TestBadgerTransaction_NodeKeyRequiresAllProperties(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "composite_key",
+		Type:       ConstraintNodeKey,
+		Label:      "Entity",
+		Properties: []string{"part1", "part2"},
+	})
+
+	tx, _ := engine.BeginTransaction()
+
+	// Missing part2 - should fail
+	_, err := tx.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("entity-1")),
+		Labels: []string{"Entity"},
+		Properties: map[string]interface{}{
+			"part1": "value1",
+			// part2 is NULL - not allowed in NODE KEY!
+		},
+	})
+
+	if err == nil {
+		t.Fatal("Expected NODE KEY error for NULL property, got nil")
+	}
+
+	constraintErr, ok := err.(*ConstraintViolationError)
+	if !ok {
+		t.Errorf("Expected ConstraintViolationError, got %T", err)
+	}
+
+	if constraintErr != nil && constraintErr.Type != ConstraintNodeKey {
+		t.Errorf("Expected NODE KEY error, got %s", constraintErr.Type)
+	}
+}
+
+// TestBadgerTransaction_ExistenceConstraint tests EXISTS/NOT NULL constraint.
+func TestBadgerTransaction_ExistenceConstraint(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "require_email",
+		Type:       ConstraintExists,
+		Label:      "User",
+		Properties: []string{"email"},
+	})
+
+	tx, _ := engine.BeginTransaction()
+
+	// Missing required property - should fail
+	_, err := tx.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-1")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"name": "Alice",
+			// email is missing!
+		},
+	})
+
+	if err == nil {
+		t.Fatal("Expected EXISTS constraint violation, got nil")
+	}
+
+	tx.Rollback()
+
+	// With required property - should succeed
+	tx2, _ := engine.BeginTransaction()
+	_, err = tx2.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"name":  "Bob",
+			"email": "bob@example.com", // Required property present
+		},
+	})
+
+	if err != nil {
+		t.Errorf("Should allow node with required property: %v", err)
+	}
+
+	tx2.Commit()
+}
+
+// TestBadgerTransaction_MultipleConstraints tests multiple constraints on same label.
+func TestBadgerTransaction_MultipleConstraints(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	// Add multiple constraints
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "unique_email",
+		Type:       ConstraintUnique,
+		Label:      "User",
+		Properties: []string{"email"},
+	})
+
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "require_name",
+		Type:       ConstraintExists,
+		Label:      "User",
+		Properties: []string{"name"},
+	})
+
+	tx, _ := engine.BeginTransaction()
+
+	// Violates EXISTS constraint
+	_, err := tx.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-1")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "alice@example.com",
+			// Missing name
+		},
+	})
+
+	if err == nil {
+		t.Fatal("Expected EXISTS constraint violation")
+	}
+
+	tx.Rollback()
+
+	// Satisfies all constraints
+	tx2, _ := engine.BeginTransaction()
+	_, err = tx2.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "bob@example.com",
+			"name":  "Bob",
+		},
+	})
+
+	if err != nil {
+		t.Errorf("Should satisfy all constraints: %v", err)
+	}
+
+	tx2.Commit()
+}
+
+// TestCompareValues tests the compareValues function with different types.
+func TestCompareValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		a        interface{}
+		b        interface{}
+		expected bool
+	}{
+		{"int equal", 42, 42, true},
+		{"int not equal", 42, 43, false},
+		{"int and int64 equal", 42, int64(42), true},
+		{"int and float64 equal", 42, 42.0, true},
+		{"string equal", "hello", "hello", true},
+		{"string not equal", "hello", "world", false},
+		{"bool equal", true, true, true},
+		{"bool not equal", true, false, false},
+		{"mixed types", 42, "42", false},
+		{"float precision", 3.14, 3.14, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := compareValues(tt.a, tt.b)
+			if result != tt.expected {
+				t.Errorf("compareValues(%v, %v) = %v, want %v", tt.a, tt.b, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBadgerEngine_UpdateNode_EnforcesUniqueConstraint(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "unique_email",
+		Type:       ConstraintUnique,
+		Label:      "User",
+		Properties: []string{"email"},
+	})
+
+	_, err := engine.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-1")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "alice@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateNode failed: %v", err)
+	}
+
+	_, err = engine.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "bob@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateNode failed: %v", err)
+	}
+
+	err = engine.UpdateNode(&Node{
+		ID:     NodeID(prefixTestID("user-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "alice@example.com",
+		},
+	})
+	if err == nil {
+		t.Fatal("Expected UNIQUE constraint violation on update, got nil")
+	}
+	if _, ok := err.(*ConstraintViolationError); !ok {
+		t.Fatalf("Expected ConstraintViolationError, got %T", err)
+	}
+}
+
+func TestBadgerEngine_DeleteNode_UnregistersUniqueConstraint(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "unique_email",
+		Type:       ConstraintUnique,
+		Label:      "User",
+		Properties: []string{"email"},
+	})
+
+	_, err := engine.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-1")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "reuse@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateNode failed: %v", err)
+	}
+
+	if err := engine.DeleteNode(NodeID(prefixTestID("user-1"))); err != nil {
+		t.Fatalf("DeleteNode failed: %v", err)
+	}
+
+	_, err = engine.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("user-2")),
+		Labels: []string{"User"},
+		Properties: map[string]interface{}{
+			"email": "reuse@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Expected reused unique value to succeed after delete, got: %v", err)
+	}
+}
+
+// TestBadgerTransaction_ConstraintAcrossCommits tests constraint enforcement across multiple commits.
+func TestBadgerTransaction_ConstraintAcrossCommits(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+
+	engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
+		Name:       "unique_username",
+		Type:       ConstraintUnique,
+		Label:      "Account",
+		Properties: []string{"username"},
+	})
+
+	// Transaction 1: Create alice
+	tx1, _ := engine.BeginTransaction()
+	tx1.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("account-1")),
+		Labels: []string{"Account"},
+		Properties: map[string]interface{}{
+			"username": "alice",
+		},
+	})
+	tx1.Commit()
+
+	// Transaction 2: Try to create another alice
+	tx2, _ := engine.BeginTransaction()
+	_, err := tx2.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("account-2")),
+		Labels: []string{"Account"},
+		Properties: map[string]interface{}{
+			"username": "alice", // Duplicate across transactions!
+		},
+	})
+
+	if err == nil {
+		t.Fatal("Expected UNIQUE constraint violation across commits")
+	}
+
+	tx2.Rollback()
+
+	// Transaction 3: Different username should work
+	tx3, _ := engine.BeginTransaction()
+	_, err = tx3.CreateNode(&Node{
+		ID:     NodeID(prefixTestID("account-3")),
+		Labels: []string{"Account"},
+		Properties: map[string]interface{}{
+			"username": "bob",
+		},
+	})
+
+	if err != nil {
+		t.Errorf("Different username should succeed: %v", err)
+	}
+
+	tx3.Commit()
+}
+
+// setupTestBadgerEngine creates a temporary BadgerDB for testing.
+func setupTestBadgerEngine(t *testing.T) (*BadgerEngine, func()) {
+	dir := fmt.Sprintf("/tmp/badger-test-%d", os.Getpid())
+
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
+	if err != nil {
+		t.Fatalf("Failed to create BadgerEngine: %v", err)
+	}
+
+	cleanup := func() {
+		engine.Close()
+		os.RemoveAll(dir)
+	}
+
+	return engine, cleanup
+}
+
+func TestCompareValues_CrossType(t *testing.T) {
+	// Cypher semantics: numeric types compare across int/int64/float64
+	tests := []struct {
+		name     string
+		a, b     interface{}
+		expected bool
+	}{
+		{"int==int equal", 42, 42, true},
+		{"int==int not equal", 42, 43, false},
+		{"int==int64 equal", 42, int64(42), true},
+		{"int==int64 not equal", 42, int64(43), false},
+		{"int==float64 equal", 42, float64(42), true},
+		{"int==float64 not equal", 42, float64(42.5), false},
+		{"int64==int equal", int64(42), 42, true},
+		{"int64==int not equal", int64(42), 43, false},
+		{"int64==int64 equal", int64(42), int64(42), true},
+		{"int64==int64 not equal", int64(42), int64(99), false},
+		{"int64==float64 equal", int64(42), float64(42), true},
+		{"int64==float64 not equal", int64(42), float64(42.1), false},
+		{"float64==int equal", float64(42), 42, true},
+		{"float64==int not equal", float64(42.5), 42, false},
+		{"float64==int64 equal", float64(42), int64(42), true},
+		{"float64==int64 not equal", float64(42.5), int64(42), false},
+		{"float64==float64 equal", float64(3.14), float64(3.14), true},
+		{"float64==float64 not equal", float64(3.14), float64(2.72), false},
+		{"string==string equal", "hello", "hello", true},
+		{"string==string not equal", "hello", "world", false},
+		{"bool==bool equal", true, true, true},
+		{"bool==bool not equal", true, false, false},
+		{"string vs int", "42", 42, false},
+		{"bool vs string", true, "true", false},
+		{"nil==nil", nil, nil, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := compareValues(tt.a, tt.b)
+			assert.Equal(t, tt.expected, result, "compareValues(%v, %v)", tt.a, tt.b)
+		})
+	}
+}

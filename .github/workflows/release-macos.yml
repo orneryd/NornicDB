@@ -1,0 +1,193 @@
+name: Release macOS Assets
+
+on:
+  push:
+    tags:
+      - "*"
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch, tag, or commit SHA to build from"
+        required: true
+        default: "main"
+        type: string
+      target_tag:
+        description: "Tag name for the release (e.g., v1.2.3). Defaults to source_ref if tag-like"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-release-assets:
+    name: Build macOS Release Assets
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: macos-latest
+    outputs:
+      checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+    steps:
+      - id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CHECKOUT_REF="${{ inputs.source_ref }}"
+            TARGET_TAG="${{ inputs.target_tag }}"
+            if [ -z "$TARGET_TAG" ]; then
+              TARGET_TAG="$CHECKOUT_REF"
+            fi
+          else
+            CHECKOUT_REF="${{ github.ref }}"
+            TARGET_TAG="${{ github.ref_name }}"
+          fi
+          echo "checkout_ref=${CHECKOUT_REF}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.meta.outputs.checkout_ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build macOS pkg and dmg
+        run: make macos-package
+
+      - name: Upload macOS assets to workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-release-assets-${{ steps.meta.outputs.release_tag }}
+          path: |
+            dist/*.pkg
+            dist/*.dmg
+          if-no-files-found: error
+
+  build-homebrew-release-assets:
+    name: Build Homebrew ${{ matrix.goarch }} Tarball
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ${{ matrix.runner }}
+    needs: build-macos-release-assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: arm64
+            runner: macos-latest
+          - goarch: amd64
+            runner: macos-15-intel
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build-macos-release-assets.outputs.checkout_ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build llama.cpp static library
+        run: |
+          LLAMA_VERSION="$(sed -n 's/^LLAMA_VERSION ?= //p' Makefile | head -n1)"
+          ./scripts/build-llama.sh "$LLAMA_VERSION"
+
+      - name: Build Homebrew tarball
+        run: |
+          VERSION="${{ needs.build-macos-release-assets.outputs.release_tag }}"
+          VERSION="${VERSION#v}"
+          HOMEBREW_TARGETS="darwin/${{ matrix.goarch }}" VERSION="$VERSION" ./scripts/build-homebrew-artifacts.sh
+
+      - name: Upload Homebrew tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: homebrew-release-assets-${{ needs.build-macos-release-assets.outputs.release_tag }}-${{ matrix.goarch }}
+          path: dist/homebrew/nornicdb-darwin-${{ matrix.goarch }}.tar.gz
+          if-no-files-found: error
+
+  publish-github-release-assets:
+    name: Publish GitHub Release Assets
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ubuntu-latest
+    needs:
+      - build-macos-release-assets
+      - build-homebrew-release-assets
+    steps:
+      - name: Download macOS release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: macos-release-assets-${{ needs.build-macos-release-assets.outputs.release_tag }}
+          path: dist
+
+      - name: Download Homebrew release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: homebrew-release-assets-${{ needs.build-macos-release-assets.outputs.release_tag }}-*
+          path: dist/homebrew
+          merge-multiple: true
+
+      - name: Generate Homebrew SHA256SUMS
+        run: |
+          cd dist/homebrew
+          shasum -a 256 nornicdb-darwin-*.tar.gz | sort -k2 > SHA256SUMS
+
+      - name: Create or update release with pkg/dmg assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.build-macos-release-assets.outputs.release_tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.pkg
+            dist/*.dmg
+            dist/homebrew/*.tar.gz
+            dist/homebrew/SHA256SUMS
+
+      - name: Open Homebrew tap update PR
+        if: ${{ vars.HOMEBREW_TAP_REPOSITORY != '' }}
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
+          event-type: nornicdb-release
+          client-payload: |
+            {
+              "tag": "${{ needs.build-macos-release-assets.outputs.release_tag }}",
+              "repository": "${{ github.repository }}",
+              "sha256s_url": "https://github.com/${{ github.repository }}/releases/download/${{ needs.build-macos-release-assets.outputs.release_tag }}/SHA256SUMS"
+            }

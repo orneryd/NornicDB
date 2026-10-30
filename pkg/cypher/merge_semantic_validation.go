@@ -1,0 +1,332 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"strings"
+	"sync"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+)
+
+type semanticValidationCache struct {
+	shards [boundedCacheShardCount]semanticValidationCacheShard
+	max    int
+}
+
+type semanticValidationCacheShard struct {
+	mu      sync.RWMutex
+	entries map[string]struct{}
+}
+
+func newSemanticValidationCache(max int) *semanticValidationCache {
+	c := &semanticValidationCache{max: max}
+	shardLimit := max / boundedCacheShardCount
+	for i := range c.shards {
+		c.shards[i].entries = make(map[string]struct{}, shardLimit/4+1)
+	}
+	return c
+}
+
+func (cache *semanticValidationCache) contains(query string) bool {
+	if cache == nil {
+		return false
+	}
+	sh := &cache.shards[boundedCacheStringShardIndex(query)]
+	sh.mu.RLock()
+	_, exists := sh.entries[query]
+	sh.mu.RUnlock()
+	return exists
+}
+
+func (cache *semanticValidationCache) add(query string) {
+	if cache == nil || cache.max <= 0 {
+		return
+	}
+	sh := &cache.shards[boundedCacheStringShardIndex(query)]
+	sh.mu.Lock()
+	if len(sh.entries) >= cache.max/boundedCacheShardCount {
+		clear(sh.entries)
+	}
+	sh.entries[query] = struct{}{}
+	sh.mu.Unlock()
+}
+
+// validateMergeSemanticScopes applies the MERGE binding and pattern-value
+// contract before routing. Keeping this validation ahead of every physical
+// executor prevents optimized and general MERGE paths from accepting different
+// syntax or producing effects before a semantic failure.
+func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
+	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
+		return nil
+	}
+	// Literal-bearing MERGE statements share one compile verdict through the
+	// canonical form (PR #1043 #6), looked up only when the exact text
+	// misses; failures are never cached, so a bad statement still reports
+	// its own error. Both keys carry the language version (semanticCacheKey).
+	key := semanticCacheKey(cypher, cypher25)
+	cached := e.mergeSemanticValidationCache.contains(key)
+	var canonicalKey string
+	var normalized bool
+	if !cached {
+		var canonical string
+		canonical, normalized = normalizeLiteralText(cypher)
+		if normalized {
+			canonicalKey = semanticCacheKey(canonical, cypher25)
+			cached = e.mergeSemanticValidationCache.contains(canonicalKey)
+		}
+	}
+	if cached {
+		return nil
+	}
+	clauses, ok := splitPipelineClauses(ctx, cypher)
+	if !ok {
+		return nil
+	}
+
+	scope := newSemanticBindingScope()
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseMatch, pipelineClauseOptionalMatch:
+			addMergePatternBindings(scope, clause.text)
+		case pipelineClauseCreate:
+			addMergePatternBindings(scope, clause.text)
+		case pipelineClauseWith:
+			scope = projectedBindingScope(ctx, scope, clause.text)
+		case pipelineClauseLet:
+			if err := bindPipelineLet(scope, clause.text); err != nil {
+				return err
+			}
+		case pipelineClauseUnwind:
+			if alias := unwindBindingName(clause.text); alias != "" {
+				scope.bind(alias)
+			}
+		case pipelineClauseMerge:
+			if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
+				return err
+			}
+		}
+	}
+	if normalized {
+		e.mergeSemanticValidationCache.add(canonicalKey)
+	}
+	e.mergeSemanticValidationCache.add(key)
+	return nil
+}
+
+func addMergePatternBindings(scope *semanticBindingScope, clause string) {
+	pattern := strings.TrimSpace(clause)
+	for _, keyword := range []string{"OPTIONAL MATCH", "MATCH", "CREATE"} {
+		if startsWithKeywordFold(pattern, keyword) {
+			pattern = strings.TrimSpace(pattern[len(keyword):])
+			break
+		}
+	}
+	for _, name := range extractNodeVariables(pattern) {
+		scope.bind(name)
+	}
+	for _, name := range extractRelationshipVariables(pattern) {
+		scope.bind(name)
+	}
+	if name := extractPathAssignmentVariable(pattern); name != "" {
+		scope.bind(name)
+	}
+}
+
+// cypher25 adds Neo4j 2026.09's rule for a Cypher 25 statement: a property
+// value may not read a node or relationship the same MERGE creates
+// (MERGE (a {x: 1})-[:T]->(b {x: a.x})).
+func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string, cypher25 bool) error {
+	// Neo4j rejects EXISTS / COUNT / COLLECT { … } anywhere in a MERGE clause:
+	// its pattern, property maps and ON CREATE / ON MATCH SET actions.
+	if mayContainSubqueryExpression(clause) && len(findSubqueryExpressions(clause)) > 0 {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"SubqueryInMerge",
+			"Subquery expressions are not allowed in a MERGE clause.",
+		)
+	}
+	pattern := mergeClausePattern(clause)
+	if pattern == "" {
+		return nil
+	}
+	if mergePatternUsesParameterPredicate(pattern) {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidParameterUse",
+			"MERGE pattern predicates must use a property map, not a parameter map",
+		)
+	}
+	if e.mergePatternContainsNullProperty(pattern) {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SemanticError",
+			"MergeReadOwnWrites",
+			"MERGE cannot match or create an entity using a null property value",
+		)
+	}
+
+	relationshipPattern := patternHasRelationship(pattern)
+	relationshipVariables := extractRelationshipVariables(pattern)
+	for _, variable := range relationshipVariables {
+		if scope.contains(variable) {
+			return mergeVariableAlreadyBoundError(variable)
+		}
+	}
+	if cypher25 {
+		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, make(map[string]string), "MERGE"); err != nil {
+			return err
+		}
+	}
+	if relationshipPattern {
+		// Every relationship of a MERGE path (mergePathSegments).
+		segments := mergePathSegments(pattern)
+		if len(segments) < 2 {
+			segments = []string{pattern}
+		}
+		for _, segment := range segments {
+			if err := validateRelationshipMutation(segment, mergeRelationshipMutation); err != nil {
+				return err
+			}
+		}
+	}
+	for _, nodePattern := range e.splitNodePatterns(pattern) {
+		variable := createNodePatternVariable(nodePattern)
+		if variable == "" {
+			continue
+		}
+		if scope.contains(variable) {
+			if !relationshipPattern || createNodePatternHasDecoration(nodePattern) {
+				return mergeVariableAlreadyBoundError(variable)
+			}
+			continue
+		}
+		scope.bind(variable)
+	}
+	for _, variable := range relationshipVariables {
+		scope.bind(variable)
+	}
+	if pathVariable := extractPathAssignmentVariable(pattern); pathVariable != "" {
+		if scope.contains(pathVariable) {
+			return mergeVariableAlreadyBoundError(pathVariable)
+		}
+		scope.bind(pathVariable)
+	}
+	if err := e.validateMergeActionScopes(scope, clause); err != nil {
+		return err
+	}
+	for _, nodePattern := range e.splitNodePatterns(pattern) {
+		if err := e.validateCreatePatternExpressions(scope, nodePattern); err != nil {
+			return err
+		}
+	}
+	if err := e.validateCreateRelationshipExpressions(scope, pattern); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
+	parts := splitMergeClauseActions(pipelineClauseBody(clause, "MERGE"), nil)
+	for _, clauses := range [...]mergeActionClauses{parts.onCreate, parts.onMatch} {
+		for index := 0; index < clauses.len(); index++ {
+			if err := e.validateSetClauseScope(scope, inlineOverflowAt(clauses.inline[:], clauses.overflow, index)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func mergeClausePattern(clause string) string {
+	return splitMergeClauseActions(pipelineClauseBody(clause, "MERGE"), nil).pattern
+}
+
+func mergePatternUsesParameterPredicate(pattern string) bool {
+	for index := 0; index < len(pattern); index++ {
+		character := pattern[index]
+		switch cypherLexicalByte(character) {
+		case cypherQuoteClass:
+			index = skipCypherQuotedText(pattern, index, character) - 1
+		case '/':
+			if end := queryCommentEnd(pattern, index); end >= 0 {
+				index = end - 1
+			}
+		case '{':
+			if end := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter); end > index {
+				index = end
+			}
+		case '$':
+			if dynamicLabelStartsAt(pattern, index) {
+				// A dynamic label or type ($(e), $all(e), $any(e)), not a
+				// parameter map.
+				if closing := cyphertext.FindMatchingDelimiter(pattern, strings.IndexByte(pattern[index:], '(')+index, '(', ')', cyphertext.OpeningDelimiter); closing > 0 {
+					index = closing
+				}
+				continue
+			}
+			// A $ inside a name (n:L$M) is no parameter.
+			if isParameterStart(pattern, index) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *StorageExecutor) mergePatternContainsNullProperty(pattern string) bool {
+	for cursor := 0; cursor < len(pattern); cursor++ {
+		if pattern[cursor] != '{' {
+			continue
+		}
+		end := e.findMatchingBrace(pattern, cursor)
+		if end < 0 {
+			return false
+		}
+		for _, entry := range splitTopLevelComma(pattern[cursor+1 : end]) {
+			colon := findTopLevelMapKeyValueSeparator(entry)
+			if colon >= 0 && strings.EqualFold(strings.TrimSpace(entry[colon+1:]), "null") {
+				return true
+			}
+		}
+		cursor = end
+	}
+	return false
+}
+
+// validateMergePatternProperties rejects a MERGE pattern's property whose
+// value can't identify an entity (null or NaN) with Neo4j's SemanticError,
+// then checks the values are storable (validatePropertyValues). entity
+// ("node" or "relationship") names the pattern element in the message.
+func validateMergePatternProperties(properties map[string]interface{}, entity string) error {
+	for property, value := range properties {
+		switch {
+		case value == nil:
+			return localizedStatusError("Neo.ClientError.Statement.SemanticError", "MergeNullPropertyValue",
+				localization.CypherMergePropertyValueNotMergeable(entity, "null", property))
+		case isNaNValue(value):
+			// NaN equals nothing, itself included, so it can't identify an
+			// entity; a NaN inside a list can (Neo4j 5.26, #907).
+			return localizedStatusError("Neo.ClientError.Statement.SemanticError", "MergeNaNPropertyValue",
+				localization.CypherMergePropertyValueNotMergeable(entity, "NaN", property))
+		}
+	}
+	return validatePropertyValues(properties)
+}
+
+func mergeVariableAlreadyBoundError(variable string) error {
+	return newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"VariableAlreadyBound",
+		fmt.Sprintf("variable %s is already bound and cannot be redeclared by MERGE", variable),
+	)
+}
+
+// isNaNValue reports whether value is a floating-point NaN.
+func isNaNValue(value interface{}) bool {
+	floating, ok := valueconvert.FloatValue(value)
+	return ok && math.IsNaN(floating)
+}

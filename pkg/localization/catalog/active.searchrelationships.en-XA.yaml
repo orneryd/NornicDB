@@ -1,0 +1,6 @@
+- id: search.relationships_disabled
+  other: "[!! relationship search is not enabled for this database; set NORNICDB_SEARCH_RELATIONSHIPS_ENABLED=true !!]"
+- id: search.relationships_continuation
+  other: "[!! relationship search returns a single page and can't be continued !!]"
+- id: search.graph_continuation
+  other: "[!! db.retrieveGraph returns one page: qid, discard, mode, groupBy and rankedLimit don't apply !!]"

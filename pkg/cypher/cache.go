@@ -1,0 +1,1281 @@
+// Package cypher - Query result caching for performance optimization.
+package cypher
+
+import (
+	"container/list"
+	"context"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+// QueryCache provides LRU (Least Recently Used) caching for Cypher query results
+// with automatic TTL (Time To Live) expiration.
+//
+// The cache improves performance by storing results of expensive read-only queries
+// and returning them instantly on subsequent identical requests. It automatically
+// handles cache invalidation when write operations occur.
+//
+// Features:
+//   - LRU eviction when cache is full (keeps most recently used)
+//   - TTL-based expiration for time-sensitive data
+//   - Thread-safe concurrent access
+//   - Automatic invalidation on writes (CREATE, DELETE, SET, etc.)
+//   - Hit/miss statistics for monitoring
+//
+// Example 1 - Basic Caching:
+//
+//	cache := NewQueryCache(1000) // Store up to 1000 query results
+//
+//	// First query - cache miss, executes and stores
+//	result1, found := cache.Get("MATCH (n) RETURN count(n)", nil)
+//	// found == false, executes query
+//
+//	cache.Put("MATCH (n) RETURN count(n)", nil, result1, 5*time.Minute)
+//
+//	// Second query - cache hit, instant return
+//	result2, found := cache.Get("MATCH (n) RETURN count(n)", nil)
+//	// found == true, returns cached result (10-100x faster!)
+//
+// Example 2 - With Parameters:
+//
+//	params := map[string]interface{}{"name": "Alice", "minAge": 25}
+//	cypher := "MATCH (n:Person {name: $name}) WHERE n.age >= $minAge RETURN n"
+//
+//	// Parameters are part of cache key
+//	result, found := cache.Get(cypher, params)
+//	if !found {
+//		result = executeQuery(cypher, params)
+//		cache.Put(cypher, params, result, 1*time.Minute)
+//	}
+//
+// Example 3 - Cache Invalidation:
+//
+//	// Read queries use cache
+//	cache.Get("MATCH (n:User) RETURN n.name", nil)
+//
+//	// Write query invalidates entire cache
+//	executor.Execute(ctx, "CREATE (n:User {name: 'Bob'})", nil)
+//	cache.Invalidate() // All cached results cleared
+//
+//	// Next query will be cache miss
+//	cache.Get("MATCH (n:User) RETURN n.name", nil) // Re-executes
+//
+// ELI12 (Explain Like I'm 12):
+//
+// Imagine you're doing math homework and your friend asks "What's 127 × 384?"
+// You grab your calculator and spend 30 seconds calculating: 48,768.
+//
+// Five minutes later, they ask the SAME question again. Instead of using your
+// calculator again, you just look at your paper where you wrote the answer:
+// 48,768. That's caching! You remembered the answer from before.
+//
+// But what if you're told "new homework sheet" (a write operation)? You erase
+// your paper because those old answers might not be right anymore. That's
+// cache invalidation.
+//
+// The QueryCache does this for database queries - it remembers answers to
+// questions it's seen before, so it can reply instantly without doing all
+// the work again!
+//
+// Performance Impact:
+//   - Cache hits are 10-100x faster than executing queries
+//   - Reduces database load for read-heavy workloads
+//   - Memory usage: ~1KB per cached query result
+//
+// Thread Safety:
+//
+//	All methods are thread-safe and can be called from multiple goroutines.
+type QueryCache struct {
+	cache   map[string]*cachedResult
+	lruList []string // Most recent first
+	mu      sync.RWMutex
+	maxSize int
+	hits    int64
+	misses  int64
+}
+
+// cachedResult wraps a query result with metadata for TTL and LRU tracking.
+type cachedResult struct {
+	result    *ExecuteResult
+	timestamp time.Time
+	ttl       time.Duration
+}
+
+// NewQueryCache creates a new query cache with the specified maximum size.
+//
+// The cache uses LRU (Least Recently Used) eviction - when full, it removes
+// the oldest unused entries to make room for new ones.
+//
+// Parameters:
+//   - maxSize: Maximum number of query results to cache (recommended: 100-10000)
+//
+// Returns:
+//   - *QueryCache ready for use
+//
+// Example:
+//
+//	// Small cache for testing
+//	cache := NewQueryCache(100)
+//
+//	// Production cache for high-traffic application
+//	cache := NewQueryCache(10000)
+//
+//	// Memory-constrained environment
+//	cache := NewQueryCache(50)
+//
+// Memory Usage:
+//   - Approximately maxSize * 1KB for typical queries
+//   - 1000 entries ≈ 1MB memory
+//   - 10000 entries ≈ 10MB memory
+func NewQueryCache(maxSize int) *QueryCache {
+	return &QueryCache{
+		cache:   make(map[string]*cachedResult),
+		lruList: make([]string, 0, maxSize),
+		maxSize: maxSize,
+	}
+}
+
+// Get retrieves a cached query result if it exists and hasn't expired.
+//
+// The method checks both existence and TTL expiration. If found and valid,
+// it moves the entry to the front of the LRU list (marking it as recently used)
+// and increments the hit counter. Otherwise, it increments the miss counter.
+//
+// Parameters:
+//   - cypher: The Cypher query string
+//   - params: Query parameters (can be nil). Different params = different cache entry.
+//
+// Returns:
+//   - *ExecuteResult: The cached result if found and valid
+//   - bool: true if cache hit, false if cache miss
+//
+// Example 1 - Simple Usage:
+//
+//	result, found := cache.Get("MATCH (n) RETURN n.name", nil)
+//	if found {
+//		// cache hit — return the cached result
+//		return result
+//	}
+//	// cache miss — execute the query and Put() the result into the cache
+//
+// Example 2 - With Parameters:
+//
+//	params := map[string]interface{}{"id": "user-123"}
+//	result, found := cache.Get("MATCH (n:User {id: $id}) RETURN n", params)
+//
+// Example 3 - Pattern for Query Execution:
+//
+//	func (e *Executor) ExecuteWithCache(cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+//		// Try cache first
+//		if result, found := e.cache.Get(cypher, params); found {
+//			return result, nil
+//		}
+//
+//		// Cache miss - execute query
+//		result, err := e.executeQuery(cypher, params)
+//		if err != nil {
+//			return nil, err
+//		}
+//
+//		// Store in cache for next time
+//		e.cache.Put(cypher, params, result, 5*time.Minute)
+//		return result, nil
+//	}
+//
+// Thread Safety:
+//
+//	Safe to call concurrently from multiple goroutines.
+func (qc *QueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
+	key := qc.cacheKey(cypher, params)
+
+	qc.mu.RLock()
+	cached, exists := qc.cache[key]
+	qc.mu.RUnlock()
+
+	if !exists {
+		qc.mu.Lock()
+		qc.misses++
+		qc.mu.Unlock()
+		return nil, false
+	}
+
+	// Check TTL
+	if time.Since(cached.timestamp) > cached.ttl {
+		qc.mu.Lock()
+		delete(qc.cache, key)
+		qc.misses++
+		qc.mu.Unlock()
+		return nil, false
+	}
+
+	// Update LRU (move to front)
+	qc.mu.Lock()
+	qc.moveToFront(key)
+	qc.hits++
+	qc.mu.Unlock()
+
+	return cached.result, true
+}
+
+// Put stores a query result in the cache with the specified TTL (Time To Live).
+//
+// If the cache is at capacity, the least recently used entry is evicted first
+// (LRU eviction policy). The new entry is added to the front of the LRU list.
+//
+// Parameters:
+//   - cypher: The Cypher query string
+//   - params: Query parameters (can be nil)
+//   - result: The query result to cache
+//   - ttl: How long the result stays valid (e.g., 5*time.Minute)
+//
+// Example 1 - Basic Caching:
+//
+//	result, err := executor.Execute(ctx, "MATCH (n:User) RETURN count(n)", nil)
+//	if err == nil {
+//		cache.Put("MATCH (n:User) RETURN count(n)", nil, result, 5*time.Minute)
+//	}
+//
+// Example 2 - Different TTLs for Different Queries:
+//
+//	// Fast-changing data - short TTL
+//	cache.Put("MATCH (n:ActiveSession) RETURN n", nil, result, 30*time.Second)
+//
+//	// Stable data - longer TTL
+//	cache.Put("MATCH (n:Country) RETURN n.name", nil, result, 1*time.Hour)
+//
+//	// Very stable reference data
+//	cache.Put("MATCH (n:Constant) RETURN n", nil, result, 24*time.Hour)
+//
+// Example 3 - Pattern After Query Execution:
+//
+//	result, err := executeQuery(cypher, params)
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	// Cache successful results
+//	if isReadOnlyQuery(cypher) {
+//		cache.Put(cypher, params, result, 5*time.Minute)
+//	}
+//	return result, nil
+//
+// ELI12:
+//
+// When you learn a new fact, you write it in your notebook with a date.
+// Later, if someone asks you that fact, you check your notebook first
+// instead of looking it up again. The TTL is like saying "this fact is
+// only good for 1 hour" - after that, you need to check the source again.
+//
+// Thread Safety:
+//
+//	Safe to call concurrently from multiple goroutines.
+func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration) {
+	key := qc.cacheKey(cypher, params)
+	result = cacheOwnedResult(result)
+
+	qc.mu.Lock()
+	defer qc.mu.Unlock()
+
+	// Evict if at capacity
+	if len(qc.cache) >= qc.maxSize && qc.cache[key] == nil {
+		qc.evictOldest()
+	}
+
+	qc.cache[key] = &cachedResult{
+		result:    result,
+		timestamp: time.Now(),
+		ttl:       ttl,
+	}
+
+	qc.moveToFront(key)
+}
+
+// cacheOwnedResult gives a persistent cache its own visible outer row window.
+// The caller may still own a larger allocation, so neither its hidden row
+// headers nor the shared row contents may be cleared during publication.
+func cacheOwnedResult(result *ExecuteResult) *ExecuteResult {
+	if result == nil {
+		return nil
+	}
+	owned := *result
+	owned.Rows = slices.Clone(result.Rows)
+	return &owned
+}
+
+// Invalidate clears all cached query results.
+//
+// This method is called after write operations (CREATE, DELETE, SET, REMOVE, MERGE)
+// to ensure cached results don't become stale. It removes all entries from the cache.
+//
+// Future Enhancement: Smart invalidation that only removes entries affected by
+// specific labels or patterns, rather than clearing the entire cache.
+//
+// Example 1 - After Write Operations:
+//
+//	// Execute write query
+//	_, err := executor.Execute(ctx, "CREATE (n:User {name: 'Bob'})", nil)
+//	if err == nil {
+//		cache.Invalidate() // Clear cache so old counts/results are refreshed
+//	}
+//
+// Example 2 - Manual Cache Reset:
+//
+//	// Clear cache after bulk import
+//	importUsers(dataFile)
+//	cache.Invalidate() // Force all queries to re-execute with new data
+//
+// Example 3 - Integration Pattern:
+//
+//	func (e *Executor) Execute(ctx context.Context, cypher string) (*ExecuteResult, error) {
+//		// Check if query modifies data
+//		if isWriteQuery(cypher) {
+//			defer e.cache.Invalidate() // Clear cache after write
+//		}
+//
+//		// Try cache for read queries
+//		if isReadQuery(cypher) {
+//			if result, found := e.cache.Get(cypher, nil); found {
+//				return result, nil
+//			}
+//		}
+//
+//		return e.executeQuery(ctx, cypher)
+//	}
+//
+// ELI12:
+//
+// Imagine you have a notebook with answers to questions about your toy collection.
+// You write "I have 10 cars" in the notebook. Later, you get 3 new cars as gifts.
+// Now your notebook is WRONG - it still says 10! So you erase the ENTIRE notebook
+// and start fresh. Next time someone asks, you'll count again and get the right
+// answer: 13 cars.
+//
+// That's what Invalidate does - it erases all the old answers because something
+// changed, and the old answers might be wrong now.
+//
+// Thread Safety:
+//
+//	Safe to call concurrently from multiple goroutines.
+func (qc *QueryCache) Invalidate() {
+	qc.mu.Lock()
+	defer qc.mu.Unlock()
+
+	// Clear entire cache on write operations
+	// Future optimization: smart invalidation based on labels/patterns
+	qc.cache = make(map[string]*cachedResult)
+	clear(qc.lruList)
+	qc.lruList = qc.lruList[:0]
+}
+
+// Stats returns cache performance statistics for monitoring.
+//
+// Returns:
+//   - hits: Number of successful cache retrievals
+//   - misses: Number of cache misses (not found or expired)
+//   - size: Current number of cached entries
+//
+// Example 1 - Monitoring Cache Performance:
+//
+//	hits, misses, size := cache.Stats()
+//	hitRate := float64(hits) / float64(hits+misses) * 100
+//	// emit hit-rate metric e.g. "Cache hit rate: 87.50% (450/1000 entries)"
+//
+// Example 2 - Prometheus Metrics:
+//
+//	func collectMetrics() {
+//		hits, misses, size := cache.Stats()
+//		prometheus.CacheHits.Set(float64(hits))
+//		prometheus.CacheMisses.Set(float64(misses))
+//		prometheus.CacheSize.Set(float64(size))
+//	}
+//
+// Example 3 - Auto-Tuning Cache Size:
+//
+//	hits, misses, size := cache.Stats()
+//	hitRate := float64(hits) / float64(hits+misses)
+//
+//	if hitRate < 0.5 && size == maxSize {
+//		// Low hit rate and cache is full — emit a structured warning so
+//		// operators can react (e.g. via the package logger).
+//	}
+//
+// ELI12:
+//
+// Imagine you're playing a video game and trying to remember enemy patterns.
+// - Hits: Times you remembered correctly and didn't get hit
+// - Misses: Times you forgot and had to learn again
+// - Size: How many patterns you have memorized right now
+//
+// If your hit rate is 80%, that means 8 out of 10 times you remembered!
+//
+// Thread Safety:
+//
+//	Safe to call concurrently from multiple goroutines.
+func (qc *QueryCache) Stats() (hits, misses int64, size int) {
+	qc.mu.RLock()
+	defer qc.mu.RUnlock()
+	return qc.hits, qc.misses, len(qc.cache)
+}
+
+// cacheKey is the query and its parameters encoded in full
+// (statementCacheKey): entries are keyed by the whole key, never a hash.
+func (qc *QueryCache) cacheKey(cypher string, params map[string]interface{}) string {
+	return statementCacheKey(cypher, params)
+}
+
+// moveToFront moves key to front of LRU list.
+func (qc *QueryCache) moveToFront(key string) {
+	// Remove from current position
+	for i, k := range qc.lruList {
+		if k == key {
+			qc.lruList = append(qc.lruList[:i], qc.lruList[i+1:]...)
+			break
+		}
+	}
+
+	// Add to front
+	qc.lruList = append([]string{key}, qc.lruList...)
+}
+
+// evictOldest removes the least recently used entry.
+func (qc *QueryCache) evictOldest() {
+	if len(qc.lruList) == 0 {
+		return
+	}
+
+	oldest := qc.lruList[len(qc.lruList)-1]
+	delete(qc.cache, oldest)
+	qc.lruList[len(qc.lruList)-1] = ""
+	qc.lruList = qc.lruList[:len(qc.lruList)-1]
+}
+
+// =============================================================================
+// SMART CACHE INVALIDATION
+// =============================================================================
+
+// SmartQueryCache extends QueryCache with label-aware invalidation.
+// Instead of clearing the entire cache on any write, it tracks which labels
+// each cached query depends on and only invalidates affected entries.
+//
+// Performance:
+//   - Writes to :User only invalidate queries touching :User
+//   - Queries on :Product remain cached when :User is modified
+//   - Reduces cache misses by 50-80% in multi-label workloads
+//
+// Example:
+//
+//	cache := NewSmartQueryCache(1000)
+//
+//	// Cache query for User nodes
+//	cache.PutWithLabels("MATCH (n:User) RETURN n", nil, result, 5*time.Minute, []string{"User"})
+//
+//	// This invalidates only User-related queries
+//	cache.InvalidateLabels([]string{"User"})
+//
+//	// Product queries remain cached!
+//	result, found := cache.Get("MATCH (n:Product) RETURN n", nil)
+type SmartQueryCache struct {
+	cache       map[string]*smartCachedResult
+	labelIndex  map[string]map[string]struct{} // label -> set of cache keys
+	lru         *list.List
+	lruMap      map[string]*list.Element
+	mu          sync.RWMutex
+	maxSize     int
+	hits        int64
+	misses      int64
+	smartInvals int64 // Smart invalidations (partial)
+	fullInvals  int64 // Full invalidations
+
+	// metrics is the Plan 04-03 cross-cutting cache bag (D-12a bridge).
+	// SmartQueryCache emits cache_hits_total{cache="query_result"} +
+	// cache_misses_total{cache="query_result"} + cache_evictions_total{
+	// cache="query_result", reason="lru"} on the unified Cache subsystem
+	// surface so the Phase 10 K8S-11 hit-ratio recording rule sees the
+	// query-result workload alongside other caches. Nil-safe.
+	metrics *observability.CacheMetrics
+}
+
+// smartCachedResult extends cachedResult with label tracking.
+type smartCachedResult struct {
+	result *ExecuteResult
+	// entities is whether result returns a node or relationship, whose
+	// access Execute records on every hit (resultHasMaterializedEntities).
+	entities  bool
+	trace     HotPathTrace
+	timestamp time.Time
+	ttl       time.Duration
+	labels    []string // Labels this query depends on
+	key       string
+
+	// The provider publication captured before execution. A scalar token keeps
+	// cached results from retaining old providers or their embedding caches.
+	embeddingGeneration uint64
+}
+
+// NewSmartQueryCache creates a cache with label-aware invalidation.
+func NewSmartQueryCache(maxSize int) *SmartQueryCache {
+	return &SmartQueryCache{
+		cache:      make(map[string]*smartCachedResult),
+		labelIndex: make(map[string]map[string]struct{}),
+		lru:        list.New(),
+		lruMap:     make(map[string]*list.Element),
+		maxSize:    maxSize,
+	}
+}
+
+// SetCacheMetrics installs the Plan 04-03 D-12a cross-cutting cache bag for
+// query-result observation. Nil-safe (nil bag → no observation). Per
+// CONTEXT D-12 the closed `cache` enum binds to "query_result" here.
+func (sc *SmartQueryCache) SetCacheMetrics(m *observability.CacheMetrics) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.metrics = m
+}
+
+// observeHit / observeMiss / observeEviction emit into the cross-cutting
+// CacheMetrics bag with closed-enum label values (per CONTEXT D-12). All
+// nil-safe.
+func (sc *SmartQueryCache) observeHit() {
+	if sc.metrics == nil {
+		return
+	}
+	sc.metrics.Hits.WithLabelValues("query_result").Inc()
+}
+
+func (sc *SmartQueryCache) observeMiss() {
+	if sc.metrics == nil {
+		return
+	}
+	sc.metrics.Misses.WithLabelValues("query_result").Inc()
+}
+
+func (sc *SmartQueryCache) observeEviction(reason string) {
+	if sc.metrics == nil {
+		return
+	}
+	// Forbidden-label discipline: reason MUST be one of
+	// observability.AllowedEvictionReasons {lru, ttl, capacity, manual}.
+	// Closed-enum string literal at the call site enforces; the bag's
+	// CounterVec is constructed against the closed enum so a free-form
+	// string would not register as a new series silently.
+	sc.metrics.Evictions.WithLabelValues("query_result", reason).Inc()
+}
+
+// Get retrieves a cached result (same as QueryCache).
+func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
+	return sc.get(resultCacheEntryKey(context.Background(), cypher, params))
+}
+
+func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
+	result, _, _, found := sc.getWithTrace(key)
+	return result, found
+}
+
+// getWithTrace returns a cached result, its hot-path trace, and whether it
+// returns nodes or relationships (entities).
+func (sc *SmartQueryCache) getWithTrace(key string) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
+	return sc.getWithTraceForEmbedding(key, 0)
+}
+
+func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint64) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
+	sc.mu.RLock()
+	cached, exists := sc.cache[key]
+	sc.mu.RUnlock()
+
+	if !exists || cached.embeddingGeneration != generation {
+		sc.mu.Lock()
+		sc.misses++
+		sc.mu.Unlock()
+		// Plan 04-03 D-12a: cross-cutting cache_misses_total{cache="query_result"}.
+		sc.observeMiss()
+		return nil, HotPathTrace{}, false, false
+	}
+
+	// Check TTL
+	if time.Since(cached.timestamp) > cached.ttl {
+		sc.mu.Lock()
+		sc.removeEntry(key)
+		sc.misses++
+		sc.mu.Unlock()
+		// Plan 04-03 D-12a: TTL-expired entries are MISSES from the caller's
+		// perspective AND TTL EVICTIONS from the cache's perspective — emit
+		// both observations so dashboards see the cause-and-effect.
+		sc.observeMiss()
+		sc.observeEviction("ttl")
+		return nil, HotPathTrace{}, false, false
+	}
+
+	// Update LRU
+	sc.mu.Lock()
+	if elem, ok := sc.lruMap[key]; ok {
+		sc.lru.MoveToFront(elem)
+	}
+	sc.hits++
+	sc.mu.Unlock()
+
+	// Plan 04-03 D-12a: cross-cutting cache_hits_total{cache="query_result"}.
+	sc.observeHit()
+	return cached.result, cached.trace, cached.entities, true
+}
+
+// PutWithLabels stores a result with associated labels for smart invalidation.
+func (sc *SmartQueryCache) PutWithLabels(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration, labels []string) {
+	sc.putWithLabels(resultCacheEntryKey(context.Background(), cypher, params), result, ttl, labels)
+}
+
+func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl time.Duration, labels []string) {
+	sc.putWithLabelsAndTrace(key, result, ttl, labels, HotPathTrace{})
+}
+
+func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace) {
+	sc.putWithLabelsAndTraceForEmbedding(key, result, ttl, labels, trace, 0)
+}
+
+func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
+	result = cacheOwnedResult(result)
+	entities := resultHasMaterializedEntities(result)
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	// Remove old entry if exists
+	if _, exists := sc.cache[key]; exists {
+		sc.removeEntry(key)
+	}
+
+	// Evict if at capacity
+	for sc.lru.Len() >= sc.maxSize {
+		sc.evictOldestLRU()
+	}
+
+	// Add new entry
+	entry := &smartCachedResult{
+		result:    result,
+		entities:  entities,
+		trace:     trace,
+		timestamp: time.Now(),
+		ttl:       ttl,
+		labels:    labels,
+		key:       key,
+
+		embeddingGeneration: generation,
+	}
+	sc.cache[key] = entry
+	elem := sc.lru.PushFront(entry)
+	sc.lruMap[key] = elem
+
+	// Index by labels
+	for _, label := range labels {
+		if sc.labelIndex[label] == nil {
+			sc.labelIndex[label] = make(map[string]struct{})
+		}
+		sc.labelIndex[label][key] = struct{}{}
+	}
+}
+
+// Put stores a result, auto-extracting labels from the query.
+func (sc *SmartQueryCache) Put(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration) {
+	labels := extractLabelsFromQuery(cypher)
+	sc.PutWithLabels(cypher, params, result, ttl, labels)
+}
+
+// InvalidateLabels removes only cache entries that depend on the given labels.
+// This is much more efficient than full invalidation for multi-label workloads.
+// Also invalidates queries with NO labels (like "MATCH (n) RETURN count(n)")
+// since they match all nodes and are affected by any label change.
+func (sc *SmartQueryCache) InvalidateLabels(labels []string) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	keysToRemove := make(map[string]struct{})
+
+	// Collect all keys that depend on any of the labels
+	for _, label := range labels {
+		if keys, ok := sc.labelIndex[label]; ok {
+			for key := range keys {
+				keysToRemove[key] = struct{}{}
+			}
+		}
+	}
+
+	// Also invalidate queries with NO labels (they match all nodes)
+	// These queries are affected by ANY node creation/deletion
+	for key, entry := range sc.cache {
+		if len(entry.labels) == 0 {
+			keysToRemove[key] = struct{}{}
+		}
+	}
+
+	// Remove collected entries
+	for key := range keysToRemove {
+		sc.removeEntry(key)
+	}
+
+	if len(keysToRemove) > 0 {
+		sc.smartInvals++
+	}
+}
+
+// Invalidate clears the entire cache (fallback for complex operations).
+func (sc *SmartQueryCache) Invalidate() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	sc.cache = make(map[string]*smartCachedResult)
+	sc.labelIndex = make(map[string]map[string]struct{})
+	sc.lru.Init()
+	sc.lruMap = make(map[string]*list.Element)
+	sc.fullInvals++
+}
+
+// Stats returns cache statistics including smart invalidation metrics.
+func (sc *SmartQueryCache) Stats() (hits, misses int64, size int, smartInvals, fullInvals int64) {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	return sc.hits, sc.misses, len(sc.cache), sc.smartInvals, sc.fullInvals
+}
+
+// removeEntry removes an entry and cleans up label indexes.
+func (sc *SmartQueryCache) removeEntry(key string) {
+	if entry, ok := sc.cache[key]; ok {
+		// Remove from label indexes
+		for _, label := range entry.labels {
+			if keys, ok := sc.labelIndex[label]; ok {
+				delete(keys, key)
+				if len(keys) == 0 {
+					delete(sc.labelIndex, label)
+				}
+			}
+		}
+		// Remove from LRU
+		if elem, ok := sc.lruMap[key]; ok {
+			sc.lru.Remove(elem)
+			delete(sc.lruMap, key)
+		}
+		delete(sc.cache, key)
+	}
+}
+
+// evictOldestLRU removes the least recently used entry. Plan 04-03 D-12b:
+// emits cache_evictions_total{cache="query_result", reason="lru"} into the
+// cross-cutting Cache bag. Reason is the closed-enum literal "lru" — never
+// free-form (forbidden-label discipline).
+func (sc *SmartQueryCache) evictOldestLRU() {
+	if elem := sc.lru.Back(); elem != nil {
+		entry := elem.Value.(*smartCachedResult)
+		sc.removeEntry(entry.key)
+		sc.observeEviction("lru")
+	}
+}
+
+// extractLabelsFromQuery extracts node labels and relationship type tokens from
+// a Cypher query string. It scans for label/type tokens like :Label,
+// :Label:AnotherLabel, and :TYPE_A|TYPE_B while skipping quoted string content.
+// A label expression that matches entities without a listed label (:!A, :%,
+// :A|!B, a parenthesised group) makes it return nil: the result depends on
+// every write, as an unlabelled query's does (#860).
+func extractLabelsFromQuery(cypher string) []string {
+	seen := make(map[string]struct{})
+	var labels []string
+	addLabel := func(label string) {
+		if label == "RETURN" || label == "WHERE" || label == "AND" || label == "OR" {
+			return
+		}
+		if _, ok := seen[label]; ok {
+			return
+		}
+		seen[label] = struct{}{}
+		labels = append(labels, label)
+	}
+
+	for i := 0; i < len(cypher); i++ {
+		if end, quoted := skipCypherLexicalToken(cypher, i); quoted {
+			i = end - 1
+			continue
+		}
+		ch := cypher[i]
+
+		if ch != ':' {
+			continue
+		}
+		// Skip type-cast and namespace-style double-colon constructs.
+		if i+1 < len(cypher) && cypher[i+1] == ':' {
+			continue
+		}
+
+		start := i + 1
+		if start >= len(cypher) {
+			continue
+		}
+		first := cypher[start]
+		if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, start) {
+			return nil
+		}
+		if !cyphertext.NameStartAt(cypher, start) {
+			continue
+		}
+
+		end := start + 1
+		for end < len(cypher) {
+			if cyphertext.NamePartAt(cypher, end) {
+				end++
+				continue
+			}
+			break
+		}
+		addLabel(cypher[start:end])
+
+		scan := end
+		for scan < len(cypher) {
+			j := scan
+			for j < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, j)) {
+				j++
+			}
+			if j >= len(cypher) || cypher[j] != '|' {
+				break
+			}
+			j++
+			for j < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, j)) {
+				j++
+			}
+			if j < len(cypher) && cypher[j] == ':' {
+				j++
+			}
+			if j >= len(cypher) {
+				break
+			}
+			first := cypher[j]
+			if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, j) {
+				return nil
+			}
+			if !cyphertext.NameStartAt(cypher, j) {
+				break
+			}
+			altStart := j
+			j++
+			for j < len(cypher) {
+				if cyphertext.NamePartAt(cypher, j) {
+					j++
+					continue
+				}
+				break
+			}
+			addLabel(cypher[altStart:j])
+			scan = j
+		}
+
+		i = scan - 1
+	}
+
+	return labels
+}
+
+// resultCacheEntryKey is the result cache's key for cypher run with params: the
+// normalized statement text and the parameters, encoded in full
+// (statementCacheKey), so an entry is served only for the same statement
+// text and the same parameter values (#729). Normalizing the text keeps
+// trivia outside expression-derived column names and a trailing semicolon
+// from defeating a hit. Column-name spelling remains part of the key.
+func resultCacheEntryKey(ctx context.Context, cypher string, params map[string]interface{}) string {
+	source := trimTrailingStatementDelimiters(cypher)
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	if ctx.Err() != nil {
+		return ""
+	}
+	var protected []statementPresentationSpan
+	if err == nil {
+		protected = statementExpressionNameSpans(syntax)
+	}
+	return statementCacheKey(normalizeQueryWithPresentation(source, protected), params)
+}
+
+// =============================================================================
+// QUERY PLAN CACHE
+// =============================================================================
+
+// QueryPlanCache caches parsed query ASTs to skip repeated parsing.
+// Parsing can take 10-20% of query execution time for simple queries.
+//
+// The cache uses a normalized query string (whitespace collapsed, case normalized)
+// as the key, so "MATCH (n) RETURN n" and "match  (n)  return  n" share the cache.
+//
+// Example:
+//
+//	planCache := NewQueryPlanCache(500)
+//
+//	// First execution parses and caches
+//	plan, found := planCache.Get("MATCH (n:User) RETURN n")
+//	if !found {
+//	    plan = parser.Parse("MATCH (n:User) RETURN n")
+//	    planCache.Put("MATCH (n:User) RETURN n", plan)
+//	}
+//
+//	// Second execution uses cached plan (skip parsing!)
+//	plan, found = planCache.Get("MATCH (n:User) RETURN n")
+//	// found == true
+type QueryPlanCache struct {
+	cache   map[string]*cachedPlan
+	lru     *list.List
+	lruMap  map[string]*list.Element
+	mu      sync.RWMutex
+	maxSize int
+	hits    int64
+	misses  int64
+
+	// metrics is the Plan 04-03 CypherMetrics bag for planner-cache
+	// observation per CONTEXT D-12a. Planner cache stays under the cypher
+	// subsystem (nornicdb_cypher_planner_*), NOT the cross-cutting cache
+	// subsystem (which is for general-purpose caches; planner cache is
+	// Cypher-specific). Nil-safe.
+	metrics *observability.CypherMetrics
+}
+
+// CachedPlan wraps a parsed query with metadata.
+type cachedPlan struct {
+	clauses   []Clause
+	queryType QueryType
+	key       string
+}
+
+// NewQueryPlanCache creates a new query plan cache.
+func NewQueryPlanCache(maxSize int) *QueryPlanCache {
+	if maxSize <= 0 {
+		maxSize = 500 // Default: cache 500 query plans
+	}
+	return &QueryPlanCache{
+		cache:   make(map[string]*cachedPlan),
+		lru:     list.New(),
+		lruMap:  make(map[string]*list.Element),
+		maxSize: maxSize,
+	}
+}
+
+// SetCypherMetrics installs the Plan 04-03 CypherMetrics bag for planner-
+// specific observation per CONTEXT D-12a. Nil-safe (nil bag → no observation).
+func (pc *QueryPlanCache) SetCypherMetrics(m *observability.CypherMetrics) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	pc.metrics = m
+}
+
+// observePlannerHit / observePlannerMiss / setPlannerSize emit into the
+// Cypher subsystem's planner_cache_* families per D-12a. All nil-safe.
+func (pc *QueryPlanCache) observePlannerHit() {
+	if pc.metrics == nil {
+		return
+	}
+	pc.metrics.PlannerCacheHits.WithLabelValues().Inc()
+}
+
+func (pc *QueryPlanCache) observePlannerMiss() {
+	if pc.metrics == nil {
+		return
+	}
+	pc.metrics.PlannerCacheMisses.WithLabelValues().Inc()
+}
+
+// setPlannerSize sets the planner_cache_size gauge to the current cache
+// occupancy. Called from inside Put after a successful insertion (or from
+// LRU eviction inside the same call). Caller MUST hold pc.mu.
+func (pc *QueryPlanCache) setPlannerSize() {
+	if pc.metrics == nil {
+		return
+	}
+	pc.metrics.PlannerCacheSize.Set(float64(len(pc.cache)))
+}
+
+// Get retrieves a cached query plan.
+func (pc *QueryPlanCache) Get(cypher string) ([]Clause, QueryType, bool) {
+	key := normalizeQuery(cypher)
+
+	pc.mu.RLock()
+	plan, exists := pc.cache[key]
+	pc.mu.RUnlock()
+
+	if !exists {
+		pc.mu.Lock()
+		pc.misses++
+		pc.mu.Unlock()
+		// Plan 04-03 D-12a: planner-specific miss counter (Cypher subsystem).
+		pc.observePlannerMiss()
+		return nil, 0, false
+	}
+
+	// Update LRU
+	pc.mu.Lock()
+	if elem, ok := pc.lruMap[key]; ok {
+		pc.lru.MoveToFront(elem)
+	}
+	pc.hits++
+	pc.mu.Unlock()
+
+	// Plan 04-03 D-12a: planner-specific hit counter (Cypher subsystem).
+	pc.observePlannerHit()
+	return plan.clauses, plan.queryType, true
+}
+
+// Put stores a parsed query plan.
+func (pc *QueryPlanCache) Put(cypher string, clauses []Clause, queryType QueryType) {
+	key := normalizeQuery(cypher)
+
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+
+	// Check if already exists
+	if _, exists := pc.cache[key]; exists {
+		return
+	}
+
+	// Evict if at capacity
+	for pc.lru.Len() >= pc.maxSize {
+		if elem := pc.lru.Back(); elem != nil {
+			plan := elem.Value.(*cachedPlan)
+			delete(pc.cache, plan.key)
+			delete(pc.lruMap, plan.key)
+			pc.lru.Remove(elem)
+		}
+	}
+
+	// Add new entry
+	plan := &cachedPlan{
+		clauses:   clauses,
+		queryType: queryType,
+		key:       key,
+	}
+	pc.cache[key] = plan
+	elem := pc.lru.PushFront(plan)
+	pc.lruMap[key] = elem
+
+	// Plan 04-03 D-12a: planner_cache_size gauge tracks current occupancy.
+	// Set inside the lock so the value reflects the post-mutation state.
+	pc.setPlannerSize()
+}
+
+// Stats returns plan cache statistics.
+func (pc *QueryPlanCache) Stats() (hits, misses int64, size int) {
+	pc.mu.RLock()
+	defer pc.mu.RUnlock()
+	return pc.hits, pc.misses, len(pc.cache)
+}
+
+// Clear empties the plan cache.
+func (pc *QueryPlanCache) Clear() {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	pc.cache = make(map[string]*cachedPlan)
+	pc.lru.Init()
+	pc.lruMap = make(map[string]*list.Element)
+}
+
+// normalizeQuery normalizes a Cypher query for cache key generation.
+// Collapses whitespace and lowercases keywords for consistent matching.
+func normalizeQuery(cypher string) string { return normalizeQueryWithPresentation(cypher, nil) }
+
+func normalizeQueryWithPresentation(cypher string, protected []statementPresentationSpan) string {
+	// Collapse consecutive whitespace to a single ASCII space without allocating
+	// the intermediate []string created by strings.Fields. Text inside a
+	// string literal or a backtick-quoted name is kept as it is: 'a  b' and
+	// 'a b' are different statements (#729).
+	if cypher == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(cypher))
+	prevSpace := true
+	for i := 0; i < len(cypher); i++ {
+		end := i
+		for _, span := range protected {
+			if span.start == i && span.end > end {
+				end = span.end
+			}
+		}
+		if end > i {
+			b.WriteString(cypher[i:end])
+			i = end - 1
+			prevSpace = false
+			continue
+		}
+		if end, quoted := skipCypherLexicalToken(cypher, i); quoted {
+			b.WriteString(cypher[i:end])
+			i = end - 1
+			prevSpace = false
+			continue
+		}
+		c := cypher[i]
+		switch {
+		case cyphertext.IsWhitespaceAt(cypher, i):
+			if !prevSpace {
+				b.WriteByte(' ')
+				prevSpace = true
+			}
+		default:
+			b.WriteByte(c)
+			prevSpace = false
+		}
+	}
+	out := b.String()
+	return strings.TrimSpace(out)
+}
+
+// ========================================
+// Node Lookup Cache
+// ========================================
+
+// makeLookupKey creates a cache key from label and properties.
+//
+// Used for fast node lookups during query execution. The key combines
+// the label with sorted property values to ensure consistent cache hits.
+//
+// # Parameters
+//
+//   - label: The node label
+//   - props: Property map for filtering
+//
+// # Returns
+//
+//   - A string key suitable for cache lookup
+//
+// # Example
+//
+//	key := makeLookupKey("Person", map[string]interface{}{"name": "Alice"})
+//	// key = "Person:name=Alice,"
+func makeLookupKey(label string, props map[string]interface{}) string {
+	if len(props) == 0 {
+		return label
+	}
+	// Simple key: label + sorted props
+	key := label + ":"
+	for k, v := range props {
+		key += fmt.Sprintf("%s=%v,", k, v)
+	}
+	return key
+}
+
+// lookupCachedNode looks up a node by label+properties from cache.
+//
+// This provides a fast path for repeated node lookups during MATCH operations.
+// Thread-safe for concurrent access.
+//
+// # Parameters
+//
+//   - label: The node label to match
+//   - props: Property filters
+//
+// # Returns
+//
+//   - The cached node, or nil if not in cache
+func (e *StorageExecutor) lookupCachedNode(label string, props map[string]interface{}) *storage.Node {
+	e.ensureNodeLookupCache()
+
+	key := makeLookupKey(label, props)
+	cacheMu := e.nodeLookupCacheLock()
+	cacheMu.RLock()
+	node := e.nodeLookupCache[key]
+	cacheMu.RUnlock()
+	return node
+}
+
+// cacheNodeLookup caches a node lookup result.
+//
+// Includes simple eviction when cache grows too large (>10000 entries).
+// Thread-safe for concurrent access.
+//
+// # Parameters
+//
+//   - label: The node label
+//   - props: Property filters used for lookup
+//   - node: The node to cache
+func (e *StorageExecutor) cacheNodeLookup(label string, props map[string]interface{}, node *storage.Node) {
+	e.ensureNodeLookupCache()
+
+	key := makeLookupKey(label, props)
+	cacheMu := e.nodeLookupCacheLock()
+	cacheMu.Lock()
+	// Simple eviction: if too large, clear
+	if len(e.nodeLookupCache) > 10000 {
+		e.nodeLookupCache = make(map[string]*storage.Node, 1000)
+	}
+	e.nodeLookupCache[key] = node
+	cacheMu.Unlock()
+}
+
+// invalidateNodeLookupCache clears the node lookup cache.
+//
+// Should be called after write operations that may affect node properties.
+func (e *StorageExecutor) invalidateNodeLookupCache() {
+	cacheMu := e.nodeLookupCacheLock()
+	cacheMu.Lock()
+	if e.nodeLookupCache != nil {
+		clear(e.nodeLookupCache)
+	} else {
+		e.nodeLookupCache = make(map[string]*storage.Node)
+	}
+	cacheMu.Unlock()
+}
+
+// promoteNodeLookupCacheTo copies this executor's MERGE/MATCH lookup cache
+// entries into dst's cache. Called after a transactional clone successfully
+// commits so its now-durable entries can serve subsequent Execute calls on
+// the parent. On rollback callers invoke invalidateNodeLookupCache instead
+// so uncommitted entries are dropped without ever reaching the parent.
+//
+// The two caches are isolated by design (see cloneWithStorage and the
+// nodeLookupCache field doc); promotion only runs in the success path.
+func (e *StorageExecutor) promoteNodeLookupCacheTo(dst *StorageExecutor) {
+	if e == nil || dst == nil || dst == e {
+		return
+	}
+	if e.nodeLookupCacheMu == dst.nodeLookupCacheMu {
+		return // already shared, nothing to promote
+	}
+	srcMu := e.nodeLookupCacheLock()
+	srcMu.RLock()
+	entries := make(map[string]*storage.Node, len(e.nodeLookupCache))
+	for k, v := range e.nodeLookupCache {
+		entries[k] = v
+	}
+	srcMu.RUnlock()
+	if len(entries) == 0 {
+		return
+	}
+	dst.ensureNodeLookupCache()
+	dstMu := dst.nodeLookupCacheLock()
+	dstMu.Lock()
+	for k, v := range entries {
+		dst.nodeLookupCache[k] = v
+	}
+	dstMu.Unlock()
+}
+
+// labelExpressionWidensMatch reports whether a label expression term that
+// starts with c can match an entity without any label the query names (!,
+// %, or a group).
+func labelExpressionWidensMatch(c byte) bool {
+	return c == '!' || c == '%' || c == '('
+}
+
+// dynamicLabelStartsAt reports whether a dynamic label or type ($(e),
+// $all(e), $any(e)) starts at s[i]: its names are known only at run time,
+// so a query with one depends on every write, as an unlabelled one does.
+// A parameter ({k:$v}) is not one.
+func dynamicLabelStartsAt(s string, i int) bool {
+	if i+1 >= len(s) || s[i] != '$' {
+		return false
+	}
+	if s[i+1] == '(' {
+		return true
+	}
+	for _, function := range [...]string{"all(", "any("} {
+		if i+1+len(function) <= len(s) && strings.EqualFold(s[i+1:i+1+len(function)], function) {
+			return true
+		}
+	}
+	return false
+}

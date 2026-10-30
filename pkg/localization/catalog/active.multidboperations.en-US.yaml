@@ -1,0 +1,64 @@
+- id: multidb.composite.constituent_database_not_found
+  other: "constituent database '{{.Database}}' not found: {{.Cause}}"
+- id: multidb.composite.database_as_constituent
+  other: "cannot use composite database '{{.Database}}' as constituent"
+- id: multidb.composite.duplicate_alias
+  other: "duplicate constituent alias: '{{.Alias}}'"
+- id: multidb.composite.secure_remote_credentials_failed
+  other: "failed to secure remote credentials for alias '{{.Alias}}': {{.Cause}}"
+- id: multidb.composite.database_not_composite
+  other: "database '{{.Database}}' is not a composite database"
+- id: multidb.composite.persist_metadata_after_drop_failed
+  other: "failed to persist metadata after drop: {{.Cause}}"
+- id: multidb.composite.alias_exists
+  other: "constituent alias '{{.Alias}}' already exists"
+- id: multidb.composite.alias_not_found
+  other: "constituent alias '{{.Alias}}' not found"
+- id: multidb.manager.delete_database_data_failed
+  other: "failed to delete database data: {{.Cause}}"
+- id: multidb.manager.resolve_remote_credentials_failed
+  other: "failed to resolve remote credentials for constituent '{{.Alias}}': {{.Cause}}"
+- id: multidb.manager.get_remote_storage_failed
+  other: "failed to get remote storage for constituent '{{.Alias}}': {{.Cause}}"
+- id: multidb.manager.get_constituent_storage_failed
+  other: "failed to get storage for constituent '{{.Database}}': {{.Cause}}"
+- id: multidb.manager.remote_engine_factory_not_configured
+  other: "remote constituent '{{.Alias}}' cannot be opened: remote engine factory is not configured"
+- id: multidb.manager.remote_engine_factory_returned_nil
+  other: "remote engine factory returned nil for constituent '{{.Alias}}'"
+- id: multidb.manager.invalid_status
+  other: "invalid status: {{.Status}} (must be 'online' or 'offline')"
+- id: multidb.manager.alias_contains_whitespace
+  other: "invalid alias name: '{{.Alias}}' (cannot contain whitespace)"
+- id: multidb.manager.alias_reserved
+  other: "invalid alias name: '{{.Alias}}' (reserved name)"
+- id: multidb.metadata.parse_failed
+  other: "failed to parse database metadata: {{.Cause}}"
+- id: multidb.metadata.serialize_failed
+  other: "failed to serialize database metadata: {{.Cause}}"
+- id: multidb.storage.get_node_count_failed
+  other: "failed to get node count: {{.Cause}}"
+- id: multidb.storage.get_edge_count_failed
+  other: "failed to get edge count: {{.Cause}}"
+- id: multidb.storage.get_size_failed
+  other: "failed to get storage size: {{.Cause}}"
+- id: multidb.storage.calculate_node_size_failed
+  other: "failed to calculate node size: {{.Cause}}"
+- id: multidb.storage.calculate_edge_size_failed
+  other: "failed to calculate edge size: {{.Cause}}"
+- id: multidb.storage.get_all_nodes_failed
+  other: "failed to get all nodes: {{.Cause}}"
+- id: multidb.storage.get_all_edges_failed
+  other: "failed to get all edges: {{.Cause}}"
+- id: multidb.storage.encode_node_failed
+  other: "failed to encode node: {{.Cause}}"
+- id: multidb.storage.encode_edge_failed
+  other: "failed to encode edge: {{.Cause}}"
+- id: multidb.storage.get_all_nodes_for_size_calculation_failed
+  other: "failed to get all nodes for size calculation: {{.Cause}}"
+- id: multidb.storage.get_all_edges_for_size_calculation_failed
+  other: "failed to get all edges for size calculation: {{.Cause}}"
+- id: multidb.storage.get_outgoing_edges_failed
+  other: "get outgoing edges: {{.Cause}}"
+- id: multidb.storage.get_incoming_edges_failed
+  other: "get incoming edges: {{.Cause}}"

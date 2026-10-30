@@ -1,0 +1,146 @@
+@import "tailwindcss";
+@import "@ornery/ui-grid-react/styles";
+
+@config "../tailwind.config.js";
+
+.nornic-grid {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  --ui-grid-surface: #141824;
+  --ui-grid-border-color: #2a3247;
+  --ui-grid-header-background: #1e2433;
+  --ui-grid-header-weight: 600;
+  --ui-grid-cell-color: #f3f4f6;
+  --ui-grid-muted-color: #9ca3af;
+  --ui-grid-row-odd: #141824;
+  --ui-grid-row-even: #1a1f2e;
+  --ui-grid-row-hover: rgba(16, 185, 129, 0.08);
+  --ui-grid-accent: #10b981;
+  --ui-grid-group-background: #1e2433;
+  --ui-grid-radius: 8px;
+  --ui-grid-shadow: none;
+  --ui-grid-control-background: #141824;
+  --ui-grid-control-border-color: #2a3247;
+  --ui-grid-control-color: #9ca3af;
+  --ui-grid-control-background-active: rgba(16, 185, 129, 0.14);
+  --ui-grid-control-border-color-active: rgba(16, 185, 129, 0.35);
+  --ui-grid-control-color-active: #10b981;
+  --ui-grid-filter-input-focus-outline: 2px solid rgba(16, 185, 129, 0.2);
+  --ui-grid-cell-focus-background: rgba(16, 185, 129, 0.08);
+  --ui-grid-cell-focus-ring: inset 0 0 0 1px rgba(16, 185, 129, 0.28);
+  --ui-grid-cell-editing-background: rgba(16, 185, 129, 0.06);
+  --ui-grid-cell-editor-border-color: rgba(16, 185, 129, 0.45);
+  --ui-grid-cell-editor-focus-outline: 2px solid rgba(16, 185, 129, 0.2);
+  --ui-grid-expandable-row-background: rgba(16, 185, 129, 0.04);
+  --ui-grid-empty-state-min-height: 10rem;
+}
+
+.nornic-grid > ui-grid-element {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+body {
+  background-color: #0a0e1a;
+  color: #f3f4f6;
+  font-family: Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: #141824;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #2a3247;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #10b981;
+}
+
+/* Code editor styling */
+.cypher-editor {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.875rem;
+  background-color: #141824;
+  border: 1px solid #2a3247;
+  border-radius: 0.5rem;
+}
+
+.cypher-editor:focus {
+  outline: none;
+  border-color: transparent;
+  box-shadow: 0 0 0 2px #10b981;
+}
+
+/* Result table styling */
+.result-table {
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+.result-table th {
+  background-color: #1e2433;
+  text-align: left;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  color: #34d399;
+  border-bottom: 1px solid #2a3247;
+}
+
+.result-table td {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid rgb(42 50 71 / 0.5);
+}
+
+.result-table tr:hover {
+  background-color: rgb(30 36 51 / 0.5);
+}
+
+/* JSON viewer */
+.json-key {
+  color: #4a9eff;
+}
+
+.json-string {
+  color: #34d399;
+}
+
+.json-number {
+  color: #d4af37;
+}
+
+.json-boolean {
+  color: #c084fc;
+}
+
+.json-null {
+  color: #9ca3af;
+  font-style: italic;
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 5px rgba(16, 185, 129, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.6);
+  }
+}
+
+.status-connected {
+  animation: pulse-glow 2s ease-in-out infinite;
+}

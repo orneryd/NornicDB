@@ -1,0 +1,217 @@
+// Wave-0 RED test for the cypher slow-query slog emission schema (LOG-07 + D-04c).
+//
+// References (*StorageExecutor).SetLogger and (*StorageExecutor).SetSlowQueryThreshold
+// which do not yet exist; package fails to compile until the GREEN task ships them.
+package cypher
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+func TestExecutorLoggerConcurrentConfiguration(t *testing.T) {
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var workers sync.WaitGroup
+	start := make(chan struct{})
+	for worker := 0; worker < 8; worker++ {
+		workers.Add(1)
+		go func(worker int) {
+			defer workers.Done()
+			<-start
+			for iteration := 0; iteration < 300; iteration++ {
+				if worker%2 == 0 {
+					executor.SetLogger(logger)
+					executor.SetLogger(nil)
+				} else {
+					executor.Logger().Debug("concurrent logger")
+				}
+			}
+		}(worker)
+	}
+	close(start)
+	workers.Wait()
+	if executor.Logger() == nil {
+		t.Fatal("logger must always have a fallback")
+	}
+}
+
+// TestExecutor_SlowQueryLog_Schema asserts the LOG-07 schema:
+//
+//	level=WARN
+//	msg="slow query"
+//	event="slow_query"
+//	plan_hash matches ^[0-9a-f]{16}$
+//	cypher.duration_ms is a number >= 0
+//	query is a string of <= 500 chars containing "<REDACTED>" (input has a string literal).
+func TestExecutor_SlowQueryLog_Schema(t *testing.T) {
+	te := observability.NewTestEnv(t)
+	te.CaptureRecords()
+
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "slow_query_test")
+	exec := NewStorageExecutor(store)
+	exec.SetLogger(te.Logger)
+	// Force every query into the slow-query path.
+	forceSlowQueryLogging(t, exec)
+
+	ctx := context.Background()
+	// Query MUST contain a string literal so the redacted attr provably contains "<REDACTED>".
+	if _, err := exec.Execute(ctx, `MATCH (n {name: "alice"}) RETURN n`, nil); err != nil {
+		// Execution may fail for other reasons (no nodes, etc.); that's OK — we only
+		// care that the slow-query log fired before the return.
+		t.Logf("execute returned err=%v (acceptable for slow-query schema test)", err)
+	}
+
+	records := te.LoggedRecords()
+	if len(records) == 0 {
+		t.Fatalf("no slow-query records captured")
+	}
+
+	hexRe := regexp.MustCompile(`^[0-9a-f]{16}$`)
+	var found bool
+	for _, rec := range records {
+		if rec["level"] != "WARN" {
+			continue
+		}
+		if rec["msg"] != "slow query" {
+			continue
+		}
+		if rec["event"] != "slow_query" {
+			t.Errorf("expected event=slow_query, got %v", rec["event"])
+			continue
+		}
+		ph, ok := rec["plan_hash"].(string)
+		if !ok || !hexRe.MatchString(ph) {
+			t.Errorf("plan_hash %v not valid 16-char hex", rec["plan_hash"])
+			continue
+		}
+		dur, ok := rec["cypher.duration_ms"].(float64) // JSON numbers decode as float64
+		if !ok || dur < 0 {
+			t.Errorf("cypher.duration_ms %v invalid", rec["cypher.duration_ms"])
+			continue
+		}
+		q, ok := rec["query"].(string)
+		if !ok {
+			t.Errorf("query attr not a string: %T", rec["query"])
+			continue
+		}
+		if len(q) > 500 {
+			t.Errorf("query attr exceeds 500 chars: len=%d", len(q))
+			continue
+		}
+		if !strings.Contains(q, RedactedPlaceholder) {
+			t.Errorf("query attr missing redaction marker: %q", q)
+			continue
+		}
+		if strings.Contains(q, "alice") {
+			t.Errorf("LOG-08 violation: 'alice' literal leaked into log: %q", q)
+		}
+		found = true
+	}
+	if !found {
+		t.Fatalf("no record matched the LOG-07 schema; records=%v", records)
+	}
+}
+
+// TestExecutor_SlowQueryLog_PlanHashDistinguishesShape — NornicDB issue #563
+// defect 2: Execute's deferred emitSlowQueryLog(originalCypher, nil, dur)
+// always passed a nil plan, so plan_hash was "0000000000000000" for every
+// non-EXPLAIN/PROFILE query. That makes the field useless for grouping
+// slow-query records by statement shape. Two queries of the same shape but
+// different literal values MUST produce the same hash; two different shapes
+// MUST produce different hashes; and the hash MUST NOT be the zero
+// placeholder for an ordinary executed query.
+func TestExecutor_SlowQueryLog_PlanHashDistinguishesShape(t *testing.T) {
+	te := observability.NewTestEnv(t)
+	te.CaptureRecords()
+
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "slow_query_shape_test")
+	exec := NewStorageExecutor(store)
+	exec.SetLogger(te.Logger)
+	forceSlowQueryLogging(t, exec)
+
+	ctx := context.Background()
+	_, _ = exec.Execute(ctx, `MATCH (n {name: "alice"}) RETURN n`, nil)
+	_, _ = exec.Execute(ctx, `MATCH (n {name: "bob"}) RETURN n`, nil)
+	_, _ = exec.Execute(ctx, `MATCH (n) WHERE n.age > 5 RETURN n`, nil)
+
+	var hashes []string
+	for _, rec := range te.LoggedRecords() {
+		if rec["event"] != "slow_query" {
+			continue
+		}
+		ph, _ := rec["plan_hash"].(string)
+		hashes = append(hashes, ph)
+	}
+	if len(hashes) != 3 {
+		t.Fatalf("expected 3 slow_query records, got %d: %v", len(hashes), hashes)
+	}
+	if hashes[0] == "0000000000000000" {
+		t.Fatalf("plan_hash is the zero placeholder for a non-EXPLAIN query: %v", hashes)
+	}
+	if hashes[0] != hashes[1] {
+		t.Fatalf("same-shape queries with different literals produced different plan_hash: %q vs %q", hashes[0], hashes[1])
+	}
+	if hashes[0] == hashes[2] {
+		t.Fatalf("different-shape queries produced the same plan_hash: %q", hashes[0])
+	}
+}
+
+// TestExecutor_SlowQueryLog_TruncatesAt500 — query attr is exactly <= 500 chars
+// even when the redacted query is longer.
+func TestExecutor_SlowQueryLog_TruncatesAt500(t *testing.T) {
+	te := observability.NewTestEnv(t)
+	te.CaptureRecords()
+
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "slow_query_test_trunc")
+	exec := NewStorageExecutor(store)
+	exec.SetLogger(te.Logger)
+	forceSlowQueryLogging(t, exec)
+
+	// Build a query whose redacted form will be > 500 chars. WHERE n.k0 = 0 OR n.k1 = 1 ...
+	// Each clause adds ~20 chars (after redaction); 30 clauses ~ 600+ chars.
+	var b strings.Builder
+	b.WriteString("MATCH (n) WHERE ")
+	for i := 0; i < 30; i++ {
+		if i > 0 {
+			b.WriteString(" OR ")
+		}
+		// fixed-width identifier so the test is deterministic
+		b.WriteString("n.k")
+		b.WriteString(string(rune('a' + (i % 26))))
+		b.WriteString(" = ")
+		b.WriteString("12345")
+	}
+	b.WriteString(" RETURN n")
+
+	ctx := context.Background()
+	if _, err := exec.Execute(ctx, b.String(), nil); err != nil {
+		t.Logf("execute returned err=%v (acceptable)", err)
+	}
+
+	for _, rec := range te.LoggedRecords() {
+		if rec["msg"] != "slow query" {
+			continue
+		}
+		q, ok := rec["query"].(string)
+		if !ok {
+			continue
+		}
+		if len(q) > 500 {
+			t.Fatalf("expected truncation at 500, got len=%d", len(q))
+		}
+		return // success
+	}
+	t.Fatalf("no slow-query record observed for truncation test")
+}

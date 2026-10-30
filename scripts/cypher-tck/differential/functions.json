@@ -1,0 +1,2398 @@
+[
+ {
+  "name": "abs",
+  "signature": "abs(input :: INTEGER | FLOAT) :: INTEGER | FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A numeric value from which the absolute number will be returned.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT"
+   }
+  ],
+  "returnDescription": "INTEGER | FLOAT"
+ },
+ {
+  "name": "acos",
+  "signature": "acos(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "all",
+  "signature": "all(variable :: VARIABLE IN list :: LIST<ANY> WHERE predicate :: ANY) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "variable",
+    "description": "A variable that can be used within the `WHERE` clause.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "list",
+    "description": "A predicate must hold for all elements in this list for the function to return `true`.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "any",
+  "signature": "any(variable :: VARIABLE IN list :: LIST<ANY> WHERE predicate :: ANY) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "variable",
+    "description": "A variable that can be used within the `WHERE` clause.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "list",
+    "description": "A list for the predicate to check against.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "asin",
+  "signature": "asin(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "atan",
+  "signature": "atan(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "atan2",
+  "signature": "atan2(y :: FLOAT, x :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "y",
+    "description": "A y angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   },
+   {
+    "name": "x",
+    "description": "An x angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "avg",
+  "signature": "avg(input :: INTEGER | FLOAT | DURATION) :: INTEGER | FLOAT | DURATION",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value aggregated to form an average.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT | DURATION"
+   }
+  ],
+  "returnDescription": "INTEGER | FLOAT | DURATION"
+ },
+ {
+  "name": "btrim",
+  "signature": "btrim(input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value from which all leading and trailing whitespace will be removed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "btrim",
+  "signature": "btrim(input :: STRING, trimCharacterString :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value from which the leading and trailing trim character will be removed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "trimCharacterString",
+    "description": "A character to be removed from the start and end of the given string.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "ceil",
+  "signature": "ceil(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be rounded to the nearest higher integer.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "char_length",
+  "signature": "char_length(input :: STRING) :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A string value whose length in characters is to be calculated.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "character_length",
+  "signature": "character_length(input :: STRING) :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A string value whose length in characters is to be calculated.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "coalesce",
+  "signature": "coalesce(input :: ANY) :: ANY",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "If this is the first non-`NULL` value, it will be returned.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ANY"
+ },
+ {
+  "name": "collect",
+  "signature": "collect(input :: ANY) :: LIST<ANY>",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value aggregated into a list.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "LIST<ANY>"
+ },
+ {
+  "name": "cos",
+  "signature": "cos(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "cot",
+  "signature": "cot(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "count",
+  "signature": "count(input :: ANY) :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be aggregated.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "date",
+  "signature": "date(input = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: DATE",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "Either a string representation of a temporal value, a map containing the single key 'timezone', or a map containing temporal values ('date', 'year', 'month', 'day', 'week', 'dayOfWeek', 'quarter', 'dayOfQuarter', 'ordinalDay') as components.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "DATE"
+ },
+ {
+  "name": "date.realtime",
+  "signature": "date.realtime(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: DATE",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "DATE"
+ },
+ {
+  "name": "date.statement",
+  "signature": "date.statement(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: DATE",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "DATE"
+ },
+ {
+  "name": "date.transaction",
+  "signature": "date.transaction(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: DATE",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "DATE"
+ },
+ {
+  "name": "date.truncate",
+  "signature": "date.truncate(unit :: STRING, input = DEFAULT_TEMPORAL_ARGUMENT :: ANY, fields = null :: MAP) :: DATE",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "unit",
+    "description": "A string representing one of the following: 'day', 'week', 'month', 'weekYear', 'quarter', 'year', 'decade', 'century', 'millennium'.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "input",
+    "description": "The date to be truncated using either `ZONED DATETIME`, `LOCAL DATETIME`, or `DATE`.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   },
+   {
+    "name": "fields",
+    "description": "A list of time components smaller than those specified in `unit` to preserve during truncation.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=null, type=MAP}",
+    "type": "MAP"
+   }
+  ],
+  "returnDescription": "DATE"
+ },
+ {
+  "name": "datetime",
+  "signature": "datetime(input = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: ZONED DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "Either a string representation of a temporal value, a map containing the single key 'timezone', or a map containing temporal values ('year', 'month', 'day', 'hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond', 'timezone', 'epochSeconds', 'epochMillis') as components.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ZONED DATETIME"
+ },
+ {
+  "name": "datetime.fromepoch",
+  "signature": "datetime.fromepoch(seconds :: INTEGER | FLOAT, nanoseconds :: INTEGER | FLOAT) :: ZONED DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "seconds",
+    "description": "The number of seconds from the UNIX epoch in the UTC time zone.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT"
+   },
+   {
+    "name": "nanoseconds",
+    "description": "The number of nanoseconds from the UNIX epoch in the UTC time zone. This can be added to seconds.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT"
+   }
+  ],
+  "returnDescription": "ZONED DATETIME"
+ },
+ {
+  "name": "datetime.fromepochmillis",
+  "signature": "datetime.fromepochmillis(milliseconds :: INTEGER | FLOAT) :: ZONED DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "milliseconds",
+    "description": "The number of milliseconds from the UNIX epoch in the UTC time zone.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT"
+   }
+  ],
+  "returnDescription": "ZONED DATETIME"
+ },
+ {
+  "name": "datetime.realtime",
+  "signature": "datetime.realtime(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: ZONED DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ZONED DATETIME"
+ },
+ {
+  "name": "datetime.statement",
+  "signature": "datetime.statement(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: ZONED DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ZONED DATETIME"
+ },
+ {
+  "name": "datetime.transaction",
+  "signature": "datetime.transaction(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: ZONED DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ZONED DATETIME"
+ },
+ {
+  "name": "datetime.truncate",
+  "signature": "datetime.truncate(unit :: STRING, input = DEFAULT_TEMPORAL_ARGUMENT :: ANY, fields = null :: MAP) :: ZONED DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "unit",
+    "description": "A string representing one of the following: 'microsecond', 'millisecond', 'second', 'minute', 'hour', 'day', 'week', 'month', 'weekYear', 'quarter', 'year', 'decade', 'century', 'millennium'.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "input",
+    "description": "The date to be truncated using either `ZONED DATETIME`, `LOCAL DATETIME`, or `DATE`.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   },
+   {
+    "name": "fields",
+    "description": "A list of time components smaller than those specified in `unit` to preserve during truncation.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=null, type=MAP}",
+    "type": "MAP"
+   }
+  ],
+  "returnDescription": "ZONED DATETIME"
+ },
+ {
+  "name": "degrees",
+  "signature": "degrees(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "duration",
+  "signature": "duration(input :: ANY) :: DURATION",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A map optionally containing the following keys: 'years', 'quarters', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds', 'milliseconds', 'microseconds', or 'nanoseconds'.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "DURATION"
+ },
+ {
+  "name": "duration.between",
+  "signature": "duration.between(from :: ANY, to :: ANY) :: DURATION",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "from",
+    "description": "A temporal instant type (`DATE`, `LOCAL TIME`, `ZONED TIME`, `LOCAL DATETIME`, `ZONED DATETIME`) representing the starting instant.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "to",
+    "description": "A temporal instant type (`DATE`, `LOCAL TIME`, `ZONED TIME`, `LOCAL DATETIME`, `ZONED DATETIME`) representing the ending instant.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "DURATION"
+ },
+ {
+  "name": "duration.inDays",
+  "signature": "duration.inDays(from :: ANY, to :: ANY) :: DURATION",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "from",
+    "description": "A temporal instant type (`DATE`, `LOCAL TIME`, `ZONED TIME`, `LOCAL DATETIME`, `ZONED DATETIME`) representing the starting instant.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "to",
+    "description": "A temporal instant type (`DATE`, `LOCAL TIME`, `ZONED TIME`, `LOCAL DATETIME`, `ZONED DATETIME`) representing the ending instant.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "DURATION"
+ },
+ {
+  "name": "duration.inMonths",
+  "signature": "duration.inMonths(from :: ANY, to :: ANY) :: DURATION",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "from",
+    "description": "A temporal instant type (`DATE`, `LOCAL TIME`, `ZONED TIME`, `LOCAL DATETIME`, `ZONED DATETIME`) representing the starting instant.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "to",
+    "description": "A temporal instant type (`DATE`, `LOCAL TIME`, `ZONED TIME`, `LOCAL DATETIME`, `ZONED DATETIME`) representing the ending instant.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "DURATION"
+ },
+ {
+  "name": "duration.inSeconds",
+  "signature": "duration.inSeconds(from :: ANY, to :: ANY) :: DURATION",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "from",
+    "description": "A temporal instant type (`DATE`, `LOCAL TIME`, `ZONED TIME`, `LOCAL DATETIME`, `ZONED DATETIME`) representing the starting instant.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "to",
+    "description": "A temporal instant type (`DATE`, `LOCAL TIME`, `ZONED TIME`, `LOCAL DATETIME`, `ZONED DATETIME`) representing the ending instant.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "DURATION"
+ },
+ {
+  "name": "e",
+  "signature": "e() :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "elementId",
+  "signature": "elementId(input :: NODE | RELATIONSHIP) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An element id of a node or a relationship.",
+    "isDeprecated": false,
+    "type": "NODE | RELATIONSHIP"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "endNode",
+  "signature": "endNode(input :: RELATIONSHIP) :: NODE",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A relationship.",
+    "isDeprecated": false,
+    "type": "RELATIONSHIP"
+   }
+  ],
+  "returnDescription": "NODE"
+ },
+ {
+  "name": "exists",
+  "signature": "exists(input :: ANY) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A pattern to verify the existence of.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "exp",
+  "signature": "exp(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to which the base of the natural logarithm, e, will be raised.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "file",
+  "signature": "file() :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "floor",
+  "signature": "floor(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be rounded to the nearest lower integer.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "graph.byElementId",
+  "signature": "graph.byElementId(elementId :: STRING) :: GRAPH",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "elementId",
+    "description": "An element id of a node or relationship.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "GRAPH"
+ },
+ {
+  "name": "graph.byName",
+  "signature": "graph.byName(name :: STRING) :: GRAPH",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "name",
+    "description": "The name of the graph to be resolved.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "GRAPH"
+ },
+ {
+  "name": "haversin",
+  "signature": "haversin(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "head",
+  "signature": "head(list :: LIST<ANY>) :: ANY",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "list",
+    "description": "A list from which the first element will be returned.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "ANY"
+ },
+ {
+  "name": "id",
+  "signature": "id(input :: NODE | RELATIONSHIP) :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A node or a relationship.",
+    "isDeprecated": false,
+    "type": "NODE | RELATIONSHIP"
+   }
+  ],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "isEmpty",
+  "signature": "isEmpty(input :: STRING | MAP | LIST<ANY>) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be checked for emptiness.",
+    "isDeprecated": false,
+    "type": "STRING | MAP | LIST<ANY>"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "isNaN",
+  "signature": "isNaN(input :: INTEGER | FLOAT) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A numeric value to be compared against `NaN`.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "keys",
+  "signature": "keys(input :: NODE | RELATIONSHIP | MAP) :: LIST<STRING>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A node or relationship from which the names of all properties will be returned.",
+    "isDeprecated": false,
+    "type": "NODE | RELATIONSHIP | MAP"
+   }
+  ],
+  "returnDescription": "LIST<STRING>"
+ },
+ {
+  "name": "labels",
+  "signature": "labels(input :: NODE) :: LIST<STRING>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A node whose labels will be returned.",
+    "isDeprecated": false,
+    "type": "NODE"
+   }
+  ],
+  "returnDescription": "LIST<STRING>"
+ },
+ {
+  "name": "last",
+  "signature": "last(list :: LIST<ANY>) :: ANY",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "list",
+    "description": "A list from which the last element will be returned.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "ANY"
+ },
+ {
+  "name": "left",
+  "signature": "left(original :: STRING, length :: INTEGER) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "original",
+    "description": "A string value whose rightmost characters will be trimmed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "length",
+    "description": "The length of the leftmost characters to be returned.",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "length",
+  "signature": "length(input :: PATH) :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A path whose relationships will be counted.",
+    "isDeprecated": false,
+    "type": "PATH"
+   }
+  ],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "linenumber",
+  "signature": "linenumber() :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "localdatetime",
+  "signature": "localdatetime(input = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: LOCAL DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "Either a string representation of a temporal value, a map containing the single key 'timezone', or a map containing temporal values ('year', 'month', 'day', 'hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond') as components.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "LOCAL DATETIME"
+ },
+ {
+  "name": "localdatetime.realtime",
+  "signature": "localdatetime.realtime(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: LOCAL DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "LOCAL DATETIME"
+ },
+ {
+  "name": "localdatetime.statement",
+  "signature": "localdatetime.statement(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: LOCAL DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "LOCAL DATETIME"
+ },
+ {
+  "name": "localdatetime.transaction",
+  "signature": "localdatetime.transaction(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: LOCAL DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "LOCAL DATETIME"
+ },
+ {
+  "name": "localdatetime.truncate",
+  "signature": "localdatetime.truncate(unit :: STRING, input = DEFAULT_TEMPORAL_ARGUMENT :: ANY, fields = null :: MAP) :: LOCAL DATETIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "unit",
+    "description": "A string representing one of the following: 'microsecond', 'millisecond', 'second', 'minute', 'hour', 'day', 'week', 'month', 'weekYear', 'quarter', 'year', 'decade', 'century', 'millennium'.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "input",
+    "description": "The date to be truncated using either `ZONED DATETIME`, `LOCAL DATETIME`, or `DATE`.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   },
+   {
+    "name": "fields",
+    "description": "A list of time components smaller than those specified in `unit` to preserve during truncation.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=null, type=MAP}",
+    "type": "MAP"
+   }
+  ],
+  "returnDescription": "LOCAL DATETIME"
+ },
+ {
+  "name": "localtime",
+  "signature": "localtime(input = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: LOCAL TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "Either a string representation of a temporal value, a map containing the single key 'timezone', or a map containing temporal values ('hour, 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond' as components.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "LOCAL TIME"
+ },
+ {
+  "name": "localtime.realtime",
+  "signature": "localtime.realtime(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: LOCAL TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "LOCAL TIME"
+ },
+ {
+  "name": "localtime.statement",
+  "signature": "localtime.statement(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: LOCAL TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "LOCAL TIME"
+ },
+ {
+  "name": "localtime.transaction",
+  "signature": "localtime.transaction(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: LOCAL TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "LOCAL TIME"
+ },
+ {
+  "name": "localtime.truncate",
+  "signature": "localtime.truncate(unit :: STRING, input = DEFAULT_TEMPORAL_ARGUMENT :: ANY, fields = null :: MAP) :: LOCAL TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "unit",
+    "description": "A string representing one of the following: 'day', 'week', 'month', 'weekYear', 'quarter', 'year', 'decade', 'century', 'millennium'.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "input",
+    "description": "The date to be truncated using either `ZONED DATETIME`, `LOCAL DATETIME`, `LOCAL TIME`, or `DATE`.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   },
+   {
+    "name": "fields",
+    "description": "A list of time components smaller than those specified in `unit` to preserve during truncation.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=null, type=MAP}",
+    "type": "MAP"
+   }
+  ],
+  "returnDescription": "LOCAL TIME"
+ },
+ {
+  "name": "log",
+  "signature": "log(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value for which the natural logarithm will be returned.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "log10",
+  "signature": "log10(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value for which the common logarithm (base 10) will be returned.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "lower",
+  "signature": "lower(input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A string to be converted into lowercase.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "ltrim",
+  "signature": "ltrim(input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value in which all leading whitespace will be removed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "ltrim",
+  "signature": "ltrim(input :: STRING, trimCharacterString :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value from which the leading trim character will be removed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "trimCharacterString",
+    "description": "A character to be removed from the start of the given string.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "max",
+  "signature": "max(input :: ANY) :: ANY",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be aggregated.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ANY"
+ },
+ {
+  "name": "min",
+  "signature": "min(input :: ANY) :: ANY",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be aggregated.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ANY"
+ },
+ {
+  "name": "nodes",
+  "signature": "nodes(input :: PATH) :: LIST<NODE>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A path whose nodes will be returned.",
+    "isDeprecated": false,
+    "type": "PATH"
+   }
+  ],
+  "returnDescription": "LIST<NODE>"
+ },
+ {
+  "name": "none",
+  "signature": "none(variable :: VARIABLE IN list :: LIST<ANY> WHERE predicate :: ANY) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "variable",
+    "description": "A variable that can be used within the `WHERE` clause.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "list",
+    "description": "A list for the predicate to check against.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "normalize",
+  "signature": "normalize(input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be normalized.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "normalize",
+  "signature": "normalize(input :: STRING, normalForm = NFC :: [NFC, NFD, NFKC, NFKD]) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be normalized.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "normalForm",
+    "description": "A keyword specifying any of the normal forms; NFC, NFD, NFKC or NFKD.",
+    "isDeprecated": false,
+    "type": "[NFC, NFD, NFKC, NFKD]"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "nullIf",
+  "signature": "nullIf(v1 :: ANY, v2 :: ANY) :: ANY",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "v1",
+    "description": "A first value to be returned if the second value is not equivalent.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "v2",
+    "description": "A second value against which the first value is compared.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ANY"
+ },
+ {
+  "name": "percentileCont",
+  "signature": "percentileCont(input :: FLOAT, percentile :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be aggregated.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   },
+   {
+    "name": "percentile",
+    "description": "A percentile between 0.0 and 1.0.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "percentileDisc",
+  "signature": "percentileDisc(input :: INTEGER | FLOAT, percentile :: FLOAT) :: INTEGER | FLOAT",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be aggregated.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT"
+   },
+   {
+    "name": "percentile",
+    "description": "A percentile between 0.0 and 1.0.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "INTEGER | FLOAT"
+ },
+ {
+  "name": "pi",
+  "signature": "pi() :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "point",
+  "signature": "point(input :: MAP) :: POINT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "Cartesian 2D: {x :: FLOAT, y :: FLOAT, crs = \"cartesian\" :: STRING, srid = 7203 :: INTEGER}\n\nCartesian 3D: {x :: FLOAT, y :: FLOAT, z :: FLOAT, crs = \"cartesian-3D\" :: STRING, srid = 9157 :: INTEGER} \n\nWGS 84 2D: {longitude | x :: FLOAT, latitude | y :: FLOAT, crs = \"WGS-84-2D\" :: STRING, srid = 4326 :: INTEGER}\n\nWGS 84 3D: {longitude | x :: FLOAT, latitude | y :: FLOAT, height | z :: FLOAT, crs = \"WGS-84-3D\" :: STRING, srid = 4979 :: INTEGER}",
+    "isDeprecated": false,
+    "type": "MAP"
+   }
+  ],
+  "returnDescription": "POINT"
+ },
+ {
+  "name": "point.distance",
+  "signature": "point.distance(from :: POINT, to :: POINT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "from",
+    "description": "A start point.",
+    "isDeprecated": false,
+    "type": "POINT"
+   },
+   {
+    "name": "to",
+    "description": "An end point in the same CRS as the start point.",
+    "isDeprecated": false,
+    "type": "POINT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "point.withinBBox",
+  "signature": "point.withinBBox(point :: POINT, lowerLeft :: POINT, upperRight :: POINT) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "point",
+    "description": "A point to be confirmed in the bounding box.",
+    "isDeprecated": false,
+    "type": "POINT"
+   },
+   {
+    "name": "lowerLeft",
+    "description": "The lower left side point of the bounding box.",
+    "isDeprecated": false,
+    "type": "POINT"
+   },
+   {
+    "name": "upperRight",
+    "description": "The upper right side point of the bounding box.",
+    "isDeprecated": false,
+    "type": "POINT"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "properties",
+  "signature": "properties(input :: NODE | RELATIONSHIP | MAP) :: MAP",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An entity to return the properties from.",
+    "isDeprecated": false,
+    "type": "NODE | RELATIONSHIP | MAP"
+   }
+  ],
+  "returnDescription": "MAP"
+ },
+ {
+  "name": "radians",
+  "signature": "radians(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in degrees.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "rand",
+  "signature": "rand() :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "randomUUID",
+  "signature": "randomUUID() :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "range",
+  "signature": "range(start :: INTEGER, end :: INTEGER) :: LIST<INTEGER>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "start",
+    "description": "The start value of the range.",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   },
+   {
+    "name": "end",
+    "description": "The end value of the range.",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   }
+  ],
+  "returnDescription": "LIST<INTEGER>"
+ },
+ {
+  "name": "range",
+  "signature": "range(start :: INTEGER, end :: INTEGER, step :: INTEGER) :: LIST<INTEGER>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "start",
+    "description": "The start value of the range.",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   },
+   {
+    "name": "end",
+    "description": "The end value of the range.",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   },
+   {
+    "name": "step",
+    "description": "The size of the increment (default value: 1).",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   }
+  ],
+  "returnDescription": "LIST<INTEGER>"
+ },
+ {
+  "name": "reduce",
+  "signature": "reduce(accumulator :: VARIABLE = initial :: ANY, variable :: VARIABLE IN list :: LIST<ANY> | expression :: ANY) :: ANY",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "accumulator",
+    "description": "A variable that holds the result as the list is iterated.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "variable",
+    "description": "A variable that can be used within the reducing expression.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "ANY"
+ },
+ {
+  "name": "relationships",
+  "signature": "relationships(input :: PATH) :: LIST<RELATIONSHIP>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "The path from which all relationships will be returned.",
+    "isDeprecated": false,
+    "type": "PATH"
+   }
+  ],
+  "returnDescription": "LIST<RELATIONSHIP>"
+ },
+ {
+  "name": "replace",
+  "signature": "replace(original :: STRING, search :: STRING, replace :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "original",
+    "description": "The string to be modified.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "search",
+    "description": "The value to replace in the original string.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "replace",
+    "description": "The value to be inserted in the original string.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "reverse",
+  "signature": "reverse(input :: STRING | LIST<ANY>) :: STRING | LIST<ANY>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "The string or list to be reversed.",
+    "isDeprecated": false,
+    "type": "STRING | LIST<ANY>"
+   }
+  ],
+  "returnDescription": "STRING | LIST<ANY>"
+ },
+ {
+  "name": "right",
+  "signature": "right(original :: STRING, length :: INTEGER) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "original",
+    "description": "A string value whose leftmost characters will be trimmed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "length",
+    "description": "The length of the rightmost characters to be returned.",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "round",
+  "signature": "round(value :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "value",
+    "description": "A value to be rounded.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "round",
+  "signature": "round(value :: FLOAT, precision :: INTEGER | FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "value",
+    "description": "A value to be rounded.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   },
+   {
+    "name": "precision",
+    "description": "The rounding precision.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "round",
+  "signature": "round(value :: FLOAT, precision :: INTEGER | FLOAT, mode :: STRING) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "value",
+    "description": "A value to be rounded.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   },
+   {
+    "name": "precision",
+    "description": "The rounding precision.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT"
+   },
+   {
+    "name": "mode",
+    "description": "A precision rounding mode (`UP`, `DOWN`, `CEILING`, `FLOOR`, `HALF_UP`, `HALF_DOWN`, `HALF_EVEN`).",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "rtrim",
+  "signature": "rtrim(input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value from which all leading and trailing whitespace will be removed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "rtrim",
+  "signature": "rtrim(input :: STRING, trimCharacterString :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value from which the leading and trailing trim character will be removed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "trimCharacterString",
+    "description": "A character to be removed from the start and end of the given string.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "sign",
+  "signature": "sign(input :: INTEGER | FLOAT) :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A positive or negative number.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT"
+   }
+  ],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "sin",
+  "signature": "sin(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "single",
+  "signature": "single(variable :: VARIABLE IN list :: LIST<ANY> WHERE predicate :: ANY) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "variable",
+    "description": "A variable that can be used within the `WHERE` clause.",
+    "isDeprecated": false,
+    "type": "ANY"
+   },
+   {
+    "name": "list",
+    "description": "A list for the predicate to check against.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "size",
+  "signature": "size(input :: STRING | LIST<ANY>) :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value whose length is to be calculated.",
+    "isDeprecated": false,
+    "type": "STRING | LIST<ANY>"
+   }
+  ],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "split",
+  "signature": "split(original :: STRING, splitDelimiters :: STRING | LIST<STRING>) :: LIST<STRING>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "original",
+    "description": "The string to be split.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "splitDelimiters",
+    "description": "The string with which to split the original string.",
+    "isDeprecated": false,
+    "type": "STRING | LIST<STRING>"
+   }
+  ],
+  "returnDescription": "LIST<STRING>"
+ },
+ {
+  "name": "sqrt",
+  "signature": "sqrt(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "The value to calculate the square root of.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "startNode",
+  "signature": "startNode(input :: RELATIONSHIP) :: NODE",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A relationship.",
+    "isDeprecated": false,
+    "type": "RELATIONSHIP"
+   }
+  ],
+  "returnDescription": "NODE"
+ },
+ {
+  "name": "stdev",
+  "signature": "stdev(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "The value to calculate the standard deviation of.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "stdevp",
+  "signature": "stdevp(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "The value to calculate the population standard deviation of.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "substring",
+  "signature": "substring(original :: STRING, start :: INTEGER) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "original",
+    "description": "The string to be shortened.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "start",
+    "description": "The start position of the new string.",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "substring",
+  "signature": "substring(original :: STRING, start :: INTEGER, length :: INTEGER) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "original",
+    "description": "The string to be shortened.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "start",
+    "description": "The start position of the new string.",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   },
+   {
+    "name": "length",
+    "description": "The length of the new string.",
+    "isDeprecated": false,
+    "type": "INTEGER"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "sum",
+  "signature": "sum(input :: INTEGER | FLOAT | DURATION) :: INTEGER | FLOAT | DURATION",
+  "isBuiltIn": true,
+  "aggregating": true,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be aggregated.",
+    "isDeprecated": false,
+    "type": "INTEGER | FLOAT | DURATION"
+   }
+  ],
+  "returnDescription": "INTEGER | FLOAT | DURATION"
+ },
+ {
+  "name": "tail",
+  "signature": "tail(input :: LIST<ANY>) :: LIST<ANY>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A list from which all but the first element will be returned.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "LIST<ANY>"
+ },
+ {
+  "name": "tan",
+  "signature": "tan(input :: FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "An angle in radians.",
+    "isDeprecated": false,
+    "type": "FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "time",
+  "signature": "time(input = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: ZONED TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "Either a string representation of a temporal value, a map containing the single key 'timezone', or a map containing temporal values ('hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond', 'timezone') as components.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ZONED TIME"
+ },
+ {
+  "name": "time.realtime",
+  "signature": "time.realtime(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: ZONED TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ZONED TIME"
+ },
+ {
+  "name": "time.statement",
+  "signature": "time.statement(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: ZONED TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ZONED TIME"
+ },
+ {
+  "name": "time.transaction",
+  "signature": "time.transaction(timezone = DEFAULT_TEMPORAL_ARGUMENT :: ANY) :: ZONED TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "timezone",
+    "description": "A string value representing a time zone.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "ZONED TIME"
+ },
+ {
+  "name": "time.truncate",
+  "signature": "time.truncate(unit :: STRING, input = DEFAULT_TEMPORAL_ARGUMENT :: ANY, fields = null :: MAP) :: ZONED TIME",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "unit",
+    "description": "A string representing one of the following: 'microsecond', 'millisecond', 'second', 'minute', 'hour', 'day'.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "input",
+    "description": "The date to be truncated using either `ZONED DATETIME`, `LOCAL DATETIME`, `ZONED TIME`, or `LOCAL TIME`.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=DEFAULT_TEMPORAL_ARGUMENT, type=ANY}",
+    "type": "ANY"
+   },
+   {
+    "name": "fields",
+    "description": "A list of time components smaller than those specified in `unit` to preserve during truncation.",
+    "isDeprecated": false,
+    "default": "DefaultParameterValue{value=null, type=MAP}",
+    "type": "MAP"
+   }
+  ],
+  "returnDescription": "ZONED TIME"
+ },
+ {
+  "name": "timestamp",
+  "signature": "timestamp() :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "toBoolean",
+  "signature": "toBoolean(input :: BOOLEAN | STRING | INTEGER) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be converted into a boolean.",
+    "isDeprecated": false,
+    "type": "BOOLEAN | STRING | INTEGER"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "toBooleanList",
+  "signature": "toBooleanList(input :: LIST<ANY>) :: LIST<BOOLEAN>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A list of values to be converted into a list of booleans.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "LIST<BOOLEAN>"
+ },
+ {
+  "name": "toBooleanOrNull",
+  "signature": "toBooleanOrNull(input :: ANY) :: BOOLEAN",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be converted into a boolean or null.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "BOOLEAN"
+ },
+ {
+  "name": "toFloat",
+  "signature": "toFloat(input :: STRING | INTEGER | FLOAT) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be converted into a float.",
+    "isDeprecated": false,
+    "type": "STRING | INTEGER | FLOAT"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "toFloatList",
+  "signature": "toFloatList(input :: LIST<ANY>) :: LIST<FLOAT>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A list of values to be converted into a list of floats.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "LIST<FLOAT>"
+ },
+ {
+  "name": "toFloatOrNull",
+  "signature": "toFloatOrNull(input :: ANY) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be converted into a float or null.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "toInteger",
+  "signature": "toInteger(input :: BOOLEAN | STRING | INTEGER | FLOAT) :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be converted into an integer.",
+    "isDeprecated": false,
+    "type": "BOOLEAN | STRING | INTEGER | FLOAT"
+   }
+  ],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "toIntegerList",
+  "signature": "toIntegerList(input :: LIST<ANY>) :: LIST<INTEGER>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A list of values to be converted into a list of integers.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "LIST<INTEGER>"
+ },
+ {
+  "name": "toIntegerOrNull",
+  "signature": "toIntegerOrNull(input :: ANY) :: INTEGER",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be converted into an integer or null.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "INTEGER"
+ },
+ {
+  "name": "toLower",
+  "signature": "toLower(input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A string to be converted into lowercase.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "toString",
+  "signature": "toString(input :: ANY) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be converted into a string.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "toStringList",
+  "signature": "toStringList(input :: LIST<ANY>) :: LIST<STRING>",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A list of values to be converted into a list of strings.",
+    "isDeprecated": false,
+    "type": "LIST<ANY>"
+   }
+  ],
+  "returnDescription": "LIST<STRING>"
+ },
+ {
+  "name": "toStringOrNull",
+  "signature": "toStringOrNull(input :: ANY) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to be converted into a string or null.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "toUpper",
+  "signature": "toUpper(input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A string to be converted into uppercase.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "trim",
+  "signature": "trim(input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "trimSpecification",
+    "description": "The parts of the string to trim; LEADING, TRAILING, BOTH",
+    "isDeprecated": false,
+    "type": "[LEADING, TRAILING, BOTH]"
+   },
+   {
+    "name": "input",
+    "description": "A value from which all leading and trailing whitespace will be removed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "trim",
+  "signature": "trim([[LEADING | TRAILING | BOTH] [trimCharacterString :: STRING] FROM] input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "trimSpecification",
+    "description": "The parts of the string to trim; LEADING, TRAILING, BOTH",
+    "isDeprecated": false,
+    "type": "[LEADING, TRAILING, BOTH]"
+   },
+   {
+    "name": "trimCharacterString",
+    "description": "The characters to be removed from the start and/or end of the given string.",
+    "isDeprecated": false,
+    "type": "STRING"
+   },
+   {
+    "name": "input",
+    "description": "A value from which all leading and/or trailing trim characters will be removed.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "type",
+  "signature": "type(input :: RELATIONSHIP) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A relationship.",
+    "isDeprecated": false,
+    "type": "RELATIONSHIP"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "upper",
+  "signature": "upper(input :: STRING) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A string to be converted into uppercase.",
+    "isDeprecated": false,
+    "type": "STRING"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "valueType",
+  "signature": "valueType(input :: ANY) :: STRING",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "input",
+    "description": "A value to return the type of.",
+    "isDeprecated": false,
+    "type": "ANY"
+   }
+  ],
+  "returnDescription": "STRING"
+ },
+ {
+  "name": "vector.similarity.cosine",
+  "signature": "vector.similarity.cosine(a :: LIST<INTEGER | FLOAT>, b :: LIST<INTEGER | FLOAT>) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "a",
+    "description": "A list representing the first vector.",
+    "isDeprecated": false,
+    "type": "LIST<INTEGER | FLOAT>"
+   },
+   {
+    "name": "b",
+    "description": "A list representing the second vector.",
+    "isDeprecated": false,
+    "type": "LIST<INTEGER | FLOAT>"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ },
+ {
+  "name": "vector.similarity.euclidean",
+  "signature": "vector.similarity.euclidean(a :: LIST<INTEGER | FLOAT>, b :: LIST<INTEGER | FLOAT>) :: FLOAT",
+  "isBuiltIn": true,
+  "aggregating": false,
+  "argumentDescription": [
+   {
+    "name": "a",
+    "description": "A list representing the first vector.",
+    "isDeprecated": false,
+    "type": "LIST<INTEGER | FLOAT>"
+   },
+   {
+    "name": "b",
+    "description": "A list representing the second vector.",
+    "isDeprecated": false,
+    "type": "LIST<INTEGER | FLOAT>"
+   }
+  ],
+  "returnDescription": "FLOAT"
+ }
+]

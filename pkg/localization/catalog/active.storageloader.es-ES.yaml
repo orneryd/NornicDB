@@ -1,0 +1,36 @@
+- id: storage.loader.loading_nodes
+  other: "al cargar los nodos: {{.Cause}}"
+- id: storage.loader.loading_relationships
+  other: "al cargar las relaciones: {{.Cause}}"
+- id: storage.loader.opening_file
+  other: "al abrir el archivo: {{.Cause}}"
+- id: storage.loader.decoding_json
+  other: "al decodificar JSON: {{.Cause}}"
+- id: storage.loader.creating_nodes
+  other: "al crear los nodos: {{.Cause}}"
+- id: storage.loader.creating_edges
+  other: "al crear las relaciones: {{.Cause}}"
+- id: storage.loader.export_engine_unsupported
+  other: "SaveToNeo4jExport: el tipo de motor {{.EngineType}} no admite la exportación completa"
+- id: storage.loader.getting_all_nodes
+  other: "al obtener todos los nodos: {{.Cause}}"
+- id: storage.loader.getting_all_edges
+  other: "al obtener todas las relaciones: {{.Cause}}"
+- id: storage.loader.creating_file
+  other: "al crear el archivo: {{.Cause}}"
+- id: storage.loader.encoding_json
+  other: "al codificar JSON: {{.Cause}}"
+- id: storage.loader.parsing_node_json
+  other: "al analizar el JSON del nodo: {{.Cause}}"
+- id: storage.loader.converting_node
+  other: "al convertir el nodo: {{.Cause}}"
+- id: storage.loader.scanning_file
+  other: "al explorar el archivo: {{.Cause}}"
+- id: storage.loader.parsing_relationship_json
+  other: "al analizar el JSON de la relación: {{.Cause}}"
+- id: storage.loader.converting_relationship
+  other: "al convertir la relación: {{.Cause}}"
+- id: storage.loader.getting_nodes
+  other: "al obtener los nodos: {{.Cause}}"
+- id: storage.loader.getting_edges
+  other: "al obtener las relaciones: {{.Cause}}"

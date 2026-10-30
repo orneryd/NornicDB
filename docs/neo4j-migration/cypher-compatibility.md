@@ -1,0 +1,677 @@
+# NornicDB Cypher Compatibility
+
+**Date**: November 26, 2025  
+**Status**: Historical feature inventory; not a complete language conformance claim
+
+**Purpose**: Inventory of implemented Cypher features and native extensions
+
+The original inventory below predates Cypher 25 acceptance testing and is not
+proof of current Neo4j parity. The [Cypher 25 audit and catch-up plan](https://github.com/orneryd/NornicDB/blob/main/openspec/changes/cypher25-current-release-conformance/README.md)
+records explicit version rejection, missing features and executable evidence.
+It plans additive support with query prefixes overriding
+`NORNICDB_CYPHER_VERSION=5|25`, without persisted database-language migration
+or removal of existing APIs. Native schema extensions below are not necessarily
+Neo4j syntax. No full Cypher 25 or ISO GQL compliance is claimed.
+
+---
+
+## Currently Implemented
+
+### Core Clauses
+
+- ✅ **MATCH** - Pattern matching with property filters
+- ✅ **MATCH...CREATE** - Create relationships between matched nodes (like Neo4j's variable scoping)
+- ✅ **CREATE** - Node and relationship creation
+- ✅ **MERGE** - Upsert operations with ON CREATE/ON MATCH
+- ✅ **DELETE** - Node deletion
+- ✅ **DETACH DELETE** - Delete with relationship removal
+- ✅ **SET** - Property updates
+- ✅ **SET +=** - Property merging
+- ✅ **REMOVE** - Property removal
+- ✅ **RETURN** - Result projection
+- ✅ **WHERE** - Filtering
+- ✅ **WITH** - Intermediate result projection
+- ✅ **UNWIND** - List expansion
+- ✅ **OPTIONAL MATCH** - Outer join equivalent
+- ✅ **UNION** / **UNION ALL** - Query combination
+- ✅ **FOREACH** - Iteration with updates
+
+### Schema Management
+
+- ✅ **CREATE CONSTRAINT** - All constraint families (see below)
+- ✅ **CREATE INDEX** - Property indexes
+- ✅ **CREATE FULLTEXT INDEX** - Fulltext search indexes
+- ✅ **CREATE VECTOR INDEX** - Vector similarity indexes
+- ✅ **DROP CONSTRAINT** / **DROP INDEX** - Schema deletion
+
+#### Constraint Types
+
+All constraint DDL supports `IF NOT EXISTS` for idempotent creation and named or unnamed forms.
+
+**Node constraints** (`FOR (var:Label)`):
+
+| Constraint | Syntax |
+|------------|--------|
+| Uniqueness | `REQUIRE var.prop IS UNIQUE` |
+| Existence | `REQUIRE var.prop IS NOT NULL` |
+| Node key | `REQUIRE (var.p1, var.p2) IS NODE KEY` |
+| Property type | `REQUIRE var.prop IS :: TYPE` |
+| Temporal no-overlap | `REQUIRE (var.key, var.from, var.to) IS TEMPORAL NO OVERLAP` |
+| Domain/enum | `REQUIRE var.prop IN ['val1', 'val2']` |
+
+**Cardinality constraints** (`FOR ()-[var:TYPE]->()` or `FOR ()<-[var:TYPE]-()`):
+
+| Constraint | Syntax |
+|------------|--------|
+| Max outgoing | `FOR ()-[var:TYPE]->() REQUIRE MAX COUNT N` |
+| Max incoming | `FOR ()<-[var:TYPE]-() REQUIRE MAX COUNT N` |
+
+Limits the number of outgoing or incoming edges of a given type per node. Direction is encoded in the `FOR` clause arrows.
+
+**Relationship endpoint policies** (`FOR (:SrcLabel)-[var:TYPE]->(:TgtLabel)`):
+
+| Constraint | Syntax |
+|------------|--------|
+| Allowed pair | `FOR (:Src)-[var:TYPE]->(:Tgt) REQUIRE ALLOWED` |
+| Disallowed pair | `FOR (:Src)-[var:TYPE]->(:Tgt) REQUIRE DISALLOWED` |
+
+ALLOWED policies form a union whitelist: once any ALLOWED policy exists for a relationship type, only declared (source, target) label pairs are permitted. DISALLOWED policies are a blacklist and take precedence over ALLOWED.
+
+**Relationship constraints** (`FOR ()-[var:TYPE]-()`):
+
+| Constraint | Syntax |
+|------------|--------|
+| Uniqueness | `REQUIRE var.prop IS UNIQUE` |
+| Composite uniqueness | `REQUIRE (var.p1, var.p2) IS UNIQUE` |
+| Existence | `REQUIRE var.prop IS NOT NULL` |
+| Relationship key | `REQUIRE (var.p1, var.p2) IS RELATIONSHIP KEY` |
+| Property type | `REQUIRE var.prop IS :: TYPE` |
+| Temporal no-overlap | `REQUIRE (var.key, var.from, var.to) IS TEMPORAL NO OVERLAP` |
+| Domain/enum | `REQUIRE var.prop IN ['val1', 'val2']` |
+
+Temporal no-overlap, domain/enum, cardinality, and endpoint policy constraints are NornicDB extensions not available in Neo4j.
+Uniqueness and key constraints on relationships automatically create owned backing indexes.
+`SHOW CONSTRAINTS` returns all constraint types with entity type, direction, maxCount, sourceLabel, targetLabel, and policyMode columns where applicable.
+For operational guidance on NornicDB-specific schema features, including `REQUIRE { ... }` block contracts and `SHOW CONSTRAINT CONTRACTS`, see [Managing Constraints](../user-guides/managing-constraints.md).
+
+### CALL Procedures
+
+- ✅ **db.labels()** - List all labels
+- ✅ **db.propertyKeys()** - List all property keys
+- ✅ **db.relationshipTypes()** - List all relationship types
+- ✅ **db.indexes()** - List indexes
+- ✅ **db.constraints()** - List constraints
+- ✅ **db.index.vector.queryNodes()** - Vector similarity search
+- ✅ **db.index.fulltext.queryNodes()** - Fulltext search
+- ✅ **apoc.path.subgraphNodes()** - Graph traversal
+- ✅ **apoc.path.expand()** - Path expansion
+
+### SHOW Commands
+
+- ✅ **SHOW INDEXES** - Display indexes
+- ✅ **SHOW CONSTRAINTS** - Display constraints
+- ✅ **SHOW CONSTRAINT CONTRACTS** - Display block-style constraint contract metadata
+- ✅ **SHOW PROCEDURES** - List procedures
+- ✅ **SHOW FUNCTIONS** - List functions
+- ✅ **SHOW DATABASE** - Database info
+
+SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and values: constraint types such as `UNIQUENESS` / `RELATIONSHIP_UNIQUENESS` and `NODE_PROPERTY_EXISTENCE`, Neo4j's index providers (`range-1.0`, `fulltext-1.0`, `vector-2.0`, …), `options`, and a `createStatement` that recreates each index and constraint. NornicDB's own constraint types (temporal no-overlap, domain, cardinality, endpoint policy) keep their names, and their `createStatement` uses the NornicDB syntax above. Some values have no NornicDB meaning and are `null`:
+
+- SHOW INDEXES `lastRead`, `readCount` and `trackedSince`: NornicDB doesn't track index reads.
+- SHOW DATABASES `store`: NornicDB does not use Neo4j's store format and returns `null` rather than claiming a Neo4j format. A server is the single primary of each database it serves (`currentPrimariesCount` 1, `replicationLag` 0), and `lastStartTime` is the later of the database's creation and the server's start.
+
+`databaseID` and `serverID` are persisted native UUID strings. Neo4j's database ID is an opaque store identifier; callers must not assume identical identifier contents across products or installations. Database UUIDs survive restarts and change when a database is dropped and recreated. The installation UUID survives manager reloads and is shared by its databases. Writable startup upgrades legacy metadata without replacing recorded creation times; read-only legacy stores return unknown IDs as `null` until the writer upgrades them.
+
+`CALL db.info()` reports the selected database's ID, name, and persisted creation date. `CALL dbms.info()` reports the configured system database's identity, matching the Neo4j relationship rather than reporting product identity. Creation dates are UTC ISO-8601 strings; SHOW creation/start fields are temporal values. Unknown metadata is `null`, never a fabricated fixed date. Product announcements and the existing cypher-shell identity override are unchanged.
+
+`db.info()` retains the native `nodeCount` and `relationshipCount` result columns after the three shared identity columns. Their types and descriptions are included in SHOW PROCEDURES metadata. `dbms.components()` describes the native edition as a NornicDB edition; this wording does not alter the configured product announcement or compatibility override. `db.clearQueryCaches()` returns its status text in the shared `value` column.
+
+`tx.setMetaData()` accepts a MAP, including an empty map, and returns no result columns or rows. It uses an active explicit transaction or a statement-scoped implicit transaction for an autocommit call; it does not leave an explicit transaction open. Its SHOW PROCEDURES mode is `DBMS`.
+
+`db.awaitIndex()`, `db.awaitIndexes()`, and `db.resampleIndex()` return no result columns or rows. Named-index calls validate existence and report `Neo.ClientError.Schema.IndexNotFound` for an unknown name. Native indexes are maintained synchronously, so waiting completes immediately and resampling does not invent a background-progress result.
+
+`db.create.setNodeVectorProperty()` and `db.create.setRelationshipVectorProperty()` accept entity arguments and return no result columns or rows. An in-query call preserves outer variables for a subsequent RETURN. Native string IDs remain supported as an input extension. SHOW PROCEDURES declares the shared entity/key/vector argument names and types; native descriptions do not claim a special Neo4j storage representation.
+
+`db.index.vector.createNodeIndex()` returns void and declares its shared SCHEMA mode, argument metadata, and deprecation in favor of CREATE VECTOR INDEX. Evaluated parameters and names containing commas are supported. The native four-argument form defaults to cosine, and the native `dot` similarity remains available. Vector query procedures declare the shared `numberOfNearestNeighbours :: INTEGER` and `query :: ANY` arguments, retaining native text-query embedding support. Native cosine scores use [-1, 1], Euclidean scores use (0, 1], and dot-product scores are unbounded; these are native scoring representations, not Neo4j's [0, 1] score contract.
+
+`db.index.fulltext.listAvailableAnalyzers()` exposes the shared `analyzer`, `description`, and `stopwords` columns before the native `kind`, `version`, `digest`, `dynamicLoad`, and `selectedDatabases` extensions. The native `none` analyzer reports no stopwords; plugin stopwords are `null` because the stemmer ABI does not expose that metadata. The available inventory is native, not a list of Lucene analyzers. Fulltext query descriptions document the shared option keys using native scores and the available `none` analyzer.
+
+`db.schema.visualization()` returns nonpersisted NODE and RELATIONSHIP values with negative statement-local IDs. Each virtual label node carries `name`, comma-joined standalone-index property names in `indexes`, and native recreatable constraint statements in `constraints`. Owned backing indexes are not repeated. Constraint statements deliberately do not invent Neo4j internal schema/store IDs. Relationship endpoints refer to virtual label nodes, with all combinations of the independently observed start/end label sets for each type, including combinations absent from individual stored edges.
+
+`dbms.listConfig()` accepts an optional case-sensitive name substring and returns the shared eight columns with STRING setting values. The inventory uses the same database-scoped resolver, defaults, active values, explicit-override flags, and secret redaction as SHOW SETTINGS, with native valid-value descriptions. Native version and legacy protocol keys remain; protocol state, startup/default values, and explicit-setting status are `null` when the executor has no transport runtime information, rather than fabricated enabled flags. Product wording identifies NornicDB.
+
+`dbms.listConnections()` returns the shared seven fields, including `serverAddress`, from immutable accepted-Bolt-connection snapshots. IDs, timestamps, HELLO user agents, and socket addresses come from real connections; disconnected connections disappear. Administrators and authentication-disabled callers see the instance inventory; other users see their own connections. The main application shares the same inventory with HTTP queries. Embedded executors or independently assembled HTTP servers without a connection source return an empty list rather than invented connections; server integrations can use `SetConnectionLister`.
+
+`CALL db.labels()` and `CALL db.relationshipTypes()` list tokens currently in use in allocation order, not alphabetical order. Namespace writes persist token positions with schema metadata, including transactional and bulk writes. Deleting the last entity hides its token; recreating it retains the original position, including after restart. Legacy or directly imported tokens without recorded positions follow known tokens in alphabetical order because their original allocation history is unavailable.
+
+`keys()` lists a node's, relationship's, or map's property names in alphabetical order on every route. Neo4j's order is unspecified and unstable — it follows the property-store layout for stored entities and hash order for map literals, and it changes with the storage layout and map contents — so NornicDB keeps the deterministic sorted order introduced by #602/#671 as an intentional, documented difference. Cypher defines no order for `keys()`, and the openCypher TCK grades `keys()` results ignoring list order, so the sorted result is conformant. Code that pairs `keys(n)` with a separately built list must not assume Neo4j's order.
+
+`CALL { … }` subqueries accept three unambiguous forms that Neo4j 5.26 rejects, as intentional extensions (#907):
+
+- An unscoped body may read an outer variable without an importing `WITH`: `MATCH (p) CALL { MATCH (p)-->(f) RETURN count(f) AS c } RETURN p, c`. Neo4j reports `Variable p not defined`.
+- A body may return an outer variable as itself when it never declares that name again: `MATCH (seed) CALL (seed) { MATCH (seed)--(c) RETURN seed, collect(c) AS cs } RETURN seed, cs`. The column is the outer value. Returning any other value under an outer name is rejected, as in Neo4j (`Variable a already declared in outer scope`).
+- A scoped body (`CALL (a)`, `CALL (*)`) may declare an imported name again, as a top-level `WITH 1 AS a WITH 2 AS a` does: `CALL (a) { WITH a * 10 AS a … }`. The new value holds inside the body only; the enclosing query keeps its own. Neo4j reports that the variable is shadowing an imported variable.
+
+### Aggregation Functions
+
+- ✅ **COUNT()** - Count aggregation
+- ✅ **SUM()** - Sum aggregation
+- ✅ **AVG()** - Average aggregation
+- ✅ **MIN()** / **MAX()** - Min/max aggregation
+- ✅ **COLLECT()** - List collection
+
+### Scalar Functions (52 total)
+
+- ✅ String functions: substring, replace, trim, upper, lower, split, etc.
+- ✅ Math functions: abs, ceil, floor, round, sqrt, sin, cos, etc.
+- ✅ List functions: size, head, tail, last, range, etc.
+- ✅ Type functions: toInteger, toFloat, toString, toBoolean
+- ✅ Spatial functions: point, distance
+- ✅ POINT values (cartesian, cartesian-3d, wgs-84, wgs-84-3d): stored as
+  properties (also lists of one CRS), returned over Bolt as Point2D / Point3D
+  and over HTTP in Neo4j's GeoJSON-like form; fields `x`, `y`, `z`,
+  `latitude`, `longitude`, `height`, `crs`, `srid`; `point.distance`,
+  `point.withinBBox`, equality and ORDER BY as in Neo4j 5.26
+- ✅ Type predicate expressions: `x IS :: TYPE`, `x IS NOT :: TYPE`, `x :: TYPE`,
+  `x IS [NOT] TYPED TYPE` (all types and synonyms, `NOT NULL`, `LIST<T>`,
+  unions, `ANY`, `NOTHING`, `NULL`, `PROPERTY VALUE`)
+- ✅ Date/time functions: date, datetime, timestamp
+
+### Bolt Handshake Compatibility for `cypher-shell`
+
+NornicDB speaks Bolt directly, and most Bolt drivers work without special handling. One notable edge case is Neo4j's `cypher-shell`, which may reject an otherwise valid Bolt connection if the Bolt `HELLO` success metadata does not advertise a Neo4j-style `server` string.
+
+For that case, NornicDB includes an explicit compatibility override:
+
+```bash
+export NORNICDB_BOLT_SERVER_ANNOUNCEMENT="Neo4j/5.26.0"
+cypher-shell -a bolt://localhost:7687 -u admin -p password
+```
+
+Equivalent YAML setting:
+
+```yaml
+server:
+  bolt_server_announcement: "Neo4j/5.26.0"
+```
+
+This changes only the announced Bolt server string used during handshake compatibility checks. It does not change Cypher behavior or query semantics. Leave it unset unless you specifically need compatibility with `cypher-shell` or another strict Neo4j client.
+
+---
+
+### Comments and Whitespace
+
+Comments (`//`, `/* … */`) and any whitespace between tokens (spaces, tabs, line breaks, the Unicode spaces) are ignored, as in Neo4j: `ORDER  BY`, `ORDER /* c */ BY` and a statement written over several lines run like the single-line form. Column names, error messages and EXPLAIN / PROFILE plans still show the statement as sent.
+
+This normalization is on by default. `NORNICDB_CYPHER_QUERY_NORMALIZATION=false` turns it off for clients that already strip comments and collapse whitespace; with it off, statements with comments or unusual spacing may fail. Permission checks and write detection work the same either way.
+
+## Recently Verified Features
+
+### 1. **ORDER BY** Clause
+
+**Status**: Implemented  
+**Impact**: Full sorting support
+
+```cypher
+
+MATCH (n:Node)
+RETURN n.name, n.age
+ORDER BY n.age DESC, n.name ASC
+```
+
+**Features**:
+
+- ✅ Single and multiple sort fields
+- ✅ ASC/DESC modifiers
+- ✅ String and numeric sorting
+- ✅ Integration with LIMIT/SKIP
+
+### 2. **LIMIT** / **SKIP** Clauses
+
+**Status**: Implemented  
+**Impact**: Full pagination support
+
+```cypher
+
+MATCH (n:Node)
+RETURN n
+ORDER BY n.created DESC
+SKIP 10
+LIMIT 20
+```
+
+**Features**:
+
+- ✅ LIMIT with any number
+- ✅ SKIP with any number
+- ✅ Combined SKIP + LIMIT for pagination
+- ✅ Works with ORDER BY
+
+### 3. **DISTINCT** Keyword
+
+**Status**: Implemented  
+**Impact**: Full deduplication support
+
+```cypher
+
+MATCH (n:Node)-[:KNOWS]->(m)
+RETURN DISTINCT n.name
+```
+
+**Features**:
+
+- ✅ RETURN DISTINCT
+- ✅ Deduplication of result rows
+- ✅ Works with aggregations
+
+### 4. **AS** Aliasing in RETURN
+
+**Status**: Implemented  
+**Impact**: Full aliasing support
+
+```cypher
+
+MATCH (n:Node)
+RETURN n.name AS personName, n.age AS personAge
+```
+
+### 5. **Variable-length Paths**
+
+**Status**: Implemented
+
+```cypher
+
+MATCH p=(a:Person)-[:KNOWS*1..3]->(b:Person) RETURN p
+```
+
+### 6. **EXISTS Subqueries**
+
+**Status**: Implemented
+
+```cypher
+
+MATCH (n:Person)
+WHERE EXISTS { MATCH (n)-[:KNOWS]->(m) }
+RETURN n
+```
+
+### 7. **COUNT Subqueries**
+
+**Status**: Implemented
+
+```cypher
+
+MATCH (n:Person)
+RETURN n.name, COUNT { MATCH (n)-[:KNOWS]->(m) } AS cnt
+```
+
+### 8. **Map Projections**
+
+**Status**: Implemented
+
+```cypher
+
+MATCH (n:Person) RETURN n {.name, .age}
+```
+
+### 9. **List Comprehensions**
+
+**Status**: Implemented
+
+```cypher
+
+RETURN [x IN range(0,5) WHERE x % 2 = 0 | x*2] AS evens
+```
+
+### 10. **WHERE after YIELD**
+
+**Status**: Implemented (6 passing tests)
+
+```cypher
+
+CALL db.index.vector.queryNodes('idx', 10, $vector)
+YIELD node, score
+WHERE score > 0.8
+RETURN node
+
+-- Also works with CONTAINS, <>, =
+CALL db.labels() YIELD label WHERE label CONTAINS 'Person'
+```
+
+---
+
+## Implemented November 26, 2025
+
+### 11. **CASE Expressions**
+
+**Status**: Complete  
+**Files**: `pkg/cypher/case_expression.go` (376 lines)
+
+```cypher
+-- Searched CASE
+MATCH (n:Person)
+RETURN n.name,
+  CASE
+    WHEN n.age < 18 THEN 'minor'
+    WHEN n.age < 65 THEN 'adult'
+    ELSE 'senior'
+  END AS ageGroup
+
+-- Simple CASE
+MATCH (n:Person)
+RETURN CASE n.age
+  WHEN 30 THEN 'thirty'
+  WHEN 25 THEN 'twenty-five'
+  ELSE 'other'
+END AS ageLabel
+```
+
+**Features Implemented**:
+
+- ✅ Searched CASE with WHEN/THEN/ELSE
+- ✅ Simple CASE with value matching
+- ✅ NULL handling (IS NULL, IS NOT NULL)
+- ✅ Comparison operators (<, >, <=, >=, =, <>)
+- ✅ Nested expression evaluation
+- ✅ Multiple WHEN clauses
+- ✅ Optional ELSE clause (returns NULL if omitted)
+
+### 12. **shortestPath() / allShortestPaths()**
+
+**Status**: Complete (16 passing tests)  
+**Files**: `pkg/cypher/shortest_path.go` (372 lines), `pkg/cypher/traversal.go` (617 lines)
+
+```cypher
+-- shortestPath with MATCH variable resolution
+MATCH (start:Person {name: 'Alice'}), (end:Person {name: 'Carol'})
+MATCH p = shortestPath((start)-[:KNOWS*]->(end))
+RETURN p, length(p) AS pathLength
+
+-- allShortestPaths
+MATCH (start:Person {name: 'Alice'}), (end:Person {name: 'Carol'})
+MATCH p = allShortestPaths((start)-[:KNOWS*]->(end))
+RETURN p
+
+-- Path functions
+MATCH p = shortestPath((a)-[*]-(b))
+RETURN nodes(p), relationships(p), length(p)
+```
+
+**Features Implemented**:
+
+- ✅ BFS shortest path algorithm (unweighted)
+- ✅ allShortestPaths() - finds all paths of minimum length
+- ✅ **Variable resolution from MATCH clause** (like Neo4j's LogicalVariable)
+- ✅ Direction support (outgoing ->, incoming <-, both -)
+- ✅ Relationship type filtering
+- ✅ Max hops limiting (\*..max)
+- ✅ Path functions: nodes(p), relationships(p), length(p)
+- ✅ Cycle detection
+
+**Recent Fix**: shortestPath now correctly resolves variable references (e.g., `start`, `end`) from the preceding MATCH clause, matching Neo4j's behavior where variables are "in scope" and referenced, not re-queried.
+
+### 13. **Transaction Atomicity**
+
+```go
+// Transaction support with full rollback
+tx := engine.BeginTransaction()
+
+// All operations are buffered
+tx.CreateNode(&storage.Node{...})
+tx.CreateEdge(&storage.Edge{...})
+tx.UpdateGraphNode(&storage.Node{ID: nodeID}, storage.ClientNodeEdits)
+tx.DeleteGraphNode(nodeID, storage.CascadeEdges)
+
+// Atomic commit - all or nothing
+err := tx.Commit()
+
+// Or rollback to discard all changes
+tx.Rollback()
+```
+
+**Features Implemented**:
+
+- ✅ `BeginTransaction()` - Start new transaction
+- ✅ `Commit()` - Atomically apply all buffered operations
+- ✅ `Rollback()` - Discard all buffered operations
+- ✅ `CreateNode/UpdateNode/DeleteNode` - Node operations in transaction
+- ✅ `CreateEdge/DeleteEdge` - Edge operations in transaction
+- ✅ `GetNode()` - Read-your-writes consistency
+- ✅ `IsActive()` - Check transaction status
+- ✅ Isolation - Uncommitted changes not visible to other operations
+- ✅ Atomicity - All operations succeed or all fail together
+
+### 14. **Composite Indexes**
+
+**Status**: Complete  
+**Files**: `pkg/storage/schema.go`
+
+**Features**:
+
+- ✅ Multi-property indexes
+- ✅ SHA256-based composite keys
+- ✅ Efficient prefix lookups
+- ✅ Full and partial key matching
+- ✅ Neo4j-compatible behavior
+
+### 15. **MATCH...CREATE**
+
+**Status**: Complete  
+**Files**: `pkg/cypher/create.go` (427 lines)
+
+```cypher
+-- Create relationship between existing matched nodes
+MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+CREATE (a)-[:KNOWS]->(b)
+```
+
+**Key Feature**: Like Neo4j, variables from MATCH are "in scope" - CREATE only creates what's NEW. If variables reference matched nodes, use those existing nodes (not create new ones).
+
+---
+
+### 16. **EXPLAIN / PROFILE**
+
+**Status**: Complete (27 passing tests)  
+**Files**: `pkg/cypher/explain.go` (560 lines), `pkg/cypher/explain_test.go`
+
+```cypher
+-- EXPLAIN - show execution plan without executing
+EXPLAIN MATCH (n:Person) RETURN n
+EXPLAIN MATCH (n:Person) WHERE n.age > 25 RETURN n ORDER BY n.name LIMIT 10
+
+-- PROFILE - execute and show plan with statistics
+PROFILE MATCH (n:Person) RETURN n
+PROFILE MATCH (n:Person)-[:KNOWS]->(m) RETURN n, m
+```
+
+**Features Implemented**:
+
+- ✅ EXPLAIN mode (shows plan, doesn't execute)
+- ✅ PROFILE mode (executes and shows plan with stats)
+- ✅ Execution plan tree structure
+- ✅ Operator types: NodeByLabelScan, AllNodesScan, NodeIndexSeek, Filter, Expand, Sort, Limit, ProduceResults, etc.
+- ✅ Estimated rows per operator
+- ✅ DB hits estimation
+- ✅ Actual rows and timing (PROFILE only)
+- ✅ Visual plan formatting
+
+**Example Output**:
+
+```
++--------------------------------------------------------------+
+| PROFILE Query Plan                                           |
++--------------------------------------------------------------+
+| Total Time: 1.234ms                                          |
+| Total Rows: 3                                                |
+| Total DB Hits: 2006                                          |
++--------------------------------------------------------------+
+| +- ProduceResults (Return results)                           |
+| |   Est: 100, Actual: 3, Hits: 100                          |
+|   +- NodeByLabelScan (Scan all :Person nodes)               |
+|   |   Est: 1000, Actual: 3, Hits: 2000                      |
++--------------------------------------------------------------+
+```
+
+---
+
+## ⏺️ Optional Features
+
+### 1. **Multi-database Support** ✅
+
+**Status**: IMPLEMENTED
+
+```cypher
+-- Supported
+USE database2
+CREATE DATABASE mydb
+CREATE OR REPLACE DATABASE mydb
+SHOW DATABASES
+CREATE COMPOSITE DATABASE cmp CONSTITUENTS database1, database2
+CREATE ALIAS aliasName FOR DATABASE dbName
+```
+
+Multi-database management follows Neo4j 4.x semantics through the system
+database surface: `USE` targets a database for the session, database DDL is
+admin-only (non-admin callers receive `Neo.ClientError.Security.Forbidden`),
+composite databases require an explicit constituent target before any
+graph-accessing statement (pattern reads, `COUNT {}`/`EXISTS {}` subqueries and
+pattern comprehensions), and composite constituents are authorized per
+selected database. See [multi-database](../user-guides/multi-database.md).
+
+---
+
+## Implementation Status Summary
+
+| Feature               | Status   | Tests     | Coverage   |
+| --------------------- | -------- | --------- | ---------- |
+| CASE expressions      | Complete | 7+ tests  | 376 lines  |
+| shortestPath()        | Complete | 16 tests  | 372 lines  |
+| allShortestPaths()    | Complete | 16 tests  | included   |
+| Transaction Atomicity | Complete | 12 tests  | 521 lines  |
+| WHERE after YIELD     | Complete | 6 tests   | integrated |
+| MATCH...CREATE        | Complete | 16+ tests | 427 lines  |
+| Composite Indexes     | Complete | multiple  | integrated |
+| EXPLAIN/PROFILE       | Complete | 27 tests  | 560 lines  |
+
+### Test Coverage
+
+| Package         | Tests           | Coverage |
+| --------------- | --------------- | -------- |
+| **pkg/cypher**  | 863 tests       | 82%+     |
+| **pkg/storage** | 308 tests       | 85.2%    |
+| **Total**       | **1,171 tests** | **~83%** |
+
+---
+
+## Current Status Summary
+
+**Compatibility**: 100% — production ready  
+**Status**: All critical features implemented  
+**Deployment**: Ready for production use
+
+### Complete Feature Set
+
+**Core Query (100%)**:
+
+- ✅ All 16 Cypher clauses implemented and tested
+- ✅ All result modifiers (ORDER BY, LIMIT, SKIP, DISTINCT, AS)
+- ✅ All pattern types (variable-length, bidirectional, multiple)
+- ✅ All subqueries (EXISTS, COUNT)
+- ✅ All collections (map projections, list/pattern comprehensions)
+- ✅ WHERE after YIELD filtering
+
+**Advanced Features (100%)**:
+
+- ✅ CASE expressions (searched and simple)
+- ✅ shortestPath() and allShortestPaths() with MATCH variable resolution
+- ✅ Variable-length path traversal
+- ✅ Composite indexes with prefix lookup
+- ✅ MATCH...CREATE with variable scoping (like Neo4j)
+
+**Transaction Support (100%)**:
+
+- ✅ BeginTransaction/Commit/Rollback
+- ✅ Atomic operations (all-or-nothing)
+- ✅ Read-your-writes consistency
+- ✅ Transaction isolation
+
+**Schema & Indexes (100%)**:
+
+- ✅ All constraint families: UNIQUE, EXISTS, NODE KEY, RELATIONSHIP KEY, property type
+- ✅ Constraints on both nodes and relationships with full write-path enforcement
+- ✅ NornicDB extensions: temporal no-overlap, domain/enum, cardinality, endpoint policy constraints
+- ✅ IF NOT EXISTS idempotent creation, owned backing indexes
+- ✅ Property indexes (single and composite)
+- ✅ Fulltext indexes (BM25 scoring)
+- ✅ Vector indexes (cosine/euclidean/dot similarity)
+
+**Functions (100%)**:
+
+- ✅ 52 scalar functions
+- ✅ 5 aggregation functions
+- ✅ 10 CALL procedures
+
+### ⏺️ Optional (Not Required for Most Deployments)
+
+**Low Priority**:
+
+- ⏺️ Multi-database - Not needed
+
+---
+
+## Recent Changes (November 26, 2025)
+
+### Statistics Representation
+
+`db.stats.collect`, `clear`, `status`, `stop`, and `retrieve` expose the shared
+section/configuration and result contracts. As in Neo4j 5.26, query collection
+is on when a database starts (`db.stats.status()` reports `collecting`) until
+`db.stats.stop('QUERIES')`, and `db.stats.clear('QUERIES')` returns `false` with
+"Collected data cannot be cleared while collecting." until collection stops.
+Collection is shared by transaction-scoped executors of a database. Duration limits expire
+without a background daemon. Repeated collection preserves the active session;
+zero or omitted duration means no deadline. Statistics calls bypass result caches.
+
+NornicDB retains at most 1,000 distinct statement texts, with at most 100 recent
+invocations per statement; larger statements (over 64 KiB) are not collected.
+Aggregate invocation counts and duration summaries cover the retained statement's
+full collection history, not only the recent samples. Statement text can contain
+literal values: use parameters for sensitive values, which are not retained.
+Execution timing measures the complete executor call; unavailable compilation
+timing, execution plans, and row estimates are null rather than invented.
+
+Graph counts and tokens come from the selected native storage and schema.
+Index and constraint details retain native descriptors; metadata reports the
+actual Go runtime and host instead of fabricated JVM fields. Token inventory
+reflects the native listing policy, not Neo4j's historical token store.
+No-argument query-section calls, `ALL`, and `retrieveAllAnTheStats` remain
+native extensions. Empty query collection returns no fabricated counter row.
+
+### shortestPath Variable Resolution Fix
+
+**Problem**: `shortestPath((start)-[:KNOWS*]->(end))` was not correctly resolving `start` and `end` variables from the preceding MATCH clause.
+
+**Solution**: Implemented Neo4j-style variable resolution:
+
+1. Parse the first MATCH clause to extract variable bindings
+2. Resolve which `nodePatternInfo` each variable maps to
+3. Find actual nodes matching those patterns
+4. Use those specific nodes for shortestPath calculation
+
+**Reference**: Neo4j uses `LogicalVariable` references in their query planner to bind variables from MATCH before using them in subsequent clauses.
+
+### Transaction Atomicity Implementation
+
+**Added**: Full transaction support with:
+
+- Buffered operations (Write-Ahead Log pattern)
+- Atomic commit (all operations applied together)
+- Rollback support (discard all buffered changes)
+- Read-your-writes consistency
+- Transaction isolation
+
+---
+
+**Last Updated**: November 26, 2025 (Post EXPLAIN/PROFILE implementation)  
+**Status**: Production ready  
+**Test Results**: 1,171 tests passing

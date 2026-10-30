@@ -1,0 +1,161 @@
+package cypher
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCloneStringInterfaceMap_IsIndependentCopy(t *testing.T) {
+	original := map[string]interface{}{"a": 1, "b": "x"}
+	clone := cloneStringInterfaceMap(original)
+	require.Equal(t, original, clone)
+	clone["a"] = 999
+	require.Equal(t, 1, original["a"], "mutating the clone must not affect the original")
+}
+
+type countingCallTailNodes struct {
+	storage.Engine
+	reads int
+}
+
+func (engine *countingCallTailNodes) GetNode(id storage.NodeID) (*storage.Node, error) {
+	engine.reads++
+	return engine.Engine.GetNode(id)
+}
+
+func TestCallTailRelationshipReusesEndpointsWithinExecution(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "calltailreuse")
+	_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Alice"}})
+	require.NoError(t, err)
+	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Bob"}})
+	require.NoError(t, err)
+	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "edge", StartNode: "a", EndNode: "b", Type: "CTR", Properties: map[string]interface{}{"name": "shared"}}))
+	edge, err := store.GetEdge("edge")
+	require.NoError(t, err)
+
+	counted := &countingCallTailNodes{Engine: store}
+	exec := NewStorageExecutor(counted)
+	seed := &ExecuteResult{Columns: []string{"relationship"}, Rows: [][]interface{}{{edge}, {edge}}}
+	result, handled, err := exec.tryExecuteCallTailRelationshipMatchProjection(context.Background(), seed,
+		"MATCH (a:CT)-[r:CTR {name: relationship.name}]->(b:CT) WITH a, r, b RETURN a.name AS name", nil)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, [][]interface{}{{"Alice"}, {"Alice"}}, result.Rows)
+	require.Equal(t, 2, counted.reads)
+}
+
+// TestCallTailPlansEvaluateLikeThePipeline pins CALL tails the compiled
+// CALL-tail plans run (WITH … WHERE … RETURN, and MATCH over a yielded
+// relationship): their WHERE, projections and ORDER BY / LIMIT evaluate with
+// the pipeline's WITH and RETURN appliers, so null tests, string operators,
+// IN, comparisons, AND / OR / NOT, labels(), properties(), type() and
+// startNode() on yielded nodes and relationships behave as on any other
+// route (#530). Expected rows are Neo4j 5.26.30's.
+func TestCallTailPlansEvaluateLikeThePipeline(t *testing.T) {
+	setup := []string{
+		"CREATE FULLTEXT INDEX ct_ft IF NOT EXISTS FOR (n:CT) ON EACH [n.name]",
+		"CREATE FULLTEXT INDEX ctr_ft IF NOT EXISTS FOR ()-[r:CTR]-() ON EACH [r.name]",
+		"CREATE (a:CT {name:'alpha one', age:37, tags:['math','code']})-[:CTR {name:'beta x', w:1}]->(b:CT {name:'alpha two', age:41, tags:['art']}), (c:CT {name:'alpha lovelace', age:20})-[:CTR {name:'beta y', w:2}]->(a)",
+	}
+	for _, tc := range []struct {
+		query  string
+		params map[string]interface{}
+		want   [][]interface{}
+	}{
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.age IS NOT NULL RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha lovelace"}, {"alpha one"}, {"alpha two"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.missing IS NULL RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha lovelace"}, {"alpha one"}, {"alpha two"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.name STARTS WITH 'alpha b' RETURN node.name AS name ORDER BY name", nil, [][]interface{}{}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.name ENDS WITH 'one' RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha one"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.name CONTAINS 'love' RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha lovelace"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE 'code' IN node.tags RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha one"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.age >= 37 RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha one"}, {"alpha two"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE NOT node.age < 37 RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha one"}, {"alpha two"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.age = 37 AND node.name STARTS WITH 'alpha' RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha one"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.age = 0 OR node.name ENDS WITH 'two' RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha two"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE NOT (node.age IN [37, 41]) RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha lovelace"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.age IN $ages RETURN node.name AS name ORDER BY name", map[string]interface{}{"ages": []interface{}{int64(37), int64(20)}}, [][]interface{}{{"alpha lovelace"}, {"alpha one"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE node.tags IS NULL RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha lovelace"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node WHERE size(node.tags) > 1 RETURN node.name AS name ORDER BY name", nil, [][]interface{}{{"alpha one"}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node, score WITH node, score WHERE score > 0 RETURN node.name AS name, labels(node) AS l, properties(node).age AS age, elementId(node) = elementId(node) AS e ORDER BY name", nil, [][]interface{}{{"alpha lovelace", []interface{}{"CT"}, int64(20), true}, {"alpha one", []interface{}{"CT"}, int64(37), true}, {"alpha two", []interface{}{"CT"}, int64(41), true}}},
+		{"CALL db.index.fulltext.queryNodes('ct_ft', 'alpha') YIELD node WITH node.name AS n, node.age AS a WHERE a > 36 RETURN n, a * 2 AS twice ORDER BY twice DESC LIMIT 2", nil, [][]interface{}{{"alpha two", int64(82)}, {"alpha one", int64(74)}}},
+		{"CALL db.index.fulltext.queryRelationships('ctr_ft', 'beta') YIELD relationship WITH relationship WHERE type(relationship) = 'CTR' RETURN relationship.name AS name, startNode(relationship).name AS s ORDER BY name", nil, [][]interface{}{{"beta x", "alpha one"}, {"beta y", "alpha lovelace"}}},
+		{"CALL db.index.fulltext.queryRelationships('ctr_ft', 'beta') YIELD relationship WITH relationship WHERE relationship.w > 1 RETURN properties(relationship).name AS name", nil, [][]interface{}{{"beta y"}}},
+		{"CALL db.index.fulltext.queryRelationships('ctr_ft', 'beta') YIELD relationship MATCH (a:CT)-[r:CTR {name: relationship.name}]->(b:CT) WHERE b.age > 0 WITH a, r, b RETURN a.name AS a, type(r) AS t, b.name AS b ORDER BY a", nil, [][]interface{}{{"alpha lovelace", "CTR", "alpha one"}, {"alpha one", "CTR", "alpha two"}}},
+	} {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "calltailplans"))
+		ctx := context.Background()
+		for _, statement := range setup {
+			_, err := exec.Execute(ctx, statement, nil)
+			require.NoError(t, err, statement)
+		}
+		result, err := exec.Execute(ctx, tc.query, tc.params)
+		require.NoError(t, err, tc.query)
+		if strings.Contains(tc.query, "ORDER BY") {
+			require.Equal(t, tc.want, result.Rows, tc.query)
+		} else {
+			require.ElementsMatch(t, tc.want, result.Rows, tc.query)
+		}
+	}
+}
+
+func TestCallTailCachedPlansResolveCurrentPagination(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "calltail-current-pagination")
+	for _, id := range []storage.NodeID{"left", "right"} {
+		_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"PageNode"}, Properties: map[string]interface{}{"name": string(id)}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "page-edge", StartNode: "left", EndNode: "right", Type: "PageEdge", Properties: map[string]interface{}{"key": "one"}}))
+	edge, err := store.GetEdge("page-edge")
+	require.NoError(t, err)
+	exec := NewStorageExecutor(store)
+	for _, tc := range []struct {
+		name, tail   string
+		seed         *ExecuteResult
+		relationship bool
+	}{
+		{"projection", "WITH name RETURN name LIMIT $page_limit", &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{"left"}, {"right"}}}, false},
+		{"relationship", "MATCH (a:PageNode)-[r:PageEdge {key: relationship.key}]->(b:PageNode) WITH a, r, b RETURN a.name AS name LIMIT $page_limit", &ExecuteResult{Columns: []string{"relationship"}, Rows: [][]interface{}{{edge}, {edge}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, limit := range []interface{}{int64(1), "not-an-integer", int64(2), nil, int64(0)} {
+				ctx := withParams(context.Background(), map[string]interface{}{"page_limit": limit})
+				var result *ExecuteResult
+				var handled bool
+				var err error
+				if tc.relationship {
+					result, handled, err = exec.tryExecuteCallTailRelationshipMatchProjection(ctx, tc.seed, tc.tail, nil)
+				} else {
+					result, handled, err = exec.tryExecuteCallTailProjectionFilter(ctx, tc.seed, tc.tail, nil)
+				}
+				require.NoError(t, err)
+				wanted, integer := limit.(int64)
+				if !integer {
+					require.False(t, handled)
+					require.Nil(t, result)
+					continue
+				}
+				require.True(t, handled)
+				require.NotNil(t, result)
+				require.Len(t, result.Rows, int(wanted))
+				require.Equal(t, []string{"name"}, result.Columns)
+				for i, row := range result.Rows {
+					name := "left"
+					if !tc.relationship && i == 1 {
+						name = "right"
+					}
+					require.Equal(t, []interface{}{name}, row)
+				}
+				if tc.relationship {
+					result, handled, err = exec.tryExecuteCallTailProjectionFilter(ctx, tc.seed, tc.tail, nil)
+					require.NoError(t, err)
+					require.False(t, handled)
+					require.Nil(t, result)
+				}
+			}
+		})
+	}
+}

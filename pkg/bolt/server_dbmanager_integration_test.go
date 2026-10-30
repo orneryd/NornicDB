@@ -1,0 +1,667 @@
+package bolt
+
+import (
+	"context"
+	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"net"
+	"testing"
+	"time"
+
+	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSessionGetExecutorForDatabase_WiresDatabaseManagerCommands(t *testing.T) {
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
+	require.NoError(t, err)
+	defer mgr.Close()
+
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"}))
+	provider, ok := interface{}(&boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(mgr)}).(cypher.DatabaseIdentityProvider)
+	require.True(t, ok, "Bolt must forward persisted administrative identity")
+	id, createdAt := provider.DatabaseIdentity("tenant_a")
+	actualID, actualCreatedAt := mgr.DatabaseIdentity("tenant_a")
+	require.Equal(t, actualID, id)
+	require.True(t, actualCreatedAt.Equal(createdAt))
+
+	s := &Session{server: &Server{dbManager: mgr}}
+	exec, err := s.getExecutorForDatabase("nornic")
+	require.NoError(t, err)
+
+	res, err := exec.Execute(context.Background(), "SHOW DATABASES", nil)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotEmpty(t, res.Rows)
+}
+
+func TestBoltListConnectionsReportsLiveConnection(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
+	t.Cleanup(func() { _ = server.Close() })
+	port := startBoltTestServer(t, server)
+	ctx := context.Background()
+	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth(), func(config *neo4jdriver.Config) {
+		config.UserAgent = "nornicdb-connections-test"
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{DatabaseName: "nornic"})
+	t.Cleanup(func() { _ = session.Close(context.Background()) })
+	result, err := session.Run(ctx, "CALL dbms.listConnections() YIELD connectionId, connectTime, connector, userAgent, serverAddress, clientAddress RETURN *", nil)
+	require.NoError(t, err)
+	records, err := result.Collect(ctx)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	connectionID, _ := records[0].Get("connectionId")
+	require.Contains(t, connectionID, "bolt-")
+	connectTime, _ := records[0].Get("connectTime")
+	_, err = time.Parse(time.RFC3339Nano, connectTime.(string))
+	require.NoError(t, err)
+	connector, _ := records[0].Get("connector")
+	require.Equal(t, "bolt", connector)
+	userAgent, _ := records[0].Get("userAgent")
+	require.Equal(t, "nornicdb-connections-test", userAgent)
+	serverAddress, _ := records[0].Get("serverAddress")
+	require.Contains(t, serverAddress, fmt.Sprintf(":%d", port))
+	clientAddress, _ := records[0].Get("clientAddress")
+	require.Contains(t, clientAddress, "127.0.0.1:")
+	require.NoError(t, session.Close(ctx))
+	require.NoError(t, driver.Close(ctx))
+	require.Eventually(t, func() bool { return len(server.ConnectionListings()) == 0 }, time.Second, time.Millisecond)
+}
+
+func TestGh738_BoltStatementAdmission(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
+	t.Cleanup(func() { _ = server.Close() })
+	port := startBoltTestServer(t, server)
+	ctx := context.Background()
+	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+	for _, explicit := range []bool{false, true} {
+		for _, testCase := range []struct{ query, code string }{
+			{"USE system CREATE (:U717 {v:2})", "Neo.ClientError.Statement.SemanticError"},
+			{"USE system MATCH (n) RETURN count(n) AS c", "Neo.ClientError.Statement.SemanticError"},
+			{"USE system OPTIONAL MATCH (n) RETURN n", "Neo.ClientError.Statement.SemanticError"},
+			{"USE system CALL { MATCH (n) RETURN n } RETURN n", "Neo.ClientError.Statement.SemanticError"},
+			{"USE nosuchdb RETURN 1", "Neo.ClientError.Database.DatabaseNotFound"},
+		} {
+			t.Run(fmt.Sprint(explicit)+testCase.query, func(t *testing.T) {
+				session := driver.NewSession(ctx, neo4jdriver.SessionConfig{DatabaseName: "nornic"})
+				defer session.Close(ctx)
+				var queryErr error
+				if explicit {
+					tx, beginErr := session.BeginTransaction(ctx)
+					require.NoError(t, beginErr)
+					defer tx.Close(ctx)
+					result, runErr := tx.Run(ctx, testCase.query, nil)
+					queryErr = runErr
+					if queryErr == nil {
+						_, queryErr = result.Consume(ctx)
+					}
+				} else {
+					result, runErr := session.Run(ctx, testCase.query, nil)
+					queryErr = runErr
+					if queryErr == nil {
+						_, queryErr = result.Consume(ctx)
+					}
+				}
+				var status *neo4jdriver.Neo4jError
+				require.ErrorAs(t, queryErr, &status)
+				require.Equal(t, testCase.code, status.Code)
+			})
+		}
+	}
+	store, err := manager.GetStorage("system")
+	require.NoError(t, err)
+	nodes, err := store.GetNodesByLabel("U717")
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+}
+
+func TestGh745_BoltCompositeSubqueryResults(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "pother"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "pcomp", []multidb.ConstituentRef{{Alias: "other", DatabaseName: "pother", Type: "local", AccessMode: "read_write"}}))
+	store, err := manager.GetStorage("pother")
+	require.NoError(t, err)
+	_, err = cypher.NewStorageExecutor(store).Execute(context.Background(), "CREATE (:EI {v: 1})-[:R]->(:EI {v: 2})", nil)
+	require.NoError(t, err)
+	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
+	t.Cleanup(func() { _ = server.Close() })
+	port := startBoltTestServer(t, server)
+	ctx := context.Background()
+	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+	for _, explicit := range []bool{false, true} {
+		for _, testCase := range []struct {
+			query   string
+			columns []string
+		}{
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1}) RETURN n } RETURN n", []string{"n"}},
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1}) RETURN n } RETURN elementId(n) AS e", []string{"e"}},
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1}) RETURN n } RETURN n.v AS v", []string{"v"}},
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1}) RETURN elementId(n) AS e } RETURN e", []string{"e"}},
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1})-[r:R]->(m) RETURN n,r,m } RETURN [n,r,m] AS entities", []string{"entities"}},
+		} {
+			t.Run(fmt.Sprint(explicit)+testCase.query, func(t *testing.T) {
+				session := driver.NewSession(ctx, neo4jdriver.SessionConfig{DatabaseName: "pcomp"})
+				defer session.Close(ctx)
+				var result neo4jdriver.ResultWithContext
+				if explicit {
+					tx, beginErr := session.BeginTransaction(ctx)
+					require.NoError(t, beginErr)
+					defer tx.Close(ctx)
+					result, err = tx.Run(ctx, testCase.query, nil)
+				} else {
+					result, err = session.Run(ctx, testCase.query, nil)
+				}
+				require.NoError(t, err)
+				columns, err := result.Keys()
+				require.NoError(t, err)
+				require.Equal(t, testCase.columns, columns)
+				records, err := result.Collect(ctx)
+				require.NoError(t, err)
+				require.Len(t, records, 1)
+				value := records[0].Values[0]
+				switch testCase.columns[0] {
+				case "n":
+					require.Contains(t, value.(neo4jdriver.Node).ElementId, "4:pother:")
+				case "e":
+					require.Contains(t, value.(string), "4:pother:")
+				case "v":
+					require.Equal(t, int64(1), value)
+				case "entities":
+					entities := value.([]interface{})
+					require.Contains(t, entities[0].(neo4jdriver.Node).ElementId, "4:pother:")
+					relationship := entities[1].(neo4jdriver.Relationship)
+					require.Contains(t, relationship.ElementId, "5:pother:")
+					require.Equal(t, entities[0].(neo4jdriver.Node).ElementId, relationship.StartElementId)
+					require.Equal(t, entities[2].(neo4jdriver.Node).ElementId, relationship.EndElementId)
+				}
+			})
+		}
+	}
+}
+
+func TestGh683_BoltCompositeCommit(t *testing.T) {
+	for _, writes := range []int{1, 2} {
+		t.Run(fmt.Sprint(writes), func(t *testing.T) {
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = manager.Close() })
+			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "share_shard"}))
+			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "cmp_sh", []multidb.ConstituentRef{
+				{Alias: "sh", DatabaseName: "share_shard", Type: "local", AccessMode: "read_write"},
+			}))
+			server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
+			t.Cleanup(func() { _ = server.Close() })
+			port := startBoltTestServer(t, server)
+			ctx := context.Background()
+			driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = driver.Close(context.Background()) })
+			session := driver.NewSession(ctx, neo4jdriver.SessionConfig{DatabaseName: "cmp_sh"})
+			defer session.Close(ctx)
+			tx, err := session.BeginTransaction(ctx)
+			require.NoError(t, err)
+			defer tx.Close(ctx)
+			for index := 0; index < writes; index++ {
+				result, runErr := tx.Run(ctx, "USE cmp_sh.sh CREATE (:TxShare {id:$id})", map[string]any{"id": index})
+				require.NoError(t, runErr)
+				_, err = result.Consume(ctx)
+				require.NoError(t, err)
+			}
+			result, err := tx.Run(ctx, "USE cmp_sh.sh MATCH (n:TxShare) RETURN count(n) AS c", nil)
+			require.NoError(t, err)
+			record, err := result.Single(ctx)
+			require.NoError(t, err)
+			require.Equal(t, int64(writes), record.Values[0])
+			require.NoError(t, tx.Commit(ctx))
+			store, err := manager.GetStorage("share_shard")
+			require.NoError(t, err)
+			nodes, err := store.GetNodesByLabel("TxShare")
+			require.NoError(t, err)
+			require.Len(t, nodes, writes)
+		})
+	}
+}
+
+func TestDatabaseScopedRollbackBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		id, create      string
+		failedStatement bool
+	}{
+		{id: "clean-rollback", create: "CREATE (n:TxProbe {id: 'clean-rollback'})"},
+		{id: "failed-statement-rollback", create: "CREATE (n:TxProbe {id: 'failed-statement-rollback'})", failedStatement: true},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
+			exec := databaseScopedExecutor(t, store, true)
+			txExec, ok := exec.(TransactionalExecutor)
+			require.True(t, ok, "database-scoped Bolt executor must support real explicit transactions")
+			ctx := context.Background()
+			require.NoError(t, txExec.BeginTransaction(ctx, nil))
+			_, err := txExec.Execute(ctx, tc.create, nil)
+			require.NoError(t, err)
+			if tc.failedStatement {
+				_, err = txExec.Execute(ctx, "THIS IS NOT CYPHER", nil)
+				require.Error(t, err)
+			}
+			require.NoError(t, txExec.RollbackTransaction(ctx))
+			require.Equal(t, int64(0), databaseScopedNodeCount(t, exec, tc.id))
+		})
+	}
+}
+
+func newDatabaseManagerBoltWriteSession(t *testing.T, mgr DatabaseManagerInterface) (context.Context, neo4jdriver.SessionWithContext) {
+	t.Helper()
+	server := NewWithDatabaseManager(&Config{
+		Port:            0,
+		ReadBufferSize:  8192,
+		WriteBufferSize: 8192,
+	}, &mockExecutor{}, mgr)
+	t.Cleanup(func() {
+		_ = server.Close()
+	})
+	port := startBoltTestServer(t, server)
+
+	ctx := context.Background()
+	driver, err := neo4jdriver.NewDriverWithContext(
+		fmt.Sprintf("bolt://127.0.0.1:%d", port),
+		neo4jdriver.NoAuth(),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = driver.Close(context.Background())
+	})
+	require.NoError(t, driver.VerifyConnectivity(ctx))
+
+	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
+		AccessMode:   neo4jdriver.AccessModeWrite,
+		DatabaseName: "nornic",
+	})
+	return ctx, session
+}
+
+func TestDatabaseManagerBoltNeo4jDriverExecuteWriteRollsBackPriorWrites(t *testing.T) {
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
+	mgr := &mockDBManager{
+		stores: map[string]storage.Engine{
+			"nornic": store,
+		},
+		defaultDB: "nornic",
+	}
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
+	var err error
+	defer func() {
+		_ = session.Close(ctx)
+	}()
+
+	_, err = session.ExecuteWrite(ctx, func(tx neo4jdriver.ManagedTransaction) (any, error) {
+		result, runErr := tx.Run(ctx, "CREATE (n:TxProbe {id: $id})", map[string]any{"id": "driver-rollback"})
+		if runErr != nil {
+			return nil, runErr
+		}
+		if _, consumeErr := result.Consume(ctx); consumeErr != nil {
+			return nil, consumeErr
+		}
+		result, runErr = tx.Run(ctx, "THIS IS NOT CYPHER", nil)
+		if runErr != nil {
+			return nil, runErr
+		}
+		_, consumeErr := result.Consume(ctx)
+		return nil, consumeErr
+	})
+	require.Error(t, err)
+
+	count := databaseScopedNodeCount(t, databaseScopedExecutor(t, store), "driver-rollback")
+	require.Equal(t, int64(0), count)
+}
+
+func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesGeneratedNodeIDs(t *testing.T) {
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = mgr.Close()
+	})
+
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
+	defer func() {
+		_ = session.Close(ctx)
+	}()
+
+	_, err = session.ExecuteWrite(ctx, func(tx neo4jdriver.ManagedTransaction) (any, error) {
+		result, runErr := tx.Run(ctx, "MERGE (d:Directory {path: $path}) SET d.name = $name", map[string]any{
+			"path": "/repo/internal/runtime",
+			"name": "runtime",
+		})
+		if runErr != nil {
+			return nil, runErr
+		}
+		_, consumeErr := result.Consume(ctx)
+		return nil, consumeErr
+	})
+	require.NoError(t, err)
+
+	store, err := mgr.GetStorage("nornic")
+	require.NoError(t, err)
+	exec := cypher.NewStorageExecutor(store)
+	res, err := exec.Execute(ctx,
+		"MATCH (d:Directory {path: $path}) RETURN count(d) AS c",
+		map[string]any{"path": "/repo/internal/runtime"},
+	)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.EqualValues(t, 1, res.Rows[0][0])
+}
+
+func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesCanonicalUnwindIDs(t *testing.T) {
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = mgr.Close()
+	})
+
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
+	defer func() {
+		_ = session.Close(ctx)
+	}()
+
+	_, err = session.ExecuteWrite(ctx, func(tx neo4jdriver.ManagedTransaction) (any, error) {
+		statements := []struct {
+			query  string
+			params map[string]any
+		}{
+			{
+				query: "MERGE (r:Repository {id: $repo_id}) SET r.name = $name, r.path = $path",
+				params: map[string]any{
+					"repo_id": "pcg-nornicdb-canonical",
+					"name":    "pcg-nornicdb-canonical",
+					"path":    "/tmp/pcg-nornicdb-canonical",
+				},
+			},
+			{
+				query: `UNWIND $rows AS row
+MATCH (r:Repository {id: row.repo_id})
+MERGE (d:Directory {path: row.path})
+SET d.name = row.name, d.repo_id = row.repo_id,
+    d.scope_id = row.scope_id, d.generation_id = row.generation_id
+MERGE (r)-[:CONTAINS]->(d)`,
+				params: map[string]any{
+					"rows": []map[string]any{{
+						"repo_id":       "pcg-nornicdb-canonical",
+						"path":          "/tmp/pcg-nornicdb-canonical/src",
+						"name":          "src",
+						"scope_id":      "scope:pcg-nornicdb-canonical",
+						"generation_id": "generation:pcg-nornicdb-canonical",
+					}},
+				},
+			},
+		}
+		for _, stmt := range statements {
+			result, runErr := tx.Run(ctx, stmt.query, stmt.params)
+			if runErr != nil {
+				return nil, runErr
+			}
+			if _, consumeErr := result.Consume(ctx); consumeErr != nil {
+				return nil, consumeErr
+			}
+		}
+		return nil, nil
+	})
+	require.NoError(t, err)
+
+	store, err := mgr.GetStorage("nornic")
+	require.NoError(t, err)
+	exec := cypher.NewStorageExecutor(store)
+	res, err := exec.Execute(ctx,
+		"MATCH (:Repository {id: $repo_id})-[:CONTAINS]->(:Directory {path: $path}) RETURN count(*) AS c",
+		map[string]any{
+			"repo_id": "pcg-nornicdb-canonical",
+			"path":    "/tmp/pcg-nornicdb-canonical/src",
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.EqualValues(t, 1, res.Rows[0][0])
+}
+
+func databaseScopedExecutor(t *testing.T, store storage.Engine, transaction ...bool) QueryExecutor {
+	t.Helper()
+
+	mgr := &mockDBManager{
+		stores: map[string]storage.Engine{
+			"nornic": store,
+		},
+		defaultDB: "nornic",
+	}
+	s := &Session{
+		server: &Server{
+			dbManager: mgr,
+		},
+	}
+	exec, err := s.getExecutorForDatabase("nornic", transaction...)
+	require.NoError(t, err)
+	return exec
+}
+
+// startBoltTestServer pre-binds a loopback listener for the test server and
+// runs the accept loop directly, avoiding racy reads of server.listener and the
+// reserve-then-rebind TOCTOU window.
+func startBoltTestServer(t *testing.T, server *Server, shutdownChecks ...func(error)) int {
+	t.Helper()
+	require.LessOrEqual(t, len(shutdownChecks), 1)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	require.Greater(t, addr.Port, 0)
+	server.listener = listener
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.serve()
+	}()
+
+	t.Cleanup(func() {
+		shutdownErr := server.Close()
+		serveErr := <-errCh
+		if len(shutdownChecks) == 1 {
+			shutdownChecks[0](shutdownErr)
+		} else {
+			require.NoError(t, shutdownErr)
+		}
+		require.NoError(t, serveErr)
+	})
+	return addr.Port
+}
+
+func databaseScopedNodeCount(t *testing.T, exec QueryExecutor, id string) int64 {
+	t.Helper()
+
+	res, err := exec.Execute(context.Background(),
+		"MATCH (n:TxProbe {id: $id}) RETURN count(n) AS c",
+		map[string]any{"id": id},
+	)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Len(t, res.Rows[0], 1)
+	switch count := res.Rows[0][0].(type) {
+	case int:
+		return int64(count)
+	case int64:
+		return count
+	case float64:
+		return int64(count)
+	default:
+		t.Fatalf("count type = %T, want numeric", count)
+	}
+	return -1
+}
+
+type fixedEmbedder struct {
+	dims int
+}
+
+func (f *fixedEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
+	out := make([]float32, f.dims)
+	if f.dims > 0 {
+		out[0] = 1
+	}
+	return out, nil
+}
+
+func (f *fixedEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for range texts {
+		v, _ := f.Embed(ctx, "")
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+func (f *fixedEmbedder) Dimensions() int { return f.dims }
+func (f *fixedEmbedder) Model() string   { return "fixed" }
+func (f *fixedEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
+
+func (f *fixedEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	return []string{text}, nil
+}
+
+type providerBackedExecutor struct {
+	base *cypher.StorageExecutor
+}
+
+func (p *providerBackedExecutor) Execute(_ context.Context, _ string, _ map[string]any) (*QueryResult, error) {
+	return &QueryResult{}, nil
+}
+
+func (p *providerBackedExecutor) BaseCypherExecutor() *cypher.StorageExecutor {
+	return p.base
+}
+
+func (p *providerBackedExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageExecutor, _ string, _ storage.Engine) {
+	if p == nil || p.base == nil || exec == nil {
+		return
+	}
+	if emb := p.base.GetEmbedder(); emb != nil {
+		exec.SetEmbedder(emb)
+	}
+}
+
+func TestSessionGetExecutorForDatabase_InheritsEmbedder_ForStringVectorQuery(t *testing.T) {
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	store := storage.NewNamespacedEngine(baseStore, "nornic")
+	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine"))
+	_, err := store.CreateNode(&storage.Node{
+		ID:     "d1",
+		Labels: []string{"Doc"},
+		Properties: map[string]interface{}{
+			"embedding": []float32{1, 0, 0},
+		},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+	})
+	require.NoError(t, err)
+
+	mgr := &mockDBManager{
+		stores: map[string]storage.Engine{
+			"nornic": store,
+		},
+		defaultDB: "nornic",
+	}
+
+	baseExec := cypher.NewStorageExecutor(store)
+	var emb embed.Embedder = &fixedEmbedder{dims: 3}
+	baseExec.SetEmbedder(emb)
+
+	s := &Session{
+		server: &Server{
+			dbManager: mgr,
+			executor:  &boltQueryExecutorAdapter{executor: baseExec},
+		},
+	}
+
+	exec, err := s.getExecutorForDatabase("nornic")
+	require.NoError(t, err)
+
+	// Ensure the DB-scoped Bolt executor inherits the base embedder so string
+	// query inputs over Bolt are accepted.
+	adapter, ok := exec.(*boltQueryExecutorAdapter)
+	require.True(t, ok)
+	require.NotNil(t, adapter.executor.GetEmbedder())
+
+	res, err := exec.Execute(context.Background(),
+		"CALL db.index.vector.queryNodes('idx_doc', 1, $q) YIELD node, score RETURN score",
+		map[string]any{"q": "hello world"},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Columns)
+}
+
+func TestSessionGetExecutorForDatabase_InheritsEmbedder_FromBaseExecutorProvider(t *testing.T) {
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	store := storage.NewNamespacedEngine(baseStore, "nornic")
+	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine"))
+	_, err := store.CreateNode(&storage.Node{
+		ID:     "d1",
+		Labels: []string{"Doc"},
+		Properties: map[string]interface{}{
+			"embedding": []float32{1, 0, 0},
+		},
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+	})
+	require.NoError(t, err)
+
+	mgr := &mockDBManager{
+		stores: map[string]storage.Engine{
+			"nornic": store,
+		},
+		defaultDB: "nornic",
+	}
+
+	baseExec := cypher.NewStorageExecutor(store)
+	var emb embed.Embedder = &fixedEmbedder{dims: 3}
+	baseExec.SetEmbedder(emb)
+
+	s := &Session{
+		server: &Server{
+			dbManager: mgr,
+			executor:  &providerBackedExecutor{base: baseExec},
+		},
+	}
+
+	exec, err := s.getExecutorForDatabase("nornic")
+	require.NoError(t, err)
+
+	adapter, ok := exec.(*boltQueryExecutorAdapter)
+	require.True(t, ok)
+	require.NotNil(t, adapter.executor.GetEmbedder())
+
+	res, err := exec.Execute(context.Background(),
+		"CALL db.index.vector.queryNodes('idx_doc', 1, $q) YIELD node, score RETURN score",
+		map[string]any{"q": "hello world"},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+}

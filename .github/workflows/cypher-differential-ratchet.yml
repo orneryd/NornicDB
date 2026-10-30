@@ -1,0 +1,56 @@
+name: Cypher Differential Ratchet
+
+# Compares the generated sweep and the issue reproductions with the
+# pinned Neo4j through Bolt auto-commit, Bolt explicit transactions and HTTP
+# (#754). It fails when a statement that matched Neo4j starts to differ, and
+# lists the known differences that match now
+# (testing/cypher/tck/testdata/differential/known_mismatches.jsonl). The fixed
+# corpus runs with Cypher Conformance. Runs require manual admin approval,
+# directly or through nightly.yml (whose schedule is paused).
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to check"
+        required: true
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ratchet:
+    name: Differential ratchet
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Compare the sweep and the issue reproductions with pinned Neo4j
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          make cypher-differential-ratchet 2>&1 | tee artifacts/differential-ratchet.log
+
+      - name: Upload ratchet log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypher-differential-ratchet-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn

@@ -1,0 +1,137 @@
+# NornicDB ARM64 Metal
+# Self-contained build with local embedding support
+#
+# Build:  docker build -f docker/Dockerfile.arm64-metal -t nornicdb-arm64-metal .
+# With BGE model embedded:
+#         docker build -f docker/Dockerfile.arm64-metal --build-arg EMBED_MODEL=true -t nornicdb-arm64-metal-bge .
+# Headless (no UI):
+#         docker build -f docker/Dockerfile.arm64-metal --build-arg HEADLESS=true -t nornicdb-arm64-metal-headless .
+
+ARG LLAMA_CPU_IMAGE=timothyswt/llama-cpu-libs:v0.7.0@sha256:ec78fcac54c5f6d8f4cb7db4d41cae2eb856d348579001a41328bde839d2f028
+
+# =============================================================================
+# Stage 1: UI (skipped in headless mode)
+# =============================================================================
+FROM node:26-alpine AS ui
+ARG HEADLESS=false
+WORKDIR /ui
+COPY ui/package*.json ./
+RUN if [ "$HEADLESS" != "true" ]; then \
+      npm ci 2>/dev/null || npm install --legacy-peer-deps; \
+    fi
+COPY ui/ .
+RUN if [ "$HEADLESS" != "true" ]; then \
+      npm run build; \
+    else \
+      mkdir -p dist && echo "Headless mode - UI skipped" > dist/HEADLESS; \
+    fi
+
+# =============================================================================
+# Stage 2: prebuilt llama.cpp static library (ARM64)
+# =============================================================================
+FROM ${LLAMA_CPU_IMAGE} AS llama
+
+# =============================================================================
+# Stage 3: Go build
+# =============================================================================
+FROM golang:1.27.1-bookworm AS builder
+ARG HEADLESS=false
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
+
+# Copy llama static library (before COPY . . for better layer caching)
+COPY --from=llama /output/lib/libllama_combined.a /build/lib/llama/libllama_linux_arm64.a
+
+# Go dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Source + UI (only copy UI dist if not headless)
+COPY . .
+COPY --from=ui /ui/dist ./ui/dist
+
+# Overwrite repo headers with ones matching LLAMA_VERSION (must be AFTER COPY . .)
+# COPY . . would otherwise replace these with the stale headers committed to the repo,
+# causing a struct size mismatch between the compiled library and the CGo bindings.
+COPY --from=llama /output/include/*.h /build/lib/llama/
+
+# Build (with or without UI based on HEADLESS arg)
+# NOTE: Cannot use -static linking because Go plugins require dynamic linking
+RUN if [ "$HEADLESS" = "true" ]; then \
+      echo "Building headless (no UI)..." && \
+      CGO_ENABLED=1 go build -tags="localllm noui" \
+        -ldflags="-s -w -X main.buildTime=$(date -u +%Y%m%d-%H%M%S)" \
+        -o nornicdb ./cmd/nornicdb; \
+    else \
+      echo "Building with UI..." && \
+      CGO_ENABLED=1 go build -tags=localllm \
+        -ldflags="-s -w -X main.buildTime=$(date -u +%Y%m%d-%H%M%S)" \
+        -o nornicdb ./cmd/nornicdb; \
+    fi
+
+# Build APOC plugin
+RUN echo "Building APOC plugin..." && \
+    mkdir -p apoc/built-plugins && \
+    cd apoc/plugin-src/apoc && go build -buildmode=plugin -o ../../../apoc/built-plugins/apoc.so apoc_plugin.go && \
+    echo "✓ Built plugin:" && ls -lh /build/apoc/built-plugins/*.so
+
+# =============================================================================
+# Stage 4: Runtime
+# =============================================================================
+FROM debian:bookworm-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata wget && rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /data /app/models
+
+COPY --from=builder /build/nornicdb /app/
+COPY --from=builder /build/apoc/built-plugins /app/plugins/
+COPY docker/entrypoint.sh /app/
+COPY docker/healthcheck.sh /app/
+RUN chmod +x /app/entrypoint.sh /app/healthcheck.sh
+
+# Model embedding: download during build when EMBED_MODEL=true.
+ARG EMBED_MODEL=false
+ARG HEADLESS=false
+ARG BGE_MODEL_URL=https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf
+ARG BGE_RERANKER_URL=https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf
+RUN \
+    if [ "$EMBED_MODEL" = "true" ]; then \
+      echo "Downloading BGE-M3 model from Hugging Face..." && \
+      wget -q --show-progress -O /app/models/bge-m3.gguf "$BGE_MODEL_URL" && \
+      echo "✓ Downloaded bge-m3.gguf ($(du -h /app/models/bge-m3.gguf | cut -f1))" && \
+      echo "Downloading BGE reranker model from Hugging Face..." && \
+      wget -q --show-progress -O /app/models/bge-reranker-v2-m3.gguf "$BGE_RERANKER_URL" && \
+      echo "✓ Downloaded bge-reranker-v2-m3.gguf ($(du -h /app/models/bge-reranker-v2-m3.gguf | cut -f1))"; \
+    else \
+      echo "→ BYOM mode (no embedded model)"; \
+    fi && \
+    if [ "$HEADLESS" = "true" ]; then \
+      echo "✓ Headless mode enabled (no UI)"; \
+    fi
+
+EXPOSE 7473 7474 7687 6334 9091
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD /app/healthcheck.sh
+
+# Set NORNICDB_HEADLESS and reranker (when EMBED_MODEL=true reranker file is present)
+ENV NORNICDB_DATA_DIR=/data \
+  NORNICDB_ADDRESS=0.0.0.0 \
+    NORNICDB_HTTP_PORT=7474 \
+    NORNICDB_BOLT_PORT=7687 \
+    NORNICDB_EMBEDDING_PROVIDER=local \
+    NORNICDB_EMBEDDING_MODEL=bge-m3 \
+    NORNICDB_EMBEDDING_DIMENSIONS=1024 \
+    NORNICDB_MODELS_DIR=/app/models \
+    NORNICDB_EMBEDDING_GPU_LAYERS=0 \
+    NORNICDB_NO_AUTH=true \
+    NORNICDB_HEADLESS=${HEADLESS} \
+    NORNICDB_PLUGINS_DIR=/app/plugins \
+    NORNICDB_SEARCH_RERANK_ENABLED=false \
+    NORNICDB_SEARCH_RERANK_PROVIDER=local \
+    NORNICDB_SEARCH_RERANK_MODEL=bge-reranker-v2-m3.gguf
+
+ENTRYPOINT ["/app/entrypoint.sh"]

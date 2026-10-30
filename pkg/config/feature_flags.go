@@ -1,0 +1,1322 @@
+// Feature flags for experimental functionality in NornicDB.
+//
+// Centralized feature flag management. All flags are loaded from environment
+// variables via Config.Features and can be toggled at runtime for testing.
+//
+// DEFAULTS:
+//   - Tier 1 features (Cooldown, Edge Provenance, Evidence Buffering, Per-Node Config, WAL)
+//     are ENABLED BY DEFAULT for production safety
+//   - Kalman, Topology, and GPU Clustering features are DISABLED by default (experimental)
+//
+// Usage:
+//
+//	// Load from environment
+//	config := config.LoadFromEnv()
+//	if config.Features.KalmanEnabled {
+//		// Use Kalman filtering
+//	}
+//
+//	// Runtime toggles (for tests)
+//	config.EnableKalmanFiltering()
+//	if config.IsKalmanEnabled() { ... }
+//
+// Environment variables (to ENABLE experimental features):
+//
+//	NORNICDB_KALMAN_ENABLED=true
+//	NORNICDB_AUTO_TLP_ENABLED=true
+//	NORNICDB_KMEANS_CLUSTERING_ENABLED=true
+//	NORNICDB_GPU_CLUSTERING_AUTO_INTEGRATION_ENABLED=true
+//
+// Environment variables (to DISABLE default-on features if problems occur):
+//
+//	NORNICDB_EDGE_PROVENANCE_ENABLED=false
+//	NORNICDB_COOLDOWN_ENABLED=false
+//	NORNICDB_EVIDENCE_BUFFERING_ENABLED=false
+//	NORNICDB_PER_NODE_CONFIG_ENABLED=false
+//	NORNICDB_WAL_ENABLED=false
+package config
+
+import (
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	// Note: Import config package for centralized flags
+	// Commented to avoid circular import in some cases
+	// Use globalConfig pattern instead
+)
+
+// Feature flag keys
+const (
+	// EnvKalmanEnabled is the environment variable to enable Kalman filtering
+	EnvKalmanEnabled = "NORNICDB_KALMAN_ENABLED"
+
+	// EnvAutoTLPEnabled is the environment variable to enable automatic TLP (Topological Link prediction)
+	// When enabled, the inference engine automatically creates relationships based on:
+	// - Semantic similarity (embedding distance)
+	// - Co-access patterns (nodes accessed together)
+	// - Temporal proximity (nodes in same session)
+	// - Transitive inference (A→B→C suggests A→C)
+	// DISABLED by default - enable with "true" or "1"
+	EnvAutoTLPEnabled = "NORNICDB_AUTO_TLP_ENABLED"
+
+	// EnvCooldownAutoIntegrationEnabled is the environment variable to enable automatic cooldown in inference
+	EnvCooldownAutoIntegrationEnabled = "NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED"
+
+	// EnvEvidenceAutoIntegrationEnabled is the environment variable to enable automatic evidence buffering in inference
+	EnvEvidenceAutoIntegrationEnabled = "NORNICDB_EVIDENCE_AUTO_INTEGRATION_ENABLED"
+
+	// EnvEdgeProvenanceAutoIntegrationEnabled is the environment variable to enable automatic provenance logging in inference
+	EnvEdgeProvenanceAutoIntegrationEnabled = "NORNICDB_EDGE_PROVENANCE_AUTO_INTEGRATION_ENABLED"
+
+	// EnvPerNodeConfigAutoIntegrationEnabled is the environment variable to enable automatic per-node config in inference
+	EnvPerNodeConfigAutoIntegrationEnabled = "NORNICDB_PER_NODE_CONFIG_AUTO_INTEGRATION_ENABLED"
+
+	// EnvEdgeProvenanceEnabled is the environment variable to enable edge provenance logging
+	EnvEdgeProvenanceEnabled = "NORNICDB_EDGE_PROVENANCE_ENABLED"
+
+	// EnvCooldownEnabled is the environment variable to enable cooldown logic
+	EnvCooldownEnabled = "NORNICDB_COOLDOWN_ENABLED"
+
+	// EnvEvidenceBufferingEnabled is the environment variable to enable evidence buffering
+	EnvEvidenceBufferingEnabled = "NORNICDB_EVIDENCE_BUFFERING_ENABLED"
+
+	// EnvPerNodeConfigEnabled is the environment variable to enable per-node configuration
+	EnvPerNodeConfigEnabled = "NORNICDB_PER_NODE_CONFIG_ENABLED"
+
+	// EnvWALEnabled is the environment variable to enable write-ahead logging
+	EnvWALEnabled = "NORNICDB_WAL_ENABLED"
+
+	// EnvGPUClusteringEnabled is the environment variable to enable GPU k-means clustering
+	EnvGPUClusteringEnabled = "NORNICDB_KMEANS_CLUSTERING_ENABLED"
+
+	// EnvGPUClusteringAutoIntegrationEnabled is the environment variable to enable automatic GPU clustering in inference
+	EnvGPUClusteringAutoIntegrationEnabled = "NORNICDB_GPU_CLUSTERING_AUTO_INTEGRATION_ENABLED"
+
+	// EnvEdgeDecayEnabled is the environment variable to enable automatic edge decay
+	// Auto-generated edges decay over time if not reinforced (accessed)
+	EnvEdgeDecayEnabled = "NORNICDB_EDGE_DECAY_ENABLED"
+
+	// EnvAutoTLPLLMQCEnabled is the environment variable to enable LLM quality control for Auto-TLP
+	// When enabled, TLP suggestions are batch-reviewed by Heimdall SLM before creation
+	// This adds latency but improves relationship quality
+	// DISABLED by default - requires Heimdall SLM to be configured
+	EnvAutoTLPLLMQCEnabled = "NORNICDB_AUTO_TLP_LLM_QC_ENABLED"
+
+	// EnvAutoTLPLLMAugmentEnabled allows Heimdall to suggest ADDITIONAL edges beyond TLP's candidates
+	// When enabled, Heimdall can discover relationships that TLP algorithms missed
+	// Requires EnvAutoTLPLLMQCEnabled to also be enabled
+	// DISABLED by default - increases SLM workload
+	EnvAutoTLPLLMAugmentEnabled = "NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED"
+
+	// EnvParserType selects the Cypher parser implementation
+	// - "nornic" (default): Fast inline parser optimized for NornicDB
+	// - "antlr": ANTLR-based OpenCypher parser (stricter, better error messages)
+	// Environment: NORNICDB_PARSER
+	EnvParserType = "NORNICDB_PARSER"
+
+	// EnvCypherQueryNormalization turns the Cypher query text normalization
+	// off. ENABLED by default: comments and runs of whitespace outside string
+	// literals and quoted names become one space before a statement runs, as
+	// Neo4j ignores them (#740). Disable with "false" or "0" only for clients
+	// that send normalized statements already; with it off, a statement with
+	// comments or unusual spacing may fail. Permission and routing decisions
+	// don't depend on it.
+	// Environment: NORNICDB_CYPHER_QUERY_NORMALIZATION
+	EnvCypherQueryNormalization = "NORNICDB_CYPHER_QUERY_NORMALIZATION"
+
+	// Parser type constants
+	ParserTypeNornic = "nornic"
+	ParserTypeANTLR  = "antlr"
+
+	// FeatureKalmanDecay enables Kalman filtering for memory decay prediction
+	FeatureKalmanDecay = "kalman_decay"
+
+	// FeatureKalmanCoAccess enables Kalman filtering for co-access confidence
+	FeatureKalmanCoAccess = "kalman_coaccess"
+
+	// FeatureKalmanLatency enables Kalman filtering for latency prediction
+	FeatureKalmanLatency = "kalman_latency"
+
+	// FeatureKalmanSimilarity enables Kalman filtering for similarity smoothing
+	FeatureKalmanSimilarity = "kalman_similarity"
+
+	// FeatureKalmanTemporal enables Kalman filtering for temporal patterns
+	FeatureKalmanTemporal = "kalman_temporal"
+
+	// FeatureTopologyAutoIntegration enables AUTOMATIC topology integration with inference engine
+	// NOTE: Topology algorithms (CALL gds.linkPrediction.*) are ALWAYS available
+	// This only controls automatic use in inference.Engine.OnStore()
+	FeatureTopologyAutoIntegration = "topology_auto_integration"
+
+	// FeatureCooldownAutoIntegration enables AUTOMATIC cooldown in inference engine
+	// NOTE: CooldownTable is ALWAYS available for direct use
+	// This only controls automatic use in inference.Engine.ProcessSuggestion()
+	FeatureCooldownAutoIntegration = "cooldown_auto_integration"
+
+	// FeatureEvidenceAutoIntegration enables AUTOMATIC evidence buffering in inference engine
+	// NOTE: EvidenceBuffer is ALWAYS available for direct use
+	// This only controls automatic use in inference.Engine.ProcessSuggestion()
+	FeatureEvidenceAutoIntegration = "evidence_auto_integration"
+
+	// FeatureEdgeProvenanceAutoIntegration enables AUTOMATIC provenance logging in inference engine
+	// NOTE: EdgeMetaStore is ALWAYS available for direct use
+	// This only controls automatic logging in inference.Engine.ProcessSuggestion()
+	FeatureEdgeProvenanceAutoIntegration = "edge_provenance_auto_integration"
+
+	// FeaturePerNodeConfigAutoIntegration enables AUTOMATIC per-node config in inference engine
+	// NOTE: NodeConfigStore is ALWAYS available for direct use
+	// This only controls automatic checking in inference.Engine.ProcessSuggestion()
+	FeaturePerNodeConfigAutoIntegration = "per_node_config_auto_integration"
+
+	// FeatureEdgeProvenance enables edge provenance logging for audit trails
+	// Tracks why edges were created, when, and what evidence supports them
+	FeatureEdgeProvenance = "edge_provenance"
+
+	// FeatureCooldown enables cooldown logic to prevent echo chambers
+	// Prevents rapid re-materialization of the same edge pairs
+	FeatureCooldown = "cooldown"
+
+	// FeatureEvidenceBuffering enables evidence buffering before materialization
+	// Only materializes edges after accumulating sufficient evidence
+	FeatureEvidenceBuffering = "evidence_buffering"
+
+	// FeaturePerNodeConfig enables per-node configuration (pins, denies, caps)
+	// Allows fine-grained control over edge materialization per node
+	FeaturePerNodeConfig = "per_node_config"
+
+	// FeatureWAL enables write-ahead logging for durability
+	// Provides crash recovery via WAL + snapshots
+	FeatureWAL = "wal"
+
+	// FeatureGPUClustering enables GPU-accelerated k-means clustering for similarity search
+	// Provides 10-50x speedup on indices with 10K+ embeddings
+	FeatureGPUClustering = "gpu_clustering"
+
+	// FeatureGPUClusteringAutoIntegration enables AUTOMATIC GPU clustering in inference engine
+	// NOTE: ClusterIntegration is ALWAYS available for direct use
+	// This only controls automatic use in inference.Engine.Search()
+	FeatureGPUClusteringAutoIntegration = "gpu_clustering_auto_integration"
+)
+
+var (
+	// Global feature flag state
+	kalmanEnabled                        atomic.Bool
+	topologyLinkPredictionEnabled        atomic.Bool
+	cooldownAutoIntegrationEnabled       atomic.Bool
+	evidenceAutoIntegrationEnabled       atomic.Bool
+	edgeProvenanceAutoIntegrationEnabled atomic.Bool
+	perNodeConfigAutoIntegrationEnabled  atomic.Bool
+	edgeProvenanceEnabled                atomic.Bool
+	cooldownEnabled                      atomic.Bool
+	evidenceBufferingEnabled             atomic.Bool
+	perNodeConfigEnabled                 atomic.Bool
+	walEnabled                           atomic.Bool
+	gpuClusteringEnabled                 atomic.Bool
+	gpuClusteringAutoIntegrationEnabled  atomic.Bool
+	edgeDecayEnabled                     atomic.Bool
+	autoTLPLLMQCEnabled                  atomic.Bool
+	autoTLPLLMAugmentEnabled             atomic.Bool
+	featureFlags                         = make(map[string]bool)
+	featureFlagsMu                       sync.RWMutex
+	initOnce                             sync.Once
+
+	// Parser type - "nornic" (default) or "antlr"
+	parserType atomic.Value // string
+
+	// cypherQueryNormalizationDisabled is set when the Cypher query text
+	// normalization is turned off (EnvCypherQueryNormalization); its zero
+	// value is the default, enabled.
+	cypherQueryNormalizationDisabled atomic.Bool
+)
+
+func init() {
+	// Check environment variables on startup
+	initOnce.Do(func() {
+		// Parser type: "nornic" (default) or "antlr"
+		parserType.Store(ParserTypeNornic) // default
+		if env := os.Getenv(EnvParserType); env != "" {
+			switch strings.ToLower(env) {
+			case ParserTypeANTLR:
+				parserType.Store(ParserTypeANTLR)
+			case ParserTypeNornic, "":
+				parserType.Store(ParserTypeNornic)
+			default:
+				// Unknown parser type, use default
+				parserType.Store(ParserTypeNornic)
+			}
+		}
+
+		// Cypher query normalization: ENABLED by default, disable with
+		// "false" or "0".
+		if env := strings.ToLower(strings.TrimSpace(os.Getenv(EnvCypherQueryNormalization))); env == "false" || env == "0" {
+			cypherQueryNormalizationDisabled.Store(true)
+		}
+
+		// Experimental features - DISABLED by default, enable with "true" or "1"
+		if env := os.Getenv(EnvKalmanEnabled); env == "true" || env == "1" {
+			kalmanEnabled.Store(true)
+		}
+		// Auto-TLP: DISABLED by default (creates relationships automatically)
+		if env := os.Getenv(EnvAutoTLPEnabled); env == "true" || env == "1" {
+			topologyLinkPredictionEnabled.Store(true)
+		}
+
+		// Auto-Integration features - ENABLED by default for inference engine
+		// These control automatic use in inference.Engine.ProcessSuggestion()
+		// Users can disable with "false" or "0" if problems occur
+
+		// Cooldown Auto-Integration: enabled by default
+		cooldownAutoIntegrationEnabled.Store(true)
+		if env := os.Getenv(EnvCooldownAutoIntegrationEnabled); env == "false" || env == "0" {
+			cooldownAutoIntegrationEnabled.Store(false)
+		}
+
+		// Evidence Auto-Integration: enabled by default
+		evidenceAutoIntegrationEnabled.Store(true)
+		if env := os.Getenv(EnvEvidenceAutoIntegrationEnabled); env == "false" || env == "0" {
+			evidenceAutoIntegrationEnabled.Store(false)
+		}
+
+		// Edge Provenance Auto-Integration: enabled by default
+		edgeProvenanceAutoIntegrationEnabled.Store(true)
+		if env := os.Getenv(EnvEdgeProvenanceAutoIntegrationEnabled); env == "false" || env == "0" {
+			edgeProvenanceAutoIntegrationEnabled.Store(false)
+		}
+
+		// Per-Node Config Auto-Integration: enabled by default
+		perNodeConfigAutoIntegrationEnabled.Store(true)
+		if env := os.Getenv(EnvPerNodeConfigAutoIntegrationEnabled); env == "false" || env == "0" {
+			perNodeConfigAutoIntegrationEnabled.Store(false)
+		}
+
+		// Tier 1 features - ENABLED by default for production safety
+		// Users can disable with "false" or "0" if problems occur
+
+		// Edge Provenance: enabled by default for audit trails
+		edgeProvenanceEnabled.Store(true)
+		if env := os.Getenv(EnvEdgeProvenanceEnabled); env == "false" || env == "0" {
+			edgeProvenanceEnabled.Store(false)
+		}
+
+		// Cooldown: enabled by default to prevent echo chambers
+		cooldownEnabled.Store(true)
+		if env := os.Getenv(EnvCooldownEnabled); env == "false" || env == "0" {
+			cooldownEnabled.Store(false)
+		}
+
+		// Evidence Buffering: enabled by default to reduce false positives
+		evidenceBufferingEnabled.Store(true)
+		if env := os.Getenv(EnvEvidenceBufferingEnabled); env == "false" || env == "0" {
+			evidenceBufferingEnabled.Store(false)
+		}
+
+		// Per-Node Config: enabled by default for fine-grained control
+		perNodeConfigEnabled.Store(true)
+		if env := os.Getenv(EnvPerNodeConfigEnabled); env == "false" || env == "0" {
+			perNodeConfigEnabled.Store(false)
+		}
+
+		// WAL: enabled by default for durability
+		walEnabled.Store(true)
+		if env := os.Getenv(EnvWALEnabled); env == "false" || env == "0" {
+			walEnabled.Store(false)
+		}
+
+		// GPU Clustering: DISABLED by default (experimental, requires GPU)
+		// Enable with "true" or "1"
+		if env := os.Getenv(EnvGPUClusteringEnabled); env == "true" || env == "1" {
+			gpuClusteringEnabled.Store(true)
+		}
+
+		// GPU Clustering Auto-Integration: DISABLED by default (experimental)
+		// Enable with "true" or "1"
+		if env := os.Getenv(EnvGPUClusteringAutoIntegrationEnabled); env == "true" || env == "1" {
+			gpuClusteringAutoIntegrationEnabled.Store(true)
+		}
+
+		// Edge Decay: ENABLED by default to clean up stale auto-generated edges
+		// Disable with "false" or "0" if you want edges to persist forever
+		edgeDecayEnabled.Store(true)
+		if env := os.Getenv(EnvEdgeDecayEnabled); env == "false" || env == "0" {
+			edgeDecayEnabled.Store(false)
+		}
+
+		// Auto-TLP LLM QC: DISABLED by default (requires Heimdall SLM)
+		// When enabled, TLP suggestions are batch-reviewed by the SLM
+		if env := os.Getenv(EnvAutoTLPLLMQCEnabled); env == "true" || env == "1" {
+			autoTLPLLMQCEnabled.Store(true)
+		}
+
+		// Auto-TLP LLM Augment: DISABLED by default
+		// When enabled, Heimdall can suggest additional edges beyond TLP's candidates
+		if env := os.Getenv(EnvAutoTLPLLMAugmentEnabled); env == "true" || env == "1" {
+			autoTLPLLMAugmentEnabled.Store(true)
+		}
+	})
+}
+
+// EnableKalmanFiltering globally enables Kalman filtering.
+// This is the master switch - individual features can still be disabled.
+func EnableKalmanFiltering() {
+	kalmanEnabled.Store(true)
+}
+
+// DisableKalmanFiltering globally disables Kalman filtering.
+func DisableKalmanFiltering() {
+	kalmanEnabled.Store(false)
+}
+
+// IsKalmanEnabled returns true if Kalman filtering is globally enabled.
+func IsKalmanEnabled() bool {
+	return kalmanEnabled.Load()
+}
+
+// SetKalmanEnabled sets the global Kalman filtering state.
+func SetKalmanEnabled(enabled bool) {
+	kalmanEnabled.Store(enabled)
+}
+
+// WithKalmanEnabled temporarily enables Kalman filtering and returns a cleanup function.
+// Useful for tests that need to enable/disable filtering.
+//
+// Example:
+//
+//	cleanup := filter.WithKalmanEnabled()
+//	defer cleanup()
+//	// ... test code with Kalman enabled ...
+func WithKalmanEnabled() func() {
+	prev := kalmanEnabled.Load()
+	kalmanEnabled.Store(true)
+	return func() {
+		kalmanEnabled.Store(prev)
+	}
+}
+
+// WithKalmanDisabled temporarily disables Kalman filtering and returns a cleanup function.
+func WithKalmanDisabled() func() {
+	prev := kalmanEnabled.Load()
+	kalmanEnabled.Store(false)
+	return func() {
+		kalmanEnabled.Store(prev)
+	}
+}
+
+// EnableFeature enables a specific Kalman feature.
+func EnableFeature(feature string) {
+	featureFlagsMu.Lock()
+	defer featureFlagsMu.Unlock()
+	featureFlags[feature] = true
+}
+
+// DisableFeature disables a specific Kalman feature.
+func DisableFeature(feature string) {
+	featureFlagsMu.Lock()
+	defer featureFlagsMu.Unlock()
+	featureFlags[feature] = false
+}
+
+// IsFeatureEnabled returns true if a specific feature is enabled.
+// Both the global Kalman flag AND the specific feature must be enabled.
+func IsFeatureEnabled(feature string) bool {
+	if !kalmanEnabled.Load() {
+		return false
+	}
+	featureFlagsMu.RLock()
+	defer featureFlagsMu.RUnlock()
+	enabled, exists := featureFlags[feature]
+	// If feature not explicitly set, default to enabled when global is on
+	if !exists {
+		return true
+	}
+	return enabled
+}
+
+// EnableAutoTLP enables automatic TLP (relationship inference).
+// When enabled, the system automatically creates relationships between nodes
+// based on semantic similarity, co-access patterns, and temporal proximity.
+func EnableAutoTLP() {
+	topologyLinkPredictionEnabled.Store(true)
+	EnableFeature(FeatureTopologyAutoIntegration)
+}
+
+// DisableAutoTLP disables automatic TLP (relationship inference).
+func DisableAutoTLP() {
+	topologyLinkPredictionEnabled.Store(false)
+	DisableFeature(FeatureTopologyAutoIntegration)
+}
+
+// IsAutoTLPEnabled returns true if automatic TLP is enabled.
+// Note: This does NOT affect Cypher procedures (CALL gds.linkPrediction.*) - they are always available.
+func IsAutoTLPEnabled() bool {
+	return topologyLinkPredictionEnabled.Load() || IsFeatureEnabled(FeatureTopologyAutoIntegration)
+}
+
+// WithAutoTLPEnabled temporarily enables Auto-TLP and returns cleanup function.
+// Useful for A/B testing in unit tests.
+//
+// Example:
+//
+//	cleanup := featureflags.WithAutoTLPEnabled()
+//	defer cleanup()
+//	// ... test code with Auto-TLP enabled ...
+func WithAutoTLPEnabled() func() {
+	prev := topologyLinkPredictionEnabled.Load()
+	topologyLinkPredictionEnabled.Store(true)
+	EnableFeature(FeatureTopologyAutoIntegration)
+	return func() {
+		topologyLinkPredictionEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureTopologyAutoIntegration)
+		}
+	}
+}
+
+// WithAutoTLPDisabled temporarily disables Auto-TLP and returns cleanup function.
+func WithAutoTLPDisabled() func() {
+	prev := topologyLinkPredictionEnabled.Load()
+	topologyLinkPredictionEnabled.Store(false)
+	DisableFeature(FeatureTopologyAutoIntegration)
+	return func() {
+		topologyLinkPredictionEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureTopologyAutoIntegration)
+		}
+	}
+}
+
+// EnableCooldownAutoIntegration enables automatic cooldown in inference engine.
+func EnableCooldownAutoIntegration() {
+	cooldownAutoIntegrationEnabled.Store(true)
+	EnableFeature(FeatureCooldownAutoIntegration)
+}
+
+// DisableCooldownAutoIntegration disables automatic cooldown in inference engine.
+func DisableCooldownAutoIntegration() {
+	cooldownAutoIntegrationEnabled.Store(false)
+	DisableFeature(FeatureCooldownAutoIntegration)
+}
+
+// IsCooldownAutoIntegrationEnabled returns true if automatic cooldown is enabled in inference.
+//
+// When enabled, ProcessSuggestion() will automatically check cooldown before allowing
+// edge materialization. When disabled, you must manually check cooldown if desired.
+//
+// Example (auto-integration enabled - default):
+//
+//	result := engine.ProcessSuggestion(suggestion, "session-123")
+//	if result.ShouldMaterialize {  // Cooldown already checked!
+//	    db.CreateEdge(...)
+//	}
+//
+// Example (auto-integration disabled - manual control):
+//
+//	// Disable auto-integration
+//	os.Setenv("NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED", "false")
+//
+//	// Manually check cooldown
+//	if engine.GetCooldownTable().CanMaterialize(src, dst, label) {
+//	    db.CreateEdge(...)
+//	    engine.GetCooldownTable().RecordMaterialization(src, dst, label)
+//	}
+func IsCooldownAutoIntegrationEnabled() bool {
+	return cooldownAutoIntegrationEnabled.Load()
+}
+
+// WithCooldownAutoIntegrationEnabled temporarily enables cooldown auto-integration.
+func WithCooldownAutoIntegrationEnabled() func() {
+	prev := cooldownAutoIntegrationEnabled.Load()
+	cooldownAutoIntegrationEnabled.Store(true)
+	EnableFeature(FeatureCooldownAutoIntegration)
+	return func() {
+		cooldownAutoIntegrationEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureCooldownAutoIntegration)
+		}
+	}
+}
+
+// WithCooldownAutoIntegrationDisabled temporarily disables cooldown auto-integration.
+func WithCooldownAutoIntegrationDisabled() func() {
+	prev := cooldownAutoIntegrationEnabled.Load()
+	cooldownAutoIntegrationEnabled.Store(false)
+	DisableFeature(FeatureCooldownAutoIntegration)
+	return func() {
+		cooldownAutoIntegrationEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureCooldownAutoIntegration)
+		}
+	}
+}
+
+// EnableEvidenceAutoIntegration enables automatic evidence buffering in inference engine.
+func EnableEvidenceAutoIntegration() {
+	evidenceAutoIntegrationEnabled.Store(true)
+	EnableFeature(FeatureEvidenceAutoIntegration)
+}
+
+// DisableEvidenceAutoIntegration disables automatic evidence buffering in inference engine.
+func DisableEvidenceAutoIntegration() {
+	evidenceAutoIntegrationEnabled.Store(false)
+	DisableFeature(FeatureEvidenceAutoIntegration)
+}
+
+// IsEvidenceAutoIntegrationEnabled returns true if automatic evidence buffering is enabled.
+// Note: This does NOT affect EvidenceBuffer direct use - it's always available.
+func IsEvidenceAutoIntegrationEnabled() bool {
+	return evidenceAutoIntegrationEnabled.Load() || IsFeatureEnabled(FeatureEvidenceAutoIntegration)
+}
+
+// WithEvidenceAutoIntegrationEnabled temporarily enables evidence auto-integration.
+func WithEvidenceAutoIntegrationEnabled() func() {
+	prev := evidenceAutoIntegrationEnabled.Load()
+	evidenceAutoIntegrationEnabled.Store(true)
+	EnableFeature(FeatureEvidenceAutoIntegration)
+	return func() {
+		evidenceAutoIntegrationEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureEvidenceAutoIntegration)
+		}
+	}
+}
+
+// WithEvidenceAutoIntegrationDisabled temporarily disables evidence auto-integration.
+func WithEvidenceAutoIntegrationDisabled() func() {
+	prev := evidenceAutoIntegrationEnabled.Load()
+	evidenceAutoIntegrationEnabled.Store(false)
+	DisableFeature(FeatureEvidenceAutoIntegration)
+	return func() {
+		evidenceAutoIntegrationEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureEvidenceAutoIntegration)
+		}
+	}
+}
+
+// EnableEdgeProvenanceAutoIntegration enables automatic provenance logging in inference engine.
+func EnableEdgeProvenanceAutoIntegration() {
+	edgeProvenanceAutoIntegrationEnabled.Store(true)
+	EnableFeature(FeatureEdgeProvenanceAutoIntegration)
+}
+
+// DisableEdgeProvenanceAutoIntegration disables automatic provenance logging in inference engine.
+func DisableEdgeProvenanceAutoIntegration() {
+	edgeProvenanceAutoIntegrationEnabled.Store(false)
+	DisableFeature(FeatureEdgeProvenanceAutoIntegration)
+}
+
+// IsEdgeProvenanceAutoIntegrationEnabled returns true if automatic provenance logging is enabled.
+// Note: This does NOT affect EdgeMetaStore direct use - it's always available.
+func IsEdgeProvenanceAutoIntegrationEnabled() bool {
+	return edgeProvenanceAutoIntegrationEnabled.Load() || IsFeatureEnabled(FeatureEdgeProvenanceAutoIntegration)
+}
+
+// WithEdgeProvenanceAutoIntegrationEnabled temporarily enables edge provenance auto-integration.
+func WithEdgeProvenanceAutoIntegrationEnabled() func() {
+	prev := edgeProvenanceAutoIntegrationEnabled.Load()
+	edgeProvenanceAutoIntegrationEnabled.Store(true)
+	EnableFeature(FeatureEdgeProvenanceAutoIntegration)
+	return func() {
+		edgeProvenanceAutoIntegrationEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureEdgeProvenanceAutoIntegration)
+		}
+	}
+}
+
+// WithEdgeProvenanceAutoIntegrationDisabled temporarily disables edge provenance auto-integration.
+func WithEdgeProvenanceAutoIntegrationDisabled() func() {
+	prev := edgeProvenanceAutoIntegrationEnabled.Load()
+	edgeProvenanceAutoIntegrationEnabled.Store(false)
+	DisableFeature(FeatureEdgeProvenanceAutoIntegration)
+	return func() {
+		edgeProvenanceAutoIntegrationEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureEdgeProvenanceAutoIntegration)
+		}
+	}
+}
+
+// IsPerNodeConfigAutoIntegrationEnabled returns true if per-node config is auto-integrated.
+//
+// When enabled, ProcessSuggestion() automatically checks deny lists, edge caps, and
+// trust levels before allowing edge materialization.
+//
+// Example (auto-integration enabled - default):
+//
+//	// Set up node config
+//	userConfig := storage.NewNodeConfig("user-123")
+//	userConfig.MaxOutEdges = 50
+//	userConfig.DenyList = []string{"spam-node"}
+//	engine.GetNodeConfigStore().Set(userConfig)
+//
+//	// ProcessSuggestion automatically enforces limits
+//	result := engine.ProcessSuggestion(suggestion, "session-123")
+//	if result.NodeConfigBlocked {
+//	    log.Printf("Blocked by node config: %s", result.Reason)
+//	}
+//
+// Example (auto-integration disabled - manual control):
+//
+//	os.Setenv("NORNICDB_PER_NODE_CONFIG_AUTO_INTEGRATION_ENABLED", "false")
+//
+//	// Manually check node config
+//	store := engine.GetNodeConfigStore()
+//	if allowed, _ := store.IsEdgeAllowedWithReason(src, dst, label); allowed {
+//	    db.CreateEdge(...)
+//	}
+//
+// Note: This does NOT affect NodeConfigStore direct use - it's always available.
+func IsPerNodeConfigAutoIntegrationEnabled() bool {
+	return perNodeConfigAutoIntegrationEnabled.Load() || IsFeatureEnabled(FeaturePerNodeConfigAutoIntegration)
+}
+
+// WithPerNodeConfigAutoIntegrationEnabled temporarily enables per-node config auto-integration.
+func WithPerNodeConfigAutoIntegrationEnabled() func() {
+	prev := perNodeConfigAutoIntegrationEnabled.Load()
+	perNodeConfigAutoIntegrationEnabled.Store(true)
+	EnableFeature(FeaturePerNodeConfigAutoIntegration)
+	return func() {
+		perNodeConfigAutoIntegrationEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeaturePerNodeConfigAutoIntegration)
+		}
+	}
+}
+
+// WithPerNodeConfigAutoIntegrationDisabled temporarily disables per-node config auto-integration.
+func WithPerNodeConfigAutoIntegrationDisabled() func() {
+	prev := perNodeConfigAutoIntegrationEnabled.Load()
+	perNodeConfigAutoIntegrationEnabled.Store(false)
+	DisableFeature(FeaturePerNodeConfigAutoIntegration)
+	return func() {
+		perNodeConfigAutoIntegrationEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeaturePerNodeConfigAutoIntegration)
+		}
+	}
+}
+
+// EnableAllFeatures enables all Kalman features.
+func EnableAllFeatures() {
+	EnableKalmanFiltering()
+	EnableFeature(FeatureKalmanDecay)
+	EnableFeature(FeatureKalmanCoAccess)
+	EnableFeature(FeatureKalmanLatency)
+	EnableFeature(FeatureKalmanSimilarity)
+	EnableFeature(FeatureKalmanTemporal)
+}
+
+// DisableAllFeatures disables all Kalman features.
+func DisableAllFeatures() {
+	DisableKalmanFiltering()
+	DisableFeature(FeatureKalmanDecay)
+	DisableFeature(FeatureKalmanCoAccess)
+	DisableFeature(FeatureKalmanLatency)
+	DisableFeature(FeatureKalmanSimilarity)
+	DisableFeature(FeatureKalmanTemporal)
+}
+
+// ResetFeatureFlags resets all feature flags to defaults.
+func ResetFeatureFlags() {
+	kalmanEnabled.Store(false)
+	topologyLinkPredictionEnabled.Store(false)
+	cooldownAutoIntegrationEnabled.Store(false)
+	evidenceAutoIntegrationEnabled.Store(false)
+	edgeProvenanceAutoIntegrationEnabled.Store(false)
+	perNodeConfigAutoIntegrationEnabled.Store(false)
+	edgeProvenanceEnabled.Store(false)
+	cooldownEnabled.Store(false)
+	evidenceBufferingEnabled.Store(false)
+	perNodeConfigEnabled.Store(false)
+	walEnabled.Store(false)
+	gpuClusteringEnabled.Store(false)
+	gpuClusteringAutoIntegrationEnabled.Store(false)
+	edgeDecayEnabled.Store(false)
+	autoTLPLLMQCEnabled.Store(false)
+	autoTLPLLMAugmentEnabled.Store(false)
+	featureFlagsMu.Lock()
+	defer featureFlagsMu.Unlock()
+	featureFlags = make(map[string]bool)
+}
+
+// GetEnabledFeatures returns a list of enabled features.
+func GetEnabledFeatures() []string {
+	if !kalmanEnabled.Load() {
+		return nil
+	}
+	featureFlagsMu.RLock()
+	defer featureFlagsMu.RUnlock()
+
+	var enabled []string
+	allFeatures := []string{
+		FeatureKalmanDecay,
+		FeatureKalmanCoAccess,
+		FeatureKalmanLatency,
+		FeatureKalmanSimilarity,
+		FeatureKalmanTemporal,
+	}
+
+	for _, f := range allFeatures {
+		flag, exists := featureFlags[f]
+		if !exists || flag {
+			enabled = append(enabled, f)
+		}
+	}
+	return enabled
+}
+
+// FeatureStatus returns the current status of all features.
+type FeatureStatus struct {
+	GlobalEnabled            bool
+	KalmanEnabled            bool
+	TopologyEnabled          bool
+	EdgeProvenanceEnabled    bool
+	CooldownEnabled          bool
+	EvidenceBufferingEnabled bool
+	PerNodeConfigEnabled     bool
+	WALEnabled               bool
+	GPUClusteringEnabled     bool
+	Features                 map[string]bool
+}
+
+// GetFeatureStatus returns the complete feature status.
+func GetFeatureStatus() FeatureStatus {
+	featureFlagsMu.RLock()
+	defer featureFlagsMu.RUnlock()
+
+	status := FeatureStatus{
+		GlobalEnabled:            kalmanEnabled.Load(),
+		KalmanEnabled:            kalmanEnabled.Load(),
+		TopologyEnabled:          topologyLinkPredictionEnabled.Load(),
+		EdgeProvenanceEnabled:    edgeProvenanceEnabled.Load(),
+		CooldownEnabled:          cooldownEnabled.Load(),
+		EvidenceBufferingEnabled: evidenceBufferingEnabled.Load(),
+		PerNodeConfigEnabled:     perNodeConfigEnabled.Load(),
+		WALEnabled:               walEnabled.Load(),
+		GPUClusteringEnabled:     gpuClusteringEnabled.Load(),
+		Features:                 make(map[string]bool),
+	}
+
+	for k, v := range featureFlags {
+		status.Features[k] = v
+	}
+	return status
+}
+
+// FilteredValue represents a value that may or may not have been filtered.
+// Useful for A/B testing and comparison.
+// Note: Kalman-specific methods have been moved to pkg/filter package.
+type FilteredValue struct {
+	Raw         float64 // Original unfiltered value
+	Filtered    float64 // Filtered value (same as Raw if disabled)
+	WasFiltered bool    // True if filtering was applied
+	Feature     string  // Which feature flag controlled this
+}
+
+// EnableEdgeProvenance enables edge provenance logging.
+func EnableEdgeProvenance() {
+	edgeProvenanceEnabled.Store(true)
+	EnableFeature(FeatureEdgeProvenance)
+}
+
+// DisableEdgeProvenance disables edge provenance logging.
+func DisableEdgeProvenance() {
+	edgeProvenanceEnabled.Store(false)
+	DisableFeature(FeatureEdgeProvenance)
+}
+
+// IsEdgeProvenanceEnabled returns true if edge provenance is enabled.
+func IsEdgeProvenanceEnabled() bool {
+	return edgeProvenanceEnabled.Load() || IsFeatureEnabled(FeatureEdgeProvenance)
+}
+
+// WithEdgeProvenanceEnabled temporarily enables edge provenance and returns cleanup function.
+func WithEdgeProvenanceEnabled() func() {
+	prev := edgeProvenanceEnabled.Load()
+	edgeProvenanceEnabled.Store(true)
+	EnableFeature(FeatureEdgeProvenance)
+	return func() {
+		edgeProvenanceEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureEdgeProvenance)
+		}
+	}
+}
+
+// WithEdgeProvenanceDisabled temporarily disables edge provenance and returns cleanup function.
+func WithEdgeProvenanceDisabled() func() {
+	prev := edgeProvenanceEnabled.Load()
+	edgeProvenanceEnabled.Store(false)
+	DisableFeature(FeatureEdgeProvenance)
+	return func() {
+		edgeProvenanceEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureEdgeProvenance)
+		}
+	}
+}
+
+// EnableCooldown enables cooldown logic.
+func EnableCooldown() {
+	cooldownEnabled.Store(true)
+	EnableFeature(FeatureCooldown)
+}
+
+// DisableCooldown disables cooldown logic.
+func DisableCooldown() {
+	cooldownEnabled.Store(false)
+	DisableFeature(FeatureCooldown)
+}
+
+// IsCooldownEnabled returns true if cooldown is enabled.
+func IsCooldownEnabled() bool {
+	return cooldownEnabled.Load() || IsFeatureEnabled(FeatureCooldown)
+}
+
+// WithCooldownEnabled temporarily enables cooldown and returns cleanup function.
+func WithCooldownEnabled() func() {
+	prev := cooldownEnabled.Load()
+	cooldownEnabled.Store(true)
+	EnableFeature(FeatureCooldown)
+	return func() {
+		cooldownEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureCooldown)
+		}
+	}
+}
+
+// WithCooldownDisabled temporarily disables cooldown and returns cleanup function.
+func WithCooldownDisabled() func() {
+	prev := cooldownEnabled.Load()
+	cooldownEnabled.Store(false)
+	DisableFeature(FeatureCooldown)
+	return func() {
+		cooldownEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureCooldown)
+		}
+	}
+}
+
+// EnableEvidenceBuffering enables evidence buffering.
+func EnableEvidenceBuffering() {
+	evidenceBufferingEnabled.Store(true)
+	EnableFeature(FeatureEvidenceBuffering)
+}
+
+// DisableEvidenceBuffering disables evidence buffering.
+func DisableEvidenceBuffering() {
+	evidenceBufferingEnabled.Store(false)
+	DisableFeature(FeatureEvidenceBuffering)
+}
+
+// IsEvidenceBufferingEnabled returns true if evidence buffering is enabled.
+func IsEvidenceBufferingEnabled() bool {
+	return evidenceBufferingEnabled.Load() || IsFeatureEnabled(FeatureEvidenceBuffering)
+}
+
+// WithEvidenceBufferingEnabled temporarily enables evidence buffering and returns cleanup function.
+func WithEvidenceBufferingEnabled() func() {
+	prev := evidenceBufferingEnabled.Load()
+	evidenceBufferingEnabled.Store(true)
+	EnableFeature(FeatureEvidenceBuffering)
+	return func() {
+		evidenceBufferingEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureEvidenceBuffering)
+		}
+	}
+}
+
+// WithEvidenceBufferingDisabled temporarily disables evidence buffering and returns cleanup function.
+func WithEvidenceBufferingDisabled() func() {
+	prev := evidenceBufferingEnabled.Load()
+	evidenceBufferingEnabled.Store(false)
+	DisableFeature(FeatureEvidenceBuffering)
+	return func() {
+		evidenceBufferingEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureEvidenceBuffering)
+		}
+	}
+}
+
+// EnablePerNodeConfig enables per-node configuration.
+func EnablePerNodeConfig() {
+	perNodeConfigEnabled.Store(true)
+	EnableFeature(FeaturePerNodeConfig)
+}
+
+// DisablePerNodeConfig disables per-node configuration.
+func DisablePerNodeConfig() {
+	perNodeConfigEnabled.Store(false)
+	DisableFeature(FeaturePerNodeConfig)
+}
+
+// IsPerNodeConfigEnabled returns true if per-node config is enabled.
+func IsPerNodeConfigEnabled() bool {
+	return perNodeConfigEnabled.Load() || IsFeatureEnabled(FeaturePerNodeConfig)
+}
+
+// WithPerNodeConfigEnabled temporarily enables per-node config and returns cleanup function.
+func WithPerNodeConfigEnabled() func() {
+	prev := perNodeConfigEnabled.Load()
+	perNodeConfigEnabled.Store(true)
+	EnableFeature(FeaturePerNodeConfig)
+	return func() {
+		perNodeConfigEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeaturePerNodeConfig)
+		}
+	}
+}
+
+// WithPerNodeConfigDisabled temporarily disables per-node config and returns cleanup function.
+func WithPerNodeConfigDisabled() func() {
+	prev := perNodeConfigEnabled.Load()
+	perNodeConfigEnabled.Store(false)
+	DisableFeature(FeaturePerNodeConfig)
+	return func() {
+		perNodeConfigEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeaturePerNodeConfig)
+		}
+	}
+}
+
+// EnableWAL enables write-ahead logging.
+func EnableWAL() {
+	walEnabled.Store(true)
+	EnableFeature(FeatureWAL)
+}
+
+// DisableWAL disables write-ahead logging.
+func DisableWAL() {
+	walEnabled.Store(false)
+	DisableFeature(FeatureWAL)
+}
+
+// IsWALEnabled returns true if WAL is enabled.
+func IsWALEnabled() bool {
+	return walEnabled.Load() || IsFeatureEnabled(FeatureWAL)
+}
+
+// WithWALEnabled temporarily enables WAL and returns cleanup function.
+func WithWALEnabled() func() {
+	prev := walEnabled.Load()
+	walEnabled.Store(true)
+	EnableFeature(FeatureWAL)
+	return func() {
+		walEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureWAL)
+		}
+	}
+}
+
+// WithWALDisabled temporarily disables WAL and returns cleanup function.
+func WithWALDisabled() func() {
+	prev := walEnabled.Load()
+	walEnabled.Store(false)
+	DisableFeature(FeatureWAL)
+	return func() {
+		walEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureWAL)
+		}
+	}
+}
+
+// EnableGPUClustering enables GPU k-means clustering for similarity search.
+func EnableGPUClustering() {
+	gpuClusteringEnabled.Store(true)
+	EnableFeature(FeatureGPUClustering)
+}
+
+// DisableGPUClustering disables GPU k-means clustering.
+func DisableGPUClustering() {
+	gpuClusteringEnabled.Store(false)
+	DisableFeature(FeatureGPUClustering)
+}
+
+// IsGPUClusteringEnabled returns true if GPU clustering is enabled.
+func IsGPUClusteringEnabled() bool {
+	return gpuClusteringEnabled.Load() || IsFeatureEnabled(FeatureGPUClustering)
+}
+
+// WithGPUClusteringEnabled temporarily enables GPU clustering and returns cleanup function.
+func WithGPUClusteringEnabled() func() {
+	prev := gpuClusteringEnabled.Load()
+	gpuClusteringEnabled.Store(true)
+	EnableFeature(FeatureGPUClustering)
+	return func() {
+		gpuClusteringEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureGPUClustering)
+		}
+	}
+}
+
+// WithGPUClusteringDisabled temporarily disables GPU clustering and returns cleanup function.
+func WithGPUClusteringDisabled() func() {
+	prev := gpuClusteringEnabled.Load()
+	gpuClusteringEnabled.Store(false)
+	DisableFeature(FeatureGPUClustering)
+	return func() {
+		gpuClusteringEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureGPUClustering)
+		}
+	}
+}
+
+// EnableGPUClusteringAutoIntegration enables automatic GPU clustering in inference engine.
+func EnableGPUClusteringAutoIntegration() {
+	gpuClusteringAutoIntegrationEnabled.Store(true)
+	EnableFeature(FeatureGPUClusteringAutoIntegration)
+}
+
+// DisableGPUClusteringAutoIntegration disables automatic GPU clustering in inference engine.
+func DisableGPUClusteringAutoIntegration() {
+	gpuClusteringAutoIntegrationEnabled.Store(false)
+	DisableFeature(FeatureGPUClusteringAutoIntegration)
+}
+
+// IsGPUClusteringAutoIntegrationEnabled returns true if automatic GPU clustering is enabled.
+//
+// When enabled, the inference engine will automatically use ClusterIntegration
+// for similarity searches when available and configured.
+//
+// Example (auto-integration enabled):
+//
+//	os.Setenv("NORNICDB_GPU_CLUSTERING_AUTO_INTEGRATION_ENABLED", "true")
+//
+//	// Engine automatically uses cluster-accelerated search
+//	results, _ := engine.SimilaritySearch(ctx, embedding, 10)
+//
+// Example (auto-integration disabled - manual control):
+//
+//	// Manually use cluster integration
+//	ci := engine.GetClusterIntegration()
+//	if ci != nil && ci.IsEnabled() {
+//	    results, _ := ci.Search(ctx, embedding, 10)
+//	}
+//
+// Note: This does NOT affect ClusterIntegration direct use - it's always available.
+func IsGPUClusteringAutoIntegrationEnabled() bool {
+	return gpuClusteringAutoIntegrationEnabled.Load() || IsFeatureEnabled(FeatureGPUClusteringAutoIntegration)
+}
+
+// WithGPUClusteringAutoIntegrationEnabled temporarily enables GPU clustering auto-integration.
+func WithGPUClusteringAutoIntegrationEnabled() func() {
+	prev := gpuClusteringAutoIntegrationEnabled.Load()
+	gpuClusteringAutoIntegrationEnabled.Store(true)
+	EnableFeature(FeatureGPUClusteringAutoIntegration)
+	return func() {
+		gpuClusteringAutoIntegrationEnabled.Store(prev)
+		if !prev {
+			DisableFeature(FeatureGPUClusteringAutoIntegration)
+		}
+	}
+}
+
+// WithGPUClusteringAutoIntegrationDisabled temporarily disables GPU clustering auto-integration.
+func WithGPUClusteringAutoIntegrationDisabled() func() {
+	prev := gpuClusteringAutoIntegrationEnabled.Load()
+	gpuClusteringAutoIntegrationEnabled.Store(false)
+	DisableFeature(FeatureGPUClusteringAutoIntegration)
+	return func() {
+		gpuClusteringAutoIntegrationEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureGPUClusteringAutoIntegration)
+		}
+	}
+}
+
+// EnableEdgeDecay enables automatic edge decay for stale auto-generated edges.
+func EnableEdgeDecay() {
+	edgeDecayEnabled.Store(true)
+}
+
+// DisableEdgeDecay disables automatic edge decay.
+func DisableEdgeDecay() {
+	edgeDecayEnabled.Store(false)
+}
+
+// IsEdgeDecayEnabled returns true if edge decay is enabled.
+// When enabled, auto-generated edges decay over time and are deleted
+// when their confidence drops below the threshold.
+func IsEdgeDecayEnabled() bool {
+	return edgeDecayEnabled.Load()
+}
+
+// WithEdgeDecayEnabled temporarily enables edge decay and returns cleanup function.
+func WithEdgeDecayEnabled() func() {
+	prev := edgeDecayEnabled.Load()
+	edgeDecayEnabled.Store(true)
+	return func() {
+		edgeDecayEnabled.Store(prev)
+	}
+}
+
+// WithEdgeDecayDisabled temporarily disables edge decay and returns cleanup function.
+func WithEdgeDecayDisabled() func() {
+	prev := edgeDecayEnabled.Load()
+	edgeDecayEnabled.Store(false)
+	return func() {
+		edgeDecayEnabled.Store(prev)
+	}
+}
+
+// EnableAutoTLPLLMQC enables LLM quality control for Auto-TLP edge creation.
+// When enabled, the Heimdall SLM validates each edge suggestion before creation.
+func EnableAutoTLPLLMQC() {
+	autoTLPLLMQCEnabled.Store(true)
+}
+
+// DisableAutoTLPLLMQC disables LLM quality control for Auto-TLP.
+func DisableAutoTLPLLMQC() {
+	autoTLPLLMQCEnabled.Store(false)
+}
+
+// IsAutoTLPLLMQCEnabled returns true if LLM quality control is enabled for Auto-TLP.
+// When enabled, each edge suggestion is validated by the Heimdall SLM before creation.
+func IsAutoTLPLLMQCEnabled() bool {
+	return autoTLPLLMQCEnabled.Load()
+}
+
+// WithAutoTLPLLMQCEnabled temporarily enables LLM QC and returns cleanup function.
+func WithAutoTLPLLMQCEnabled() func() {
+	prev := autoTLPLLMQCEnabled.Load()
+	autoTLPLLMQCEnabled.Store(true)
+	return func() {
+		autoTLPLLMQCEnabled.Store(prev)
+	}
+}
+
+// WithAutoTLPLLMQCDisabled temporarily disables LLM QC and returns cleanup function.
+func WithAutoTLPLLMQCDisabled() func() {
+	prev := autoTLPLLMQCEnabled.Load()
+	autoTLPLLMQCEnabled.Store(false)
+	return func() {
+		autoTLPLLMQCEnabled.Store(prev)
+	}
+}
+
+// EnableAutoTLPLLMAugment enables LLM augmentation for Auto-TLP.
+// When enabled, Heimdall can suggest additional edges beyond TLP's candidates.
+func EnableAutoTLPLLMAugment() {
+	autoTLPLLMAugmentEnabled.Store(true)
+}
+
+// DisableAutoTLPLLMAugment disables LLM augmentation for Auto-TLP.
+func DisableAutoTLPLLMAugment() {
+	autoTLPLLMAugmentEnabled.Store(false)
+}
+
+// IsAutoTLPLLMAugmentEnabled returns true if LLM augmentation is enabled.
+// When enabled, Heimdall can suggest NEW edges that TLP algorithms missed.
+// Requires IsAutoTLPLLMQCEnabled() to also be true to have any effect.
+func IsAutoTLPLLMAugmentEnabled() bool {
+	return autoTLPLLMAugmentEnabled.Load()
+}
+
+// WithAutoTLPLLMAugmentEnabled temporarily enables LLM augmentation.
+func WithAutoTLPLLMAugmentEnabled() func() {
+	prev := autoTLPLLMAugmentEnabled.Load()
+	autoTLPLLMAugmentEnabled.Store(true)
+	return func() {
+		autoTLPLLMAugmentEnabled.Store(prev)
+	}
+}
+
+// WithAutoTLPLLMAugmentDisabled temporarily disables LLM augmentation.
+func WithAutoTLPLLMAugmentDisabled() func() {
+	prev := autoTLPLLMAugmentEnabled.Load()
+	autoTLPLLMAugmentEnabled.Store(false)
+	return func() {
+		autoTLPLLMAugmentEnabled.Store(prev)
+	}
+}
+
+// ============================================================================
+// Cypher Query Normalization
+// ============================================================================
+
+// IsCypherQueryNormalizationEnabled reports whether statements are rewritten
+// to their canonical text before they run (comments and runs of whitespace
+// outside quotes become one space). Enabled by default
+// (EnvCypherQueryNormalization).
+func IsCypherQueryNormalizationEnabled() bool {
+	return !cypherQueryNormalizationDisabled.Load()
+}
+
+// SetCypherQueryNormalizationEnabled turns the Cypher query normalization on
+// or off.
+func SetCypherQueryNormalizationEnabled(enabled bool) {
+	cypherQueryNormalizationDisabled.Store(!enabled)
+}
+
+// WithCypherQueryNormalizationDisabled turns the normalization off and
+// returns the function that restores the previous setting (for tests).
+func WithCypherQueryNormalizationDisabled() func() {
+	previous := IsCypherQueryNormalizationEnabled()
+	SetCypherQueryNormalizationEnabled(false)
+	return func() {
+		SetCypherQueryNormalizationEnabled(previous)
+	}
+}
+
+// ============================================================================
+// Parser Type Configuration
+// ============================================================================
+
+// GetParserType returns the current parser type ("nornic" or "antlr").
+// Default is "nornic" (the fast inline parser).
+func GetParserType() string {
+	if v := parserType.Load(); v != nil {
+		return v.(string)
+	}
+	return ParserTypeNornic
+}
+
+// SetParserType sets the parser type ("nornic" or "antlr").
+func SetParserType(t string) {
+	switch strings.ToLower(t) {
+	case ParserTypeANTLR:
+		parserType.Store(ParserTypeANTLR)
+	default:
+		parserType.Store(ParserTypeNornic)
+	}
+}
+
+// IsANTLRParser returns true if the ANTLR parser is selected.
+func IsANTLRParser() bool {
+	return GetParserType() == ParserTypeANTLR
+}
+
+// IsNornicParser returns true if the Nornic (inline) parser is selected.
+func IsNornicParser() bool {
+	return GetParserType() == ParserTypeNornic
+}
+
+// WithANTLRParser temporarily switches to ANTLR parser and returns cleanup function.
+// Useful for A/B testing between parsers.
+func WithANTLRParser() func() {
+	prev := GetParserType()
+	SetParserType(ParserTypeANTLR)
+	return func() {
+		SetParserType(prev)
+	}
+}
+
+// WithNornicParser temporarily switches to Nornic parser and returns cleanup function.
+func WithNornicParser() func() {
+	prev := GetParserType()
+	SetParserType(ParserTypeNornic)
+	return func() {
+		SetParserType(prev)
+	}
+}

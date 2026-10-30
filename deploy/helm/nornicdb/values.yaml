@@ -1,0 +1,129 @@
+replicaCount: 1
+
+image:
+  repository: nornicdb
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+
+service:
+  type: ClusterIP
+  boltPort: 7687
+  httpPort: 7474
+  telemetryPort: 9090
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 2Gi
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+
+# K8S-01/K8S-02: ServiceMonitor for Prometheus Operator scraping
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  additionalLabels: {}
+  metricRelabelings:
+    # K8S-03: drop target_info series from OTel->Prom bridge
+    - sourceLabels: [__name__]
+      regex: "target_info"
+      action: drop
+
+# K8S-02: PodMonitor alternative to ServiceMonitor
+podMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  additionalLabels: {}
+  metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: "target_info"
+      action: drop
+
+# K8S-04: NetworkPolicy restricts telemetry port ingress
+networkPolicy:
+  enabled: true
+  monitoringNamespace: monitoring
+
+# K8S-05/K8S-06/K8S-07: Probe configuration
+probes:
+  startup:
+    enabled: true
+    path: /readyz
+    port: telemetry
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    # K8S-07: high failureThreshold for storage warm-up (~10 min)
+    failureThreshold: 60
+    timeoutSeconds: 5
+  readiness:
+    enabled: true
+    path: /readyz
+    port: telemetry
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 5
+  liveness:
+    enabled: true
+    path: /livez
+    port: telemetry
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    failureThreshold: 3
+    timeoutSeconds: 5
+
+# K8S-08: preStop lifecycle hook
+lifecycle:
+  preStop:
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - sleep 10
+
+# NornicDB configuration
+config:
+  nodeId: ""
+  dataDir: /data
+  logLevel: info
+  logFormat: json
+  tracing:
+    enabled: false
+    endpoint: ""
+    sampleRatio: "0.01"
+  metrics:
+    enabled: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

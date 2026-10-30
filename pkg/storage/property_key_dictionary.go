@@ -1,0 +1,657 @@
+package storage
+
+import (
+	"encoding/binary"
+	"fmt"
+	"sync"
+	"sync/atomic"
+
+	"github.com/dgraph-io/badger/v4"
+)
+
+// The property-key dictionary tokenizes property-key NAMES (not values)
+// to per-namespace varint IDs so that node and edge bodies can encode
+// `productName`, `unitPrice`, etc. as 1-2 byte integers instead of
+// repeating the string in every record. The namespace boundary keeps
+// multi-tenant ID spaces isolated; a tenant cannot exhaust another
+// tenant's id space, and each dictionary compacts independently.
+//
+// Layout on disk:
+//
+//	[prefixPropKeyForward] + varint(len(ns)) + ns + varint(len(name)) + name -> varint(id)
+//	[prefixPropKeyReverse] + varint(len(ns)) + ns + varint(id)               -> name
+//	[prefixPropKeyCounter] + varint(len(ns)) + ns                            -> varint(next_id)
+//
+// Length-prefixing the namespace guarantees no ambiguity between e.g.
+// namespaces "ab" and "a" + key "b...".
+//
+// The in-memory cache mirrors idDictionary's pattern: read paths take
+// RLock; allocation takes Lock briefly to commit a new (name -> id)
+// pair. Per-txn counter writes are batched via the same flushTxnCounters
+// pattern so seed workloads pay one counter Set per dirty namespace per
+// commit instead of one per allocation.
+const (
+	prefixPropKeyForward = byte(0x20)
+	prefixPropKeyReverse = byte(0x21)
+	prefixPropKeyCounter = byte(0x22)
+)
+
+// propertyKeyDictionary holds the per-namespace forward and reverse
+// indexes for property-key tokenization.
+type propertyKeyDictionary struct {
+	// WAL identity belongs to this physical dictionary, independent of names used.
+	walIdentity      atomic.Pointer[string]
+	walEpochRevision atomic.Uint64
+	// Under mu: invalidates prepared imports when mappings or durability change.
+	walBindingRevision uint64
+	walBindingDomain   uint64 // changes only when existing ID meanings can change
+
+	mu        sync.RWMutex
+	forward   map[string]map[string]uint64 // namespace -> (name -> id)
+	reverse   map[string]map[uint64]string // namespace -> (id -> name)
+	persisted map[string]map[string]bool   // namespace -> persisted names
+	nextID    map[string]*atomic.Uint64    // namespace -> next id
+
+	// Per-txn staged counter high-water marks and pending forward/
+	// reverse entries, persisted out-of-band of the user transaction at
+	// commit time (see resolveOrAllocateInTxn for why those writes
+	// cannot ride the user txn).
+	txnMu             sync.Mutex
+	txnCounters       map[*badger.Txn]map[string]uint64
+	txnPendingForward map[*badger.Txn]map[propKeyName]uint64
+
+	// noted holds the names a buffered write has used that have no ID yet:
+	// a transaction's or the async layer's write allocates IDs only when
+	// it encodes, at commit or flush, and a rolled-back one never does.
+	// Guarded by mu; never removed, never persisted.
+	noted map[string]map[string]struct{} // namespace -> names
+}
+
+// propKeyName is a property name within a namespace.
+type propKeyName struct {
+	namespace, name string
+}
+
+func newPropertyKeyDictionary() *propertyKeyDictionary {
+	return &propertyKeyDictionary{
+		forward:           make(map[string]map[string]uint64),
+		reverse:           make(map[string]map[uint64]string),
+		persisted:         make(map[string]map[string]bool),
+		nextID:            make(map[string]*atomic.Uint64),
+		txnCounters:       make(map[*badger.Txn]map[string]uint64),
+		txnPendingForward: make(map[*badger.Txn]map[propKeyName]uint64),
+		noted:             make(map[string]map[string]struct{}),
+	}
+}
+
+// propKeyForwardKey encodes a forward-map lookup key:
+// prefix + varint(len(ns)) + ns + varint(len(name)) + name.
+func propKeyForwardKey(namespace, name string) []byte {
+	out := make([]byte, 0, 1+binary.MaxVarintLen64+len(namespace)+binary.MaxVarintLen64+len(name))
+	out = append(out, prefixPropKeyForward)
+	out = binary.AppendUvarint(out, uint64(len(namespace)))
+	out = append(out, namespace...)
+	out = binary.AppendUvarint(out, uint64(len(name)))
+	out = append(out, name...)
+	return out
+}
+
+func propKeyReverseKey(namespace string, id uint64) []byte {
+	out := make([]byte, 0, 1+binary.MaxVarintLen64+len(namespace)+binary.MaxVarintLen64)
+	out = append(out, prefixPropKeyReverse)
+	out = binary.AppendUvarint(out, uint64(len(namespace)))
+	out = append(out, namespace...)
+	out = binary.AppendUvarint(out, id)
+	return out
+}
+
+func propKeyCounterKey(namespace string) []byte {
+	out := make([]byte, 0, 1+binary.MaxVarintLen64+len(namespace))
+	out = append(out, prefixPropKeyCounter)
+	out = binary.AppendUvarint(out, uint64(len(namespace)))
+	out = append(out, namespace...)
+	return out
+}
+
+// ensureNamespace lazily initializes the per-namespace maps and
+// counter on first use. NOT internally synchronized — callers must
+// either (a) hold d.mu (write lock) when the dict is concurrently
+// reachable, or (b) call only during construction (newPropertyKey-
+// Dictionary + loadFromBadger), before *d is published to any other
+// goroutine. The deliberate fine-grained locking scheme around
+// resolveOrAllocateInTxn keeps the critical section tight and
+// excludes the badger txn.Set I/O from it; do not widen this helper
+// into self-locking, since that would force the caller to drop and
+// re-acquire on every map touch.
+func (d *propertyKeyDictionary) ensureNamespace(namespace string) {
+	if _, ok := d.forward[namespace]; !ok {
+		d.forward[namespace] = make(map[string]uint64)
+		d.reverse[namespace] = make(map[uint64]string)
+		d.persisted[namespace] = make(map[string]bool)
+		d.nextID[namespace] = &atomic.Uint64{}
+	}
+}
+
+// resolveOrAllocateInTxn returns the varint id for (namespace, name),
+// allocating a new id and STAGING the forward+reverse entries for
+// out-of-band persistence if the name has never been seen in this
+// namespace. The persistence keys do NOT ride the user transaction:
+// two concurrent writers in the same namespace both first-allocating
+// the same property name would otherwise both write
+// propKeyForwardKey(ns, name) inside their own user txns, triggering
+// Badger's optimistic write-write conflict before the higher-level
+// commit-time UNIQUE check could surface as the contracted
+// "constraint violation: ... already exists" shape (see
+// docs/plans/consumer-pinned-error-contract-plan.md §2.1).
+//
+// In-memory correctness: the d.mu Lock around the allocation makes the
+// in-memory forward/reverse maps single-writer-correct — only one
+// goroutine ever wins id=N for a given (namespace, name). Persistence
+// is idempotent because every writer that subsequently reads the same
+// (namespace, name) sees the same id from the map.
+//
+// Durability: new forward/reverse entries are persisted before entity
+// records that reference them commit. A failed persistence aborts the
+// entity transaction; a later entity-commit failure can leave an
+// unused dictionary entry, which is safe and is not recycled.
+//
+// Lock discipline: reads happen under RLock; allocation upgrades to
+// Lock and re-checks for the concurrent-create race. The losing
+// goroutine's allocated ID becomes orphaned; nothing references it yet
+// and there's no recycle by design.
+func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespace, name string) (uint64, error) {
+	d.mu.RLock()
+	if forward, ok := d.forward[namespace]; ok {
+		if id, ok := forward[name]; ok {
+			persisted := d.persisted[namespace][name]
+			d.mu.RUnlock()
+			if !persisted {
+				d.recordTxnPendingPersist(txn, namespace, name, id)
+				d.recordTxnCounterUse(txn, namespace, id)
+			}
+			return id, nil
+		}
+	}
+	d.mu.RUnlock()
+
+	// A concurrent caller may have allocated the name since the read check.
+	d.mu.Lock()
+	d.ensureNamespace(namespace)
+	id, ok := d.forward[namespace][name]
+	persisted := ok && d.persisted[namespace][name]
+	if !ok {
+		id = d.nextID[namespace].Add(1)
+		d.forward[namespace][name] = id
+		d.reverse[namespace][id] = name
+		d.walBindingRevision++
+		d.walEpochRevision.Add(1)
+	}
+	d.mu.Unlock()
+
+	if !persisted {
+		d.recordTxnPendingPersist(txn, namespace, name, id)
+		d.recordTxnCounterUse(txn, namespace, id)
+	}
+	return id, nil
+}
+
+// recordTxnPendingPersist stages a (namespace, name, id) tuple on the
+// txn so the user's commit can later flush them via flushTxnCounters
+// (which drains BOTH the per-namespace counter high-water marks AND the
+// staged forward/reverse entries) and persist them out of the user
+// transaction (persistTxnCounters, commitWriter.commitTokens). Staging is
+// keyed by name: a statement that introduces many property names, or
+// uses an unpersisted one on many rows, stages each name once in constant
+// time (#703).
+func (d *propertyKeyDictionary) recordTxnPendingPersist(txn *badger.Txn, namespace, name string, id uint64) {
+	d.txnMu.Lock()
+	defer d.txnMu.Unlock()
+	pending := d.txnPendingForward[txn]
+	if pending == nil {
+		pending = make(map[propKeyName]uint64)
+		d.txnPendingForward[txn] = pending
+	}
+	pending[propKeyName{namespace: namespace, name: name}] = id
+}
+
+type propKeyPersistEntry struct {
+	namespace string
+	name      string
+	id        uint64
+}
+
+// lookup returns the property-key name for a given (namespace, id).
+// Read-only — used by the decode path. Returns ("", false) if unknown.
+// lookupID returns the key token of a property name in a namespace, if the
+// name has one.
+func (d *propertyKeyDictionary) lookupID(namespace, name string) (uint64, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	id, ok := d.forward[namespace][name]
+	return id, ok
+}
+
+// noteProperties records the keys of properties that hold a value as used
+// by a write in namespace, without allocating IDs (noted): allocating outside
+// the encoding txn would leave an ID the store never persists. Most writes
+// use only known names, so it checks them all under one read lock and takes
+// the write lock only when one is new.
+func (d *propertyKeyDictionary) noteProperties(namespace string, properties map[string]interface{}) {
+	d.mu.RLock()
+	allKnown := true
+	forward, noted := d.forward[namespace], d.noted[namespace]
+	for name, value := range properties {
+		if value == nil {
+			continue
+		}
+		if _, ok := forward[name]; ok {
+			continue
+		}
+		if _, ok := noted[name]; ok {
+			continue
+		}
+		allKnown = false
+		break
+	}
+	d.mu.RUnlock()
+	if allKnown {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	names := d.noted[namespace]
+	if names == nil {
+		names = make(map[string]struct{})
+		d.noted[namespace] = names
+	}
+	for name, value := range properties {
+		if value != nil {
+			names[name] = struct{}{}
+		}
+	}
+}
+
+// known reports whether a write in namespace has used name: it has an ID,
+// or a buffered write noted it.
+func (d *propertyKeyDictionary) known(namespace, name string) bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if _, ok := d.forward[namespace][name]; ok {
+		return true
+	}
+	_, ok := d.noted[namespace][name]
+	return ok
+}
+
+func (d *propertyKeyDictionary) lookup(namespace string, id uint64) (string, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if reverse, ok := d.reverse[namespace]; ok {
+		name, ok := reverse[id]
+		return name, ok
+	}
+	return "", false
+}
+
+// recordTxnCounterUse stages the per-namespace high-water mark on the
+// txn so flushTxnCounters can write a single counter Set per dirty
+// namespace at commit time.
+func (d *propertyKeyDictionary) recordTxnCounterUse(txn *badger.Txn, namespace string, id uint64) {
+	d.txnMu.Lock()
+	state, ok := d.txnCounters[txn]
+	if !ok {
+		state = make(map[string]uint64)
+		d.txnCounters[txn] = state
+	}
+	if id > state[namespace] {
+		state[namespace] = id
+	}
+	d.txnMu.Unlock()
+}
+
+// propKeyTxnDrain holds the per-txn staged state — counter high-water
+// marks and pending forward/reverse entries — drained at commit time
+// for out-of-band persistence.
+type propKeyTxnDrain struct {
+	counters map[string]uint64
+	pending  []propKeyPersistEntry
+}
+
+// flushTxnCounters detaches the staged counter state and pending
+// forward/reverse entries for this txn and returns them for OUT-OF-TXN
+// persistence by the caller. The persistence writes must NOT go
+// through the user txn: every property-writing commit in the same
+// namespace would otherwise touch propKeyCounterKey(ns) and the
+// propKeyForwardKey(ns, name) keys for any newly-seen property name,
+// triggering Badger's optimistic write-write conflict on concurrent
+// commits and hiding genuine constraint violations from the
+// per-namespace commit-time UNIQUE check (see
+// consumer-pinned-error-contract-plan.md §2.1).
+//
+// Returns a zero-value drain if the txn allocated no fresh property
+// keys.
+func (d *propertyKeyDictionary) flushTxnCounters(txn *badger.Txn) propKeyTxnDrain {
+	d.txnMu.Lock()
+	state, hasCounters := d.txnCounters[txn]
+	if hasCounters {
+		delete(d.txnCounters, txn)
+	}
+	pending, hasPending := d.txnPendingForward[txn]
+	if hasPending {
+		delete(d.txnPendingForward, txn)
+	}
+	d.txnMu.Unlock()
+	out := propKeyTxnDrain{}
+	if hasCounters && len(state) > 0 {
+		out.counters = make(map[string]uint64, len(state))
+		for k, v := range state {
+			out.counters[k] = v
+		}
+	}
+	if hasPending && len(pending) > 0 {
+		out.pending = make([]propKeyPersistEntry, 0, len(pending))
+		for key, id := range pending {
+			out.pending = append(out.pending, propKeyPersistEntry{namespace: key.namespace, name: key.name, id: id})
+		}
+	}
+	return out
+}
+
+// persistTxnCounters writes the staged forward/reverse entries and
+// per-namespace counter keys out of the user transaction, as ordinary
+// commits of as many batches as they need.
+func (d *propertyKeyDictionary) persistTxnCounters(db *managedBadgerDB, drain propKeyTxnDrain) error {
+	if drain.empty() {
+		return nil
+	}
+	w := &batchWriter{to: db}
+	defer w.discard()
+	err := drain.writeTo(w)
+	if err == nil {
+		err = w.flush()
+	}
+	if err != nil {
+		return err
+	}
+	d.markPersisted(drain)
+	return nil
+}
+
+// empty reports whether the drain holds nothing to persist.
+func (drain propKeyTxnDrain) empty() bool {
+	return len(drain.counters) == 0 && len(drain.pending) == 0
+}
+
+// writeTo writes the drained tokens and counter high-water marks through
+// w, one unit per token and per counter, so any number of them fits: a
+// statement introducing more property names than one Badger batch holds
+// commits like any other large statement (#703).
+func (drain propKeyTxnDrain) writeTo(w *batchWriter) error {
+	units := make([]func(txn *badger.Txn) error, 0, len(drain.pending)+len(drain.counters))
+	for _, entry := range drain.pending {
+		forward := propKeyForwardKey(entry.namespace, entry.name)
+		id := binary.AppendUvarint(nil, entry.id)
+		reverse := propKeyReverseKey(entry.namespace, entry.id)
+		name := []byte(entry.name)
+		units = append(units, func(txn *badger.Txn) error {
+			if err := txn.Set(forward, id); err != nil {
+				return err
+			}
+			return txn.Set(reverse, name)
+		})
+	}
+	for namespace, max := range drain.counters {
+		key, value := propKeyCounterKey(namespace), binary.AppendUvarint(nil, max)
+		units = append(units, func(txn *badger.Txn) error { return txn.Set(key, value) })
+	}
+	for _, unit := range units {
+		if err := w.write(unit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// markPersisted records the drained tokens as durable. It also hydrates the
+// in-memory forward/reverse maps and the per-namespace nextID counter: the
+// normal allocation path already populated them before this runs (so the
+// writes below are idempotent there), but crash recovery replays durable
+// tokens into a fresh dictionary whose in-memory maps are otherwise empty.
+func (d *propertyKeyDictionary) markPersisted(drain propKeyTxnDrain) {
+	d.mu.Lock()
+	if len(drain.pending) != 0 {
+		d.walBindingRevision++
+	}
+	for _, entry := range drain.pending {
+		d.ensureNamespace(entry.namespace)
+		if id, exists := d.forward[entry.namespace][entry.name]; exists && id != entry.id {
+			d.walBindingDomain++
+		}
+		if name, exists := d.reverse[entry.namespace][entry.id]; exists && name != entry.name {
+			d.walBindingDomain++
+		}
+		if _, exists := d.forward[entry.namespace][entry.name]; !exists || d.reverse[entry.namespace][entry.id] != entry.name {
+			d.walEpochRevision.Add(1)
+		}
+		d.persisted[entry.namespace][entry.name] = true
+		if _, ok := d.forward[entry.namespace][entry.name]; !ok {
+			d.forward[entry.namespace][entry.name] = entry.id
+		}
+		d.reverse[entry.namespace][entry.id] = entry.name
+		if cur := d.nextID[entry.namespace].Load(); entry.id > cur {
+			d.nextID[entry.namespace].Store(entry.id)
+		}
+	}
+	for namespace, max := range drain.counters {
+		d.ensureNamespace(namespace)
+		if cur := d.nextID[namespace].Load(); max > cur {
+			d.nextID[namespace].Store(max)
+		}
+	}
+	d.mu.Unlock()
+}
+
+// discardTxnCounters drops staged counter state for a rolled-back txn.
+// Safe to call multiple times.
+func (d *propertyKeyDictionary) discardTxnCounters(txn *badger.Txn) {
+	d.txnMu.Lock()
+	delete(d.txnCounters, txn)
+	delete(d.txnPendingForward, txn)
+	d.txnMu.Unlock()
+}
+
+// moveTxnCounters preserves staged tokens when the same logical transaction
+// continues on a newer physical read view after an independently owned commit.
+func (d *propertyKeyDictionary) moveTxnCounters(from, to *badger.Txn) {
+	d.txnMu.Lock()
+	if counters, ok := d.txnCounters[from]; ok {
+		d.txnCounters[to] = counters
+		delete(d.txnCounters, from)
+	}
+	if pending, ok := d.txnPendingForward[from]; ok {
+		d.txnPendingForward[to] = pending
+		delete(d.txnPendingForward, from)
+	}
+	d.txnMu.Unlock()
+}
+
+// loadFromBadger hydrates the in-memory dictionary from persisted
+// forward, reverse, and counter keys. Called once on engine open.
+func (d *propertyKeyDictionary) loadFromBadger(db badgerViewer) error {
+	return db.View(func(txn *badger.Txn) error {
+		// Forward map.
+		{
+			opts := badgerIteratorOptions()
+			opts.Prefix = []byte{prefixPropKeyForward}
+			it := txn.NewIterator(opts)
+			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
+				item := it.Item()
+				key := item.KeyCopy(nil)
+				namespace, name, ok := decodePropKeyForwardKey(key)
+				if !ok {
+					continue
+				}
+				var id uint64
+				if err := item.Value(func(val []byte) error {
+					parsed, n := binary.Uvarint(val)
+					if n <= 0 {
+						return fmt.Errorf("property key forward value malformed for ns=%q name=%q", namespace, name)
+					}
+					id = parsed
+					return nil
+				}); err != nil {
+					it.Close()
+					return err
+				}
+				d.ensureNamespace(namespace)
+				d.forward[namespace][name] = id
+				d.reverse[namespace][id] = name
+				d.persisted[namespace][name] = true
+			}
+			it.Close()
+		}
+		// Counters.
+		{
+			opts := badgerIteratorOptions()
+			opts.Prefix = []byte{prefixPropKeyCounter}
+			it := txn.NewIterator(opts)
+			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
+				item := it.Item()
+				key := item.KeyCopy(nil)
+				namespace, ok := decodePropKeyCounterKey(key)
+				if !ok {
+					continue
+				}
+				var counter uint64
+				if err := item.Value(func(val []byte) error {
+					parsed, n := binary.Uvarint(val)
+					if n <= 0 {
+						return fmt.Errorf("property key counter malformed for ns=%q", namespace)
+					}
+					counter = parsed
+					return nil
+				}); err != nil {
+					it.Close()
+					return err
+				}
+				d.ensureNamespace(namespace)
+				if cur := d.nextID[namespace].Load(); counter > cur {
+					d.nextID[namespace].Store(counter)
+				}
+			}
+			it.Close()
+		}
+		// Re-derive nextID floor from the loaded forward map in case any
+		// counter key is missing for a namespace that already has IDs.
+		for namespace, forward := range d.forward {
+			counter := d.nextID[namespace]
+			cur := counter.Load()
+			for _, id := range forward {
+				if id > cur {
+					cur = id
+				}
+			}
+			counter.Store(cur)
+		}
+		return nil
+	})
+}
+
+// decodePropKeyForwardKey is the inverse of propKeyForwardKey. Returns
+// ok=false on malformed keys (caller should skip them; nothing in the
+// engine writes malformed keys, but a forward-compatible decoder
+// silently ignores unknown trailing bytes from future versions).
+func decodePropKeyForwardKey(key []byte) (string, string, bool) {
+	if len(key) < 1 || key[0] != prefixPropKeyForward {
+		return "", "", false
+	}
+	rest := key[1:]
+	nsLen, n := binary.Uvarint(rest)
+	if n <= 0 || uint64(len(rest)-n) < nsLen {
+		return "", "", false
+	}
+	rest = rest[n:]
+	namespace := string(rest[:nsLen])
+	rest = rest[nsLen:]
+	nameLen, n := binary.Uvarint(rest)
+	if n <= 0 || uint64(len(rest)-n) < nameLen {
+		return "", "", false
+	}
+	rest = rest[n:]
+	if uint64(len(rest)) != nameLen {
+		return "", "", false
+	}
+	return namespace, string(rest), true
+}
+
+func decodePropKeyCounterKey(key []byte) (string, bool) {
+	if len(key) < 1 || key[0] != prefixPropKeyCounter {
+		return "", false
+	}
+	rest := key[1:]
+	nsLen, n := binary.Uvarint(rest)
+	if n <= 0 || uint64(len(rest)-n) != nsLen {
+		return "", false
+	}
+	return string(rest[n:]), true
+}
+
+// PropKeyDictCounters exposes per-namespace counter usage for
+// observability probes.
+func (b *BadgerEngine) PropKeyDictCounters() map[string]uint64 {
+	if b == nil || b.propKeyDict == nil {
+		return nil
+	}
+	out := make(map[string]uint64)
+	b.propKeyDict.mu.RLock()
+	for ns, ctr := range b.propKeyDict.nextID {
+		out[ns] = ctr.Load()
+	}
+	b.propKeyDict.mu.RUnlock()
+	return out
+}
+
+// NotePropertyKeysInNamespace records the keys of properties that hold a
+// value as used in namespace (PropertyKeyRegistry). Writes that encode
+// allocate their names; buffered ones (BadgerTransaction, AsyncEngine)
+// call this when they take the write.
+func (b *BadgerEngine) NotePropertyKeysInNamespace(namespace string, properties map[string]interface{}) {
+	b.propKeyDict.noteProperties(namespace, properties)
+}
+
+// PropertyKeyKnownInNamespace reports whether a write in namespace has
+// stored a value under name (PropertyKeyRegistry).
+func (b *BadgerEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
+	return b.propKeyDict.known(namespace, name)
+}
+
+// isPropertyKeyDictionaryKey reports whether key is a property-key token
+// or counter record.
+func isPropertyKeyDictionaryKey(key []byte) bool {
+	if len(key) == 0 {
+		return false
+	}
+	switch key[0] {
+	case prefixPropKeyForward, prefixPropKeyReverse, prefixPropKeyCounter:
+		return true
+	}
+	return false
+}
+
+// replaceWith makes d hold fresh's names and counters, for Restore: d stays
+// the engine's dictionary, and the swap is made under d's locks, so nothing
+// reads a dictionary that is being built. Staged per-transaction state is
+// dropped with the store it belonged to.
+func (d *propertyKeyDictionary) replaceWith(fresh *propertyKeyDictionary) {
+	d.mu.Lock()
+	d.walBindingDomain++
+	d.walBindingRevision++
+	d.walEpochRevision.Add(1)
+	d.forward, d.reverse, d.persisted = fresh.forward, fresh.reverse, fresh.persisted
+	d.nextID, d.noted = fresh.nextID, fresh.noted
+	d.mu.Unlock()
+	d.txnMu.Lock()
+	d.txnCounters = make(map[*badger.Txn]map[string]uint64)
+	d.txnPendingForward = make(map[*badger.Txn]map[propKeyName]uint64)
+	d.txnMu.Unlock()
+}

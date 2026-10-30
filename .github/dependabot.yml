@@ -1,0 +1,43 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - go
+
+  - package-ecosystem: npm
+    directory: "/ui"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - ui
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - ci
+
+  - package-ecosystem: docker
+    directory: "/docker"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: "nvidia/cuda"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+    labels:
+      - dependencies
+      - docker

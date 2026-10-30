@@ -1,0 +1,213 @@
+v1.1.0 - macOS Native Integration
+
+🍎 Complete macOS Integration with Menu Bar App
+
+This release adds comprehensive native macOS support with a polished menu bar
+application, professional installer, and seamless auto-start configuration.
+
+═══════════════════════════════════════════════════════════════════════════
+
+🎯 NEW FEATURES
+
+Menu Bar Application
+--------------------
+• Native Swift/SwiftUI menu bar app with status monitoring
+• Color-coded NornicDB logo icon (green=running, red=stopped, gray=unknown)
+• Real-time health monitoring (checks every 10 seconds)
+• Quick access menu for server control
+• Auto-starts on login via LaunchAgent
+
+First-Run Setup Wizard
+----------------------
+• Beautiful 3-step wizard for initial configuration
+• Visual step indicators with progress tracking
+• Three configuration presets:
+  - Basic: Essential features only
+  - Standard: Embeddings + K-Means (recommended)
+  - Advanced: All AI features enabled
+• Smart model download integration
+• Green checkmarks for installed models
+• One-click download for missing models (BGE-M3, qwen3-0.6b)
+• Direct link to open models folder
+
+Settings Window (4 Tabs)
+------------------------
+• Features Tab: Toggle embeddings, k-means, auto-TLP, Heimdall
+• Server Tab: Configure port and host address
+• Models Tab: Select AI models from available .gguf files
+• Startup Tab: Control auto-start behavior
+• Change detection with "Unsaved changes" indicator
+• Save button disabled when no changes
+• Inline progress indicator during save/restart
+• Auto-closes after successful configuration
+
+Model Management
+----------------
+• Download default models from HuggingFace menu
+• Open models folder for manual model management
+• Automatic .gguf file scanning
+• Model selection dropdowns in Settings
+• Visual indication of installed vs missing models
+• Support for custom models (drag & drop to folder)
+
+Auto-Start Configuration
+------------------------
+• Server auto-starts on boot (com.nornicdb.server LaunchAgent)
+• Menu bar app auto-starts on login (com.nornicdb.menubar LaunchAgent)
+• Configurable via Settings → Startup tab
+• Graceful shutdown and restart handling
+
+Professional Installer
+----------------------
+• Distributable .pkg installer (15MB)
+• DMG packaging for easy distribution
+• Graceful reinstallation support
+• Preserves user data, config, and database
+• Pre-install script stops existing services
+• Post-install script configures LaunchAgents
+• Automatic menu bar app launch after install
+• Requires macOS 12.0+ (Monterey or later)
+
+═══════════════════════════════════════════════════════════════════════════
+
+🔧 TECHNICAL IMPROVEMENTS
+
+LaunchAgent Integration
+-----------------------
+• com.nornicdb.server.plist - Server daemon with auto-restart
+• com.nornicdb.menubar.plist - Menu bar app auto-launch
+• Proper working directory and environment variables
+• Structured logging to /usr/local/var/log/nornicdb/
+
+Build System
+------------
+• New Makefile targets:
+  - make macos-menubar: Build menu bar app
+  - make macos-install: Install as service
+  - make macos-uninstall: Clean uninstall
+  - make macos-package: Create .pkg installer
+  - make macos-package-signed: Signed package for distribution
+  - make macos-all: Build and install everything
+• Automatic architecture detection (arm64/x86_64)
+• Icon generation from SVG logo
+• Swift compilation with proper flags
+
+Configuration Management
+------------------------
+• YAML config parsing in Swift (regex-based)
+• Preserves comments and formatting when saving
+• Model selection persistence
+• Server port/host configuration
+• Feature toggles saved to config.yaml
+• Auto-start preference management
+
+Code Quality
+------------
+• Clean separation of concerns (AppDelegate, ConfigManager, Views)
+• Comprehensive error handling
+• Async downloads with progress tracking
+• Memory-safe file operations
+• Proper cleanup on reinstallation
+
+═══════════════════════════════════════════════════════════════════════════
+
+📦 INSTALLATION
+
+Build and install:
+  make build macos-menubar macos-package
+  open dist/NornicDB-1.0.0-arm64.pkg
+
+What gets installed:
+  • /usr/local/bin/nornicdb (server binary)
+  • /Applications/NornicDB.app (menu bar app)
+  • ~/Library/LaunchAgents/*.plist (auto-start configs)
+  • ~/Library/Application Support/NornicDB/config.yaml
+  • /usr/local/var/nornicdb/models/ (AI models)
+  • /usr/local/var/nornicdb/data/ (database)
+
+═══════════════════════════════════════════════════════════════════════════
+
+🐛 BUG FIXES
+
+Test Infrastructure
+-------------------
+• Fixed Windows OOM issues in Go tests
+• Added skipOnConstrainedEnv for memory-intensive tests
+• Converted disk-based BadgerDB tests to in-memory
+• Added skipDiskIOTestOnWindows for Windows compatibility
+• Proper cleanup of test resources
+
+Server Configuration
+--------------------
+• Fixed LaunchAgent command (nornicdb serve instead of nornicdb --config)
+• Corrected health check URL (port 7474 HTTP instead of 7687 Bolt)
+• Fixed Web UI URL in menu bar app
+• Model configuration persistence
+
+═══════════════════════════════════════════════════════════════════════════
+
+📚 DOCUMENTATION
+
+New Documentation:
+  • macos/README.md - Complete macOS integration guide
+  • macos/BUILD_GUIDE.md - Build and packaging instructions
+  • macos/USER_GUIDE.md - End-user documentation
+  • macos/INSTALLATION_GUIDE.md - Installation and setup guide
+  • macos/FEATURES.md - Feature showcase
+  • macos/CHANGELOG.md - Version history
+  • macos/Distribution-README.txt - Packaged with installer
+  • macos/Assets/README.md - Icon and asset documentation
+
+═══════════════════════════════════════════════════════════════════════════
+
+⚡ PERFORMANCE & COMPATIBILITY
+
+• Native Apple Silicon (arm64) and Intel (x86_64) support
+• Minimal memory footprint (menu bar app ~60MB)
+• Fast health checks (non-blocking async)
+• Efficient file scanning for models
+• No dependencies on external frameworks
+• Works seamlessly with existing NornicDB installations
+
+═══════════════════════════════════════════════════════════════════════════
+
+🎓 USAGE
+
+Quick commands:
+  make macos-package              # Build installer
+  ./macos/scripts/test-config.sh  # Verify installation
+  launchctl list | grep nornicdb  # Check service status
+  
+User actions:
+  • Click menu bar icon → Quick access to all features
+  • Press ⌘, → Open Settings
+  • Press ⌘L → Show logs
+  • Menu → Download Models → One-click model download
+  • Menu → Open Models Folder → Manage custom models
+
+═══════════════════════════════════════════════════════════════════════════
+
+🚀 DISTRIBUTION
+
+For end users:
+  1. Download NornicDB-1.1.0-arm64.dmg
+  2. Double-click .pkg installer
+  3. Follow first-run wizard
+  4. Done! Look for database icon in menu bar
+
+For developers:
+  make clean macos-clean
+  make build macos-menubar macos-package
+  # Test: open dist/NornicDB-*.pkg
+  # Distribute: Upload to GitHub Releases
+
+═══════════════════════════════════════════════════════════════════════════
+
+Breaking Changes: None
+Upgrade Path: Safe to install over v1.0.0 - all data preserved
+Compatibility: macOS 12.0+ (Monterey, Ventura, Sonoma)
+
+═══════════════════════════════════════════════════════════════════════════
+
+Contributors: @orneryd
+Release Date: 2024-12-07

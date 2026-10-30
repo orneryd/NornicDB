@@ -1,0 +1,359 @@
+- id: cyphercore.empty_query
+  description: Consulta Cypher vacía.
+  other: consulta vacía
+- id: cyphercore.composite_target_required
+  description: La consulta compuesta requiere un componente explícito. Code y USE no se traducen.
+  other: "{{.Code}}: Las consultas en bases de datos compuestas requieren un grafo de destino explícito. Use USE <composite>.<alias> para seleccionar un componente específico"
+- id: cyphercore.invalid_label_name
+  description: Identificador de etiqueta no válido. Label no se traduce.
+  other: "nombre de etiqueta no válido: {{.Label}} (debe ser alfanumérico y comenzar con una letra o un guion bajo)"
+- id: cyphercore.invalid_label_reserved
+  description: Identificador de etiqueta reservado. Label no se traduce.
+  other: "nombre de etiqueta no válido: {{.Label}} (contiene una palabra clave reservada)"
+- id: cyphercore.invalid_property_key
+  description: Identificador de propiedad no válido. Key no se traduce.
+  other: "clave de propiedad no válida: {{.Key}} (debe ser alfanumérica y comenzar con una letra o un guion bajo)"
+- id: cyphercore.invalid_property_value
+  description: Valor de propiedad mal formado. Key no se traduce.
+  other: "valor de propiedad no válido para la clave {{.Key}}: sintaxis mal formada"
+- id: cyphercore.embedding_transaction_storage_required
+  description: WITH EMBEDDING requiere almacenamiento transaccional.
+  other: WITH EMBEDDING requiere almacenamiento compatible con transacciones
+- id: cyphercore.implicit_transaction_prime_failed
+  description: Error al inicializar el espacio de nombres. Cause no se traduce.
+  other: "no se pudo inicializar el espacio de nombres de la transacción implícita: {{.Cause}}"
+- id: cyphercore.implicit_transaction_start_failed
+  description: Error al iniciar la transacción implícita. Cause no se traduce.
+  other: "no se pudo iniciar la transacción implícita: {{.Cause}}"
+- id: cyphercore.implicit_transaction_pin_failed
+  description: Error al fijar el espacio de nombres. Cause no se traduce.
+  other: "no se pudo fijar el espacio de nombres de la transacción implícita: {{.Cause}}"
+- id: cyphercore.implicit_transaction_configure_failed
+  description: Error al configurar la transacción implícita. Cause no se traduce.
+  other: "no se pudo configurar la transacción implícita: {{.Cause}}"
+- id: cyphercore.implicit_transaction_wal_begin_failed
+  description: Error al escribir el inicio en WAL. Cause no se traduce.
+  other: "no se pudo escribir el inicio de la transacción en WAL: {{.Cause}}"
+- id: cyphercore.implicit_transaction_commit_failed
+  description: Error al confirmar la transacción. Cause no se traduce.
+  other: "error al confirmar la transacción: {{.Cause}}"
+- id: cyphercore.embedding_configured_required
+  description: WITH EMBEDDING requiere un generador configurado.
+  other: WITH EMBEDDING requiere un generador de incrustaciones configurado
+- id: cyphercore.embedding_chunk_failed
+  description: Error al fragmentar para incrustación. NodeID y Cause no se traducen.
+  other: "WITH EMBEDDING no pudo fragmentar el nodo {{.NodeID}}: {{.Cause}}"
+- id: cyphercore.embedding_node_failed
+  description: Error al generar la incrustación. NodeID y Cause no se traducen.
+  other: "WITH EMBEDDING no pudo generar la incrustación del nodo {{.NodeID}}: {{.Cause}}"
+- id: cyphercore.embedding_empty_vector
+  description: La incrustación no produjo un vector. NodeID no se traduce.
+  other: WITH EMBEDDING devolvió un vector vacío para el nodo {{.NodeID}}
+- id: cyphercore.optional_match_required
+  description: OPTIONAL no está seguido de MATCH.
+  other: OPTIONAL debe estar seguido de MATCH
+- id: cyphercore.unterminated_string_literal
+  description: Literal de cadena Cypher sin terminar.
+  other: literal de cadena sin terminar
+- id: cyphercore.parse_failed
+  description: Error de análisis Cypher. Cause no se traduce.
+  other: "error de análisis: {{.Cause}}"
+- id: cyphercore.case_envelope_invalid
+  description: La expresión CASE no tiene la estructura requerida.
+  other: "expresión CASE no válida: debe comenzar con CASE y terminar con END"
+- id: cyphercore.case_when_required
+  description: La expresión CASE no tiene una cláusula WHEN.
+  other: la expresión CASE debe tener al menos una cláusula WHEN
+- id: cyphercore.case_then_required
+  description: La cláusula WHEN no tiene THEN. Section no se traduce.
+  other: "la cláusula WHEN debe tener THEN: {{.Section}}"
+- id: cyphercore.fulltext_unexpected_token
+  description: Token inesperado en consulta de texto completo. Token no se traduce.
+  other: "no se puede analizar la consulta: token inesperado {{.Token}}"
+- id: cyphercore.fulltext_number_after_boost_expected
+  description: Falta un valor numérico de refuerzo.
+  other: "no se puede analizar la consulta: se esperaba un número después de ^"
+- id: cyphercore.fulltext_bad_boost
+  description: Valor de refuerzo no válido. Boost no se traduce.
+  other: "no se puede analizar la consulta: refuerzo no válido {{.Boost}}"
+- id: cyphercore.fulltext_closing_parenthesis_required
+  description: Falta el paréntesis de cierre.
+  other: "no se puede analizar la consulta: falta ')'"
+- id: cyphercore.fulltext_range_to_required
+  description: Falta TO en el rango.
+  other: "no se puede analizar la consulta: se esperaba TO en el rango"
+- id: cyphercore.fulltext_range_close_required
+  description: Falta el delimitador de cierre del rango.
+  other: "no se puede analizar la consulta: se esperaba ] o } para cerrar el rango"
+- id: cyphercore.fulltext_range_endpoint_required
+  description: Falta un extremo del rango.
+  other: "no se puede analizar la consulta: se esperaba un extremo del rango"
+- id: cyphercore.fulltext_bad_regex
+  description: Expresión regular no válida. Pattern y Cause no se traducen.
+  other: "no se puede analizar la consulta: expresión regular no válida /{{.Pattern}}/: {{.Cause}}"
+- id: cyphercore.fulltext_bad_wildcard
+  description: Comodín no válido. Cause no se traduce.
+  other: "no se puede analizar la consulta: comodín no válido: {{.Cause}}"
+- id: cyphercore.index_hint_not_found
+  description: El índice solicitado no existe. Hint, Label y Property no se traducen.
+  other: "no se encontró ningún índice para la sugerencia: {{.Hint}} (el índice en :{{.Label}}({{.Property}}) no existe)"
+- id: cyphercore.execution_plan_build_failed
+  description: Error al crear el plan de ejecución. Cause no se traduce.
+  other: "no se pudo crear el plan de ejecución: {{.Cause}}"
+- id: cyphercore.typed_decode_row_failed
+  description: Error al decodificar una fila tipada. Cause no se traduce.
+  other: "no se pudo decodificar la fila: {{.Cause}}"
+- id: cyphercore.typed_destination_pointer_required
+  description: El destino tipado debe ser un puntero válido.
+  other: el destino debe ser un puntero no nulo
+- id: cyphercore.typed_destination_unsupported
+  description: Tipo de destino no admitido. Kind no se traduce.
+  other: "tipo de destino no admitido: {{.Kind}}"
+- id: cyphercore.typed_field_failed
+  description: Error al asignar un campo. Field y Cause no se traducen.
+  other: "campo {{.Field}}: {{.Cause}}"
+- id: cyphercore.typed_time_parse_failed
+  description: Error al analizar una hora. Value no se traduce.
+  other: "no se puede analizar la hora: {{.Value}}"
+- id: cyphercore.typed_assignment_failed
+  description: Asignación tipada incompatible. Los tipos no se traducen.
+  other: "no se puede asignar {{.ValueType}} a {{.DestinationType}}"
+- id: cyphercore.embedder_not_configured
+  description: No hay un generador de incrustaciones configurado.
+  other: no hay un generador de incrustaciones configurado
+- id: cyphercore.embedding_no_output
+  description: La incrustación de consulta no produjo vectores.
+  other: no se pudo generar la incrustación de la consulta (no se produjeron incrustaciones)
+- id: cyphercore.division_by_zero
+  other: "/ por cero"
+- id: cyphercore.yield_pagination_invalid
+  other: "SKIP y LIMIT requieren un INTEGER no negativo"
+- id: cyphercore.invalid_input
+  other: "Entrada no válida '{{.Token}}'"
+- id: cyphercore.invalid_input_expected_expression
+  other: "Entrada no válida '{{.Token}}': se esperaba una expresión"
+- id: cyphercore.invalid_input_expected_identifier
+  other: "Entrada no válida '{{.Token}}': se esperaba un identificador"
+- id: cyphercore.parameter_type_mismatch
+  other: "Tipo no coincidente para el parámetro '{{.Parameter}}': se esperaba {{.Expected}} pero era {{.Type}}"
+- id: cyphercore.entity_referenced_in_same_clause
+  other: "La variable {{.Kind}} '{{.Variable}}' hace referencia a un {{.Kind}} creado en la misma cláusula {{.Clause}}, lo que no está permitido. Haga referencia solo a variables creadas en cláusulas anteriores."
+- id: cyphercore.conditional_column_names
+  other: "Todas las consultas condicionales deben tener los mismos nombres de columnas de retorno. Use `AS` para que las columnas tengan el mismo nombre."
+- id: cyphercore.conditional_column_count
+  other: "Todas las consultas condicionales deben devolver el mismo número de columnas."
+- id: cyphercore.interpolation_wrong_type
+  other: "Tipo incorrecto. Se esperaba BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION o VECTOR, pero se obtuvo {{.Type}}"
+- id: cyphercore.map_comprehension_key_not_string
+  other: "Se esperaba una clave de mapa STRING, pero se obtuvo {{.Type}}"
+- id: cyphercore.group_by_implicit_grouping_key
+  other: "La columna de agregación contiene expresiones de agrupación implícitas. Por ejemplo, en 'RETURN n.a, n.a + n.b + count(*)' la expresión de agregación 'n.a + n.b + count(*)' incluye la clave de agrupación implícita 'n.b'. Puede reescribir la consulta extrayendo estas expresiones de agrupación o agregación a una cláusula WITH anterior. Expresiones no válidas: {{.Illegal}}"
+- id: cyphercore.function_argument_out_of_range
+  other: "El argumento de la función '{{.Function}}()' está fuera de rango"
+- id: cyphercore.string_join_element_type
+  other: "Se esperaba un valor de cadena para `string.join`, pero se obtuvo: {{.Value}}; considere convertirlo en cadena con toString()."
+- id: cyphercore.replace_limit_negative
+  other: "El límite debe ser mayor o igual que 0."
+- id: cyphercore.format_template_value_count
+  other: "format(): la plantilla toma {{.Expected}} valores pero se dieron {{.Given}}"
+- id: cyphercore.format_template_value_type
+  other: "format(): {{.Verb}} no puede imprimir {{.Value}}"
+- id: cyphercore.format_template_verb_invalid
+  other: "format(): {{.Verb}} no es un verbo de plantilla"
+- id: cyphercore.temporal_pattern_invalid_character
+  other: "Se usa un carácter no válido en el patrón. Verifique que `{{.Type}}` admite todos los caracteres."
+- id: cyphercore.duration_pattern_unbalanced_escapes
+  other: "Error al analizar el patrón. Asegúrese de usar un número par de caracteres de escape en el patrón."
+- id: cyphercore.temporal_pattern_mismatch
+  other: "El patrón `{{.Pattern}}` no coincide con la entrada `{{.Input}}`. Verifique que el patrón sea válido para construir `{{.Type}}`."
+- id: cyphercore.temporal_pattern_requires_string
+  other: "Un patrón solo se puede usar con una entrada `STRING`."
+- id: cyphercore.reduce_form_invalid_syntax
+  other: "Sintaxis no válida para la función `{{.Function}}`. La función {{.Function}} debe tener la firma {{.Signature}}"
+- id: cyphercore.predicate_not_boolean
+  other: "No se sabe cómo tratar eso como un predicado: {{.Value}}"
+- id: cyphercore.regex_replacement_illegal_group_reference
+  other: "Referencia de grupo no válida"
+- id: cyphercore.regex_replacement_group_index_missing
+  other: "Referencia de grupo no válida: falta el índice del grupo"
+- id: cyphercore.regex_replacement_escape_missing
+  other: "falta el carácter que se va a escapar"
+- id: cyphercore.regex_replacement_named_group_unterminated
+  other: "al grupo de captura con nombre le falta la '}' final"
+- id: cyphercore.regex_replacement_no_group
+  other: "No hay ningún grupo {{.Group}}"
+- id: cyphercore.regex_replacement_no_named_group
+  other: 'No hay ningún grupo con el nombre {{"{"}}{{.Name}}{{"}"}}'
+- id: cyphercore.list_operand_type_mismatch
+  other: "Tipo no coincidente: se esperaba List<T> pero era {{.Type}}"
+- id: cyphercore.list_parameter_type_mismatch
+  other: "Tipo no coincidente para el parámetro '{{.Parameter}}': se esperaba List<T> pero era {{.Type}}"
+- id: cyphercore.list_coercion_to_boolean
+  other: "No se permite convertir una lista en booleano. Use `NOT isEmpty(...)` en su lugar."
+- id: cyphercore.list_index_type_mismatch
+  other: "Tipo no coincidente: el índice de lista debe ser Integer, pero era {{.Type}}"
+- id: cyphercore.list_index_non_integer
+  other: "No se puede acceder a una lista mediante un índice numérico no entero, se recibió {{.Value}}"
+- id: cyphercore.list_index_non_number
+  other: "No se puede acceder a la lista '{{.List}}' mediante un índice no numérico, se recibió {{.Value}}"
+- id: cyphercore.list_index_boolean
+  other: "No se puede acceder a la lista '{{.List}}' mediante un índice no numérico, se recibió {{.Value}}: se esperaba que {{.Value}} fuera org.neo4j.values.storable.NumberValue, pero era org.neo4j.values.storable.{{.Class}}"
+- id: cyphercore.regex_pattern_type_mismatch
+  other: "Tipo no coincidente: el patrón de una expresión regular debe ser String, pero era {{.Value}}"
+- id: cyphercore.duration_arithmetic_overflow
+  other: "La aritmética de duraciones desborda: {{.Duration}} {{.Operator}} {{.Operand}}"
+- id: cyphercore.map_key_type_mismatch
+  other: "Tipo no coincidente: la clave del mapa debe ser String, pero era {{.Type}}"
+- id: cyphercore.entity_property_key_type_mismatch
+  other: "Tipo no coincidente: la clave de propiedad de un nodo o relación debe ser String, pero era {{.Type}}"
+- id: cyphercore.token_name_invalid
+  other: "'{{.Name}}' no es un nombre de token válido. Los nombres de token no pueden estar vacíos ni contener bytes nulos."
+- id: cyphercore.token_name_null
+  other: "Null no es un nombre de token válido. Los nombres de token no pueden estar vacíos ni contener bytes nulos."
+- id: cyphercore.dynamic_label_value_invalid
+  other: "Se esperaba que la etiqueta del nodo fuera una cadena o una lista de cadenas."
+- id: cyphercore.dynamic_label_type_mismatch
+  other: "Tipo no coincidente: se esperaba String o List<String> pero era {{.Type}}"
+- id: cyphercore.label_target_type_mismatch
+  other: "Tipo no coincidente: se esperaba Node pero era {{.Type}}"
+- id: cyphercore.dynamic_token_position_invalid
+  other: "Las etiquetas y tipos dinámicos solo se permiten en las cláusulas MATCH, CREATE, MERGE, SET y REMOVE."
+- id: cyphercore.dynamic_any_in_write_pattern
+  other: "Las etiquetas dinámicas con `$any()` no se permiten en CREATE ni en MERGE."
+- id: cyphercore.dynamic_relationship_type_count
+  other: "Se debe especificar exactamente un tipo de relación, pero se encontraron {{.Count}}."
+- id: cyphercore.function_argument_count
+  other: "{{.Function}}() espera {{.Expected}} argumento(s), recibió {{.Got}}"
+- id: cyphercore.trim_character_length
+  other: "El argumento `trimCharacterString` de la función `trim()` debe tener longitud 1."
+- id: cyphercore.trim_specification_unknown
+  other: "Especificación de trim desconocida. Los valores válidos son: LEADING, TRAILING, BOTH."
+- id: cyphercore.normalize_form_invalid
+  other: "la forma normal de normalize() debe ser NFC, NFD, NFKC o NFKD; se recibió: {{.Form}}"
+- id: cyphercore.procedure_output_shadows_variable
+  other: "la salida del procedimiento {{.Variable}} oculta una variable existente"
+- id: cyphercore.variable_declared_in_outer_scope
+  other: "La variable `{{.Variable}}` ya está declarada en el ámbito exterior"
+- id: cyphercore.pattern_node_value_type
+  other: "Se esperaba que `{{.Variable}}` fuera un Node, pero es: {{.Type}}"
+- id: cyphercore.expression_unevaluable
+  other: "no se pudo evaluar la expresión: {{.Expression}}"
+- id: cyphercore.standalone_call_modifiers
+  other: "No se puede usar una llamada independiente con WHERE (en su lugar use: `CALL ... WITH * WHERE ... RETURN *`)"
+- id: cyphercore.yield_where_misplaced
+  other: "Entrada no válida 'WHERE': el WHERE de un YIELD debe ir antes de su ORDER BY, SKIP y LIMIT"
+- id: cyphercore.temporal_date_form_conflict
+  other: "No se puede asignar {{.Field}} a una fecha {{.Form}}."
+- id: cyphercore.temporal_field_required
+  other: "se debe especificar {{.Field}}"
+- id: cyphercore.temporal_field_not_supported
+  other: "No admitido: {{.Field}}"
+- id: cyphercore.temporal_fields_conflict
+  other: "{{.Field}} no se puede seleccionar junto con {{.Other}}."
+- id: cyphercore.temporal_offset_mismatch
+  other: "La zona horaria y el desfase no coinciden: {{.Input}}"
+- id: cyphercore.temporal_epoch_invalid
+  other: "No se puede construir una fecha y hora a partir de: {{.Value}}"
+- id: cyphercore.temporal_field_requires_field
+  other: "{{.Field}} no se puede especificar sin {{.Required}}"
+- id: cyphercore.temporal_field_out_of_range
+  other: "Valor no válido para {{.Field}} (valores válidos {{.Valid}}): {{.Value}}"
+- id: cyphercore.temporal_field_invalid_value
+  other: "Valor no válido para {{.Field}}: {{.Value}}"
+- id: cyphercore.temporal_day_of_year_not_leap_year
+  other: "Fecha no válida 'DayOfYear 366' porque '{{.Year}}' no es un año bisiesto"
+- id: cyphercore.temporal_february_29_not_leap_year
+  other: "Fecha no válida 'February 29' porque '{{.Year}}' no es un año bisiesto"
+- id: cyphercore.temporal_invalid_date
+  other: "Fecha no válida '{{.Month}} {{.Day}}'"
+- id: cyphercore.temporal_text_unparseable
+  other: "El texto no se puede convertir en un {{.Type}}\n{{.Text}}\n ^"
+- id: cyphercore.temporal_map_invalid
+  other: "valor de {{.Type}} no válido: {{.Value}}"
+- id: cyphercore.function_argument_invalid
+  other: "Entrada no válida para la función '{{.Function}}()': se esperaba {{.Expected}}, se obtuvo: {{.Value}}"
+- id: cyphercore.vector_similarity_invalid_vector
+  other: "Entrada no válida para 'vector.similarity.{{.Function}}()': el argumento {{.Argument}} no es un vector válido para esta función de similitud."
+- id: cyphercore.vector_similarity_dimensions
+  other: "Entrada no válida para 'vector.similarity.{{.Function}}()': los vectores proporcionados no tienen el mismo número de dimensiones."
+- id: cyphercore.function_list_argument_empty
+  other: "El argumento `{{.Argument}}` de la función `{{.Function}}()` no debe estar vacío."
+- id: cyphercore.function_argument_null
+  other: "No se pudo invocar la función `{{.Function}}`: Causa: el argumento `{{.Argument}}` es nulo."
+- id: cyphercore.temporal_call_signature
+  other: "Firma de llamada no válida para {{.Type}}Function: la entrada proporcionada fue [{{.Provided}}]"
+- id: cyphercore.temporal_procedure_call_signature
+  other: "Firma de llamada no válida para {{.Procedure}}: la entrada proporcionada fue [{{.Provided}}]"
+- id: cyphercore.temporal_unsupported_unit
+  other: "Unidad no admitida: {{.Unit}}"
+- id: cyphercore.temporal_no_such_field
+  other: "No existe el campo: {{.Field}}"
+- id: cyphercore.temporal_invalid_nanosecond
+  other: "Nanosegundo no válido: {{.Value}}"
+- id: cyphercore.temporal_missing_component
+  other: "No se puede obtener el componente {{.Component}} de: {{.Value}}"
+- id: cyphercore.percentile_out_of_range
+  other: "Entrada no válida '{{.Value}}': no es un argumento válido, debe ser un número entre 0.0 y 1.0"
+- id: cyphercore.point_map_keys_invalid
+  other: "Un mapa con las claves {{.Keys}} no describe un punto válido; un punto se describe con coordenadas cartesianas, p. ej. {x: 2.3, y: 4.5, crs: 'cartesian'}, o con coordenadas geográficas, p. ej. {latitude: 12.78, longitude: 56.7, crs: 'WGS-84'}."
+- id: cyphercore.point_coordinates_missing
+  other: "Un punto debe contener 'x' e 'y' o 'latitude' y 'longitude'"
+- id: cyphercore.aggregate_number_or_duration_only
+  other: "{{.Function}}() solo admite valores numéricos, duraciones o null."
+- id: cyphercore.aggregate_number_only
+  other: "{{.Function}}() solo admite valores numéricos o null, pero recibió {{.Received}}"
+- id: cyphercore.aggregate_mixes_number_and_duration
+  other: "{{.Function}}() no puede mezclar números y duraciones"
+- id: cyphercore.apoc_path_min_level
+  other: "minLevel solo puede ser 0 o 1 en {{.Procedure}}()"
+- id: cyphercore.apoc_path_node_argument
+  other: "{{.Argument}} debe ser un nodo, un id de elemento o una lista de ellos, pero era {{.Received}}"
+- id: cyphercore.apoc_path_config_not_map
+  other: "la configuración de apoc.path debe ser un mapa, pero era {{.Received}}"
+- id: cyphercore.apoc_path_sequence_relationship
+  other: "la secuencia no tiene filtro de relación para el paso {{.Step}}"
+- id: cyphercore.apoc_path_label_filter_empty
+  other: "la entrada del filtro de etiquetas {{.Entry}} no tiene etiqueta"
+- id: cyphercore.apoc_path_sequence_label
+  other: "la secuencia no tiene filtro de etiquetas para la profundidad {{.Depth}}"
+- id: cyphercore.apoc_path_node_not_found
+  other: "{{.Argument}}: ningún nodo tiene el id de elemento {{.ID}}"
+- id: cyphercore.apoc_path_config_number
+  other: "{{.Key}} debe ser un número, pero era {{.Received}}"
+- id: cyphercore.apoc_path_config_string
+  other: "{{.Key}} debe ser una cadena, pero era {{.Received}}"
+- id: cyphercore.apoc_path_limit
+  other: "limit debe ser -1 (sin límite) o al menos 0, pero era {{.Limit}}"
+- id: cyphercore.map_projection_coercion
+  other: "No se puede convertir `{{.Value}}` en Map"
+- id: cyphercore.percentile_not_number
+  other: "No se puede convertir `{{.Value}}` en Number"
+- id: cyphercore.map_projection_receiver
+  other: "Entrada no válida '{': solo se puede proyectar una variable, no {{.Receiver}}"
+- id: cyphercore.vector_dimension_range
+  other: "Entrada no válida. '{{.Value}}' no es un valor válido. Debe ser un número entre 1 y 4096."
+- id: cyphercore.vector_dimension_mismatch
+  other: "Se esperaba un {{.Expected}}, pero se recibió {{.Got}}"
+- id: cyphercore.vector_coordinate_type
+  other: "Entrada no válida para la función '{{.Function}}': se esperaba un NUMBER, se recibió: {{.Got}}"
+- id: cyphercore.vector_coordinates_not_finite
+  other: "22NBG: Coordenadas de vector no válidas. Las coordenadas deben ser finitas."
+- id: cyphercore.vector_coordinate_range
+  other: "valor numérico fuera de rango"
+- id: cyphercore.vector_distance_dimensions
+  other: "Los argumentos `vector1` y `vector2` de la función `vector_distance()` deben tener la misma dimensión."
+- id: cyphercore.vector_inner_type_invalid
+  other: "Tipo interno de vector no válido; se esperaba INTEGER64, INTEGER32, INTEGER16, INTEGER8, FLOAT64 o FLOAT32"
+- id: cyphercore.vector_metric_invalid
+  other: "Métrica de distancia de vector no válida; se esperaba {{.Expected}}"
+- id: cyphercore.uuid_invalid_text
+  other: "El argumento `input` de la función `uuid()` debe ser una cadena UUID válida."
+- id: cyphercore.result_metadata_unresolved
+  description: No se pudo determinar el ámbito y las columnas de la sentencia.
+  other: No se puede determinar el ámbito y las columnas de resultado de la sentencia
+- id: cyphercore.result_metadata_mismatch
+  description: Las columnas de ejecución no coinciden con el esquema de la sentencia.
+  other: Las columnas de resultado de la ejecución no coinciden con el esquema de la sentencia
+- id: cyphercore.call_import_variables_required
+  description: A CALL import item must name a variable.
+  other: Las importaciones de CALL deben contener solo nombres de variables

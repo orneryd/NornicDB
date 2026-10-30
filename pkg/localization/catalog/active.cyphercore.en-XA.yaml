@@ -1,0 +1,359 @@
+- id: cyphercore.empty_query
+  description: Expanded pseudo-locale empty query.
+  other: "[!! empty query !!]"
+- id: cyphercore.composite_target_required
+  description: Expanded pseudo-locale composite target error.
+  other: "[!! {{.Code}}: Queries on composite databases require explicit graph targeting. Use USE <composite>.<alias> to target a specific constituent !!]"
+- id: cyphercore.invalid_label_name
+  description: Expanded pseudo-locale invalid label.
+  other: "[!! invalid label name: {{.Label}} (must be alphanumeric starting with letter or underscore) !!]"
+- id: cyphercore.invalid_label_reserved
+  description: Expanded pseudo-locale reserved label.
+  other: "[!! invalid label name: {{.Label}} (contains reserved keyword) !!]"
+- id: cyphercore.invalid_property_key
+  description: Expanded pseudo-locale invalid property key.
+  other: "[!! invalid property key: {{.Key}} (must be alphanumeric starting with letter or underscore) !!]"
+- id: cyphercore.invalid_property_value
+  description: Expanded pseudo-locale invalid property value.
+  other: "[!! invalid property value for key {{.Key}}: malformed syntax !!]"
+- id: cyphercore.embedding_transaction_storage_required
+  description: Expanded pseudo-locale transaction storage requirement.
+  other: "[!! WITH EMBEDDING requires transaction-capable storage !!]"
+- id: cyphercore.implicit_transaction_prime_failed
+  description: Expanded pseudo-locale implicit transaction prime failure.
+  other: "[!! failed to prime implicit transaction namespace: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_start_failed
+  description: Expanded pseudo-locale implicit transaction start failure.
+  other: "[!! failed to start implicit transaction: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_pin_failed
+  description: Expanded pseudo-locale implicit transaction pin failure.
+  other: "[!! failed to pin implicit transaction namespace: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_configure_failed
+  description: Expanded pseudo-locale implicit transaction configuration failure.
+  other: "[!! failed to configure implicit transaction: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_wal_begin_failed
+  description: Expanded pseudo-locale implicit WAL begin failure.
+  other: "[!! failed to write WAL tx begin: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_commit_failed
+  description: Expanded pseudo-locale implicit commit failure.
+  other: "[!! commit failed: {{.Cause}} !!]"
+- id: cyphercore.embedding_configured_required
+  description: Expanded pseudo-locale configured embedder requirement.
+  other: "[!! WITH EMBEDDING requires configured embedder !!]"
+- id: cyphercore.embedding_chunk_failed
+  description: Expanded pseudo-locale embedding chunk failure.
+  other: "[!! WITH EMBEDDING chunking failed for node {{.NodeID}}: {{.Cause}} !!]"
+- id: cyphercore.embedding_node_failed
+  description: Expanded pseudo-locale node embedding failure.
+  other: "[!! WITH EMBEDDING embed failed for node {{.NodeID}}: {{.Cause}} !!]"
+- id: cyphercore.embedding_empty_vector
+  description: Expanded pseudo-locale empty embedding vector.
+  other: "[!! WITH EMBEDDING embed returned empty vector for node {{.NodeID}} !!]"
+- id: cyphercore.optional_match_required
+  description: Expanded pseudo-locale OPTIONAL MATCH error.
+  other: "[!! OPTIONAL must be followed by MATCH !!]"
+- id: cyphercore.unterminated_string_literal
+  description: Expanded pseudo-locale unterminated string.
+  other: "[!! unterminated string literal !!]"
+- id: cyphercore.parse_failed
+  description: Expanded pseudo-locale parse wrapper.
+  other: "[!! parse error: {{.Cause}} !!]"
+- id: cyphercore.case_envelope_invalid
+  description: Expanded pseudo-locale CASE envelope error.
+  other: "[!! invalid CASE expression: must start with CASE and end with END !!]"
+- id: cyphercore.case_when_required
+  description: Expanded pseudo-locale CASE WHEN requirement.
+  other: "[!! CASE expression must have at least one WHEN clause !!]"
+- id: cyphercore.case_then_required
+  description: Expanded pseudo-locale CASE THEN requirement.
+  other: "[!! WHEN clause must have THEN: {{.Section}} !!]"
+- id: cyphercore.fulltext_unexpected_token
+  description: Expanded pseudo-locale unexpected fulltext token.
+  other: "[!! query cannot be parsed: unexpected token {{.Token}} !!]"
+- id: cyphercore.fulltext_number_after_boost_expected
+  description: Expanded pseudo-locale missing boost number.
+  other: "[!! query cannot be parsed: expected number after ^ !!]"
+- id: cyphercore.fulltext_bad_boost
+  description: Expanded pseudo-locale bad boost.
+  other: "[!! query cannot be parsed: bad boost {{.Boost}} !!]"
+- id: cyphercore.fulltext_closing_parenthesis_required
+  description: Expanded pseudo-locale missing parenthesis.
+  other: "[!! query cannot be parsed: missing ')' !!]"
+- id: cyphercore.fulltext_range_to_required
+  description: Expanded pseudo-locale missing range TO.
+  other: "[!! query cannot be parsed: expected TO in range !!]"
+- id: cyphercore.fulltext_range_close_required
+  description: Expanded pseudo-locale missing range close.
+  other: "[!! query cannot be parsed: expected ] or } to close range !!]"
+- id: cyphercore.fulltext_range_endpoint_required
+  description: Expanded pseudo-locale missing range endpoint.
+  other: "[!! query cannot be parsed: expected range endpoint !!]"
+- id: cyphercore.fulltext_bad_regex
+  description: Expanded pseudo-locale bad regex.
+  other: "[!! query cannot be parsed: bad regex /{{.Pattern}}/: {{.Cause}} !!]"
+- id: cyphercore.fulltext_bad_wildcard
+  description: Expanded pseudo-locale bad wildcard.
+  other: "[!! query cannot be parsed: bad wildcard: {{.Cause}} !!]"
+- id: cyphercore.index_hint_not_found
+  description: Expanded pseudo-locale missing hinted index.
+  other: "[!! no index found for hint: {{.Hint}} (index on :{{.Label}}({{.Property}}) does not exist) !!]"
+- id: cyphercore.execution_plan_build_failed
+  description: Expanded pseudo-locale plan build failure.
+  other: "[!! failed to build execution plan: {{.Cause}} !!]"
+- id: cyphercore.typed_decode_row_failed
+  description: Expanded pseudo-locale typed row decode failure.
+  other: "[!! failed to decode row: {{.Cause}} !!]"
+- id: cyphercore.typed_destination_pointer_required
+  description: Expanded pseudo-locale destination pointer requirement.
+  other: "[!! dest must be a non-nil pointer !!]"
+- id: cyphercore.typed_destination_unsupported
+  description: Expanded pseudo-locale unsupported destination.
+  other: "[!! unsupported destination type: {{.Kind}} !!]"
+- id: cyphercore.typed_field_failed
+  description: Expanded pseudo-locale typed field failure.
+  other: "[!! field {{.Field}}: {{.Cause}} !!]"
+- id: cyphercore.typed_time_parse_failed
+  description: Expanded pseudo-locale time parse failure.
+  other: "[!! cannot parse time: {{.Value}} !!]"
+- id: cyphercore.typed_assignment_failed
+  description: Expanded pseudo-locale typed assignment failure.
+  other: "[!! cannot assign {{.ValueType}} to {{.DestinationType}} !!]"
+- id: cyphercore.embedder_not_configured
+  description: Expanded pseudo-locale missing embedder.
+  other: "[!! no embedder configured !!]"
+- id: cyphercore.embedding_no_output
+  description: Expanded pseudo-locale empty embedding output.
+  other: "[!! failed to embed query (no embeddings produced) !!]"
+- id: cyphercore.division_by_zero
+  other: "[!! / by zero !!]"
+- id: cyphercore.yield_pagination_invalid
+  other: "[!! SKIP and LIMIT require a non-negative INTEGER !!]"
+- id: cyphercore.invalid_input
+  other: "[!! Invalid input '{{.Token}}' !!]"
+- id: cyphercore.invalid_input_expected_expression
+  other: "[!! Invalid input '{{.Token}}': expected an expression !!]"
+- id: cyphercore.invalid_input_expected_identifier
+  other: "[!! Invalid input '{{.Token}}': expected an identifier !!]"
+- id: cyphercore.parameter_type_mismatch
+  other: "[!! Type mismatch for parameter '{{.Parameter}}': expected {{.Expected}} but was {{.Type}} !!]"
+- id: cyphercore.entity_referenced_in_same_clause
+  other: "[!! The {{.Kind}} variable '{{.Variable}}' is referencing a {{.Kind}} that is created in the same {{.Clause}} clause which is not allowed. Please only reference variables created in earlier clauses. !!]"
+- id: cyphercore.conditional_column_names
+  other: "[!! All conditional queries must have the same return column names. Use `AS` to ensure columns have the same name. !!]"
+- id: cyphercore.conditional_column_count
+  other: "[!! All conditional queries must return the same number of columns. !!]"
+- id: cyphercore.interpolation_wrong_type
+  other: "[!! Wrong type. Expected BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION or VECTOR, got {{.Type}} !!]"
+- id: cyphercore.map_comprehension_key_not_string
+  other: "[!! Expected a STRING map key, got {{.Type}} !!]"
+- id: cyphercore.group_by_implicit_grouping_key
+  other: "[!! Aggregation column contains implicit grouping expressions. For example, in 'RETURN n.a, n.a + n.b + count(*)' the aggregation expression 'n.a + n.b + count(*)' includes the implicit grouping key 'n.b'. It may be possible to rewrite the query by extracting these grouping/aggregation expressions into a preceding WITH clause. Illegal expression(s): {{.Illegal}} !!]"
+- id: cyphercore.function_argument_out_of_range
+  other: "[!! Function argument to '{{.Function}}()' is out of range !!]"
+- id: cyphercore.string_join_element_type
+  other: "[!! Expected a string value for `string.join`, but got: {{.Value}}; consider converting it to a string with toString(). !!]"
+- id: cyphercore.replace_limit_negative
+  other: "[!! The limit needs to be greater than or equal to 0. !!]"
+- id: cyphercore.format_template_value_count
+  other: "[!! format(): the template takes {{.Expected}} values but {{.Given}} were given !!]"
+- id: cyphercore.format_template_value_type
+  other: "[!! format(): {{.Verb}} can't print {{.Value}} !!]"
+- id: cyphercore.format_template_verb_invalid
+  other: "[!! format(): {{.Verb}} is not a template verb !!]"
+- id: cyphercore.temporal_pattern_invalid_character
+  other: "[!! An invalid character is used in the pattern. Verify that all characters are supported by `{{.Type}}`. !!]"
+- id: cyphercore.duration_pattern_unbalanced_escapes
+  other: "[!! Pattern parsing failed. Make sure that an even number of escapes are used in the pattern. !!]"
+- id: cyphercore.temporal_pattern_mismatch
+  other: "[!! Pattern, `{{.Pattern}}`, does not match input, `{{.Input}}`. Verify that the pattern is valid for constructing `{{.Type}}`. !!]"
+- id: cyphercore.temporal_pattern_requires_string
+  other: "[!! A pattern can only be used in conjunction with a `STRING` input. !!]"
+- id: cyphercore.reduce_form_invalid_syntax
+  other: "[!! Invalid syntax for the `{{.Function}}` function. The function {{.Function}} must have the signature {{.Signature}} !!]"
+- id: cyphercore.predicate_not_boolean
+  other: "[!! Don't know how to treat that as a predicate: {{.Value}} !!]"
+- id: cyphercore.regex_replacement_illegal_group_reference
+  other: "[!! Illegal group reference !!]"
+- id: cyphercore.regex_replacement_group_index_missing
+  other: "[!! Illegal group reference: group index is missing !!]"
+- id: cyphercore.regex_replacement_escape_missing
+  other: "[!! character to be escaped is missing !!]"
+- id: cyphercore.regex_replacement_named_group_unterminated
+  other: "[!! named capturing group is missing trailing '}' !!]"
+- id: cyphercore.regex_replacement_no_group
+  other: "[!! No group {{.Group}} !!]"
+- id: cyphercore.regex_replacement_no_named_group
+  other: '[!! No group with name {{"{"}}{{.Name}}{{"}"}} !!]'
+- id: cyphercore.list_operand_type_mismatch
+  other: "[!! Type mismatch: expected List<T> but was {{.Type}} !!]"
+- id: cyphercore.list_parameter_type_mismatch
+  other: "[!! Type mismatch for parameter '{{.Parameter}}': expected List<T> but was {{.Type}} !!]"
+- id: cyphercore.list_coercion_to_boolean
+  other: "[!! Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. !!]"
+- id: cyphercore.list_index_type_mismatch
+  other: "[!! Type mismatch: list index must be given as Integer, but was {{.Type}} !!]"
+- id: cyphercore.list_index_non_integer
+  other: "[!! Cannot access a list using an non-integer number index, got {{.Value}} !!]"
+- id: cyphercore.list_index_non_number
+  other: "[!! Cannot access a list '{{.List}}' using a non-number index, got {{.Value}} !!]"
+- id: cyphercore.list_index_boolean
+  other: "[!! Cannot access a list '{{.List}}' using a non-number index, got {{.Value}}: Expected {{.Value}} to be a org.neo4j.values.storable.NumberValue, but it was a org.neo4j.values.storable.{{.Class}} !!]"
+- id: cyphercore.regex_pattern_type_mismatch
+  other: "[!! Type mismatch: a regular expression pattern must be a String, but was {{.Value}} !!]"
+- id: cyphercore.duration_arithmetic_overflow
+  other: "[!! Duration arithmetic overflows: {{.Duration}} {{.Operator}} {{.Operand}} !!]"
+- id: cyphercore.map_key_type_mismatch
+  other: "[!! Type mismatch: map key must be given as String, but was {{.Type}} !!]"
+- id: cyphercore.entity_property_key_type_mismatch
+  other: "[!! Type mismatch: node or relationship property key must be given as String, but was {{.Type}} !!]"
+- id: cyphercore.token_name_invalid
+  other: "[!! '{{.Name}}' is not a valid token name. Token names cannot be empty or contain any null-bytes. !!]"
+- id: cyphercore.token_name_null
+  other: "[!! Null is not a valid token name. Token names cannot be empty or contain any null-bytes. !!]"
+- id: cyphercore.dynamic_label_value_invalid
+  other: "[!! Expected node label to be a string or list of strings. !!]"
+- id: cyphercore.dynamic_label_type_mismatch
+  other: "[!! Type mismatch: expected String or List<String> but was {{.Type}} !!]"
+- id: cyphercore.label_target_type_mismatch
+  other: "[!! Type mismatch: expected Node but was {{.Type}} !!]"
+- id: cyphercore.dynamic_token_position_invalid
+  other: "[!! Dynamic Label and Types are only allowed in MATCH, CREATE, MERGE, SET and REMOVE clauses. !!]"
+- id: cyphercore.dynamic_any_in_write_pattern
+  other: "[!! Dynamic labels using `$any()` are not allowed in CREATE or MERGE. !!]"
+- id: cyphercore.dynamic_relationship_type_count
+  other: "[!! Exactly one relationship type must be specified, but {{.Count}} were found. !!]"
+- id: cyphercore.function_argument_count
+  other: "[!! {{.Function}}() expects {{.Expected}} argument(s), got {{.Got}} !!]"
+- id: cyphercore.trim_character_length
+  other: "[!! The argument `trimCharacterString` in the `trim()` function must be of length 1. !!]"
+- id: cyphercore.trim_specification_unknown
+  other: "[!! Unknown trim specification. Valid values are: LEADING, TRAILING, BOTH. !!]"
+- id: cyphercore.normalize_form_invalid
+  other: "[!! normalize() normal form must be one of NFC, NFD, NFKC or NFKD, got: {{.Form}} !!]"
+- id: cyphercore.procedure_output_shadows_variable
+  other: "[!! procedure output {{.Variable}} shadows an existing variable !!]"
+- id: cyphercore.variable_declared_in_outer_scope
+  other: "[!! Variable `{{.Variable}}` already declared in outer scope !!]"
+- id: cyphercore.pattern_node_value_type
+  other: "[!! Expected `{{.Variable}}` to be a Node, got: {{.Type}} !!]"
+- id: cyphercore.expression_unevaluable
+  other: "[!! could not evaluate expression: {{.Expression}} !!]"
+- id: cyphercore.standalone_call_modifiers
+  other: "[!! Cannot use standalone call with WHERE (instead use: `CALL ... WITH * WHERE ... RETURN *`) !!]"
+- id: cyphercore.yield_where_misplaced
+  other: "[!! Invalid input 'WHERE': a YIELD's WHERE must come before its ORDER BY, SKIP and LIMIT !!]"
+- id: cyphercore.temporal_date_form_conflict
+  other: "[!! Cannot assign {{.Field}} to {{.Form}} date. !!]"
+- id: cyphercore.temporal_field_required
+  other: "[!! {{.Field}} must be specified !!]"
+- id: cyphercore.temporal_field_not_supported
+  other: "[!! Not supported: {{.Field}} !!]"
+- id: cyphercore.temporal_fields_conflict
+  other: "[!! {{.Field}} cannot be selected together with {{.Other}}. !!]"
+- id: cyphercore.temporal_offset_mismatch
+  other: "[!! Timezone and offset do not match: {{.Input}} !!]"
+- id: cyphercore.temporal_epoch_invalid
+  other: "[!! Cannot construct date time from: {{.Value}} !!]"
+- id: cyphercore.temporal_field_requires_field
+  other: "[!! {{.Field}} cannot be specified without {{.Required}} !!]"
+- id: cyphercore.temporal_field_out_of_range
+  other: "[!! Invalid value for {{.Field}} (valid values {{.Valid}}): {{.Value}} !!]"
+- id: cyphercore.temporal_field_invalid_value
+  other: "[!! Invalid value for {{.Field}}: {{.Value}} !!]"
+- id: cyphercore.temporal_day_of_year_not_leap_year
+  other: "[!! Invalid date 'DayOfYear 366' as '{{.Year}}' is not a leap year !!]"
+- id: cyphercore.temporal_february_29_not_leap_year
+  other: "[!! Invalid date 'February 29' as '{{.Year}}' is not a leap year !!]"
+- id: cyphercore.temporal_invalid_date
+  other: "[!! Invalid date '{{.Month}} {{.Day}}' !!]"
+- id: cyphercore.temporal_text_unparseable
+  other: "[!! Text cannot be parsed to a {{.Type}}\n{{.Text}}\n ^ !!]"
+- id: cyphercore.temporal_map_invalid
+  other: "[!! invalid {{.Type}} value: {{.Value}} !!]"
+- id: cyphercore.function_argument_invalid
+  other: "[!! Invalid input for function '{{.Function}}()': Expected {{.Expected}}, got: {{.Value}} !!]"
+- id: cyphercore.vector_similarity_invalid_vector
+  other: "[!! Invalid input for 'vector.similarity.{{.Function}}()': Argument {{.Argument}} is not a valid vector for this similarity function. !!]"
+- id: cyphercore.vector_similarity_dimensions
+  other: "[!! Invalid input for 'vector.similarity.{{.Function}}()': The supplied vectors do not have the same number of dimensions. !!]"
+- id: cyphercore.function_list_argument_empty
+  other: "[!! The argument `{{.Argument}}` in the `{{.Function}}()` function must not be empty. !!]"
+- id: cyphercore.function_argument_null
+  other: "[!! Failed to invoke function `{{.Function}}`: Caused by: the `{{.Argument}}` argument is null. !!]"
+- id: cyphercore.temporal_call_signature
+  other: "[!! Invalid call signature for {{.Type}}Function: Provided input was [{{.Provided}}] !!]"
+- id: cyphercore.temporal_procedure_call_signature
+  other: "[!! Invalid call signature for {{.Procedure}}: Provided input was [{{.Provided}}] !!]"
+- id: cyphercore.temporal_unsupported_unit
+  other: "[!! Unsupported unit: {{.Unit}} !!]"
+- id: cyphercore.temporal_no_such_field
+  other: "[!! No such field: {{.Field}} !!]"
+- id: cyphercore.temporal_invalid_nanosecond
+  other: "[!! Invalid nanosecond: {{.Value}} !!]"
+- id: cyphercore.temporal_missing_component
+  other: "[!! Cannot get the {{.Component}} of: {{.Value}} !!]"
+- id: cyphercore.percentile_out_of_range
+  other: "[!! Invalid input '{{.Value}}' is not a valid argument, must be a number in the range 0.0 to 1.0 !!]"
+- id: cyphercore.point_map_keys_invalid
+  other: "[!! A map with keys {{.Keys}} is not describing a valid point, a point is described either by using cartesian coordinates e.g. {x: 2.3, y: 4.5, crs: 'cartesian'} or using geographic coordinates e.g. {latitude: 12.78, longitude: 56.7, crs: 'WGS-84'}. !!]"
+- id: cyphercore.point_coordinates_missing
+  other: "[!! A point must contain either 'x' and 'y' or 'latitude' and 'longitude' !!]"
+- id: cyphercore.aggregate_number_or_duration_only
+  other: "[!! {{.Function}}() can only handle numerical values, duration, or null. !!]"
+- id: cyphercore.aggregate_number_only
+  other: "[!! {{.Function}}() can only handle numerical values or null, but received {{.Received}} !!]"
+- id: cyphercore.aggregate_mixes_number_and_duration
+  other: "[!! {{.Function}}() cannot mix number and duration !!]"
+- id: cyphercore.apoc_path_min_level
+  other: "[!! minLevel can only be 0 or 1 in {{.Procedure}}() !!]"
+- id: cyphercore.apoc_path_node_argument
+  other: "[!! {{.Argument}} must be a node, an element id or a list of them, but was {{.Received}} !!]"
+- id: cyphercore.apoc_path_config_not_map
+  other: "[!! the apoc.path config must be a map, but was {{.Received}} !!]"
+- id: cyphercore.apoc_path_sequence_relationship
+  other: "[!! the sequence has no relationship filter for step {{.Step}} !!]"
+- id: cyphercore.apoc_path_label_filter_empty
+  other: "[!! the label filter entry {{.Entry}} has no label !!]"
+- id: cyphercore.apoc_path_sequence_label
+  other: "[!! the sequence has no label filter for depth {{.Depth}} !!]"
+- id: cyphercore.apoc_path_node_not_found
+  other: "[!! {{.Argument}}: no node has the element id {{.ID}} !!]"
+- id: cyphercore.apoc_path_config_number
+  other: "[!! {{.Key}} must be a number, but was {{.Received}} !!]"
+- id: cyphercore.apoc_path_config_string
+  other: "[!! {{.Key}} must be a string, but was {{.Received}} !!]"
+- id: cyphercore.apoc_path_limit
+  other: "[!! limit must be -1 (no limit) or at least 0, but was {{.Limit}} !!]"
+- id: cyphercore.map_projection_coercion
+  other: "[!! Can't coerce `{{.Value}}` to Map !!]"
+- id: cyphercore.percentile_not_number
+  other: "[!! Can't coerce `{{.Value}}` to Number !!]"
+- id: cyphercore.map_projection_receiver
+  other: "[!! Invalid input '{': only a variable can be projected, not {{.Receiver}} !!]"
+- id: cyphercore.vector_dimension_range
+  other: "[!! Invalid input. '{{.Value}}' is not a valid value. Must be a number in the range 1 to 4096. !!]"
+- id: cyphercore.vector_dimension_mismatch
+  other: "[!! Expected a {{.Expected}}, but got {{.Got}} !!]"
+- id: cyphercore.vector_coordinate_type
+  other: "[!! Invalid input for function '{{.Function}}': Expected a NUMBER, got: {{.Got}} !!]"
+- id: cyphercore.vector_coordinates_not_finite
+  other: "[!! 22NBG: Invalid vector coordinates. The vector coordinates must be finite. !!]"
+- id: cyphercore.vector_coordinate_range
+  other: "[!! numeric value out of range !!]"
+- id: cyphercore.vector_distance_dimensions
+  other: "[!! The argument `vector1` and `vector2` in the `vector_distance()` function must be of the same dimension. !!]"
+- id: cyphercore.vector_inner_type_invalid
+  other: "[!! Invalid vector inner type, expected INTEGER64, INTEGER32, INTEGER16, INTEGER8, FLOAT64 or FLOAT32 !!]"
+- id: cyphercore.vector_metric_invalid
+  other: "[!! Invalid vector distance metric, expected {{.Expected}} !!]"
+- id: cyphercore.uuid_invalid_text
+  other: "[!! The argument `input` in the `uuid()` function must be a valid uuid string. !!]"
+- id: cyphercore.result_metadata_unresolved
+  description: Expanded pseudo-locale unresolved statement schema.
+  other: "[!! Cannot establish the statement scope and result columns !!]"
+- id: cyphercore.result_metadata_mismatch
+  description: Expanded pseudo-locale execution schema mismatch.
+  other: "[!! Execution result columns do not match the statement schema !!]"
+- id: cyphercore.call_import_variables_required
+  description: A CALL import item must name a variable.
+  other: "[!! CALL imports must contain only variable names !!]"

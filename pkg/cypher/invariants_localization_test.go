@@ -1,0 +1,59 @@
+package cypher
+
+import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+type invariantCreateErrEngine struct {
+	storage.Engine
+	err error
+}
+
+func (e *invariantCreateErrEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+	return "", e.err
+}
+
+func (e *invariantCreateErrEngine) BulkCreateNodes(nodes []*storage.Node) error {
+	return e.err
+}
+
+func TestCypherInvariantErrorsHaveTypedIdentityAndExactEnglish(t *testing.T) {
+	t.Run("pipeline create failure", func(t *testing.T) {
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+		t.Cleanup(func() { _ = base.Close() })
+		store := storage.NewNamespacedEngine(base, "pipeline_invariant")
+		seed := NewStorageExecutor(store)
+		_, err := seed.Execute(context.Background(), "CREATE (:Person {id:'p1'})", nil)
+		require.NoError(t, err)
+
+		cause := errors.New("create failed")
+		exec := NewStorageExecutor(&invariantCreateErrEngine{Engine: store, err: cause})
+		outcome := exec.executePipeline(context.Background(), "MATCH (n:Person) WITH n CREATE (:Tmp {id:'t1'}) RETURN n")
+		require.Equal(t, pipelineDispatchFailed, outcome.state)
+		require.EqualError(t, outcome.err, "pipeline CREATE failed: failed to create node: create failed")
+		require.ErrorIs(t, outcome.err, cause)
+
+		var localizedErr *localization.LocalizedError
+		require.ErrorAs(t, outcome.err, &localizedErr)
+		require.Equal(t, localization.MessageCypherInvariantsPipelineCreateFailed, localizedErr.Message.ID)
+		require.Equal(t, "failed to create node: create failed", localizedErr.Message.Data["Cause"])
+	})
+
+	t.Run("transaction prefix deletion", func(t *testing.T) {
+		wrapper := &transactionStorageWrapper{}
+		_, _, err := wrapper.DeleteByPrefix("tenant:")
+		require.EqualError(t, err, "DeleteByPrefix not supported within transaction context")
+
+		var localizedErr *localization.LocalizedError
+		require.ErrorAs(t, err, &localizedErr)
+		require.Equal(t, localization.MessageCypherInvariantsDeleteByPrefixTransactionUnsupported, localizedErr.Message.ID)
+	})
+}

@@ -1,0 +1,1073 @@
+package cypher
+
+import (
+	"context"
+	"encoding/binary"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+// CypherDate is a calendar date without a time or zone.
+type CypherDate struct{ Time time.Time }
+
+// CypherLocalTime is a wall-clock time without a zone.
+type CypherLocalTime struct{ Time time.Time }
+
+// CypherTime is a wall-clock time with a fixed offset.
+type CypherTime struct{ Time time.Time }
+
+// CypherLocalDateTime is a calendar date and wall-clock time without a zone.
+type CypherLocalDateTime struct{ Time time.Time }
+
+// CypherDateTime is a zoned instant. ZoneID is retained for named-zone wire encoding.
+type CypherDateTime struct {
+	Time   time.Time
+	ZoneID string
+}
+
+func (v CypherDate) String() string          { return formatISODate(v.Time) }
+func (v CypherLocalTime) String() string     { return formatTemporalClock(v.Time, false, "", false) }
+func (v CypherTime) String() string          { return formatTemporalClock(v.Time, true, "", false) }
+func (v CypherLocalDateTime) String() string { return formatTemporalDateTime(v.Time, false, "", false) }
+func (v CypherDateTime) String() string      { return formatTemporalDateTime(v.Time, true, v.ZoneID, false) }
+
+func (CypherDate) PropertyValueKind() string          { return "date" }
+func (CypherLocalTime) PropertyValueKind() string     { return "local-time" }
+func (CypherTime) PropertyValueKind() string          { return "time" }
+func (CypherLocalDateTime) PropertyValueKind() string { return "local-date-time" }
+func (CypherDateTime) PropertyValueKind() string      { return "zoned-date-time" }
+
+func (v CypherDate) TemporalTime() time.Time          { return v.Time }
+func (v CypherLocalTime) TemporalTime() time.Time     { return v.Time }
+func (v CypherTime) TemporalTime() time.Time          { return v.Time }
+func (v CypherLocalDateTime) TemporalTime() time.Time { return v.Time }
+func (v CypherDateTime) TemporalTime() time.Time      { return v.Time }
+
+func init() {
+	registerTemporalTimeExtension(41, CypherDate{}, func(value CypherDate) time.Time { return value.Time }, func(value time.Time) CypherDate { return CypherDate{Time: value} })
+	registerTemporalTimeExtension(42, CypherLocalTime{}, func(value CypherLocalTime) time.Time { return value.Time }, func(value time.Time) CypherLocalTime { return CypherLocalTime{Time: value} })
+	registerTemporalTimeExtension(43, CypherTime{}, func(value CypherTime) time.Time { return value.Time }, func(value time.Time) CypherTime { return CypherTime{Time: value} })
+	registerTemporalTimeExtension(44, CypherLocalDateTime{}, func(value CypherLocalDateTime) time.Time { return value.Time }, func(value time.Time) CypherLocalDateTime { return CypherLocalDateTime{Time: value} })
+	msgpack.RegisterExtEncoder(46, CypherDateTime{}, encodeCypherDateTime)
+	msgpack.RegisterExtDecoder(46, CypherDateTime{}, decodeCypherDateTime)
+	msgpack.RegisterExt(45, (*CypherDuration)(nil))
+}
+
+func registerTemporalTimeExtension[T any](id int8, prototype T, extract func(T) time.Time, construct func(time.Time) T) {
+	msgpack.RegisterExtEncoder(id, prototype, func(_ *msgpack.Encoder, value reflect.Value) ([]byte, error) {
+		return marshalTemporalTime(extract(value.Interface().(T))), nil
+	})
+	msgpack.RegisterExtDecoder(id, prototype, func(decoder *msgpack.Decoder, value reflect.Value, length int) error {
+		data := make([]byte, length)
+		if err := decoder.ReadFull(data); err != nil {
+			return err
+		}
+		decoded, err := unmarshalTemporalTime(data)
+		if err != nil {
+			return err
+		}
+		value.Set(reflect.ValueOf(construct(decoded)))
+		return nil
+	})
+}
+
+func (v *CypherDate) MarshalMsgpack() ([]byte, error)      { return marshalTemporalTime(v.Time), nil }
+func (v *CypherLocalTime) MarshalMsgpack() ([]byte, error) { return marshalTemporalTime(v.Time), nil }
+func (v *CypherTime) MarshalMsgpack() ([]byte, error)      { return marshalTemporalTime(v.Time), nil }
+func (v *CypherLocalDateTime) MarshalMsgpack() ([]byte, error) {
+	return marshalTemporalTime(v.Time), nil
+}
+
+func (v *CypherDate) UnmarshalMsgpack(data []byte) error {
+	value, err := unmarshalTemporalTime(data)
+	v.Time = value
+	return err
+}
+func (v *CypherLocalTime) UnmarshalMsgpack(data []byte) error {
+	value, err := unmarshalTemporalTime(data)
+	v.Time = value
+	return err
+}
+func (v *CypherTime) UnmarshalMsgpack(data []byte) error {
+	value, err := unmarshalTemporalTime(data)
+	v.Time = value
+	return err
+}
+func (v *CypherLocalDateTime) UnmarshalMsgpack(data []byte) error {
+	value, err := unmarshalTemporalTime(data)
+	v.Time = value
+	return err
+}
+
+func marshalTemporalTime(value time.Time) []byte {
+	data := make([]byte, 16)
+	binary.BigEndian.PutUint64(data[0:8], uint64(value.Unix()))
+	binary.BigEndian.PutUint32(data[8:12], uint32(value.Nanosecond()))
+	_, offset := value.Zone()
+	binary.BigEndian.PutUint32(data[12:16], uint32(int32(offset)))
+	return data
+}
+
+func unmarshalTemporalTime(data []byte) (time.Time, error) {
+	if len(data) != 16 {
+		return time.Time{}, fmt.Errorf("invalid temporal property payload length %d", len(data))
+	}
+	seconds := int64(binary.BigEndian.Uint64(data[0:8]))
+	nanos := int64(binary.BigEndian.Uint32(data[8:12]))
+	offset := int(int32(binary.BigEndian.Uint32(data[12:16])))
+	return time.Unix(seconds, nanos).In(time.FixedZone("", offset)), nil
+}
+
+func encodeCypherDateTime(_ *msgpack.Encoder, value reflect.Value) ([]byte, error) {
+	timestamp := value.Interface().(CypherDateTime)
+	zoneID := timestamp.ZoneID
+	data := make([]byte, 16+len(zoneID))
+	binary.BigEndian.PutUint64(data[0:8], uint64(timestamp.Time.Unix()))
+	binary.BigEndian.PutUint32(data[8:12], uint32(timestamp.Time.Nanosecond()))
+	_, offset := timestamp.Time.Zone()
+	binary.BigEndian.PutUint32(data[12:16], uint32(int32(offset)))
+	copy(data[16:], zoneID)
+	return data, nil
+}
+
+func decodeCypherDateTime(decoder *msgpack.Decoder, value reflect.Value, length int) error {
+	if length < 16 {
+		return fmt.Errorf("invalid CypherDateTime payload length %d", length)
+	}
+	data := make([]byte, length)
+	if err := decoder.ReadFull(data); err != nil {
+		return err
+	}
+	seconds := int64(binary.BigEndian.Uint64(data[0:8]))
+	nanos := int64(binary.BigEndian.Uint32(data[8:12]))
+	offset := int(int32(binary.BigEndian.Uint32(data[12:16])))
+	zoneID := string(data[16:])
+	location := time.FixedZone("", offset)
+	if zoneID != "" {
+		loaded, ok := loadPinnedTemporalLocation(zoneID)
+		if !ok {
+			return fmt.Errorf("unknown CypherDateTime zone %q", zoneID)
+		}
+		location = loaded
+	}
+	value.Set(reflect.ValueOf(CypherDateTime{
+		Time:   time.Unix(seconds, nanos).In(location),
+		ZoneID: zoneID,
+	}))
+	return nil
+}
+
+type temporalStatementTimeKey struct{}
+
+// rowStatementContextKey binds the statement's context in a row for the row
+// evaluator, which takes no context argument: function calls retain execution
+// identity and version, clock calls share its instant, and subqueries run in it.
+const rowStatementContextKey = "\x00statement_context"
+
+// needsRowStatementContext preserves statement state for function dispatch and
+// graph expressions. This applies to nested calls as well as whole expressions:
+// every registry function must see the same execution identity and version.
+func needsRowStatementContext(expression string) bool {
+	if containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
+		containsRelationshipPattern(expression) || containsContextPluginCall(expression) {
+		return true
+	}
+	called := false
+	_ = forEachFunctionCall(expression, func(string, string) error {
+		called = true
+		return nil
+	})
+	return called
+}
+
+// rowStatementContextOrBackground is the statement context a row carries, or
+// the background context for a row without one: a subquery run from it keeps
+// the statement's transaction, parameters and Cypher version (#1055).
+func rowStatementContextOrBackground(values map[string]interface{}) context.Context {
+	if ctx := rowStatementContext(values); ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
+// rowStatementContext is the statement context a row carries, or nil.
+func rowStatementContext(values map[string]interface{}) context.Context {
+	ctx, _ := values[rowStatementContextKey].(context.Context)
+	return ctx
+}
+
+// containsStatementClockCall reports a call that reads the statement's clock:
+// a temporal constructor, or a decay function (decayScore, decay), which
+// scores at the statement's time (#866). A row expression with one carries
+// the statement context (rowStatementContextKey).
+func containsStatementClockCall(expression string) bool {
+	for index := 0; index < len(expression); index++ {
+		if expression[index] != '(' {
+			continue
+		}
+		end := index
+		for end > 0 && cyphertext.IsWhitespaceAt(expression, end-1) {
+			end--
+		}
+		start := end
+		for start > 0 && (cyphertext.NamePartAt(expression, start-1) || expression[start-1] == '.') {
+			start--
+		}
+		name := expression[start:end]
+		if dot := strings.IndexByte(name, '.'); dot >= 0 {
+			name = name[:dot]
+		}
+		if name == "" {
+			continue
+		}
+		switch name[0] | 0x20 {
+		case 'd':
+			if equalFoldASCII(name, "date") || equalFoldASCII(name, "datetime") || equalFoldASCII(name, "decay") || equalFoldASCII(name, "decayscore") {
+				return true
+			}
+		case 'l':
+			if equalFoldASCII(name, "localdatetime") || equalFoldASCII(name, "localtime") {
+				return true
+			}
+		case 't':
+			if equalFoldASCII(name, "time") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *StorageExecutor) temporalClockTime(ctx context.Context, clock string) time.Time {
+	if clock == "realtime" {
+		return time.Now().UTC()
+	}
+	if clock != "statement" {
+		if e.txContext != nil && e.txContext.active {
+			if transaction, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
+				return transaction.StartTime.UTC()
+			}
+		}
+		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+			return wrapper.tx.StartTime.UTC()
+		}
+	}
+	if instant, ok := ctx.Value(temporalStatementTimeKey{}).(time.Time); ok {
+		return instant
+	}
+	return time.Now().UTC()
+}
+
+func temporalClockValue(kind string, instant time.Time, zoneID string) (interface{}, bool) {
+	switch kind {
+	case "date":
+		return CypherDate{Time: time.Date(instant.Year(), instant.Month(), instant.Day(), 0, 0, 0, 0, time.UTC)}, true
+	case "localtime":
+		return CypherLocalTime{Time: instant}, true
+	case "time":
+		return CypherTime{Time: instant}, true
+	case "localdatetime":
+		return CypherLocalDateTime{Time: instant}, true
+	case "datetime":
+		return CypherDateTime{Time: instant, ZoneID: zoneID}, true
+	default:
+		return nil, false
+	}
+}
+
+// evaluateTemporalConstructor evaluates a temporal function call: the
+// constructors (date(…), datetime.realtime(…), …), X.truncate, the
+// duration.between family and datetime.fromepoch / fromepochmillis. handled
+// is false for any other expression. A call Neo4j rejects at run time
+// returns its error: an argument of a type the function doesn't take is
+// ProcedureCallFailed ("Invalid call signature for Truncate: …").
+func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evaluate func(string) (interface{}, bool, error), expression string) (result interface{}, handled bool, err error) {
+	var argumentErr error
+	var lastArgument interface{}
+	argumentEvaluated := false
+	ctxEval := func(argument string) interface{} {
+		if argumentErr != nil {
+			return nil
+		}
+		value, resolved, evalErr := evaluate(argument)
+		value, argumentErr = checkedPropertyResult(ctx, argument, value, resolved, evalErr)
+		argumentEvaluated, lastArgument = true, value
+		return value
+	}
+	defer func() {
+		if argumentErr != nil {
+			result, err = nil, argumentErr
+			return
+		}
+		if result == nil && handled && err == nil && argumentEvaluated && lastArgument != nil {
+			var callFacts1 functionCallFacts
+			if call := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts1); call && isTemporalConstructor(callFacts1.name) && strings.TrimSpace(callFacts1.inner) != "" && len(e.splitFunctionArgs(callFacts1.inner)) == 1 {
+				function := callFacts1.name
+
+				err = temporalConstructorError(function, lastArgument)
+			}
+		}
+	}()
+	var callFacts2 functionCallFacts
+	ok := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts2)
+	name, argument := callFacts2.name, callFacts2.inner
+	if !ok {
+		return nil, false, nil
+	}
+	kind := lowerASCII(name)
+	if kind == "duration.between" || kind == "duration.inmonths" || kind == "duration.indays" || kind == "duration.inseconds" {
+		arguments := e.splitFunctionArgs(argument)
+		if len(arguments) != 2 {
+			return nil, true, nil
+		}
+		leftExpression := strings.TrimSpace(arguments[0])
+		rightExpression := strings.TrimSpace(arguments[1])
+		left := ctxEval(leftExpression)
+		right := left
+		if rightExpression != leftExpression {
+			right = ctxEval(rightExpression)
+		}
+		if left == nil || right == nil {
+			return nil, true, nil
+		}
+		if !isTemporalInstant(left) || !isTemporalInstant(right) {
+			return nil, true, temporalProcedureCallError("Between", left, right)
+		}
+		if leftExpression == rightExpression {
+			return &CypherDuration{}, true, nil
+		}
+		value, _ := durationBetweenTemporalValues(strings.TrimPrefix(kind, "duration."), left, right)
+		return value, true, nil
+	}
+	if strings.HasSuffix(kind, ".truncate") {
+		if _, builtin := builtInCypherFunctions[kind]; !builtin {
+			return nil, false, nil // A qualified plugin keeps its own handler.
+		}
+		kind = strings.TrimSuffix(kind, ".truncate")
+		arguments := e.splitFunctionArgs(argument)
+		if len(arguments) < 1 || len(arguments) > 3 {
+			return nil, true, nil
+		}
+		unitValue := ctxEval(strings.TrimSpace(arguments[0]))
+		var value interface{}
+		if len(arguments) == 1 {
+			value, _ = temporalClockValue(kind, e.temporalClockTime(ctx, "transaction"), "")
+		} else {
+			value = ctxEval(strings.TrimSpace(arguments[1]))
+		}
+		var fieldsValue interface{}
+		fields := map[string]interface{}{}
+		if len(arguments) == 3 {
+			fieldsValue = ctxEval(strings.TrimSpace(arguments[2]))
+		}
+		unit, unitOK := unitValue.(string)
+		if fieldsValue != nil {
+			var fieldsOK bool
+			if fields, fieldsOK = toStringAnyMap(fieldsValue); !fieldsOK {
+				unitOK = false
+			}
+		}
+		if !unitOK || !isTemporalInstant(value) {
+			return nil, true, temporalProcedureCallError("Truncate", unitValue, value, fieldsValue)
+		}
+		return truncateTemporalValue(kind, unit, value, fields)
+	}
+	clock := "transaction"
+	clockFunction := false
+	if dot := strings.IndexByte(kind, '.'); dot > 0 {
+		suffix := kind[dot+1:]
+		if suffix == "transaction" || suffix == "statement" || suffix == "realtime" {
+			clock, clockFunction = suffix, true
+			kind = kind[:dot]
+		}
+	}
+	switch kind {
+	case "date", "localtime", "time", "localdatetime", "datetime", "duration":
+		argument = strings.TrimSpace(argument)
+		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && strings.IndexByte(argument, ',') >= 0 {
+			if arguments := e.splitFunctionArgs(argument); len(arguments) == 2 {
+				value, err := constructTemporalWithPattern(kind, ctxEval(strings.TrimSpace(arguments[0])), ctxEval(strings.TrimSpace(arguments[1])))
+				return value, true, err
+			}
+		}
+		if clockFunction && argument != "" {
+			zoneID, valid := ctxEval(argument).(string)
+			if !valid {
+				return nil, true, nil
+			}
+			instant := e.temporalClockTime(ctx, clock)
+			location, zoneID, valid := temporalLocationForProjection(map[string]interface{}{"timezone": zoneID}, true, instant, true)
+			if !valid {
+				return nil, true, nil
+			}
+			value, handled := temporalClockValue(kind, instant.In(location), zoneID)
+			return value, handled, nil
+		}
+		if argument == "" {
+			value, _ := temporalClockValue(kind, e.temporalClockTime(ctx, clock), "")
+			return value, true, nil
+		}
+		value := ctxEval(argument)
+		if value == nil {
+			return nil, true, nil
+		}
+		if text, isString := value.(string); isString {
+			parsed, valid, err := parseTemporalTextWithError(kind, text)
+			if err != nil {
+				return nil, true, err
+			}
+			if !valid {
+				return nil, true, nil
+			}
+			return parsed, true, nil
+		}
+		if converted, valid := projectTemporalValue(kind, value); valid {
+			return converted, true, nil
+		}
+		fields, isMap := toStringAnyMap(value)
+		if !isMap {
+			return nil, true, nil
+		}
+		built, _ := buildTemporalValue(kind, fields)
+		return built, true, nil
+	case "datetime.fromepoch":
+		// Both arguments are integers, whatever the signature says: a float or
+		// null is ProcedureCallFailed, and the nanoseconds are of the second.
+		arguments := e.splitFunctionArgs(argument)
+		if len(arguments) != 2 {
+			return nil, true, nil
+		}
+		secondsValue := ctxEval(strings.TrimSpace(arguments[0]))
+		nanosValue := ctxEval(strings.TrimSpace(arguments[1]))
+		seconds, secondsOK := cypherIntegerValue(secondsValue)
+		nanos, nanosOK := cypherIntegerValue(nanosValue)
+		if !secondsOK || !nanosOK {
+			return nil, true, temporalProcedureCallError("FromEpoch", secondsValue, nanosValue)
+		}
+		if nanos < 0 || nanos > 999_999_999 {
+			return nil, true, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+				localization.CypherCoreTemporalInvalidNanosecond(nanos))
+		}
+		return CypherDateTime{Time: time.Unix(seconds, nanos).UTC()}, true, nil
+	case "datetime.fromepochmillis":
+		millisValue := ctxEval(strings.TrimSpace(argument))
+		millis, valid := cypherIntegerValue(millisValue)
+		if !valid {
+			return nil, true, temporalProcedureCallError("FromEpochMillis", millisValue)
+		}
+		return CypherDateTime{Time: time.UnixMilli(millis).UTC()}, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
+// temporalEpochBase reads a temporal constructor map's epochSeconds or
+// epochMillis as Neo4j does: in datetime() it is the base instant (UTC, then
+// in the map's timezone) that the map's other fields override, like a
+// datetime key (datetime({epochSeconds: 1700000000, year: 2020}) is
+// 2020-11-14T22:13:20Z); fields is returned with the epoch key replaced by
+// that datetime. An epoch key in another constructor is a TypeError ("Not
+// supported: epochSeconds"); an epoch that isn't an integer, both keys, or
+// one with a datetime, date or time key is an ArgumentError. A map without
+// either key is returned unchanged.
+func temporalEpochBase(kind string, fields map[string]interface{}) (map[string]interface{}, error) {
+	seconds, hasSeconds := fields["epochSeconds"]
+	millis, hasMillis := fields["epochMillis"]
+	if !hasSeconds && !hasMillis {
+		return fields, nil
+	}
+	key, value := "epochSeconds", seconds
+	if !hasSeconds {
+		key, value = "epochMillis", millis
+	}
+	if kind != "datetime" {
+		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgument", localization.CypherCoreTemporalFieldNotSupported(key))
+	}
+	if hasSeconds && hasMillis {
+		return nil, temporalArgumentError(localization.CypherCoreTemporalFieldsConflict("epochMillis", "epochSeconds"))
+	}
+	for _, base := range []string{"datetime", "date", "time"} {
+		if _, exists := fields[base]; exists {
+			return nil, temporalArgumentError(localization.CypherCoreTemporalFieldsConflict(key, base))
+		}
+	}
+	epoch, isInteger := cypherIntegerValue(value)
+	if !isInteger {
+		return nil, temporalArgumentError(localization.CypherCoreTemporalEpochInvalid(neo4jProvidedValue(value)))
+	}
+	instant := time.Unix(epoch, 0).UTC()
+	if key == "epochMillis" {
+		instant = time.UnixMilli(epoch).UTC()
+	}
+	based := cloneTemporalFields(fields)
+	delete(based, key)
+	based["datetime"] = CypherDateTime{Time: instant}
+	return based, nil
+}
+
+func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}, bool) {
+	if kind == "duration" {
+		return buildDurationFromFields(fields), true
+	}
+	fields, err := temporalEpochBase(kind, fields)
+	if err != nil {
+		return nil, true
+	}
+	// A map Neo4j rejects builds no value (temporalConstructorError reports
+	// why); nothing rolls over into the next month, day or hour.
+	if temporalFieldsError(kind, fields) != nil {
+		return nil, true
+	}
+	dateFields := fields
+	if source, exists := fields["datetime"]; exists {
+		dateFields = cloneTemporalFields(fields)
+		if _, hasDate := dateFields["date"]; !hasDate {
+			dateFields["date"] = source
+		}
+	}
+	date, valid := buildDateFromFields(dateFields)
+	if !valid && kind != "localtime" && kind != "time" {
+		return nil, true
+	}
+	if kind == "date" {
+		return CypherDate{Time: date}, true
+	}
+	baseTime, baseZoned, hasBaseTime := temporalBaseTime(fields)
+	hour, minute, second, nanosecond := int64(0), int64(0), int64(0), int64(0)
+	if hasBaseTime {
+		hour, minute, second, nanosecond = int64(baseTime.Hour()), int64(baseTime.Minute()), int64(baseTime.Second()), int64(baseTime.Nanosecond())
+	}
+	hour = temporalFieldInt(fields, "hour", hour)
+	minute = temporalFieldInt(fields, "minute", minute)
+	second = temporalFieldInt(fields, "second", second)
+	if hasAnyTemporalField(fields, "nanosecond", "microsecond", "millisecond") {
+		nanosecond = temporalFieldInt(fields, "nanosecond", 0) +
+			temporalFieldInt(fields, "microsecond", 0)*1_000 +
+			temporalFieldInt(fields, "millisecond", 0)*1_000_000
+	}
+	if kind == "localtime" || kind == "time" {
+		date = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	zone, zoneID, zoneOK := temporalLocationForProjection(fields, kind == "time" || kind == "datetime", baseTime, baseZoned)
+	if !zoneOK {
+		return nil, true
+	}
+	if zoneID != "" {
+		zone, zoneOK = loadTemporalLocationAt(zoneID, date)
+		if !zoneOK {
+			return nil, true
+		}
+	}
+	if hasBaseTime && baseZoned && hasAnyTemporalField(fields, "timezone") && (kind == "time" || kind == "datetime") {
+		source := time.Date(date.Year(), date.Month(), date.Day(), baseTime.Hour(), baseTime.Minute(), baseTime.Second(), baseTime.Nanosecond(), baseTime.Location())
+		converted := source.In(zone)
+		date = converted
+		hour, minute, second, nanosecond = int64(converted.Hour()), int64(converted.Minute()), int64(converted.Second()), int64(converted.Nanosecond())
+		hour = temporalFieldInt(fields, "hour", hour)
+		minute = temporalFieldInt(fields, "minute", minute)
+		second = temporalFieldInt(fields, "second", second)
+		if hasAnyTemporalField(fields, "nanosecond", "microsecond", "millisecond") {
+			nanosecond = temporalFieldInt(fields, "nanosecond", 0) + temporalFieldInt(fields, "microsecond", 0)*1_000 + temporalFieldInt(fields, "millisecond", 0)*1_000_000
+		}
+	}
+	value := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), zone)
+	if kind == "datetime" && zoneID != "" {
+		local := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), time.UTC)
+		value = ResolveNamedZoneLocalTime(local, zone, true)
+	}
+	value = normalizeTemporalNamedZone(value)
+	switch kind {
+	case "localtime":
+		return CypherLocalTime{Time: value}, true
+	case "time":
+		return CypherTime{Time: value}, true
+	case "localdatetime":
+		return CypherLocalDateTime{Time: value}, true
+	case "datetime":
+		return CypherDateTime{Time: value, ZoneID: zoneID}, true
+	default:
+		return value, true
+	}
+}
+
+func projectTemporalValue(kind string, value interface{}) (interface{}, bool) {
+	// Public parameters may carry a pointer to any typed temporal value.
+	// Project the value before reading its source date, clock and offset.
+	if pointer := reflect.ValueOf(value); pointer.IsValid() && pointer.Kind() == reflect.Ptr {
+		if pointer.IsNil() {
+			return nil, false
+		}
+		value = pointer.Elem().Interface()
+	}
+	date, hasDate := temporalBaseDate(value)
+	clock, zoned, hasTime := temporalTimeParts(value)
+	switch kind {
+	case "date":
+		if hasDate {
+			return CypherDate{Time: time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)}, true
+		}
+	case "localtime":
+		if hasTime {
+			return CypherLocalTime{Time: time.Date(1970, 1, 1, clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), time.UTC)}, true
+		}
+	case "time":
+		if hasTime {
+			location := time.UTC
+			if zoned {
+				// A TIME carries the offset at the source instant. Reusing a
+				// region on the placeholder date can select a different DST
+				// or historical offset (for example St John's in summer).
+				_, offset := clock.Zone()
+				location = time.FixedZone("", offset)
+			}
+			return CypherTime{Time: time.Date(1970, 1, 1, clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location)}, true
+		}
+	case "localdatetime":
+		if hasDate && hasTime {
+			return CypherLocalDateTime{Time: time.Date(date.Year(), date.Month(), date.Day(), clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), time.UTC)}, true
+		}
+	case "datetime":
+		if hasDate && hasTime {
+			location := time.UTC
+			zoneID := ""
+			if zoned {
+				location = clock.Location()
+			}
+			if typed, ok := value.(CypherDateTime); ok {
+				zoneID = typed.ZoneID
+			}
+			return CypherDateTime{Time: time.Date(date.Year(), date.Month(), date.Day(), clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location), ZoneID: zoneID}, true
+		}
+	}
+	return nil, false
+}
+
+func buildDateFromFields(fields map[string]interface{}) (time.Time, bool) {
+	base, hasBase := temporalBaseDate(fields["date"])
+	year, hasYear := temporalOptionalInt(fields, "year")
+	if !hasYear && hasBase {
+		year = int64(base.Year())
+	}
+	if !hasYear && !hasBase {
+		return time.Time{}, false
+	}
+	if week, exists := temporalOptionalInt(fields, "week"); exists {
+		day := int64(1)
+		if hasBase {
+			isoYear, _ := base.ISOWeek()
+			if !hasYear {
+				year = int64(isoYear)
+			}
+			day = int64(base.Weekday())
+			if day == 0 {
+				day = 7
+			}
+		}
+		day = temporalFieldInt(fields, "dayOfWeek", day)
+		jan4 := time.Date(int(year), 1, 4, 0, 0, 0, 0, time.UTC)
+		monday := jan4.AddDate(0, 0, -(int(jan4.Weekday())+6)%7)
+		return monday.AddDate(0, 0, (int(week)-1)*7+int(day)-1), true
+	}
+	if ordinal, exists := temporalOptionalInt(fields, "ordinalDay"); exists {
+		return time.Date(int(year), 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(ordinal)-1), true
+	}
+	if quarter, exists := temporalOptionalInt(fields, "quarter"); exists {
+		quarterStart := time.Date(int(year), time.Month((quarter-1)*3+1), 1, 0, 0, 0, 0, time.UTC)
+		if dayOfQuarter, given := temporalOptionalInt(fields, "dayOfQuarter"); given || !hasBase {
+			if !given {
+				dayOfQuarter = 1
+			}
+			return quarterStart.AddDate(0, 0, int(dayOfQuarter)-1), true
+		}
+		// The base date's month of its quarter and day of month, the day
+		// clamped to the new month (Neo4j: 2020-05-31 with quarter 1 is
+		// 2020-02-29).
+		month := quarterStart.Month() + (base.Month()-1)%3
+		return time.Date(int(year), month, clampDay(year, month, base.Day()), 0, 0, 0, 0, time.UTC), true
+	}
+	month, day := int64(1), int64(1)
+	if hasBase {
+		month, day = int64(base.Month()), int64(base.Day())
+	}
+	month = temporalFieldInt(fields, "month", month)
+	if explicitDay, given := temporalOptionalInt(fields, "day"); given {
+		day = explicitDay
+	} else if hasBase {
+		// A day the base date supplies is clamped to the new month (Neo4j:
+		// 2020-05-31 with month 2 is 2020-02-29), not rolled over.
+		day = int64(clampDay(year, time.Month(month), int(day)))
+	}
+	return time.Date(int(year), time.Month(month), int(day), 0, 0, 0, 0, time.UTC), true
+}
+
+// clampDay is day, or the month's last day when the month is shorter.
+func clampDay(year int64, month time.Month, day int) int {
+	if last := daysInMonth(year, month); day > last {
+		return last
+	}
+	return day
+}
+
+func temporalBaseTime(fields map[string]interface{}) (time.Time, bool, bool) {
+	if value, exists := fields["time"]; exists {
+		return temporalTimeParts(value)
+	}
+	if value, exists := fields["datetime"]; exists {
+		return temporalTimeParts(value)
+	}
+	return time.Time{}, false, false
+}
+
+func temporalTimeParts(value interface{}) (time.Time, bool, bool) {
+	switch value := value.(type) {
+	case CypherLocalTime:
+		return value.Time, false, true
+	case CypherTime:
+		return value.Time, true, true
+	case CypherLocalDateTime:
+		return value.Time, false, true
+	case CypherDateTime:
+		return value.Time, true, true
+	case time.Time:
+		return value, true, true
+	default:
+		return time.Time{}, false, false
+	}
+}
+
+func cloneTemporalFields(fields map[string]interface{}) map[string]interface{} {
+	clone := make(map[string]interface{}, len(fields)+1)
+	for key, value := range fields {
+		clone[key] = value
+	}
+	return clone
+}
+
+func hasAnyTemporalField(fields map[string]interface{}, names ...string) bool {
+	for _, name := range names {
+		if _, exists := fields[name]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func temporalLocationForProjection(fields map[string]interface{}, zoned bool, base time.Time, baseZoned bool) (*time.Location, string, bool) {
+	if !zoned {
+		return time.UTC, "", true
+	}
+	if _, explicit := fields["timezone"]; explicit {
+		return temporalLocation(fields, true)
+	}
+	if baseZoned {
+		zoneID := ""
+		if strings.Contains(base.Location().String(), "/") {
+			zoneID = base.Location().String()
+		}
+		return base.Location(), zoneID, true
+	}
+	return time.UTC, "", true
+}
+
+func temporalBaseDate(value interface{}) (time.Time, bool) {
+	switch value := value.(type) {
+	case CypherDate:
+		return value.Time, true
+	case CypherLocalDateTime:
+		return value.Time, true
+	case CypherDateTime:
+		return value.Time, true
+	case time.Time:
+		return value, true
+	case string:
+		parsed, err := time.Parse("2006-01-02", value)
+		return parsed, err == nil
+	default:
+		return time.Time{}, false
+	}
+}
+
+func temporalLocation(fields map[string]interface{}, zoned bool) (*time.Location, string, bool) {
+	if !zoned {
+		return time.UTC, "", true
+	}
+	zoneValue, exists := fields["timezone"]
+	if !exists {
+		return time.UTC, "", true
+	}
+	zoneID, ok := zoneValue.(string)
+	if !ok {
+		return nil, "", false
+	}
+	if offset, ok := parseTemporalOffset(zoneID); ok {
+		return time.FixedZone(zoneID, offset), "", true
+	}
+	if id, offset, length, ok := prefixedOffsetZone(zoneID); ok && length == len(zoneID) {
+		if offset == 0 {
+			location, _ := loadTemporalLocation(id)
+			return location, id, true
+		}
+		return time.FixedZone(id, offset), id, true
+	}
+	location, err := time.LoadLocation(zoneID)
+	if err != nil {
+		return nil, "", false
+	}
+	return location, zoneID, true
+}
+
+func parseTemporalOffset(value string) (int, bool) {
+	if value == "Z" {
+		return 0, true
+	}
+	if len(value) == 5 || len(value) == 7 {
+		sign := 1
+		if value[0] == '-' {
+			sign = -1
+		} else if value[0] != '+' {
+			return 0, false
+		}
+		hour, errHour := strconv.Atoi(value[1:3])
+		minute, errMinute := strconv.Atoi(value[3:5])
+		second := 0
+		var errSecond error
+		if len(value) == 7 {
+			second, errSecond = strconv.Atoi(value[5:7])
+		}
+		if errHour != nil || errMinute != nil || errSecond != nil || minute > 59 || second > 59 {
+			return 0, false
+		}
+		return sign * (hour*3600 + minute*60 + second), true
+	}
+	if len(value) != 6 && len(value) != 9 {
+		return 0, false
+	}
+	sign := 1
+	if value[0] == '-' {
+		sign = -1
+	} else if value[0] != '+' {
+		return 0, false
+	}
+	if value[3] != ':' || (len(value) == 9 && value[6] != ':') {
+		return 0, false
+	}
+	hour, errHour := strconv.Atoi(value[1:3])
+	minute, errMinute := strconv.Atoi(value[4:6])
+	second := 0
+	var errSecond error
+	if len(value) == 9 {
+		second, errSecond = strconv.Atoi(value[7:9])
+	}
+	if errHour != nil || errMinute != nil || errSecond != nil || minute > 59 || second > 59 {
+		return 0, false
+	}
+	return sign * (hour*3600 + minute*60 + second), true
+}
+
+func temporalFieldInt(fields map[string]interface{}, name string, fallback int64) int64 {
+	if value, exists := fields[name]; exists {
+		if integer, ok := temporalInt(value); ok {
+			return integer
+		}
+	}
+	return fallback
+}
+
+func temporalOptionalInt(fields map[string]interface{}, name string) (int64, bool) {
+	value, exists := fields[name]
+	if !exists {
+		return 0, false
+	}
+	integer, ok := temporalInt(value)
+	return integer, ok
+}
+
+func temporalInt(value interface{}) (int64, bool) {
+	return valueconvert.Int64(value, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat)
+}
+
+func temporalFloat(fields map[string]interface{}, name string) float64 {
+	floating, ok := valueconvert.NumericFloat64(fields[name])
+	if !ok {
+		return 0
+	}
+	return floating
+}
+
+func buildDurationFromFields(fields map[string]interface{}) *CypherDuration {
+	months := temporalFloat(fields, "years")*12 + temporalFloat(fields, "quarters")*3 + temporalFloat(fields, "months")
+	wholeMonths, fractionalMonths := math.Modf(months)
+	days := temporalFloat(fields, "weeks")*7 + temporalFloat(fields, "days") + fractionalMonths*30.436875
+	wholeDays, fractionalDays := math.Modf(days)
+	seconds := fractionalDays*86400 + temporalFloat(fields, "hours")*3600 + temporalFloat(fields, "minutes")*60 + temporalFloat(fields, "seconds")
+	seconds += temporalFloat(fields, "milliseconds") / 1_000
+	seconds += temporalFloat(fields, "microseconds") / 1_000_000
+	seconds += temporalFloat(fields, "nanoseconds") / 1_000_000_000
+	wholeSeconds, fraction := math.Modf(seconds)
+	nanos := int64(math.Round(fraction * 1_000_000_000))
+	secondsInt := int64(wholeSeconds)
+	if nanos == 1_000_000_000 {
+		secondsInt++
+		nanos = 0
+	} else if nanos == -1_000_000_000 {
+		secondsInt--
+		nanos = 0
+	}
+	hours := secondsInt / 3_600
+	secondsInt %= 3_600
+	minutes := secondsInt / 60
+	secondsInt %= 60
+	totalMonths := int64(wholeMonths)
+	return &CypherDuration{
+		Years:   totalMonths / 12,
+		Months:  totalMonths % 12,
+		Days:    int64(wholeDays),
+		Hours:   hours,
+		Minutes: minutes,
+		Seconds: secondsInt,
+		Nanos:   nanos,
+	}
+}
+
+// formatTemporalClock writes a clock time with its offset and zone. Neo4j
+// writes seconds two ways: its value serialization (HTTP results, the
+// String methods) leaves out zero seconds (12:34), while toString() always
+// writes them (12:34:00, #818); alwaysSeconds selects toString()'s form.
+func formatTemporalClock(value time.Time, zoned bool, zoneID string, alwaysSeconds bool) string {
+	format := "15:04"
+	if alwaysSeconds || value.Second() != 0 || value.Nanosecond() != 0 {
+		format = "15:04:05"
+		if value.Nanosecond() != 0 {
+			format += ".999999999"
+		}
+	}
+	result := value.Format(format)
+	if zoned {
+		_, offset := value.Zone()
+		result += formatTemporalOffset(offset)
+	}
+	if zoneID != "" {
+		result += "[" + zoneID + "]"
+	}
+	return result
+}
+
+// formatTemporalDateTime writes a date-time; alwaysSeconds as in
+// formatTemporalClock.
+// formatISODate writes a date as ISO 8601 does: a year past 9999 has a +
+// (+12021-01-01), a year before 1 a - (-0044-03-15).
+func formatISODate(value time.Time) string {
+	if value.Year() > 9999 {
+		return "+" + value.Format("2006-01-02")
+	}
+	return value.Format("2006-01-02")
+}
+
+func formatTemporalDateTime(value time.Time, zoned bool, zoneID string, alwaysSeconds bool) string {
+	result := formatISODate(value) + "T" + formatTemporalClock(value, zoned, "", alwaysSeconds)
+	if zoneID != "" {
+		result += "[" + zoneID + "]"
+	}
+	return result
+}
+
+func formatTemporalOffset(offset int) string {
+	if offset == 0 {
+		return "Z"
+	}
+	sign := '+'
+	if offset < 0 {
+		sign = '-'
+		offset = -offset
+	}
+	hours := offset / 3600
+	minutes := (offset % 3600) / 60
+	seconds := offset % 60
+	if seconds == 0 {
+		return fmt.Sprintf("%c%02d:%02d", sign, hours, minutes)
+	}
+	return fmt.Sprintf("%c%02d:%02d:%02d", sign, hours, minutes, seconds)
+}
+
+// temporalConstructorTypes names the value each temporal constructor builds,
+// as Neo4j's errors name it.
+var temporalConstructorTypes = map[string]string{
+	"date":          "Date",
+	"datetime":      "DateTime",
+	"localdatetime": "LocalDateTime",
+	"time":          "Time",
+	"localtime":     "LocalTime",
+	"duration":      "Duration",
+}
+
+// isTemporalConstructor reports date, datetime, localdatetime, time,
+// localtime and duration.
+func isTemporalConstructor(function string) bool {
+	_, ok := temporalConstructorTypes[lowerASCII(function)]
+	return ok
+}
+
+// temporalConstructorError is the statement error of a temporal constructor
+// that built no value from a non-null input, as Neo4j 5.26 reports it: a
+// SyntaxError for text it can't parse, ExecutionFailed for a map with
+// invalid fields, and ProcedureCallFailed for a value of another type. It is
+// nil for a null input, which gives null.
+func temporalConstructorError(function string, input interface{}) error {
+	typeName := temporalConstructorTypes[lowerASCII(function)]
+	switch value := input.(type) {
+	case nil:
+		return nil
+	case string:
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
+			localization.CypherCoreTemporalTextUnparseable(typeName, strconv.Quote(value)))
+	case map[string]interface{}:
+		value, err := temporalEpochBase(lowerASCII(function), value)
+		if err != nil {
+			return err
+		}
+		if err := temporalFieldsError(lowerASCII(function), value); err != nil {
+			return err
+		}
+		return localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",
+			localization.CypherCoreTemporalMapInvalid(typeName, fmt.Sprintf("%v", value)))
+	}
+	return temporalCallSignatureError(typeName, neo4jProvidedValue(input))
+}
+
+// neo4jProvidedValue writes a value as Neo4j lists the input of a call with
+// an invalid signature: NO_VALUE, String("x"), Boolean('true'), Double(1.5),
+// Long(1), and any other value as itself.
+func neo4jProvidedValue(value interface{}) string {
+	switch typed := value.(type) {
+	case nil:
+		return "NO_VALUE"
+	case string:
+		return "String(" + strconv.Quote(typed) + ")"
+	case bool:
+		return fmt.Sprintf("Boolean('%t')", typed)
+	case float32, float64:
+		return fmt.Sprintf("Double(%v)", typed)
+	}
+	if integer, ok := cypherIntegerValue(value); ok {
+		return fmt.Sprintf("Long(%d)", integer)
+	}
+	return fmt.Sprintf("%v", value)
+}
+
+// temporalCallSignatureError is Neo4j's error for a temporal constructor
+// called with a value of a type it doesn't take.
+func temporalCallSignatureError(typeName, provided string) error {
+	return localizedStatusError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument",
+		localization.CypherCoreTemporalCallSignature(typeName, provided))
+}

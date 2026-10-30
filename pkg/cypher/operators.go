@@ -1,0 +1,1012 @@
+// Operator evaluation for NornicDB Cypher.
+//
+// This file contains functions for evaluating logical, comparison, and arithmetic
+// operators in Cypher expressions. These operators follow Neo4j semantics for
+// compatibility.
+//
+// # Operator Categories
+//
+// Logical Operators:
+//   - AND: Logical conjunction (short-circuit evaluation)
+//   - OR: Logical disjunction (short-circuit evaluation)
+//   - XOR: Logical exclusive or
+//   - NOT: Logical negation
+//
+// Comparison Operators:
+//   - = : Equality
+//   - <> : Inequality (also !=)
+//   - < : Less than
+//   - > : Greater than
+//   - <= : Less than or equal
+//   - >= : Greater than or equal
+//   - =~ : Regular expression match
+//
+// Arithmetic Operators:
+//   - + : Addition (also date + duration)
+//   - - : Subtraction (also date - duration, date - date)
+//   - * : Multiplication
+//   - / : Division
+//   - % : Modulo
+//
+// # Operator Precedence
+//
+// From highest to lowest:
+//  1. Unary: NOT, -
+//  2. Multiplicative: *, /, %
+//  3. Additive: +, -
+//  4. Comparison: =, <>, <, >, <=, >=, =~
+//  5. Logical AND
+//  6. Logical XOR
+//  7. Logical OR
+//
+// # ELI12
+//
+// Operators are like action words in math:
+//   - AND means "both must be true" (like needing both a ticket AND ID to enter)
+//   - OR means "at least one" (like having either cash OR a card to pay)
+//   - + means "add together" (like combining apples from two baskets)
+//   - = means "are these the same?" (like checking if two puzzle pieces match)
+//
+// When you have multiple operators like "2 + 3 * 4", we follow PEMDAS rules:
+// multiplication (*) happens before addition (+), so it's 2 + (3 * 4) = 14.
+//
+// # Neo4j Compatibility
+//
+// These operators match Neo4j behavior exactly:
+//   - NULL propagation (NULL AND true = NULL)
+//   - Type coercion rules (comparing integers to floats)
+//   - Date arithmetic (date + duration)
+//   - Regex matching (=~ operator)
+
+package cypher
+
+import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
+)
+
+func asciiLowerByte(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
+}
+
+func equalFoldASCII(text, other string) bool {
+	if len(text) != len(other) {
+		return false
+	}
+	for i := 0; i < len(text); i++ {
+		if asciiLowerByte(text[i]) != asciiLowerByte(other[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasPrefixFoldASCII(text, prefix string) bool {
+	return len(text) >= len(prefix) && equalFoldASCII(text[:len(prefix)], prefix)
+}
+
+func hasSuffixFoldASCII(text, suffix string) bool {
+	return len(text) >= len(suffix) && equalFoldASCII(text[len(text)-len(suffix):], suffix)
+}
+
+func hasKeywordPrefixFoldASCII(text, keyword string) bool {
+	if len(text) < len(keyword) || !equalFoldASCII(text[:len(keyword)], keyword) {
+		return false
+	}
+	return len(text) == len(keyword) || cyphertext.IsWhitespaceAt(text, len(keyword))
+}
+
+func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
+	if strings.HasPrefix(op, " ") && strings.HasSuffix(op, " ") {
+		word := strings.TrimSpace(op)
+		start := queryGapEnd(expr, idx)
+		if start > idx {
+			before := skipBackSpaces(expr, idx)
+			if before > 0 && strings.IndexByte(".:", expr[before-1]) >= 0 {
+				return false
+			}
+			end, ok := keywordMatchAt(expr, start, word, 0, len(word))
+			if !ok || !keywordBoundaryOK(expr, end, keywordBoundaryWord, keywordAfter) {
+				return false
+			}
+			if !caseInsensitive {
+				at := start
+				for index := 0; index < len(word); index++ {
+					if cyphertext.IsWhitespaceAt(word, index) {
+						for index+1 < len(word) && cyphertext.IsWhitespaceAt(word, index+1) {
+							index++
+						}
+						next, unfinished := cyphertext.GapEnd(expr, at)
+						if next <= at || unfinished >= 0 {
+							return false
+						}
+						at = next
+					} else {
+						if expr[at] != word[index] {
+							return false
+						}
+						at++
+					}
+				}
+			}
+			return true
+		}
+	}
+	for offset := 0; offset < len(op); offset++ {
+		exprByte := expr[idx+offset]
+		opByte := op[offset]
+		if caseInsensitive {
+			exprByte = asciiLowerByte(exprByte)
+			opByte = asciiLowerByte(opByte)
+		}
+		if exprByte != opByte {
+			return false
+		}
+	}
+	return true
+}
+
+// isSpacedKeywordOperator reports a logical keyword operator written with
+// its surrounding spaces (" AND ", " OR ", " XOR ").
+func isSpacedKeywordOperator(op string) bool {
+	switch strings.ToUpper(op) {
+	case " AND ", " OR ", " XOR ":
+		return true
+	}
+	return false
+}
+
+func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) int {
+	if len(op) == 0 || len(expr) < len(op) {
+		return -1
+	}
+
+	prefix := op[0]
+	var foldMask byte
+	if caseInsensitive && (prefix >= 'A' && prefix <= 'Z' || prefix >= 'a' && prefix <= 'z') {
+		foldMask = 0x20
+		prefix |= foldMask
+	}
+	parenDepth := 0
+	bracketDepth := 0
+	braceDepth := 0
+	keyword := isSpacedKeywordOperator(op)
+
+	for i := 0; i <= len(expr)-len(op); i++ {
+		c := expr[i]
+		if c == '/' {
+			if end := queryCommentEnd(expr, i); end >= 0 {
+				i = end - 1
+				continue
+			}
+		}
+		switch {
+		case isCypherQuoteByte(c):
+			i = skipCypherQuotedText(expr, i, c) - 1
+		case c == '(':
+			parenDepth++
+		case c == ')':
+			parenDepth--
+		case trackBrackets && c == '[':
+			bracketDepth++
+		case trackBrackets && c == ']':
+			bracketDepth--
+		case trackBrackets && c == '{':
+			braceDepth++
+		case trackBrackets && c == '}':
+			braceDepth--
+		case parenDepth == 0 && (!trackBrackets || (bracketDepth == 0 && braceDepth == 0)):
+			if c|foldMask == prefix && (len(op) == 1 || operatorMatchesAt(expr, op, i, caseInsensitive)) {
+				if op == "=" {
+					if i > 0 && (expr[i-1] == '<' || expr[i-1] == '>' || expr[i-1] == '!') {
+						continue
+					}
+					if i < len(expr)-1 && expr[i+1] == '~' {
+						continue
+					}
+				}
+				if keyword && caseOperandExpectedBefore(expr, i+1) {
+					// A word of the operator's name where an operand is
+					// expected is a variable (or > 1 AND or < 3).
+					continue
+				}
+				return i
+			}
+		}
+	}
+
+	return -1
+}
+
+func splitByOperatorWithOptions(expr, op string, caseInsensitive, trackBrackets bool) (string, string, bool) {
+	return splitAtOperator(expr, op, findTopLevelOperator(expr, op, caseInsensitive, trackBrackets))
+}
+
+// splitByOperatorOutsideCase is splitByOperatorWithOptions for predicates
+// scanned as written: an operator inside a CASE ... END block is not top-level
+// (#699). findTopLevelOperator is CASE-unaware to keep the hot scan cheap, and
+// the context evaluator substitutes CASE blocks before scanning
+// (evaluateExpressionWithCASESubstituted); the row predicate evaluator and the
+// MATCH WHERE validation scan the text itself, so they split with this.
+func splitByOperatorOutsideCase(expr, op string, caseInsensitive, trackBrackets bool) (string, string, bool) {
+	idx := findTopLevelOperator(expr, op, caseInsensitive, trackBrackets)
+	for idx > 0 && mayContainCaseKeyword(expr[:idx]) {
+		end := enclosingCaseBlockEnd(expr, idx)
+		if end < 0 {
+			break
+		}
+		// The block closes at top level, so the search resumes after it in the
+		// top-level state.
+		next := findTopLevelOperator(expr[end+1:], op, caseInsensitive, trackBrackets)
+		if next < 0 {
+			idx = -1
+			break
+		}
+		idx = end + 1 + next
+	}
+	return splitAtOperator(expr, op, idx)
+}
+
+// splitAtOperator splits expr around the op at idx, or reports false for -1.
+func splitAtOperator(expr, op string, idx int) (string, string, bool) {
+	if idx < 0 {
+		return "", "", false
+	}
+	left := strings.TrimSpace(expr[:idx])
+	end := idx + len(op)
+	if strings.HasPrefix(op, " ") && strings.HasSuffix(op, " ") ||
+		strings.IndexFunc(strings.TrimSpace(op), func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
+		end = keywordEndAt(expr, queryGapEnd(expr, idx), strings.TrimSpace(op))
+	}
+	right := strings.TrimSpace(expr[end:])
+	return left, right, true
+}
+
+// insideCaseBlock reports whether s[at] is inside a CASE … END block that an
+// END closes, at the block's own level, for the scanners that read a keyword
+// there as a name (#1162). A CASE without an END (the word case read as the
+// keyword, as in WITH case WHERE …) encloses nothing, so it can't swallow the
+// clauses after it; and inside a bracket or a subquery's braces within the
+// block (THEN COLLECT { MATCH … }) a clause can start, so nothing there is
+// the block's.
+func insideCaseBlock(s string, at int) bool {
+	end := enclosingCaseBlockEnd(s, at)
+	return end >= 2 && caseKeywordAt(s, end-2, "END") && bracketDepthAt(s, at) == 0
+}
+
+// bracketDepthAt is the number of brackets, parentheses and braces open at
+// s[at], outside quotes and backtick names.
+func bracketDepthAt(s string, at int) int {
+	depth := 0
+	for i := 0; i < at && i < len(s); i++ {
+		switch c := s[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
+			i = skipCypherQuotedText(s, i, c) - 1
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		}
+	}
+	return depth
+}
+
+// enclosingCaseBlockEnd returns the index of the last byte of the END that
+// closes the CASE … END block enclosing expr[at], or -1 when expr[at] is not
+// inside one. A CASE counts only outside quotes, backtick names, brackets and
+// property access (n.case); an unterminated CASE extends to the end of expr.
+func enclosingCaseBlockEnd(expr string, at int) int {
+	depth, nest := 0, 0
+	for i := 0; i < len(expr); i++ {
+		if i >= at && depth == 0 {
+			return -1
+		}
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
+			continue
+		}
+		c := expr[i]
+		switch c {
+		case '(', '[', '{':
+			nest++
+		case ')', ']', '}':
+			nest--
+		default:
+			if nest != 0 || (i > 0 && expr[i-1] == '.') {
+				continue
+			}
+			if c|0x20 == 'c' && caseKeywordAt(expr, i, "CASE") {
+				depth++
+				i += len("CASE") - 1
+			} else if depth > 0 && c|0x20 == 'e' && caseKeywordAt(expr, i, "END") {
+				depth--
+				i += len("END") - 1
+				if depth == 0 && i >= at {
+					return i
+				}
+			}
+		}
+	}
+	return len(expr) - 1
+}
+
+// mayContainCaseKeyword reports whether s contains the letters "case" in any
+// letter case (a superset of the CASE keywords in s). It searches for the 'c'
+// and 'C' bytes, so text without them is rejected at memchr speed.
+func mayContainCaseKeyword(s string) bool {
+	return hasASEAfterByte(s, 'c') || hasASEAfterByte(s, 'C')
+}
+
+// hasASEAfterByte reports whether some c in s is followed by "ase" in any
+// letter case.
+func hasASEAfterByte(s string, c byte) bool {
+	for {
+		i := strings.IndexByte(s, c)
+		if i < 0 || i+4 > len(s) {
+			return false
+		}
+		if s[i+1]|0x20 == 'a' && s[i+2]|0x20 == 's' && s[i+3]|0x20 == 'e' {
+			return true
+		}
+		s = s[i+1:]
+	}
+}
+
+func hasTopLevelExpressionOperator(expr string) bool {
+	if expr == "" {
+		return false
+	}
+	switch expr[0] {
+	case '(':
+		return false
+	}
+	if hasKeywordPrefixFoldASCII(expr, "case") {
+		// A leading CASE … END is the whole expression unless something
+		// follows it (CASE … END > 4, CASE … END + 1): then that is a
+		// top-level operator (#699).
+		end := leadingCaseExpressionEnd(expr)
+		return end > 0 && strings.TrimSpace(expr[end:]) != ""
+	}
+	if hasPrefixFoldASCII(expr, "not ") || hasSuffixFoldASCII(expr, " is null") || hasSuffixFoldASCII(expr, " is not null") {
+		return true
+	}
+	for _, op := range []string{" BETWEEN ", " AND ", " OR ", " XOR ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ", " NOT IN ", " IN "} {
+		if findTopLevelOperator(expr, op, true, true) >= 0 {
+			return true
+		}
+	}
+	for _, op := range []string{"<>", "<=", ">=", "=~", "!=", "=", "<", ">", " + ", "+", "*", "/", "%", " - ", "-"} {
+		if findTopLevelOperator(expr, op, false, true) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ========================================
+// Logical Operators
+// ========================================
+
+// hasLogicalOperator checks if the expression has a logical operator outside of quotes/parentheses.
+//
+// This function scans the expression for the given operator, ensuring it's not inside:
+//   - String literals (single or double quotes)
+//   - Nested parentheses
+//
+// # Parameters
+//
+//   - expr: The expression to check
+//   - op: The logical operator to find (case-insensitive)
+//
+// # Returns
+//
+//   - true if the operator is found at the top level
+//   - false if not found or only inside quotes/parentheses
+//
+// # Example
+//
+//	hasLogicalOperator("a = 1 AND b = 2", " AND ")      // true
+//	hasLogicalOperator("name CONTAINS 'AND'", " AND ") // false (inside quotes)
+//	hasLogicalOperator("(a AND b) OR c", " AND ")      // false (inside parens)
+func (e *StorageExecutor) hasLogicalOperator(expr, op string) bool {
+	return findTopLevelOperator(expr, op, true, false) >= 0
+}
+
+// ========================================
+// Comparison Operators
+// ========================================
+
+// hasComparisonOperator checks if the expression has a comparison operator.
+//
+// Operators checked (in order of specificity):
+//   - <> (not equal)
+//   - <= (less than or equal)
+//   - >= (greater than or equal)
+//   - =~ (regex match)
+//   - != (not equal, alternative)
+//   - = (equal)
+//   - < (less than)
+//   - > (greater than)
+//
+// # Parameters
+//
+//   - expr: The expression to check
+//
+// # Returns
+//
+//   - true if any comparison operator is found at the top level
+//
+// # Example
+//
+//	hasComparisonOperator("a = 1")          // true
+//	hasComparisonOperator("a <= 5")         // true
+//	hasComparisonOperator("name =~ '.*'")   // true
+//	hasComparisonOperator("a + b")          // false
+func (e *StorageExecutor) hasComparisonOperator(expr string) bool {
+	ops := []string{"<>", "<=", ">=", "=~", "!=", "=", "<", ">"}
+	for _, op := range ops {
+		if e.hasOperatorOutsideQuotes(expr, op) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasOperatorOutsideQuotes checks if operator exists outside quotes and parentheses.
+//
+// This function handles special cases like ensuring "=" is not confused with
+// "<=", ">=", "!=" or "=~".
+//
+// # Parameters
+//
+//   - expr: The expression to check
+//   - op: The operator to find
+//
+// # Returns
+//
+//   - true if the operator is found at the top level
+//
+// # Example
+//
+//	hasOperatorOutsideQuotes("a = 1", "=")           // true
+//	hasOperatorOutsideQuotes("a <= 1", "=")          // false (part of <=)
+//	hasOperatorOutsideQuotes("name = 'test=1'", "=") // true (first = only)
+func (e *StorageExecutor) hasOperatorOutsideQuotes(expr, op string) bool {
+	if len(expr) < len(op) || !strings.Contains(expr, op) {
+		return false
+	}
+	return findTopLevelOperator(expr, op, false, false) >= 0
+}
+
+// evaluateComparisonExpr evaluates comparison expressions.
+//
+// Operators are evaluated in order of specificity to handle multi-character
+// operators correctly (e.g., "<>" before "<" and ">").
+//
+// # Parameters
+//
+//   - expr: The comparison expression
+//   - nodes: Map of variable names to nodes for property access
+//   - rels: Map of variable names to relationships for property access
+//
+// # Returns
+//
+//   - true or false based on the comparison result
+//   - nil if no valid comparison operator found
+//
+// # Example
+//
+//	evaluateComparisonExpr("5 > 3", nodes, rels)        // true
+//	evaluateComparisonExpr("'abc' = 'abc'", nodes, rels) // true
+//	evaluateComparisonExpr("n.age >= 18", nodes, rels)   // depends on n.age
+func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+	// Try operators in order of specificity
+	ops := []struct {
+		op   string
+		eval func(left, right interface{}) bool
+	}{
+		{"<>", func(l, r interface{}) bool { return !e.compareEqual(l, r) }},
+		{"!=", func(l, r interface{}) bool { return !e.compareEqual(l, r) }},
+		{"<=", func(l, r interface{}) bool { return e.compareLess(l, r) || e.compareEqual(l, r) }},
+		{">=", func(l, r interface{}) bool { return e.compareGreater(l, r) || e.compareEqual(l, r) }},
+		{"=~", e.compareRegex},
+		{"=", e.compareEqual},
+		{"<", e.compareLess},
+		{">", e.compareGreater},
+	}
+
+	for _, op := range ops {
+		// An operator inside a list, map or parentheses isn't the expression's
+		// comparison ([CASE WHEN a = 1 THEN 1 END] is a list, #907).
+		leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, op.op, false, true)
+		if ok {
+			left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			if left == nil || right == nil {
+				return nil, true
+			}
+			left, right = promoteConstantNumbers(op.op, leftExpr, rightExpr, left, right, cypherVersionFromContext(ctx) == "25")
+			if op.op == "=~" {
+				matched, err := cypherRegexMatch(left, right)
+				if err != nil {
+					recordExpressionFailure(ctx, err)
+				}
+				return matched, true
+			}
+			if op.op == "=" || op.op == "<>" || op.op == "!=" {
+				equal := cypherEquality(left, right)
+				if equal == nil {
+					return nil, true
+				}
+				if op.op != "=" {
+					return !equal.(bool), true
+				}
+				return equal, true
+			}
+			return op.eval(left, right), true
+		}
+	}
+
+	return nil, false
+}
+
+// ========================================
+// Arithmetic Operators
+// ========================================
+
+// hasArithmeticOperator checks if the expression has arithmetic operators.
+//
+// Checks for: +, -, *, /, %
+// Note: + and - are checked with surrounding spaces to distinguish
+// from unary operators and signs in numbers.
+//
+// # Parameters
+//
+//   - expr: The expression to check
+//
+// # Returns
+//
+//   - true if any arithmetic operator is found at the top level
+//
+// # Example
+//
+//	hasArithmeticOperator("a + b")   // true
+//	hasArithmeticOperator("a * b")   // true
+//	hasArithmeticOperator("-5")      // false (unary minus)
+//	hasArithmeticOperator("a - b")   // true
+func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
+	// Include + for date arithmetic (date + duration) and ^ for exponentiation
+	// (#656: CREATE property maps must evaluate every arithmetic operator,
+	// never store the expression text).
+	ops := []string{" + ", "+", "*", "/", "%", "^", " - ", "-"}
+	for _, op := range ops {
+		if e.hasOperatorOutsideQuotes(expr, op) {
+			return true
+		}
+	}
+	return false
+}
+
+// evaluateArithmeticExpr evaluates arithmetic expressions.
+//
+// Supports:
+//   - Numeric operations: +, -, *, /, %
+//   - Date arithmetic: date + duration, date - duration, date - date
+//
+// # Parameters
+//
+//   - expr: The arithmetic expression
+//   - nodes: Map of variable names to nodes for property access
+//   - rels: Map of variable names to relationships for property access
+//
+// # Returns
+//
+//   - The numeric result (int64 or float64)
+//   - For date arithmetic: string (formatted date) or *CypherDuration
+//   - nil if no valid arithmetic operator found
+//
+// # Example
+//
+//	evaluateArithmeticExpr("5 + 3", nodes, rels)             // int64(8)
+//	evaluateArithmeticExpr("10 / 3", nodes, rels)            // float64(3.333...)
+//	evaluateArithmeticExpr("date('2025-01-01') + duration('P5D')", ...) // "2025-01-06..."
+func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+	// A relationship pattern or a map projection has - and * that aren't
+	// arithmetic.
+	if !expressionTextAccepted(expr, expressionTextOperator) {
+		return nil, false
+	}
+	operands := func(leftExpr, rightExpr string) (interface{}, interface{}) {
+		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		return left, right
+	}
+	// result reports an operator's statement error (overflow, operand type)
+	// and returns its value; a null result is a result, not "not arithmetic".
+	result := func(op byte, left, right, value interface{}) (interface{}, bool) {
+		if err := arithmeticError(op, left, right); err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil, true
+		}
+		return value, true
+	}
+	// Operators split by precedence tier, loosest first (+ -, then * / %,
+	// then ^), each at its last top-level operator so they associate to the
+	// left: a / b - c / d is (a / b) - (c / d), 10 - 3 - 2 is 5. A sign
+	// that follows an operator or opens the expression is unary.
+	if leftExpr, rightExpr, operator, ok := splitRowArithmeticTier(expr, "+-"); ok && binaryOperands(leftExpr, rightExpr) {
+		left, right := operands(leftExpr, rightExpr)
+		if operator == '+' {
+			return result('+', left, right, e.add(left, right))
+		}
+		return result('-', left, right, e.subtract(left, right))
+	}
+	if leftExpr, rightExpr, operator, ok := splitRowArithmeticTier(expr, "*/%"); ok && binaryOperands(leftExpr, rightExpr) {
+		left, right := operands(leftExpr, rightExpr)
+		switch operator {
+		case '*':
+			return result('*', left, right, e.multiply(left, right))
+		case '/':
+			if value, folded := foldedDivisionByZero(leftExpr, rightExpr, left, right); folded {
+				return value, true
+			}
+			if divisionByZero('/', left, right) {
+				recordExpressionFailure(ctx, divisionByZeroError())
+			}
+			return result('/', left, right, e.divide(left, right))
+		}
+		if divisionByZero('%', left, right) {
+			recordExpressionFailure(ctx, divisionByZeroError())
+		}
+		return result('%', left, right, e.modulo(left, right))
+	}
+	// Cypher exponentiation always yields a floating-point value.
+	if leftExpr, rightExpr, _, ok := splitRowArithmeticTier(expr, "^"); ok && binaryOperands(leftExpr, rightExpr) {
+		leftValue, rightValue := operands(leftExpr, rightExpr)
+		left, leftOK := toFloat64(leftValue)
+		right, rightOK := toFloat64(rightValue)
+		if leftOK && rightOK {
+			return result('^', leftValue, rightValue, math.Pow(left, right))
+		}
+		return result('^', leftValue, rightValue, nil)
+	}
+	return nil, false
+}
+
+// binaryOperands reports whether both sides of a binary operator are present;
+// a bare "*" (RETURN *) or a leading sign is not an arithmetic expression.
+func binaryOperands(left, right string) bool {
+	return strings.TrimSpace(left) != "" && strings.TrimSpace(right) != ""
+}
+
+// splitByOperator splits expression by operator respecting quotes and parentheses.
+//
+// This function carefully handles:
+//   - String literals (single and double quotes)
+//   - Nested parentheses
+//   - Special case for "=" not being part of "<=", ">=", "!="
+//
+// # Parameters
+//
+//   - expr: The expression to split
+//   - op: The operator to split by (case-insensitive)
+//
+// # Returns
+//
+//   - A slice with exactly 2 elements if operator found
+//   - A slice with 1 element (original expr) if not found
+//
+// # Example
+//
+//	splitByOperator("a + b", " + ")              // ["a", "b"]
+//	splitByOperator("'a + b' + c", " + ")        // ["'a + b'", "c"]
+//	splitByOperator("(a + b) + c", " + ")        // ["(a + b)", "c"]
+func (e *StorageExecutor) splitByOperator(expr, op string) []string {
+	left, right, ok := splitByOperatorWithOptions(expr, op, true, false)
+	if !ok {
+		return []string{expr}
+	}
+	return []string{left, right}
+}
+
+// ========================================
+// Arithmetic Helper Functions
+// ========================================
+
+// appendListOperand appends what list + value adds to a list: a list
+// value's elements, any other value itself (value is not null). add and
+// reduce's in-place fold (reduceAppendPlan) both append through it.
+func appendListOperand(list []interface{}, value interface{}) []interface{} {
+	if items, isList := toInterfaceSlice(value); isList {
+		return append(list, items...)
+	}
+	return append(list, value)
+}
+
+// add handles addition including date + duration.
+//
+// This function supports:
+//   - Numeric addition (int64 + int64 = int64, otherwise float64)
+//   - Date arithmetic (date + duration = date, duration + date = date)
+//
+// # Parameters
+//
+//   - left: Left operand
+//   - right: Right operand
+//
+// # Returns
+//
+//   - int64 if both operands are integers
+//   - float64 for other numeric types
+//   - string (formatted date) for date + duration
+//   - nil if operands cannot be added
+//
+// # Example
+//
+//	add(5, 3)                                    // int64(8)
+//	add(5.0, 3)                                  // float64(8.0)
+//	add("2025-01-01", &CypherDuration{Days: 5})  // "2025-01-06T00:00:00Z"
+func (e *StorageExecutor) add(left, right interface{}) interface{} {
+	// A null operand makes the sum null, for lists and strings too.
+	if left == nil || right == nil {
+		return nil
+	}
+	// Two strings are none of the temporal, list or duration forms below:
+	// concatenated first, for every evaluator (#1214).
+	if leftText, ok := left.(string); ok {
+		if rightText, ok := right.(string); ok {
+			return leftText + rightText
+		}
+	}
+	if result, handled := addTemporalValues(left, right); handled {
+		return result
+	}
+	// Cypher list concatenation:
+	// - list + list
+	// - list + scalar
+	// - scalar + list
+	leftList, leftIsList := toInterfaceSlice(left)
+	rightList, rightIsList := toInterfaceSlice(right)
+	if leftIsList {
+		size := 1
+		if rightIsList {
+			size = len(rightList)
+		}
+		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), size))
+		return appendListOperand(append(out, leftList...), right)
+	}
+	if rightIsList {
+		out := make([]interface{}, 0, util.SafePreallocSum(len(rightList), 1))
+		out = append(out, left)
+		out = append(out, rightList...)
+		return out
+	}
+
+	// Handle date/datetime + duration
+	if dur, ok := right.(*CypherDuration); ok {
+		result := addDurationToDate(left, dur)
+		if result != "" {
+			return result
+		}
+	}
+	// Handle duration + date/datetime (commutative)
+	if dur, ok := left.(*CypherDuration); ok {
+		result := addDurationToDate(right, dur)
+		if result != "" {
+			return result
+		}
+	}
+
+	// String concatenation: string + string, string + number, number + string.
+	if text, isText := left.(string); isText {
+		if other, ok := concatOperandText(right); ok {
+			return text + other
+		}
+		return nil
+	}
+	if text, isText := right.(string); isText {
+		if other, ok := concatOperandText(left); ok {
+			return other + text
+		}
+		return nil
+	}
+
+	value, _, _ := numericArithmetic('+', left, right)
+	return value
+}
+
+// concatOperandText is the text a value contributes to string + value: a
+// string as it is, and every value that joins a string at run time
+// (joinsString: numbers, booleans, points, temporal values, durations,
+// VECTORs) as toString() writes it. Other values are not concatenated.
+func concatOperandText(value interface{}) (string, bool) {
+	if text, isString := value.(string); isString {
+		return text, true
+	}
+	if !joinsString(value) {
+		return "", false
+	}
+	text, ok := convertToStringOrNull(value).(string)
+	return text, ok
+}
+
+// multiply performs numeric multiplication.
+//
+// # Parameters
+//
+//   - left: Left operand
+//   - right: Right operand
+//
+// # Returns
+//
+//   - int64 if both operands are integers
+//   - float64 otherwise
+//   - nil if operands cannot be multiplied
+//
+// # Example
+//
+//	multiply(5, 3)    // int64(15)
+//	multiply(5.0, 3)  // float64(15.0)
+func (e *StorageExecutor) multiply(left, right interface{}) interface{} {
+	if factor, ok := toFloat64(right); ok {
+		if result, handled := scaleTemporalDuration(left, factor); handled {
+			return result
+		}
+	}
+	if factor, ok := toFloat64(left); ok {
+		if result, handled := scaleTemporalDuration(right, factor); handled {
+			return result
+		}
+	}
+	value, _, _ := numericArithmetic('*', left, right)
+	return value
+}
+
+// divide performs numeric division.
+//
+// Note: INTEGER division by zero returns nil here (the context-aware
+// evaluators report "/ by zero"); a FLOAT operand gives ±Inf or NaN.
+// Returns int64 if both operands are integers and division is exact.
+//
+// # Parameters
+//
+//   - left: Dividend
+//   - right: Divisor
+//
+// # Returns
+//
+//   - int64 if exact integer division, float64 otherwise
+//   - nil for an INTEGER division by zero or invalid operands
+//
+// # Example
+//
+//	divide(10, 2)  // int64(5)
+//	divide(10, 3)  // float64(3.333...)
+//	divide(10, 0)  // nil (division by zero)
+func (e *StorageExecutor) divide(left, right interface{}) interface{} {
+	if divisor, ok := toFloat64(right); ok && divisor != 0 {
+		if result, handled := scaleTemporalDuration(left, 1/divisor); handled {
+			return result
+		}
+	}
+	// Integer division is exact and truncates toward zero; a floating operand
+	// selects IEEE 754 division (0.0 / 0.0 is NaN). Integer division by zero
+	// is null here; the context-aware evaluators report "/ by zero".
+	value, _, _ := numericArithmetic('/', left, right)
+	return value
+}
+
+// modulo performs modulo operation (remainder after division).
+//
+// Note: INTEGER modulo by zero returns nil here (the context-aware
+// evaluators report "/ by zero"); a FLOAT operand by zero gives NaN.
+//
+// # Parameters
+//
+//   - left: Dividend
+//   - right: Divisor
+//
+// # Returns
+//
+//   - int64 when both operands are integers, float64 otherwise
+//   - nil for an INTEGER modulo by zero or invalid operands
+//
+// # Example
+//
+//	modulo(10, 3)  // int64(1)
+//	modulo(10, 0)  // nil (division by zero)
+//	modulo(1.5, 0) // NaN
+func (e *StorageExecutor) modulo(left, right interface{}) interface{} {
+	value, _, _ := numericArithmetic('%', left, right)
+	return value
+}
+
+// subtract handles subtraction including date arithmetic.
+//
+// This function supports:
+//   - Numeric subtraction (int64 - int64 = int64, otherwise float64)
+//   - Date - duration = date
+//   - Date - date = duration
+//
+// # Parameters
+//
+//   - left: Left operand
+//   - right: Right operand
+//
+// # Returns
+//
+//   - int64 if both operands are integers
+//   - float64 for other numeric types
+//   - string (formatted date) for date - duration
+//   - *CypherDuration for date - date
+//   - nil if operands cannot be subtracted
+//
+// # Example
+//
+//	subtract(10, 3)                                   // int64(7)
+//	subtract("2025-01-06", &CypherDuration{Days: 5})  // "2025-01-01T00:00:00Z"
+//	subtract("2025-01-06", "2025-01-01")              // &CypherDuration{Days: 5}
+func (e *StorageExecutor) subtract(left, right interface{}) interface{} {
+	if result, handled := subtractTemporalValues(left, right); handled {
+		return result
+	}
+	// Handle date - duration = date
+	if dur, ok := right.(*CypherDuration); ok {
+		result := subtractDurationFromDate(left, dur)
+		if result != "" {
+			return result
+		}
+	}
+
+	// Handle date - date = duration
+	leftTime := parseDateTime(left)
+	rightTime := parseDateTime(right)
+	if !leftTime.IsZero() && !rightTime.IsZero() {
+		return durationBetween(left, right)
+	}
+
+	value, _, _ := numericArithmetic('-', left, right)
+	return value
+}
+
+// ========================================
+// String Predicate Helper
+// ========================================
+
+// hasStringPredicate checks if expression has a string predicate (case-insensitive).
+//
+// String predicates include STARTS WITH, ENDS WITH, CONTAINS.
+// This function respects quotes and nested structures.
+//
+// # Parameters
+//
+//   - expr: The expression to check
+//   - predicate: The predicate to find (e.g., " CONTAINS ", " STARTS WITH ")
+//
+// # Returns
+//
+//   - true if the predicate is found at the top level
+//
+// # Example
+//
+//	hasStringPredicate("n.name CONTAINS 'test'", " CONTAINS ")  // true
+//	hasStringPredicate("'CONTAINS' = n.name", " CONTAINS ")     // false (in quotes)
+func (e *StorageExecutor) hasStringPredicate(expr, predicate string) bool {
+	return findTopLevelOperator(expr, predicate, true, true) >= 0
+}
+
+func nullPredicateOperand(expression, keyword string) (string, bool) {
+	at := topLevelKeywordIndex(expression, keyword)
+	if at <= 0 || strings.TrimSpace(expression[keywordEndAt(expression, at, keyword):]) != "" {
+		return "", false
+	}
+	return strings.TrimSpace(expression[:at]), true
+}

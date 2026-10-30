@@ -1,0 +1,162 @@
+- id: cyphercomposite.constituent_alias_expected
+  description: Expanded pseudo-locale missing ALIAS keyword.
+  other: "[!! invalid constituent syntax: ALIAS expected !!]"
+- id: cyphercomposite.constituent_alias_name_empty
+  description: Expanded pseudo-locale empty alias name.
+  other: "[!! invalid constituent syntax: alias name cannot be empty !!]"
+- id: cyphercomposite.constituent_alias_name_invalid
+  description: Expanded pseudo-locale invalid alias name.
+  other: "[!! invalid constituent syntax: alias name: {{.Cause}} !!]"
+- id: cyphercomposite.constituent_for_database_expected
+  description: Expanded pseudo-locale missing FOR DATABASE clause.
+  other: "[!! invalid constituent syntax: FOR DATABASE expected !!]"
+- id: cyphercomposite.constituent_database_name_empty
+  description: Expanded pseudo-locale empty database name.
+  other: "[!! invalid constituent syntax: database name cannot be empty !!]"
+- id: cyphercomposite.constituent_database_name_invalid
+  description: Expanded pseudo-locale invalid database name.
+  other: "[!! invalid constituent syntax: database name: {{.Cause}} !!]"
+- id: cyphercomposite.constituent_remote_uri_expected
+  description: Expanded pseudo-locale missing remote URI.
+  other: "[!! invalid constituent syntax: remote URI expected after AT !!]"
+- id: cyphercomposite.constituent_remote_uri_invalid
+  description: Expanded pseudo-locale invalid remote URI.
+  other: "[!! invalid constituent syntax: remote URI: {{.Cause}} !!]"
+- id: cyphercomposite.constituent_remote_uri_empty
+  description: Expanded pseudo-locale empty remote URI.
+  other: "[!! invalid constituent syntax: remote URI cannot be empty !!]"
+- id: cyphercomposite.constituent_user_empty
+  description: Expanded pseudo-locale empty user.
+  other: "[!! invalid constituent syntax: user cannot be empty !!]"
+- id: cyphercomposite.constituent_user_invalid
+  description: Expanded pseudo-locale invalid user.
+  other: "[!! invalid constituent syntax: user: {{.Cause}} !!]"
+- id: cyphercomposite.constituent_password_empty
+  description: Expanded pseudo-locale empty password.
+  other: "[!! invalid constituent syntax: password cannot be empty !!]"
+- id: cyphercomposite.constituent_password_invalid
+  description: Expanded pseudo-locale invalid password.
+  other: "[!! invalid constituent syntax: password: {{.Cause}} !!]"
+- id: cyphercomposite.constituent_oidc_credential_forwarding_expected
+  description: Expanded pseudo-locale incomplete OIDC forwarding.
+  other: "[!! invalid constituent syntax: OIDC CREDENTIAL FORWARDING expected !!]"
+- id: cyphercomposite.constituent_secret_ref_expected
+  description: Expanded pseudo-locale missing SECRET REF.
+  other: "[!! invalid constituent syntax: SECRET REF expected !!]"
+- id: cyphercomposite.constituent_secret_ref_empty
+  description: Expanded pseudo-locale empty secret reference.
+  other: "[!! invalid constituent syntax: secret ref cannot be empty !!]"
+- id: cyphercomposite.constituent_secret_ref_invalid
+  description: Expanded pseudo-locale invalid secret reference.
+  other: "[!! invalid constituent syntax: secret ref: {{.Cause}} !!]"
+- id: cyphercomposite.constituent_type_empty
+  description: Expanded pseudo-locale empty type.
+  other: "[!! invalid constituent syntax: type cannot be empty !!]"
+- id: cyphercomposite.constituent_type_invalid
+  description: Expanded pseudo-locale invalid type.
+  other: "[!! invalid constituent syntax: type: {{.Cause}} !!]"
+- id: cyphercomposite.constituent_type_unsupported
+  description: Expanded pseudo-locale unsupported type.
+  other: "[!! invalid constituent syntax: type must be local or remote !!]"
+- id: cyphercomposite.constituent_type_contradicts_at
+  description: Expanded pseudo-locale contradictory type.
+  other: "[!! invalid constituent syntax: TYPE local contradicts AT (remote URI already specified) !!]"
+- id: cyphercomposite.constituent_access_mode_empty
+  description: Expanded pseudo-locale empty access mode.
+  other: "[!! invalid constituent syntax: access mode cannot be empty !!]"
+- id: cyphercomposite.constituent_access_mode_invalid
+  description: Expanded pseudo-locale invalid access mode.
+  other: "[!! invalid constituent syntax: access mode: {{.Cause}} !!]"
+- id: cyphercomposite.constituent_access_mode_unsupported
+  description: Expanded pseudo-locale unsupported access mode.
+  other: "[!! invalid constituent syntax: access mode must be read, write, or read_write !!]"
+- id: cyphercomposite.constituent_unexpected_token
+  description: Expanded pseudo-locale unexpected token.
+  other: "[!! invalid constituent syntax: unexpected token '{{.Token}}' !!]"
+- id: cyphercomposite.constituent_auth_modes_conflict
+  description: Expanded pseudo-locale authentication conflict.
+  other: "[!! invalid constituent syntax: cannot combine OIDC CREDENTIAL FORWARDING with USER/PASSWORD !!]"
+- id: cyphercomposite.constituent_user_password_required
+  description: Expanded pseudo-locale incomplete user authentication.
+  other: "[!! invalid constituent syntax: USER and PASSWORD must both be provided !!]"
+- id: cyphercomposite.constituent_remote_required
+  description: Expanded pseudo-locale remote constituent requirement.
+  other: "[!! invalid constituent syntax: USER/PASSWORD and OIDC CREDENTIAL FORWARDING require a remote constituent (AT '<url>' or TYPE remote) !!]"
+- id: cyphercomposite.database_manager_unavailable
+  description: Expanded pseudo-locale unavailable database manager.
+  other: "[!! database manager not available - {{.Command}} requires multi-database support !!]"
+- id: cyphercomposite.create_invalid_syntax
+  description: Expanded pseudo-locale invalid create syntax.
+  other: "[!! invalid CREATE COMPOSITE DATABASE syntax !!]"
+- id: cyphercomposite.create_database_name_expected
+  description: Expanded pseudo-locale missing create database name.
+  other: "[!! invalid CREATE COMPOSITE DATABASE syntax: database name expected !!]"
+- id: cyphercomposite.create_database_name_empty
+  description: Expanded pseudo-locale empty create database name.
+  other: "[!! invalid CREATE COMPOSITE DATABASE syntax: database name cannot be empty !!]"
+- id: cyphercomposite.create_tokenize_failed
+  description: Expanded pseudo-locale create tokenization failure.
+  other: "[!! invalid CREATE COMPOSITE DATABASE syntax: {{.Cause}} !!]"
+- id: cyphercomposite.create_constituent_required
+  description: Expanded pseudo-locale missing constituent.
+  other: "[!! invalid CREATE COMPOSITE DATABASE syntax: at least one constituent required !!]"
+- id: cyphercomposite.create_database_failed
+  description: Expanded pseudo-locale create failure.
+  other: "[!! failed to create composite database '{{.Database}}': {{.Cause}} !!]"
+- id: cyphercomposite.drop_invalid_syntax
+  description: Expanded pseudo-locale invalid drop syntax.
+  other: "[!! invalid DROP COMPOSITE DATABASE syntax !!]"
+- id: cyphercomposite.drop_database_name_expected
+  description: Expanded pseudo-locale missing drop database name.
+  other: "[!! invalid DROP COMPOSITE DATABASE syntax: database name expected !!]"
+- id: cyphercomposite.drop_database_name_empty
+  description: Expanded pseudo-locale empty drop database name.
+  other: "[!! invalid DROP COMPOSITE DATABASE syntax: database name cannot be empty !!]"
+- id: cyphercomposite.drop_database_failed
+  description: Expanded pseudo-locale drop failure.
+  other: "[!! failed to drop composite database '{{.Database}}': {{.Cause}} !!]"
+- id: cyphercomposite.show_constituents_invalid_syntax
+  description: Expanded pseudo-locale invalid show syntax.
+  other: "[!! invalid SHOW CONSTITUENTS syntax !!]"
+- id: cyphercomposite.show_constituents_name_expected
+  description: Expanded pseudo-locale missing show database name.
+  other: "[!! invalid SHOW CONSTITUENTS syntax: FOR COMPOSITE DATABASE name expected !!]"
+- id: cyphercomposite.get_constituents_failed
+  description: Expanded pseudo-locale constituent lookup failure.
+  other: "[!! failed to get constituents: {{.Cause}} !!]"
+- id: cyphercomposite.alter_invalid_syntax
+  description: Expanded pseudo-locale invalid alter syntax.
+  other: "[!! invalid ALTER COMPOSITE DATABASE syntax !!]"
+- id: cyphercomposite.alter_database_keyword_expected
+  description: Expanded pseudo-locale missing DATABASE keyword.
+  other: "[!! invalid ALTER COMPOSITE DATABASE syntax: DATABASE expected after COMPOSITE !!]"
+- id: cyphercomposite.alter_database_name_expected
+  description: Expanded pseudo-locale missing alter database name.
+  other: "[!! invalid ALTER COMPOSITE DATABASE syntax: database name expected !!]"
+- id: cyphercomposite.alter_database_name_empty
+  description: Expanded pseudo-locale empty alter database name.
+  other: "[!! invalid ALTER COMPOSITE DATABASE syntax: database name cannot be empty !!]"
+- id: cyphercomposite.alter_tokenize_failed
+  description: Expanded pseudo-locale alter tokenization failure.
+  other: "[!! invalid ALTER COMPOSITE DATABASE syntax: {{.Cause}} !!]"
+- id: cyphercomposite.alter_add_alias_expected
+  description: Expanded pseudo-locale missing ADD ALIAS.
+  other: "[!! invalid ALTER COMPOSITE DATABASE syntax: ADD ALIAS expected !!]"
+- id: cyphercomposite.add_alias_unexpected_token
+  description: Expanded pseudo-locale unexpected ADD ALIAS token.
+  other: "[!! invalid ADD ALIAS syntax: unexpected token '{{.Token}}' !!]"
+- id: cyphercomposite.add_constituent_failed
+  description: Expanded pseudo-locale add constituent failure.
+  other: "[!! failed to add constituent to composite database '{{.Database}}': {{.Cause}} !!]"
+- id: cyphercomposite.alter_drop_alias_expected
+  description: Expanded pseudo-locale missing DROP ALIAS.
+  other: "[!! invalid ALTER COMPOSITE DATABASE syntax: DROP ALIAS expected !!]"
+- id: cyphercomposite.drop_alias_name_empty
+  description: Expanded pseudo-locale empty DROP ALIAS name.
+  other: "[!! invalid DROP ALIAS syntax: alias name cannot be empty !!]"
+- id: cyphercomposite.remove_constituent_failed
+  description: Expanded pseudo-locale remove constituent failure.
+  other: "[!! failed to remove constituent from composite database '{{.Database}}': {{.Cause}} !!]"
+- id: cyphercomposite.alter_action_expected
+  description: Expanded pseudo-locale missing alter action.
+  other: "[!! invalid ALTER COMPOSITE DATABASE syntax: ADD ALIAS or DROP ALIAS expected !!]"

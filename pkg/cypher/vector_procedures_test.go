@@ -1,0 +1,2073 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/config"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/textchunk"
+	"github.com/orneryd/nornicdb/pkg/vectorspace"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func countTestTokens(text string) (int, error) {
+	return len(strings.Fields(text)), nil
+}
+
+func chunkTestText(text string, maxTokens, overlap int) ([]string, error) {
+	return textchunk.ChunkByTokenCount(text, maxTokens, overlap, countTestTokens)
+}
+
+func TestMonster531ProcedureIndexAdmission(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			for _, test := range []struct {
+				name, setup, query string
+			}{
+				{"node vector", "CREATE VECTOR INDEX taken FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3}}", "CALL db.index.vector.createNodeIndex('taken', 'V', 'e', 8, 'cosine')"},
+				{"relationship vector", "CREATE VECTOR INDEX taken FOR ()-[r:V]-() ON (r.e) OPTIONS {indexConfig: {`vector.dimensions`: 3}}", "CALL db.index.vector.createRelationshipIndex('taken', 'V', 'e', 8, 'cosine')"},
+				{"node fulltext", "CREATE FULLTEXT INDEX taken FOR (n:V) ON EACH [n.t]", "CALL db.index.fulltext.createNodeIndex('taken', ['V'], ['t'])"},
+				{"relationship fulltext", "CREATE FULLTEXT INDEX taken FOR ()-[r:V]-() ON EACH [r.t]", "CALL db.index.fulltext.createRelationshipIndex('taken', ['V'], ['t'])"},
+				{"cross-kind name", "CREATE INDEX taken FOR (n:T) ON (n.id)", "CALL db.index.vector.createNodeIndex('taken', 'V', 'e', 3, 'cosine')"},
+				{"constraint name", "CREATE CONSTRAINT taken FOR (n:T) REQUIRE n.id IS NOT NULL", "CALL db.index.vector.createNodeIndex('taken', 'V', 'e', 3, 'cosine')"},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+					ctx := context.Background()
+					_, err := exec.Execute(ctx, test.setup, nil)
+					require.NoError(t, err)
+					before := exec.storage.GetSchema().GetIndexes()
+					constraintsBefore := exec.storage.GetSchema().GetAllConstraints()
+					_, err = exec.Execute(ctx, test.query, nil)
+					require.Error(t, err)
+					require.ElementsMatch(t, before, exec.storage.GetSchema().GetIndexes())
+					require.ElementsMatch(t, constraintsBefore, exec.storage.GetSchema().GetAllConstraints())
+				})
+			}
+		})
+	}
+}
+
+func TestCallDbIndexVectorCreateNodeIndex(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("create_vector_index", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('embeddings_idx', 'Document', 'embedding', 384, 'cosine')", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("embeddings_idx")
+		require.True(t, exists)
+		assert.Equal(t, "Document", index.Label)
+		assert.Equal(t, "embedding", index.Property)
+		assert.Equal(t, 384, index.Dimensions)
+		assert.Equal(t, "cosine", index.SimilarityFunc)
+	})
+
+	t.Run("create_with_default_similarity", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('idx2', 'Node', 'vec', 128)", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("idx2")
+		require.True(t, exists)
+		assert.Equal(t, "cosine", index.SimilarityFunc)
+	})
+
+	t.Run("create_with_euclidean", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('idx3', 'Item', 'features', 256, 'euclidean')", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("idx3")
+		require.True(t, exists)
+		assert.Equal(t, "euclidean", index.SimilarityFunc)
+	})
+
+	t.Run("parameterized_names_with_commas", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex($name, $label, $property, $dimension, $similarity)", map[string]interface{}{
+			"name": "comma,index", "label": "Comma,Label", "property": "embedding,property", "dimension": int64(3), "similarity": "COSINE",
+		})
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("comma,index")
+		require.True(t, exists)
+		assert.Equal(t, "Comma,Label", index.Label)
+		assert.Equal(t, "embedding,property", index.Property)
+		assert.Equal(t, 3, index.Dimensions)
+	})
+}
+
+func TestVectorIndexRegistryAndNamedEmbeddings(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "nornic")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	node := &storage.Node{
+		ID:              storage.NodeID(storage.EnsureDatabasePrefix("nornic", "doc-1")),
+		Labels:          []string{"Doc"},
+		NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
+	}
+	_, err := store.CreateNode(node)
+	require.NoError(t, err)
+	storedNode, _ := store.GetNode(node.ID)
+	require.NotNil(t, storedNode)
+	require.NotNil(t, storedNode.NamedEmbeddings)
+
+	_, err = exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('title_idx', 'Doc', 'title', 3, 'dot')", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('title_idx', 1, [1,0,0]) YIELD node, score", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+
+	row := result.Rows[0]
+	nodeObj, ok := row[0].(*storage.Node)
+	require.True(t, ok)
+	assert.True(t, strings.HasSuffix(string(nodeObj.ID), "doc-1"))
+	score, ok := row[1].(float64)
+	require.True(t, ok)
+	assert.Greater(t, score, 0.0)
+
+	stats := exec.GetVectorRegistry().Stats()
+	require.Len(t, stats, 1)
+	assert.Equal(t, "Doc", stats[0].Key.Type)
+	assert.Equal(t, "title", stats[0].Key.VectorName)
+	assert.Equal(t, 3, stats[0].Dimensions)
+	assert.Equal(t, vectorspace.DistanceDot, stats[0].Distance)
+}
+
+// TestVectorIndexQueryNodesEmbeddingSourcePrecedence owns the embedding-source
+// contract of db.index.vector.queryNodes: NamedEmbeddings win over a property
+// vector, a property vector wins over ChunkEmbeddings, and the other label is
+// excluded. Both the executor's exact (unwired) path and the unified search
+// service path must preserve those Cypher semantics, so the same population
+// and assertions run against each.
+func TestVectorIndexQueryNodesEmbeddingSourcePrecedence(t *testing.T) {
+	cases := []struct {
+		name       string
+		useService bool
+	}{
+		{name: "exact fallback without a wired service", useService: false},
+		{name: "unified search service", useService: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(base, "nornic")
+			exec := NewStorageExecutor(store)
+			if tc.useService {
+				exec.SetSearchService(search.NewService(store, search.DefaultVectorDimensions, nil))
+			}
+			ctx := context.Background()
+
+			makeID := func(raw string) storage.NodeID {
+				return storage.NodeID(storage.EnsureDatabasePrefix("nornic", raw))
+			}
+			mustCreate := func(n *storage.Node) {
+				_, err := store.CreateNode(n)
+				require.NoError(t, err)
+			}
+
+			// Highest score via NamedEmbeddings["title"].
+			mustCreate(&storage.Node{
+				ID:              makeID("doc-named"),
+				Labels:          []string{"Doc"},
+				Properties:      map[string]interface{}{"title": "not a vector"},
+				NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
+			})
+			// Medium score via node.Properties["title"] vector (when no NamedEmbeddings).
+			mustCreate(&storage.Node{
+				ID:         makeID("doc-prop"),
+				Labels:     []string{"Doc"},
+				Properties: map[string]interface{}{"title": []float64{0.8, 0.2, 0}},
+			})
+			// Lower score via ChunkEmbeddings fallback.
+			mustCreate(&storage.Node{
+				ID:              makeID("doc-chunk"),
+				Labels:          []string{"Doc"},
+				ChunkEmbeddings: [][]float32{{0.5, 0.5, 0}},
+			})
+			// Precedence check: NamedEmbeddings should win even if property vector would score higher.
+			mustCreate(&storage.Node{
+				ID:              makeID("doc-both"),
+				Labels:          []string{"Doc"},
+				Properties:      map[string]interface{}{"title": []float64{1, 0, 0}},
+				NamedEmbeddings: map[string][]float32{"title": {0, 1, 0}},
+			})
+			// Label filter should exclude this.
+			mustCreate(&storage.Node{
+				ID:              makeID("other-label"),
+				Labels:          []string{"Other"},
+				NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
+			})
+
+			// Create index via DDL (not the CALL helper), with property "title".
+			_, err := exec.Execute(ctx, "CREATE VECTOR INDEX title_idx FOR (n:Doc) ON (n.title) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
+			require.NoError(t, err)
+
+			result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('title_idx', 10, [1,0,0]) YIELD node, score", nil)
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 4)
+
+			gotIDs := make([]string, 0, len(result.Rows))
+			gotScores := make([]float64, 0, len(result.Rows))
+			for _, row := range result.Rows {
+				n, ok := row[0].(*storage.Node)
+				require.True(t, ok)
+				gotIDs = append(gotIDs, string(n.ID))
+				score, ok := row[1].(float64)
+				require.True(t, ok)
+				gotScores = append(gotScores, score)
+			}
+
+			assert.True(t, strings.HasSuffix(gotIDs[0], "doc-named"))
+			assert.True(t, strings.HasSuffix(gotIDs[1], "doc-prop"))
+			assert.True(t, strings.HasSuffix(gotIDs[2], "doc-chunk"))
+			assert.True(t, strings.HasSuffix(gotIDs[3], "doc-both"))
+
+			// Ensure ordering reflects the precedence and expected similarity ordering.
+			require.Greater(t, gotScores[0], gotScores[1])
+			require.Greater(t, gotScores[1], gotScores[2])
+			require.Greater(t, gotScores[2], gotScores[3])
+		})
+	}
+}
+
+func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Create a node first
+	_, err := engine.CreateNode(&storage.Node{
+		ID:         "node1",
+		Labels:     []string{"Document"},
+		Properties: map[string]interface{}{"title": "Test"},
+	})
+	require.NoError(t, err)
+
+	t.Run("set_vector_property", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.create.setNodeVectorProperty('node1', 'embedding', [0.1, 0.2, 0.3, 0.4])", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+
+		// Verify the vector was set
+		node, err := engine.GetNode("node1")
+		require.NoError(t, err)
+
+		embedding, ok := node.Properties["embedding"].([]float64)
+		require.True(t, ok, "embedding should be []float64")
+		assert.Equal(t, []float64{0.1, 0.2, 0.3, 0.4}, embedding)
+	})
+
+	t.Run("update_vector_property", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.create.setNodeVectorProperty('node1', 'embedding', [0.5, 0.6, 0.7, 0.8])", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+
+		// Verify the vector was updated
+		node, err := engine.GetNode("node1")
+		require.NoError(t, err)
+
+		embedding, ok := node.Properties["embedding"].([]float64)
+		require.True(t, ok)
+		assert.Equal(t, []float64{0.5, 0.6, 0.7, 0.8}, embedding)
+	})
+
+	t.Run("node_not_found", func(t *testing.T) {
+		_, err := exec.Execute(ctx, "CALL db.create.setNodeVectorProperty('nonexistent', 'embedding', [1.0, 2.0])", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "node not found")
+	})
+}
+
+func TestCallDbCreateSetRelationshipVectorProperty(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Create nodes and relationship first
+	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}})
+	require.NoError(t, err)
+	err = engine.CreateEdge(&storage.Edge{
+		ID:         "rel1",
+		StartNode:  "a",
+		EndNode:    "b",
+		Type:       "CONNECTS",
+		Properties: map[string]interface{}{},
+	})
+	require.NoError(t, err)
+
+	t.Run("set_relationship_vector", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.create.setRelationshipVectorProperty('rel1', 'features', [1.0, 2.0, 3.0])", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+
+		// Verify the vector was set
+		rel, err := engine.GetEdge("rel1")
+		require.NoError(t, err)
+
+		// Handle both []float64 and []interface{} (msgpack may convert types)
+		var features []float64
+		switch v := rel.Properties["features"].(type) {
+		case []float64:
+			features = v
+		case []interface{}:
+			features = make([]float64, len(v))
+			for i, val := range v {
+				switch f := val.(type) {
+				case float64:
+					features[i] = f
+				case float32:
+					features[i] = float64(f)
+				case int:
+					features[i] = float64(f)
+				case int64:
+					features[i] = float64(f)
+				default:
+					t.Fatalf("unexpected type in vector: %T", val)
+				}
+			}
+		default:
+			t.Fatalf("features should be []float64 or []interface{}, got %T", rel.Properties["features"])
+		}
+		assert.Equal(t, []float64{1.0, 2.0, 3.0}, features)
+	})
+
+	t.Run("relationship_not_found", func(t *testing.T) {
+		_, err := exec.Execute(ctx, "CALL db.create.setRelationshipVectorProperty('nonexistent', 'features', [1.0])", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "relationship not found")
+	})
+}
+
+func TestVectorIndexQueryNodesWithProcedure(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// This tests the existing queryNodes procedure with index created via CALL
+	t.Run("query_vector_index", func(t *testing.T) {
+		// Create vector index first
+		_, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('test_idx', 'Doc', 'vec', 4, 'cosine')", nil)
+		require.NoError(t, err)
+
+		// Query (will return empty since no embeddings stored via this mechanism)
+		result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('test_idx', 5, [0.1, 0.2, 0.3, 0.4]) YIELD node, score", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+	})
+
+	t.Run("string_query_without_embedder", func(t *testing.T) {
+		// String query without embedder should return helpful error
+		_, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('test_idx', 5, 'search text') YIELD node, score", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no embedder configured")
+	})
+
+	t.Run("string_query_with_embedder", func(t *testing.T) {
+		// Create a mock embedder
+		mockEmbedder := &mockQueryEmbedder{
+			embedding: []float32{0.1, 0.2, 0.3, 0.4},
+		}
+		exec.SetEmbedder(mockEmbedder)
+
+		// Now string query should work (embeds the string first)
+		result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('test_idx', 5, 'machine learning') YIELD node, score", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+		// Verify the embedder was called
+		assert.Equal(t, "machine learning", mockEmbedder.lastQuery)
+	})
+
+	t.Run("string_query_with_embedder_long_query_chunked", func(t *testing.T) {
+		// Embedder simulates a tokenizer limit (fails if called with >512 chars).
+		mockEmbedder := &failingOnLongQueryEmbedder{
+			embedding: []float32{0.1, 0.2, 0.3, 0.4},
+		}
+		exec.SetEmbedder(mockEmbedder)
+
+		longQuery := loadLargeDocQuery(t)
+		result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('test_idx', 5, $queryText) YIELD node, score", map[string]interface{}{
+			"queryText": longQuery,
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+
+		require.GreaterOrEqual(t, mockEmbedder.calls, 2, "expected embedding to run on multiple query chunks")
+		require.Greater(t, mockEmbedder.maxLen, 0)
+		require.LessOrEqual(t, mockEmbedder.maxTokens, 512, "expected no embedding call on chunks > 512 tokens")
+	})
+}
+
+// TestCallDbIndexVectorQueryNodesServiceWiring owns both halves of the
+// procedure's service-wiring contract: an executor with no DB-owned search
+// service answers from its exact fallback and never allocates a throwaway
+// service, while a lazily warmed wired service is warmed by the query itself
+// and answers from its index without a full store scan.
+func TestCallDbIndexVectorQueryNodesServiceWiring(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{
+			name: "does not create a search service when unwired",
+			run: func(t *testing.T) {
+				baseEngine := newTestMemoryEngine(t)
+				engine := storage.NewNamespacedEngine(baseEngine, "test")
+				exec := NewStorageExecutor(engine)
+				ctx := context.Background()
+
+				_, err := exec.Execute(ctx, "CREATE VECTOR INDEX doc_emb_idx FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
+				require.NoError(t, err)
+				for i := 0; i < 10; i++ {
+					vec := []float64{0, 1, 0, 0}
+					if i == 0 {
+						vec = []float64{1, 0, 0, 0}
+					}
+					_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:Doc {uuid:'doc-%02d', embedding:%s})", i, formatInlineFloat64Vector(vec)), nil)
+					require.NoError(t, err)
+				}
+
+				params := map[string]interface{}{"q": []float64{1, 0, 0, 0}}
+				for i := 0; i < 5; i++ {
+					res, err := exec.Execute(ctx, fmt.Sprintf("CALL db.index.vector.queryNodes('doc_emb_idx', 3, $q) YIELD node, score RETURN node.uuid AS uuid, score /* query_%d */", i), params)
+					require.NoError(t, err)
+					require.Len(t, res.Rows, 3)
+					require.Equal(t, "doc-00", res.Rows[0][0])
+					require.Nil(t, exec.searchService, "queryNodes must use exact fallback when no DB-owned service is wired, not allocate a throwaway service")
+				}
+			},
+		},
+		{
+			name: "lazy wired service warms before query",
+			run: func(t *testing.T) {
+				baseEngine := newTestMemoryEngine(t)
+				engine := storage.NewNamespacedEngine(baseEngine, "test")
+				counting := &countingStreamingEngine{Engine: engine}
+				exec := NewStorageExecutor(counting)
+				ctx := context.Background()
+
+				_, err := exec.Execute(ctx, "CREATE VECTOR INDEX doc_emb_idx FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
+				require.NoError(t, err)
+
+				searchSvc := search.NewService(engine, 4, nil)
+				var warmCalls int32
+				var warmErr atomic.Value
+				searchSvc.SetLazyWarming(true, search.WarmFunc(func() {
+					atomic.AddInt32(&warmCalls, 1)
+					if err := searchSvc.BuildIndexes(context.Background()); err != nil {
+						warmErr.Store(err)
+					}
+				}))
+				exec.SetSearchService(searchSvc)
+
+				_, err = exec.Execute(ctx, "CREATE (:Doc {uuid:'doc-best', embedding:[1.0,0.0,0.0,0.0]})", nil)
+				require.NoError(t, err)
+				_, err = exec.Execute(ctx, "CREATE (:Doc {uuid:'doc-other', embedding:[0.0,1.0,0.0,0.0]})", nil)
+				require.NoError(t, err)
+				require.False(t, searchSvc.IsReady(), "live-indexed vector properties must not be reported as full warmup readiness")
+				require.Equal(t, 2, searchSvc.CountPropertyVectorEntries("embedding"), "live-indexed vector properties are present before full warmup")
+
+				counting.allNodesCalls = 0
+				counting.labelCalls = 0
+				counting.streamNodesCalls = 0
+
+				res, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_emb_idx', 1, $q) YIELD node, score RETURN node.uuid AS uuid, score", map[string]interface{}{
+					"q": []float64{1, 0, 0, 0},
+				})
+				require.NoError(t, err)
+				require.Len(t, res.Rows, 1)
+				require.Equal(t, "doc-best", res.Rows[0][0])
+				if errValue := warmErr.Load(); errValue != nil {
+					require.NoError(t, errValue.(error))
+				}
+				require.True(t, searchSvc.IsReady())
+				require.Equal(t, int32(1), atomic.LoadInt32(&warmCalls))
+				require.Equal(t, 0, counting.allNodesCalls)
+				require.Equal(t, 0, counting.labelCalls)
+				require.Equal(t, 0, counting.streamNodesCalls)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, tc.run)
+	}
+}
+
+// mockQueryEmbedder is a test embedder for string queries
+type mockQueryEmbedder struct {
+	embedding []float32
+	lastQuery string
+}
+
+func (m *mockQueryEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	m.lastQuery = text
+	return m.embedding, nil
+}
+
+func (m *mockQueryEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	return chunkTestText(text, maxTokens, overlap)
+}
+
+type countingQueryEmbedder struct {
+	embedding []float32
+	calls     int
+}
+
+func (m *countingQueryEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	m.calls++
+	return m.embedding, nil
+}
+
+func (m *countingQueryEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	return chunkTestText(text, maxTokens, overlap)
+}
+
+type failingOnLongQueryEmbedder struct {
+	embedding []float32
+
+	calls     int
+	maxLen    int
+	maxTokens int
+}
+
+func (m *failingOnLongQueryEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	m.calls++
+	if len(text) > m.maxLen {
+		m.maxLen = len(text)
+	}
+	tok, err := countTestTokens(text)
+	if err != nil {
+		return nil, err
+	}
+	if tok > m.maxTokens {
+		m.maxTokens = tok
+	}
+	if tok > 512 {
+		return nil, fmt.Errorf("simulated tokenizer overflow for tokens=%d", tok)
+	}
+	return m.embedding, nil
+}
+
+func (m *failingOnLongQueryEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	return chunkTestText(text, maxTokens, overlap)
+}
+
+func loadLargeDocQuery(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join("..", "..", "docs", "features", "gpu-acceleration.md")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	query := string(data)
+	tokens, err := countTestTokens(query)
+	require.NoError(t, err)
+	require.Greater(t, tokens, 512)
+	return query
+}
+
+// 3. Parameter reference ($queryVector)
+func TestVectorSearchQueryModes(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Create test nodes with embeddings via Cypher SET (like Neo4j clients do)
+	// Node 1: about machine learning
+	_, err := exec.Execute(ctx, `CREATE (n:Document {id: 'doc1', title: 'ML Guide', content: 'Machine learning basics'})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `MATCH (n:Document {id: 'doc1'}) SET n.embedding = [0.9, 0.1, 0.0, 0.0]`, nil)
+	require.NoError(t, err)
+
+	// Node 2: about databases
+	_, err = exec.Execute(ctx, `CREATE (n:Document {id: 'doc2', title: 'DB Guide', content: 'Database fundamentals'})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `MATCH (n:Document {id: 'doc2'}) SET n.embedding = [0.0, 0.9, 0.1, 0.0]`, nil)
+	require.NoError(t, err)
+
+	// Node 3: about web development
+	_, err = exec.Execute(ctx, `CREATE (n:Document {id: 'doc3', title: 'Web Guide', content: 'Web development intro'})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `MATCH (n:Document {id: 'doc3'}) SET n.embedding = [0.0, 0.0, 0.9, 0.1]`, nil)
+	require.NoError(t, err)
+
+	// Create vector index so queryNodes uses 4-dim service and BuildIndexes indexes the 4-dim embeddings
+	_, err = exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('doc_idx', 'Document', 'embedding', 4, 'cosine')", nil)
+	require.NoError(t, err)
+
+	t.Run("query_with_direct_vector_array", func(t *testing.T) {
+		// Query for ML-related documents using direct vector (Neo4j style)
+		mlQuery := [4]float32{0.85, 0.15, 0.0, 0.0} // Similar to doc1
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, [0.85, 0.15, 0.0, 0.0]) YIELD node, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// Should find nodes with embeddings, doc1 should be most similar
+		assert.Greater(t, len(result.Rows), 0, "Should find at least one document")
+		if len(result.Rows) > 0 {
+			topNode := result.Rows[0][0].(*storage.Node)
+			assert.Equal(t, "doc1", topNode.Properties["id"], "doc1 should be most similar to ML query")
+			score := result.Rows[0][1].(float64)
+			assert.Greater(t, score, 0.8, "Score should be high for similar vectors")
+		}
+		_ = mlQuery // Suppress unused warning
+	})
+
+	t.Run("query_with_string_auto_embedded", func(t *testing.T) {
+		// Set up mock embedder that returns ML-like vector for any query
+		mockEmbedder := &mockQueryEmbedder{
+			embedding: []float32{0.85, 0.15, 0.0, 0.0}, // Returns ML-like vector
+		}
+		exec.SetEmbedder(mockEmbedder)
+
+		// Query using string - server embeds it automatically
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, 'machine learning tutorial') YIELD node, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// Verify embedder was called with the query string
+		assert.Equal(t, "machine learning tutorial", mockEmbedder.lastQuery)
+
+		// Should find nodes, doc1 should be most similar
+		assert.Greater(t, len(result.Rows), 0, "Should find documents")
+		if len(result.Rows) > 0 {
+			topNode := result.Rows[0][0].(*storage.Node)
+			assert.Equal(t, "doc1", topNode.Properties["id"], "doc1 should match ML query")
+		}
+	})
+
+	t.Run("query_with_double_quoted_string", func(t *testing.T) {
+		mockEmbedder := &mockQueryEmbedder{
+			embedding: []float32{0.0, 0.85, 0.15, 0.0}, // Returns DB-like vector
+		}
+		exec.SetEmbedder(mockEmbedder)
+
+		// Query using double-quoted string
+		result, err := exec.Execute(ctx,
+			`CALL db.index.vector.queryNodes('doc_idx', 10, "database query") YIELD node, score`, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// Verify embedder was called
+		assert.Equal(t, "database query", mockEmbedder.lastQuery)
+
+		// doc2 should be most similar
+		if len(result.Rows) > 0 {
+			topNode := result.Rows[0][0].(*storage.Node)
+			assert.Equal(t, "doc2", topNode.Properties["id"], "doc2 should match DB query")
+		}
+	})
+
+	t.Run("parameter_reference_without_params", func(t *testing.T) {
+		// A missing parameter is the statement's ParameterMissing error, as in
+		// Neo4j (#657).
+		_, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, $queryVector) YIELD node, score", nil)
+		require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): queryVector")
+	})
+
+	t.Run("parameter_reference_with_vector_param", func(t *testing.T) {
+		// Test with []float32 parameter
+		queryVector := []float32{0.85, 0.15, 0.0, 0.0}
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, $queryVector) YIELD node, score",
+			map[string]interface{}{"queryVector": queryVector})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Should find nodes with embeddings
+		assert.Greater(t, len(result.Rows), 0, "Should find nodes when parameter provided")
+	})
+
+	t.Run("parameter_reference_with_float64_param", func(t *testing.T) {
+		// Test with []float64 parameter (should be converted to []float32)
+		queryVector := []float64{0.85, 0.15, 0.0, 0.0}
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, $queryVector) YIELD node, score",
+			map[string]interface{}{"queryVector": queryVector})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Should find nodes with embeddings
+		assert.Greater(t, len(result.Rows), 0, "Should find nodes when []float64 parameter provided")
+	})
+
+	t.Run("parameter_reference_with_interface_slice_param", func(t *testing.T) {
+		// Test with []interface{} parameter
+		queryVector := []interface{}{0.85, 0.15, 0.0, 0.0}
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, $queryVector) YIELD node, score",
+			map[string]interface{}{"queryVector": queryVector})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Should find nodes with embeddings
+		assert.Greater(t, len(result.Rows), 0, "Should find nodes when []interface{} parameter provided")
+	})
+
+	t.Run("parameter_reference_with_string_param", func(t *testing.T) {
+		// Test with string parameter (should be embedded)
+		// Create a new executor with embedder for this test
+		baseStore := newTestMemoryEngine(t)
+		testStore := storage.NewNamespacedEngine(baseStore, "test")
+		testExec := NewStorageExecutor(testStore)
+		mockEmbedder := &mockQueryEmbedder{
+			embedding: []float32{0.85, 0.15, 0.0, 0.0}, // Match test data
+		}
+		testExec.SetEmbedder(mockEmbedder)
+
+		// Create index first
+		_, err := testExec.Execute(ctx, "CALL db.index.vector.createNodeIndex('doc_idx', 'Document', 'embedding', 4, 'cosine')", nil)
+		require.NoError(t, err)
+
+		// Create test data
+		_, err = testExec.Execute(ctx, `
+			CREATE (d1:Document {content: 'machine learning tutorial', embedding: [0.85, 0.15, 0.0, 0.0]})
+		`, nil)
+		require.NoError(t, err)
+
+		result, err := testExec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, $queryText) YIELD node, score",
+			map[string]interface{}{"queryText": "machine learning"})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Should find nodes after embedding
+		assert.Greater(t, len(result.Rows), 0, "Should find nodes when string parameter is embedded")
+		assert.Equal(t, "machine learning", mockEmbedder.lastQuery, "Embedder should be called with parameter value")
+	})
+
+	t.Run("parameter_reference_missing_param", func(t *testing.T) {
+		// Test error when parameter name doesn't match
+		_, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, $missingParam) YIELD node, score",
+			map[string]interface{}{"otherParam": []float32{0.1, 0.2}})
+		require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): missingParam")
+	})
+
+	t.Run("parameter_reference_invalid_type", func(t *testing.T) {
+		// Test error when parameter has wrong type
+		_, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, $queryVector) YIELD node, score",
+			map[string]interface{}{"queryVector": 123}) // Invalid: not a vector
+		require.Error(t, err, "Should error when parameter has invalid type")
+		assert.Contains(t, err.Error(), "unsupported type", "Error should mention unsupported type")
+	})
+
+	t.Run("string_query_error_without_embedder", func(t *testing.T) {
+		// Create fresh executor without embedder
+		freshExec := NewStorageExecutor(engine)
+
+		// Should fail gracefully with helpful message
+		_, err := freshExec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('idx', 5, 'test query') YIELD node, score", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no embedder configured")
+		assert.Contains(t, err.Error(), "use vector array")
+	})
+
+	t.Run("dimension_mismatch_silently_filters", func(t *testing.T) {
+		// Query with different dimension vector - should return 0 results (not error)
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, [0.5, 0.5]) YIELD node, score", nil) // 2-dim vs 4-dim
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Empty(t, result.Rows, "Dimension mismatch should filter out all nodes")
+	})
+
+	t.Run("limit_results", func(t *testing.T) {
+		// Query with limit of 2
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 2, [0.5, 0.5, 0.5, 0.5]) YIELD node, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.LessOrEqual(t, len(result.Rows), 2, "Should respect limit")
+	})
+}
+
+func TestVectorQueryNodes_StringInput_EmbeddingCacheCanonicalizesCase(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "nornic")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := store.CreateNode(&storage.Node{
+		ID:              storage.NodeID(storage.EnsureDatabasePrefix("nornic", "doc-1")),
+		Labels:          []string{"OriginalText"},
+		NamedEmbeddings: map[string][]float32{"embedding": {1, 0, 0}},
+		Properties:      map[string]interface{}{"originalText": "Get it delivered"},
+	})
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "CREATE VECTOR INDEX idx_original_text FOR (n:OriginalText) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
+	require.NoError(t, err)
+
+	emb := &countingQueryEmbedder{embedding: []float32{1, 0, 0}}
+	exec.SetEmbedder(emb)
+
+	queries := []string{
+		"CALL db.index.vector.queryNodes('idx_original_text', 5, 'Get it delivered') YIELD node, score RETURN node, score",
+		"CALL db.index.vector.queryNodes('idx_original_text', 5, 'GET IT DELIVERED') YIELD node, score RETURN node, score",
+		"CALL db.index.vector.queryNodes('idx_original_text', 5, 'gEt It DeLiVeReD') YIELD node, score RETURN node, score",
+	}
+	for _, q := range queries {
+		res, qerr := exec.Execute(ctx, q, nil)
+		require.NoError(t, qerr)
+		require.NotEmpty(t, res.Rows)
+	}
+
+	require.Equal(t, 1, emb.calls, "expected canonicalized string query embedding cache to avoid repeated embedding calls")
+}
+
+// TestVectorSearchEndToEnd simulates a typical workflow:
+// 1. Application generates embedding client-side
+// 2. Application stores embedding via Cypher SET
+// 3. Application queries via db.index.vector.queryNodes with vector
+func TestVectorSearchEndToEnd(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Simulate storing a node with embedding (as done with Neo4j)
+	_, err := exec.Execute(ctx, `CREATE (n:Node {id: 'node-abc123', type: 'decision', content: 'Use PostgreSQL', title: 'Database Choice'})`, nil)
+	require.NoError(t, err)
+
+	// Application generates embedding and stores it (single SET for simplicity)
+	_, err = exec.Execute(ctx, `MATCH (n:Node {id: 'node-abc123'}) SET n.embedding = [0.7, 0.2, 0.05, 0.05]`, nil)
+	require.NoError(t, err)
+
+	// Additional properties
+	_, err = exec.Execute(ctx, `MATCH (n:Node {id: 'node-abc123'}) SET n.has_embedding = true`, nil)
+	require.NoError(t, err)
+
+	// Create vector index (4 dims) so queryNodes uses matching service and can find the node
+	_, err = exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('node_embedding_index', 'Node', 'embedding', 4, 'cosine')", nil)
+	require.NoError(t, err)
+
+	// Verify embedding was stored
+	result, err := exec.Execute(ctx, `MATCH (n:Node {id: 'node-abc123'}) RETURN n`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+
+	// Query with pre-computed query vector
+	searchResult, err := exec.Execute(ctx, `CALL db.index.vector.queryNodes('node_embedding_index', 10, [0.65, 0.25, 0.05, 0.05]) YIELD node, score`, nil)
+	require.NoError(t, err)
+	require.NotNil(t, searchResult)
+
+	// Should find our node with high similarity
+	require.GreaterOrEqual(t, len(searchResult.Rows), 1, "Should find the stored node")
+	if len(searchResult.Rows) > 0 {
+		score := searchResult.Rows[0][1].(float64)
+		assert.Greater(t, score, 0.9, "Should have high similarity score")
+	}
+}
+
+// TestMultiLineSetWithArray tests that SET clauses with arrays and multiple properties work
+func TestMultiLineSetWithArray(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Create a node
+	_, err := exec.Execute(ctx, `CREATE (n:Node {id: 'test-multi'})`, nil)
+	require.NoError(t, err)
+
+	// Multi-line SET with array - this is how embeddings are set with metadata
+	_, err = exec.Execute(ctx, `
+		MATCH (n:Node {id: 'test-multi'})
+		SET n.embedding = [0.7, 0.2, 0.05, 0.05],
+		    n.embedding_dimensions = 4,
+		    n.embedding_model = 'bge-m3',
+		    n.has_embedding = true
+	`, nil)
+	require.NoError(t, err)
+
+	// Verify all properties were set
+	nodes, err := engine.AllNodes()
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+
+	node := nodes[0]
+
+	// Check embedding was stored as a regular property (no special routing).
+	// Cypher list literals of homogeneous numerics round-trip through
+	// storage as []float64 — the property codec narrows arrays whose
+	// elements are all the same kind so callers see deterministic types.
+	embProp, hasEmb := node.Properties["embedding"]
+	require.True(t, hasEmb, "embedding property should exist in Properties")
+	embSlice, ok := embProp.([]float64)
+	require.True(t, ok, "embedding should round-trip as []float64 (got %T)", embProp)
+	assert.Len(t, embSlice, 4, "Embedding should have 4 dimensions")
+
+	// Check embedding metadata was set via Cypher (all stored as regular properties)
+	assert.Equal(t, int64(4), node.Properties["embedding_dimensions"])
+	assert.Equal(t, "bge-m3", node.Properties["embedding_model"])
+	assert.Equal(t, true, node.Properties["has_embedding"])
+}
+
+func TestMatchWithCallProcedure(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Create vector index using CALL procedure
+	_, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('idx', 'Document', 'embedding', 4, 'cosine')", nil)
+	require.NoError(t, err)
+
+	// Create test nodes with embeddings
+	_, err = exec.Execute(ctx, `
+		CREATE (d1:Document {id: 'doc1', content: 'machine learning'})
+		CREATE (d2:Document {id: 'doc2', content: 'deep learning'})
+	`, nil)
+	require.NoError(t, err)
+
+	// Set embeddings on nodes
+	_, err = exec.Execute(ctx, `
+		MATCH (d1:Document {id: 'doc1'})
+		SET d1.embedding = [0.9, 0.1, 0.0, 0.0]
+	`, nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, `
+		MATCH (d2:Document {id: 'doc2'})
+		SET d2.embedding = [0.8, 0.2, 0.0, 0.0]
+	`, nil)
+	require.NoError(t, err)
+
+	t.Run("match_with_call_using_bound_variable", func(t *testing.T) {
+		// Query: MATCH (n:Document {id: 'doc1'}) CALL db.index.vector.queryNodes('idx', 10, n.embedding) YIELD node, score
+		result, err := exec.Execute(ctx, `
+			MATCH (n:Document {id: 'doc1'})
+			CALL db.index.vector.queryNodes('idx', 10, n.embedding)
+			YIELD node, score
+			RETURN node.id AS docId, score
+		`, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Greater(t, len(result.Rows), 0, "Should find at least one result")
+
+		// Should find doc1 itself (exact match)
+		if len(result.Rows) > 0 {
+			firstRow := result.Rows[0]
+			assert.Equal(t, "doc1", firstRow[0], "First result should be doc1")
+			score := firstRow[1].(float64)
+			assert.Greater(t, score, 0.9, "Score should be high for identical vector")
+		}
+	})
+
+	t.Run("match_with_call_multiple_nodes", func(t *testing.T) {
+		// Query with multiple matching nodes - should execute CALL for each
+		result, err := exec.Execute(ctx, `
+			MATCH (n:Document)
+			CALL db.index.vector.queryNodes('idx', 5, n.embedding)
+			YIELD node, score
+			RETURN node.id AS docId, score
+			ORDER BY score DESC
+		`, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Should have results from both doc1 and doc2 queries
+		assert.GreaterOrEqual(t, len(result.Rows), 2, "Should have results from multiple nodes")
+	})
+
+	t.Run("match_with_call_no_matching_nodes", func(t *testing.T) {
+		// Query with no matching nodes - should return empty
+		result, err := exec.Execute(ctx, `
+			MATCH (n:Document {id: 'nonexistent'})
+			CALL db.index.vector.queryNodes('idx', 10, n.embedding)
+			YIELD node, score
+			RETURN node, score
+		`, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Empty(t, result.Rows, "Should return empty when no nodes match")
+	})
+
+	t.Run("match_with_call_where_clause", func(t *testing.T) {
+		// Query with WHERE clause in MATCH
+		result, err := exec.Execute(ctx, `
+			MATCH (n:Document)
+			WHERE n.id = 'doc1'
+			CALL db.index.vector.queryNodes('idx', 10, n.embedding)
+			YIELD node, score
+			RETURN node.id AS docId, score
+		`, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Greater(t, len(result.Rows), 0, "Should find results when WHERE clause matches")
+	})
+}
+
+func TestCallLeadingVectorYieldMatchPipeline(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('idx_original_text', 'OriginalText', 'embedding', 4, 'cosine')", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "CREATE (o1:OriginalText {id:'o1', originalText:'Get it delivered'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (o2:OriginalText {id:'o2', originalText:'Schedule delivery date'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (t1:TranslatedText {id:'t1', language:'es', translatedText:'Recibelo a domicilio'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (t2:TranslatedText {id:'t2', language:'es', translatedText:'Programar fecha de entrega'})", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "MATCH (o:OriginalText {id:'o1'}) SET o.embedding = [1.0, 0.0, 0.0, 0.0]", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (o:OriginalText {id:'o2'}) SET o.embedding = [0.9, 0.1, 0.0, 0.0]", nil)
+	require.NoError(t, err)
+
+	o1, err := exec.Execute(ctx, "MATCH (o:OriginalText {id:'o1'}) RETURN o", nil)
+	require.NoError(t, err)
+	require.Len(t, o1.Rows, 1)
+	o1Node, ok := o1.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	o2, err := exec.Execute(ctx, "MATCH (o:OriginalText {id:'o2'}) RETURN o", nil)
+	require.NoError(t, err)
+	require.Len(t, o2.Rows, 1)
+	o2Node, ok := o2.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	t1, err := exec.Execute(ctx, "MATCH (t:TranslatedText {id:'t1'}) RETURN t", nil)
+	require.NoError(t, err)
+	require.Len(t, t1.Rows, 1)
+	t1Node, ok := t1.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	t2, err := exec.Execute(ctx, "MATCH (t:TranslatedText {id:'t2'}) RETURN t", nil)
+	require.NoError(t, err)
+	require.Len(t, t2.Rows, 1)
+	t2Node, ok := t2.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+
+	require.NoError(t, engine.CreateEdge(&storage.Edge{
+		ID:        "edge-o1-t1",
+		Type:      "TRANSLATES_TO",
+		StartNode: o1Node.ID,
+		EndNode:   t1Node.ID,
+	}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{
+		ID:        "edge-o2-t2",
+		Type:      "TRANSLATES_TO",
+		StartNode: o2Node.ID,
+		EndNode:   t2Node.ID,
+	}))
+
+	result, err := exec.Execute(ctx, `
+CALL db.index.vector.queryNodes('idx_original_text', 5, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+MATCH (node:OriginalText)-[:TRANSLATES_TO]->(t:TranslatedText)
+RETURN
+  node.originalText AS originalText,
+  score,
+  t.language AS language,
+  t.translatedText AS translatedText
+ORDER BY score DESC, t.language
+LIMIT 5
+`, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, []string{"originalText", "score", "language", "translatedText"}, result.Columns)
+	require.GreaterOrEqual(t, len(result.Rows), 1)
+}
+
+func TestCallLeadingVectorYieldTailClausePermutations(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('idx_tail', 'OriginalText', 'embedding', 4, 'cosine')", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "CREATE (o1:OriginalText {id:'o1', originalText:'Get it delivered', embedding:[1.0,0.0,0.0,0.0]})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (o2:OriginalText {id:'o2', originalText:'Schedule delivery date', embedding:[0.9,0.1,0.0,0.0]})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (t1:TranslatedText {id:'t1', language:'es', translatedText:'Recibelo a domicilio'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (t2:TranslatedText {id:'t2', language:'fr', translatedText:'Recevez-le a domicile'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:TailDeleteTarget {id:'td1'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:TailDetachDeleteTarget {id:'tdd1'})-[:TMP_REL]->(:TailDetachDeletePeer {id:'peer1'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (o:OriginalText {id:'o1'}), (t:TranslatedText {id:'t1'}) CREATE (o)-[:TRANSLATES_TO]->(t)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (o:OriginalText {id:'o2'}), (t:TranslatedText {id:'t2'}) CREATE (o)-[:TRANSLATES_TO]->(t)", nil)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name          string
+		query         string
+		minRows       int
+		expectedCols  []string
+		validateAfter func(t *testing.T)
+	}{
+		{
+			name: "WITH_then_RETURN",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+WITH node, score
+RETURN node.originalText AS originalText, score
+ORDER BY score DESC
+`,
+			minRows:      1,
+			expectedCols: []string{"originalText", "score"},
+		},
+		{
+			name: "MATCH_traversal",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+MATCH (node:OriginalText)-[:TRANSLATES_TO]->(t:TranslatedText)
+RETURN node.originalText AS originalText, t.language AS language
+ORDER BY language
+`,
+			minRows:      1,
+			expectedCols: []string{"originalText", "language"},
+		},
+		{
+			name: "OPTIONAL_MATCH",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+OPTIONAL MATCH (node)-[:DOES_NOT_EXIST]->(x)
+RETURN node.originalText AS originalText, x AS missing
+`,
+			minRows:      1,
+			expectedCols: []string{"originalText", "missing"},
+		},
+		{
+			name: "UNWIND_scalar_tail",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+UNWIND [score] AS s
+RETURN s AS score
+`,
+			minRows:      1,
+			expectedCols: []string{"score"},
+		},
+		{
+			name: "SET_mutation",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+MATCH (node:OriginalText)
+SET node.tailSeen = true
+RETURN node.originalText AS originalText
+`,
+			minRows:      1,
+			expectedCols: []string{"originalText"},
+			validateAfter: func(t *testing.T) {
+				check, err := exec.Execute(ctx, "MATCH (o:OriginalText) WHERE o.tailSeen = true RETURN count(o) AS c", nil)
+				require.NoError(t, err)
+				require.Len(t, check.Rows, 1)
+				assert.GreaterOrEqual(t, check.Rows[0][0].(int64), int64(1))
+			},
+		},
+		{
+			name: "REMOVE_mutation",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+MATCH (node:OriginalText)
+REMOVE node.tailSeen
+RETURN node.originalText AS originalText
+`,
+			minRows:      1,
+			expectedCols: []string{"originalText"},
+			validateAfter: func(t *testing.T) {
+				check, err := exec.Execute(ctx, "MATCH (o:OriginalText) WHERE o.tailSeen IS NOT NULL RETURN count(o) AS c", nil)
+				require.NoError(t, err)
+				require.Len(t, check.Rows, 1)
+				assert.Equal(t, int64(0), check.Rows[0][0])
+			},
+		},
+		{
+			name: "CREATE_mutation",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+CREATE (m:TailProbe {name: node.originalText})
+RETURN m.name AS probeName
+`,
+			minRows:      1,
+			expectedCols: []string{"probeName"},
+			validateAfter: func(t *testing.T) {
+				check, err := exec.Execute(ctx, "MATCH (m:TailProbe) RETURN count(m) AS c", nil)
+				require.NoError(t, err)
+				require.Len(t, check.Rows, 1)
+				assert.GreaterOrEqual(t, check.Rows[0][0].(int64), int64(1))
+			},
+		},
+		{
+			name: "MERGE_no_seed_reference",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+MERGE (m:TailMerge {id: 'fixed'})
+RETURN m.id AS mergedName
+`,
+			minRows:      1,
+			expectedCols: []string{"mergedName"},
+			validateAfter: func(t *testing.T) {
+				check, err := exec.Execute(ctx, "MATCH (m:TailMerge {id:'fixed'}) RETURN count(m) AS c", nil)
+				require.NoError(t, err)
+				require.Len(t, check.Rows, 1)
+				assert.GreaterOrEqual(t, check.Rows[0][0].(int64), int64(1))
+			},
+		},
+		{
+			name: "CALL_subquery_tail",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+CALL {
+  WITH node
+  RETURN node.originalText AS txt
+}
+RETURN txt
+`,
+			minRows:      1,
+			expectedCols: []string{"txt"},
+		},
+		{
+			name: "DELETE_tail",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node
+MATCH (d:TailDeleteTarget {id:'td1'})
+DELETE d
+RETURN count(*) AS deletedCount
+`,
+			minRows:      0,
+			expectedCols: []string{"deletedCount"},
+			validateAfter: func(t *testing.T) {
+				check, err := exec.Execute(ctx, "MATCH (d:TailDeleteTarget {id:'td1'}) RETURN count(d) AS c", nil)
+				require.NoError(t, err)
+				require.Len(t, check.Rows, 1)
+				assert.Equal(t, int64(0), check.Rows[0][0])
+			},
+		},
+		{
+			name: "DETACH_DELETE_tail",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD node
+MATCH (d:TailDetachDeleteTarget {id:'tdd1'})
+DETACH DELETE d
+RETURN count(*) AS deletedCount
+`,
+			minRows:      0,
+			expectedCols: []string{"deletedCount"},
+			validateAfter: func(t *testing.T) {
+				check, err := exec.Execute(ctx, "MATCH (d:TailDetachDeleteTarget {id:'tdd1'}) RETURN count(d) AS c", nil)
+				require.NoError(t, err)
+				require.Len(t, check.Rows, 1)
+				assert.Equal(t, int64(0), check.Rows[0][0])
+			},
+		},
+		{
+			name: "FOREACH_tail",
+			query: `
+CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
+YIELD score
+			FOREACH (x IN [1] | CREATE (:TailForeach {v: score}))
+RETURN score
+`,
+			minRows:      0,
+			expectedCols: []string{"score"},
+			validateAfter: func(t *testing.T) {
+				check, err := exec.Execute(ctx, "MATCH (m:TailForeach) RETURN count(m) AS c", nil)
+				require.NoError(t, err)
+				require.Len(t, check.Rows, 1)
+				assert.GreaterOrEqual(t, check.Rows[0][0].(int64), int64(1))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(ctx, tt.query, nil)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.GreaterOrEqual(t, len(result.Rows), tt.minRows)
+			assert.Equal(t, tt.expectedCols, result.Columns)
+			if tt.validateAfter != nil {
+				tt.validateAfter(t)
+			}
+		})
+	}
+}
+
+func TestCallDbIndexVectorQueryRelationships(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("query_relationship_vectors", func(t *testing.T) {
+		// Create relationship vector index
+		_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('rel_idx', 'SIMILAR_TO', 'features', 2, 'cosine')", nil)
+		require.NoError(t, err)
+
+		// Create nodes and relationship
+		_, err = engine.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Node"}})
+		require.NoError(t, err)
+		_, err = engine.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Node"}})
+		require.NoError(t, err)
+		err = engine.CreateEdge(&storage.Edge{
+			ID:         "rel1",
+			Type:       "SIMILAR_TO",
+			StartNode:  "n1",
+			EndNode:    "n2",
+			Properties: map[string]interface{}{"features": []float64{0.1, 0.2}},
+		})
+		require.NoError(t, err)
+
+		// Query relationship vectors
+		result, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('rel_idx', 5, [0.1, 0.2]) YIELD relationship, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Should find the relationship
+		assert.Greater(t, len(result.Rows), 0, "Should find relationships with matching vectors")
+		if len(result.Rows) > 0 {
+			score := result.Rows[0][1].(float64)
+			assert.Greater(t, score, 0.9, "Score should be high for identical vectors")
+		}
+	})
+
+	t.Run("query_with_string_parameter", func(t *testing.T) {
+		// Create relationship vector index
+		_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('rel_text_idx', 'CONTAINS', 'embedding', 4, 'cosine')", nil)
+		require.NoError(t, err)
+
+		// Create nodes and relationship with embedding
+		_, err = engine.CreateNode(&storage.Node{ID: "n3", Labels: []string{"Node"}})
+		require.NoError(t, err)
+		_, err = engine.CreateNode(&storage.Node{ID: "n4", Labels: []string{"Node"}})
+		require.NoError(t, err)
+		err = engine.CreateEdge(&storage.Edge{
+			ID:         "rel2",
+			Type:       "CONTAINS",
+			StartNode:  "n3",
+			EndNode:    "n4",
+			Properties: map[string]interface{}{"embedding": []float64{0.85, 0.15, 0.0, 0.0}},
+		})
+		require.NoError(t, err)
+
+		// Create mock embedder
+		mockEmbedder := &mockQueryEmbedder{
+			embedding: []float32{0.85, 0.15, 0.0, 0.0},
+		}
+		exec.SetEmbedder(mockEmbedder)
+
+		// Query with string (should be embedded)
+		result, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('rel_text_idx', 5, 'machine learning') YIELD relationship, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Should find relationships after embedding
+		assert.Greater(t, len(result.Rows), 0, "Should find relationships when string is embedded")
+		assert.Equal(t, "machine learning", mockEmbedder.lastQuery, "Embedder should be called with query string")
+	})
+
+	t.Run("query_with_string_parameter_long_query_chunked", func(t *testing.T) {
+		// Create relationship vector index dedicated to this test.
+		_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('rel_long_text_idx', 'CONTAINS_LONG', 'embedding', 4, 'cosine')", nil)
+		require.NoError(t, err)
+
+		// Create nodes and relationship with embedding.
+		_, err = engine.CreateNode(&storage.Node{ID: "nl1", Labels: []string{"Node"}})
+		require.NoError(t, err)
+		_, err = engine.CreateNode(&storage.Node{ID: "nl2", Labels: []string{"Node"}})
+		require.NoError(t, err)
+		err = engine.CreateEdge(&storage.Edge{
+			ID:         "rel_long",
+			Type:       "CONTAINS_LONG",
+			StartNode:  "nl1",
+			EndNode:    "nl2",
+			Properties: map[string]interface{}{"embedding": []float64{0.85, 0.15, 0.0, 0.0}},
+		})
+		require.NoError(t, err)
+
+		mockEmbedder := &failingOnLongQueryEmbedder{
+			embedding: []float32{0.85, 0.15, 0.0, 0.0},
+		}
+		exec.SetEmbedder(mockEmbedder)
+
+		longQuery := loadLargeDocQuery(t)
+		result, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('rel_long_text_idx', 5, $queryText) YIELD relationship, score", map[string]interface{}{
+			"queryText": longQuery,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Greater(t, len(result.Rows), 0, "Should find relationships when long string is chunk-embedded")
+
+		require.GreaterOrEqual(t, mockEmbedder.calls, 2, "expected embedding to run on multiple query chunks")
+		require.Greater(t, mockEmbedder.maxLen, 0)
+		require.LessOrEqual(t, mockEmbedder.maxTokens, 512, "expected no embedding call on chunks > 512 tokens")
+	})
+
+	t.Run("no_index_scenario", func(t *testing.T) {
+		// No such index: Neo4j's ProcedureCallFailed, as for queryNodes.
+		_, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('nonexistent_idx', 5, [0.1, 0.2]) YIELD relationship, score", nil)
+		require.ErrorContains(t, err, "There is no such vector schema index: nonexistent_idx")
+	})
+
+	t.Run("no_matching_relationships", func(t *testing.T) {
+		// Create relationship vector index
+		_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('empty_idx', 'HAS', 'vector', 2, 'cosine')", nil)
+		require.NoError(t, err)
+
+		// Create nodes but no relationships (or relationships without matching vectors)
+		_, err = engine.CreateNode(&storage.Node{ID: "n5", Labels: []string{"Node"}})
+		require.NoError(t, err)
+		_, err = engine.CreateNode(&storage.Node{ID: "n6", Labels: []string{"Node"}})
+		require.NoError(t, err)
+
+		// Create a relationship but with an orthogonal vector (perpendicular to query vector)
+		// Query vector: [0.1, 0.2] - normalized direction
+		// Orthogonal vector: [-0.2, 0.1] - perpendicular, should have cosine similarity near 0
+		err = engine.CreateEdge(&storage.Edge{
+			ID:         "rel3",
+			Type:       "HAS",
+			StartNode:  "n5",
+			EndNode:    "n6",
+			Properties: map[string]interface{}{"vector": []float64{-0.2, 0.1}}, // Orthogonal to [0.1, 0.2]
+		})
+		require.NoError(t, err)
+
+		// Query with vector that doesn't match any relationships well
+		result, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('empty_idx', 5, [0.1, 0.2]) YIELD relationship, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, []string{"relationship", "score"}, result.Columns)
+		// Orthogonal vectors: Neo4j's cosine score is 0.5, the middle of its
+		// [0, 1] scale.
+		if len(result.Rows) > 0 {
+			for _, row := range result.Rows {
+				score := row[1].(float64)
+				assert.Equal(t, 0.5, score, "orthogonal vectors score 0.5")
+			}
+		} else {
+			// Or the implementation might filter out very low scores
+			// Either behavior is acceptable - empty or low scores
+		}
+	})
+
+	t.Run("no_matching_relationships_empty_index", func(t *testing.T) {
+		// Create relationship vector index but no relationships at all
+		_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('truly_empty_idx', 'RELATES', 'features', 2, 'cosine')", nil)
+		require.NoError(t, err)
+
+		// Query with no relationships in the index
+		result, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('truly_empty_idx', 5, [0.1, 0.2]) YIELD relationship, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, []string{"relationship", "score"}, result.Columns)
+		assert.Empty(t, result.Rows, "Should return empty when no relationships exist in index")
+	})
+}
+
+func TestCallDbIndexVectorQueryRelationships_UsesSearchServiceRelationshipVectors(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('rel_idx_search', 'RELATES_TO', 'fact_embedding', 3, 'cosine')", nil)
+	require.NoError(t, err)
+
+	_, err = engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Entity"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Entity"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Entity"}})
+	require.NoError(t, err)
+	require.NoError(t, engine.CreateEdge(&storage.Edge{
+		ID:        "rel-best",
+		Type:      "RELATES_TO",
+		StartNode: "a",
+		EndNode:   "b",
+		Properties: map[string]interface{}{
+			"fact_embedding": []float32{1, 0, 0},
+		},
+	}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{
+		ID:        "rel-other",
+		Type:      "RELATES_TO",
+		StartNode: "a",
+		EndNode:   "c",
+		Properties: map[string]interface{}{
+			"fact_embedding": []float32{0, 1, 0},
+		},
+	}))
+
+	searchSvc := search.NewService(engine, 3, nil)
+	require.NoError(t, searchSvc.BuildIndexes(ctx))
+	require.True(t, searchSvc.HasRelationshipVectorEntries("RELATES_TO", "fact_embedding"))
+	exec.SetSearchService(searchSvc)
+
+	result, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('rel_idx_search', 1, [1.0, 0.0, 0.0]) YIELD relationship, score", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	relationship := result.Rows[0][0].(*storage.Edge)
+	require.Equal(t, "rel-best", string(relationship.ID))
+	require.Greater(t, result.Rows[0][1].(float64), 0.99)
+}
+
+func TestCallDbIndexFulltextQueryRelationships(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Create nodes and relationship with text property
+	_, err := engine.CreateNode(&storage.Node{ID: "x", Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "y", Labels: []string{"Node"}})
+	require.NoError(t, err)
+	err = engine.CreateEdge(&storage.Edge{
+		ID:         "rel_text",
+		StartNode:  "x",
+		EndNode:    "y",
+		Type:       "DESCRIBES",
+		Properties: map[string]interface{}{"description": "This is a test relationship with searchable text"},
+	})
+	require.NoError(t, err)
+
+	t.Run("query_relationship_fulltext", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.index.fulltext.queryRelationships('default', 'searchable') YIELD relationship, score", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+	})
+
+	t.Run("missing_index_fails_like_queryNodes", func(t *testing.T) {
+		// As in Neo4j and as for queryNodes (#657).
+		_, err := exec.Execute(ctx, "CALL db.index.fulltext.queryRelationships('rel_text_idx', 'searchable') YIELD relationship, score", nil)
+		require.EqualError(t, err, "Failed to invoke procedure `db.index.fulltext.queryRelationships`: Caused by: there is no such fulltext schema index: rel_text_idx")
+		code, _ := nornicerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Procedure.ProcedureCallFailed", code)
+	})
+}
+
+func TestVectorQueryNodes_ReturnTailFunctions_DoNotAffectArgCount(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('idx_tail_fn', 'OriginalText', 'embedding', 4, 'cosine')", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "CREATE (o:OriginalText {id:'o1', originalText:'get it shipped', embedding:[1.0,0.0,0.0,0.0]})", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, `
+CALL db.index.vector.queryNodes('idx_tail_fn', 10, [1.0, 0.0, 0.0, 0.0])
+YIELD node, score
+RETURN elementId(node) AS id, labels(node) AS labels, left(node.originalText,40) AS txt, score
+LIMIT 5
+`, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, []string{"id", "labels", "txt", "score"}, result.Columns)
+	require.NotEmpty(t, result.Rows)
+}
+
+// =============================================================================
+// Tests for New Index Creation Procedures (Neo4j 100% Compatibility)
+// =============================================================================
+
+func TestCallDbIndexVectorCreateRelationshipIndex(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("create_relationship_vector_index", func(t *testing.T) {
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.createRelationshipIndex('rel_vec_idx', 'SIMILAR_TO', 'similarity', 768, 'cosine')", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+
+		assert.Equal(t, "rel_vec_idx", result.Rows[0][0])
+		assert.Equal(t, "SIMILAR_TO", result.Rows[0][1])
+		assert.Equal(t, "similarity", result.Rows[0][2])
+		assert.Equal(t, 768, result.Rows[0][3])
+		assert.Equal(t, "cosine", result.Rows[0][4])
+	})
+
+	t.Run("create_with_euclidean_similarity", func(t *testing.T) {
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.createRelationshipIndex('rel_vec_idx2', 'CONNECTS', 'embedding', 1024, 'euclidean')", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+
+		assert.Equal(t, "euclidean", result.Rows[0][4])
+	})
+
+	t.Run("create_with_default_similarity", func(t *testing.T) {
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.createRelationshipIndex('rel_vec_idx3', 'RELATES', 'vec', 256)", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+
+		assert.Equal(t, "cosine", result.Rows[0][4]) // Default
+	})
+
+	t.Run("missing_arguments_error", func(t *testing.T) {
+		_, err := exec.Execute(ctx,
+			"CALL db.index.vector.createRelationshipIndex('idx', 'REL', 'prop')", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires at least 4 arguments")
+	})
+}
+
+func TestCallDbIndexFulltextCreateNodeIndex(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("create_single_label_single_property", func(t *testing.T) {
+		result, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createNodeIndex('ft_idx1', 'Document', 'content')", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+
+		assert.Equal(t, "ft_idx1", result.Rows[0][0])
+		labels := result.Rows[0][1].([]string)
+		assert.Contains(t, labels, "Document")
+	})
+
+	t.Run("create_with_array_labels", func(t *testing.T) {
+		result, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createNodeIndex('ft_idx2', ['Article', 'Blog', 'Post'], ['title', 'content'])", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+
+		labels := result.Rows[0][1].([]string)
+		assert.Len(t, labels, 3)
+		assert.Contains(t, labels, "Article")
+		assert.Contains(t, labels, "Blog")
+		assert.Contains(t, labels, "Post")
+
+		properties := result.Rows[0][2].([]string)
+		assert.Len(t, properties, 2)
+		assert.Contains(t, properties, "title")
+		assert.Contains(t, properties, "content")
+	})
+
+	t.Run("create_with_single_quoted_strings", func(t *testing.T) {
+		result, err := exec.Execute(ctx,
+			`CALL db.index.fulltext.createNodeIndex('ft_idx3', 'Memory', 'text')`, nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+	})
+
+	t.Run("missing_arguments_error", func(t *testing.T) {
+		_, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createNodeIndex('idx', 'Label')", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires at least 3 arguments")
+	})
+}
+
+func TestCallDbIndexFulltextCreateRelationshipIndex(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("create_single_type_single_property", func(t *testing.T) {
+		result, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createRelationshipIndex('rel_ft_idx1', 'MENTIONS', 'description')", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+
+		assert.Equal(t, "rel_ft_idx1", result.Rows[0][0])
+	})
+
+	t.Run("create_with_array_types", func(t *testing.T) {
+		result, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createRelationshipIndex('rel_ft_idx2', ['REFERENCES', 'CITES', 'LINKS_TO'], ['note', 'context'])", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+
+		relTypes := result.Rows[0][1].([]string)
+		assert.Len(t, relTypes, 3)
+		assert.Contains(t, relTypes, "REFERENCES")
+		assert.Contains(t, relTypes, "CITES")
+		assert.Contains(t, relTypes, "LINKS_TO")
+	})
+
+	t.Run("missing_arguments_error", func(t *testing.T) {
+		_, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createRelationshipIndex('idx', 'REL')", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires at least 3 arguments")
+	})
+}
+
+func TestCallDbIndexFulltextDrop(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("drop_existing_index", func(t *testing.T) {
+		// Create index first
+		_, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createNodeIndex('to_drop', 'Node', 'prop')", nil)
+		require.NoError(t, err)
+
+		// Drop it
+		result, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.drop('to_drop')", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+
+		assert.Equal(t, "to_drop", result.Rows[0][0])
+		assert.Equal(t, true, result.Rows[0][1])
+	})
+
+	t.Run("drop_nonexistent_index_errors", func(t *testing.T) {
+		// Like DROP INDEX, an unknown name is an error, not a reported drop.
+		_, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.drop('nonexistent_index')", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nonexistent_index")
+	})
+
+	t.Run("drop_with_quoted_name", func(t *testing.T) {
+		_, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createNodeIndex('my_special_index', 'Node', 'prop')", nil)
+		require.NoError(t, err)
+		result, err := exec.Execute(ctx,
+			`CALL db.index.fulltext.drop("my_special_index")`, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "my_special_index", result.Rows[0][0])
+	})
+
+	t.Run("invalid_drop_arguments_error", func(t *testing.T) {
+		// null is the procedure's failure; a parameter that isn't a
+		// string is a TypeError.
+		_, err := exec.Execute(context.Background(), "CALL db.index.fulltext.drop(null)", nil)
+		require.Error(t, err)
+		code, _ := nornicerrors.Neo4jStatus(err)
+		assert.Equal(t, "Neo.ClientError.Procedure.ProcedureCallFailed", code)
+
+		_, err = exec.Execute(context.Background(), "CALL db.index.fulltext.drop($name)", map[string]interface{}{"name": int64(1)})
+		require.Error(t, err)
+		code, _ = nornicerrors.Neo4jStatus(err)
+		assert.Equal(t, "Neo.ClientError.Statement.TypeError", code)
+	})
+}
+
+func TestCallDbIndexVectorDrop(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("drop_existing_vector_index", func(t *testing.T) {
+		// Create index first
+		_, err := exec.Execute(ctx,
+			"CALL db.index.vector.createNodeIndex('vec_to_drop', 'Doc', 'embedding', 384, 'cosine')", nil)
+		require.NoError(t, err)
+
+		// Drop it
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.drop('vec_to_drop')", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+
+		assert.Equal(t, "vec_to_drop", result.Rows[0][0])
+		assert.Equal(t, true, result.Rows[0][1])
+	})
+
+	t.Run("drop_nonexistent_vector_index_errors", func(t *testing.T) {
+		_, err := exec.Execute(ctx,
+			"CALL db.index.vector.drop('nonexistent_vec_idx')", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nonexistent_vec_idx")
+	})
+}
+
+// =============================================================================
+// Integration Tests: Real-World Index Workflows
+// =============================================================================
+
+func TestFulltextIndexWorkflow(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("complete_fulltext_workflow", func(t *testing.T) {
+		// 1. Create fulltext index for documents
+		result, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createNodeIndex('documents_search', ['Document', 'Article'], ['title', 'content', 'summary'])", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "documents_search", result.Rows[0][0])
+
+		// 2. Create some documents
+		_, err = exec.Execute(ctx, `
+			CREATE (d1:Document {id: 'doc1', title: 'Introduction to Machine Learning', content: 'Machine learning is a subset of AI'})
+		`, nil)
+		require.NoError(t, err)
+
+		_, err = exec.Execute(ctx, `
+			CREATE (d2:Article {id: 'doc2', title: 'Deep Learning Tutorial', content: 'Neural networks enable deep learning'})
+		`, nil)
+		require.NoError(t, err)
+
+		// 3. Query the fulltext index
+		result, err = exec.Execute(ctx,
+			"CALL db.index.fulltext.queryNodes('documents_search', 'machine learning') YIELD node, score", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+
+		// 4. Clean up - drop the index
+		result, err = exec.Execute(ctx,
+			"CALL db.index.fulltext.drop('documents_search')", nil)
+		require.NoError(t, err)
+		assert.Equal(t, true, result.Rows[0][1])
+	})
+}
+
+func TestVectorIndexWorkflow(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("complete_vector_workflow", func(t *testing.T) {
+		// 1. Create vector index for embeddings
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.createNodeIndex('memory_embeddings', 'Memory', 'embedding', 1024, 'cosine')", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("memory_embeddings")
+		require.True(t, exists)
+		assert.Equal(t, 1024, index.Dimensions)
+
+		// 2. Create relationship vector index
+		result, err = exec.Execute(ctx,
+			"CALL db.index.vector.createRelationshipIndex('edge_similarity', 'RELATES_TO', 'weight_vector', 256, 'euclidean')", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "edge_similarity", result.Rows[0][0])
+
+		// 3. Create a memory node directly in storage with known ID
+		_, err = engine.CreateNode(&storage.Node{
+			ID:         "mem1",
+			Labels:     []string{"Memory"},
+			Properties: map[string]interface{}{"content": "Test memory"},
+		})
+		require.NoError(t, err)
+
+		// 4. Set embedding via procedure (uses storage ID, not property)
+		result, err = exec.Execute(ctx,
+			"CALL db.create.setNodeVectorProperty('mem1', 'embedding', [0.1, 0.2, 0.3, 0.4])", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+
+		// 5. Query vector index
+		result, err = exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('memory_embeddings', 5, [0.15, 0.25, 0.35, 0.45]) YIELD node, score", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+
+		// 6. Drop indexes
+		result, err = exec.Execute(ctx, "CALL db.index.vector.drop('memory_embeddings')", nil)
+		require.NoError(t, err)
+		assert.Equal(t, true, result.Rows[0][1])
+
+		result, err = exec.Execute(ctx, "CALL db.index.vector.drop('edge_similarity')", nil)
+		require.NoError(t, err)
+		assert.Equal(t, true, result.Rows[0][1])
+	})
+}
+
+func TestNeo4jCompatibleWorkflow(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	t.Run("neo4j_style_index_management", func(t *testing.T) {
+		// This simulates how a Neo4j-compatible client would manage indexes in NornicDB
+
+		// 1. Create default indexes that clients expect
+		_, err := exec.Execute(ctx,
+			"CALL db.index.vector.createNodeIndex('node_embedding_index', 'Node', 'embedding', 1024, 'cosine')", nil)
+		require.NoError(t, err)
+
+		_, err = exec.Execute(ctx,
+			"CALL db.index.fulltext.createNodeIndex('node_fulltext_index', ['Node', 'Memory', 'Decision'], ['content', 'title', 'description'])", nil)
+		require.NoError(t, err)
+
+		// 2. Verify indexes were created by listing them
+		result, err := exec.Execute(ctx, "CALL db.indexes()", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+
+		// 3. Store a decision node
+		_, err = exec.Execute(ctx, `
+			CREATE (n:Decision {
+				id: 'decision-123',
+				type: 'decision',
+				title: 'Use PostgreSQL for primary database',
+				content: 'Selected PostgreSQL due to ACID compliance and JSON support',
+				created: datetime()
+			})
+		`, nil)
+		require.NoError(t, err)
+
+		// 4. Set embedding (simulating what an embedding service does)
+		embedding := make([]float32, 1024)
+		for i := range embedding {
+			embedding[i] = float32(i) / 1024.0
+		}
+
+		// Using Cypher SET instead of procedure for embedding (Neo4j style)
+		_, err = exec.Execute(ctx, `
+			MATCH (n:Decision {id: 'decision-123'})
+			SET n.embedding = [0.1, 0.2, 0.3, 0.4],
+			    n.has_embedding = true
+		`, nil)
+		require.NoError(t, err)
+
+		// 5. Search - both fulltext and vector
+		result, err = exec.Execute(ctx,
+			"CALL db.index.fulltext.queryNodes('node_fulltext_index', 'PostgreSQL') YIELD node, score", nil)
+		require.NoError(t, err)
+
+		result, err = exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('node_embedding_index', 10, [0.1, 0.2, 0.3, 0.4]) YIELD node, score", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+	})
+}
+
+func TestCallDbIndexVectorQueryNodes_AdditionalParameterBranches(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	_, err := engine.CreateNode(&storage.Node{
+		ID:         "doc-1",
+		Labels:     []string{"Doc"},
+		Properties: map[string]interface{}{"embedding": []float64{0.1, 0.2, 0.3}},
+	})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{
+		ID:         "doc-2",
+		Labels:     []string{"Doc"},
+		Properties: map[string]interface{}{"embedding": []float64{0.1, 0.1, 0.1}},
+	})
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "CREATE VECTOR INDEX idx_doc FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
+	require.NoError(t, err)
+
+	// []float64 parameter path.
+	res, err := exec.callDbIndexVectorQueryNodes(
+		context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float64{0.1, 0.2, 0.3}}),
+		"CALL db.index.vector.queryNodes('idx_doc', 5, $q)",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotEmpty(t, res.Rows)
+
+	// []interface{} numeric conversion path.
+	res, err = exec.callDbIndexVectorQueryNodes(
+		context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []interface{}{float64(0.1), int(0), int64(1)}}),
+		"CALL db.index.vector.queryNodes('idx_doc', 5, $q)",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// string parameter embedding path.
+	exec.SetEmbedder(&sequenceEmbedder{embs: [][]float32{{0.1, 0.2, 0.3}}})
+	res, err = exec.callDbIndexVectorQueryNodes(
+		context.WithValue(ctx, paramsKey, map[string]interface{}{"q": "semantic query"}),
+		"CALL db.index.vector.queryNodes('idx_doc', 5, $q)",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// No query input and params present with supported types -> deterministic error branch.
+	_, err = exec.callDbIndexVectorQueryNodes(
+		context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float32{0.1, 0.2, 0.3}}),
+		"CALL db.index.vector.queryNodes('idx_doc', 5)",
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parameter may have unsupported type")
+
+	// Build index state, then delete node and query again (covers stale/orphan-safe flow).
+	_, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, [0.1,0.2,0.3])")
+	require.NoError(t, err)
+	require.NoError(t, engine.DeleteNode("doc-1"))
+	res, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, [0.1,0.2,0.3])")
+	require.NoError(t, err)
+	require.NotNil(t, res)
+}

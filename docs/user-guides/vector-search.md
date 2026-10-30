@@ -1,0 +1,679 @@
+# Vector Search Guide
+
+**Complete guide to semantic search in NornicDB**
+
+Last Updated: December 11, 2025
+
+For durable pagination of canonical text/hybrid search results, see
+[Search Continuation](search-continuation.md). The continuation API extends
+`/nornicdb/search`, native `NornicSearch/SearchText`, and `db.retrieve`; it does
+not change the low-level vector index procedures documented here.
+
+---
+
+## Overview
+
+NornicDB provides production-ready vector search with:
+
+- **Automatic indexing** - All node embeddings are indexed automatically
+- **Cypher integration** - `db.index.vector.queryNodes` procedure
+- **String auto-embedding** - Pass text, get results (no pre-computation)
+- **GPU acceleration** - 10-100x speedup with Metal/CUDA/OpenCL
+- **Hybrid search** - RRF fusion of vector + BM25
+- **Caching** - 450,000x speedup for repeated queries
+
+> Important: semantic search requires embeddings. Embedding generation is disabled by default in current releases; enable it with `NORNICDB_EMBEDDING_ENABLED=true` (or `nornicdb serve --embedding-enabled`) or provide vectors yourself.
+
+---
+
+## How Vector Search Works
+
+### Two Types of Indexes
+
+NornicDB maintains **two complementary vector index systems**:
+
+#### 1. Internal Automatic Index (Zero Configuration)
+
+NornicDB automatically maintains an internal vector index that:
+
+- **Indexes nodes** with managed embeddings in `node.ChunkEmbeddings` (main embedding is `ChunkEmbeddings[0]`)
+- **Updates automatically** when nodes are created, updated, or deleted
+- **Requires no setup** - works out of the box
+- **Used by** REST API (`/nornicdb/search`) and hybrid search
+
+```go
+// This happens automatically at database startup:
+db.searchService = search.NewService(storage, 1024, nil)
+
+// Nodes are indexed automatically via storage callbacks:
+// OnNodeCreated → searchService.IndexNode(node)
+// OnNodeUpdated → searchService.IndexNode(node)
+// OnNodeDeleted → searchService.RemoveNode(nodeID)
+```
+
+`search.Service.IndexNode()` also indexes `node.NamedEmbeddings` (client-managed vectors, e.g. Qdrant gRPC) as vector entries of that node (one per vector name).
+
+### HNSW Construction Acceleration
+
+Large vector indexes are built through HNSW. On supported Apple Metal hosts, NornicDB attempts GPU-assisted construction by default: the GPU scores nearest-neighbor candidates in batches, while the CPU still performs final HNSW graph mutation and reciprocal linking. If Metal is unavailable or a build kernel fails, construction restarts through the normal CPU builder and the persisted HNSW artifact format remains unchanged.
+
+| Variable                                     | Default | Description                                                            |
+| -------------------------------------------- | ------- | ---------------------------------------------------------------------- |
+| `NORNICDB_HNSW_BUILD_GPU_ENABLED`            | `true`  | Attempt GPU-assisted HNSW construction.                                |
+| `NORNICDB_HNSW_BUILD_GPU_BATCH_SIZE`         | `2048`  | Vectors per construction batch.                                        |
+| `NORNICDB_HNSW_BUILD_GPU_CANDIDATE_K`        | `128`   | Candidate neighbors requested from the accelerator before CPU linking. |
+| `NORNICDB_HNSW_BUILD_GPU_DISTANCE_PRECISION` | `fp32`  | Build candidate-search precision.                                      |
+
+#### 2. User-Defined Cypher Indexes (Optional)
+
+Create named indexes for specific labels/properties:
+
+```cypher
+CALL db.index.vector.createNodeIndex(
+  'embeddings',      -- Your index name
+  'Document',        -- Node label to filter
+  'embedding',       -- Property name to search (also used as a NamedEmbeddings key if present)
+  1024,              -- Vector dimensions
+  'cosine'           -- Similarity: 'cosine', 'euclidean', or 'dot'
+)
+```
+
+**Key insight:** User-defined indexes are **metadata only** - they specify which nodes to search and where to find embeddings. The actual embeddings come from either:
+
+1. `node.NamedEmbeddings[index.property]` (or `"default"` when no property is configured)
+2. The specified property (e.g., `node.Properties["embedding"]` when it contains a vector array)
+3. `node.ChunkEmbeddings[0..N]` (best score across chunks)
+
+### Embedding Lookup Order (Cypher `db.index.vector.queryNodes`)
+
+When `db.index.vector.queryNodes` runs, it finds embeddings in this order:
+
+```
+1. NamedEmbeddings[index.property] (or "default")
+2. node.Properties[index.property] (vector array)
+3. ChunkEmbeddings[0..N]
+```
+
+This means **user-defined indexes can match managed embeddings** (via `ChunkEmbeddings`) and/or property vectors.
+
+---
+
+## Quick Start
+
+### Cypher (Recommended)
+
+```cypher
+-- String query (auto-embedded)
+CALL db.index.vector.queryNodes('embeddings', 10, 'machine learning tutorial')
+YIELD node, score
+RETURN node.title, score
+ORDER BY score DESC
+
+-- Direct vector array (Neo4j compatible)
+CALL db.index.vector.queryNodes('embeddings', 10, [0.1, 0.2, 0.3, 0.4])
+YIELD node, score
+```
+
+### Go API
+
+```go
+// Search for similar content (labels=nil searches all labels)
+results, err := db.Search(ctx, "AI and learning algorithms", nil, 10)
+for _, result := range results {
+    fmt.Printf("Found: %s (score: %.3f)\n", result.Title, result.Score)
+}
+```
+
+---
+
+## Cypher Vector Search
+
+### `db.index.vector.queryNodes`
+
+| Parameter    | Type                   | Description                 |
+| ------------ | ---------------------- | --------------------------- |
+| `indexName`  | String                 | Name of the vector index    |
+| `k`          | Integer                | Number of results to return |
+| `queryInput` | Array/String/Parameter | Query vector or text        |
+
+**Query Input Types:**
+
+```cypher
+-- 1. String Query (Auto-Embedded) ✨ NORNICDB EXCLUSIVE
+CALL db.index.vector.queryNodes('idx', 10, 'database performance')
+YIELD node, score
+
+-- 2. Direct Vector Array (Neo4j Compatible)
+CALL db.index.vector.queryNodes('idx', 10, [0.1, 0.2, 0.3, 0.4])
+YIELD node, score
+
+-- 3. Parameter Reference
+CALL db.index.vector.queryNodes('idx', 10, $queryVector)
+YIELD node, score
+```
+
+## Qdrant gRPC: Text Queries (Upstream `Points.Query`)
+
+If you have the Qdrant gRPC endpoint enabled, you can also run **text queries** using the upstream Qdrant protobuf contract (no custom protos).
+
+**Requirements:**
+
+- `NORNICDB_QDRANT_GRPC_ENABLED=true`
+- `NORNICDB_EMBEDDING_ENABLED=true` (needed to embed the query text)
+
+**Concept:**
+
+- Use `qdrant.Points/Query` with `Query.nearest(VectorInput.document(Document{text: ...}))`.
+
+See **[Qdrant gRPC Endpoint](qdrant-grpc.md)** for setup, configuration, and multi-language client examples.
+
+### Storing Embeddings via Cypher
+
+```cypher
+-- Single property
+MATCH (n:Document {id: 'doc1'})
+SET n.embedding = [0.7, 0.2, 0.05, 0.05]
+
+-- Multi-line SET with optional user metadata
+MATCH (n:Document {id: 'doc1'})
+SET n.embedding = [0.7, 0.2, 0.05, 0.05],
+    n.embedding_dimensions = 1024,
+    n.embedding_model = 'mxbai-embed-large',
+    n.has_embedding = true
+```
+
+### Inline Embedding During Mutations (`WITH EMBEDDING`)
+
+For mutations where vectors must be available immediately after the write, use `WITH EMBEDDING` on the same Cypher statement:
+
+```cypher
+CREATE (d:Doc {id: 'v1', content: 'vector ready now'})
+WITH EMBEDDING
+RETURN d.id
+```
+
+This performs embedding generation in the mutation transaction, so the node is queryable by vector search right away.
+
+For additional patterns (`UNWIND`, `MERGE`, `SET`), see the Cypher guide section: `Inline Embedding on Mutations (WITH EMBEDDING)`.
+
+### Creating Vector Indexes
+
+```cypher
+CALL db.index.vector.createNodeIndex(
+  'embeddings',      -- index name
+  'Document',        -- node label
+  'embedding',       -- property name (also used as a NamedEmbeddings key if present)
+  1024,              -- dimensions
+  'cosine'           -- similarity function: 'cosine', 'euclidean', or 'dot'
+)
+```
+
+> 💡 **Tip:** Managed embeddings are stored internally (`ChunkEmbeddings` + `EmbedMeta`). Even if a node has no `node.Properties["embedding"]`, Cypher/vector search can still match it via managed/internal embeddings and/or `NamedEmbeddings`.
+
+---
+
+## REST API (Hybrid Search)
+
+The REST API uses NornicDB's **internal automatic index** for combined vector + BM25 search:
+
+```bash
+# Hybrid search (vector + BM25 with RRF fusion)
+curl -X POST http://localhost:7474/nornicdb/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "query": "machine learning algorithms",
+    "limit": 10,
+    "labels": ["Document", "Memory"]
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "results": [
+    {
+      "id": "node-123",
+      "title": "ML Basics",
+      "score": 0.92,
+      "rrf_score": 0.034,
+      "vector_rank": 1,
+      "bm25_rank": 3
+    }
+  ],
+  "search_method": "hybrid",
+  "metrics": {
+    "vector_search_time_ms": 12,
+    "bm25_search_time_ms": 8,
+    "fusion_time_ms": 1
+  }
+}
+```
+
+---
+
+## When to Use Each Approach
+
+| Use Case                       | Recommended Approach                                               |
+| ------------------------------ | ------------------------------------------------------------------ |
+| General semantic search        | REST API `/nornicdb/search`                                        |
+| Neo4j driver compatibility     | `db.index.vector.queryNodes` with user index                       |
+| Filter by specific label       | User-defined index with label filter                               |
+| Custom embedding property      | User-defined index with property name                              |
+| Use managed embeddings         | Either (Cypher uses `ChunkEmbeddings`; HTTP uses `search.Service`) |
+| Hybrid vector + keyword search | REST API (built-in RRF fusion)                                     |
+
+---
+
+## Go API
+
+### Basic Search
+
+```go
+// Generate embedding
+embedder, _ := embed.New(&embed.Config{
+    Provider: "ollama",
+    APIUrl:   "http://localhost:11434",
+    Model:    "mxbai-embed-large",
+})
+
+embedding, _ := embedder.Embed(ctx, "Machine learning is awesome")
+
+// Store node with embedding via Cypher
+db.ExecuteCypher(ctx, `CREATE (n:KnowledgeFact {
+    content: "Machine learning enables computers to learn from data",
+    title: "ML Basics"
+}) RETURN n`, nil)
+
+// Search
+results, _ := db.Search(ctx, "AI and learning algorithms", nil, 10)
+```
+
+### Batch Embedding
+
+```go
+texts := []string{
+    "Python is a programming language",
+    "Go is fast and concurrent",
+    "Rust provides memory safety",
+}
+
+embeddings, _ := embedder.BatchEmbed(ctx, texts)
+// 2-5x faster than sequential embedding
+```
+
+### Cached Embeddings (450,000x Speedup)
+
+```go
+// Wrap any embedder with caching
+cached := embed.NewCachedEmbedder(embedder, 10000) // 10K cache
+
+// First call: ~50-200ms
+emb1, _ := cached.Embed(ctx, "Hello world")
+
+// Second call: ~111ns (450,000x faster!)
+emb2, _ := cached.Embed(ctx, "Hello world")
+
+// Check stats
+stats := cached.Stats()
+fmt.Printf("Cache: %.1f%% hit rate\n", stats.HitRate)
+```
+
+**Server defaults:**
+
+```bash
+nornicdb serve                        # 10K cache (~40MB)
+nornicdb serve --embedding-cache 50000  # Larger cache
+nornicdb serve --embedding-cache 0      # Disable
+```
+
+### Async Embedding
+
+```go
+autoEmbedder.QueueEmbed("doc-1", "Some content",
+    func(nodeID string, embedding []float32, err error) {
+        db.UpdateNodeEmbedding(nodeID, embedding)
+    })
+```
+
+---
+
+## GPU Acceleration
+
+### Enable GPU
+
+```go
+gpuConfig := &gpu.Config{
+    Enabled:          true,
+    PreferredBackend: gpu.BackendMetal, // or CUDA, OpenCL, Vulkan
+    MaxMemoryMB:      8192,
+}
+
+manager, _ := gpu.NewManager(gpuConfig)
+index := gpu.NewEmbeddingIndex(manager, gpu.DefaultEmbeddingIndexConfig(1024))
+
+// Add embeddings and sync
+for _, emb := range embeddings {
+    index.Add(nodeID, emb)
+}
+index.SyncToGPU()
+
+// Search (10-100x faster!)
+results, _ := index.Search(queryEmbedding, 10)
+```
+
+### GPU Backends
+
+| Backend    | Platform       | Performance | Notes              |
+| ---------- | -------------- | ----------- | ------------------ |
+| **Metal**  | Apple Silicon  | Excellent   | Native M1/M2/M3    |
+| **CUDA**   | NVIDIA         | Highest     | Requires toolkit   |
+| **OpenCL** | Cross-platform | Good        | Best compatibility |
+| **Vulkan** | Cross-platform | Good        | Future-proof       |
+
+---
+
+## Hybrid Search
+
+Combines vector similarity with BM25 full-text search using RRF (Reciprocal Rank Fusion):
+
+```cypher
+-- Via Cypher
+CALL db.index.vector.queryNodes('memories', 20, 'authentication patterns')
+YIELD node, score
+WHERE node.type IN ['decision', 'code'] AND score >= 0.5
+RETURN node
+```
+
+```go
+// Via Go API: HybridSearch fuses vector + BM25 internally (RRF)
+results, _ := db.HybridSearch(ctx, "machine learning", nil /* queryEmbedding optional */, nil /* labels */, 10)
+```
+
+---
+
+## Performance Tuning
+
+### Vector Strategy Selection
+
+NornicDB chooses the fastest available vector-search strategy at runtime:
+
+1. **K-means clustered search** (when clustering is enabled and clustered)
+2. **GPU brute-force (exact)** (when GPU is enabled and the dataset is within the configured threshold)
+3. **CPU brute-force (exact)** only when `NORNICDB_VECTOR_CPU_BRUTE_MAX_N` opts in below a chosen threshold
+4. **HNSW (ANN)** by default for CPU-only datasets
+
+GPU brute-force is **exact** and typically stays competitive to much larger `N` than CPU brute-force due to massive parallelism.
+CPU brute-force is opt-in. With the default `NORNICDB_VECTOR_CPU_BRUTE_MAX_N=0`, the pipeline uses HNSW regardless of dataset size unless GPU brute-force or clustering is selected.
+
+Tuning knobs:
+
+```bash
+# Opt into CPU brute-force below this N; 0 keeps HNSW as the CPU default.
+export NORNICDB_VECTOR_CPU_BRUTE_MAX_N=0
+
+# Use GPU brute-force when N is in this range (defaults shown)
+export NORNICDB_VECTOR_GPU_BRUTE_MIN_N=5000
+export NORNICDB_VECTOR_GPU_BRUTE_MAX_N=15000
+```
+
+### Compressed ANN profile (`quality=compressed`)
+
+NornicDB also supports a compressed ANN profile for large-scale memory economics:
+
+```bash
+export NORNICDB_VECTOR_ANN_QUALITY=compressed
+```
+
+When enabled, the query path uses IVF/PQ compressed candidate generation with bounded exact reranking. If compressed prerequisites are not satisfied for a run, the service logs diagnostics and falls back safely.
+
+High-level tradeoff (latest benchmark snapshot, averaged):
+
+```text
+Dataset size ->      1500      3000      6000      12000
+HNSW latency      ~5.81us   ~5.75us   ~5.83us   ~5.64us
+IVFPQ latency    ~23.0us   ~42.6us   ~38.9us   ~48.7us
+```
+
+```text
+Dataset size ->        1500      3000      6000      12000
+HNSW heap delta      ~1.56MiB  ~1.57MiB  ~1.57MiB  ~1.58MiB
+IVFPQ heap delta     ~1.57MiB  ~2.08MiB  ~2.08MiB  ~2.08MiB
+```
+
+Use this profile when memory-scaled ANN operation is more important than lowest-latency single-query performance. For full knobs and operational tuning, see `docs/operations/configuration.md` ("Compressed ANN mode (IVFPQ)").
+
+### Compressed HNSW coordinates
+
+HNSW can keep compressed coordinates for graph traversal, independently of the
+`fast`, `balanced`, or `accurate` graph preset. Original vectors continue to
+build the graph and rescore the candidate pool by default. Lexical insertion
+order, signature tie-breaking, and lexical query entry points remain enabled.
+
+```bash
+export NORNICDB_VECTOR_ANN_QUALITY=fast
+export NORNICDB_VECTOR_HNSW_QUANTIZATION=scalar  # none | scalar | pq | binary
+export NORNICDB_PERSIST_SEARCH_INDEXES=true     # file-backed originals/checkpoints
+```
+
+| Mode | Coordinate storage at 1,024 dimensions | Scoring |
+| --- | --- | --- |
+| `scalar` (`int8`) | 1,024 bytes + a 4-byte scale per vector | Signed int8 dot product with per-vector symmetric scales |
+| `pq` (`product`) | 256 bytes at the default 16× ratio, plus shared codebooks | Float query against product-codeword lookup tables |
+| `binary` | 128 bytes | Sign bits and Hamming distance |
+
+These sizes exclude graph links, originals, storage caches, and process memory.
+Keeping originals permits exact rescoring; compression ratios are not RSS ratios.
+This initial compressed HNSW path accelerates cosine queries. Dot and Euclidean
+queries retain their existing original-vector scoring paths.
+
+PQ accepts `NORNICDB_VECTOR_HNSW_PQ_COMPRESSION=4|8|16|32|64` (default `16`),
+`NORNICDB_VECTOR_HNSW_PQ_TRAINING_SAMPLE_MAX` (default `10000`), and
+`NORNICDB_VECTOR_HNSW_PQ_TRAINING_ITERATIONS` (default `10`). Training prioritizes
+lexical seeds, then samples the remaining population deterministically. Books
+train independently using squared distance, matching encoding. A collection with
+fewer than 256 live vectors remains uncompressed until it has enough training
+vectors; its strategy reports quantization as pending. Product codes here are
+non-residual codes on the HNSW graph; the existing `quality=compressed` IVF-PQ
+routing mode remains available separately.
+
+Qdrant gRPC clients can instead set `CreateCollection.quantization_config` to
+scalar int8, product, or binary. The collection stores that policy and reapplies
+it after restart, including when global quantization is disabled. All named
+vectors in one collection must share a policy. Scalar quantile clipping other
+than `1` and changing quantization through `UpdateCollection` are currently
+unsupported and return explicit errors.
+
+`SearchParams.quantization` (also forwarded by Query, Recommend, and SearchGroups)
+controls each request:
+
+- `ignore=true` traverses original coordinates.
+- `rescore=true` (the default) ranks discovered candidates with original vectors.
+- `oversampling>=1` expands the rescoring pool; binary often needs a larger pool.
+- `rescore=false` returns approximate scores through the final public consumer.
+  Binary scores are approximate proxies, rather than exact cosine values.
+
+Binary storage also accepts `NORNICDB_VECTOR_HNSW_BINARY_QUERY_BITS=1|4|8`
+(default `1`), or Qdrant `BinaryQuantization.query_encoding=Binary|Scalar4Bits|Scalar8Bits`.
+The 4/8-bit query variants preserve query magnitudes while stored vectors still
+use one bit per dimension. Bitplane/popcount scoring costs more than Hamming
+scoring, and can improve candidate ranking. Two-bit and 1.5-bit stored encodings
+are currently unsupported and return explicit errors.
+
+`params.exact=true` evaluates the indexed population with original vectors.
+For Go callers the equivalent fields are `SearchOptions.QuantizationIgnore`,
+`QuantizationRescore`, and `QuantizationOversampling` (zero means the default 1).
+Recall depends on embedding distribution, graph beam, and rescoring depth;
+measure the full corpus before choosing a compressed mode. Native ARM64 int8
+scoring and portable Go scoring use the same exact signed-integer accumulation.
+CUDA/Vulkan construction still requires device validation on those platforms.
+
+### Dimensions
+
+| Dimensions | Speed    | Quality | Model Examples    |
+| ---------- | -------- | ------- | ----------------- |
+| 384        | Fast     | Good    | all-MiniLM-L6-v2  |
+| 768        | Balanced | Better  | e5-base           |
+| 1024       | Slower   | Best    | mxbai-embed-large |
+| 3072       | Slowest  | Highest | OpenAI ada-002    |
+
+### Similarity Thresholds
+
+`db.Search` itself does not take a threshold argument — apply a score cutoff in the caller (or use the REST/Cypher path with `WHERE score >= ...`):
+
+```go
+results, _ := db.Search(ctx, query, nil, 10)
+filtered := results[:0]
+for _, r := range results {
+    if r.Score >= 0.7 {
+        filtered = append(filtered, r)
+    }
+}
+```
+
+### Tips
+
+1. **Use caching** - 450,000x speedup for repeated queries
+2. **Enable GPU** - 10-100x speedup for search
+3. **Set thresholds** - Eliminate weak matches early
+4. **Batch operations** - 2-5x faster than sequential
+
+---
+
+## Common Patterns
+
+### RAG (Retrieval-Augmented Generation)
+
+```go
+// 1. Search for context
+results, _ := db.Search(ctx, userQuery, nil, 5)
+
+// 2. Build context
+context := ""
+for _, r := range results {
+    context += r.Content + "\n"
+}
+
+// 3. Generate with context
+response := llm.Generate(userQuery, context)
+```
+
+### Semantic K-Means Clustering
+
+```go
+results, _ := db.Search(ctx, seed, nil, 100)
+clusters := groupBySimilarity(results, 0.8)
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+
+```bash
+NORNICDB_EMBEDDING_ENABLED=true
+NORNICDB_EMBEDDING_API_URL=http://localhost:8080
+NORNICDB_EMBEDDING_MODEL=mxbai-embed-large
+NORNICDB_EMBEDDING_DIMENSIONS=1024
+NORNICDB_EMBEDDING_CACHE_SIZE=10000
+NORNICDB_KMEANS_MIN_EMBEDDINGS=1000  # Minimum embeddings before K-means clustering
+```
+
+**K-Means cluster count (auto by default):**
+
+- The number of clusters is chosen from the dataset size when clustering runs: **K ≈ √(n/2)** (min 10, max 8192). For ~900k embeddings this yields ~670 clusters (~1350 vectors per cluster) instead of a fixed 100.
+- Override with `NORNICDB_KMEANS_NUM_CLUSTERS=500` (or any positive value) to use a fixed K.
+
+**K-Means Clustering Threshold:**
+
+- `NORNICDB_KMEANS_MIN_EMBEDDINGS` (default: 1000): Minimum number of embeddings required before K-means clustering is triggered. Below this threshold, brute-force search is used as it's faster for small datasets.
+
+  **Performance Scaling (Benchmarked):**
+  - 2,000 embeddings: 14% faster (61ms → 65ms avg)
+  - 4,500 embeddings: 26% faster (35ms → 47ms avg)
+  - 10,000+ embeddings: 10-50x faster
+
+  **Tuning:**
+  - 1000 (default): Safe for most workloads, proven benefit
+  - 500-1000: Latency-sensitive applications (14-26% speedup)
+  - 100-500: Testing or small datasets
+  - 2000+: Very large datasets, maximize speedup
+
+### Verify Status
+
+```bash
+curl http://localhost:8080/health
+# Check "embedding" section
+```
+
+---
+
+## NornicDB vs Neo4j
+
+| Feature                    | Neo4j GDS | NornicDB |
+| -------------------------- | --------- | -------- |
+| Vector array queries       | ✅        | ✅       |
+| String auto-embedding      | ❌        | ✅       |
+| Multi-line SET with arrays | ❌        | ✅       |
+| Managed embedding storage  | ❌        | ✅       |
+| Server-side embedding      | ❌        | ✅       |
+| GPU acceleration           | ❌        | ✅       |
+| Embedding cache            | ❌        | ✅       |
+
+---
+
+## Troubleshooting
+
+| Issue              | Solution                                         |
+| ------------------ | ------------------------------------------------ |
+| Slow search        | Enable GPU, use caching, reduce dimensions       |
+| Poor results       | Increase dimensions, lower threshold, use hybrid |
+| Out of memory      | Reduce batch size, enable GPU (uses VRAM)        |
+| No embedder error  | Configure embedding service or use vector arrays |
+| Dimension mismatch | Ensure all embeddings use same model             |
+
+---
+
+## Disabling vector search per database
+
+`db.nornic.search.vector.enabled=false` prevents NornicDB from building or
+serving any vector index for that database. The supported global environment
+alternative is `NORNICDB_SEARCH_VECTOR_ENABLED=false`. Set it when:
+
+- Memory pressure: durably stored embeddings still take RAM when iterated into the in-memory ANN substrate at boot. Disabling skips that load entirely.
+- Exports-only deployments: NornicDB generates embeddings but a downstream system (Qdrant, Weaviate, custom pipeline) owns the index.
+- Lexical-only search: only fulltext search makes sense for the workload.
+
+When vector is disabled:
+
+- `POST /nornicdb/search` returns BM25-only 200 responses with `vector_enabled: false` in the body. If BM25 is also disabled, responses are 503 `search_disabled_for_database` (not retryable).
+- `db.index.vector.queryNodes` Cypher procedure returns zero rows with a `WARN` log.
+- The Qdrant gRPC bridge surfaces a structured error to external clients.
+
+See **[Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control)** for the full configuration matrix and yaml examples.
+
+## Lazy warming
+
+`db.nornic.search.vector.warming=lazy` defers the vector index build until the
+first inbound search query for that database. Its supported global environment
+alternative is `NORNICDB_SEARCH_VECTOR_WARMING=lazy`. The first request
+**blocks synchronously** while the build runs (any `Service.Search` caller —
+HTTP, Bolt, GraphQL, gRPC, Cypher procedures — gets the same behavior).
+Subsequent requests are warm. This is useful for multi-tenant deployments where
+most databases are idle at any moment.
+
+Health checks must NOT target `/nornicdb/search` for `lazy` databases — see [Low Memory Mode → Caveat: health checks](../operations/low-memory-mode.md#caveat-health-checks).
+
+## Related Docs
+
+- [K-Means Clustering](../advanced/k-means-clustering/README.md) - GPU/CPU IVF candidate generator
+- [Functions Index](../api-reference/cypher-functions/README.md) - Vector similarity functions
+- [Search Implementation](../performance/searching.md) - Hybrid search internals
+- [Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control) — control BM25 and vector indexes per database
+
+---
+
+_Last updated: December 1, 2025_

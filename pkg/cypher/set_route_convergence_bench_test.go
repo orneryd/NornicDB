@@ -1,0 +1,70 @@
+package cypher
+
+import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// BenchmarkSetCreateRoutes measures the SET / CREATE routes that share the
+// SET applicator and the CREATE core, through Execute as a client reaches
+// them. create_async runs on the async server stack, where auto-commit
+// node-only CREATE takes the bulk fast path.
+func BenchmarkSetCreateRoutes(b *testing.B) {
+	ctx := context.Background()
+	memory := func(b *testing.B) *StorageExecutor {
+		exec, _ := newTestExecutor(b)
+		return exec
+	}
+	asyncStack := func(b *testing.B) *StorageExecutor {
+		dir := b.TempDir()
+		badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+		require.NoError(b, err)
+		wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
+		require.NoError(b, err)
+		engine := storage.NewWALEngine(badger, wal)
+		b.Cleanup(func() {
+			_ = wal.Close()
+			_ = badger.Close()
+		})
+		return NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
+	}
+	for _, bc := range []struct {
+		name  string
+		build func(b *testing.B) *StorageExecutor
+		setup []string
+		query string
+	}{
+		{name: "create_set", build: memory, query: "CREATE (n:BenchCS {id: $i}) SET n.x = 1, n.y = 'y', n:Tagged RETURN n.x AS x"},
+		{name: "create_ref", build: memory, query: "CREATE (a:BenchA {name: 'x'}), (b:BenchB {name: a.name}) RETURN b.name AS n"},
+		{name: "create_async", build: asyncStack, query: "CREATE (a:BenchA {id: $i}), (b:BenchB {id: $i})"},
+		{name: "create_async_rel", build: asyncStack, query: "CREATE (a:BenchA {id: $i})-[:R {w: $i}]->(b:BenchB {id: $i}) RETURN a.id AS id"},
+		{name: "create_async_multi", build: asyncStack, query: "CREATE (a:BenchA {id: $i}) CREATE (a)-[:R]->(b:BenchB {id: $i})"},
+		{name: "match_set_multi", build: memory, setup: []string{"CREATE (:BenchMS {id: 1, a: 0})"}, query: "MATCH (n:BenchMS {id: 1}) SET n.a = n.a + 1, n.b = 'x'"},
+		{name: "match_set_map", build: memory, setup: []string{"CREATE (:BenchMS {id: 1, a: 0})"}, query: "MATCH (n:BenchMS {id: 1}) SET n += {a: $i, c: null}"},
+		{name: "merge_set", build: memory, query: "MERGE (n:BenchMG {id: 1}) SET n.a = $i, n:Tagged"},
+		{name: "match_create_set", build: memory, setup: []string{"CREATE (:BenchMC {id: 1, name: 'm'})"}, query: "MATCH (a:BenchMC {id: 1}) CREATE (b:BenchMC2 {name: a.name}) SET b.x = $i"},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
+			exec := bc.build(b)
+			for _, q := range bc.setup {
+				_, err := exec.Execute(ctx, q, nil)
+				require.NoError(b, err)
+			}
+			params := map[string]interface{}{"i": int64(0)}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				params["i"] = int64(i)
+				if _, err := exec.Execute(ctx, bc.query, params); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

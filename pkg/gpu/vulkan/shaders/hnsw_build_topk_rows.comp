@@ -1,0 +1,67 @@
+// HNSW Build Top-K Rows Compute Shader for NornicDB
+// SPDX-License-Identifier: Apache-2.0
+//
+// Each thread handles one query row, selecting top-k indices from the score
+// matrix. Uses insertion sort for stable ordering.
+//
+// Grid: (query_n, 1, 1) with 256 threads per workgroup
+//   - gl_GlobalInvocationID.x = query index (qid)
+//
+// Input:  scores[qid * frontier_n + fid] for all fid
+// Output: topk_indices[qid * k + i], topk_scores[qid * k + i]
+
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Scores {
+    float scores[];          // [query_n * frontier_n] row-major
+};
+
+layout(set = 0, binding = 1) buffer TopIndices {
+    uint topk_indices[];     // [query_n * k]
+};
+
+layout(set = 0, binding = 2) buffer TopScores {
+    float topk_scores[];     // [query_n * k]
+};
+
+layout(push_constant) uniform PushConstants {
+    uint frontier_n;
+    uint query_n;
+    uint k;
+} pc;
+
+void main() {
+    uint qid = gl_GlobalInvocationID.x;
+    if (qid >= pc.query_n || pc.k == 0 || pc.k > 256) return;
+
+    float best_scores[256];
+    uint best_indices[256];
+
+    for (uint i = 0; i < pc.k; i++) {
+        best_scores[i] = -2.0;
+        best_indices[i] = 0xFFFFFFFFu;
+    }
+
+    uint row = qid * pc.frontier_n;
+    for (uint fid = 0; fid < pc.frontier_n; fid++) {
+        float score = scores[row + fid];
+        if (score > best_scores[pc.k - 1] || (score == best_scores[pc.k - 1] && fid < best_indices[pc.k - 1])) {
+            uint pos = pc.k - 1;
+            while (pos > 0 && (score > best_scores[pos - 1] || (score == best_scores[pos - 1] && fid < best_indices[pos - 1]))) {
+                best_scores[pos] = best_scores[pos - 1];
+                best_indices[pos] = best_indices[pos - 1];
+                pos--;
+            }
+            best_scores[pos] = score;
+            best_indices[pos] = fid;
+        }
+    }
+
+    uint out_base = qid * pc.k;
+    for (uint i = 0; i < pc.k; i++) {
+        topk_scores[out_base + i] = best_scores[i];
+        topk_indices[out_base + i] = best_indices[i];
+    }
+}

@@ -1,0 +1,251 @@
+package cypher
+
+import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"sort"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr string) []*storage.Node {
+	if len(nodes) <= 1 {
+		return nodes
+	}
+
+	// Parse multiple ORDER BY columns: "n.value ASC, n.name DESC"
+	specs, _ := e.parseNodeOrderSpecs(orderExpr, variable)
+	if len(specs) == 0 {
+		return nodes
+	}
+
+	sorted := make([]*storage.Node, len(nodes))
+	copy(sorted, nodes)
+
+	sort.Slice(sorted, func(i, j int) bool {
+		return e.compareNodeOrderSpecs(sorted[i], sorted[j], specs) < 0
+	})
+
+	return sorted
+}
+
+// parseNodeOrderSpecs parses "n.value ASC, n.name DESC" for node sorting
+func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) ([]nodeOrderSpec, bool) {
+	terms := parseOrderByClause(orderExpr)
+	if len(terms) == 0 || variable == "" {
+		return nil, false
+	}
+	var specs []nodeOrderSpec
+
+	for _, term := range terms {
+		// Node sorting is safe only for direct properties of the matched
+		// variable. Aliases and computed expressions must be sorted after
+		// projection, when their values actually exist.
+		base, propName, ok := splitPostfixPropertyAccess(term.column)
+		if !ok || base != variable {
+			return nil, false
+		}
+
+		specs = append(specs, nodeOrderSpec{propName: propName, descending: term.descending})
+	}
+
+	return specs, true
+}
+
+// evaluateWhereOnComputedRow is the computed-row entry into the shared row
+// predicate evaluator: the post-WITH WHERE position evaluates identically to
+// every other WHERE position (null drops the row, AND/OR precedence and IS
+// NULL forms come from the one owner) instead of a local text splitter.
+func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereClause string, values map[string]interface{}) bool {
+	return e.evaluateRowPredicate(ctx, whereClause, values)
+}
+
+// evaluateExpressionFromValues evaluates an expression over a computed values
+// map (CALL projections, UNWIND rows, YIELD values, SET expressions, collect
+// transforms). The values scope is carried as context bindings and evaluation
+// runs through the shared evaluator, so property access, keys(), properties(),
+// labels(), type checks, temporal constructors and function dispatch see the
+// real values. Node/relationship values are additionally mirrored into the
+// entity scopes so legacy handlers that resolve variables there keep working.
+//
+// The result reader preserves resolution separately from the value. This
+// compatibility wrapper records an unsuccessful evaluation as a statement error.
+func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[string]interface{}) interface{} {
+	return e.evaluateExpressionFromValuesContext(rowStatementContextOrBackground(values), expr, values)
+}
+
+// rowFallbackPolicy keeps row materialization's resolution preconditions separate
+// from direct context evaluation while sharing one context/depth dispatch owner.
+type rowFallbackPolicy uint8
+
+const (
+	rowFallbackContext rowFallbackPolicy = iota
+	rowFallbackValue
+)
+
+// evaluateRowFallback is the row evaluator's fallback to the shared
+// evaluator. err is the error a function raised there (a registry function's
+// argument error), which the shared evaluator records as the statement error
+// rather than returning it; the row evaluator reports the expression as
+// unresolved and evaluateRowExpressionWithContext records err.
+func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}, policy rowFallbackPolicy) (interface{}, bool, error) {
+	if policy == rowFallbackValue {
+		if err := scalarExpressionEvaluationError(expr, values); err != nil {
+			return nil, false, err
+		}
+		if cyphertext.IsIdentifier(expr) {
+			if value, bound := e.boundValue(rowStatementContextOrBackground(values), expr); bound {
+				return runtimeRowResult(value, true, nil)
+			}
+			return nil, false, nil
+		}
+		if strings.HasPrefix(expr, "$") {
+			// A parameter absent from a planning scope is unresolved, not text.
+			// Actual materialization rejects this result at the checked boundary.
+			ctx := rowStatementContextOrBackground(values)
+			if value, ok := resolveValueReference(ctx, expr, parameterName); ok {
+				return runtimeRowResult(value, true, nil)
+			}
+			if value, ok := resolveValueReference(ctx, expr, parameterPath); ok {
+				return runtimeRowResult(value, true, nil)
+			}
+			return nil, false, nil
+		}
+	}
+	parent := rowStatementContextOrBackground(values)
+	state, _ := parent.Value(rowFallbackExpressionKey{}).(rowFallbackState)
+	if state.depth >= maxRowFallbackDepth {
+		_, err := checkedPropertyResult(parent, expr, nil, false, unresolvedExpressionError(expr))
+		return nil, false, err
+	}
+	ctx := context.WithValue(parent, expressionOperandFailureKey{}, &expressionFailure{})
+	ctx = context.WithValue(ctx, rowFallbackExpressionKey{}, rowFallbackState{text: expr, depth: state.depth + 1})
+	if rowIsCypher25(values) {
+		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
+	}
+	return e.evaluateExpressionFromValuesResult(ctx, expr, values)
+}
+
+// evaluateExpressionFromValuesContext is evaluateExpressionFromValues with
+// the evaluation context: expression failures are recorded on ctx.
+func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Context, expr string, values map[string]interface{}) interface{} {
+	ctx = withExpressionFailureSlot(ctx)
+	value, resolved, err := e.evaluateExpressionFromValuesResult(ctx, expr, values)
+	value, err = checkedPropertyResult(ctx, expr, value, resolved, err)
+	recordExpressionFailure(ctx, err)
+	return value
+}
+
+// Legacy and row callers share an explicit result, never source text as a value.
+// Pattern syntax can be unhandled; it is not a scalar value or successful NULL.
+func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool, error) {
+	ctx = withExpressionFailureSlot(ctx)
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return nil, false, nil
+	}
+	if value, found := values[expr]; found {
+		return runtimeRowResult(value, true, nil)
+	}
+	if variable, chain, ok := rowPropertyChainShape(expr); ok {
+		receiver, bound := values[variable]
+		if !bound {
+			receiver, bound = e.boundValue(ctx, variable)
+		}
+		// A partial row is valid during inspection and streaming preflight.
+		// Keep an absent receiver unresolved; the checked materializer owns
+		// rejection when execution actually requires this property's value.
+		if !bound {
+			return nil, false, nil
+		}
+		value, supported := evaluateRowPropertyChain(receiver, chain, e, false)
+		var err error
+		if !supported {
+			err = rowPropertyChainTypeError(e.queryVisibleValue(receiver), chain)
+		}
+		return runtimeRowResult(value, supported, err)
+	}
+	if name, end, ok := scanSymbolicName(expr, 0); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
+		if _, bound := values[normalizePropertyKey(name)]; bound {
+			return e.evaluateRowValueText(expr, values)
+		}
+	}
+	if containsRelationshipPattern(expr) || startsWithRelationshipFragment(expr) {
+		return nil, false, nil
+	}
+	ctx = withValueBindings(ctx, values)
+	nodes, rels := entityScopesFromValues(values)
+	return e.evaluateContextExpressionResult(ctx, expr, nodes, rels)
+}
+
+// entityScopesFromValues extracts the *storage.Node and *storage.Edge entries of
+// a computed values map into node/relationship scopes for the shared evaluator.
+// Rows without entities keep nil scopes, so the common scalar row path stays
+// allocation-free.
+func entityScopesFromValues(values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge) {
+	var nodes map[string]*storage.Node
+	var rels map[string]*storage.Edge
+	for name, val := range values {
+		switch entity := val.(type) {
+		case *storage.Node:
+			if entity == nil {
+				continue
+			}
+			if nodes == nil {
+				nodes = make(map[string]*storage.Node, 1)
+			}
+			nodes[name] = entity
+		case *storage.Edge:
+			if entity == nil {
+				continue
+			}
+			if rels == nil {
+				rels = make(map[string]*storage.Edge, 1)
+			}
+			rels[name] = entity
+		}
+	}
+	return nodes, rels
+}
+
+func (e *StorageExecutor) evaluateCaseExpressionFromValues(expr string, values map[string]interface{}) interface{} {
+	// The shared CASE evaluator resolves non-entity variables through the
+	// context value bindings, so the values scope is passed the same way as
+	// every other scope instead of using a parallel evaluator.
+	return e.evaluateCaseExpression(withValueBindings(context.Background(), values), expr, nil, nil, nil, nil, nil, 0)
+}
+
+// evaluateConditionFromValues evaluates a boolean condition over a computed
+// values scope. It delegates to the shared condition evaluator with the values
+// carried as context bindings, mirroring how the main expression evaluator
+// resolves non-entity variables.
+func (e *StorageExecutor) evaluateConditionFromValues(condition string, values map[string]interface{}) bool {
+	return e.evaluateCondition(withValueBindings(context.Background(), values), condition, nil, nil)
+}
+
+func parseLiteralValueFromComputedRow(expr string) (interface{}, bool) {
+	return parseLiteralScalarForPipeline(expr)
+}
+
+// evaluateMapLiteralFromValues evaluates a map literal using computed values
+func (e *StorageExecutor) evaluateMapLiteralFromValues(ctx context.Context, expr string, values map[string]interface{}) (map[string]interface{}, error) {
+	return e.materializePropertyMap(ctx, expr, values, true, true)
+}
+
+// executeMatchWithClause handles MATCH ... WHERE ... WITH ... RETURN queries
+// This processes computed values (like CASE WHEN) in the WITH clause
+// and handles aggregation with implicit GROUP BY
+
+// startsWithRelationshipFragment reports whether expr starts with the tail
+// of a relationship pattern a split left behind (->(), -[r]->(b), >(), <--):
+// a fragment, not an expression. A leading minus sign (-1) is not one.
+func startsWithRelationshipFragment(expr string) bool {
+	if expr == "" {
+		return false
+	}
+	if expr[0] == '>' || expr[0] == '<' {
+		return true
+	}
+	return strings.HasPrefix(expr, "-[") || strings.HasPrefix(expr, "--") || strings.HasPrefix(expr, "->")
+}

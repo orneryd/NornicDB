@@ -1,0 +1,233 @@
+package differential
+
+import (
+	"github.com/orneryd/nornicdb/internal/jsontext"
+	"regexp"
+	"sort"
+)
+
+// Outcome is one statement's answer through one route: its columns and rows,
+// or the status code of its error. Values are in a route's normalized form
+// (NormalizeBoltValue for Bolt, the response JSON for HTTP), the same form on
+// both servers.
+type Outcome struct {
+	Columns []string `json:"columns,omitempty"`
+	Rows    [][]any  `json:"rows,omitempty"`
+	// Code is the error's Neo4j status code; "" when the statement succeeded.
+	// A client-side failure (a timeout, a broken connection) is
+	// "client:<description>".
+	Code string `json:"code,omitempty"`
+	// Message is the error's text, kept for reports only: the status code is
+	// the contract, the wording is each server's own.
+	Message string `json:"message,omitempty"`
+}
+
+// Failed reports whether the statement failed.
+func (outcome Outcome) Failed() bool { return outcome.Code != "" }
+
+var orderBy = regexp.MustCompile(`(?i)\bORDER\s+BY\b`)
+
+// Same reports whether two outcomes of query agree, as the sweep compares
+// them (#907):
+//   - two errors agree when their status codes are equal, whatever the text;
+//   - an error and rows never agree;
+//   - rows agree when the columns are equal and the rows are equal, in order
+//     when query has ORDER BY and as a multiset otherwise;
+//   - rows that tie under the RETURN's ORDER BY have no defined order among
+//     themselves (in Neo4j either): when every sort key is a returned column,
+//     each run of rows with equal keys compares as a multiset;
+//   - a collect() with no ORDER BY before it has no defined element order (in
+//     Neo4j either), so list values of such a statement compare as multisets;
+//   - labels() and keys() list token names in an order that depends on the
+//     database's history (in Neo4j, the order the names were first used), so a
+//     returned column that is one of them compares as a set of names;
+//   - a statement that keeps arbitrary rows (Arbitrary) compares its columns
+//     and its number of rows only.
+func Same(query string, reference, actual Outcome) bool {
+	_, masked := maskQuery(query, maskOpaqueSyntax)
+	facts := inspectClauseRoles(query)
+	if facts.arbitrary && !reference.Failed() && !actual.Failed() {
+		return equalStrings(reference.Columns, actual.Columns) && len(reference.Rows) == len(actual.Rows)
+	}
+	shape := returnShape(query, reference.Columns)
+	return sameRows(reference, actual, comparison{
+		ordered:        orderBy.MatchString(facts.roleMask(masked, true)),
+		tieKeys:        shape.sortKeys,
+		unorderedLists: unorderedCollect(facts.roleMask(masked, false)),
+		tokenColumns:   shape.tokenColumns,
+	})
+}
+
+// OrderOnly reports whether two outcomes of query that don't agree (Same)
+// differ only in the order of their rows: the same rows, as a multiset.
+func OrderOnly(query string, reference, actual Outcome) bool {
+	_, masked := maskQuery(query, maskOpaqueSyntax)
+	facts := inspectClauseRoles(query)
+	if reference.Failed() || actual.Failed() || !orderBy.MatchString(facts.roleMask(masked, true)) {
+		return false
+	}
+	shape := returnShape(query, reference.Columns)
+	return sameRows(reference, actual, comparison{unorderedLists: unorderedCollect(facts.roleMask(masked, false)), tokenColumns: shape.tokenColumns})
+}
+
+// Arbitrary reports whether query keeps arbitrary rows: a LIMIT or SKIP with
+// no ORDER BY since its clause's WITH or RETURN. Which rows such a clause keeps
+// isn't defined (in Neo4j either), so neither are its rows nor what it writes.
+func Arbitrary(query string) bool {
+	return inspectClauseRoles(query).arbitrary
+}
+
+// SameGraphState reports whether two answers of a GraphStateQueries statement
+// agree: rows as a multiset, label lists in any order.
+func SameGraphState(reference, actual Outcome) bool {
+	return sameRows(reference, actual, comparison{unorderedLists: true})
+}
+
+// comparison is how two outcomes' rows are compared.
+type comparison struct {
+	// ordered compares the rows in order; with tieKeys, rows whose values in
+	// those columns are equal and adjacent compare as a multiset.
+	ordered bool
+	tieKeys []int
+	// unorderedLists compares every list value as a multiset.
+	unorderedLists bool
+	// tokenColumns are columns whose list values compare as multisets.
+	tokenColumns []int
+}
+
+func sameRows(reference, actual Outcome, how comparison) bool {
+	if reference.Failed() || actual.Failed() {
+		return reference.Code == actual.Code
+	}
+	if !equalStrings(reference.Columns, actual.Columns) {
+		return false
+	}
+	if len(reference.Rows) != len(actual.Rows) {
+		return false
+	}
+	encode := func(rows [][]any) []string {
+		encoded := make([]string, len(rows))
+		for index, row := range rows {
+			encoded[index] = canonical(sortColumns(row, how.tokenColumns), how.unorderedLists)
+		}
+		return encoded
+	}
+	left, right := encode(reference.Rows), encode(actual.Rows)
+	if !how.ordered {
+		sort.Strings(left)
+		sort.Strings(right)
+		return equalStrings(left, right)
+	}
+	if len(how.tieKeys) > 0 {
+		// Each run of reference rows with equal sort keys may come in any
+		// order; the actual rows at the same positions must be the same run.
+		key := func(row []any) string {
+			values := make([]any, len(how.tieKeys))
+			for index, column := range how.tieKeys {
+				values[index] = row[column]
+			}
+			return canonical(values, how.unorderedLists)
+		}
+		for start := 0; start < len(left); {
+			end := start + 1
+			for end < len(left) && key(reference.Rows[end]) == key(reference.Rows[start]) {
+				end++
+			}
+			sort.Strings(left[start:end])
+			sort.Strings(right[start:end])
+			start = end
+		}
+	}
+	return equalStrings(left, right)
+}
+
+// sortColumns is row with the list values in columns sorted.
+func sortColumns(row []any, columns []int) []any {
+	if len(columns) == 0 {
+		return row
+	}
+	sorted := append([]any(nil), row...)
+	for _, column := range columns {
+		if column >= len(sorted) {
+			continue
+		}
+		if list, ok := sorted[column].([]any); ok {
+			items := append([]any(nil), list...)
+			sort.Slice(items, func(left, right int) bool {
+				return canonical(items[left], false) < canonical(items[right], false)
+			})
+			sorted[column] = items
+		}
+	}
+	return sorted
+}
+
+// unorderedCollect reports whether query's first collect( has no ORDER BY
+// before it.
+var collectCall = regexp.MustCompile(`(?i)(?:^|[^.\w$])collect\s*\(`)
+
+func unorderedCollect(query string) bool {
+	match := collectCall.FindStringIndex(query)
+	return match != nil && !orderBy.MatchString(query[:match[0]])
+}
+
+// canonical is value's JSON with map keys sorted; with unorderedLists, the
+// elements of every list are sorted too.
+func canonical(value any, unorderedLists bool) string {
+	if unorderedLists {
+		value = sortLists(value)
+	}
+	encoded, err := jsontext.Marshal(value)
+	if err != nil {
+		return "unencodable"
+	}
+	return string(encoded)
+}
+
+func sortLists(value any) any {
+	switch typed := value.(type) {
+	case []any:
+		items := make([]any, len(typed))
+		for index, item := range typed {
+			items[index] = sortLists(item)
+		}
+		sort.Slice(items, func(left, right int) bool {
+			return canonical(items[left], false) < canonical(items[right], false)
+		})
+		return items
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			result[key] = sortLists(item)
+		}
+		return result
+	}
+	return value
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// GraphStateQueries read a graph's nodes and relationships in a form both
+// servers and every route answer alike; the outcomes compare as multisets.
+var GraphStateQueries = []string{
+	"MATCH (n) RETURN labels(n) AS labels, properties(n) AS properties",
+	"MATCH (a)-[r]->(b) RETURN properties(a) AS start, type(r) AS type, properties(r) AS properties, properties(b) AS end",
+}
+
+// Writes reports whether query may change the graph in a defined way, so the
+// graph state after it is compared too: it writes, and doesn't write to
+// arbitrary rows (Arbitrary).
+func Writes(query string) bool {
+	facts := inspectClauseRoles(query)
+	return facts.writes && !facts.arbitrary
+}

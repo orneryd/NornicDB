@@ -1,0 +1,54 @@
+- id: search.vector_file_magic_invalid
+  description: Error de carga por una firma de cabecera vectorial no válida.
+  other: firma de archivo vectorial no válida
+- id: search.vector_file_version_unsupported
+  description: Error de carga por una versión de archivo vectorial no compatible.
+  other: "versión de archivo vectorial {{.Version}} no compatible"
+- id: search.vector_file_dimensions_mismatch
+  description: Error de carga por dimensiones incompatibles.
+  other: "dimensiones del archivo vectorial {{.FileDimensions}} != dimensiones del almacén {{.StoreDimensions}}"
+- id: search.vector_meta_dimensions_mismatch
+  description: Error de carga por dimensiones de metadatos incompatibles.
+  other: "dimensiones de metadatos {{.MetaDimensions}} != dimensiones del almacén {{.StoreDimensions}}"
+- id: search.gpu_not_enabled
+  description: Error de requisito previo de sincronización con GPU.
+  other: gpu no habilitada
+- id: search.vector_dimensions_invalid
+  description: Error de dimensiones vectoriales para sincronización con GPU.
+  other: dimensiones vectoriales no válidas
+- id: search.ivfpq_vector_store_required
+  description: Error de validación de compilación IVFPQ sin almacén vectorial.
+  other: se requiere el almacén de archivos vectoriales
+- id: search.ivfpq_dimensions_invalid
+  description: Error de validación de dimensiones IVFPQ.
+  other: dimensiones no válidas
+- id: search.ivfpq_segments_invalid
+  description: Error de validación de segmentos IVFPQ.
+  other: "segmentos PQ no válidos: dimensiones={{.Dimensions}} segmentos={{.Segments}}"
+- id: search.ivfpq_training_vectors_insufficient
+  description: Error de validación de vectores de entrenamiento IVFPQ.
+  other: "vectores de entrenamiento insuficientes ({{.VectorCount}}) para listas IVF ({{.ListCount}})"
+- id: search.ivf_coarse_training_failed
+  description: Error de entrenamiento grueso IVFPQ. Cause no se traduce.
+  other: "error en el entrenamiento grueso de IVF: {{.Cause}}"
+- id: search.pq_codebook_training_failed
+  description: Error de entrenamiento del libro de códigos PQ. Cause no se traduce.
+  other: "error en el entrenamiento del libro de códigos PQ: {{.Cause}}"
+- id: search.hnsw_gpu_build_dimension_invalid
+  description: Error de dimensiones de compilación HNSW con GPU.
+  other: "dimensión de compilación HNSW con GPU no válida: {{.Dimensions}}"
+- id: search.gpu_accelerator_unavailable
+  description: Error de compilación HNSW cuando no hay acelerador GPU.
+  other: no hay ningún acelerador GPU disponible
+- id: search.cuda_not_available
+  description: Error de disponibilidad de CUDA.
+  other: "cuda: CUDA no está disponible en este sistema"
+- id: search.vulkan_not_available
+  description: Error de disponibilidad de Vulkan.
+  other: "vulkan: Vulkan no está disponible en este sistema"
+- id: search.vulkan_device_not_initialized
+  description: Error cuando el dispositivo o contexto de cálculo de Vulkan no está inicializado.
+  other: "vulkan: dispositivo no inicializado"
+- id: search.ivfpq_vector_store_unavailable
+  description: Error de compilación IVFPQ cuando no hay almacén vectorial.
+  other: almacén de archivos vectoriales no disponible para la compilación IVFPQ

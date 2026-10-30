@@ -1,0 +1,137 @@
+package cypher
+
+import (
+	"context"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Expected values are Neo4j 5.26.30's (#838).
+func TestTypePredicateParserModes(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			t.Run("reference values and filters", TestTypePredicatesMatchNeo4j)
+			t.Run("edge cases and invalid types", TestTypePredicateEdgeCases)
+		})
+	}
+}
+
+func TestTypePredicatesMatchNeo4j(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+	for expression, want := range map[string]bool{
+		"1 IS :: INTEGER": true, "'a' IS :: STRING NOT NULL": true, "null IS :: INTEGER": true,
+		"null IS :: INTEGER NOT NULL": false, "1 IS NOT :: STRING": true, "[1, 2] IS :: LIST<INTEGER>": true,
+		"1.5 IS :: INTEGER | FLOAT": true, "1 IS :: INT": true, "1 IS :: SIGNED INTEGER": true,
+		"1 IS :: FLOAT": false, "1.0 IS :: INTEGER": false, "'a' IS :: VARCHAR": true, "true IS :: BOOL": true,
+		"null IS :: NULL": true, "1 IS :: NULL": false, "null IS :: NOTHING": false, "1 IS :: NOTHING": false,
+		"1 IS :: ANY": true, "null IS :: ANY NOT NULL": false, "1 IS :: ANY VALUE": true,
+		"[1, null] IS :: LIST<INTEGER>": true, "[1, null] IS :: LIST<INTEGER NOT NULL>": false,
+		"[] IS :: LIST<NOTHING>": true, "[1, 'a'] IS :: LIST<INTEGER | STRING>": true,
+		"[1, 'a'] IS :: LIST<INTEGER> | LIST<STRING>": false, "[1, 2] IS :: ARRAY<INT>": true,
+		"1 IS :: ANY<INTEGER | FLOAT>": true, "{a: 1} IS :: MAP": true, "{a: 1} IS :: ANY MAP": true,
+		"date() IS :: DATE": true, "localtime() IS :: TIME WITHOUT TIME ZONE": true,
+		"time() IS :: TIME WITH TIME ZONE": true, "localdatetime() IS :: TIMESTAMP WITHOUT TIME ZONE": true,
+		"datetime() IS :: TIMESTAMP WITH TIME ZONE": true, "datetime() IS :: ZONED DATETIME": true,
+		"duration('P1D') IS :: DURATION": true, "1 IS :: PROPERTY VALUE": true, "[1, 2] IS :: PROPERTY VALUE": true,
+		"{a: 1} IS :: PROPERTY VALUE": false, "[1, 'a'] IS :: PROPERTY VALUE": false,
+		"null IS NOT :: STRING": false, "null IS NOT :: STRING NOT NULL": true,
+		"1 :: INTEGER": true, "1 IS TYPED INTEGER": true, "1 IS NOT TYPED INTEGER": false,
+	} {
+		result, err := exec.Execute(ctx, "RETURN "+expression+" AS v", nil)
+		if assert.NoError(t, err, expression) {
+			assert.Equal(t, [][]interface{}{{want}}, result.Rows, expression)
+		}
+	}
+	_, err := exec.Execute(ctx, "RETURN 1 IS :: INTEGER NOT NULL | FLOAT AS v", nil)
+	require.Error(t, err)
+
+	_, err = exec.Execute(ctx, "UNWIND [1, 'a', 2.5, null] AS x CREATE (:T {v: x, i: 1})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (n:T) WHERE n.v IS :: INTEGER | FLOAT RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows, "the null property matches the nullable union")
+	result, err = exec.Execute(ctx, "MATCH (n:T) WHERE n.v IS NOT :: STRING RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+	result, err = exec.Execute(ctx, "MATCH (n:T) RETURN CASE WHEN n.v IS :: STRING THEN 'text' ELSE 'other' END AS k ORDER BY k", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"other"}, {"other"}, {"text"}, {"text"}}, result.Rows, "null IS :: STRING is true")
+}
+
+func TestTypePredicateTypesAreNotVariables(t *testing.T) {
+	require.Empty(t, expressionFreeVariables("1 IS :: INTEGER | LIST<STRING NOT NULL>"))
+	require.Equal(t, []string{"n"}, expressionFreeVariables("count(CASE WHEN n.v IS :: INTEGER | FLOAT THEN 1 END)"))
+	require.Equal(t, []string{"x", "y"}, expressionFreeVariables("x IS TYPED TIME WITH TIME ZONE AND y IS NOT TYPED ANY<INT> NOT NULL"))
+	require.Equal(t, "plain", maskTypePredicateTypes("plain"))
+}
+
+func TestTypePredicateEdgeCases(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+	for expression, want := range map[string]interface{}{
+		"null IS :: ANY<INTEGER | FLOAT> NOT NULL": false,
+		"null IS :: ANY<INTEGER | FLOAT>":          true,
+		"1 IS :: ANY<INTEGER | FLOAT> NOT NULL":    true,
+		"[1, 'a'] IS :: LIST":                      true,
+		"1 IS :: LIST<INTEGER>":                    false,
+		"'a::b'":                                   "a::b",
+		"2 < 1 IS :: INTEGER":                      nil,
+		"1 = 1 IS :: BOOLEAN":                      false,
+		"1 + 1 IS :: INTEGER":                      true,
+		"NOT 1 IS :: STRING":                       true,
+		"true AND 1 IS :: STRING":                  false,
+		"1 IS :: INTEGER = true":                   true,
+		"[1] IS :: LIST<INTEGER> = true":           true,
+	} {
+		result, err := exec.Execute(ctx, "RETURN "+expression+" AS v", nil)
+		if assert.NoError(t, err, expression) {
+			assert.Equal(t, [][]interface{}{{want}}, result.Rows, expression)
+		}
+	}
+	for _, expression := range []string{"1 IS :: FOO", "1 IS :: LIST<INTEGER", "1 IS :: LIST<FOO>", "1 IS :: FOO<INTEGER>", "1 IS :: INTEGER | FOO"} {
+		_, err := exec.Execute(ctx, "RETURN "+expression+" AS v", nil)
+		assert.Error(t, err, expression)
+	}
+	_, err := exec.Execute(ctx, "CREATE (:T838e {v: 1})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (n:T838e) WHERE n.v IS :: FOO RETURN n", nil)
+	require.Error(t, err)
+
+	require.Equal(t, "x           ", maskTypePredicateTypes("x :: INTEGER"))
+	require.False(t, isOperatorWith("RETURN 1 AS time WITH 1 AS y RETURN y", len("RETURN 1 AS time ")))
+	require.True(t, isOperatorWith("RETURN x IS :: TIME WITH TIME ZONE", len("RETURN x IS :: TIME ")))
+}
+
+func TestTypePredicateSplittingAndRowValueErrors(t *testing.T) {
+	_, _, _, ok, err := splitTypePredicate("'a::b'")
+	require.False(t, ok)
+	require.NoError(t, err)
+	require.Equal(t, "x    ", maskTypePredicateTypes("x :: "))
+
+	e := setupTestExecutor(t)
+	_, _, err = e.evaluateRowValue("1 IS :: FOO", pipelineRow{})
+	require.Error(t, err)
+	_, ok, err = e.evaluateRowValue("missing.v IS :: INTEGER", pipelineRow{})
+	require.False(t, ok && err == nil, "an operand without a value is not a result")
+}
+
+func TestComparisonScanSkipsTypeAngleBrackets(t *testing.T) {
+	_, comparison := scanComparisonChain("x IS TYPED LIST<INTEGER>")
+	require.False(t, comparison, "LIST<…> is a type, not a comparison")
+	scan, comparison := scanComparisonChain("a<b")
+	require.True(t, comparison)
+	require.Equal(t, 1, scan.count)
+
+	exec, _ := newTestExecutor(t)
+	result, err := exec.Execute(context.Background(), "RETURN [1] IS TYPED LIST<INTEGER> AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{true}}, result.Rows)
+}

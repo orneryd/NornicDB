@@ -1,0 +1,1940 @@
+// Package bolt implements the Neo4j Bolt protocol server for NornicDB.
+package bolt
+
+import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"strings"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
+)
+
+var errDateTimeSignature = errors.New("DateTime signature is not allowed by the negotiated Bolt temporal format")
+
+var packstreamZero8 [8]byte
+var packstreamFallbackHook func(v any)
+
+// ============================================================================
+// PackStream Encoding
+// ============================================================================
+
+func encodePackStreamMapInto(dst []byte, m map[string]any) []byte {
+	return encodePackStreamMapIntoWithUTC(dst, m, true)
+}
+
+func encodePackStreamMapIntoWithUTC(dst []byte, m map[string]any, useUTCDateTimeStructs bool) []byte {
+	return encodeRecordMapInto(dst, m, useUTCDateTimeStructs, false, "")
+}
+
+func encodePackStreamMap(m map[string]any) []byte {
+	return encodePackStreamMapInto(nil, m)
+}
+
+func encodePackStreamListInto(dst []byte, items []any) []byte {
+	return encodePackStreamListIntoWithUTC(dst, items, true)
+}
+
+func encodePackStreamListIntoWithUTC(dst []byte, items []any, useUTCDateTimeStructs bool) []byte {
+	return encodeRecordListInto(dst, items, useUTCDateTimeStructs, false, "")
+}
+
+func encodePackStreamList(items []any) []byte {
+	return encodePackStreamListInto(nil, items)
+}
+
+// appendPackStreamListHeader appends the PackStream header of a list of size
+// items: TINY_LIST, LIST_8, LIST_16 or LIST_32. Every list the server sends
+// is headed by it, so no list is cut to a 16-bit size.
+func appendPackStreamListHeader(dst []byte, size int) []byte {
+	return appendPackStreamSizedHeader(dst, size, 0x90, 0xD4)
+}
+
+// appendPackStreamMapHeader appends the PackStream header of a map of size
+// entries: TINY_MAP, MAP_8, MAP_16 or MAP_32.
+func appendPackStreamMapHeader(dst []byte, size int) []byte {
+	return appendPackStreamSizedHeader(dst, size, 0xA0, 0xD8)
+}
+
+// appendPackStreamSizedHeader appends a list or map header: tiny+size below
+// 16, then sized8 (the 8-bit marker), sized8+1 and sized8+2 for 8-, 16- and
+// 32-bit sizes.
+func appendPackStreamSizedHeader(dst []byte, size int, tiny, sized8 byte) []byte {
+	switch {
+	case size < 16:
+		return append(dst, tiny+byte(size))
+	case size < 1<<8:
+		return append(dst, sized8, byte(size))
+	case size < 1<<16:
+		return append(dst, sized8+1, byte(size>>8), byte(size))
+	default:
+		return append(dst, sized8+2, byte(size>>24), byte(size>>16), byte(size>>8), byte(size))
+	}
+}
+
+// encodePackStreamStringListInto appends a list of strings (labels, a
+// LIST<STRING> property).
+func encodePackStreamStringListInto(dst []byte, items []string) []byte {
+	dst = appendPackStreamListHeader(dst, len(items))
+	for _, item := range items {
+		dst = encodePackStreamStringInto(dst, item)
+	}
+	return dst
+}
+
+func encodePackStreamStringInto(dst []byte, s string) []byte {
+	length := len(s)
+
+	if length < 16 {
+		dst = append(dst, byte(0x80+length))
+	} else if length < 256 {
+		dst = append(dst, 0xD0, byte(length))
+	} else if length < 65536 {
+		dst = append(dst, 0xD1, byte(length>>8), byte(length))
+	} else {
+		dst = append(dst, 0xD2, byte(length>>24), byte(length>>16), byte(length>>8), byte(length))
+	}
+
+	return append(dst, s...)
+}
+
+func encodePackStreamString(s string) []byte {
+	return encodePackStreamStringInto(nil, s)
+}
+
+func encodePackStreamBytesInto(dst []byte, b []byte) []byte {
+	size := len(b)
+	if size < 256 {
+		dst = append(dst, 0xCC, byte(size))
+	} else if size < 65536 {
+		dst = append(dst, 0xCD, byte(size>>8), byte(size))
+	} else {
+		dst = append(dst, 0xCE, byte(size>>24), byte(size>>16), byte(size>>8), byte(size))
+	}
+	return append(dst, b...)
+}
+
+func encodePackStreamValueInto(dst []byte, v any) []byte {
+	return encodePackStreamValueIntoWithUTC(dst, v, true)
+}
+
+func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs bool) []byte {
+	switch val := v.(type) {
+	case nil:
+		return append(dst, 0xC0)
+	case bool:
+		if val {
+			return append(dst, 0xC3)
+		}
+		return append(dst, 0xC2)
+	// All integer types - encode as INT64 for Neo4j driver compatibility
+	case int:
+		return encodePackStreamIntInto(dst, int64(val))
+	case int8:
+		return encodePackStreamIntInto(dst, int64(val))
+	case int16:
+		return encodePackStreamIntInto(dst, int64(val))
+	case int32:
+		return encodePackStreamIntInto(dst, int64(val))
+	case int64:
+		return encodePackStreamIntInto(dst, val)
+	case uint:
+		return encodePackStreamIntInto(dst, int64(val))
+	case uint8:
+		return encodePackStreamIntInto(dst, int64(val))
+	case uint16:
+		return encodePackStreamIntInto(dst, int64(val))
+	case uint32:
+		return encodePackStreamIntInto(dst, int64(val))
+	case uint64:
+		return encodePackStreamIntInto(dst, int64(val))
+	// Float types
+	case float32:
+		dst = append(dst, 0xC1)
+		dst = append(dst, packstreamZero8[:]...)
+		binary.BigEndian.PutUint64(dst[len(dst)-8:], math.Float64bits(float64(val)))
+		return dst
+	case float64:
+		dst = append(dst, 0xC1)
+		dst = append(dst, packstreamZero8[:]...)
+		binary.BigEndian.PutUint64(dst[len(dst)-8:], math.Float64bits(val))
+		return dst
+	case string:
+		return encodePackStreamStringInto(dst, val)
+	case []byte:
+		return encodePackStreamBytesInto(dst, val)
+	case storage.NodeID:
+		return encodePackStreamStringInto(dst, string(val))
+	case storage.EdgeID:
+		return encodePackStreamStringInto(dst, string(val))
+	// Map types
+	case storage.RemotePathValue:
+		return encodeRemotePathInto(dst, val, useUTCDateTimeStructs, false)
+	case storage.RemoteEntityValue:
+		return encodeRemoteEntityInto(dst, val, useUTCDateTimeStructs, false)
+	case map[string]any:
+		if path, ok := extractPathFromMap(val); ok {
+			return encodePathIntoWithUTC(dst, path.Nodes, path.Relationships, useUTCDateTimeStructs)
+		}
+
+		return encodePackStreamMapIntoWithUTC(dst, val, useUTCDateTimeStructs)
+	case map[string]string:
+		if len(val) == 0 {
+			return append(dst, 0xA0)
+		}
+		size := len(val)
+		dst = appendPackStreamMapHeader(dst, size)
+		for k, v := range val {
+			dst = encodePackStreamStringInto(dst, k)
+			dst = encodePackStreamStringInto(dst, v)
+		}
+		return dst
+	// Storage types - Neo4j compatible node/edge encoding
+	case storage.Node:
+		return encodeStorageNodeIntoWithUTC(dst, &val, useUTCDateTimeStructs)
+	case *storage.Node:
+		if val == nil {
+			return append(dst, 0xC0)
+		}
+		return encodeStorageNodeIntoWithUTC(dst, val, useUTCDateTimeStructs)
+	case []storage.Node:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for i := range val {
+			dst = encodeStorageNodeIntoWithUTC(dst, &val[i], useUTCDateTimeStructs)
+		}
+		return dst
+	case []*storage.Node:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for _, n := range val {
+			dst = encodePackStreamValueIntoWithUTC(dst, n, useUTCDateTimeStructs)
+		}
+		return dst
+	case storage.Edge:
+		return encodeStorageEdgeIntoWithUTC(dst, &val, useUTCDateTimeStructs)
+	case *storage.Edge:
+		if val == nil {
+			return append(dst, 0xC0)
+		}
+		return encodeStorageEdgeIntoWithUTC(dst, val, useUTCDateTimeStructs)
+	case unboundRelationship:
+		return encodeUnboundRelationshipIntoWithUTC(dst, &val, useUTCDateTimeStructs)
+	case *unboundRelationship:
+		if val == nil {
+			return append(dst, 0xC0)
+		}
+		return encodeUnboundRelationshipIntoWithUTC(dst, val, useUTCDateTimeStructs)
+	case []storage.Edge:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for i := range val {
+			dst = encodeStorageEdgeIntoWithUTC(dst, &val[i], useUTCDateTimeStructs)
+		}
+		return dst
+	case []*storage.Edge:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for _, e := range val {
+			dst = encodePackStreamValueIntoWithUTC(dst, e, useUTCDateTimeStructs)
+		}
+		return dst
+	// List types
+	case []string:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for _, s := range val {
+			dst = encodePackStreamStringInto(dst, s)
+		}
+		return dst
+	case []any:
+		return encodePackStreamListIntoWithUTC(dst, val, useUTCDateTimeStructs)
+	case []bool:
+		// A stored LIST<BOOLEAN> property decodes as []bool.
+		dst = appendPackStreamListHeader(dst, len(val))
+		for _, b := range val {
+			if b {
+				dst = append(dst, 0xC3)
+			} else {
+				dst = append(dst, 0xC2)
+			}
+		}
+		return dst
+	case []int32:
+		dst = appendPackStreamListHeader(dst, len(val))
+		for _, n := range val {
+			dst = encodePackStreamIntInto(dst, int64(n))
+		}
+		return dst
+	case []int:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for _, n := range val {
+			dst = encodePackStreamIntInto(dst, int64(n))
+		}
+		return dst
+	case []int64:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for _, n := range val {
+			dst = encodePackStreamIntInto(dst, n)
+		}
+		return dst
+	case []float64:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for _, n := range val {
+			dst = append(dst, 0xC1)
+			dst = append(dst, packstreamZero8[:]...)
+			binary.BigEndian.PutUint64(dst[len(dst)-8:], math.Float64bits(n))
+		}
+		return dst
+	case []float32:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for _, n := range val {
+			dst = append(dst, 0xC1)
+			dst = append(dst, packstreamZero8[:]...)
+			binary.BigEndian.PutUint64(dst[len(dst)-8:], math.Float64bits(float64(n)))
+		}
+		return dst
+	case []map[string]any:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for _, m := range val {
+			dst = encodePackStreamMapIntoWithUTC(dst, m, useUTCDateTimeStructs)
+		}
+		return dst
+	case time.Time:
+		return encodePackStreamZonedDateTimeIntoWithUTC(dst, val, useUTCDateTimeStructs)
+	case cypher.CypherDate:
+		return encodePackStreamDateInto(dst, val.Time)
+	case cypher.CypherLocalTime:
+		return encodePackStreamLocalTimeInto(dst, val.Time)
+	case cypher.CypherTime:
+		return encodePackStreamTimeInto(dst, val.Time)
+	case cypher.CypherLocalDateTime:
+		return encodePackStreamLocalDateTimeValueInto(dst, val.Time)
+	case cypher.CypherDateTime:
+		return encodePackStreamCypherDateTimeInto(dst, val, useUTCDateTimeStructs)
+	case *cypher.CypherDuration:
+		return encodePackStreamCypherDurationInto(dst, val)
+	case cypher.CypherPoint:
+		return encodePackStreamPointInto(dst, val)
+	case *cypher.CypherPoint:
+		if val == nil {
+			return append(dst, 0xC0)
+		}
+		return encodePackStreamPointInto(dst, *val)
+	case cypher.CypherVector, cypher.CypherUUID:
+		// Bolt 5 has no structure for these: Neo4j's placeholder map.
+		placeholder, _ := cypher.UnsupportedTypePlaceholder(val)
+		return encodePackStreamMapIntoWithUTC(dst, placeholder, useUTCDateTimeStructs)
+	case time.Duration:
+		// Encode duration as milliseconds (signed).
+		return encodePackStreamIntInto(dst, val.Milliseconds())
+	}
+
+	// Fall back to existing implementation for less common types (nodes, relationships, etc.)
+	if packstreamFallbackHook != nil {
+		packstreamFallbackHook(v)
+	}
+	return append(dst, encodePackStreamValue(v)...)
+}
+
+func encodePackStreamValue(v any) []byte {
+	switch val := v.(type) {
+	case nil:
+		return []byte{0xC0}
+	case bool:
+		if val {
+			return []byte{0xC3}
+		}
+		return []byte{0xC2}
+	// All integer types - encode as INT64 for Neo4j driver compatibility
+	case int:
+		return encodePackStreamInt(int64(val))
+	case int8:
+		return encodePackStreamInt(int64(val))
+	case int16:
+		return encodePackStreamInt(int64(val))
+	case int32:
+		return encodePackStreamInt(int64(val))
+	case int64:
+		return encodePackStreamInt(val)
+	case uint:
+		return encodePackStreamInt(int64(val))
+	case uint8:
+		return encodePackStreamInt(int64(val))
+	case uint16:
+		return encodePackStreamInt(int64(val))
+	case uint32:
+		return encodePackStreamInt(int64(val))
+	case uint64:
+		return encodePackStreamInt(int64(val))
+	// Float types
+	case float32:
+		buf := make([]byte, 9)
+		buf[0] = 0xC1
+		binary.BigEndian.PutUint64(buf[1:], math.Float64bits(float64(val)))
+		return buf
+	case float64:
+		buf := make([]byte, 9)
+		buf[0] = 0xC1
+		binary.BigEndian.PutUint64(buf[1:], math.Float64bits(val))
+		return buf
+	case time.Time:
+		return encodePackStreamDateTime(val)
+	case cypher.CypherDate:
+		return encodePackStreamDateInto(nil, val.Time)
+	case cypher.CypherLocalTime:
+		return encodePackStreamLocalTimeInto(nil, val.Time)
+	case cypher.CypherTime:
+		return encodePackStreamTimeInto(nil, val.Time)
+	case cypher.CypherLocalDateTime:
+		return encodePackStreamLocalDateTimeValueInto(nil, val.Time)
+	case cypher.CypherDateTime:
+		return encodePackStreamCypherDateTimeInto(nil, val, true)
+	case *cypher.CypherDuration:
+		return encodePackStreamCypherDurationInto(nil, val)
+	case cypher.CypherPoint:
+		return encodePackStreamPointInto(nil, val)
+	case *cypher.CypherPoint:
+		if val == nil {
+			return []byte{0xC0}
+		}
+		return encodePackStreamPointInto(nil, *val)
+	case cypher.CypherVector, cypher.CypherUUID:
+		placeholder, _ := cypher.UnsupportedTypePlaceholder(val)
+		return encodePackStreamMapIntoWithUTC(nil, placeholder, true)
+	case string:
+		return encodePackStreamString(val)
+	// List types
+	case []string:
+		items := make([]any, len(val))
+		for i, s := range val {
+			items[i] = s
+		}
+		return encodePackStreamList(items)
+	case []any:
+		return encodePackStreamList(val)
+	case []int:
+		items := make([]any, len(val))
+		for i, n := range val {
+			items[i] = int64(n)
+		}
+		return encodePackStreamList(items)
+	case []int64:
+		items := make([]any, len(val))
+		for i, n := range val {
+			items[i] = n
+		}
+		return encodePackStreamList(items)
+	case []float64:
+		items := make([]any, len(val))
+		for i, n := range val {
+			items[i] = n
+		}
+		return encodePackStreamList(items)
+	case []float32:
+		items := make([]any, len(val))
+		for i, n := range val {
+			items[i] = float64(n)
+		}
+		return encodePackStreamList(items)
+	case []map[string]any:
+		items := make([]any, len(val))
+		for i, m := range val {
+			items[i] = m
+		}
+		return encodePackStreamList(items)
+	// Map types
+	case storage.RemotePathValue:
+		return encodeRemotePathInto(nil, val, true, false)
+	case storage.RemoteEntityValue:
+		return encodeRemoteEntityInto(nil, val, true, false)
+	case map[string]any:
+
+		return encodePackStreamMap(val)
+	// Storage types - Neo4j compatible node/edge encoding
+	case *storage.Node:
+		if val == nil {
+			return []byte{0xC0}
+		}
+		return encodeStorageNode(val)
+	case *storage.Edge:
+		if val == nil {
+			return []byte{0xC0}
+		}
+		return encodeStorageEdge(val)
+	default:
+		// Unknown type - encode as null
+		return []byte{0xC0}
+	}
+}
+
+func encodePackStreamDateTimeInto(dst []byte, t time.Time) []byte {
+	return encodePackStreamDateTimeIntoWithUTC(dst, t, true)
+}
+
+func encodePackStreamDateTimeIntoWithUTC(dst []byte, t time.Time, useUTCDateTimeStructs bool) []byte {
+	return encodePackStreamCypherDateTimeInto(dst, cypher.CypherDateTime{Time: t}, useUTCDateTimeStructs)
+}
+
+func encodePackStreamZonedDateTimeIntoWithUTC(dst []byte, value time.Time, useUTCDateTimeStructs bool) []byte {
+	zoneID := value.Location().String()
+	if !strings.Contains(zoneID, "/") {
+		zoneID = ""
+	}
+	return encodePackStreamCypherDateTimeInto(dst, cypher.CypherDateTime{Time: value, ZoneID: zoneID}, useUTCDateTimeStructs)
+}
+
+func encodePackStreamDateTime(t time.Time) []byte {
+	return encodePackStreamDateTimeInto(nil, t)
+}
+
+func encodePackStreamDateInto(dst []byte, value time.Time) []byte {
+	date := time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
+	dst = append(dst, 0xB1, 0x44)
+	return encodePackStreamIntInto(dst, date.Unix()/86_400)
+}
+
+// encodePackStreamPointInto writes a point as Bolt's Point2D (0x58: srid,
+// x, y) or Point3D (0x59: srid, x, y, z) structure.
+func encodePackStreamPointInto(dst []byte, point cypher.CypherPoint) []byte {
+	coordinates := point.Coordinates()
+	if len(coordinates) == 3 {
+		dst = append(dst, 0xB4, 0x59)
+	} else {
+		dst = append(dst, 0xB3, 0x58)
+	}
+	dst = encodePackStreamIntInto(dst, int64(point.SRID))
+	for _, coordinate := range coordinates {
+		dst = append(dst, 0xC1)
+		dst = binary.BigEndian.AppendUint64(dst, math.Float64bits(coordinate))
+	}
+	return dst
+}
+
+func encodePackStreamLocalTimeInto(dst []byte, value time.Time) []byte {
+	nanos := int64(value.Hour())*int64(time.Hour) + int64(value.Minute())*int64(time.Minute) +
+		int64(value.Second())*int64(time.Second) + int64(value.Nanosecond())
+	dst = append(dst, 0xB1, 0x74)
+	return encodePackStreamIntInto(dst, nanos)
+}
+
+func encodePackStreamTimeInto(dst []byte, value time.Time) []byte {
+	dst = append(dst, 0xB2, 0x54)
+	dst = encodePackStreamIntInto(dst, int64(value.Hour())*int64(time.Hour)+int64(value.Minute())*int64(time.Minute)+int64(value.Second())*int64(time.Second)+int64(value.Nanosecond()))
+	_, offset := value.Zone()
+	return encodePackStreamIntInto(dst, int64(offset))
+}
+
+func encodePackStreamLocalDateTimeValueInto(dst []byte, value time.Time) []byte {
+	naive := time.Date(value.Year(), value.Month(), value.Day(), value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), time.UTC)
+	dst = append(dst, 0xB2, 0x64)
+	dst = encodePackStreamIntInto(dst, naive.Unix())
+	return encodePackStreamIntInto(dst, int64(naive.Nanosecond()))
+}
+
+func encodePackStreamCypherDateTimeInto(dst []byte, value cypher.CypherDateTime, useUTCDateTimeStructs bool) []byte {
+	var offset int
+	if !useUTCDateTimeStructs || value.ZoneID == "" {
+		_, offset = value.Time.Zone()
+	}
+	seconds := value.Time.Unix()
+	signature := byte(0x49)
+	if !useUTCDateTimeStructs {
+		// Legacy seconds describe the local wall clock, not the UTC instant.
+		seconds += int64(offset)
+		signature = 0x46
+	}
+	if value.ZoneID != "" {
+		signature += 0x20
+	}
+	dst = append(dst, 0xB3, signature)
+	dst = encodePackStreamIntInto(dst, seconds)
+	dst = encodePackStreamIntInto(dst, int64(value.Time.Nanosecond()))
+	if value.ZoneID != "" {
+		return encodePackStreamStringInto(dst, value.ZoneID)
+	}
+	return encodePackStreamIntInto(dst, int64(offset))
+}
+
+func decodePackStreamDateTime(seconds, nanos int64, location *time.Location, useUTCDateTimeStructs, namedZone bool) time.Time {
+	value := time.Unix(seconds, nanos)
+	if useUTCDateTimeStructs {
+		return value.In(location)
+	}
+	// Interpret the legacy wall-clock components in the supplied zone. Looking
+	// up the offset at time.Unix(seconds, nanos) instead is wrong near DST changes.
+	value = value.UTC()
+	if namedZone {
+		// Legacy zone IDs use the string-constructor policy: the earlier overlap
+		// instant and a forward shift through gaps, matching Neo4j's wire reader.
+		return cypher.ResolveNamedZoneLocalTime(value, location, false)
+	}
+	return time.Date(value.Year(), value.Month(), value.Day(), value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), location)
+}
+
+func encodePackStreamCypherDurationInto(dst []byte, value *cypher.CypherDuration) []byte {
+	if value == nil {
+		return append(dst, 0xC0)
+	}
+	dst = append(dst, 0xB4, 0x45)
+	dst = encodePackStreamIntInto(dst, value.Years*12+value.Months)
+	dst = encodePackStreamIntInto(dst, value.Days)
+	seconds := value.Hours*3600 + value.Minutes*60 + value.Seconds
+	dst = encodePackStreamIntInto(dst, seconds)
+	return encodePackStreamIntInto(dst, value.Nanos)
+}
+
+func encodePackStreamIntInto(dst []byte, val int64) []byte {
+	// Tiny int: -16 to 127 (inline, 1 byte)
+	if val >= -16 && val <= 127 {
+		return append(dst, byte(val))
+	}
+	// INT8: -128 to -17 (marker + 1 byte)
+	if val >= -128 && val < -16 {
+		return append(dst, 0xC8, byte(val))
+	}
+	// INT16: -32768 to 32767 (marker + 2 bytes)
+	if val >= -32768 && val <= 32767 {
+		return append(dst, 0xC9, byte(val>>8), byte(val))
+	}
+	// INT32: -2147483648 to 2147483647
+	if val >= -2147483648 && val <= 2147483647 {
+		return append(dst, 0xCA, byte(val>>24), byte(val>>16), byte(val>>8), byte(val))
+	}
+	// INT64: everything else
+	return append(dst, 0xCB,
+		byte(val>>56), byte(val>>48), byte(val>>40), byte(val>>32),
+		byte(val>>24), byte(val>>16), byte(val>>8), byte(val),
+	)
+}
+
+// encodeNodeInto encodes a map-based Cypher node as a proper Bolt Node structure (signature 0x4E).
+// Format: STRUCT(3 fields, signature 0x4E) + id + labels + properties
+func encodeNodeInto(dst []byte, nodeId any, labels any, props map[string]any) []byte {
+	return encodeNodeIntoWithUTC(dst, nodeId, labels, props, true)
+}
+
+func encodeNodeIntoWithUTC(dst []byte, nodeId any, labels any, props map[string]any, useUTCDateTimeStructs bool) []byte {
+	// Bolt Node structure: B3 4E (tiny struct, 3 fields, signature 'N')
+	dst = append(dst, 0xB3, 0x4E)
+
+	// Field 1: Node ID (as int64 for Neo4j compatibility)
+	switch idVal := nodeId.(type) {
+	case int64:
+		dst = encodePackStreamIntInto(dst, idVal)
+	case int:
+		dst = encodePackStreamIntInto(dst, int64(idVal))
+	case string:
+		dst = encodePackStreamIntInto(dst, util.HashStringToInt64(idVal))
+	default:
+		dst = encodePackStreamIntInto(dst, 0)
+	}
+
+	// Field 2: Labels (list of strings)
+	switch l := labels.(type) {
+	case []string:
+		dst = encodePackStreamStringListInto(dst, l)
+	case []any:
+		dst = encodePackStreamListIntoWithUTC(dst, l, useUTCDateTimeStructs)
+	default:
+		dst = append(dst, 0x90)
+	}
+
+	// Field 3: Properties (map), skipping internal fields
+	propCount := 0
+	for k := range props {
+		if k == "_nodeId" || k == "labels" {
+			continue
+		}
+		propCount++
+	}
+
+	if propCount == 0 {
+		dst = append(dst, 0xA0)
+		return dst
+	}
+
+	dst = appendPackStreamMapHeader(dst, propCount)
+
+	for k, v := range props {
+		if k == "_nodeId" || k == "labels" {
+			continue
+		}
+		dst = encodePackStreamStringInto(dst, k)
+		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+	}
+
+	return dst
+}
+
+func encodeStorageNodeInto(dst []byte, node *storage.Node) []byte {
+	return encodeStorageNodeIntoWithUTC(dst, node, true)
+}
+
+func encodeStorageNodeIntoWithUTC(dst []byte, node *storage.Node, useUTCDateTimeStructs bool) []byte {
+	// Bolt Node structure: B3 4E (tiny struct, 3 fields, signature 'N')
+	dst = append(dst, 0xB3, 0x4E)
+
+	// Field 1: Node ID (as int64)
+	dst = encodePackStreamIntInto(dst, util.HashStringToInt64(string(node.ID)))
+
+	// Field 2: Labels (list of strings)
+	labels := node.Labels
+	dst = encodePackStreamStringListInto(dst, labels)
+
+	// Field 3: Properties (map)
+	props := node.Properties
+	if len(props) == 0 {
+		return append(dst, 0xA0)
+	}
+
+	propCount := len(props)
+	dst = appendPackStreamMapHeader(dst, propCount)
+	for k, v := range props {
+		dst = encodePackStreamStringInto(dst, k)
+		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+	}
+	return dst
+}
+
+func encodeStorageEdgeInto(dst []byte, edge *storage.Edge) []byte {
+	return encodeStorageEdgeIntoWithUTC(dst, edge, true)
+}
+
+func encodeStorageEdgeIntoWithUTC(dst []byte, edge *storage.Edge, useUTCDateTimeStructs bool) []byte {
+	// Bolt Relationship structure: B5 52 (tiny struct, 5 fields, signature 'R')
+	dst = append(dst, 0xB5, 0x52)
+
+	// Field 1: Relationship ID (as int64)
+	dst = encodePackStreamIntInto(dst, util.HashStringToInt64(string(edge.ID)))
+	// Field 2: Start Node ID (as int64)
+	dst = encodePackStreamIntInto(dst, util.HashStringToInt64(string(edge.StartNode)))
+	// Field 3: End Node ID (as int64)
+	dst = encodePackStreamIntInto(dst, util.HashStringToInt64(string(edge.EndNode)))
+	// Field 4: Relationship Type (string)
+	dst = encodePackStreamStringInto(dst, edge.Type)
+
+	// Field 5: Properties (map)
+	props := edge.Properties
+	if len(props) == 0 {
+		return append(dst, 0xA0)
+	}
+
+	propCount := len(props)
+	dst = appendPackStreamMapHeader(dst, propCount)
+	for k, v := range props {
+		dst = encodePackStreamStringInto(dst, k)
+		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+	}
+	return dst
+}
+
+type unboundRelationship struct {
+	id         storage.EdgeID
+	relType    string
+	properties map[string]any
+
+	database string
+}
+
+func encodeUnboundRelationshipInto(dst []byte, rel *unboundRelationship) []byte {
+	return encodeUnboundRelationshipIntoWithUTC(dst, rel, true)
+}
+
+func encodeUnboundRelationshipIntoWithUTC(dst []byte, rel *unboundRelationship, useUTCDateTimeStructs bool) []byte {
+	// Bolt Unbound Relationship structure: B3 72 (tiny struct, 3 fields, signature 'r')
+	dst = append(dst, 0xB3, 0x72)
+	dst = encodePackStreamIntInto(dst, util.HashStringToInt64(string(rel.id)))
+	dst = encodePackStreamStringInto(dst, rel.relType)
+
+	if len(rel.properties) == 0 {
+		return append(dst, 0xA0)
+	}
+	return encodePackStreamMapIntoWithUTC(dst, rel.properties, useUTCDateTimeStructs)
+}
+
+func encodePathInto(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge) []byte {
+	return encodePathIntoWithUTC(dst, pathNodes, pathRels, true)
+}
+
+// encodeRecordListInto encodes one RECORD field list for the negotiated Bolt
+// version. Bolt 5.0+ node/relationship structures carry their element id as
+// the final field (#745); Bolt 4.x structures keep the three/five-field
+// shapes those drivers parse.
+type boltEntityDatabaseResolver func(storage.NodeID, storage.EdgeID) string
+
+func recordEntityDatabase(dbName string, nodeID storage.NodeID, edgeID storage.EdgeID, resolvers []boltEntityDatabaseResolver) string {
+	if len(resolvers) > 0 && resolvers[0] != nil {
+		if resolved := resolvers[0](nodeID, edgeID); resolved != "" {
+			return resolved
+		}
+	}
+	return dbName
+}
+
+func encodeRecordListInto(dst []byte, items []any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+	if len(items) == 0 {
+		return append(dst, 0x90)
+	}
+	size := len(items)
+	dst = appendPackStreamListHeader(dst, size)
+	for _, item := range items {
+		dst = encodeRecordValueInto(dst, item, useUTCDateTimeStructs, bolt5, dbName, resolvers...)
+	}
+	return dst
+}
+
+// encodeRecordValueInto encodes one record value. Under Bolt 5.0 entities
+// carry their element id; everything else uses the shared 4.x encoder.
+func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+	if !bolt5 {
+		return encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+	}
+	switch val := v.(type) {
+	case *storage.Node:
+		if val == nil {
+			return append(dst, 0xC0)
+		}
+		return encodeStorageNodeV5Into(dst, val, recordEntityDatabase(dbName, val.ID, "", resolvers))
+	case storage.Node:
+		return encodeStorageNodeV5Into(dst, &val, recordEntityDatabase(dbName, val.ID, "", resolvers))
+	case *storage.Edge:
+		if val == nil {
+			return append(dst, 0xC0)
+		}
+		return encodeStorageEdgeV5Into(dst, val, dbName, resolvers...)
+	case storage.Edge:
+		return encodeStorageEdgeV5Into(dst, &val, dbName, resolvers...)
+	case []*storage.Node:
+		items := make([]any, len(val))
+		for i, node := range val {
+			items[i] = node
+		}
+		return encodeRecordListInto(dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
+	case []storage.Node:
+		items := make([]any, len(val))
+		for i := range val {
+			items[i] = &val[i]
+		}
+		return encodeRecordListInto(dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
+	case []*storage.Edge:
+		items := make([]any, len(val))
+		for i, edge := range val {
+			items[i] = edge
+		}
+		return encodeRecordListInto(dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
+	case []storage.Edge:
+		items := make([]any, len(val))
+		for i := range val {
+			items[i] = &val[i]
+		}
+		return encodeRecordListInto(dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
+	case []any:
+		return encodeRecordListInto(dst, val, useUTCDateTimeStructs, true, dbName, resolvers...)
+	case []map[string]any:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		dst = appendPackStreamListHeader(dst, size)
+		for _, m := range val {
+			dst = encodeRecordValueInto(dst, m, useUTCDateTimeStructs, true, dbName, resolvers...)
+		}
+		return dst
+	case storage.RemotePathValue:
+		return encodeRemotePathInto(dst, val, useUTCDateTimeStructs, true)
+	case storage.RemoteEntityValue:
+		return encodeRemoteEntityInto(dst, val, useUTCDateTimeStructs, true)
+	case map[string]any:
+
+		if path, ok := extractPathFromMap(val); ok {
+			return encodePathV5Into(dst, path.Nodes, path.Relationships, dbName, resolvers...)
+		}
+		// Ordinary maps recurse through the version-aware encoder so nested
+		// entities keep their Bolt 5.0 structures (#745: RETURN {n: n}).
+		return encodeRecordMapInto(dst, val, useUTCDateTimeStructs, true, dbName, resolvers...)
+	}
+	return encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+}
+
+// encodeRecordMapInto encodes a map for the negotiated Bolt version. Bolt 5.0
+// recurses through encodeRecordValueInto so entities nested anywhere in the
+// map get their element-id structures; Bolt 4.x keeps the shared legacy
+// encoder. The _pathResult sentinel key is always dropped (the shared 4.x
+// behavior).
+func encodeRecordMapInto(dst []byte, m map[string]any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+	m = storage.PublicRemoteMap(m)
+	if len(m) == 0 {
+		return append(dst, 0xA0)
+	}
+
+	// Some Cypher internals use helper sentinel keys that should not be
+	// serialized to clients. Keep these out of the wire format.
+	//
+	// Note: we cannot skip all "_" keys because Bolt-compatible node/edge maps
+	// use `_nodeId` / `_edgeId`.
+	skipPathResult := false
+	if _, ok := m["_pathResult"]; ok {
+		skipPathResult = true
+	}
+
+	size := len(m)
+	if skipPathResult {
+		size--
+	}
+	dst = appendPackStreamMapHeader(dst, size)
+
+	for k, v := range m {
+		if k == "_pathResult" {
+			continue
+		}
+		dst = encodePackStreamStringInto(dst, k)
+		if bolt5 {
+			dst = encodeRecordValueInto(dst, v, useUTCDateTimeStructs, true, dbName, resolvers...)
+		} else {
+			dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+		}
+	}
+
+	return dst
+}
+
+// encodeStorageNodeV5Into encodes a node with the Bolt 5.0 four-field
+// structure (id, labels, properties, element_id). It reuses the 4.x field
+// encoding and upgrades the struct marker before appending the element id.
+func encodeStorageNodeV5Into(dst []byte, node *storage.Node, dbName string) []byte {
+	start := len(dst)
+	dst = encodeStorageNodeIntoWithUTC(dst, node, true)
+	if start+1 < len(dst) {
+		dst[start] = 0xB4 // B3 4E (3 fields) -> B4 4E (4 fields)
+	}
+	return encodePackStreamStringInto(dst, node.ElementID(dbName))
+}
+
+// encodeStorageEdgeV5Into encodes a relationship with the Bolt 5.0 eight-field
+// structure (id, start, end, type, properties, element_id,
+// start_node_element_id, end_node_element_id). It reuses the 4.x field
+// encoding and upgrades the struct marker before appending the element ids.
+func encodeStorageEdgeV5Into(dst []byte, edge *storage.Edge, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+	start := len(dst)
+	dst = encodeStorageEdgeIntoWithUTC(dst, edge, true)
+	if start+1 < len(dst) {
+		dst[start] = 0xB8 // B5 52 (5 fields) -> B8 52 (8 fields)
+	}
+	dst = encodePackStreamStringInto(dst, edge.ElementID(recordEntityDatabase(dbName, "", edge.ID, resolvers)))
+	dst = encodePackStreamStringInto(dst, edge.StartElementID(recordEntityDatabase(dbName, edge.StartNode, "", resolvers)))
+	dst = encodePackStreamStringInto(dst, edge.EndElementID(recordEntityDatabase(dbName, edge.EndNode, "", resolvers)))
+	return dst
+}
+
+// encodeNodeV5Into encodes a map-backed node (id, labels, properties,
+// element_id) for Bolt 5.0.
+func encodeNodeV5Into(dst []byte, nodeId any, labels any, nodeMap map[string]any, dbName string) []byte {
+	start := len(dst)
+	dst = encodeNodeIntoWithUTC(dst, nodeId, labels, nodeMap, true)
+	if start+1 < len(dst) {
+		dst[start] = 0xB4
+	}
+	id := fmt.Sprintf("%v", nodeId)
+	if asString, ok := nodeId.(string); ok {
+		id = asString
+	}
+	return encodePackStreamStringInto(dst, storage.NodeElementID(dbName, storage.NodeID(id)))
+}
+
+// encodePathV5Into encodes a path whose nodes and unbound relationships carry
+// Bolt 5.0 element ids (B4 72 unbound relationships).
+func encodePathV5Into(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+	dst = append(dst, 0xB3, 0x50)
+	if len(pathNodes) == 0 {
+		dst = append(dst, 0x90, 0x90, 0x90)
+		return dst
+	}
+	if len(pathRels) == 0 {
+		dst = encodeRecordListInto(dst, []any{pathNodes[0]}, true, true, dbName, resolvers...)
+		return append(dst, 0x90, 0x90)
+	}
+	uniqueNodes, nodeIndex := uniquePathNodes(pathNodes)
+	uniqueRels, relIndex := uniquePathRels(pathRels)
+
+	nodeItems := make([]any, len(uniqueNodes))
+	for i, node := range uniqueNodes {
+		nodeItems[i] = node
+	}
+	dst = encodeRecordListInto(dst, nodeItems, true, true, dbName, resolvers...)
+
+	rels := make([]unboundRelationship, len(uniqueRels))
+	for i, rel := range uniqueRels {
+		rels[i] = unboundRelationship{id: rel.ID, database: rel.Database, relType: rel.Type, properties: rel.Properties}
+	}
+	dst = encodeUnboundRelationshipListV5Into(dst, rels, dbName, resolvers...)
+
+	sequence := buildPathSequence(pathNodes, pathRels, nodeIndex, relIndex)
+	return encodePackStreamValueIntoWithUTC(dst, sequence, true)
+}
+
+// encodeUnboundRelationshipV5Into encodes a Bolt 5.0 unbound relationship:
+// B4 72 (id, type, properties, element_id). Bolt 5.0 added the element id as
+// the fourth field; the 4.x structure keeps three.
+func encodeUnboundRelationshipV5Into(dst []byte, rel *unboundRelationship, dbName string) []byte {
+	dst = append(dst, 0xB4, 0x72)
+	dst = encodePackStreamIntInto(dst, util.HashStringToInt64(string(rel.id)))
+	dst = encodePackStreamStringInto(dst, rel.relType)
+	if len(rel.properties) == 0 {
+		dst = append(dst, 0xA0)
+	} else {
+		dst = encodePackStreamMapIntoWithUTC(dst, rel.properties, true)
+	}
+	id := storage.RelationshipElementID(dbName, rel.id)
+	if rel.database != "" {
+		id = storage.SourceRelationshipElementID(rel.database, rel.id)
+	}
+	return encodePackStreamStringInto(dst, id)
+}
+
+// encodeUnboundRelationshipListV5Into encodes a list of Bolt 5.0 unbound
+// relationships (path field 2).
+func encodeUnboundRelationshipListV5Into(dst []byte, rels []unboundRelationship, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+	if len(rels) == 0 {
+		return append(dst, 0x90)
+	}
+	size := len(rels)
+	dst = appendPackStreamListHeader(dst, size)
+	for i := range rels {
+		dst = encodeUnboundRelationshipV5Into(dst, &rels[i], recordEntityDatabase(dbName, "", rels[i].id, resolvers))
+	}
+	return dst
+}
+
+func encodePathIntoWithUTC(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, useUTCDateTimeStructs bool) []byte {
+	// Bolt Path structure: B3 50 (tiny struct, 3 fields, signature 'P')
+	dst = append(dst, 0xB3, 0x50)
+
+	if len(pathNodes) == 0 {
+		// Invalid path; encode empty lists to avoid malformed structures.
+		dst = append(dst, 0x90, 0x90, 0x90)
+		return dst
+	}
+
+	if len(pathRels) == 0 {
+		// Path length 0 should contain only the first node.
+		dst = encodePackStreamListIntoWithUTC(dst, []any{pathNodes[0]}, useUTCDateTimeStructs)
+		dst = append(dst, 0x90, 0x90)
+		return dst
+	}
+
+	uniqueNodes, nodeIndex := uniquePathNodes(pathNodes)
+	uniqueRels, relIndex := uniquePathRels(pathRels)
+
+	// Field 1: Nodes list
+	dst = encodePackStreamValueIntoWithUTC(dst, uniqueNodes, useUTCDateTimeStructs)
+
+	// Field 2: Unbound relationships list
+	rels := make([]any, len(uniqueRels))
+	for i, rel := range uniqueRels {
+		rels[i] = unboundRelationship{
+			id:         rel.ID,
+			relType:    rel.Type,
+			properties: rel.Properties,
+		}
+	}
+	dst = encodePackStreamListIntoWithUTC(dst, rels, useUTCDateTimeStructs)
+
+	// Field 3: Sequence list
+	sequence := buildPathSequence(pathNodes, pathRels, nodeIndex, relIndex)
+	dst = encodePackStreamValueIntoWithUTC(dst, sequence, useUTCDateTimeStructs)
+
+	return dst
+}
+
+func uniquePathNodes(nodes []*storage.Node) ([]*storage.Node, map[storage.NodeID]int) {
+	if len(nodes) == 0 {
+		return nil, map[storage.NodeID]int{}
+	}
+	unique := make([]*storage.Node, 0, len(nodes))
+	index := make(map[storage.NodeID]int, len(nodes))
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		identity := storage.NodeID(node.IdentityKey())
+		if _, ok := index[identity]; ok {
+			continue
+		}
+		index[identity] = len(unique)
+		unique = append(unique, node)
+	}
+	return unique, index
+}
+
+func uniquePathRels(rels []*storage.Edge) ([]*storage.Edge, map[storage.EdgeID]int) {
+	if len(rels) == 0 {
+		return nil, map[storage.EdgeID]int{}
+	}
+	unique := make([]*storage.Edge, 0, len(rels))
+	index := make(map[storage.EdgeID]int, len(rels))
+	for _, rel := range rels {
+		if rel == nil {
+			continue
+		}
+		identity := storage.EdgeID(rel.IdentityKey())
+		if _, ok := index[identity]; ok {
+			continue
+		}
+		index[identity] = len(unique)
+		unique = append(unique, rel)
+	}
+	return unique, index
+}
+
+func buildPathSequence(pathNodes []*storage.Node, pathRels []*storage.Edge, nodeIndex map[storage.NodeID]int, relIndex map[storage.EdgeID]int) []int64 {
+	if len(pathNodes) == 0 || len(pathRels) == 0 {
+		return []int64{}
+	}
+
+	if len(pathNodes) < len(pathRels)+1 {
+		return []int64{}
+	}
+
+	sequence := make([]int64, 0, len(pathRels)*2)
+	current := pathNodes[0]
+	for i := 0; i < len(pathRels); i++ {
+		rel := pathRels[i]
+		next := pathNodes[i+1]
+		if rel == nil || current == nil || next == nil {
+			return []int64{}
+		}
+		relPos, ok := relIndex[storage.EdgeID(rel.IdentityKey())]
+		if !ok {
+			return []int64{}
+		}
+		nodePos, ok := nodeIndex[storage.NodeID(next.IdentityKey())]
+		if !ok {
+			return []int64{}
+		}
+
+		relSeq := int64(relPos + 1)
+		if current.ID != rel.StartNode {
+			relSeq = -relSeq
+		}
+
+		sequence = append(sequence, relSeq, int64(nodePos))
+		current = next
+	}
+	return sequence
+}
+
+func extractPathFromMap(val map[string]any) (*cypher.PathResult, bool) {
+	raw, ok := val["_pathResult"]
+	if !ok {
+		return nil, false
+	}
+
+	switch path := raw.(type) {
+	case cypher.PathResult:
+		return &path, true
+	case *cypher.PathResult:
+		if path != nil {
+			return path, true
+		}
+	}
+
+	nodes := coercePathNodes(val["nodes"])
+	rels := coercePathRels(val["relationships"])
+	if len(rels) == 0 {
+		rels = coercePathRels(val["rels"])
+	}
+	if len(nodes) == 0 && len(rels) == 0 {
+		return nil, false
+	}
+
+	return &cypher.PathResult{
+		Nodes:         nodes,
+		Relationships: rels,
+		Length:        len(rels),
+	}, true
+}
+
+// coercePathRecords is the shared kernel behind coercePathNodes and
+// coercePathRels: it normalizes a slice of records that may arrive as
+// []*T, []T, or a mixed []any of pointers and values into []*T. Items of
+// any other type are skipped; a non-slice input yields nil.
+func coercePathRecords[T any](val any) []*T {
+	switch records := val.(type) {
+	case []*T:
+		return records
+	case []T:
+		converted := make([]*T, 0, len(records))
+		for i := range records {
+			record := records[i]
+			converted = append(converted, &record)
+		}
+		return converted
+	case []any:
+		converted := make([]*T, 0, len(records))
+		for _, item := range records {
+			switch record := item.(type) {
+			case *T:
+				converted = append(converted, record)
+			case T:
+				r := record
+				converted = append(converted, &r)
+			}
+		}
+		return converted
+	default:
+		return nil
+	}
+}
+
+func coercePathNodes(val any) []*storage.Node {
+	return coercePathRecords[storage.Node](val)
+}
+
+func coercePathRels(val any) []*storage.Edge {
+	return coercePathRecords[storage.Edge](val)
+}
+
+// encodeNode encodes a node as a proper Bolt Node structure (signature 0x4E).
+// This makes nodes compatible with Neo4j drivers that expect Node instances with .properties.
+// Format: STRUCT(3 fields, signature 0x4E) + id + labels + properties
+func encodeNode(nodeId any, labels any, nodeMap map[string]any) []byte {
+	return encodeNodeWithUTC(nodeId, labels, nodeMap, true)
+}
+
+func encodeNodeWithUTC(nodeId any, labels any, nodeMap map[string]any, useUTCDateTimeStructs bool) []byte {
+	// Bolt Node structure: B3 4E (tiny struct, 3 fields, signature 'N')
+	buf := []byte{0xB3, 0x4E}
+
+	// Field 1: Node ID (as int64 for Neo4j compatibility)
+	// Convert string ID to int64 using deterministic hash function
+	var id int64
+	switch v := nodeId.(type) {
+	case string:
+		id = util.HashStringToInt64(v)
+	case int64:
+		id = v
+	case int:
+		id = int64(v)
+	default:
+		// Fallback: convert to string and hash
+		id = util.HashStringToInt64(fmt.Sprintf("%v", v))
+	}
+	buf = append(buf, encodePackStreamInt(id)...)
+
+	// Field 2: Labels (list of strings)
+	labelList := make([]any, 0)
+	switch l := labels.(type) {
+	case []string:
+		for _, s := range l {
+			labelList = append(labelList, s)
+		}
+	case []any:
+		labelList = l
+	}
+	buf = encodePackStreamListIntoWithUTC(buf, labelList, useUTCDateTimeStructs)
+
+	// Field 3: Properties (map) - exclude internal fields
+	props := make(map[string]any)
+	for k, v := range nodeMap {
+		// Skip internal fields
+		if k == "_nodeId" || k == "labels" {
+			continue
+		}
+		props[k] = v
+	}
+	buf = encodePackStreamMapIntoWithUTC(buf, props, useUTCDateTimeStructs)
+
+	return buf
+}
+
+// encodeStorageNode encodes a *storage.Node as a proper Bolt Node structure (signature 0x4E).
+// This enables Neo4j drivers to receive nodes with .properties accessor.
+// Format: STRUCT(3 fields, signature 0x4E) + id + labels + properties
+func encodeStorageNode(node *storage.Node) []byte {
+	// Bolt Node structure: B3 4E (tiny struct, 3 fields, signature 'N')
+	buf := []byte{0xB3, 0x4E}
+
+	// Field 1: Node ID (as int64 for Neo4j compatibility)
+	// Convert string ID to int64 using deterministic hash function
+	id := util.HashStringToInt64(string(node.ID))
+	buf = append(buf, encodePackStreamInt(id)...)
+
+	// Field 2: Labels (list of strings)
+	labelList := make([]any, len(node.Labels))
+	for i, label := range node.Labels {
+		labelList[i] = label
+	}
+	buf = append(buf, encodePackStreamList(labelList)...)
+
+	// Field 3: Properties (map)
+	props := make(map[string]any)
+	for k, v := range node.Properties {
+		props[k] = v
+	}
+	buf = append(buf, encodePackStreamMap(props)...)
+
+	return buf
+}
+
+// encodeStorageEdge encodes a *storage.Edge as a proper Bolt Relationship structure (signature 0x52).
+// This enables Neo4j drivers to receive relationships with proper structure.
+// Format: STRUCT(5 fields, signature 0x52) + id + startNodeId + endNodeId + type + properties
+func encodeStorageEdge(edge *storage.Edge) []byte {
+	// Bolt Relationship structure: B5 52 (tiny struct, 5 fields, signature 'R')
+	buf := []byte{0xB5, 0x52}
+
+	// Field 1: Relationship ID (as int64)
+	// Convert string ID to int64 using deterministic hash function
+	id := util.HashStringToInt64(string(edge.ID))
+	buf = append(buf, encodePackStreamInt(id)...)
+
+	// Field 2: Start Node ID (as int64)
+	// Convert string ID to int64 using deterministic hash function
+	startId := util.HashStringToInt64(string(edge.StartNode))
+	buf = append(buf, encodePackStreamInt(startId)...)
+
+	// Field 3: End Node ID (as int64)
+	// Convert string ID to int64 using deterministic hash function
+	endId := util.HashStringToInt64(string(edge.EndNode))
+	buf = append(buf, encodePackStreamInt(endId)...)
+
+	// Field 4: Relationship Type (string)
+	buf = append(buf, encodePackStreamString(edge.Type)...)
+
+	// Field 5: Properties (map)
+	props := make(map[string]any)
+	for k, v := range edge.Properties {
+		props[k] = v
+	}
+	buf = append(buf, encodePackStreamMap(props)...)
+
+	return buf
+}
+
+// encodePackStreamInt encodes an integer using the smallest PackStream representation.
+//
+// PackStream integer encoding (from Bolt spec):
+//   - Tiny: -16 to 127 (1 byte, inline)
+//   - INT8: -128 to -17 (2 bytes, marker 0xC8)
+//   - INT16: -32768 to 32767 (3 bytes, marker 0xC9)
+//   - INT32: -2147483648 to 2147483647 (5 bytes, marker 0xCA)
+//   - INT64: all other values (9 bytes, marker 0xCB)
+//
+// JavaScript Driver Behavior:
+//   - Tiny, INT8, INT16, INT32 → decoded as JavaScript Number
+//   - INT64 (0xCB) → decoded as JavaScript BigInt
+//
+// For Neo4j compatibility, we MUST use INT32 or smaller for values
+// within JavaScript's safe integer range to avoid BigInt conversion issues.
+//
+// JavaScript safe integer range: -2^53 to 2^53 (-9007199254740991 to 9007199254740991)
+// INT32 range: -2^31 to 2^31-1 (-2147483648 to 2147483647)
+//
+// Since INT32 range is within JS safe range, using INT32 encoding ensures
+// the Neo4j JS driver will return regular Numbers, not BigInts.
+func encodePackStreamInt(val int64) []byte {
+	// Tiny int: -16 to 127 (inline, 1 byte)
+	if val >= -16 && val <= 127 {
+		return []byte{byte(val)}
+	}
+	// INT8: -128 to -17 (marker + 1 byte)
+	if val >= -128 && val < -16 {
+		return []byte{0xC8, byte(val)}
+	}
+	// INT16: -32768 to 32767 (marker + 2 bytes)
+	if val >= -32768 && val <= 32767 {
+		return []byte{0xC9, byte(val >> 8), byte(val)}
+	}
+	// INT32: -2147483648 to 2147483647 (marker + 4 bytes)
+	// This is the largest encoding that Neo4j JS driver decodes as Number (not BigInt)
+	if val >= -2147483648 && val <= 2147483647 {
+		return []byte{0xCA, byte(val >> 24), byte(val >> 16), byte(val >> 8), byte(val)}
+	}
+	// INT64: everything else (marker + 8 bytes)
+	// Neo4j JS driver will decode this as BigInt
+	return []byte{0xCB, byte(val >> 56), byte(val >> 48), byte(val >> 40), byte(val >> 32),
+		byte(val >> 24), byte(val >> 16), byte(val >> 8), byte(val)}
+}
+
+// ============================================================================
+// PackStream Decoding
+// ============================================================================
+
+func decodePackStreamString(data []byte, offset int) (string, int, error) {
+	if offset >= len(data) {
+		return "", 0, fmt.Errorf("offset out of bounds")
+	}
+
+	startOffset := offset
+	marker := data[offset]
+	offset++
+
+	var length int
+
+	// Tiny string (0x80-0x8F)
+	if marker >= 0x80 && marker <= 0x8F {
+		length = int(marker - 0x80)
+	} else if marker == 0xD0 { // STRING8
+		if offset >= len(data) {
+			return "", 0, fmt.Errorf("incomplete STRING8")
+		}
+		length = int(data[offset])
+		offset++
+	} else if marker == 0xD1 { // STRING16
+		if offset+1 >= len(data) {
+			return "", 0, fmt.Errorf("incomplete STRING16")
+		}
+		length = int(data[offset])<<8 | int(data[offset+1])
+		offset += 2
+	} else if marker == 0xD2 { // STRING32
+		if offset+3 >= len(data) {
+			return "", 0, fmt.Errorf("incomplete STRING32")
+		}
+		length = int(data[offset])<<24 | int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
+		offset += 4
+	} else {
+		return "", 0, fmt.Errorf("not a string marker: 0x%02X", marker)
+	}
+
+	if offset+length > len(data) {
+		return "", 0, fmt.Errorf("string data out of bounds")
+	}
+
+	str := string(data[offset : offset+length])
+	return str, (offset + length) - startOffset, nil
+}
+
+func decodePackStreamMap(data []byte, offset int, utcDateTime ...bool) (map[string]any, int, error) {
+	if offset >= len(data) {
+		return nil, 0, fmt.Errorf("offset out of bounds")
+	}
+
+	startOffset := offset
+	size, header, err := packStreamMapHeader(data[offset:])
+	if err != nil {
+		return nil, 0, err
+	}
+	offset += header
+
+	result := make(map[string]any)
+
+	for i := 0; i < size; i++ {
+		// Decode key (must be string)
+		key, n, err := decodePackStreamString(data, offset)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to decode map key: %w", err)
+		}
+		offset += n
+
+		// Decode value
+		value, n, err := decodePackStreamValue(data, offset, utcDateTime...)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to decode map value for key %s: %w", key, err)
+		}
+		offset += n
+
+		result[key] = value
+	}
+
+	return result, offset - startOffset, nil
+}
+
+func decodePackStreamValue(data []byte, offset int, utcDateTime ...bool) (any, int, error) {
+	if offset >= len(data) {
+		return nil, 0, fmt.Errorf("offset out of bounds")
+	}
+
+	marker := data[offset]
+
+	// Null
+	if marker == 0xC0 {
+		return nil, 1, nil
+	}
+
+	// Boolean
+	if marker == 0xC2 {
+		return false, 1, nil
+	}
+	if marker == 0xC3 {
+		return true, 1, nil
+	}
+
+	// Tiny positive int (0x00-0x7F)
+	if marker <= 0x7F {
+		return int64(marker), 1, nil
+	}
+
+	// Tiny negative int (0xF0-0xFF = -16 to -1)
+	if marker >= 0xF0 {
+		return int64(int8(marker)), 1, nil
+	}
+
+	// INT8
+	if marker == 0xC8 {
+		if offset+1 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete INT8")
+		}
+		return int64(int8(data[offset+1])), 2, nil
+	}
+
+	// INT16
+	if marker == 0xC9 {
+		if offset+2 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete INT16")
+		}
+		val := int16(data[offset+1])<<8 | int16(data[offset+2])
+		return int64(val), 3, nil
+	}
+
+	// INT32
+	if marker == 0xCA {
+		if offset+4 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete INT32")
+		}
+		val := int32(data[offset+1])<<24 | int32(data[offset+2])<<16 | int32(data[offset+3])<<8 | int32(data[offset+4])
+		return int64(val), 5, nil
+	}
+
+	// INT64
+	if marker == 0xCB {
+		if offset+8 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete INT64")
+		}
+		val := int64(data[offset+1])<<56 | int64(data[offset+2])<<48 | int64(data[offset+3])<<40 | int64(data[offset+4])<<32 |
+			int64(data[offset+5])<<24 | int64(data[offset+6])<<16 | int64(data[offset+7])<<8 | int64(data[offset+8])
+		return val, 9, nil
+	}
+
+	// Float64
+	if marker == 0xC1 {
+		if offset+8 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete Float64")
+		}
+		bits := binary.BigEndian.Uint64(data[offset+1 : offset+9])
+		return math.Float64frombits(bits), 9, nil
+	}
+
+	// Bytes
+	if marker == 0xCC || marker == 0xCD || marker == 0xCE {
+		var size int
+		var headerLen int
+		switch marker {
+		case 0xCC:
+			if offset+1 >= len(data) {
+				return nil, 0, fmt.Errorf("incomplete BYTES8")
+			}
+			size = int(data[offset+1])
+			headerLen = 2
+		case 0xCD:
+			if offset+2 >= len(data) {
+				return nil, 0, fmt.Errorf("incomplete BYTES16")
+			}
+			size = int(data[offset+1])<<8 | int(data[offset+2])
+			headerLen = 3
+		case 0xCE:
+			if offset+4 >= len(data) {
+				return nil, 0, fmt.Errorf("incomplete BYTES32")
+			}
+			size = int(data[offset+1])<<24 | int(data[offset+2])<<16 | int(data[offset+3])<<8 | int(data[offset+4])
+			headerLen = 5
+		}
+
+		start := offset + headerLen
+		end := start + size
+		if end > len(data) {
+			return nil, 0, fmt.Errorf("incomplete BYTES payload")
+		}
+		out := make([]byte, size)
+		copy(out, data[start:end])
+		return out, headerLen + size, nil
+	}
+
+	// String
+	if marker >= 0x80 && marker <= 0x8F || marker == 0xD0 || marker == 0xD1 || marker == 0xD2 {
+		return decodePackStreamString(data, offset)
+	}
+
+	// List
+	if marker >= 0x90 && marker <= 0x9F || marker == 0xD4 || marker == 0xD5 || marker == 0xD6 {
+		return decodePackStreamList(data, offset, utcDateTime...)
+	}
+
+	// Map
+	if marker >= 0xA0 && marker <= 0xAF || marker == 0xD8 || marker == 0xD9 || marker == 0xDA {
+		return decodePackStreamMap(data, offset, utcDateTime...)
+	}
+
+	// Structure (for nodes, relationships, paths, etc.)
+	// Format: [marker] [signature] [field1] [field2] ...
+	// Tiny structures: 0xB0-0xBF (0-15 fields)
+	// Larger structures: 0xDC (STRUCT8), 0xDD (STRUCT16)
+	if marker >= 0xB0 && marker <= 0xBF {
+		return decodePackStreamStructure(data, offset, utcDateTime...)
+	}
+
+	// STRUCT8: 0xDC [size: 1 byte] [signature: 1 byte] [fields...]
+	if marker == 0xDC {
+		if offset+2 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete STRUCT8")
+		}
+		size := int(data[offset+1])
+		signature := data[offset+2]
+		fieldOffset := offset + 3
+		result, fieldsConsumed, err := decodeStructureFields(data, fieldOffset, size, signature, utcDateTime...)
+		if err != nil {
+			return nil, 0, err
+		}
+		// Total consumed: marker (1) + size (1) + signature (1) + fields
+		return result, 1 + 1 + 1 + fieldsConsumed, nil
+	}
+
+	// STRUCT16: 0xDD [size: 2 bytes] [signature: 1 byte] [fields...]
+	if marker == 0xDD {
+		if offset+4 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete STRUCT16")
+		}
+		size := int(data[offset+1])<<8 | int(data[offset+2])
+		signature := data[offset+3]
+		fieldOffset := offset + 4
+		result, fieldsConsumed, err := decodeStructureFields(data, fieldOffset, size, signature, utcDateTime...)
+		if err != nil {
+			return nil, 0, err
+		}
+		// Total consumed: marker (1) + size (2) + signature (1) + fields
+		return result, 1 + 2 + 1 + fieldsConsumed, nil
+	}
+
+	return nil, 0, fmt.Errorf("unknown marker: 0x%02X", marker)
+}
+
+// decodePackStreamStructure decodes a tiny structure (0xB0-0xBF).
+// Format: [marker] [signature] [field1] [field2] ...
+func decodePackStreamStructure(data []byte, offset int, utcDateTime ...bool) (any, int, error) {
+	if offset >= len(data) {
+		return nil, 0, fmt.Errorf("offset out of bounds")
+	}
+
+	marker := data[offset]
+
+	// Extract field count from marker (0xB0 = 0 fields, 0xB1 = 1 field, etc.)
+	fieldCount := int(marker - 0xB0)
+	offset++
+
+	// Read signature byte
+	if offset >= len(data) {
+		return nil, 0, fmt.Errorf("incomplete structure: missing signature")
+	}
+	signature := data[offset]
+	offset++
+
+	// Decode fields based on signature
+	// Note: offset already accounts for marker (1 byte) and signature (1 byte)
+	result, fieldsConsumed, err := decodeStructureFields(data, offset, fieldCount, signature, utcDateTime...)
+	if err != nil {
+		return nil, 0, err
+	}
+	// Total consumed: marker (1) + signature (1) + fields
+	return result, 1 + 1 + fieldsConsumed, nil
+}
+
+// decodeStructureFields decodes structure fields based on signature.
+// Common signatures:
+//
+//	0x4E (N) = Node: [id, labels, properties]
+//	0x52 (R) = Relationship: [id, startNodeId, endNodeId, type, properties]
+//	0x50 (P) = Path: [nodes, relationships, sequence]
+//	Other signatures are decoded as generic structures (map with fields)
+func decodeStructureFields(data []byte, offset int, fieldCount int, signature byte, utcDateTime ...bool) (any, int, error) {
+	// Unscoped codec callers may inspect either family. Session readers pass
+	// their negotiated mode through every nested container and structure.
+	if len(utcDateTime) > 0 {
+		utc := signature == 0x49 || signature == 0x69
+		legacy := signature == 0x46 || signature == 0x66
+		if (utc || legacy) && utcDateTime[0] != utc {
+			return nil, 0, fmt.Errorf("%w: 0x%02X", errDateTimeSignature, signature)
+		}
+	}
+
+	startOffset := offset
+	fields := make([]any, fieldCount)
+
+	// Decode all fields
+	for i := 0; i < fieldCount; i++ {
+		value, n, err := decodePackStreamValue(data, offset, utcDateTime...)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to decode structure field %d: %w", i, err)
+		}
+		fields[i] = value
+		offset += n
+	}
+
+	fieldsConsumed := offset - startOffset
+
+	// Convert to appropriate type based on signature
+	switch signature {
+	case 0x4E: // Node (N)
+		// Node structure: [id, labels, properties]
+		if fieldCount >= 3 {
+			return map[string]any{
+				"_type":      "Node",
+				"id":         fields[0],
+				"labels":     fields[1],
+				"properties": fields[2],
+			}, fieldsConsumed, nil
+		}
+		return map[string]any{"_type": "Node", "fields": fields}, fieldsConsumed, nil
+
+	case 0x52: // Relationship (R)
+		// Relationship structure: [id, startNodeId, endNodeId, type, properties]
+		if fieldCount >= 5 {
+			return map[string]any{
+				"_type":       "Relationship",
+				"id":          fields[0],
+				"startNodeId": fields[1],
+				"endNodeId":   fields[2],
+				"type":        fields[3],
+				"properties":  fields[4],
+			}, fieldsConsumed, nil
+		}
+		return map[string]any{"_type": "Relationship", "fields": fields}, fieldsConsumed, nil
+
+	case 0x50: // Path (P)
+		// Path structure: [nodes, relationships, sequence]
+		if fieldCount >= 3 {
+			return map[string]any{
+				"_type":         "Path",
+				"nodes":         fields[0],
+				"relationships": fields[1],
+				"sequence":      fields[2],
+			}, fieldsConsumed, nil
+		}
+		return map[string]any{"_type": "Path", "fields": fields}, fieldsConsumed, nil
+
+	case 0x49, 0x46: // DateTime (utc-patched and legacy): [seconds, nanos, offsetSeconds]
+		if fieldCount >= 3 {
+			sec, okSec := toInt64Field(fields[0])
+			nsec, okNsec := toInt64Field(fields[1])
+			offsetSec, okOffset := toInt64Field(fields[2])
+			if okSec && okNsec && okOffset {
+				loc := time.FixedZone("", int(offsetSec))
+				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x49, false)}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "DateTime", "fields": fields}, fieldsConsumed, nil
+
+	case 0x58, 0x59: // Point2D: [srid, x, y]; Point3D: [srid, x, y, z]
+		if len(fields) == fieldCount && fieldCount >= 3 {
+			srid, okSRID := toInt64Field(fields[0])
+			coordinates := make([]float64, 0, fieldCount-1)
+			for _, field := range fields[1:] {
+				if coordinate, ok := field.(float64); ok {
+					coordinates = append(coordinates, coordinate)
+				}
+			}
+			if okSRID && len(coordinates) == fieldCount-1 {
+				if point, ok := cypher.NewCypherPoint(int(srid), coordinates...); ok {
+					return point, fieldsConsumed, nil
+				}
+			}
+		}
+		return map[string]any{"_type": "Point", "fields": fields}, fieldsConsumed, nil
+
+	case 0x44: // Date: [days since Unix epoch]
+		if fieldCount >= 1 {
+			days, ok := toInt64Field(fields[0])
+			if ok {
+				return cypher.CypherDate{Time: time.Unix(days*86_400, 0).UTC()}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "Date", "fields": fields}, fieldsConsumed, nil
+
+	case 0x74: // LocalTime: [nanoseconds since midnight]
+		if fieldCount >= 1 {
+			nanos, ok := toInt64Field(fields[0])
+			if ok && nanos >= 0 && nanos < int64(24*time.Hour) {
+				return cypher.CypherLocalTime{Time: time.Unix(0, nanos).UTC()}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "LocalTime", "fields": fields}, fieldsConsumed, nil
+
+	case 0x54: // Time: [nanoseconds since midnight, offset seconds]
+		if fieldCount >= 2 {
+			nanos, okNanos := toInt64Field(fields[0])
+			offsetSeconds, okOffset := toInt64Field(fields[1])
+			if okNanos && okOffset && nanos >= 0 && nanos < int64(24*time.Hour) {
+				location := time.FixedZone("", int(offsetSeconds))
+				clock := time.Unix(0, nanos).UTC()
+				return cypher.CypherTime{Time: time.Date(1970, 1, 1, clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location)}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "Time", "fields": fields}, fieldsConsumed, nil
+
+	case 0x64: // LocalDateTime: [seconds, nanos]
+		if fieldCount >= 2 {
+			sec, okSec := toInt64Field(fields[0])
+			nsec, okNsec := toInt64Field(fields[1])
+			if okSec && okNsec {
+				return cypher.CypherLocalDateTime{Time: time.Unix(sec, nsec).UTC()}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "LocalDateTime", "fields": fields}, fieldsConsumed, nil
+
+	case 0x45: // Duration: [months, days, seconds, nanoseconds]
+		if fieldCount >= 4 {
+			months, okMonths := toInt64Field(fields[0])
+			days, okDays := toInt64Field(fields[1])
+			seconds, okSeconds := toInt64Field(fields[2])
+			nanos, okNanos := toInt64Field(fields[3])
+			if okMonths && okDays && okSeconds && okNanos {
+				return &cypher.CypherDuration{Months: months, Days: days, Seconds: seconds, Nanos: nanos}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "Duration", "fields": fields}, fieldsConsumed, nil
+
+	case 0x69, 0x66: // DateTime with zone id: [seconds, nanos, zoneId]
+		if fieldCount >= 3 {
+			sec, okSec := toInt64Field(fields[0])
+			nsec, okNsec := toInt64Field(fields[1])
+			zoneID, okZone := fields[2].(string)
+			if okSec && okNsec && okZone {
+				loc, err := time.LoadLocation(zoneID)
+				if err != nil {
+					loc = time.UTC
+				}
+				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x69, true), ZoneID: zoneID}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "DateTimeZoneId", "fields": fields}, fieldsConsumed, nil
+
+	default:
+		// Generic structure - return as map with signature and fields
+		result := map[string]any{
+			"_type":     fmt.Sprintf("Structure_0x%02X", signature),
+			"signature": signature,
+			"fields":    fields,
+		}
+		return result, fieldsConsumed, nil
+	}
+}
+
+func toInt64Field(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case int16:
+		return int64(n), true
+	case int8:
+		return int64(n), true
+	case uint64:
+		return int64(n), true
+	case uint32:
+		return int64(n), true
+	case uint16:
+		return int64(n), true
+	case uint8:
+		return int64(n), true
+	case uint:
+		return int64(n), true
+	default:
+		return 0, false
+	}
+}
+
+func decodePackStreamList(data []byte, offset int, utcDateTime ...bool) ([]any, int, error) {
+	if offset >= len(data) {
+		return nil, 0, fmt.Errorf("offset out of bounds")
+	}
+
+	marker := data[offset]
+	startOffset := offset
+	offset++
+
+	var size uint64
+
+	// Tiny list (0x90-0x9F)
+	if marker >= 0x90 && marker <= 0x9F {
+		size = uint64(marker - 0x90)
+	} else if marker == 0xD4 { // LIST8
+		if offset >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete LIST8")
+		}
+		size = uint64(data[offset])
+		offset++
+	} else if marker == 0xD5 { // LIST16
+		if offset+1 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete LIST16")
+		}
+		size = uint64(data[offset])<<8 | uint64(data[offset+1])
+		offset += 2
+	} else if marker == 0xD6 { // LIST32
+		if offset+3 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete LIST32")
+		}
+		size = uint64(data[offset])<<24 | uint64(data[offset+1])<<16 | uint64(data[offset+2])<<8 | uint64(data[offset+3])
+		offset += 4
+	} else {
+		return nil, 0, fmt.Errorf("not a list marker: 0x%02X", marker)
+	}
+
+	if size > uint64(len(data)-offset) {
+		return nil, 0, fmt.Errorf("list data out of bounds")
+	}
+
+	validatedSize := int(size)
+	result := make([]any, validatedSize)
+
+	for i := 0; i < validatedSize; i++ {
+		value, n, err := decodePackStreamValue(data, offset, utcDateTime...)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to decode list item %d: %w", i, err)
+		}
+		result[i] = value
+		offset += n
+	}
+
+	return result, offset - startOffset, nil
+}

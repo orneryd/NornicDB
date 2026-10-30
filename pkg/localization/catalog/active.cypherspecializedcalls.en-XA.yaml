@@ -1,0 +1,90 @@
+- id: cypherspecializedcalls.vector_query_parse_failed
+  other: "[!! vector query parse error: {{.Cause}} !!]"
+- id: cypherspecializedcalls.string_query_embedder_required
+  other: "[!! string query provided but no embedder configured; use vector array or configure embedding service !!]"
+- id: cypherspecializedcalls.embed_query_text_failed
+  other: "[!! failed to embed query '{{.Query}}': {{.Cause}} !!]"
+- id: cypherspecializedcalls.parameter_not_provided
+  other: "[!! parameter ${{.Parameter}} not provided !!]"
+- id: cypherspecializedcalls.parameter_non_numeric
+  other: "[!! parameter ${{.Parameter}} contains non-numeric value: {{.ValueType}} !!]"
+- id: cypherspecializedcalls.parameter_string_embedder_required
+  other: "[!! parameter ${{.Parameter}} is a string but no embedder configured; provide vector array or configure embedding service !!]"
+- id: cypherspecializedcalls.embed_parameter_failed
+  other: "[!! failed to embed parameter ${{.Parameter}} value '{{.Value}}': {{.Cause}} !!]"
+- id: cypherspecializedcalls.parameter_unsupported_type
+  other: "[!! parameter ${{.Parameter}} has unsupported type for vector query: {{.ValueType}} (expected []float32, []float64, []interface{}, or string) !!]"
+- id: cypherspecializedcalls.unsupported_parameters
+  other: "[!! no query vector or search text provided - parameter(s) {{.Parameters}} have unsupported type (expected []float32, []float64, []interface{}, or string) !!]"
+- id: cypherspecializedcalls.query_input_possibly_unsupported
+  other: "[!! no query vector or search text provided (parameter may have unsupported type - expected []float32, []float64, []interface{}, or string) !!]"
+- id: cypherspecializedcalls.query_input_required
+  other: "[!! no query vector or search text provided !!]"
+- id: cypherspecializedcalls.vector_query_failed
+  other: "[!! vector query failed !!]"
+- id: cypherspecializedcalls.embedder_not_configured
+  other: "[!! no embedder configured !!]"
+- id: cypherspecializedcalls.vector_embed_text_required
+  other: "[!! db.index.vector.embed requires non-empty text !!]"
+- id: cypherspecializedcalls.vector_embed_failed
+  other: "[!! failed to embed query: {{.Cause}} !!]"
+- id: cypherspecializedcalls.vector_procedure_not_found
+  other: "[!! vector query procedure not found !!]"
+- id: cypherspecializedcalls.vector_parameters_missing
+  other: "[!! missing parameters !!]"
+- id: cypherspecializedcalls.vector_unmatched_parenthesis
+  other: "[!! unmatched parenthesis !!]"
+- id: cypherspecializedcalls.fulltext_index_not_found
+  other: "[!! there is no such fulltext schema index: {{.Index}} !!]"
+- id: cypherspecializedcalls.fulltext_argument_count
+  other: "[!! invalid fulltext query syntax: expected 2 or 3 arguments !!]"
+- id: cypherspecializedcalls.procedure_options_map_required
+  other: "[!! procedure options must be a MAP !!]"
+- id: cypherspecializedcalls.fulltext_option_invalid
+  other: "[!! invalid fulltext options.{{.Option}}: {{.Value}} !!]"
+- id: cypherspecializedcalls.datetime_required
+  other: "[!! {{.Argument}} must be a valid datetime !!]"
+- id: cypherspecializedcalls.temporal_read_nodes_failed
+  other: "[!! failed to read nodes for label {{.Label}}: {{.Cause}} !!]"
+- id: cypherspecializedcalls.temporal_overlap
+  other: "[!! temporal overlap detected for {{.Property}}={{.Value}} !!]"
+- id: cypherspecializedcalls.temporal_lookup_failed
+  other: "[!! temporal lookup failed for label {{.Label}}: {{.Cause}} !!]"
+- id: cypherspecializedcalls.argument_required
+  other: "[!! {{.Argument}} is required !!]"
+- id: cypherspecializedcalls.argument_empty
+  other: "[!! {{.Argument}} cannot be empty !!]"
+- id: cypherspecializedcalls.unsigned_non_negative
+  other: "[!! {{.Argument}} must be non-negative !!]"
+- id: cypherspecializedcalls.unsigned_whole_non_negative
+  other: "[!! {{.Argument}} must be a whole non-negative number !!]"
+- id: cypherspecializedcalls.unsigned_valid
+  other: "[!! {{.Argument}} must be a valid uint64 !!]"
+- id: cypherspecializedcalls.txlog_from_sequence_positive
+  other: "[!! fromSeq must be greater than 0 !!]"
+- id: cypherspecializedcalls.wal_unavailable
+  other: "[!! WAL not available (memory-only database) !!]"
+- id: cypherspecializedcalls.txlog_sequence_order
+  other: "[!! toSeq must be >= fromSeq !!]"
+- id: cypherspecializedcalls.txlog_read_entries_failed
+  other: "[!! failed to read WAL entries: {{.Cause}} !!]"
+- id: cypherspecializedcalls.txlog_id_empty
+  other: "[!! txId cannot be empty !!]"
+- id: cypherspecializedcalls.txlog_find_entries_failed
+  other: "[!! failed to find WAL entries: {{.Cause}} !!]"
+- id: cypherspecializedcalls.txlog_to_sequence_negative
+  other: "[!! toSeq must be 0 or greater !!]"
+- id: cypherspecializedcalls.txlog_argument_type
+  other: "[!! {{.Argument}} must be {{.Type}}, but was {{.Received}} !!]"
+- id: cypherspecializedcalls.cdc_disabled
+  other: "[!! Change Data Capture is not currently enabled for database '{{.Database}}'. !!]"
+- id: cypherspecializedcalls.cdc_invalid_identifier
+  other: "[!! Invalid change identifier '{{.ID}}'. !!]"
+- id: cypherspecializedcalls.cdc_expired_identifier
+  other: "[!! Invalid change identifier '{{.ID}}': it is older than the earliest retained change (db.cdc.earliest()). !!]"
+- id: cypherspecializedcalls.cdc_future_identifier
+  other: "[!! Change identifier '{{.ID}}' points to a future transaction that has not yet happened on this database instance. !!]"
+- id: cypherspecializedcalls.cdc_scan_failed
+  other: "[!! Unable to read the Change Data Capture data for this database: {{.Cause}} !!]"
+- id: cypherspecializedcalls.cdc_selector_invalid
+  other: "[!! Invalid change selector: {{.Reason}} !!]"

@@ -1,0 +1,1578 @@
+// Tests for MERGE clause functionality, including relationship error handling
+// and idempotent operations.
+// Based on Neo4j's MERGE semantics: if MATCH finds results → use those, else CREATE
+
+package cypher
+
+import (
+	"context"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type staleMergeLookupEngine struct {
+	storage.Engine
+	hiddenLabel string
+}
+
+func (s *staleMergeLookupEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+	if label == s.hiddenLabel {
+		return nil, nil
+	}
+	return s.Engine.GetNodesByLabel(label)
+}
+
+type noScanMergeLookupEngine struct {
+	storage.Engine
+}
+
+func (n *noScanMergeLookupEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+	return nil, assert.AnError
+}
+
+func (n *noScanMergeLookupEngine) AllNodes() ([]*storage.Node, error) {
+	return nil, assert.AnError
+}
+
+// ========================================
+// Basic MERGE Node Tests
+// ========================================
+
+func TestMergeNode_CreateWhenEmpty(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// MERGE on empty store should create
+	result, err := e.Execute(ctx, `
+		MERGE (n:TestNode {id: 'test-1'})
+		RETURN n.id
+	`, nil)
+
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+
+	// Verify node was created
+	verifyResult, err := e.Execute(ctx, `
+		MATCH (n:TestNode {id: 'test-1'})
+		RETURN n.id
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, verifyResult.Rows, 1)
+}
+
+func TestMergeNode_MatchWhenExists(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create a node first
+	_, err := e.Execute(ctx, `
+		CREATE (n:Person {name: 'Alice', age: 30})
+	`, nil)
+	require.NoError(t, err)
+
+	// MERGE should find existing node, not create new one
+	result, err := e.Execute(ctx, `
+		MERGE (n:Person {name: 'Alice'})
+		RETURN n.name, n.age
+	`, nil)
+
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+
+	// Verify only one Person node exists
+	countResult, err := e.Execute(ctx, `
+		MATCH (n:Person)
+		RETURN count(n) as cnt
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, countResult.Rows, 1)
+	assert.Equal(t, int64(1), countResult.Rows[0][0])
+}
+
+func TestMergeNode_FindMergeNodeIgnoresStaleCacheEntry(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+
+	actual := &storage.Node{
+		ID:         "actual-person",
+		Labels:     []string{"Person"},
+		Properties: map[string]interface{}{"name": "Alice"},
+	}
+	_, err := store.CreateNode(actual)
+	require.NoError(t, err)
+
+	labels := []string{"Person"}
+	props := map[string]interface{}{"name": "Alice"}
+	exec.cacheMergeNode(labels, props, &storage.Node{
+		ID:         "stale-person",
+		Labels:     []string{"Person"},
+		Properties: map[string]interface{}{"name": "Alice"},
+	})
+
+	found, err := exec.findMergeNode(context.Background(), store, labels, props)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	assert.Equal(t, storage.NodeID("actual-person"), found.ID)
+
+	exec.nodeLookupCacheMu.RLock()
+	cached := exec.nodeLookupCache[mergeLookupCacheKey(labels, "name", "Alice")]
+	exec.nodeLookupCacheMu.RUnlock()
+	require.NotNil(t, cached)
+	assert.Equal(t, storage.NodeID("actual-person"), cached.ID)
+}
+
+func TestCloneWithStorageSharesNodeLookupCacheAndLock(t *testing.T) {
+	parent := NewStorageExecutor(newTestMemoryEngine(t))
+	clone := parent.cloneWithStorage(newTestMemoryEngine(t))
+
+	if parent.nodeLookupCacheMu != clone.nodeLookupCacheMu {
+		t.Fatal("cloneWithStorage must share node lookup cache lock with parent")
+	}
+
+	parent.cacheMergeNode([]string{"Person"}, map[string]interface{}{"id": "parent"}, &storage.Node{
+		ID:         "parent-node",
+		Labels:     []string{"Person"},
+		Properties: map[string]interface{}{"id": "parent"},
+	})
+	clone.cacheMergeNode([]string{"Person"}, map[string]interface{}{"id": "clone"}, &storage.Node{
+		ID:         "clone-node",
+		Labels:     []string{"Person"},
+		Properties: map[string]interface{}{"id": "clone"},
+	})
+
+	if got := parent.findMergeNodeInCache(nil, []string{"Person"}, map[string]interface{}{"id": "clone"}); got == nil {
+		t.Fatal("parent cache did not observe clone node")
+	}
+	if got := clone.findMergeNodeInCache(nil, []string{"Person"}, map[string]interface{}{"id": "parent"}); got == nil {
+		t.Fatal("clone cache did not observe parent node")
+	}
+}
+
+// TestCloneWithStorageIsolatesNodeLookupCacheForTxClones guards the fix for a
+// concurrent-MERGE bug where two writers MERGE-ing the same (label, prop, value)
+// would race through the executor's nodeLookupCache: the first writer wrote its
+// uncommitted node into the shared cache, the peer read that node ID via
+// store.GetNode(...) inside its own tx.badgerTx, and Badger SSI then rejected
+// the loser with a generic "Transaction Conflict" instead of the consumer-pinned
+// commit-time UNIQUE shape. See docs/plans/consumer-pinned-error-contract-plan.md
+// §2.1. Transactional clones must therefore get their own cache + mutex.
+func TestCloneWithStorageIsolatesNodeLookupCacheForTxClones(t *testing.T) {
+	parent := NewStorageExecutor(newTestMemoryEngine(t))
+	parent.ensureNodeLookupCache()
+
+	tx, err := parent.storage.(*storage.MemoryEngine).BeginTransaction()
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	txWrapper := &transactionStorageWrapper{
+		tx:             tx,
+		underlying:     parent.storage,
+		mutatedNodeIDs: make(map[string]struct{}),
+	}
+	clone := parent.cloneWithStorage(txWrapper)
+
+	if parent.nodeLookupCacheMu == clone.nodeLookupCacheMu {
+		t.Fatal("transactional clone must NOT share the lookup-cache mutex with parent")
+	}
+	if &parent.nodeLookupCache == &clone.nodeLookupCache {
+		t.Fatal("transactional clone must NOT share the lookup-cache map with parent")
+	}
+
+	parent.cacheMergeNode([]string{"Person"}, map[string]interface{}{"id": "abc"}, &storage.Node{
+		ID:         "parent-node",
+		Labels:     []string{"Person"},
+		Properties: map[string]interface{}{"id": "abc"},
+	})
+	if got := clone.findMergeNodeInCache(nil, []string{"Person"}, map[string]interface{}{"id": "abc"}); got != nil {
+		t.Fatalf("transactional clone leaked parent's pre-commit cache entry: %+v", got)
+	}
+}
+
+// ========================================
+// MERGE with ON CREATE/ON MATCH Tests
+// ========================================
+
+func TestMergeNode_OnCreateSet(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// ON CREATE SET should run when creating
+	result, err := e.Execute(ctx, `
+		MERGE (n:Counter {name: 'hits'})
+		ON CREATE SET n.count = 1
+		RETURN n.name, n.count
+	`, nil)
+
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+
+	// Verify the node was created with ON CREATE properties
+	verifyResult, err := e.Execute(ctx, `
+		MATCH (n:Counter {name: 'hits'})
+		RETURN n.count
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, verifyResult.Rows, 1)
+	assert.Equal(t, int64(1), verifyResult.Rows[0][0])
+}
+
+func TestMergeNode_OnMatchSet(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create initial node
+	_, err := e.Execute(ctx, `
+		CREATE (n:Counter {name: 'hits', count: 1})
+	`, nil)
+	require.NoError(t, err)
+
+	// ON MATCH SET should run when finding existing
+	_, err = e.Execute(ctx, `
+		MERGE (n:Counter {name: 'hits'})
+		ON MATCH SET n.count = n.count + 1
+		RETURN n.count
+	`, nil)
+	require.NoError(t, err)
+
+	// Verify count was incremented
+	verifyResult, err := e.Execute(ctx, `
+		MATCH (n:Counter {name: 'hits'})
+		RETURN n.count
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, verifyResult.Rows, 1)
+	assert.Equal(t, int64(2), verifyResult.Rows[0][0])
+}
+
+// ========================================
+// MERGE Idempotency Tests
+// ========================================
+
+func TestMergeNode_Idempotent(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// First MERGE - should create
+	_, err := e.Execute(ctx, `
+		MERGE (n:Singleton {key: 'unique-key'})
+		SET n.value = 'first'
+	`, nil)
+	require.NoError(t, err)
+
+	// Second MERGE - should NOT create, should match
+	_, err = e.Execute(ctx, `
+		MERGE (n:Singleton {key: 'unique-key'})
+		SET n.value = 'second'
+	`, nil)
+	require.NoError(t, err)
+
+	// Third MERGE - still idempotent
+	_, err = e.Execute(ctx, `
+		MERGE (n:Singleton {key: 'unique-key'})
+		SET n.value = 'third'
+	`, nil)
+	require.NoError(t, err)
+
+	// Verify only ONE node exists
+	countResult, err := e.Execute(ctx, `
+		MATCH (n:Singleton {key: 'unique-key'})
+		RETURN count(n) as cnt
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, countResult.Rows, 1)
+	assert.Equal(t, int64(1), countResult.Rows[0][0])
+
+	// Verify it has the last value
+	valueResult, err := e.Execute(ctx, `
+		MATCH (n:Singleton {key: 'unique-key'})
+		RETURN n.value
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, valueResult.Rows, 1)
+	assert.Equal(t, "third", valueResult.Rows[0][0])
+}
+
+func TestMergeNode_StandaloneSetAfterMerge(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := e.Execute(ctx, `
+		MERGE (fv:FactVersion {version_id: 'fv-14e79330'})
+		SET fv.fact_key = 'repo_fact|import|internal/gitreader/gitreader.go->import (
+			"bufio"
+			"bytes"
+		)',
+		    fv.tx_id = 'tx-5671c64f-000001',
+		    fv.commit_hash = '5671c64fcba850a6fd01ef68f2b9d592389f41c1',
+		    fv.valid_from_iso = '2026-03-20T20:22:20Z',
+		    fv.valid_from = datetime('2026-03-20T20:22:20Z'),
+		    fv.value_json = '{"repo":"git-to-graph","source":"internal/gitreader/gitreader.go"}',
+		    fv.valid_to = CASE WHEN null IS NULL THEN null ELSE datetime(null) END,
+		    fv.asserted_at = datetime('2026-03-20T20:22:20Z'),
+		    fv.asserted_by = 'TJ Sweet',
+		    fv.semantic_type = 'ImportEdgeVersion'
+	`, nil)
+	require.NoError(t, err)
+
+	res, err := e.Execute(ctx, `
+		MATCH (fv:FactVersion {version_id: 'fv-14e79330'})
+		RETURN fv.semantic_type, fv.asserted_by, fv.valid_to, fv.tx_id
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "ImportEdgeVersion", res.Rows[0][0])
+	require.Equal(t, "TJ Sweet", res.Rows[0][1])
+	// valid_to = CASE WHEN null IS NULL THEN null ... END evaluates to null, so
+	// the property is not stored (it used to be stored as the CASE text).
+	require.Nil(t, res.Rows[0][2])
+	require.Equal(t, "tx-5671c64f-000001", res.Rows[0][3])
+}
+
+func TestMergeChain_StandaloneSetThenRelationshipMerge(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := e.Execute(ctx, `
+		MERGE (fk:FactKey {subject_entity_id: 'file::internal/parser/parser.go', predicate: 'calls'})
+		MERGE (fv:FactVersion {version_id: 'fv-ad70fda8'})
+		SET fv.fact_key = 'repo_fact|calls|file::internal/parser/parser.go->symbol::internal/parser/parser.go::function::parseTreeSitter',
+		    fv.semantic_type = 'CallEdgeVersion',
+		    fv.asserted_by = 'TJ Sweet'
+		MERGE (fk)-[:HAS_VERSION]->(fv)
+	`, nil)
+	require.NoError(t, err)
+
+	res, err := e.Execute(ctx, `
+		MATCH (fk:FactKey {subject_entity_id: 'file::internal/parser/parser.go', predicate: 'calls'})-[:HAS_VERSION]->(fv:FactVersion {version_id: 'fv-ad70fda8'})
+		RETURN fv.semantic_type, fv.asserted_by
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "CallEdgeVersion", res.Rows[0][0])
+	require.Equal(t, "TJ Sweet", res.Rows[0][1])
+}
+
+// ========================================
+// MERGE Relationship Tests
+// ========================================
+
+func TestMergeStandaloneRelationshipPath(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"bare", "MERGE (a:SM)-[:R]->(b:SN)"},
+		{"properties", "MERGE (a:SM {name: 'x'})-[:R]->(b:SN {name: 'y'})"},
+		{"partial properties", "MERGE (a:SM {id: 7})-[:R]->(b:SN)"},
+		{"self loop", "MERGE (a:SM {id: 10})-[:R]->(a)"},
+		{"anonymous", "MERGE (:SM {id: 1})-[:R {w: 1}]->(:SN {id: 1})"},
+		{"on create", "MERGE (a:SM {id: 5})-[:R]->(b:SN {id: 5}) ON CREATE SET a.c = 1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+			exec := NewStorageExecutor(store)
+			for run := 0; run < 2; run++ {
+				_, err := exec.Execute(context.Background(), tc.query, nil)
+				require.NoError(t, err)
+			}
+			nodes, err := store.AllNodes()
+			require.NoError(t, err)
+			expectedNodes := 2
+			if tc.name == "self loop" {
+				expectedNodes = 1
+			}
+			require.Len(t, nodes, expectedNodes)
+			edges, err := store.AllEdges()
+			require.NoError(t, err)
+			require.Len(t, edges, 1)
+			if tc.name == "on create" {
+				for _, node := range nodes {
+					if slices.Contains(node.Labels, "SM") {
+						require.Equal(t, int64(1), node.Properties["c"])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMergeStandaloneRelationshipPathInTransaction(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	transaction, err := base.BeginTransaction()
+	require.NoError(t, err)
+	defer transaction.Rollback()
+	txStore := &transactionStorageWrapper{
+		tx: transaction, underlying: base, separator: ":",
+		mutatedNodeIDs: make(map[string]struct{}),
+	}
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(txStore, "test"))
+	for run := 0; run < 2; run++ {
+		_, err := exec.Execute(context.Background(), "MERGE (a:SM {id: 10})-[:R]->(a)", nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, transaction.Commit())
+	store := storage.NewNamespacedEngine(base, "test")
+	nodes, err := store.AllNodes()
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	edges, err := store.AllEdges()
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+}
+
+func TestMergeRelationship_Basic(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create nodes first
+	_, err := e.Execute(ctx, "CREATE (a:Person {name: 'Alice'})", nil)
+	require.NoError(t, err)
+	_, err = e.Execute(ctx, "CREATE (b:Person {name: 'Bob'})", nil)
+	require.NoError(t, err)
+
+	// MERGE relationship
+	_, err = e.Execute(ctx, `
+		MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+		MERGE (a)-[r:KNOWS]->(b)
+	`, nil)
+	require.NoError(t, err)
+
+	// Verify relationship exists
+	verifyResult, err := e.Execute(ctx, `
+		MATCH (a:Person {name: 'Alice'})-[r:KNOWS]->(b:Person {name: 'Bob'})
+		RETURN count(r) as cnt
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, verifyResult.Rows, 1)
+	assert.Equal(t, int64(1), verifyResult.Rows[0][0])
+}
+
+func TestMergeNode_OnCreateOnMatchNarySetMapMergePreservesCreated(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	query := `MERGE (p:Pds {url: $node.url}) ON CREATE SET p.created = timestamp(), p += $node ON MATCH SET p.updated = timestamp(), p += $node RETURN p`
+	params := map[string]interface{}{
+		"node": map[string]interface{}{
+			"url":    "https://example.test/poc",
+			"status": "created-input",
+		},
+	}
+
+	createdResult, err := exec.Execute(ctx, query, params)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, createdResult.Stats.NodesCreated)
+	require.Len(t, createdResult.Rows, 1)
+
+	verifyCreated, err := exec.Execute(ctx, `MATCH (p:Pds {url: $url}) RETURN p.created, p.updated, p.status`, map[string]interface{}{
+		"url": "https://example.test/poc",
+	})
+	require.NoError(t, err)
+	require.Len(t, verifyCreated.Rows, 1)
+	require.NotNil(t, verifyCreated.Rows[0][0], "ON CREATE branch must set created before map merge")
+	require.Nil(t, verifyCreated.Rows[0][1], "ON MATCH branch must not run for a newly created MERGE node")
+	require.Equal(t, "created-input", verifyCreated.Rows[0][2])
+
+	params["node"] = map[string]interface{}{
+		"url":    "https://example.test/poc",
+		"status": "matched-input",
+	}
+	matchedResult, err := exec.Execute(ctx, query, params)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, matchedResult.Stats.NodesCreated)
+
+	verifyMatched, err := exec.Execute(ctx, `MATCH (p:Pds {url: $url}) RETURN p.created, p.updated, p.status`, map[string]interface{}{
+		"url": "https://example.test/poc",
+	})
+	require.NoError(t, err)
+	require.Len(t, verifyMatched.Rows, 1)
+	require.NotNil(t, verifyMatched.Rows[0][0], "ON MATCH branch must preserve original created property")
+	require.NotNil(t, verifyMatched.Rows[0][1], "ON MATCH branch must set updated")
+	require.Equal(t, "matched-input", verifyMatched.Rows[0][2])
+}
+
+func TestMergeNode_LaterMapMergeNullRemovesEarlierBranchProperties(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	query := `MERGE (p:Pds {url: $node.url}) ON CREATE SET p.created = timestamp(), p += $node ON MATCH SET p.updated = timestamp(), p += $node RETURN p`
+	params := map[string]interface{}{
+		"node": map[string]interface{}{
+			"url":     "https://example.test/audit-clobber",
+			"created": nil,
+			"name":    "first",
+		},
+	}
+
+	_, err := exec.Execute(ctx, query, params)
+	require.NoError(t, err)
+
+	created, err := exec.Execute(ctx, `MATCH (p:Pds {url: $url}) RETURN p.created, p.updated, p.name`, map[string]interface{}{
+		"url": "https://example.test/audit-clobber",
+	})
+	require.NoError(t, err)
+	require.Len(t, created.Rows, 1)
+	require.Nil(t, created.Rows[0][0], "later map merge null must remove the earlier ON CREATE property")
+	require.Nil(t, created.Rows[0][1], "ON MATCH timestamp must not be present on create")
+	require.Equal(t, "first", created.Rows[0][2])
+
+	params["node"] = map[string]interface{}{
+		"url":     "https://example.test/audit-clobber",
+		"created": nil,
+		"updated": nil,
+		"name":    "second",
+	}
+	_, err = exec.Execute(ctx, query, params)
+	require.NoError(t, err)
+
+	matched, err := exec.Execute(ctx, `MATCH (p:Pds {url: $url}) RETURN p.created, p.updated, p.name`, map[string]interface{}{
+		"url": "https://example.test/audit-clobber",
+	})
+	require.NoError(t, err)
+	require.Len(t, matched.Rows, 1)
+	require.Nil(t, matched.Rows[0][0], "map merge null must keep the previously removed property absent")
+	require.Nil(t, matched.Rows[0][1], "later map merge null must remove the earlier ON MATCH property")
+	require.Equal(t, "second", matched.Rows[0][2])
+}
+
+func TestMergeRelationship_Idempotent(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create nodes
+	_, err := e.Execute(ctx, "CREATE (a:Node {id: 'a'})", nil)
+	require.NoError(t, err)
+	_, err = e.Execute(ctx, "CREATE (b:Node {id: 'b'})", nil)
+	require.NoError(t, err)
+
+	// First MERGE relationship
+	_, err = e.Execute(ctx, `
+		MATCH (a:Node {id: 'a'}), (b:Node {id: 'b'})
+		MERGE (a)-[r:CONNECTED]->(b)
+	`, nil)
+	require.NoError(t, err)
+
+	// Second MERGE - should not create duplicate
+	_, err = e.Execute(ctx, `
+		MATCH (a:Node {id: 'a'}), (b:Node {id: 'b'})
+		MERGE (a)-[r:CONNECTED]->(b)
+	`, nil)
+	require.NoError(t, err)
+
+	// Verify only one relationship
+	countResult, err := e.Execute(ctx, `
+		MATCH (a:Node {id: 'a'})-[r:CONNECTED]->(b:Node {id: 'b'})
+		RETURN count(r) as cnt
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, countResult.Rows, 1)
+	assert.Equal(t, int64(1), countResult.Rows[0][0])
+}
+
+func TestMergeHelpers_ParseReturnAndClauseSplitBranches(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+
+	a := &storage.Node{ID: "n-a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}
+	b := &storage.Node{ID: "n-b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}}
+	_, err := store.CreateNode(a)
+	require.NoError(t, err)
+	_, err = store.CreateNode(b)
+	require.NoError(t, err)
+	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-ab", StartNode: a.ID, EndNode: b.ID, Type: "KNOWS"}))
+
+	nodeCtx := map[string]*storage.Node{"a": a, "b": b}
+	relCtx := map[string]*storage.Edge{"r": {ID: "e-ab", StartNode: a.ID, EndNode: b.ID, Type: "KNOWS"}}
+	ctx := context.Background()
+
+	row := []pipelineRow{e.mergeBindingRow(ctx, nodeCtx, relCtx)}
+	result, err := e.projectMergeReturn(ctx, row, "RETURN *")
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b", "r"}, result.Columns)
+	require.Len(t, result.Rows, 1)
+
+	result, err = e.projectMergeReturn(ctx, row, "RETURN a.name AS name, id(a) AS aid")
+	require.NoError(t, err)
+	require.Equal(t, []string{"name", "aid"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"alice", "n-a"}}, result.Rows)
+
+	parts := pipelineClauseTextsForTest(t, "OPTIONAL MATCH (a) FOREACH (x IN [1] | SET a.v = x) RETURN a")
+	require.Len(t, parts, 3)
+	repeated, err := e.Execute(ctx, `
+MERGE (o:OriginalText {textKey: $lookupValue})
+WITH o, $targetLang AS targetLang
+WITH o, $targetLang AS targetLang
+WHERE o IS NOT NULL
+RETURN o.textKey AS key, targetLang
+`, map[string]interface{}{"lookupValue": "word", "targetLang": "en"})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"word", "en"}}, repeated.Rows)
+	require.EqualValues(t, 1, repeated.Stats.NodesCreated)
+}
+
+func TestFindMergeNode_UsesPropertyIndexLookup(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+
+	schema := store.GetSchema()
+	require.NotNil(t, schema)
+	require.NoError(t, schema.AddPropertyIndex("idx_original_textkey", "OriginalText", []string{"textKey"}))
+	nodeID, err := store.CreateNode(&storage.Node{
+		ID:     "orig-idx-1",
+		Labels: []string{"OriginalText"},
+		Properties: map[string]interface{}{
+			"textKey": "k-1",
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, schema.PropertyIndexInsert("OriginalText", "textKey", nodeID, "k-1"))
+
+	found, err := exec.findMergeNode(context.Background(), store, []string{"OriginalText"}, map[string]interface{}{"textKey": "k-1"})
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	require.Equal(t, storage.NodeID("orig-idx-1"), found.ID)
+}
+
+func TestFindMergeNode_UsesUniqueConstraintLookupWithoutScan(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+
+	schema := store.GetSchema()
+	require.NotNil(t, schema)
+	require.NoError(t, schema.AddUniqueConstraint("function_uid_unique", "Function", "uid"))
+	_, err := store.CreateNode(&storage.Node{
+		ID:     "function-1",
+		Labels: []string{"Function"},
+		Properties: map[string]interface{}{
+			"uid":  "content-entity:e_hot",
+			"name": "hotPath",
+		},
+	})
+	require.NoError(t, err)
+
+	noScanStore := &noScanMergeLookupEngine{Engine: store}
+	exec := NewStorageExecutor(noScanStore)
+
+	found, err := exec.findMergeNode(context.Background(), noScanStore, []string{"Function"}, map[string]interface{}{"uid": "content-entity:e_hot"})
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	require.Equal(t, storage.NodeID("function-1"), found.ID)
+}
+
+func TestFindMergeNode_IgnoresNonComparableUniqueLookupValue(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+
+	schema := store.GetSchema()
+	require.NotNil(t, schema)
+	require.NoError(t, schema.AddUniqueConstraint("function_uid_unique", "Function", "uid"))
+	exec := NewStorageExecutor(store)
+
+	require.NotPanics(t, func() {
+		found, err := exec.findMergeNode(context.Background(), store, []string{"Function"}, map[string]interface{}{"uid": []string{"bad"}})
+		require.NoError(t, err)
+		require.Nil(t, found)
+	})
+}
+
+func TestFindMergeNode_RequiresFullMultiLabelMatch(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+
+	_, err := store.CreateNode(&storage.Node{
+		ID:     "single-label",
+		Labels: []string{"FileChunk"},
+		Properties: map[string]interface{}{
+			"id": "chunk-1",
+		},
+	})
+	require.NoError(t, err)
+
+	found, err := exec.findMergeNode(context.Background(), store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
+	require.NoError(t, err)
+	require.Nil(t, found)
+
+	dualID, err := store.CreateNode(&storage.Node{
+		ID:     "dual-label",
+		Labels: []string{"FileChunk", "Node"},
+		Properties: map[string]interface{}{
+			"id": "chunk-1",
+		},
+	})
+	require.NoError(t, err)
+
+	found, err = exec.findMergeNode(context.Background(), store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	require.Equal(t, dualID, found.ID)
+}
+
+func TestExecuteCompoundMatchMerge_OptionalAndContextRelationshipBranches(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := e.Execute(ctx, "CREATE (a:Person {name:'alice'})", nil)
+	require.NoError(t, err)
+	_, err = e.Execute(ctx, "CREATE (b:Person {name:'bob'})", nil)
+	require.NoError(t, err)
+	_, err = e.Execute(ctx, "MATCH (a:Person {name:'alice'}), (b:Person {name:'bob'}) CREATE (a)-[:KNOWS]->(b)", nil)
+	require.NoError(t, err)
+
+	// OPTIONAL MATCH with no matches still executes MERGE path.
+	res, err := e.Execute(ctx, "OPTIONAL MATCH (m:Missing) MERGE (t:Target {name:'created'}) RETURN t.name", nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+
+	res, err = e.Execute(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN", nil)
+	require.Error(t, err)
+	require.Nil(t, res)
+}
+
+func TestExecuteMatchForContextWithRelationships_MapResolutionBranches(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := e.Execute(ctx, "CREATE (a:Person {name:'alice'}), (b:Person {name:'bob'}), (a)-[:KNOWS]->(b)", nil)
+	require.NoError(t, err)
+
+	matches, err := e.Execute(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person) WITH {id:'a'} AS a, b RETURN a, b", nil)
+	require.NoError(t, err)
+	require.Len(t, matches.Rows, 1)
+	require.Equal(t, map[string]interface{}{"id": "a"}, matches.Rows[0][0])
+
+	matches, err = e.Execute(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person) WITH {name:'alice'} AS a, b RETURN a, b", nil)
+	require.NoError(t, err)
+	require.Len(t, matches.Rows, 1)
+	require.Equal(t, map[string]interface{}{"name": "alice"}, matches.Rows[0][0])
+}
+
+// ========================================
+// FileIndexer Pattern Tests
+// ========================================
+
+func TestMerge_FileIndexerPattern(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	t.Run("create file and chunk nodes", func(t *testing.T) {
+		// Create file node (like FileIndexer does)
+		_, err := e.Execute(ctx, `
+			CREATE (f:File:Node {
+				path: '/app/docs/README.md',
+				name: 'README.md',
+				type: 'file'
+			})
+		`, nil)
+		require.NoError(t, err)
+
+		// Verify file was created
+		fileResult, err := e.Execute(ctx, `
+			MATCH (f:File {path: '/app/docs/README.md'})
+			RETURN f.name
+		`, nil)
+		require.NoError(t, err)
+		require.Len(t, fileResult.Rows, 1)
+		assert.Equal(t, "README.md", fileResult.Rows[0][0])
+	})
+
+	t.Run("merge chunk with file relationship", func(t *testing.T) {
+		// Get file node ID
+		fileResult, err := e.Execute(ctx, `
+			MATCH (f:File {path: '/app/docs/README.md'})
+			RETURN id(f) as fileId
+		`, nil)
+		require.NoError(t, err)
+		require.Len(t, fileResult.Rows, 1)
+		fileNodeId := fileResult.Rows[0][0]
+
+		// MERGE chunk (like FileIndexer does)
+		_, err = e.Execute(ctx, `
+			MATCH (f:File) WHERE id(f) = $fileNodeId
+			MERGE (c:FileChunk:Node {id: $chunkId})
+			SET c.chunk_index = $chunkIndex, c.text = $text, c.parent_file_id = $fileNodeId
+			MERGE (f)-[:HAS_CHUNK {index: $chunkIndex}]->(c)
+		`, map[string]interface{}{
+			"fileNodeId": fileNodeId,
+			"chunkId":    "chunk-readme-0-abc123",
+			"chunkIndex": 0,
+			"text":       "# Introduction",
+		})
+		require.NoError(t, err)
+
+		// Verify chunk was created
+		chunkResult, err := e.Execute(ctx, `
+			MATCH (c:FileChunk {id: 'chunk-readme-0-abc123'})
+			RETURN c.text, c.chunk_index
+		`, nil)
+		require.NoError(t, err)
+		require.Len(t, chunkResult.Rows, 1)
+		assert.Equal(t, "# Introduction", chunkResult.Rows[0][0])
+	})
+
+	t.Run("re-merge same chunk is idempotent", func(t *testing.T) {
+		// Get file node ID
+		fileResult, err := e.Execute(ctx, `
+			MATCH (f:File {path: '/app/docs/README.md'})
+			RETURN id(f) as fileId
+		`, nil)
+		require.NoError(t, err)
+		fileNodeId := fileResult.Rows[0][0]
+
+		// MERGE same chunk again with updated text
+		_, err = e.Execute(ctx, `
+			MATCH (f:File) WHERE id(f) = $fileNodeId
+			MERGE (c:FileChunk:Node {id: $chunkId})
+			SET c.text = $text
+		`, map[string]interface{}{
+			"fileNodeId": fileNodeId,
+			"chunkId":    "chunk-readme-0-abc123",
+			"text":       "# Updated Introduction",
+		})
+		require.NoError(t, err)
+
+		// Verify only one chunk exists with that ID
+		countResult, err := e.Execute(ctx, `
+			MATCH (c:FileChunk {id: 'chunk-readme-0-abc123'})
+			RETURN count(c) as cnt
+		`, nil)
+		require.NoError(t, err)
+		require.Len(t, countResult.Rows, 1)
+		assert.Equal(t, int64(1), countResult.Rows[0][0])
+
+		// Verify text was updated
+		textResult, err := e.Execute(ctx, `
+			MATCH (c:FileChunk {id: 'chunk-readme-0-abc123'})
+			RETURN c.text
+		`, nil)
+		require.NoError(t, err)
+		require.Len(t, textResult.Rows, 1)
+		assert.Equal(t, "# Updated Introduction", textResult.Rows[0][0])
+	})
+}
+
+// Test exact FileIndexer query format with SET on separate line
+func TestMerge_FileIndexerExactFormat(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create file node
+	_, err := e.Execute(ctx, `
+		CREATE (f:File:Node {
+			path: '/app/docs/TEST.md',
+			name: 'TEST.md',
+			type: 'file'
+		})
+	`, nil)
+	require.NoError(t, err)
+
+	// Get file node ID
+	fileResult, err := e.Execute(ctx, `
+		MATCH (f:File {path: '/app/docs/TEST.md'})
+		RETURN id(f) as fileId
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, fileResult.Rows, 1)
+	fileNodeId := fileResult.Rows[0][0]
+
+	// Use exact query format with SET on separate line
+	_, err = e.Execute(ctx, `
+		MATCH (f:File) WHERE id(f) = $fileNodeId
+		MERGE (c:FileChunk:Node {id: $chunkId})
+		SET
+			c.chunk_index = $chunkIndex,
+			c.text = $text,
+			c.type = 'file_chunk',
+			c.parent_file_id = $parentFileId
+		MERGE (f)-[:HAS_CHUNK {index: $chunkIndex}]->(c)
+	`, map[string]interface{}{
+		"fileNodeId":   fileNodeId,
+		"chunkId":      "chunk-test-0-xyz",
+		"chunkIndex":   0,
+		"text":         "Test content",
+		"parentFileId": fileNodeId,
+	})
+	require.NoError(t, err)
+
+	// Verify chunk was created with ALL properties including type
+	chunkResult, err := e.Execute(ctx, `
+		MATCH (c:FileChunk {id: 'chunk-test-0-xyz'})
+		RETURN c.text, c.chunk_index, c.type, c.parent_file_id
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, chunkResult.Rows, 1, "FileChunk should exist")
+	assert.Equal(t, "Test content", chunkResult.Rows[0][0], "text should match")
+	assert.Equal(t, int64(0), chunkResult.Rows[0][1], "chunk_index should match")
+	assert.Equal(t, "file_chunk", chunkResult.Rows[0][2], "type MUST be set to 'file_chunk'")
+	assert.Equal(t, fileNodeId, chunkResult.Rows[0][3], "parent_file_id should match")
+}
+
+// ========================================
+// MERGE with Parameters Tests
+// ========================================
+
+func TestMerge_WithParameters(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	params := map[string]interface{}{
+		"nodeId":   "param-node-1",
+		"nodeName": "Test Node",
+	}
+
+	// MERGE with parameters
+	_, err := e.Execute(ctx, `
+		MERGE (n:ParamTest {id: $nodeId})
+		SET n.name = $nodeName
+	`, params)
+	require.NoError(t, err)
+
+	// Verify node was created with correct values
+	result, err := e.Execute(ctx, `
+		MATCH (n:ParamTest {id: 'param-node-1'})
+		RETURN n.name
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "Test Node", result.Rows[0][0])
+}
+
+func TestExecuteMergeRelSegment_ErrorBranches(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	a := &storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
+	b := &storage.Node{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{}}
+	_, err := store.CreateNode(a)
+	require.NoError(t, err)
+	_, err = store.CreateNode(b)
+	require.NoError(t, err)
+
+	for _, pattern := range []string{"(a-[:REL]->(b)", "(a)-REL->(b)"} {
+		_, err := e.Execute(ctx, "MATCH (a:A), (b:B) MERGE "+pattern, nil)
+		require.Error(t, err)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+		stored, err := e.Execute(ctx, "MATCH ()-[r:REL]->() RETURN count(r)", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(0)}}, stored.Rows)
+	}
+	for _, query := range []string{
+		"MATCH (b:B) MERGE (a)-[:REL]->(b)",
+		"MATCH (a:A) MERGE (a)-[:REL]->(b)",
+	} {
+		result, err := e.Execute(ctx, query, nil)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, result.Stats.NodesCreated)
+		require.EqualValues(t, 1, result.Stats.RelationshipsCreated)
+		repeated, err := e.Execute(ctx, query, nil)
+		require.NoError(t, err)
+		require.Zero(t, repeated.Stats.NodesCreated)
+		require.Zero(t, repeated.Stats.RelationshipsCreated)
+	}
+	stored, err := e.Execute(ctx, "MATCH ()-[r:REL]->() RETURN count(r)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, stored.Rows)
+}
+
+func pipelineClauseTextsForTest(t *testing.T, query string) []string {
+	t.Helper()
+	clauses, ok := splitPipelineClauses(t.Context(), strings.TrimSpace(query))
+	require.True(t, ok)
+	texts := make([]string, len(clauses))
+	for index, clause := range clauses {
+		texts[index] = clause.text
+	}
+	return texts
+}
+
+func TestMergeSharedClauseBoundariesAndLeadingNoiseRejection(t *testing.T) {
+	clauses, ok := splitPipelineClauses(t.Context(), "   ")
+	require.False(t, ok)
+	require.Empty(t, clauses)
+	texts := pipelineClauseTextsForTest(t, "MATCH (n) OPTIONAL MATCH (m) FOREACH (x IN [1] | SET m.v = x) RETURN m")
+	require.Equal(t, []string{"MATCH (n)", "OPTIONAL MATCH (m)", "FOREACH (x IN [1] | SET m.v = x)", "RETURN m"}, texts)
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	for _, query := range []string{"x = 1", "foo bar MATCH (n) RETURN n", "junk OPTIONAL MATCH (a) RETURN a"} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		require.Error(t, err)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	}
+}
+
+func TestExecuteMergeWithChain_AdditionalBranches(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := e.Execute(ctx, "CREATE (c:Category {name:'catA'}), (a:TypeA {name:'A1'})", nil)
+	require.NoError(t, err)
+
+	// Chain-break branch: MATCH miss in middle should produce 0 rows while prior MERGE still succeeds.
+	brokenRes, err := e.Execute(ctx, `
+		MERGE (ent:Entry {id:'entry-break'})
+		ON CREATE SET ent.created = true
+		WITH ent
+		MATCH (c:Category {name:'missing'})
+		MERGE (ent)-[:IN_CATEGORY]->(c)
+		RETURN ent.id
+	`, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ent.id"}, brokenRes.Columns)
+	assert.Empty(t, brokenRes.Rows)
+
+	verifyBroken, err := e.Execute(ctx, "MATCH (e:Entry {id:'entry-break'}) RETURN count(e)", nil)
+	require.NoError(t, err)
+	require.Len(t, verifyBroken.Rows, 1)
+	assert.Equal(t, int64(1), verifyBroken.Rows[0][0])
+
+	// OPTIONAL MATCH + FOREACH clause handling in chain segments.
+	okRes, err := e.Execute(ctx, `
+		MERGE (ent:Entry {id:'entry-ok'})
+		ON CREATE SET ent.created = true
+		WITH ent
+		OPTIONAL MATCH (a:TypeA {name:'A1'})
+		FOREACH (_ IN CASE WHEN a IS NULL THEN [] ELSE [1] END | MERGE (ent)-[:HAS_A]->(a))
+		RETURN ent.id
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, okRes.Rows, 1)
+	assert.Equal(t, "entry-ok", okRes.Rows[0][0])
+}
+
+func TestMergeSharedClauseSplitterStartsWithAndReturn(t *testing.T) {
+	segments := pipelineClauseTextsForTest(t, `
+		MERGE (n:Word {name:'x'})
+		WITH n
+		MATCH (m:Word) WHERE m.name STARTS WITH 'x'
+		RETURN n.name
+	`)
+	require.GreaterOrEqual(t, len(segments), 3)
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(segments[0]), "MERGE"))
+	assert.Contains(t, strings.ToUpper(segments[len(segments)-1]), "RETURN")
+
+	one := pipelineClauseTextsForTest(t, "MERGE (n:Solo {id:'1'}) RETURN n.id")
+	require.Equal(t, []string{"MERGE (n:Solo {id:'1'})", "RETURN n.id"}, one)
+}
+
+func TestMergeSharedClauseSplitterScalarProjectionTail(t *testing.T) {
+	segments := pipelineClauseTextsForTest(t, strings.TrimSpace(`
+WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash
+MATCH (ck:CodeKey {entity_id: entity_id, relation_type: relation_type})
+MATCH (cs:CodeState {state_id: state_id})
+MATCH (c:Commit {hash: commit_hash})
+MERGE (ck)-[:HAS_STATE]->(cs)
+MERGE (c)-[:CHANGED]->(cs)
+MERGE (c)-[:TOUCHED]->(ck)
+`))
+	require.Equal(t, []string{
+		"WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash",
+		"MATCH (ck:CodeKey {entity_id: entity_id, relation_type: relation_type})",
+		"MATCH (cs:CodeState {state_id: state_id})",
+		"MATCH (c:Commit {hash: commit_hash})",
+		"MERGE (ck)-[:HAS_STATE]->(cs)",
+		"MERGE (c)-[:CHANGED]->(cs)",
+		"MERGE (c)-[:TOUCHED]->(ck)",
+	}, segments)
+}
+
+func TestMergeSharedClauseSplitterCreateRelationshipTail(t *testing.T) {
+	segments := pipelineClauseTextsForTest(t, strings.TrimSpace(`
+MERGE (s:Workload {id: 's1'})
+MERGE (t:Workload {id: 't1'})
+CREATE (s)-[:DEPENDS_ON]->(t)
+`))
+	require.Equal(t, []string{
+		"MERGE (s:Workload {id: 's1'})",
+		"MERGE (t:Workload {id: 't1'})",
+		"CREATE (s)-[:DEPENDS_ON]->(t)",
+	}, segments)
+
+	segments = pipelineClauseTextsForTest(t, "MERGE (n:Workload {id: 'n1'}) ON CREATE SET n.created = true RETURN n")
+	require.Equal(t, []string{
+		"MERGE (n:Workload {id: 'n1'}) ON CREATE SET n.created = true",
+		"RETURN n",
+	}, segments)
+}
+
+func TestMergeNodesThenCreateRelationship(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	result, err := exec.Execute(ctx, `
+MERGE (s:Workload {id: $s})
+MERGE (t:Workload {id: $t})
+CREATE (s)-[:DEPENDS_ON]->(t)`, map[string]interface{}{"s": "s1", "t": "t1"})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Stats.RelationshipsCreated)
+
+	nodes := mustCountRows(t, exec, ctx, "MATCH (n:Workload) RETURN count(n)", nil)
+	require.Equal(t, int64(2), nodes)
+	rels := mustCountRows(t, exec, ctx, "MATCH (:Workload)-[r:DEPENDS_ON]->(:Workload) RETURN count(r)", nil)
+	require.Equal(t, int64(1), rels)
+}
+
+func TestSingleMergeThenCreateNodeAndRelationship(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, `
+MERGE (s:Workload {id: 's1'})
+CREATE (t:Workload {id: 't1'})
+CREATE (s)-[:DEPENDS_ON]->(t)`, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), mustCountRows(t, exec, ctx, "MATCH (n:Workload) RETURN count(n)", nil))
+	require.Equal(t, int64(1), mustCountRows(t, exec, ctx, "MATCH (:Workload)-[r:DEPENDS_ON]->(:Workload) RETURN count(r)", nil))
+}
+
+func TestMergeNodesThenCreateRelationshipVariants(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantRels   int64
+		wantRepoID interface{}
+	}{
+		{
+			name: "set between node merges",
+			query: `MERGE (s:Workload {id: 's1'})
+SET s.repo_id = 'repo1'
+MERGE (t:Workload {id: 't1'})
+CREATE (s)-[:DEPENDS_ON]->(t)`,
+			wantRels:   1,
+			wantRepoID: "repo1",
+		},
+		{
+			name: "two create clauses",
+			query: `MERGE (s:Workload {id: 's1'})
+MERGE (t:Workload {id: 't1'})
+CREATE (s)-[:A]->(t)
+CREATE (s)-[:B]->(t)`,
+			wantRels: 2,
+		},
+		{
+			name: "comma separated create patterns",
+			query: `MERGE (s:Workload {id: 's1'})
+MERGE (t:Workload {id: 't1'})
+CREATE (s)-[:A]->(t), (s)-[:B]->(t)`,
+			wantRels: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+
+			_, err := exec.Execute(ctx, tt.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, int64(2), mustCountRows(t, exec, ctx, "MATCH (n:Workload) RETURN count(n)", nil))
+			require.Equal(t, tt.wantRels, mustCountRows(t, exec, ctx, "MATCH (:Workload)-[r]->(:Workload) RETURN count(r)", nil))
+			if tt.wantRepoID != nil {
+				result, err := exec.Execute(ctx, "MATCH (s:Workload {id: 's1'}) RETURN s.repo_id", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{tt.wantRepoID}}, result.Rows)
+			}
+		})
+	}
+}
+
+func TestMergeSharedClauseSplitterFullRowShape(t *testing.T) {
+	segments := pipelineClauseTextsForTest(t, strings.TrimSpace(`
+MERGE (ck:CodeKey {entity_id: 'entity-single', relation_type: 'calls'})
+MERGE (cs:CodeState {state_id: 'state-single'})
+SET cs.code_key = 'repo_fact|calls|single',
+    cs.tx_id = 'tx-single',
+    cs.commit_hash = 'commit-single-row',
+    cs.valid_from_iso = '2026-03-20T20:22:20Z',
+    cs.valid_from = datetime('2026-03-20T20:22:20Z'),
+    cs.value_json = '{"repo":"git-to-graph","source":"single-a","target":"single-b"}',
+    cs.valid_to = CASE WHEN null IS NULL THEN null ELSE datetime(null) END,
+    cs.asserted_at = datetime('2026-03-20T20:22:20Z'),
+    cs.asserted_by = 'TJ Sweet',
+    cs.semantic_type = 'CallEdgeVersion'
+MERGE (c:Commit {hash: 'commit-single-row'})
+ON CREATE SET c.timestamp = datetime('2026-03-20T20:22:20Z'), c.tx_id = 'tx-single', c.actor = 'TJ Sweet'
+WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash
+MATCH (ck:CodeKey {entity_id: entity_id, relation_type: relation_type})
+MATCH (cs:CodeState {state_id: state_id})
+MATCH (c:Commit {hash: commit_hash})
+MERGE (ck)-[:HAS_STATE]->(cs)
+MERGE (c)-[:CHANGED]->(cs)
+MERGE (c)-[:TOUCHED]->(ck)
+`))
+	require.Equal(t, []string{
+		"MERGE (ck:CodeKey {entity_id: 'entity-single', relation_type: 'calls'})",
+		"MERGE (cs:CodeState {state_id: 'state-single'})",
+		"SET cs.code_key = 'repo_fact|calls|single',\n    cs.tx_id = 'tx-single',\n    cs.commit_hash = 'commit-single-row',\n    cs.valid_from_iso = '2026-03-20T20:22:20Z',\n    cs.valid_from = datetime('2026-03-20T20:22:20Z'),\n    cs.value_json = '{\"repo\":\"git-to-graph\",\"source\":\"single-a\",\"target\":\"single-b\"}',\n    cs.valid_to = CASE WHEN null IS NULL THEN null ELSE datetime(null) END,\n    cs.asserted_at = datetime('2026-03-20T20:22:20Z'),\n    cs.asserted_by = 'TJ Sweet',\n    cs.semantic_type = 'CallEdgeVersion'",
+		"MERGE (c:Commit {hash: 'commit-single-row'})\nON CREATE SET c.timestamp = datetime('2026-03-20T20:22:20Z'), c.tx_id = 'tx-single', c.actor = 'TJ Sweet'",
+		"WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash",
+		"MATCH (ck:CodeKey {entity_id: entity_id, relation_type: relation_type})",
+		"MATCH (cs:CodeState {state_id: state_id})",
+		"MATCH (c:Commit {hash: commit_hash})",
+		"MERGE (ck)-[:HAS_STATE]->(cs)",
+		"MERGE (c)-[:CHANGED]->(cs)",
+		"MERGE (c)-[:TOUCHED]->(ck)",
+	}, segments)
+}
+
+func TestExecuteMatchSegment_ResolvesScalarBindings(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := store.CreateNode(&storage.Node{ID: "ck-1", Labels: []string{"CodeKey"}, Properties: map[string]interface{}{"entity_id": "entity-single", "relation_type": "calls"}})
+	require.NoError(t, err)
+
+	exec.fabricRecordBindings = map[string]interface{}{
+		"entity_id":     "entity-single",
+		"relation_type": "calls",
+	}
+	t.Cleanup(func() { exec.fabricRecordBindings = nil })
+
+	result, err := exec.executeInternal(ctx, `MATCH (ck:CodeKey {entity_id: entity_id, relation_type: relation_type}) RETURN ck`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"ck"}, result.Columns)
+	require.Len(t, result.Rows, 1)
+	node, ok := result.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	require.NotNil(t, node)
+	require.Equal(t, "entity-single", node.Properties["entity_id"])
+}
+
+func TestExecuteMerge_MissingParameterAndAnonymousPattern(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "MERGE (n:Doc {path: $path}) RETURN n", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ParameterMissing")
+	nodes, err := store.GetNodesByLabel("Doc")
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+
+	// An anonymous MERGE pattern is valid and can feed an aggregate projection.
+	fallback, err := exec.Execute(ctx, "MERGE () RETURN count(*) AS n", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, fallback.Stats.NodesCreated)
+	require.Equal(t, []string{"n"}, fallback.Columns)
+	require.Len(t, fallback.Rows, 1)
+	require.Equal(t, int64(1), fallback.Rows[0][0])
+}
+
+func TestExecuteMerge_RecoversFromDuplicateCreateForParameterizedRepositoryMerge(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	require.NoError(t, store.GetSchema().AddUniqueConstraint("repo_path", "Repository", "path"))
+
+	_, err := store.CreateNode(&storage.Node{
+		ID:     "repo-1",
+		Labels: []string{"Repository"},
+		Properties: map[string]interface{}{
+			"path":          "/Users/timothysweet/src/my-CodeGraphContext",
+			"name":          "old-name",
+			"is_dependency": true,
+		},
+	})
+	require.NoError(t, err)
+
+	exec := NewStorageExecutor(&staleMergeLookupEngine{
+		Engine:      store,
+		hiddenLabel: "Repository",
+	})
+	ctx := context.Background()
+
+	result, err := exec.Execute(ctx, `
+		MERGE (r:Repository {path: $path})
+		SET r.name = $name, r.is_dependency = $is_dependency
+		RETURN r.path, r.name, r.is_dependency
+	`, map[string]interface{}{
+		"path":          "/Users/timothysweet/src/my-CodeGraphContext",
+		"name":          "my-CodeGraphContext",
+		"is_dependency": false,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "/Users/timothysweet/src/my-CodeGraphContext", result.Rows[0][0])
+	assert.Equal(t, "my-CodeGraphContext", result.Rows[0][1])
+	assert.Equal(t, false, result.Rows[0][2])
+
+	nodes, err := store.GetNodesByLabel("Repository")
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	assert.Equal(t, "/Users/timothysweet/src/my-CodeGraphContext", nodes[0].Properties["path"])
+	assert.Equal(t, "my-CodeGraphContext", nodes[0].Properties["name"])
+	assert.Equal(t, false, nodes[0].Properties["is_dependency"])
+}
+
+func TestExecuteMerge_CreatesNodeWhenLegacySequentialIDWouldCollide(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	require.NoError(t, store.GetSchema().AddUniqueConstraint("file_path", "File", "path"))
+
+	_, err := store.CreateNode(&storage.Node{
+		ID:     "node-1",
+		Labels: []string{"Scratch"},
+		Properties: map[string]interface{}{
+			"name": "occupied-legacy-id",
+		},
+	})
+	require.NoError(t, err)
+
+	idCounter = 0
+
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	result, err := exec.Execute(ctx, `
+		MERGE (f:File {path: $path})
+		SET f.name = $name, f.relative_path = $relative_path, f.is_dependency = $is_dependency
+		RETURN f.path, f.name
+	`, map[string]interface{}{
+		"path":          "/Users/timothysweet/src/my-CodeGraphContext/cgc_entry.py",
+		"name":          "cgc_entry.py",
+		"relative_path": "cgc_entry.py",
+		"is_dependency": false,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "/Users/timothysweet/src/my-CodeGraphContext/cgc_entry.py", result.Rows[0][0])
+	assert.Equal(t, "cgc_entry.py", result.Rows[0][1])
+
+	files, err := store.GetNodesByLabel("File")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "/Users/timothysweet/src/my-CodeGraphContext/cgc_entry.py", files[0].Properties["path"])
+	assert.NotEqual(t, storage.NodeID("node-1"), files[0].ID)
+}
+
+func TestExecuteCompoundMatchMerge_StaleLabelLookupSurfacesConstraintViolation(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	require.NoError(t, store.GetSchema().AddConstraint(storage.Constraint{
+		Name:       "parameter_unique",
+		Type:       storage.ConstraintNodeKey,
+		Label:      "Parameter",
+		Properties: []string{"name", "path", "function_line_number"},
+	}))
+
+	_, err := store.CreateNode(&storage.Node{
+		ID:     "fn-1",
+		Labels: []string{"Function"},
+		Properties: map[string]interface{}{
+			"name":        "run",
+			"path":        "/Users/timothysweet/src/my-CodeGraphContext/tests/unit/tools/test_indexing_scalability.py",
+			"line_number": int64(365),
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = store.CreateNode(&storage.Node{
+		ID:     "param-1",
+		Labels: []string{"Parameter"},
+		Properties: map[string]interface{}{
+			"name":                 "query",
+			"path":                 "/Users/timothysweet/src/my-CodeGraphContext/tests/unit/tools/test_indexing_scalability.py",
+			"function_line_number": int64(365),
+		},
+	})
+	require.NoError(t, err)
+
+	exec := NewStorageExecutor(&staleMergeLookupEngine{
+		Engine:      store,
+		hiddenLabel: "Parameter",
+	})
+	ctx := context.Background()
+
+	// GH #640: MERGE node lookup must not fall back to a global AllNodes()
+	// scan. With a stale label index, the existing Parameter node cannot be
+	// located, so the unique constraint surfaces the duplicate-create conflict
+	// exactly like Neo4j does. The previous AllNodes() fallback silently
+	// "recovered" from the stale index at O(N) cost per row, which hid real
+	// index problems and diverged from Neo4j end-user behavior.
+	result, err := exec.Execute(ctx, `
+		MATCH (fn:Function {name: $func_name, path: $path, line_number: $function_line_number})
+		MERGE (p:Parameter {name: $name, path: $path, function_line_number: $function_line_number})
+		MERGE (fn)-[:HAS_PARAMETER]->(p)
+		RETURN p.name, p.path, p.function_line_number
+	`, map[string]interface{}{
+		"func_name":            "run",
+		"path":                 "/Users/timothysweet/src/my-CodeGraphContext/tests/unit/tools/test_indexing_scalability.py",
+		"function_line_number": int64(365),
+		"name":                 "query",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+	assert.Nil(t, result)
+
+	// The conflict aborts the statement before the relationship MERGE runs.
+	params, err := store.GetNodesByLabel("Parameter")
+	require.NoError(t, err)
+	require.Len(t, params, 1)
+	assert.Equal(t, "query", params[0].Properties["name"])
+	assert.Equal(t, int64(365), params[0].Properties["function_line_number"])
+
+	fn, err := store.GetFirstNodeByLabel("Function")
+	require.NoError(t, err)
+	edges, err := store.GetEdgesBetween(fn.ID, params[0].ID)
+	require.NoError(t, err)
+	require.Empty(t, edges)
+}
+
+func TestExecuteCompoundMatchMerge_SecondMergeAndErrorBranches(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := store.CreateNode(&storage.Node{
+		ID:         "match-merge-seed",
+		Labels:     []string{"P"},
+		Properties: map[string]interface{}{"name": "seed"},
+	})
+	require.NoError(t, err)
+
+	res, err := exec.Execute(
+		ctx,
+		"MERGE (pre:Scratch {id:'pre'}) WITH pre MATCH (a:P) MERGE (m:Merged {id:'ok'}) RETURN m",
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.EqualValues(t, 2, res.Stats.NodesCreated)
+	created, err := store.GetNodesByLabel("Scratch")
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	require.Equal(t, "pre", created[0].Properties["id"])
+
+	// MATCH parse failure path should bubble up deterministic error.
+	_, err = exec.Execute(ctx, "MATCH (a:P MERGE (m:Broken {id:'x'})", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	created, err = store.GetNodesByLabel("Broken")
+	require.NoError(t, err)
+	require.Empty(t, created)
+
+	// OPTIONAL MATCH with empty result should still execute MERGE branch.
+	opt, err := exec.Execute(ctx, "OPTIONAL MATCH (a:Missing) MERGE (m:Merged {id:'opt'}) RETURN m", nil)
+	require.NoError(t, err)
+	require.NotNil(t, opt)
+}
+
+func TestExecuteMergeNodeAndMatchSegment_AdditionalBranches(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	seed := &storage.Node{
+		ID:         "merge-seed",
+		Labels:     []string{"Person"},
+		Properties: map[string]interface{}{"name": "alice", "age": int64(30)},
+	}
+	_, err := store.CreateNode(seed)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MERGE (p:Person {name:'alice'}) ON MATCH SET p.age = 31 RETURN p.age AS age", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(31)}}, result.Rows)
+	require.Zero(t, result.Stats.NodesCreated)
+	require.EqualValues(t, 1, result.Stats.PropertiesSet)
+
+	created, err := exec.Execute(ctx, "MERGE (q:Person {name:'bob'}) ON CREATE SET q.city = 'phx' RETURN q.city AS city", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"phx"}}, created.Rows)
+	require.EqualValues(t, 1, created.Stats.NodesCreated)
+
+	for _, query := range []string{"MERGE bad-pattern", "(n:Person)"} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	}
+
+	bound := &storage.Node{ID: "bound-1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bound"}}
+	_, err = store.CreateNode(bound)
+	require.NoError(t, err)
+	filtered, err := exec.Execute(ctx, "MATCH (n:Person {name:'bound'}) WITH n MATCH (n:Person {name:'alice'}) RETURN n", nil)
+	require.NoError(t, err)
+	require.Empty(t, filtered.Rows)
+
+	matched, err := exec.Execute(ctx, "MATCH (x {name:'alice'}) RETURN x.age", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(31)}}, matched.Rows)
+	matched, err = exec.Execute(ctx, "MATCH (x:Person {name:'bob'}) RETURN x.city", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"phx"}}, matched.Rows)
+
+	missing, err := exec.Execute(ctx, "MATCH (z:Person {name:'missing'}) RETURN z", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"z"}, missing.Columns)
+	require.Empty(t, missing.Rows)
+	all, err := exec.Execute(ctx, "MATCH (n:Person) RETURN n.name ORDER BY n.name", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"alice"}, {"bob"}, {"bound"}}, all.Rows)
+}

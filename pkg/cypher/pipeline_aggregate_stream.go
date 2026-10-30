@@ -1,0 +1,697 @@
+package cypher
+
+import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+type pipelineRowSource func(func(pipelineRow) bool) bool
+
+// pipelineProjectionHasOnlyAggregates identifies the projection that creates
+// one global group even with no input rows. A grouping key prevents that row.
+func pipelineProjectionHasOnlyAggregates(projections []returnProjection) bool {
+	if len(projections) == 0 {
+		return false
+	}
+	for _, projection := range projections {
+		if !projection.isAggr {
+			return false
+		}
+	}
+	return true
+}
+
+func pipelineClauseAggregates(ctx context.Context, clause pipelineClause) bool {
+	if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
+		return false
+	}
+	body := pipelineClauseBody(clause.text, "RETURN")
+	if clause.kind == pipelineClauseWith {
+		body = pipelineClauseBody(clause.text, "WITH")
+	}
+	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
+		body = body[:where]
+	}
+	return returnProjectionPlanFor(ctx, "RETURN "+body).hasAggregate
+}
+
+func pipelineRowsSource(rows []pipelineRow) pipelineRowSource {
+	return func(yield func(pipelineRow) bool) bool {
+		for _, row := range rows {
+			if !yield(row) {
+				break
+			}
+		}
+		return true
+	}
+}
+
+type pipelineAggregateProjection struct {
+	expression string
+	states     []pipelineAggregateState
+}
+
+type pipelineAggregateGroup struct {
+	first       pipelineRow
+	projections []pipelineAggregateProjection
+}
+
+// pipelineAggregateRun is what pipelineAggregateGroups' row callback updates.
+type pipelineAggregateRun struct {
+	valid  bool
+	memory memoryAccount
+	rows   rowEstimator
+}
+
+// pipelineAggregateGroups aggregates the rows of source into groups. Rows are
+// validated as they stream in, unless rowsValidated says the caller already
+// validated exactly these rows; validating them again doubled the cost of
+// aggregating projections (#823).
+func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool) ([]*pipelineAggregateGroup, bool) {
+	templates := make([]pipelineAggregateProjection, len(projections))
+	memory := memoryScopeFromContext(ctx)
+	validationClauses := make([]string, 0)
+	allAggregates := pipelineProjectionHasOnlyAggregates(projections)
+	groupingCount := 0
+	for index, projection := range projections {
+		if !projection.isAggr {
+			groupingCount++
+		}
+		needsValidation := false
+		var rewritten strings.Builder
+		last := 0
+		for offset, span := range findAggregateSpans(projection.expr) {
+			name, inner, distinct, ok := parsePipelineAggregate(projection.expr[span.start:span.end])
+			if !ok {
+				return nil, false
+			}
+			templates[index].states = append(templates[index].states, pipelineAggregateState{name: name, expression: inner, distinct: distinct, memory: memoryAccount{scope: memory}})
+			needsValidation = needsValidation || strings.ContainsAny(inner, "([") || name == "percentilecont" || name == "percentiledisc"
+			rewritten.WriteString(projection.expr[last:span.start])
+			rewritten.WriteString(traversalAggPlaceholder(offset))
+			last = span.end
+		}
+		rewritten.WriteString(projection.expr[last:])
+		templates[index].expression = rewritten.String()
+		if !rowsValidated && (needsValidation || strings.ContainsAny(templates[index].expression, "([")) {
+			validationClauses = append(validationClauses, "WITH "+projection.expr)
+		}
+	}
+	newGroup := func(row pipelineRow) *pipelineAggregateGroup {
+		group := &pipelineAggregateGroup{first: make(pipelineRow, len(row)), projections: make([]pipelineAggregateProjection, len(templates))}
+		for name, value := range row {
+			group.first[name] = value
+		}
+		for index, template := range templates {
+			group.projections[index] = pipelineAggregateProjection{expression: template.expression, states: append([]pipelineAggregateState(nil), template.states...)}
+		}
+		return group
+	}
+	var grouping cypherValueIndex
+	ordered := make([]*pipelineAggregateGroup, 0)
+	values := make([]interface{}, 0, groupingCount)
+	// run is the aggregation's state the row callback updates: whether every
+	// row was valid, and the memory its new groups take (#1343).
+	run := pipelineAggregateRun{valid: true, memory: memoryAccount{scope: memory}, rows: rowEstimator{known: memory.knownLists()}}
+	defer run.memory.close()
+	completed := source(func(row pipelineRow) bool {
+		if err := ctx.Err(); err != nil {
+			recordExpressionFailure(ctx, err)
+			run.valid = false
+			return false
+		}
+		for _, clause := range validationClauses {
+			if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause, "WITH"); err != nil {
+				recordExpressionFailure(ctx, err)
+				run.valid = false
+				return false
+			}
+		}
+		values = values[:0]
+		if !allAggregates {
+			for _, projection := range projections {
+				if projection.isAggr {
+					continue
+				}
+				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
+				if !ok {
+					pipelineItemUnevaluable(ctx, projection.expr)
+					run.valid = false
+					return false
+				}
+				values = append(values, value)
+			}
+		}
+		position, exists := grouping.addTupleByContract(values, cypherEquivalenceContract)
+		if !exists {
+			if run.memory.growTuple(values, run.rows.bytes(row)+int64(len(templates))*aggregateStateBytes) != nil {
+				run.valid = false
+				return false
+			}
+			ordered = append(ordered, newGroup(row))
+		}
+		group := ordered[position]
+		for index := range group.projections {
+			for offset := range group.projections[index].states {
+				if !group.projections[index].states[offset].add(ctx, e, row) {
+					run.valid = false
+					return false
+				}
+			}
+		}
+		return true
+	})
+	if !completed || !run.valid {
+		return nil, false
+	}
+	if len(ordered) == 0 && allAggregates {
+		ordered = append(ordered, newGroup(nil))
+	}
+	return ordered, true
+}
+
+func cartesianAggregateWorkers(rows, complexity, cores int) int {
+	if rows < 65536 || cores <= 1 {
+		return 1
+	}
+	chunk := 16384 / max(1, complexity)
+	return max(1, min(cores, rows/max(256, chunk)))
+}
+
+func cartesianAggregateProperty(expression string, patterns []struct {
+	variable string
+	nodes    []*storage.Node
+}) (int, string, bool) {
+	separator := strings.IndexByte(expression, '.')
+	if separator <= 0 || separator == len(expression)-1 {
+		return 0, "", false
+	}
+	property := expression[separator+1:]
+	for _, character := range property {
+		if !cyphertext.NamePart(character) {
+			return 0, "", false
+		}
+	}
+	for index, pattern := range patterns {
+		if pattern.variable == expression[:separator] {
+			return index, property, true
+		}
+	}
+	return 0, "", false
+}
+
+func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, patterns []struct {
+	variable string
+	nodes    []*storage.Node
+}, plan *returnProjectionPlan, forcedWorkers int) ([]*pipelineAggregateGroup, bool, error) {
+	if !plan.valid || !plan.hasAggregate {
+		return nil, false, nil
+	}
+	rows := 1
+	for _, pattern := range patterns {
+		if len(pattern.nodes) == 0 || rows > int(^uint(0)>>1)/len(pattern.nodes) {
+			return nil, false, nil
+		}
+		rows *= len(pattern.nodes)
+	}
+	if rows < 65536 && forcedWorkers == 0 {
+		return nil, false, nil
+	}
+	for index, pattern := range patterns {
+		for prior := 0; prior < index; prior++ {
+			if pattern.variable == patterns[prior].variable {
+				return nil, false, nil
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, true, err
+	}
+	complexity := 0
+	for _, projection := range plan.projections {
+		if !projection.isAggr {
+			if _, _, ok := cartesianAggregateProperty(projection.expr, patterns); !ok {
+				return nil, false, nil
+			}
+			complexity += 2
+			continue
+		}
+		spans := findAggregateSpans(projection.expr)
+		if len(spans) == 0 {
+			return nil, false, nil
+		}
+		for _, span := range spans {
+			name, expression, distinct, ok := parsePipelineAggregate(projection.expr[span.start:span.end])
+			if !ok || distinct || (name != "count" && name != "sum") {
+				return nil, false, nil
+			}
+			complexity++
+			if name == "count" && expression == "*" {
+				continue
+			}
+			if _, err := strconv.ParseInt(expression, 10, 64); err == nil {
+				continue
+			}
+			patternIndex, property, ok := cartesianAggregateProperty(expression, patterns)
+			if !ok {
+				return nil, false, nil
+			}
+			if name == "sum" {
+				complexity++
+				for _, node := range patterns[patternIndex].nodes {
+					if node == nil || node.Properties[property] == nil {
+						continue
+					}
+					_, _, integer, valid := pipelineAggregateNumber(node.Properties[property])
+					if !valid || !integer {
+						return nil, false, nil
+					}
+				}
+			}
+		}
+	}
+	workers := cartesianAggregateWorkers(rows, complexity, runtime.GOMAXPROCS(0))
+	if forcedWorkers > 0 {
+		workers = min(rows, forcedWorkers)
+	}
+	type partition struct {
+		groups []*pipelineAggregateGroup
+		err    error
+	}
+	jobs := workers
+	if workers > 1 {
+		jobs = min(rows, workers*4)
+	}
+	partitions := make([]partition, workers)
+	var next atomic.Int64
+	run := func(worker int) {
+		workerContext := context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
+		source := func(yield func(pipelineRow) bool) bool {
+			values := make(pipelineRow, len(patterns))
+			for {
+				job := int(next.Add(1) - 1)
+				if job >= jobs {
+					return true
+				}
+				width, remainder := rows/jobs, rows%jobs
+				start := job*width + min(job, remainder)
+				end := start + width
+				if job < remainder {
+					end++
+				}
+				for ordinal := start; ordinal < end; ordinal++ {
+					position := ordinal
+					for index := len(patterns) - 1; index >= 0; index-- {
+						pattern := patterns[index]
+						node := pattern.nodes[position%len(pattern.nodes)]
+						if node == nil {
+							values[pattern.variable] = nil
+						} else {
+							values[pattern.variable] = node
+						}
+						position /= len(pattern.nodes)
+					}
+					if !yield(values) {
+						return true
+					}
+				}
+			}
+		}
+		groups, valid := e.pipelineAggregateGroups(workerContext, source, plan.projections, true)
+		partitions[worker].groups = groups
+		if !valid {
+			partitions[worker].err = getExpressionFailure(workerContext)
+			if partitions[worker].err == nil {
+				partitions[worker].err = newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian aggregate")
+			}
+		}
+	}
+	if workers == 1 {
+		run(0)
+	} else {
+		var wait sync.WaitGroup
+		wait.Add(workers)
+		for worker := 0; worker < workers; worker++ {
+			go func() {
+				defer wait.Done()
+				run(worker)
+			}()
+		}
+		wait.Wait()
+	}
+	if workers == 1 {
+		return partitions[0].groups, true, partitions[0].err
+	}
+	positions := make([]map[*storage.Node]int, len(patterns))
+	for index, pattern := range patterns {
+		positions[index] = make(map[*storage.Node]int, len(pattern.nodes))
+		for position, node := range pattern.nodes {
+			if _, exists := positions[index][node]; !exists {
+				positions[index][node] = position
+			}
+		}
+	}
+	type mergedGroup struct {
+		group   *pipelineAggregateGroup
+		ordinal int
+	}
+	var groups cypherValueIndex
+	var ordered []*mergedGroup
+	for _, partition := range partitions {
+		if partition.err != nil {
+			return nil, true, partition.err
+		}
+		for _, partial := range partition.groups {
+			if len(partial.first) == 0 {
+				continue
+			}
+			ordinal := 0
+			for index, pattern := range patterns {
+				node, _ := partial.first[pattern.variable].(*storage.Node)
+				ordinal = ordinal*len(pattern.nodes) + positions[index][node]
+			}
+			var parts []interface{}
+			for _, projection := range plan.projections {
+				if !projection.isAggr {
+					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, partial.first)
+					if !ok {
+						return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian grouping expression")
+					}
+					parts = append(parts, value)
+				}
+			}
+			position, exists := groups.addTupleByContract(parts, cypherEquivalenceContract)
+			var merged *mergedGroup
+			if !exists {
+				merged = &mergedGroup{group: partial, ordinal: ordinal}
+				ordered = append(ordered, merged)
+				continue
+			}
+			merged = ordered[position]
+			group := merged.group
+			if ordinal < merged.ordinal {
+				merged.ordinal = ordinal
+				group.first = partial.first
+			}
+			for index := range group.projections {
+				for stateIndex := range group.projections[index].states {
+					state := &group.projections[index].states[stateIndex]
+					other := &partial.projections[index].states[stateIndex]
+					state.count += other.count
+					state.mergeSum(other)
+				}
+			}
+		}
+	}
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left].ordinal < ordered[right].ordinal })
+	result := make([]*pipelineAggregateGroup, len(ordered))
+	for index, merged := range ordered {
+		result[index] = merged.group
+	}
+	return result, true, nil
+}
+
+func (group *pipelineAggregateGroup) value(ctx context.Context, executor *StorageExecutor, index int) (interface{}, bool) {
+	projection := &group.projections[index]
+	if len(projection.states) == 0 {
+		return executor.evaluateRowExpressionWithContext(ctx, projection.expression, group.first)
+	}
+	values := make(pipelineRow, len(group.first)+len(projection.states))
+	for name, value := range group.first {
+		values[name] = value
+	}
+	for offset := range projection.states {
+		value, ok := projection.states[offset].result(ctx, executor)
+		if !ok {
+			return nil, false
+		}
+		values[traversalAggPlaceholder(offset)] = value
+	}
+	return executor.evaluateRowExpressionWithContext(ctx, projection.expression, values)
+}
+
+type pipelineAggregateState struct {
+	name, expression string
+	distinct         bool
+	seen             cypherValueIndex
+	count            int64
+	integerTotal     int64
+	floatingTotal    float64
+	hasFloat         bool
+	selected         interface{}
+	values           []interface{}
+	mean, squared    float64
+	percentileRows   []pipelineRow
+	// duration is the running sum of sum() / avg() over durations; numbers
+	// and durations can't be mixed (aggregateMixesNumberAndDuration).
+	duration *CypherDuration
+	// memory is the state's account in the statement's memory scope:
+	// collected values and DISTINCT keys count against its limit (#1343).
+	memory memoryAccount
+}
+
+func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageExecutor, row pipelineRow) bool {
+	if state.name == "count" && state.expression == "*" {
+		state.count++
+		return true
+	}
+	if state.name == "percentilecont" || state.name == "percentiledisc" {
+		arguments := executor.splitFunctionArgs(state.expression)
+		if len(arguments) != 2 {
+			return false
+		}
+		stored := pipelineRow{}
+		if len(state.percentileRows) == 0 {
+			if err := executor.validatePercentileCalls(state.name+"("+state.expression+")", row); err != nil {
+				recordExpressionFailure(ctx, err)
+				return false
+			}
+		} else {
+			arguments = arguments[:1]
+		}
+		for _, argument := range arguments {
+			argument = strings.TrimSpace(argument)
+			value, ok := executor.evaluateRowExpressionWithContext(ctx, argument, row)
+			if !ok {
+				return false
+			}
+			stored[argument] = value
+		}
+		// The percentile evaluator retains every input row until finalization.
+		// Charge the map, its values, and the slice slot before growing it.
+		if state.memory.scope != nil {
+			if state.memory.grow(estimateValueBytes(map[string]interface{}(stored))+valueSlotBytes) != nil {
+				return false
+			}
+		}
+		state.percentileRows = append(state.percentileRows, stored)
+		return true
+	}
+	value, ok := row[state.expression]
+	if !ok || isLiteralKeyword(state.expression) {
+		value, ok = executor.evaluateRowExpressionWithContext(ctx, state.expression, row)
+	}
+	if !ok {
+		return false
+	}
+	if value == nil {
+		return true
+	}
+	if state.distinct {
+		if _, exists := state.seen.addByContract(value, cypherEquivalenceContract); exists {
+			return true
+		}
+		if state.memory.growValue(value) != nil {
+			return false
+		}
+	}
+	switch state.name {
+	case "count":
+		state.count++
+	case "collect":
+		if state.memory.growValue(value) != nil {
+			return false
+		}
+		state.values = append(state.values, value)
+	case "sum", "avg", "stdev", "stdevp":
+		// Neo4j's sum and avg take numbers or durations, never both; stDev and
+		// stDevP numbers only. Any other value fails the statement.
+		numeric, exactInteger, integer, valid := pipelineAggregateNumber(value)
+		if !valid {
+			duration, isDuration := asCypherDuration(value)
+			if !isDuration || state.name == "stdev" || state.name == "stdevp" {
+				recordExpressionFailure(ctx, aggregateValueError(state.name, value))
+				return false
+			}
+			if state.count > state.durationCount() {
+				recordExpressionFailure(ctx, aggregateMixesNumberAndDuration(state.name))
+				return false
+			}
+			if state.duration == nil {
+				state.duration = &CypherDuration{}
+			}
+			state.duration = combineDurations(state.duration, duration, 1)
+			state.count++
+			return true
+		}
+		if state.duration != nil {
+			recordExpressionFailure(ctx, aggregateMixesNumberAndDuration(state.name))
+			return false
+		}
+		state.count++
+		if state.name == "sum" {
+			state.addSum(numeric, exactInteger, integer)
+		} else if state.name == "avg" {
+			// A running mean, as Neo4j 5.26 averages (avg of 0.1, 0.2, 0.3
+			// is 0.2, not the sum's 0.19999999999999998 over 3, #907).
+			state.mean += (numeric - state.mean) / float64(state.count)
+		} else {
+			delta := numeric - state.mean
+			state.mean += delta / float64(state.count)
+			state.squared += delta * (numeric - state.mean)
+		}
+	case "min", "max":
+		if state.selected == nil {
+			state.selected = value
+		} else {
+			comparison := compareValuesForSort(value, state.selected)
+			if state.name == "min" && comparison < 0 || state.name == "max" && comparison > 0 {
+				state.selected = value
+			}
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// addSum adds a number to a sum: exactly while every number is an integer
+// and the total fits an int64; in floating point once a float is added or
+// the integer total overflows, as Neo4j 5.26 does (9223372036854775807 + 1
+// is 9.223372036854776e18, #907). The sum stays floating point after that.
+func (state *pipelineAggregateState) addSum(numeric float64, exactInteger int64, integer bool) {
+	if integer && !state.hasFloat {
+		if total, overflow := addInt64(state.integerTotal, exactInteger); !overflow {
+			state.integerTotal = total
+			return
+		}
+		state.floatingTotal = float64(state.integerTotal) + numeric
+		state.hasFloat = true
+		return
+	}
+	if !state.hasFloat {
+		state.floatingTotal = float64(state.integerTotal)
+		state.hasFloat = true
+	}
+	state.floatingTotal += numeric
+}
+
+// mergeSum adds a partial sum of the same aggregate (the parallel
+// Cartesian aggregation's partitions) with addSum's overflow rule.
+func (state *pipelineAggregateState) mergeSum(other *pipelineAggregateState) {
+	if other.hasFloat {
+		if !state.hasFloat {
+			state.floatingTotal = float64(state.integerTotal)
+			state.hasFloat = true
+		}
+		state.floatingTotal += other.floatingTotal
+		return
+	}
+	state.addSum(float64(other.integerTotal), other.integerTotal, true)
+}
+
+// addInt64 is left + right and whether it overflows an int64.
+func addInt64(left, right int64) (int64, bool) {
+	total := left + right
+	return total, (right > 0 && total < left) || (right < 0 && total > left)
+}
+
+func (state *pipelineAggregateState) result(ctx context.Context, executor *StorageExecutor) (interface{}, bool) {
+	switch state.name {
+	case "count":
+		return state.count, true
+	case "sum":
+		if state.duration != nil {
+			return state.duration, true
+		}
+		if state.hasFloat {
+			return state.floatingTotal, true
+		}
+		return state.integerTotal, true
+	case "avg":
+		if state.count == 0 {
+			return nil, true
+		}
+		if state.duration != nil {
+			// Neo4j divides the sum, its fractions of a month spilling into
+			// days and of a day into seconds (scaleTemporalDuration).
+			average, _ := scaleTemporalDuration(state.duration, 1/float64(state.count))
+			return average, true
+		}
+		return state.mean, true
+	case "min", "max":
+		return state.selected, true
+	case "collect":
+		if state.values == nil {
+			return []interface{}{}, true
+		}
+		// The rows that keep the list size it from what collect counted,
+		// not by walking it again (#1343).
+		state.memory.noteList(state.values)
+		return state.values, true
+	case "stdev", "stdevp":
+		if state.count == 0 {
+			return nil, true
+		}
+		if state.count < 2 {
+			return float64(0), true
+		}
+		divisor := state.count
+		if state.name == "stdev" {
+			divisor--
+		}
+		return math.Sqrt(state.squared / float64(divisor)), true
+	case "percentilecont", "percentiledisc":
+		return executor.evaluatePipelinePercentile(ctx, state.percentileRows, state.name, state.expression, state.distinct)
+	default:
+		return nil, false
+	}
+}
+
+// durationCount is how many of the values state has added are durations: all
+// of them once a duration was added.
+func (state *pipelineAggregateState) durationCount() int64 {
+	if state.duration == nil {
+		return 0
+	}
+	return state.count
+}
+
+// aggregateValueError is Neo4j's TypeError for a value an aggregate can't
+// take: sum and avg take numbers and durations, stDev and stDevP numbers.
+func aggregateValueError(function string, value interface{}) error {
+	name := strings.ToUpper(function)
+	if function == "sum" || function == "avg" {
+		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
+			localization.CypherCoreAggregateNumberOrDurationOnly(name))
+	}
+	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
+		localization.CypherCoreAggregateNumberOnly(name, cypherTypeName(value)))
+}
+
+// aggregateMixesNumberAndDuration is Neo4j's TypeError for sum or avg over
+// both numbers and durations.
+func aggregateMixesNumberAndDuration(function string) error {
+	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
+		localization.CypherCoreAggregateMixesNumberAndDuration(strings.ToUpper(function)))
+}

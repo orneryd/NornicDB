@@ -1,0 +1,21 @@
+- id: search.gpu_kmeans_clustered_index_required
+  description: Expanded pseudo-locale GPU k-means clustered-index validation.
+  other: "[!! gpu k-means candidate gen requires clustered index !!]"
+- id: search.cluster_hnsw_lookup_not_configured
+  description: Expanded pseudo-locale per-cluster HNSW lookup validation.
+  other: "[!! cluster HNSW lookup not configured !!]"
+- id: search.ivfpq_index_not_configured
+  description: Expanded pseudo-locale IVF/PQ index validation.
+  other: "[!! ivfpq index not configured !!]"
+- id: search.cluster_query_dimensions_mismatch
+  description: Expanded pseudo-locale cluster query dimension validation.
+  other: "[!! cluster search failed: query dimensions {{.QueryDimensions}} != index dimensions {{.IndexDimensions}} !!]"
+- id: search.cluster_search_failed
+  description: Expanded pseudo-locale cluster search failure.
+  other: "[!! cluster search failed: {{.Cause}} !!]"
+- id: search.hnsw_index_creation_failed
+  description: Expanded pseudo-locale HNSW index creation failure.
+  other: "[!! failed to create HNSW index: {{.Cause}} !!]"
+- id: search.vector_index_nil
+  description: Expanded pseudo-locale missing vector index error.
+  other: "[!! vector index is nil !!]"

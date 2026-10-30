@@ -1,0 +1,70 @@
+package cypher
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCypherMutationLocalizedErrors(t *testing.T) {
+	requireMessageID := func(t *testing.T, err error, expected localization.MessageID) *localization.LocalizedError {
+		t.Helper()
+		var localizedErr *localization.LocalizedError
+		require.ErrorAs(t, err, &localizedErr)
+		require.Equal(t, expected, localizedErr.Message.ID)
+		require.Equal(t, string(expected), localizedErr.Code)
+		return localizedErr
+	}
+
+	t.Run("validation error has typed identity and named argument", func(t *testing.T) {
+		err := localizedError(localization.CypherMutationsInvalidLabelName("9Person"), nil)
+
+		require.EqualError(t, err, `invalid label name: "9Person" (must be alphanumeric starting with letter or underscore)`)
+		localizedErr := requireMessageID(t, err, localization.MessageCypherMutationsInvalidLabelName)
+		require.Equal(t, "9Person", localizedErr.Message.Data["Label"])
+	})
+
+	t.Run("wrapper preserves cause", func(t *testing.T) {
+		cause := errors.New("storage failure")
+		err := localizedError(localization.CypherMutationsCreateNodeFailed(cause), cause)
+
+		require.EqualError(t, err, "failed to create node: storage failure")
+		require.ErrorIs(t, err, cause)
+		localizedErr := requireMessageID(t, err, localization.MessageCypherMutationsCreateNodeFailed)
+		require.Equal(t, "storage failure", localizedErr.Message.Data["Cause"])
+	})
+
+	t.Run("public clause validation exposes syntax status", func(t *testing.T) {
+		exec := NewStorageExecutor(newTestMemoryEngine(t))
+		ctx := context.Background()
+
+		_, err := exec.Execute(ctx, "DELETE n", getParamsFromContext(ctx))
+		requireSyntaxErrorStatus(t, err, "DELETE n")
+
+		_, err = exec.Execute(ctx, "SET n.value = 1", getParamsFromContext(ctx))
+		requireSyntaxErrorStatus(t, err, "SET n.value = 1")
+
+		_, err = exec.Execute(ctx, "REMOVE n.value", getParamsFromContext(ctx))
+		requireSyntaxErrorStatus(t, err, "REMOVE n.value")
+
+		_, err = exec.Execute(ctx, "UNWIND [1] RETURN 1", nil)
+		requireSyntaxErrorStatus(t, err, "UNWIND [1] RETURN 1")
+
+		_, err = exec.Execute(ctx, "FOREACH value", nil)
+		requireSyntaxErrorStatus(t, err, "FOREACH value")
+	})
+
+	t.Run("nested wrappers retain outer and inner IDs plus sentinel cause", func(t *testing.T) {
+		cause := errors.New("storage failure")
+		inner := localizedError(localization.CypherMutationsCreateNodeFailed(cause), cause)
+		outer := localizedError(localization.CypherMutationsUnwindMutationFailed(inner), inner)
+
+		require.EqualError(t, outer, "UNWIND mutation failed: failed to create node: storage failure")
+		require.ErrorIs(t, outer, cause)
+		requireMessageID(t, outer, localization.MessageCypherMutationsUnwindMutationFailed)
+		requireMessageID(t, errors.Unwrap(outer), localization.MessageCypherMutationsCreateNodeFailed)
+	})
+}

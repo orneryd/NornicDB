@@ -1,0 +1,154 @@
+// Whitespace-tolerant function matching helpers for Cypher parsing.
+// These helpers allow optional whitespace between function names and opening parentheses,
+// making the parser compatible with formatted Cypher queries like "COUNT (n)" or "count  (n)".
+
+package cypher
+
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
+
+type funcMatcher struct {
+	funcName string
+}
+
+func (m *funcMatcher) MatchString(expr string) bool {
+	if m == nil {
+		return false
+	}
+	return hasFuncStart(expr, m.funcName)
+}
+
+func (m *funcMatcher) String() string {
+	if m == nil {
+		return ""
+	}
+	return "func:" + lowerASCII(strings.TrimSpace(m.funcName))
+}
+
+// funcMatcherCache caches function-name matchers by lower-cased name
+// (boundedCache).
+var funcMatcherCache = newBoundedCache[string, *funcMatcher](1024, boundedCacheStringShardIndex)
+
+func getFuncMatcher(funcName string) *funcMatcher {
+	key := lowerASCII(strings.TrimSpace(funcName))
+	if key == "" {
+		return &funcMatcher{funcName: funcName}
+	}
+	if cached, ok := funcMatcherCache.get(key); ok {
+		return cached
+	}
+	m := &funcMatcher{funcName: key}
+	funcMatcherCache.put(key, m)
+	return m
+}
+
+// matchFuncStart checks if expr starts with funcName followed by optional whitespace and '('.
+// Case-insensitive. Returns true if matched.
+//
+// Examples:
+//   - matchFuncStart("count(n)", "count")     → true
+//   - matchFuncStart("COUNT (n)", "count")    → true
+//   - matchFuncStart("count  (n)", "count")   → true
+//   - matchFuncStart("count\n(n)", "count")   → true
+//   - matchFuncStart("countx(n)", "count")    → false (different function)
+//   - matchFuncStart("xcount(n)", "count")    → false (prefix doesn't match)
+func matchFuncStart(expr, funcName string) bool {
+	return getFuncMatcher(funcName).MatchString(expr)
+}
+
+func hasFuncStart(expr, funcName string) bool {
+	expr = strings.TrimSpace(expr)
+	funcName = strings.TrimSpace(funcName)
+	if expr == "" || funcName == "" {
+		return false
+	}
+	if len(expr) < len(funcName)+1 {
+		return false
+	}
+	if !strings.EqualFold(expr[:len(funcName)], funcName) {
+		return false
+	}
+	// Ensure next token is optional whitespace then '('
+	i := len(funcName)
+	for i < len(expr) && cyphertext.IsWhitespaceAt(expr, i) {
+		i++
+	}
+	return i < len(expr) && expr[i] == '('
+}
+
+// matchFuncStartAndSuffix checks if expr starts with funcName( and ends with ).
+// Allows optional whitespace between function name and opening paren.
+// This is the whitespace-tolerant replacement for:
+//
+//	strings.HasPrefix(lowerExpr, "funcname(") && strings.HasSuffix(expr, ")")
+//
+// Examples:
+//   - matchFuncStartAndSuffix("count(n)", "count")    → true
+//   - matchFuncStartAndSuffix("COUNT (n)", "count")   → true
+//   - matchFuncStartAndSuffix("count(n) + 1", "count") → false (doesn't end with ))
+func matchFuncStartAndSuffix(expr, funcName string) bool {
+	return matchFuncStart(expr, funcName) && strings.HasSuffix(expr, ")")
+}
+
+// extractFuncArgs extracts the arguments string from a function call expression.
+// Assumes the expression is already validated as a function call.
+// Returns empty string if not a valid function call format.
+//
+// Examples:
+//   - extractFuncArgs("count(n)", "count")           → "n"
+//   - extractFuncArgs("COUNT (n, m)", "count")       → "n, m"
+//   - extractFuncArgs("substring('hello', 0)", "substring") → "'hello', 0"
+func extractFuncArgs(expr, funcName string) string {
+	if !matchFuncStart(expr, funcName) {
+		return ""
+	}
+	// Find the opening paren position
+	idx := strings.IndexByte(expr, '(')
+	if idx == -1 || !strings.HasSuffix(expr, ")") {
+		return ""
+	}
+	// Return content between ( and )
+	return strings.TrimSpace(expr[idx+1 : len(expr)-1])
+}
+
+// extractFuncArgsLen returns the arguments and the position of the opening paren.
+// Useful when you need to know where the function name ends.
+//
+// Returns: (argsString, openParenIndex)
+// If not matched, returns ("", -1)
+func extractFuncArgsLen(expr, funcName string) (string, int) {
+	if !matchFuncStart(expr, funcName) {
+		return "", -1
+	}
+	idx := strings.IndexByte(expr, '(')
+	if idx == -1 || !strings.HasSuffix(expr, ")") {
+		return "", -1
+	}
+	return strings.TrimSpace(expr[idx+1 : len(expr)-1]), idx
+}
+
+// extractFuncArgsWithSuffix extracts function arguments and any suffix after the function call.
+// This properly handles cases like "collect({...})[..10]" where there's a suffix after the function.
+//
+// Returns:
+//   - args: the content between the function's ( and matching )
+//   - suffix: anything after the closing ), e.g., "[..10]"
+//   - ok: whether extraction was successful
+//
+// Examples:
+//   - extractFuncArgsWithSuffix("count(n)", "count")           → ("n", "", true)
+//   - extractFuncArgsWithSuffix("collect({a: 1})[..10]", "collect") → ("{a: 1}", "[..10]", true)
+//   - extractFuncArgsWithSuffix("sum(n.val) + 1", "sum")       → ("n.val", " + 1", true)
+func extractFuncArgsWithSuffix(expr, funcName string) (args string, suffix string, ok bool) {
+	if !matchFuncStart(expr, funcName) {
+		return "", "", false
+	}
+	open := strings.IndexByte(expr, '(')
+	close := findMatchingParen(expr, open)
+	if close < 0 {
+		return "", "", false
+	}
+	return strings.TrimSpace(expr[open+1 : close]), expr[close+1:], true
+}

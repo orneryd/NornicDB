@@ -1,0 +1,331 @@
+package cypher
+
+import (
+	"cmp"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+// cypherEquality applies Cypher's three-valued structural equality. A nil
+// result represents unknown, which occurs when no definite inequality exists
+// but at least one nested comparison involves null.
+func cypherEquality[L, R any](left L, right R) interface{} {
+	// Keep typed arithmetic operands unboxed on the common integer path.
+	if actual, ok := any(left).(int64); ok {
+		if expected, ok := any(right).(int64); ok {
+			return actual == expected
+		}
+	}
+	return cypherEqualityValue(any(left), any(right))
+}
+
+func cypherEqualityValue(left, right interface{}) interface{} {
+	if left == nil || right == nil {
+		return nil
+	}
+	// Two strings or two booleans are none of the forms below:
+	// their equality is ==. The equality of every evaluator (= / <>, IN,
+	// CASE) starts here (#1214).
+	switch actual := left.(type) {
+	case string:
+		if expected, ok := right.(string); ok {
+			return actual == expected
+		}
+	case bool:
+		if expected, ok := right.(bool); ok {
+			return actual == expected
+		}
+	}
+	if cypherValueKindOf(left) == valueKindNull || cypherValueKindOf(right) == valueKindNull {
+		return nil
+	}
+	// Entity snapshots compare by identity even if their properties differ.
+	leftNode, leftIsNode := left.(*storage.Node)
+	rightNode, rightIsNode := right.(*storage.Node)
+	leftEdge, leftIsEdge := left.(*storage.Edge)
+	rightEdge, rightIsEdge := right.(*storage.Edge)
+	if leftIsNode || rightIsNode || leftIsEdge || rightIsEdge {
+		return (leftIsNode && rightIsNode && leftNode != nil && rightNode != nil && leftNode.Database == rightNode.Database && leftNode.ID == rightNode.ID) ||
+			(leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && leftEdge.Database == rightEdge.Database && leftEdge.ID == rightEdge.ID)
+	}
+	// Source element identity survives property snapshots and optional legacy
+	// metadata. ORDER BY also distinguishes identity-availability domains to
+	// remain transitive; as with signed zero, sort order need not imply <>.
+	leftRemote, leftIsRemote := left.(storage.RemoteEntityValue)
+	rightRemote, rightIsRemote := right.(storage.RemoteEntityValue)
+	if leftIsRemote || rightIsRemote {
+		leftElement, leftHasElement := leftRemote["elementId"].(string)
+		rightElement, rightHasElement := rightRemote["elementId"].(string)
+		return leftIsRemote && rightIsRemote && leftHasElement && rightHasElement && cypherValueKindOf(leftRemote) == cypherValueKindOf(rightRemote) && leftElement == rightElement
+	}
+	// Compare actual path carriers, including the legacy typed _pathResult
+	// wrapper, through their ordered entity identities in either direction.
+	if cypherValueKindOf(left) == valueKindPath || cypherValueKindOf(right) == valueKindPath {
+		leftParts, leftPath := cypherPathElements(left)
+		rightParts, rightPath := cypherPathElements(right)
+		if leftPath || rightPath {
+			return leftPath && rightPath && cypherEquality(leftParts, rightParts) == true
+		}
+	}
+	leftList, leftIsList := cypherListValue(left)
+	rightList, rightIsList := cypherListValue(right)
+	if leftIsList || rightIsList {
+		if !leftIsList || !rightIsList || len(leftList) != len(rightList) {
+			return false
+		}
+		unknown := false
+		for index := range leftList {
+			equal := cypherEquality(leftList[index], rightList[index])
+			if equal == nil {
+				unknown = true
+				continue
+			}
+			if !equal.(bool) {
+				return false
+			}
+		}
+		if unknown {
+			return nil
+		}
+		return true
+	}
+
+	leftMap, leftIsMap := toStringAnyMap(left)
+	rightMap, rightIsMap := toStringAnyMap(right)
+	if leftIsMap || rightIsMap {
+		if !leftIsMap || !rightIsMap || len(leftMap) != len(rightMap) {
+			return false
+		}
+		unknown := false
+		for key, leftValue := range leftMap {
+			rightValue, exists := rightMap[key]
+			if !exists {
+				return false
+			}
+			equal := cypherEquality(leftValue, rightValue)
+			if equal == nil {
+				unknown = true
+				continue
+			}
+			if !equal.(bool) {
+				return false
+			}
+		}
+		if unknown {
+			return nil
+		}
+		return true
+	}
+
+	if equal, temporal := compareTemporalByContract(left, right, cypherValueEqualityContract); temporal {
+		return equal
+	}
+	if equal, point := comparePointValues(left, right); point {
+		return equal
+	}
+	return compareValues(left, right)
+}
+
+func cypherNumericEquality(left, right interface{}) (bool, bool) {
+	leftSigned, leftIsSigned := cypherSignedInteger(left)
+	rightSigned, rightIsSigned := cypherSignedInteger(right)
+	leftUnsigned, leftIsUnsigned := cypherUnsignedInteger(left)
+	rightUnsigned, rightIsUnsigned := cypherUnsignedInteger(right)
+	if (leftIsSigned || leftIsUnsigned) && (rightIsSigned || rightIsUnsigned) {
+		switch {
+		case leftIsSigned && rightIsSigned:
+			return leftSigned == rightSigned, true
+		case leftIsUnsigned && rightIsUnsigned:
+			return leftUnsigned == rightUnsigned, true
+		case leftIsSigned:
+			return leftSigned >= 0 && uint64(leftSigned) == rightUnsigned, true
+		default:
+			return rightSigned >= 0 && leftUnsigned == uint64(rightSigned), true
+		}
+	}
+	if comparison, exact := compareCypherNumbersExactly(left, right); exact {
+		return comparison == 0, true
+	}
+	leftNumber, leftIsNumber := strictNumericValue(left)
+	rightNumber, rightIsNumber := strictNumericValue(right)
+	if !leftIsNumber && !rightIsNumber {
+		return false, false
+	}
+	if !leftIsNumber || !rightIsNumber {
+		return false, true
+	}
+	return leftNumber == rightNumber, true
+}
+
+// compareCypherNumbersExactly orders two numbers by their exact values when
+// one of them is an integer: two integers (above 2^53 too, and mixed
+// signed/unsigned) and an integer against a float, as Neo4j compares stored
+// values: 9007199254740993 > 9007199254740992.0 (#540, #893). ok is false
+// for two floats and for NaN; callers then use their float64 comparison.
+// Ordering operators, ORDER BY, CASE comparisons and numeric equality all go
+// through this so they agree.
+func compareCypherNumbersExactly(left, right interface{}) (comparison int, ok bool) {
+	if comparison, ok := compareCypherIntegers(left, right); ok {
+		return comparison, true
+	}
+	if number, isFloat := cypherFloatValue(right); isFloat {
+		return compareIntegerWithFloat(left, number)
+	}
+	if number, isFloat := cypherFloatValue(left); isFloat {
+		comparison, ok := compareIntegerWithFloat(right, number)
+		return -comparison, ok
+	}
+	return 0, false
+}
+
+// promoteConstantNumbers applies Neo4j's plan-time folding to a comparison
+// whose operands, leftExpr and rightExpr, are both constant numeric
+// expressions (constantNumericComparison): for an operator that folds
+// (foldsConstantNumbers) an integer compared with a float is compared as a
+// float, so 9007199254740993 = 9007199254740992.0 is true and
+// 9007199254740993 > 9007199254740992.0 is false. <= and >= of the same
+// literals, <> in Cypher 5, and every comparison of values from variables,
+// parameters, properties or functions, compare exactly
+// (compareCypherNumbersExactly, #893). Other values are returned unchanged.
+func promoteConstantNumbers(operator, leftExpr, rightExpr string, left, right interface{}, cypher25 bool) (interface{}, interface{}) {
+	// The value types are checked first: the text is read only for an
+	// integer compared with a float.
+	_, leftIsFloat := cypherFloatValue(left)
+	_, rightIsFloat := cypherFloatValue(right)
+	if leftIsFloat == rightIsFloat || !foldsConstantNumbers(operator, cypher25) || !constantNumericComparison(operator, leftExpr, rightExpr) {
+		return left, right
+	}
+	return promoteIntegerToFloat(left, right)
+}
+
+// constantNumericComparison reports whether a comparison is =, <, > or <>
+// of two constant numeric expressions, which Neo4j may fold with float
+// promotion (promoteConstantNumbers, foldsConstantNumbers). Plans decide
+// this once, not per row.
+func constantNumericComparison(operator, leftExpr, rightExpr string) bool {
+	switch operator {
+	case "=", "<", ">", "<>", "!=":
+		return numericExpressionAccepted(leftExpr, numericConstantPopulation) && numericExpressionAccepted(rightExpr, numericConstantPopulation)
+	}
+	return false
+}
+
+// foldsConstantNumbers reports whether a constant numeric comparison with
+// operator compares an integer with a float as floats: =, < and > do in
+// both versions, <> only in Cypher 25 (Neo4j 2026.09 folds it, so
+// 9007199254740993 <> 9007199254740992.0 is false there; Neo4j 5.26
+// compares it exactly).
+func foldsConstantNumbers(operator string, cypher25 bool) bool {
+	return cypher25 || operator != "<>" && operator != "!="
+}
+
+// promoteIntegerToFloat returns an integer compared with a float as a float,
+// for a constant numeric comparison (promoteConstantNumbers).
+func promoteIntegerToFloat(left, right interface{}) (interface{}, interface{}) {
+	_, leftIsFloat := cypherFloatValue(left)
+	_, rightIsFloat := cypherFloatValue(right)
+	if leftIsFloat == rightIsFloat {
+		return left, right
+	}
+	if leftIsFloat {
+		if integer, ok := cypherSignedInteger(right); ok {
+			return left, float64(integer)
+		}
+		return left, right
+	}
+	if integer, ok := cypherSignedInteger(left); ok {
+		return float64(integer), right
+	}
+	return left, right
+}
+
+// cypherFloatValue returns a float32 or float64 value as a float64.
+func cypherFloatValue(value interface{}) (float64, bool) {
+	return valueconvert.FloatValue(value)
+}
+
+// compareIntegerWithFloat orders an integer against a float by their exact
+// values. ok is false when integer isn't an integer or number is NaN.
+func compareIntegerWithFloat(integer interface{}, number float64) (comparison int, ok bool) {
+	if math.IsNaN(number) {
+		return 0, false
+	}
+	whole := math.Trunc(number)
+	fraction := cmp.Compare(0, number-whole)
+	if signed, isSigned := cypherSignedInteger(integer); isSigned {
+		narrowed, fits := valueconvert.Int64(whole, valueconvert.IntegerFloat)
+		if !fits {
+			if number < 0 {
+				return 1, true
+			}
+			return -1, true
+		}
+		if comparison := cmp.Compare(signed, narrowed); comparison != 0 {
+			return comparison, true
+		}
+		return fraction, true
+	}
+	if unsigned, isUnsigned := cypherUnsignedInteger(integer); isUnsigned {
+		// Negative fractions are smaller than every unsigned integer, even when
+		// truncation would produce zero.
+		if number < 0 {
+			return 1, true
+		}
+		narrowed, fits := valueconvert.ToUint64(whole, valueconvert.IntegerFloat)
+		if !fits {
+			return -1, true
+		}
+		if comparison := cmp.Compare(unsigned, narrowed); comparison != 0 {
+			return comparison, true
+		}
+		return fraction, true
+	}
+	return 0, false
+}
+
+// compareCypherIntegers orders two integer values exactly, including values
+// above 2^53 (where float64 can no longer tell neighbours apart) and mixed
+// signed/unsigned values. ok is false unless both values are integers.
+func compareCypherIntegers(left, right interface{}) (comparison int, ok bool) {
+	leftSigned, leftIsSigned := cypherSignedInteger(left)
+	leftUnsigned, leftIsUnsigned := cypherUnsignedInteger(left)
+	rightSigned, rightIsSigned := cypherSignedInteger(right)
+	rightUnsigned, rightIsUnsigned := cypherUnsignedInteger(right)
+	if !(leftIsSigned || leftIsUnsigned) || !(rightIsSigned || rightIsUnsigned) {
+		return 0, false
+	}
+	switch {
+	case leftIsSigned && rightIsSigned:
+		return cmp.Compare(leftSigned, rightSigned), true
+	case leftIsUnsigned && rightIsUnsigned:
+		return cmp.Compare(leftUnsigned, rightUnsigned), true
+	case leftIsSigned:
+		if leftSigned < 0 {
+			return -1, true
+		}
+		return cmp.Compare(uint64(leftSigned), rightUnsigned), true
+	default:
+		if rightSigned < 0 {
+			return 1, true
+		}
+		return cmp.Compare(leftUnsigned, uint64(rightSigned)), true
+	}
+}
+
+func cypherSignedInteger(value interface{}) (int64, bool) {
+	return valueconvert.SignedInteger(value)
+}
+
+func cypherUnsignedInteger(value interface{}) (uint64, bool) {
+	return valueconvert.UnsignedInteger(value)
+}
+
+// cypherListValue is the runtime-list input owner. Consumers must use it rather
+// than asserting []interface{}: drivers and storage also carry typed slices and
+// arrays. Element conversion stays in toAnySlice, including recursive consumers
+// such as flatten and fromPairs. The ordinary boxed-list path does not allocate.
+func cypherListValue(value interface{}) ([]interface{}, bool) {
+	return valueconvert.ListValue(value)
+}

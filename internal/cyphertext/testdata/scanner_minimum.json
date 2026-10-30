@@ -1,0 +1,1092 @@
+{
+  "internal/catalogadapter/catalog_execution.go": [
+    "DatabaseIdentity"
+  ],
+  "internal/catalogadapter/catalog_operations.go": [
+    "ResolveDatabase"
+  ],
+  "internal/cyphertext/credentials.go": [
+    "PasswordBoundary",
+    "Record"
+  ],
+  "internal/cyphertext/identifier.go": [
+    "IdentifierValue",
+    "IsIdentifier",
+    "ScanIdentifier"
+  ],
+  "internal/cyphertext/identifier_reference.go": [
+    "FindIdentifier"
+  ],
+  "internal/cyphertext/keyword.go": [
+    "KeywordEnd"
+  ],
+  "internal/cyphertext/lexical.go": [
+    "CanonicalSpaceAt",
+    "CutWhitespace",
+    "IsWhitespace",
+    "IsWhitespaceAt",
+    "KeywordBoundary",
+    "NamePart",
+    "NamePartAt",
+    "NameStart",
+    "NameStartAt",
+    "NonCanonicalWhitespace",
+    "RuneAt",
+    "ValidNamePart",
+    "ValidNameStart",
+    "WhitespaceAt",
+    "WhitespaceReplacement"
+  ],
+  "internal/cyphertext/name.go": [
+    "SymbolicNameValue"
+  ],
+  "internal/cyphertext/neighbor.go": [
+    "NeighborByte"
+  ],
+  "internal/cyphertext/params.go": [
+    "ParameterReferences"
+  ],
+  "internal/cyphertext/scan.go": [
+    "CommentEnd",
+    "CommentEndStatus",
+    "HasAdjacentStringLiterals",
+    "ScanInterpolatedText",
+    "ScanQuotedText",
+    "ScanStringToken",
+    "SkipToken",
+    "SkipTokenRunes",
+    "scanQuotedText"
+  ],
+  "internal/cyphertext/source_unicode.go": [
+    "ProjectUnicode"
+  ],
+  "internal/cyphertext/string.go": [
+    "DecodeString",
+    "IsWholeString",
+    "ParseUnicodeEscape",
+    "unicodeHexDigit"
+  ],
+  "internal/cyphertext/structure.go": [
+    "FindMatchingDelimiter"
+  ],
+  "internal/cyphertext/trivia.go": [
+    "CommentReplacement",
+    "FindOutside",
+    "GapEnd"
+  ],
+  "pkg/adminimport/importer.go": [
+    "splitCypherStatements"
+  ],
+  "pkg/bolt/session_messages.go": [
+    "graphAccess",
+    "principalAccess"
+  ],
+  "pkg/cypher/admin_error_redaction.go": [
+    "record",
+    "withStatementCredentials"
+  ],
+  "pkg/cypher/aggregation_projection_scope.go": [
+    "maskProjectedExpression"
+  ],
+  "pkg/cypher/antlr/CypherLexer.g4": [],
+  "pkg/cypher/antlr/CypherParser.g4": [],
+  "pkg/cypher/antlr/context_stream.go": [
+    "LexContext"
+  ],
+  "pkg/cypher/antlr/context_text.go": [
+    "TrimSpaceContext"
+  ],
+  "pkg/cypher/antlr/source_charstream.go": [
+    "sourceInputStream"
+  ],
+  "pkg/cypher/antlr/statement_syntax.go": [
+    "Span",
+    "Text",
+    "parseStatementSyntax",
+    "recordCredentials"
+  ],
+  "pkg/cypher/apoc_custom.go": [
+    "parseCustomSignature"
+  ],
+  "pkg/cypher/arrow_validation.go": [
+    "validateArrowOperators",
+    "validatePlaceholderOperands"
+  ],
+  "pkg/cypher/ast_builder.go": [
+    "splitIntoClauses"
+  ],
+  "pkg/cypher/authorization.go": [
+    "AccessDatabases",
+    "Allows",
+    "GraphAccessTarget",
+    "firstExecutableCypherOffset",
+    "isQualifiedOrMapKey",
+    "procedureNameAt",
+    "queryKeywords"
+  ],
+  "pkg/cypher/binding_where_compile.go": [
+    "compileBindingValueResolver"
+  ],
+  "pkg/cypher/cache.go": [
+    "extractLabelsFromQuery",
+    "normalizeQueryWithPresentation"
+  ],
+  "pkg/cypher/call.go": [
+    "isIdentifierReferenced",
+    "parseCallTailRelationshipPattern",
+    "splitPathAssignment"
+  ],
+  "pkg/cypher/call_apoc_helpers.go": [
+    "splitBySemicolon"
+  ],
+  "pkg/cypher/call_shared_utils.go": [
+    "appendTopLevelCommaParts",
+    "splitTopLevelComma",
+    "splitTopLevelCommaKeepEmpty"
+  ],
+  "pkg/cypher/call_vector.go": [
+    "parseVectorQueryParams"
+  ],
+  "pkg/cypher/case_closure_balance.go": [
+    "caseEndFollowsBarePrefix",
+    "casePrefixEndRequired"
+  ],
+  "pkg/cypher/case_expression.go": [
+    "caseBinaryOperatorAt",
+    "caseBlockSpans",
+    "caseHasPreviousToken",
+    "caseKeywordAtMode",
+    "caseNestedLacksEnd",
+    "caseOperandEndsAt",
+    "caseOperandExpectedBeforeMode",
+    "casePreviousWordIn",
+    "caseTypeParameterCloses",
+    "caseVariableScopeOpensAt",
+    "caseWordAt",
+    "caseWordRoleAt",
+    "findCaseKeywordAtLevel",
+    "findTopLevelKeyword",
+    "indexCaseInsensitive",
+    "isCaseWordStart",
+    "leadingCaseExpressionEnd",
+    "parseCaseExpression"
+  ],
+  "pkg/cypher/clauses.go": [
+    "executeUnwindFixedChainLinkBatch",
+    "parseUnwindMergeRelationshipClause",
+    "parseUnwindNodePatternClauseInternal",
+    "prevWordEqualsIgnoreCase",
+    "replaceIdentifierOutsideQuotesUnless",
+    "rewriteUnwindCorrelationToIn",
+    "splitUnwindCompoundMutationStages"
+  ],
+  "pkg/cypher/comparison.go": [
+    "containsIdentifierToken"
+  ],
+  "pkg/cypher/comparison_chain.go": [
+    "scanComparisonChain",
+    "scanPlainComparisonChain",
+    "typeConstructorBefore"
+  ],
+  "pkg/cypher/composite_commands.go": [
+    "executeCompositeCommand",
+    "executeShowConstituents"
+  ],
+  "pkg/cypher/create.go": [
+    "isInsideQuotes",
+    "isSimpleVariable",
+    "namedPathAssignmentPrefix",
+    "parseParamPathParts",
+    "parseRelationshipTypeAndProps",
+    "scanCreatePatterns",
+    "splitNodePatterns",
+    "splitPatternParameterMap"
+  ],
+  "pkg/cypher/create_pipeline_helpers.go": [
+    "scanCreateRelPatternWithVars"
+  ],
+  "pkg/cypher/create_semantic_validation.go": [
+    "createNodePatternHasDecoration",
+    "createNodePatternVariable",
+    "createRelationshipPropertyMapBodies",
+    "projectedBindingScope",
+    "simpleCreatePropertyReference",
+    "unwindBindingName",
+    "validateUnwindAlias"
+  ],
+  "pkg/cypher/cypher25_expression_rewrite.go": [
+    "forEachQueryWord",
+    "interpolatedStringText",
+    "interpolationEdits",
+    "interpolationEnd",
+    "mapComprehensionEdits",
+    "mapComprehensionText",
+    "precededByWord",
+    "projectionAllEdits",
+    "startsOperand"
+  ],
+  "pkg/cypher/cypher25_value_text.go": [
+    "isSimpleCypherName"
+  ],
+  "pkg/cypher/database_drop.go": [
+    "executeDatabaseDrop"
+  ],
+  "pkg/cypher/database_options.go": [
+    "alterDatabaseOption"
+  ],
+  "pkg/cypher/deleted_entity_projection.go": [
+    "deletedEntityReadsIn",
+    "iterationSourceVariable",
+    "propertyNullTestFollows",
+    "skipSpaceIndex"
+  ],
+  "pkg/cypher/dynamic_tokens.go": [
+    "hasDynamicToken",
+    "mentionsNonEntity",
+    "resolveRowDynamicTokens",
+    "staticPatternTokenError"
+  ],
+  "pkg/cypher/execution_determinism.go": [
+    "compileExecutionPolicy"
+  ],
+  "pkg/cypher/execution_input_values.go": [
+    "compileExecutionInput"
+  ],
+  "pkg/cypher/executor.go": [
+    "cypherSyntaxConfusableReplacement",
+    "firstTopLevelCallSubquery",
+    "graphReadingExpression",
+    "hasKeywordFollowedByBrace",
+    "hasNotExistsFollowedByBrace",
+    "isLikelyPlainASCIICypher",
+    "matchKeywordAt",
+    "normalizeCypherSyntaxConfusables",
+    "skipSpaces",
+    "statementReadsGraphText",
+    "stripWithEmbeddingSuffix"
+  ],
+  "pkg/cypher/executor_match_vector_cosine_fastpath.go": [
+    "collectNodePropertyRefsForProjection",
+    "parseVarPropertyRef"
+  ],
+  "pkg/cypher/executor_mutations.go": [
+    "hasOuterParens",
+    "isDeleteStreamingEligible"
+  ],
+  "pkg/cypher/executor_mutations_delete_guard.go": [
+    "deleteExpressionRootIdentifier",
+    "hasTopLevelDeleteLabelQualifier"
+  ],
+  "pkg/cypher/executor_query_routing.go": [
+    "bareWordBeforeLiteral",
+    "executeWithoutTransaction",
+    "hasAdjacentOperands",
+    "isGraphQueryStatement",
+    "validateLeadingNodePatternTransition",
+    "validateSyntax"
+  ],
+  "pkg/cypher/executor_show.go": [
+    "applyShowTail",
+    "executeAlterDatabase",
+    "executeCreateAlias",
+    "executeDatabaseCreate",
+    "executeDropAlias",
+    "executeShowAliases",
+    "executeShowLimits",
+    "functionSignatureDescriptions"
+  ],
+  "pkg/cypher/executor_spans.go": [
+    "redactSpanErrorText"
+  ],
+  "pkg/cypher/executor_subqueries.go": [
+    "firstVariableOccurrence",
+    "indexTopLevelKeywordCallSubquery",
+    "isSimpleIdentifier",
+    "leadingWithClause",
+    "nextNonSpace",
+    "precededByAS",
+    "previousNonSpace",
+    "splitTopLevelEqualityCallSubquery"
+  ],
+  "pkg/cypher/executor_use.go": [
+    "systemShowTailError",
+    "useGraphNameAt"
+  ],
+  "pkg/cypher/explain.go": [
+    "containsVariableLengthPathPattern",
+    "extractFirstNodeLabelFromQuery",
+    "isAllDigits",
+    "parseProcedureNameToken"
+  ],
+  "pkg/cypher/expression_validation.go": [
+    "bindingDeclaration",
+    "bindingFunctionBeforeParen",
+    "coercingIterationDeclaration",
+    "forEachListOperand",
+    "localBindingAt",
+    "localBindingStep",
+    "localBindingStepReads",
+    "localScopeStart",
+    "namedPathDeclaration",
+    "staticListOperand",
+    "staticListOperandTypeError",
+    "validateListComprehensionVariables",
+    "wholeListOperand"
+  ],
+  "pkg/cypher/function_aliases.go": [
+    "canonicalizeFunctionAliases",
+    "mayCallFunctionAlias",
+    "propertyExistsKeyName"
+  ],
+  "pkg/cypher/function_match.go": [
+    "extractFuncArgsWithSuffix",
+    "hasFuncStart"
+  ],
+  "pkg/cypher/function_semantic_validation.go": [
+    "containsInternalFunctionPrefix",
+    "dottedNameParts",
+    "forEachFunctionInvocation",
+    "skipCalledName"
+  ],
+  "pkg/cypher/function_syntax.go": [
+    "lexicalExpressionText"
+  ],
+  "pkg/cypher/functions.go": [
+    "isSimpleIdentifierOrProperty",
+    "splitPostfixPropertyAccess"
+  ],
+  "pkg/cypher/functions_eval_functions.go": [
+    "evaluateExpressionWithContextFullFunctions"
+  ],
+  "pkg/cypher/functions_parse.go": [
+    "canonicalCallableName",
+    "functionNameStartsAt",
+    "inspectFunctionCall"
+  ],
+  "pkg/cypher/group_by_rewrite.go": [
+    "enclosingClose",
+    "groupByEdit",
+    "projectionWords",
+    "replaceWholeExpression"
+  ],
+  "pkg/cypher/helpers.go": [
+    "findMultiWordKeywordIndex",
+    "inspectOutsideStrings",
+    "startsWithKeywords"
+  ],
+  "pkg/cypher/identifier_unquote.go": [
+    "isPatternVariableName",
+    "scanSymbolicName",
+    "unquoteBacktickIdentifier"
+  ],
+  "pkg/cypher/keyword_scan.go": [
+    "aliasKeywordAt",
+    "clauseKeywordNamedByContext",
+    "cutDistinct",
+    "extractDelimitedSection",
+    "firstKeywordIndexFromDefault",
+    "followedByTimeZone",
+    "hasOwnStatementSyntax",
+    "inPatternClause",
+    "indexASCIIFold",
+    "isNameableClauseKeyword",
+    "isOperatorWith",
+    "isParameterStart",
+    "keywordBoundaryOK",
+    "keywordIndexFrom",
+    "keywordMatchAt",
+    "lastLiveByte",
+    "leadingShellCommandsEnd",
+    "lowerASCII",
+    "nameContinuesExpression",
+    "parseIdentifierToken",
+    "prevWordStart",
+    "queryCommentEnd",
+    "queryGapEnd",
+    "queryMayNeedCanonicalRewrite",
+    "queryWhitespaceAt",
+    "rawWordBefore",
+    "readCanonicalQueryText",
+    "scanCypherQuotedText",
+    "skipCypherLexicalToken",
+    "startsWithClauseAfterDistinct",
+    "startsWithClauseAfterName",
+    "startsWithKeywordFold",
+    "stripCommentText",
+    "trimKeywordWSBounds",
+    "upperASCII",
+    "wholeTokenAt",
+    "wordIsName"
+  ],
+  "pkg/cypher/knowledgepolicy_ddl.go": [
+    "kpScanBraceBlock",
+    "kpScanDecimal",
+    "kpScanQuotedString",
+    "kpSkipSpaces",
+    "parseBindingApplyBlock",
+    "parseForTarget",
+    "parsePolicyWhenClause",
+    "parsePropertyRuleDirectives",
+    "scanOptionValue",
+    "scanToNextStatement"
+  ],
+  "pkg/cypher/label_chain.go": [
+    "eachChainItem",
+    "indexByteOutsideBackticks",
+    "scanQuotedName",
+    "strictNodeHeadLabels"
+  ],
+  "pkg/cypher/label_expression.go": [
+    "hasLabelExpressionOperator",
+    "labelExpressionBarAt",
+    "parseUnary",
+    "skipSpaces"
+  ],
+  "pkg/cypher/label_expression_rewrite.go": [
+    "clauseKeywordStart",
+    "clauses",
+    "comprehension",
+    "declaredPatternVariables",
+    "element",
+    "elementWhereIndex",
+    "expression",
+    "foreach",
+    "labelTest",
+    "labelTestWordStart",
+    "mayReadPatternInPropertyMap",
+    "mayTestExpressionLabels",
+    "mayUseLabelExpressions",
+    "mayUsePatternPredicate",
+    "nameSingleNodePaths",
+    "opensSubquery",
+    "parenthesised",
+    "patternElements",
+    "readLabelISOperand",
+    "readsPatternVariable",
+    "relationshipChainEnd",
+    "samePatternMapReads",
+    "skipASCIISpaces",
+    "startsPathAssignment",
+    "topLevelByteIndex",
+    "trimRightIndex",
+    "writeItemHead"
+  ],
+  "pkg/cypher/list_literal.go": [
+    "isListLiteral"
+  ],
+  "pkg/cypher/literal_normalization.go": [
+    "normalizeLiteralText"
+  ],
+  "pkg/cypher/logical_operators.go": [
+    "logicalNotOperand",
+    "mayBeLogicalExpression"
+  ],
+  "pkg/cypher/map_literal_validation.go": [
+    "at",
+    "subqueryBraceBodyStartsLikeClause",
+    "subqueryExpressionAfterLiveByte",
+    "subqueryExpressionKeywordBeforeBrace",
+    "validateStaticMapKeys"
+  ],
+  "pkg/cypher/map_pattern_context.go": [
+    "insidePatternDelimiter",
+    "newMapPatternContext",
+    "scope"
+  ],
+  "pkg/cypher/match.go": [
+    "extractFuncInner"
+  ],
+  "pkg/cypher/match_index_seek.go": [
+    "splitTopLevelAndConjuncts",
+    "topLevelEqualsIndex",
+    "tryRewriteNullNormalizedPredicate",
+    "unwrapOuterParens",
+    "whereLabelDisjunction"
+  ],
+  "pkg/cypher/match_multi.go": [
+    "countKeywordOccurrences",
+    "isSimpleIdentifierCartesian",
+    "parseCartesianVarPropOffset"
+  ],
+  "pkg/cypher/match_rows.go": [
+    "substituteWithWhereLabelTests"
+  ],
+  "pkg/cypher/match_semantic_validation.go": [
+    "maskNestedScopeBodies",
+    "maskPatternComprehensions",
+    "projectionAliasError",
+    "projectionItemTermError",
+    "simpleSemanticIdentifier",
+    "validateExpressionPatternBindings",
+    "variableLengthRelationshipVariableSet",
+    "withPatternComprehensionBindings"
+  ],
+  "pkg/cypher/match_with_rel.go": [
+    "evaluateExpressionFromValuesResult"
+  ],
+  "pkg/cypher/merge_actions.go": [
+    "directedMergePath",
+    "mergePathSegments"
+  ],
+  "pkg/cypher/merge_semantic_validation.go": [
+    "mergePatternContainsNullProperty",
+    "mergePatternUsesParameterPredicate"
+  ],
+  "pkg/cypher/node_helpers.go": [
+    "extractVarName"
+  ],
+  "pkg/cypher/normalization_predicate.go": [
+    "lastPredicateWord"
+  ],
+  "pkg/cypher/numeric_expression_admission.go": [
+    "numericExpressionAccepted"
+  ],
+  "pkg/cypher/numeric_literal_rewrite.go": [
+    "canonicalizeNumericLiterals",
+    "groupedNumericLiteralEnd",
+    "mayHaveGroupedNumericLiteral",
+    "numericLiteralStartsAt"
+  ],
+  "pkg/cypher/numeric_literal_validation.go": [
+    "isASCIIDigit",
+    "numericLiteralHasUnaryMinus",
+    "validateNumericLiteralAt",
+    "validateNumericLiterals"
+  ],
+  "pkg/cypher/operators.go": [
+    "bracketDepthAt",
+    "enclosingCaseBlockEnd",
+    "equalFoldASCII",
+    "findTopLevelOperator",
+    "hasKeywordPrefixFoldASCII",
+    "operatorMatchesAt",
+    "splitAtOperator"
+  ],
+  "pkg/cypher/optional_match_traversal.go": [
+    "extractRelationshipVariables",
+    "parseOptionalClauseEndpoints"
+  ],
+  "pkg/cypher/optional_match_traversal_agg.go": [
+    "findAggregateSpans",
+    "subqueryExpressionEnd"
+  ],
+  "pkg/cypher/optional_match_traversal_general.go": [
+    "scanOptionalPatternShape"
+  ],
+  "pkg/cypher/parameters.go": [
+    "escapeCypherStringLiteral",
+    "nextUnquotedDollar",
+    "replaceParameterReferences",
+    "resolveValueReference",
+    "scanParameterReferences",
+    "skipQuotedText",
+    "statementMissingParameters"
+  ],
+  "pkg/cypher/parser.go": [
+    "tokenizeSource"
+  ],
+  "pkg/cypher/path_selector.go": [
+    "finish",
+    "hasUnboundedRepetition",
+    "hasVariableLengthRelationship",
+    "matchModeAt",
+    "mayUseParenthesisedPath",
+    "mayUsePathPatternPrefix",
+    "parenthesisedPathWhere",
+    "pathPrefixes",
+    "plainParenthesisedPath",
+    "scanPathPatternPrefix",
+    "writePatternSelectorError"
+  ],
+  "pkg/cypher/path_selector_match.go": [
+    "splitPathSelectorTerm"
+  ],
+  "pkg/cypher/path_selector_search.go": [
+    "parsePathPatternItemsContext",
+    "parsePathPatternRelationship",
+    "pathLengthBoundOf",
+    "readsPatternVariable",
+    "topLevelOperatorIndex"
+  ],
+  "pkg/cypher/pattern_comprehension_classification.go": [
+    "classifyPatternComprehensions",
+    "mayHavePatternComprehension",
+    "relationshipPatternFollows"
+  ],
+  "pkg/cypher/pattern_expression.go": [
+    "evaluatePatternPredicateValue",
+    "splitPatternComprehension"
+  ],
+  "pkg/cypher/pattern_parser.go": [
+    "looksLikeFunctionCall"
+  ],
+  "pkg/cypher/pattern_row.go": [
+    "compilePatternRow"
+  ],
+  "pkg/cypher/pipeline_aggregate_stream.go": [
+    "cartesianAggregateProperty"
+  ],
+  "pkg/cypher/pipeline_clause_effects.go": [
+    "pipelineEffectVisitor"
+  ],
+  "pkg/cypher/pipeline_executor.go": [
+    "findAllTopLevelPipelineKeywordPositions",
+    "keywordsBefore",
+    "normalizePipelineWhitespace",
+    "replaceQualifiedReferenceOutsideQuotesUnless"
+  ],
+  "pkg/cypher/pipeline_procedure_call.go": [
+    "pipelineProcedureCallsAreClauses"
+  ],
+  "pkg/cypher/pipeline_projection.go": [
+    "aggregateCallKey",
+    "stripExpressionWhitespace"
+  ],
+  "pkg/cypher/pipeline_row_stream.go": [
+    "compilePipelineNodeMatchSource"
+  ],
+  "pkg/cypher/pipeline_shared_clauses.go": [
+    "cypherGrammarVersion",
+    "parsePipelineIteration",
+    "parsePipelineLet"
+  ],
+  "pkg/cypher/pipeline_value_helpers.go": [
+    "parseIntFast"
+  ],
+  "pkg/cypher/pipeline_write_stretch.go": [
+    "addStretchMapKeys"
+  ],
+  "pkg/cypher/procedure_call_parsing.go": [
+    "findMatchingCallParen"
+  ],
+  "pkg/cypher/procedure_privileges.go": [
+    "unquoteProcedureGlob"
+  ],
+  "pkg/cypher/procedure_registry.go": [
+    "callsUserProcedure"
+  ],
+  "pkg/cypher/projection_item_source.go": [
+    "readProjectionItemSource"
+  ],
+  "pkg/cypher/property_access_semantic_validation.go": [
+    "namespacedCallFollows",
+    "parameterMayRejectPropertyAccess",
+    "propertyAccessFollows",
+    "scanPropertyAccesses"
+  ],
+  "pkg/cypher/quantified_path_pattern.go": [
+    "elementPredicateSpans",
+    "lastNodePatternStart",
+    "nameChainEnds",
+    "parenthesisedPathAt",
+    "parseQuantifiedPathMatch",
+    "quantifiedGroupFrom",
+    "quantifiedGroups"
+  ],
+  "pkg/cypher/quantifier_semantic_validation.go": [
+    "quantifierPredicateRequiresNumbers",
+    "validateStaticQuantifierTypes"
+  ],
+  "pkg/cypher/query_info.go": [
+    "appendPatternPropertyExpressions",
+    "containsKeyword",
+    "eachPatternElement",
+    "setItemKeepsMergeKey"
+  ],
+  "pkg/cypher/query_patterns.go": [
+    "countRelationshipPatterns",
+    "edgeAggregationProperty",
+    "extractNodeVariables",
+    "extractRelationshipType",
+    "extractRelationshipVariable",
+    "functionCallParenAt",
+    "splitEdgeAggregationCall"
+  ],
+  "pkg/cypher/query_structure_rewrite.go": [
+    "mayUseQueryStructure",
+    "skipBackSpaces",
+    "subqueries",
+    "topLevelWords",
+    "unionParts"
+  ],
+  "pkg/cypher/quoted_variables.go": [
+    "isBacktickQuotedName",
+    "isOneSymbolicName",
+    "isPlainVariableName",
+    "symbolicNameValue"
+  ],
+  "pkg/cypher/range_semantics.go": [
+    "namedFunctionArguments"
+  ],
+  "pkg/cypher/redaction.go": [
+    "redactLexCheckedContext",
+    "redactLiteralsContext"
+  ],
+  "pkg/cypher/reduce_form.go": [
+    "parseReduceForm"
+  ],
+  "pkg/cypher/relationship_brackets.go": [
+    "patternHasRelationship",
+    "readRelationshipBracket"
+  ],
+  "pkg/cypher/relationship_declaration.go": [
+    "addType",
+    "blankRelationshipExpressions",
+    "relationshipDeclarationOf"
+  ],
+  "pkg/cypher/relationship_quantifier_rewrite.go": [
+    "blankQuotedText",
+    "indexOutsideQuotes",
+    "mayUseRelationshipQuantifier"
+  ],
+  "pkg/cypher/relationship_variable_repeat.go": [
+    "relationshipVariableAt",
+    "repeatedRelationshipVariables"
+  ],
+  "pkg/cypher/repeatable_elements.go": [
+    "stripRepeatableElements"
+  ],
+  "pkg/cypher/result_columns_projection.go": [
+    "tryFlatReturnProjection"
+  ],
+  "pkg/cypher/result_restoration.go": [
+    "restore",
+    "value"
+  ],
+  "pkg/cypher/return_order_semantic_validation.go": [
+    "canonicalSemanticExpression",
+    "containsFunctionCallNamed",
+    "forEachSemanticExpressionReference",
+    "maskSemanticBraceBodies",
+    "qualifiedFunctionNameEnd"
+  ],
+  "pkg/cypher/reveal.go": [
+    "hasRevealCall"
+  ],
+  "pkg/cypher/row_expression.go": [
+    "containsRelationshipPattern",
+    "findListComprehensionToken",
+    "isQualifiedFunctionCall",
+    "nextRowPropertySeparator",
+    "rowArithmeticSignIsUnary",
+    "splitRowArithmeticTier",
+    "stripEnclosingExpressionParentheses",
+    "stripEnclosingRowDelimiter"
+  ],
+  "pkg/cypher/row_map_projection.go": [
+    "mapProjectionSplit"
+  ],
+  "pkg/cypher/row_property_chain.go": [
+    "rowPropertyChainShape"
+  ],
+  "pkg/cypher/row_subscript_validation.go": [
+    "isRowReceiverIdentifierAt",
+    "quotedRowReceiverStart",
+    "rowSubscriptReceiverStart",
+    "validateStaticPropertySubscripts"
+  ],
+  "pkg/cypher/runtime_type_errors.go": [
+    "expressionTextAccepted"
+  ],
+  "pkg/cypher/schema.go": [
+    "extractVectorOptionValue",
+    "parseDomainValueList",
+    "parseDropSchemaName",
+    "parseFulltextRelationshipTypes"
+  ],
+  "pkg/cypher/schema_contracts.go": [
+    "parseCurlySection",
+    "splitConstraintContractEntries"
+  ],
+  "pkg/cypher/schema_lookup_index.go": [
+    "cutSchemaName"
+  ],
+  "pkg/cypher/semantic_validation.go": [
+    "containsIllegalProjectedPatternExpression",
+    "containsMalformedCreateClauseToken",
+    "hasUnexpectedIdentifierAfterNumber",
+    "invalidAggregationInListComprehension",
+    "maskPathFunctionCalls",
+    "maskPredicatePatterns",
+    "patternInBooleanPosition",
+    "trailingIdentifier",
+    "validateCallSubqueryScopes",
+    "validateSemanticScopes"
+  ],
+  "pkg/cypher/set_helpers.go": [
+    "hasConcatOperator"
+  ],
+  "pkg/cypher/set_merge_strict.go": [
+    "forEachMapEntry"
+  ],
+  "pkg/cypher/set_semantic_validation.go": [
+    "expressionFreeVariables",
+    "expressionLocalBindings",
+    "trailingWordAfterOperand"
+  ],
+  "pkg/cypher/shell_commands.go": [
+    "consumeShellMapCommand"
+  ],
+  "pkg/cypher/shortest_path.go": [
+    "extractShortestPathCall"
+  ],
+  "pkg/cypher/shortest_path_match.go": [
+    "parseShortestPathMatch",
+    "shortestPathEndpointPatterns",
+    "shortestPathExpressionError",
+    "shortestPathPatternError",
+    "validateShortestCallBindings"
+  ],
+  "pkg/cypher/show_admin.go": [
+    "undefinedVariableError"
+  ],
+  "pkg/cypher/source_normalization.go": [
+    "sourceWhitespaceExtent"
+  ],
+  "pkg/cypher/standalone_order_rewrite.go": [
+    "scanStandaloneOrderClauses",
+    "scanStandaloneOrderContainers",
+    "standaloneClausePosition",
+    "standaloneKeyword"
+  ],
+  "pkg/cypher/statement_caches.go": [
+    "cacheDependencyScopes"
+  ],
+  "pkg/cypher/statement_framing.go": [
+    "explainProfileConflict",
+    "firstWordUpper",
+    "readTrailingFinish",
+    "stripCypherPreamble",
+    "stripUnionBranchFinishes",
+    "topLevelUnionCut",
+    "validateCypherPreamble",
+    "validateStatementFraming"
+  ],
+  "pkg/cypher/statement_text_admission.go": [
+    "ValidateStatementText",
+    "executionModePrefix",
+    "executionModeStatement",
+    "readExecutionModes",
+    "readQueryGap",
+    "statementExecutionModes",
+    "unclosedCommentError"
+  ],
+  "pkg/cypher/static_function_argument_types.go": [
+    "checkReduceForm",
+    "forEachStaticFunctionArgument",
+    "parameterMayBeFunctionArgument",
+    "precededByTypeAnnotation",
+    "staticMemberAccessBase",
+    "unwindParameterBindings",
+    "validateStaticFunctionParameters"
+  ],
+  "pkg/cypher/static_function_literal_arguments.go": [
+    "visitStaticMapLiteralKeys"
+  ],
+  "pkg/cypher/static_operand.go": [
+    "staticLiteralType"
+  ],
+  "pkg/cypher/static_operator_types.go": [
+    "checkAtom",
+    "derive",
+    "endsWithKeywordFold",
+    "endsWithOperand",
+    "forEachClauseOperatorExpression",
+    "infixKeywordIndex",
+    "maskCaseBlocks",
+    "maskMapProjections",
+    "parameterMayMismatchOperator",
+    "staticMapProjectionReceiver",
+    "staticPostfixSplit",
+    "staticSubqueryExpressionOperand",
+    "unaryPlusAt",
+    "withoutUnaryPlus"
+  ],
+  "pkg/cypher/string_literal.go": [
+    "isWholeCypherQuotedString",
+    "parseUnicodeEscape"
+  ],
+  "pkg/cypher/string_patterns.go": [
+    "ExtractParameters",
+    "FindKeywordIndex",
+    "SplitByCreate",
+    "SplitByKeyword",
+    "decimalAfterKeyword"
+  ],
+  "pkg/cypher/subquery_value_expression.go": [
+    "containsIdentifierWord",
+    "findSubqueryExpressions",
+    "parseBoundNodeShape",
+    "patternMapsAreConstantText",
+    "rowSubqueryAtom",
+    "subqueryExpressionKeywordAt"
+  ],
+  "pkg/cypher/syntax_unicode_validation.go": [
+    "isUnquotedName",
+    "validateUnicodeOperators"
+  ],
+  "pkg/cypher/temporal_values.go": [
+    "containsStatementClockCall"
+  ],
+  "pkg/cypher/transaction.go": [
+    "bareTransactionCommand"
+  ],
+  "pkg/cypher/traversal.go": [
+    "normalizeAnonymousTraversalRelationships",
+    "readChainedTraversalPattern",
+    "readTraversalPatternStateMachine"
+  ],
+  "pkg/cypher/traversal_endpoint_analysis.go": [
+    "traversalBareVariableInSafeCall",
+    "traversalCallNameIsSafe",
+    "traversalVariablePropertiesRead"
+  ],
+  "pkg/cypher/type_predicate.go": [
+    "maskTypePredicateTypes",
+    "splitTopLevelTypeUnion",
+    "typedFollowsIs"
+  ],
+  "pkg/cypher/unwind_multi_match_create.go": [
+    "parseSimpleCreateNode",
+    "parseSimpleMatchPattern",
+    "referencesUnwindBinding"
+  ],
+  "pkg/cypher/unwind_relationship_merge_batch.go": [
+    "appendRelationshipBatchScalarKeyValue",
+    "parseRelationshipBatchVectorSetters"
+  ],
+  "pkg/cypher/unwind_routing.go": [
+    "prepareTopLevelUnwind"
+  ],
+  "pkg/cypher/validator_strictness.go": [
+    "containsNotInOperator",
+    "containsTrailingListComma",
+    "forIterationClauseAt",
+    "hasAdjacentStringLiterals",
+    "lastTopLevelClauseWord",
+    "nextSignificantWords",
+    "previousSignificantWord",
+    "validateExpressionLexicalTokens"
+  ],
+  "pkg/cypher/vector_call_rewrite.go": [
+    "isBareName",
+    "mayUseVectorCall",
+    "vectorCall"
+  ],
+  "pkg/cypher/where_by_variable.go": [
+    "hasPatternOrSubquery"
+  ],
+  "pkg/fabric/executor.go": [
+    "firstToken",
+    "indexTopLevelKeyword",
+    "lastAsIndexFold",
+    "lastKeywordIndexFold",
+    "nextTopLevelClause",
+    "parseSimplePositiveInt",
+    "replaceStandaloneVar",
+    "skipLeadingSpace",
+    "splitTopLevelAnd",
+    "splitTopLevelCSV",
+    "splitTopLevelEquality",
+    "splitTopLevelResultModifiers"
+  ],
+  "pkg/fabric/planner.go": [
+    "callBodyReturns",
+    "containsFold",
+    "extractTopLevelCallBlocks",
+    "findMatchingBrace",
+    "hasTopLevelReturnClause",
+    "keywordAt",
+    "queryIsWrite",
+    "splitTopLevelUnion",
+    "trailingWithAliases"
+  ],
+  "pkg/fabric/use_clause.go": [
+    "ReadUseClause",
+    "doubleQuoteStringLiterals",
+    "inputToken",
+    "leadingWords",
+    "matchingParen",
+    "scanWord",
+    "skipSpacesAndComments",
+    "splitAtTopLevelUse",
+    "startsWithWordFold",
+    "statementsAfter"
+  ],
+  "pkg/knowledgepolicy/on_access_runtime.go": [
+    "next"
+  ],
+  "pkg/localization/projected_error.go": [
+    "As",
+    "ProjectError"
+  ],
+  "pkg/multidb/manager.go": [
+    "GetStorageSize"
+  ],
+  "pkg/nornicdb/db.go": [
+    "maybeEnableReplication"
+  ],
+  "pkg/observability/credential_text.go": [],
+  "pkg/observability/redaction_display.go": [
+    "forEachCredentialURL"
+  ],
+  "pkg/qdrantgrpc/snapshots_service.go": [
+    "Create",
+    "CreateFull"
+  ],
+  "pkg/replication/storage_adapter.go": [
+    "NewStorageAdapter",
+    "NewStorageAdapterWithWAL"
+  ],
+  "pkg/server/server_helpers.go": [
+    "canAccessGraph",
+    "databaseReadTargets",
+    "graphAccess",
+    "principalAccess"
+  ],
+  "pkg/storage/badger_nodes.go": [
+    "UpdateNode"
+  ],
+  "pkg/storage/badger_serialization.go": [
+    "encode"
+  ],
+  "pkg/storage/constraint_contracts.go": [
+    "ccScanLabels",
+    "ccScanNodeContents",
+    "ccSkipSpaces",
+    "parseConstraintPattern",
+    "parseCountPatternExpression",
+    "parseNotExistsPatternExpression",
+    "splitTopLevelCSV"
+  ],
+  "pkg/storage/namespaced.go": [
+    "CreateEdge",
+    "CreateNode",
+    "UpdateEdge",
+    "UpdateNode"
+  ],
+  "pkg/storage/remote_parameters.go": [
+    "remoteHTTPRewrite"
+  ],
+  "pkg/storage/snapshot_collection.go": [
+    "writeSnapshotCollection",
+    "writeSnapshotRecords"
+  ],
+  "pkg/storage/snapshot_stream.go": [
+    "SaveStreamingSnapshot",
+    "WriteSnapshot",
+    "write"
+  ],
+  "pkg/storage/wal.go": [
+    "SaveSnapshot",
+    "saveSnapshot"
+  ],
+  "pkg/storage/wal_engine.go": [
+    "EnableAutoCompaction",
+    "autoSnapshotLoop",
+    "createSnapshotAndCompact"
+  ],
+  "ui/src/store/appStore.ts": [],
+  "ui/src/utils/cypherStatements.ts": [],
+  "ui/src/utils/cypherText.mjs": []
+}

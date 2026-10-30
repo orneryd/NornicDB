@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#d4a017"/>
+      <stop offset="100%" style="stop-color:#b8860b"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Helmet silhouette -->
+  <path d="M 12 28 
+           Q 10 20 12 14 
+           Q 14 8 20 6 
+           Q 26 8 28 14 
+           Q 30 20 28 28
+           Q 25 31 20 32
+           Q 15 31 12 28"
+        fill="#1e3a5f"/>
+  
+  <!-- Helmet crest -->
+  <path d="M 20 5 L 20 9"
+        fill="none" stroke="#1e3a5f" stroke-width="3" stroke-linecap="round"/>
+  
+  <!-- Helmet wings -->
+  <path d="M 10 13 Q 6 10 4 6"
+        fill="none" stroke="#1e3a5f" stroke-width="2" stroke-linecap="round"/>
+  <path d="M 30 13 Q 34 10 36 6"
+        fill="none" stroke="#1e3a5f" stroke-width="2" stroke-linecap="round"/>
+  
+  <!-- All-Seeing Eye -->
+  <ellipse cx="20" cy="18" rx="6" ry="4" fill="none" stroke="url(#goldGrad)" stroke-width="1.5"/>
+  <circle cx="20" cy="18" r="3" fill="url(#goldGrad)"/>
+  <circle cx="20" cy="18" r="1.5" fill="#1e3a5f"/>
+  
+  <!-- Sight rays -->
+  <line x1="27" y1="17" x2="32" y2="16" stroke="url(#goldGrad)" stroke-width="1" opacity="0.5"/>
+  <line x1="13" y1="17" x2="8" y2="16" stroke="url(#goldGrad)" stroke-width="1" opacity="0.5"/>
+  
+  <!-- Gjallarhorn -->
+  <path d="M 32 22 Q 35 19 36 14"
+        fill="none" stroke="#1e3a5f" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="36" cy="14" r="1.5" fill="url(#goldGrad)"/>
+</svg>

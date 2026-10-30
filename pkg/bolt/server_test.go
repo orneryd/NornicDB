@@ -1,0 +1,2505 @@
+// Package bolt tests for the Bolt protocol server.
+package bolt
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"io"
+	"net"
+	"testing"
+	"time"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// mockExecutor implements QueryExecutor for testing.
+type mockExecutor struct {
+	executeFunc func(ctx context.Context, query string, params map[string]any) (*QueryResult, error)
+}
+
+func (m *mockExecutor) Execute(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+	if m.executeFunc != nil {
+		return m.executeFunc(ctx, query, params)
+	}
+	return &QueryResult{
+		Columns: []string{"n"},
+		Rows:    [][]any{{"test"}},
+	}, nil
+}
+
+type mockDBManager struct {
+	stores    map[string]storage.Engine
+	defaultDB string
+	lastGetDB string
+	lastAuth  string
+	getCalls  int
+}
+
+func (m *mockDBManager) GetStorage(name string) (storage.Engine, error) {
+	m.lastGetDB = name
+	m.getCalls++
+	if s, ok := m.stores[name]; ok {
+		return s, nil
+	}
+	return nil, io.EOF
+}
+
+func (m *mockDBManager) GetStorageWithAuth(name string, authToken string) (storage.Engine, error) {
+	m.lastGetDB = name
+	m.lastAuth = authToken
+	return m.GetStorage(name)
+}
+
+func (m *mockDBManager) Exists(name string) bool {
+	_, ok := m.stores[name]
+	return ok
+}
+
+func (m *mockDBManager) DefaultDatabaseName() string {
+	return m.defaultDB
+}
+
+func TestDefaultConfig(t *testing.T) {
+	config := DefaultConfig()
+
+	if config.Host != "127.0.0.1" {
+		t.Errorf("expected host 127.0.0.1, got %q", config.Host)
+	}
+	if config.Port != 7687 {
+		t.Errorf("expected port 7687, got %d", config.Port)
+	}
+	if config.MaxConnections != 100 {
+		t.Errorf("expected 100 max connections, got %d", config.MaxConnections)
+	}
+	if config.ReadBufferSize != 8192 {
+		t.Errorf("expected 8192 read buffer, got %d", config.ReadBufferSize)
+	}
+	if config.WriteBufferSize != 64*1024 {
+		t.Errorf("expected 64KiB write buffer, got %d", config.WriteBufferSize)
+	}
+}
+
+func TestNew(t *testing.T) {
+	t.Run("with config", func(t *testing.T) {
+		config := &Config{
+			Port:           7688,
+			MaxConnections: 50,
+		}
+		executor := &mockExecutor{}
+		server := New(config, executor)
+
+		if server.config.Port != 7688 {
+			t.Errorf("expected port 7688, got %d", server.config.Port)
+		}
+	})
+
+	t.Run("with nil config", func(t *testing.T) {
+		executor := &mockExecutor{}
+		server := New(nil, executor)
+
+		if server.config.Port != 7687 {
+			t.Error("should use default config")
+		}
+	})
+}
+
+func TestServerClose(t *testing.T) {
+	server := New(nil, &mockExecutor{})
+
+	// Close without starting should not error
+	if err := server.Close(); err != nil {
+		t.Errorf("Close() without listener should not error: %v", err)
+	}
+}
+
+func TestMessageTypes(t *testing.T) {
+	// Verify message type constants
+	tests := []struct {
+		name     string
+		msgType  byte
+		expected byte
+	}{
+		{"Hello", MsgHello, 0x01},
+		{"Goodbye", MsgGoodbye, 0x02},
+		{"Reset", MsgReset, 0x0F},
+		{"Run", MsgRun, 0x10},
+		{"Discard", MsgDiscard, 0x2F},
+		{"Pull", MsgPull, 0x3F},
+		{"Begin", MsgBegin, 0x11},
+		{"Commit", MsgCommit, 0x12},
+		{"Rollback", MsgRollback, 0x13},
+		{"Route", MsgRoute, 0x66},
+		{"Success", MsgSuccess, 0x70},
+		{"Record", MsgRecord, 0x71},
+		{"Ignored", MsgIgnored, 0x7E},
+		{"Failure", MsgFailure, 0x7F},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.msgType != tt.expected {
+				t.Errorf("expected 0x%02X, got 0x%02X", tt.expected, tt.msgType)
+			}
+		})
+	}
+}
+
+func TestProtocolVersions(t *testing.T) {
+	// Verify protocol version constants
+	tests := []struct {
+		name    string
+		version int
+		major   int
+		minor   int
+	}{
+		{"Bolt 4.4", BoltV4_4, 4, 4},
+		{"Bolt 4.3", BoltV4_3, 4, 3},
+		{"Bolt 4.2", BoltV4_2, 4, 2},
+		{"Bolt 4.1", BoltV4_1, 4, 1},
+		{"Bolt 4.0", BoltV4_0, 4, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			major := (tt.version >> 8) & 0xFF
+			minor := tt.version & 0xFF
+			if major != tt.major || minor != tt.minor {
+				t.Errorf("expected %d.%d, got %d.%d", tt.major, tt.minor, major, minor)
+			}
+		})
+	}
+}
+
+// mockConn implements net.Conn for testing.
+type mockConn struct {
+	readData  []byte
+	readPos   int
+	writeData []byte
+	closed    bool
+}
+
+func (m *mockConn) Read(b []byte) (n int, err error) {
+	if m.readPos >= len(m.readData) {
+		return 0, io.EOF
+	}
+	n = copy(b, m.readData[m.readPos:])
+	m.readPos += n
+	return n, nil
+}
+
+func (m *mockConn) Write(b []byte) (n int, err error) {
+	m.writeData = append(m.writeData, b...)
+	return len(b), nil
+}
+
+func (m *mockConn) Close() error {
+	m.closed = true
+	return nil
+}
+
+func (m *mockConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
+func (m *mockConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
+func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
+
+// newTestSession creates a properly initialized Session for testing.
+// This ensures reader and writer are set up correctly, and includes a server reference
+// for bookmark generation and validation.
+func newTestSession(conn net.Conn, executor QueryExecutor) *Session {
+	server := &Server{
+		txSequence: 0,               // Initialize transaction sequence
+		config:     DefaultConfig(), // Initialize with default config
+	}
+	return &Session{
+		conn:       conn,
+		reader:     bufio.NewReaderSize(conn, 8192),
+		writer:     bufio.NewWriterSize(conn, 8192),
+		server:     server,
+		executor:   executor,
+		messageBuf: make([]byte, 0, 4096),
+	}
+}
+
+func buildHelloMessageWithPatchBolt(extra map[string]any) []byte {
+	buf := []byte{0xB1, MsgHello}
+	if extra == nil {
+		extra = map[string]any{}
+	}
+	return append(buf, encodePackStreamMap(extra)...)
+}
+
+func TestSessionHandshake(t *testing.T) {
+	t.Run("valid handshake", func(t *testing.T) {
+		// Bolt magic: 0x6060B017
+		// Then 4 version proposals (each 4 bytes)
+		handshakeData := []byte{
+			0x60, 0x60, 0xB0, 0x17, // Magic
+			0x00, 0x00, 0x04, 0x04, // Version 4.4
+			0x00, 0x00, 0x04, 0x03, // Version 4.3
+			0x00, 0x00, 0x04, 0x02, // Version 4.2
+			0x00, 0x00, 0x04, 0x01, // Version 4.1
+		}
+
+		conn := &mockConn{readData: handshakeData}
+		session := newTestSession(conn, &mockExecutor{})
+
+		err := session.handshake()
+		if err != nil {
+			t.Fatalf("handshake() error = %v", err)
+		}
+
+		if session.version != BoltV4_4 {
+			t.Errorf("expected version %d, got %d", BoltV4_4, session.version)
+		}
+
+		// Check response was sent
+		if len(conn.writeData) != 4 {
+			t.Errorf("expected 4 bytes written, got %d", len(conn.writeData))
+		}
+	})
+
+	t.Run("invalid magic", func(t *testing.T) {
+		handshakeData := []byte{
+			0x00, 0x00, 0x00, 0x00, // Invalid magic
+			0x00, 0x00, 0x04, 0x04,
+			0x00, 0x00, 0x04, 0x03,
+			0x00, 0x00, 0x04, 0x02,
+			0x00, 0x00, 0x04, 0x01,
+		}
+
+		conn := &mockConn{readData: handshakeData}
+		session := newTestSession(conn, nil)
+
+		err := session.handshake()
+		if err == nil {
+			t.Error("expected error for invalid magic")
+		}
+	})
+}
+
+func TestSessionSendChunk(t *testing.T) {
+	conn := &mockConn{}
+	session := newTestSession(conn, nil)
+
+	data := []byte{MsgSuccess, 0xA0} // Success + empty map marker
+	err := session.sendChunk(data)
+	if err != nil {
+		t.Fatalf("sendChunk() error = %v", err)
+	}
+
+	// Should have: header (2) + data + terminator (2)
+	expected := 2 + len(data) + 2
+	if len(conn.writeData) != expected {
+		t.Errorf("expected %d bytes written, got %d", expected, len(conn.writeData))
+	}
+
+	// Check header
+	size := int(conn.writeData[0])<<8 | int(conn.writeData[1])
+	if size != len(data) {
+		t.Errorf("expected size %d, got %d", len(data), size)
+	}
+
+	// Check terminator
+	if conn.writeData[len(conn.writeData)-2] != 0x00 || conn.writeData[len(conn.writeData)-1] != 0x00 {
+		t.Error("expected 0x00 0x00 terminator")
+	}
+}
+
+func TestSessionSendSuccess(t *testing.T) {
+	conn := &mockConn{}
+	session := newTestSession(conn, nil)
+
+	err := session.sendSuccess(map[string]any{
+		"server": "NornicDB",
+	})
+	if err != nil {
+		t.Fatalf("sendSuccess() error = %v", err)
+	}
+
+	// Should have written something
+	if len(conn.writeData) == 0 {
+		t.Error("expected data to be written")
+	}
+}
+
+func TestSessionSendFailure(t *testing.T) {
+	conn := &mockConn{}
+	session := newTestSession(conn, nil)
+
+	err := session.sendFailure("Neo.ClientError.Statement.SyntaxError", "Invalid query")
+	if err != nil {
+		t.Fatalf("sendFailure() error = %v", err)
+	}
+
+	// Should have written something
+	if len(conn.writeData) == 0 {
+		t.Error("expected data to be written")
+	}
+}
+
+func TestSessionSendRecord_TimeEncodingRespectsNegotiatedCompatibility(t *testing.T) {
+	dt := time.Date(2026, 6, 9, 18, 47, 32, 123456789, time.FixedZone("MST", -7*3600))
+
+	t.Run("bolt 4.4 without utc patch uses legacy datetime struct", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSession(conn, nil)
+		session.version = BoltV4_4
+
+		err := session.sendRecord([]any{dt})
+		if err != nil {
+			t.Fatalf("sendRecord() error = %v", err)
+		}
+		if !bytes.Contains(conn.writeData, []byte{0xB3, 0x46}) {
+			t.Fatalf("expected legacy datetime struct B3 46 in wire data, got=%x", conn.writeData)
+		}
+		if bytes.Contains(conn.writeData, []byte{0xB3, 0x49}) {
+			t.Fatalf("did not expect UTC datetime struct B3 49 without negotiated patch, got=%x", conn.writeData)
+		}
+	})
+
+	t.Run("bolt 4.4 with utc patch uses utc datetime struct", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSession(conn, nil)
+		session.version = BoltV4_4
+
+		err := session.handleHello(buildHelloMessageWithPatchBolt(map[string]any{
+			"scheme":     "none",
+			"patch_bolt": []any{"utc"},
+		}))
+		if err != nil {
+			t.Fatalf("handleHello() error = %v", err)
+		}
+		conn.writeData = nil
+
+		err = session.sendRecord([]any{dt})
+		if err != nil {
+			t.Fatalf("sendRecord() error = %v", err)
+		}
+		if !bytes.Contains(conn.writeData, []byte{0xB3, 0x49}) {
+			t.Fatalf("expected UTC datetime struct B3 49 in wire data, got=%x", conn.writeData)
+		}
+	})
+
+	t.Run("bolt 5 and newer use utc datetime structs without patch negotiation", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSession(conn, nil)
+		session.version = 0x0500
+
+		err := session.sendRecord([]any{dt})
+		if err != nil {
+			t.Fatalf("sendRecord() error = %v", err)
+		}
+		if !bytes.Contains(conn.writeData, []byte{0xB3, 0x49}) {
+			t.Fatalf("expected UTC datetime struct B3 49 for Bolt 5+, got=%x", conn.writeData)
+		}
+	})
+}
+
+func TestQueryResult(t *testing.T) {
+	result := &QueryResult{
+		Columns: []string{"name", "age"},
+		Rows: [][]any{
+			{"Alice", 30},
+			{"Bob", 25},
+		},
+	}
+
+	if len(result.Columns) != 2 {
+		t.Error("expected 2 columns")
+	}
+	if len(result.Rows) != 2 {
+		t.Error("expected 2 rows")
+	}
+}
+
+func TestListenAndServe(t *testing.T) {
+	t.Run("start_and_close", func(t *testing.T) {
+		config := &Config{Port: 0, MaxConnections: 10}
+		server := New(config, &mockExecutor{})
+
+		done := make(chan error, 1)
+		go func() {
+			done <- server.ListenAndServe()
+		}()
+
+		// Wait for server to start
+		deadline := time.Now().Add(time.Second)
+		for server.listenerSnapshot() == nil && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+
+		// Close server
+		if err := server.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+
+		// Verify IsClosed
+		if !server.IsClosed() {
+			t.Error("expected server to be closed")
+		}
+
+		select {
+		case <-done:
+			// Server exited properly
+		case <-time.After(500 * time.Millisecond):
+			t.Error("server did not shut down")
+		}
+	})
+
+	t.Run("binds_configured_host", func(t *testing.T) {
+		config := &Config{Host: "127.0.0.1", Port: 0, MaxConnections: 10}
+		server := New(config, &mockExecutor{})
+
+		done := make(chan error, 1)
+		go func() {
+			done <- server.ListenAndServe()
+		}()
+
+		deadline := time.Now().Add(time.Second)
+		for server.listenerSnapshot() == nil && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+
+		listener := server.listenerSnapshot()
+		if listener == nil {
+			t.Fatal("server did not bind")
+		}
+		tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+		if !ok {
+			t.Fatalf("expected TCP listener address, got %T", listener.Addr())
+		}
+		if !tcpAddr.IP.IsLoopback() {
+			t.Fatalf("expected loopback bind address, got %v", tcpAddr.IP)
+		}
+
+		if err := server.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("server did not shut down")
+		}
+	})
+
+	t.Run("listen_error", func(t *testing.T) {
+		// Try to listen on an invalid port
+		config := &Config{Port: -1}
+		server := New(config, &mockExecutor{})
+
+		err := server.ListenAndServe()
+		if err == nil {
+			t.Error("expected error for invalid port")
+			server.Close()
+		}
+	})
+}
+
+func TestHandleConnection(t *testing.T) {
+	t.Run("connection_with_invalid_handshake", func(t *testing.T) {
+		server := New(nil, &mockExecutor{})
+
+		clientConn, serverConn := net.Pipe()
+		done := make(chan struct{})
+		go func() {
+			server.handleConnection(serverConn)
+			close(done)
+		}()
+
+		// Send invalid handshake (too short)
+		clientConn.Write([]byte{0x00, 0x00})
+		clientConn.Close()
+
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Error("handleConnection should complete on invalid handshake")
+		}
+	})
+
+	t.Run("connection_ends_on_eof", func(t *testing.T) {
+		server := New(nil, &mockExecutor{})
+
+		clientConn, serverConn := net.Pipe()
+
+		done := make(chan struct{})
+		go func() {
+			server.handleConnection(serverConn)
+			close(done)
+		}()
+
+		// Close immediately (EOF)
+		clientConn.Close()
+
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Error("handleConnection should complete on EOF")
+		}
+	})
+
+	t.Run("full_message_flow", func(t *testing.T) {
+		server := New(nil, &mockExecutor{})
+		clientConn, serverConn := net.Pipe()
+
+		done := make(chan struct{})
+		go func() {
+			server.handleConnection(serverConn)
+			close(done)
+		}()
+
+		// Valid handshake
+		handshake := []byte{
+			0x60, 0x60, 0xB0, 0x17,
+			0x00, 0x00, 0x04, 0x04,
+			0x00, 0x00, 0x04, 0x03,
+			0x00, 0x00, 0x04, 0x02,
+			0x00, 0x00, 0x04, 0x01,
+		}
+		clientConn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+		clientConn.Write(handshake)
+
+		// Read version response
+		resp := make([]byte, 4)
+		clientConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		io.ReadFull(clientConn, resp)
+
+		// Just close - we've tested handshake worked
+		clientConn.Close()
+
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Error("handleConnection did not complete")
+		}
+	})
+
+	t.Run("server_closed_during_message_handling", func(t *testing.T) {
+		server := New(nil, &mockExecutor{})
+		clientConn, serverConn := net.Pipe()
+
+		done := make(chan struct{})
+		go func() {
+			server.handleConnection(serverConn)
+			close(done)
+		}()
+
+		go func() {
+			// Valid handshake
+			handshake := []byte{
+				0x60, 0x60, 0xB0, 0x17,
+				0x00, 0x00, 0x04, 0x04,
+				0x00, 0x00, 0x04, 0x03,
+				0x00, 0x00, 0x04, 0x02,
+				0x00, 0x00, 0x04, 0x01,
+			}
+			clientConn.Write(handshake)
+
+			// Read version response
+			resp := make([]byte, 4)
+			io.ReadFull(clientConn, resp)
+
+			// Close server during handling
+			server.Close()
+			clientConn.Close()
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(1 * time.Second):
+			t.Error("handleConnection did not complete when server closed")
+			clientConn.Close()
+		}
+	})
+}
+
+func TestHandleConnection_CancelsBlockingRunOnClientDisconnect(t *testing.T) {
+	queryStarted := make(chan struct{})
+	queryCanceled := make(chan struct{})
+	serverDone := make(chan struct{})
+
+	server := New(nil, &mockExecutor{executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+		close(queryStarted)
+		<-ctx.Done()
+		close(queryCanceled)
+		return nil, ctx.Err()
+	}})
+
+	clientConn, serverConn := net.Pipe()
+	go func() {
+		server.handleConnection(serverConn)
+		close(serverDone)
+	}()
+
+	requireNoError(t, PerformHandshakeWithTesting(t, clientConn))
+	requireNoError(t, SendHello(t, clientConn, nil))
+	requireNoError(t, ReadSuccess(t, clientConn))
+	requireNoError(t, SendRun(t, clientConn, "RETURN 1 AS x", nil, nil))
+
+	select {
+	case <-queryStarted:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("query did not start")
+	}
+
+	requireNoError(t, clientConn.Close())
+
+	select {
+	case <-queryCanceled:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("blocking RUN was not canceled after client disconnect")
+	}
+
+	select {
+	case <-serverDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("connection handler did not exit after client disconnect")
+	}
+}
+
+func TestHandleConnection_ResetCancelsBlockingRun(t *testing.T) {
+	queryStarted := make(chan struct{})
+	queryCanceled := make(chan struct{})
+
+	server := New(nil, &mockExecutor{executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+		close(queryStarted)
+		<-ctx.Done()
+		close(queryCanceled)
+		return nil, ctx.Err()
+	}})
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	go server.handleConnection(serverConn)
+
+	requireNoError(t, PerformHandshakeWithTesting(t, clientConn))
+	requireNoError(t, SendHello(t, clientConn, nil))
+	requireNoError(t, ReadSuccess(t, clientConn))
+	requireNoError(t, SendRun(t, clientConn, "RETURN 1 AS x", nil, nil))
+
+	select {
+	case <-queryStarted:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("query did not start")
+	}
+
+	requireNoError(t, SendReset(t, clientConn))
+
+	select {
+	case <-queryCanceled:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("blocking RUN was not canceled after RESET")
+	}
+
+	requireNoError(t, ReadSuccess(t, clientConn))
+}
+
+func TestIsClosed(t *testing.T) {
+	server := New(nil, &mockExecutor{})
+
+	if server.IsClosed() {
+		t.Error("new server should not be closed")
+	}
+
+	server.Close()
+
+	if !server.IsClosed() {
+		t.Error("server should be closed after Close()")
+	}
+}
+
+func TestSendChunkLargeData(t *testing.T) {
+	t.Run("large data chunking", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSession(conn, nil)
+
+		// Create data that's larger than typical chunk (but still fits)
+		data := make([]byte, 1000)
+		for i := range data {
+			data[i] = byte(i % 256)
+		}
+
+		err := session.sendChunk(data)
+		if err != nil {
+			t.Fatalf("sendChunk() error = %v", err)
+		}
+
+		// Verify header
+		size := int(conn.writeData[0])<<8 | int(conn.writeData[1])
+		if size != 1000 {
+			t.Errorf("expected size 1000, got %d", size)
+		}
+	})
+
+	t.Run("multi-chunk framing (>64KiB)", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSession(conn, nil)
+
+		data := make([]byte, 70000)
+		for i := range data {
+			data[i] = byte(i)
+		}
+
+		if err := session.sendChunk(data); err != nil {
+			t.Fatalf("sendChunk() error = %v", err)
+		}
+
+		// Expected framing:
+		//   [0xFF,0xFF] + 65535 bytes
+		//   [0x11,0x71] + 4465 bytes
+		//   [0x00,0x00] terminator
+		if len(conn.writeData) != (2+65535)+(2+4465)+2 {
+			t.Fatalf("unexpected total length: got=%d", len(conn.writeData))
+		}
+
+		if conn.writeData[0] != 0xFF || conn.writeData[1] != 0xFF {
+			t.Fatalf("first chunk header mismatch: %02x %02x", conn.writeData[0], conn.writeData[1])
+		}
+
+		off := 2 + 65535
+		if conn.writeData[off] != 0x11 || conn.writeData[off+1] != 0x71 {
+			t.Fatalf("second chunk header mismatch: %02x %02x", conn.writeData[off], conn.writeData[off+1])
+		}
+
+		if conn.writeData[len(conn.writeData)-2] != 0x00 || conn.writeData[len(conn.writeData)-1] != 0x00 {
+			t.Fatal("missing terminator chunk")
+		}
+	})
+
+	t.Run("empty data", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSession(conn, nil)
+
+		err := session.sendChunk([]byte{})
+		if err != nil {
+			t.Fatalf("sendChunk() empty data error = %v", err)
+		}
+
+		// Should have header (2) + terminator (2) = 4 bytes
+		if len(conn.writeData) != 4 {
+			t.Errorf("expected 4 bytes for empty chunk, got %d", len(conn.writeData))
+		}
+	})
+}
+
+type errorConn struct {
+	mockConn
+	writeErr error
+	readErr  error
+}
+
+func (e *errorConn) Write(b []byte) (n int, err error) {
+	if e.writeErr != nil {
+		return 0, e.writeErr
+	}
+	return e.mockConn.Write(b)
+}
+
+func (e *errorConn) Read(b []byte) (n int, err error) {
+	if e.readErr != nil {
+		return 0, e.readErr
+	}
+	return e.mockConn.Read(b)
+}
+
+func TestSendChunkWriteError(t *testing.T) {
+	t.Run("write error", func(t *testing.T) {
+		// sendChunk now does single write with consolidated buffer
+		conn := &errorConn{writeErr: io.ErrClosedPipe}
+		session := newTestSession(conn, nil)
+
+		err := session.sendChunk([]byte{0x01})
+		if err == nil {
+			t.Error("expected error when write fails")
+		}
+	})
+
+	t.Run("write succeeds", func(t *testing.T) {
+		// Verify correct format: header (2) + data + terminator (2)
+		var written []byte
+		conn := &sequentialErrorConn{
+			writeFunc: func(b []byte) (int, error) {
+				written = append(written, b...)
+				return len(b), nil
+			},
+		}
+		session := newTestSession(conn, nil)
+
+		err := session.sendChunk([]byte{0xAB, 0xCD})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		// Expected: [0x00, 0x02] (size=2) + [0xAB, 0xCD] (data) + [0x00, 0x00] (terminator)
+		expected := []byte{0x00, 0x02, 0xAB, 0xCD, 0x00, 0x00}
+		if len(written) != len(expected) {
+			t.Errorf("wrong length: got %d, want %d", len(written), len(expected))
+		}
+		for i := range expected {
+			if written[i] != expected[i] {
+				t.Errorf("byte %d: got %02x, want %02x", i, written[i], expected[i])
+			}
+		}
+	})
+}
+
+type sequentialErrorConn struct {
+	mockConn
+	writeFunc func([]byte) (int, error)
+}
+
+func (s *sequentialErrorConn) Write(b []byte) (int, error) {
+	if s.writeFunc != nil {
+		return s.writeFunc(b)
+	}
+	return s.mockConn.Write(b)
+}
+
+func TestServerCloseWithListener(t *testing.T) {
+	config := &Config{Port: 0}
+	server := New(config, &mockExecutor{})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- server.ListenAndServe()
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Close with active listener
+	if err := server.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Error("server did not shut down")
+	}
+}
+
+func TestHandshakeVersionNegotiation(t *testing.T) {
+	t.Run("no matching version", func(t *testing.T) {
+		// Old versions only
+		handshakeData := []byte{
+			0x60, 0x60, 0xB0, 0x17,
+			0x00, 0x00, 0x01, 0x00, // Version 1.0 (unsupported)
+			0x00, 0x00, 0x01, 0x01,
+			0x00, 0x00, 0x01, 0x02,
+			0x00, 0x00, 0x01, 0x03,
+		}
+
+		conn := &mockConn{readData: handshakeData}
+		session := newTestSession(conn, nil)
+
+		err := session.handshake()
+		require.Error(t, err, "no mutually supported Bolt protocol version")
+		require.Equal(t, []byte{0, 0, 0, 0}, conn.writeData,
+			"the protocol-level rejection is four zero bytes before closing")
+	})
+
+	t.Run("read error during handshake", func(t *testing.T) {
+		conn := &errorConn{
+			mockConn: mockConn{readData: []byte{}},
+			readErr:  io.ErrUnexpectedEOF,
+		}
+		session := newTestSession(conn, nil)
+
+		err := session.handshake()
+		if err == nil {
+			t.Error("expected error on read failure")
+		}
+	})
+
+	t.Run("write error during handshake", func(t *testing.T) {
+		handshakeData := []byte{
+			0x60, 0x60, 0xB0, 0x17,
+			0x00, 0x00, 0x04, 0x04,
+			0x00, 0x00, 0x04, 0x03,
+			0x00, 0x00, 0x04, 0x02,
+			0x00, 0x00, 0x04, 0x01,
+		}
+
+		conn := &errorConn{
+			mockConn: mockConn{readData: handshakeData},
+			writeErr: io.ErrClosedPipe,
+		}
+		session := newTestSession(conn, nil)
+
+		err := session.handshake()
+		if err == nil {
+			t.Error("expected error on write failure")
+		}
+	})
+
+	t.Run("read versions error", func(t *testing.T) {
+		// Only magic, no versions
+		handshakeData := []byte{
+			0x60, 0x60, 0xB0, 0x17,
+		}
+
+		conn := &mockConn{readData: handshakeData}
+		session := newTestSession(conn, nil)
+
+		err := session.handshake()
+		if err == nil {
+			t.Error("expected error when versions read fails")
+		}
+	})
+}
+
+func TestHandleMessageReadError(t *testing.T) {
+	conn := &errorConn{readErr: io.ErrUnexpectedEOF}
+	session := newTestSession(conn, nil)
+
+	err := session.handleMessage()
+	if err == nil {
+		t.Error("expected error when read fails")
+	}
+}
+
+func TestHandleMessageDataReadError(t *testing.T) {
+	t.Run("read data error", func(t *testing.T) {
+		// Header says 10 bytes but we only provide header
+		messageData := []byte{
+			0x00, 0x0A, // Size: 10 bytes
+		}
+
+		conn := &mockConn{readData: messageData}
+		session := newTestSession(conn, nil)
+
+		err := session.handleMessage()
+		if err == nil {
+			t.Error("expected error when data read fails")
+		}
+	})
+
+	t.Run("read terminator error", func(t *testing.T) {
+		// Header + data but no terminator
+		messageData := []byte{
+			0x00, 0x01, // Size: 1 byte
+			MsgHello, // Message type
+			// Missing terminator
+		}
+
+		conn := &mockConn{readData: messageData}
+		session := newTestSession(conn, nil)
+
+		err := session.handleMessage()
+		if err == nil {
+			t.Error("expected error when terminator read fails")
+		}
+	})
+}
+
+func TestSessionHandleDiscard(t *testing.T) {
+	messageData := []byte{
+		0x00, 0x01,
+		MsgDiscard,
+		0x00, 0x00,
+	}
+
+	conn := &mockConn{readData: messageData}
+	session := newTestSession(conn, nil)
+
+	err := session.handleMessage()
+	// Discard should return error for unhandled or be handled
+	// Current implementation treats unknown messages as error
+	_ = err // Don't fail, just ensure we exercised the code path
+}
+
+func TestSessionHandleRoute(t *testing.T) {
+	messageData := []byte{
+		0x00, 0x01,
+		MsgRoute,
+		0x00, 0x00,
+	}
+
+	conn := &mockConn{readData: messageData}
+	session := newTestSession(conn, nil)
+
+	err := session.handleMessage()
+	// Route should be handled or return error
+	_ = err
+}
+
+// =============================================================================
+// Tests for Multi-Chunk Message Handling
+// =============================================================================
+
+func TestMultiChunkMessageHandling(t *testing.T) {
+	t.Run("single chunk message", func(t *testing.T) {
+		// Single chunk: size header + data + zero terminator
+		messageData := []byte{
+			0x00, 0x05, // Size: 5 bytes
+			0xB1, MsgHello, 0xA0, // Tiny struct with signature HELLO, empty map
+			0x00, 0x00, // Zero chunk terminator
+		}
+
+		conn := &mockConn{readData: messageData}
+		executor := &mockExecutor{}
+		session := newTestSession(conn, executor)
+
+		err := session.handleMessage()
+		// HELLO needs proper handling, but we're testing chunk reading
+		_ = err
+	})
+
+	t.Run("multi chunk message", func(t *testing.T) {
+		// Build a multi-chunk message: two chunks + zero terminator
+		// Chunk 1: 3 bytes of data
+		// Chunk 2: 2 bytes of data
+		// Zero terminator
+
+		messageData := []byte{
+			// First chunk
+			0x00, 0x03, // Size: 3 bytes
+			0xB1, 0x01, 'A', // Data
+			// Second chunk
+			0x00, 0x02, // Size: 2 bytes
+			'B', 'C', // Data
+			// Zero terminator
+			0x00, 0x00,
+		}
+
+		conn := &mockConn{readData: messageData}
+		session := newTestSession(conn, nil)
+
+		err := session.handleMessage()
+		// Will error since it's not a valid message, but tests multi-chunk reading
+		_ = err
+	})
+
+	t.Run("zero size first chunk", func(t *testing.T) {
+		// Zero-size chunk immediately (empty message)
+		messageData := []byte{0x00, 0x00}
+
+		conn := &mockConn{readData: messageData}
+		session := newTestSession(conn, nil)
+
+		err := session.handleMessage()
+		if err != nil {
+			t.Errorf("empty message should not error: %v", err)
+		}
+	})
+
+	t.Run("large chunk simulation", func(t *testing.T) {
+		// Simulate a larger message split into chunks
+		chunk1Size := 100
+		chunk2Size := 50
+
+		messageData := make([]byte, 0)
+
+		// First chunk header
+		messageData = append(messageData, byte(chunk1Size>>8), byte(chunk1Size))
+		// First chunk data (padding with valid struct start)
+		chunk1Data := make([]byte, chunk1Size)
+		chunk1Data[0] = 0xB1 // Tiny struct marker
+		chunk1Data[1] = 0x10 // RUN message type
+		messageData = append(messageData, chunk1Data...)
+
+		// Second chunk header
+		messageData = append(messageData, byte(chunk2Size>>8), byte(chunk2Size))
+		// Second chunk data
+		chunk2Data := make([]byte, chunk2Size)
+		messageData = append(messageData, chunk2Data...)
+
+		// Zero terminator
+		messageData = append(messageData, 0x00, 0x00)
+
+		conn := &mockConn{readData: messageData}
+		session := newTestSession(conn, &mockExecutor{})
+
+		err := session.handleMessage()
+		// Will likely error on parsing but tests chunk accumulation
+		_ = err
+	})
+}
+
+// =============================================================================
+// Tests for PackStream Encoding
+// =============================================================================
+
+func TestEncodePackStreamString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []byte
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: []byte{0x80}, // Tiny string, length 0
+		},
+		{
+			name:     "short string",
+			input:    "hello",
+			expected: []byte{0x85, 'h', 'e', 'l', 'l', 'o'}, // Tiny string, length 5
+		},
+		{
+			name:     "15 char string (max tiny)",
+			input:    "123456789012345",
+			expected: append([]byte{0x8F}, []byte("123456789012345")...),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := encodePackStreamString(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("length mismatch: got %d, want %d", len(result), len(tt.expected))
+			}
+			for i := range result {
+				if i < len(tt.expected) && result[i] != tt.expected[i] {
+					t.Errorf("byte %d: got 0x%02X, want 0x%02X", i, result[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestEncodePackStreamInt(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int64
+		checkLen int // Expected minimum length
+	}{
+		{"zero", 0, 1},
+		{"small positive", 42, 1},
+		{"max tiny positive", 127, 1},
+		{"negative one", -1, 1},
+		{"min tiny negative", -16, 1},
+		{"requires int8", 128, 2},
+		{"requires int16", 32768, 3},
+		{"large number", 1000000, 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := encodePackStreamInt(tt.input)
+			if len(result) < tt.checkLen {
+				t.Errorf("length too short: got %d, want at least %d", len(result), tt.checkLen)
+			}
+		})
+	}
+}
+
+func TestEncodePackStreamMap(t *testing.T) {
+	t.Run("empty map", func(t *testing.T) {
+		result := encodePackStreamMap(nil)
+		if len(result) != 1 || result[0] != 0xA0 {
+			t.Errorf("empty map should be [0xA0], got %v", result)
+		}
+	})
+
+	t.Run("empty map explicit", func(t *testing.T) {
+		result := encodePackStreamMap(map[string]any{})
+		if len(result) != 1 || result[0] != 0xA0 {
+			t.Errorf("empty map should be [0xA0], got %v", result)
+		}
+	})
+
+	t.Run("single key map", func(t *testing.T) {
+		result := encodePackStreamMap(map[string]any{"a": int64(1)})
+		// Should be: 0xA1 (tiny map, 1 entry) + key "a" + value 1
+		if result[0] != 0xA1 {
+			t.Errorf("single-entry map marker should be 0xA1, got 0x%02X", result[0])
+		}
+	})
+}
+
+func TestEncodePackStreamList(t *testing.T) {
+	t.Run("empty list", func(t *testing.T) {
+		result := encodePackStreamList(nil)
+		if len(result) != 1 || result[0] != 0x90 {
+			t.Errorf("empty list should be [0x90], got %v", result)
+		}
+	})
+
+	t.Run("single item list", func(t *testing.T) {
+		result := encodePackStreamList([]any{"test"})
+		// Should be: 0x91 (tiny list, 1 entry) + string "test"
+		if result[0] != 0x91 {
+			t.Errorf("single-entry list marker should be 0x91, got 0x%02X", result[0])
+		}
+	})
+
+	t.Run("multiple items", func(t *testing.T) {
+		result := encodePackStreamList([]any{int64(1), int64(2), int64(3)})
+		if result[0] != 0x93 { // Tiny list with 3 items
+			t.Errorf("3-entry list marker should be 0x93, got 0x%02X", result[0])
+		}
+	})
+}
+
+func TestEncodePackStreamValue(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       any
+		expectFirst byte // First byte of encoding
+	}{
+		{"nil", nil, 0xC0},
+		{"true", true, 0xC3},
+		{"false", false, 0xC2},
+		{"small int", int64(42), 42},
+		{"string", "hi", 0x82}, // Tiny string, length 2
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := encodePackStreamValue(tt.input)
+			if len(result) == 0 {
+				t.Error("result should not be empty")
+				return
+			}
+			if result[0] != tt.expectFirst {
+				t.Errorf("first byte: got 0x%02X, want 0x%02X", result[0], tt.expectFirst)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests for PackStream Decoding
+// =============================================================================
+
+func TestDecodePackStreamString(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		offset   int
+		expected string
+		wantLen  int
+		wantErr  bool
+	}{
+		{
+			name:     "tiny string empty",
+			data:     []byte{0x80},
+			offset:   0,
+			expected: "",
+			wantLen:  1,
+		},
+		{
+			name:     "tiny string hello",
+			data:     []byte{0x85, 'h', 'e', 'l', 'l', 'o'},
+			offset:   0,
+			expected: "hello",
+			wantLen:  6,
+		},
+		{
+			name:     "with offset",
+			data:     []byte{0x00, 0x00, 0x83, 'a', 'b', 'c'},
+			offset:   2,
+			expected: "abc",
+			wantLen:  4,
+		},
+		{
+			name:    "invalid marker",
+			data:    []byte{0xC0}, // Null, not a string
+			offset:  0,
+			wantErr: true,
+		},
+		{
+			name:    "out of bounds",
+			data:    []byte{0x85}, // Says 5 chars but no data
+			offset:  0,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, n, err := decodePackStreamString(tt.data, tt.offset)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
+			}
+			if n != tt.wantLen {
+				t.Errorf("consumed %d bytes, want %d", n, tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestDecodePackStreamMap(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    []byte
+		offset  int
+		wantErr bool
+		check   func(map[string]any) bool
+	}{
+		{
+			name:   "empty map",
+			data:   []byte{0xA0},
+			offset: 0,
+			check:  func(m map[string]any) bool { return len(m) == 0 },
+		},
+		{
+			name: "single entry",
+			data: []byte{
+				0xA1,      // Tiny map, 1 entry
+				0x81, 'a', // Key: "a"
+				0x01, // Value: 1
+			},
+			offset: 0,
+			check:  func(m map[string]any) bool { return m["a"] == int64(1) },
+		},
+		{
+			name:    "invalid marker",
+			data:    []byte{0xC0}, // Null, not a map
+			offset:  0,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := decodePackStreamMap(tt.data, tt.offset)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if !tt.check(result) {
+				t.Errorf("check failed for result: %v", result)
+			}
+		})
+	}
+}
+
+func TestDecodePackStreamValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		offset   int
+		expected any
+		wantErr  bool
+	}{
+		{"null", []byte{0xC0}, 0, nil, false},
+		{"true", []byte{0xC3}, 0, true, false},
+		{"false", []byte{0xC2}, 0, false, false},
+		{"tiny positive int", []byte{0x2A}, 0, int64(42), false},
+		{"tiny negative int", []byte{0xFF}, 0, int64(-1), false},
+		{"zero", []byte{0x00}, 0, int64(0), false},
+		{"max tiny positive", []byte{0x7F}, 0, int64(127), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := decodePackStreamValue(tt.data, tt.offset)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("got %v (%T), want %v (%T)", result, result, tt.expected, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDecodePackStreamList(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    []byte
+		offset  int
+		wantLen int
+		wantErr bool
+	}{
+		{
+			name:    "empty list",
+			data:    []byte{0x90},
+			offset:  0,
+			wantLen: 0,
+		},
+		{
+			name:    "single item",
+			data:    []byte{0x91, 0x01}, // [1]
+			offset:  0,
+			wantLen: 1,
+		},
+		{
+			name:    "three items",
+			data:    []byte{0x93, 0x01, 0x02, 0x03}, // [1, 2, 3]
+			offset:  0,
+			wantLen: 3,
+		},
+		{
+			name:    "invalid marker",
+			data:    []byte{0xC0}, // Null, not a list
+			offset:  0,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := decodePackStreamList(tt.data, tt.offset)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if len(result) != tt.wantLen {
+				t.Errorf("got %d items, want %d", len(result), tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestDecodePackStreamListRejectsImpossibleLIST32BeforeAllocation(t *testing.T) {
+	maliciousList := []byte{0xD6, 0xFF, 0xFF, 0xFF, 0xFF}
+
+	t.Run("direct", func(t *testing.T) {
+		_, _, err := decodePackStreamList(maliciousList, 0)
+		if err == nil || err.Error() != "list data out of bounds" {
+			t.Fatalf("expected list bounds error, got %v", err)
+		}
+	})
+
+	t.Run("nested in HELLO extra map", func(t *testing.T) {
+		data := append([]byte{0xA1, 0x81, 'x'}, maliciousList...)
+		_, _, err := decodePackStreamMap(data, 0)
+		if err == nil || err.Error() != "failed to decode map value for key x: list data out of bounds" {
+			t.Fatalf("expected nested list bounds error, got %v", err)
+		}
+	})
+}
+
+// =============================================================================
+// Tests for parseRunMessage
+// =============================================================================
+
+func TestParseRunMessage(t *testing.T) {
+	t.Run("query only no params", func(t *testing.T) {
+		// Query: "MATCH (n) RETURN n" (18 chars), empty params
+		// 0x80 + 18 = 0x92 is a tiny STRING (0x80-0x8F range is 0-15 chars)
+		// For 18 chars we need STRING8: 0xD0 + length byte
+		data := []byte{
+			0xD0, 18, // STRING8 marker + length
+			'M', 'A', 'T', 'C', 'H', ' ', '(', 'n', ')', ' ',
+			'R', 'E', 'T', 'U', 'R', 'N', ' ', 'n',
+			0xA0, // Empty map for params
+		}
+
+		session := &Session{}
+		query, params, metadata, err := session.parseRunMessage(data)
+
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if query != "MATCH (n) RETURN n" {
+			t.Errorf("query: got %q, want %q", query, "MATCH (n) RETURN n")
+		}
+		if len(params) != 0 {
+			t.Errorf("params should be empty, got %v", params)
+		}
+		if metadata == nil {
+			t.Error("metadata should not be nil")
+		}
+		if len(metadata) != 0 {
+			t.Errorf("metadata should be empty, got %v", metadata)
+		}
+	})
+
+	t.Run("query with string param", func(t *testing.T) {
+		// Query: "MATCH (n {name: $name})", params: {name: "Alice"}
+		data := []byte{
+			0x8D, // Tiny string, 13 chars for "MATCH (n) ..."
+			'M', 'A', 'T', 'C', 'H', ' ', '(', 'n', ')', ' ', 'R', 'E', 'T',
+			0xA1,                     // Map with 1 entry
+			0x84, 'n', 'a', 'm', 'e', // Key: "name"
+			0x85, 'A', 'l', 'i', 'c', 'e', // Value: "Alice"
+		}
+
+		session := &Session{}
+		_, params, metadata, err := session.parseRunMessage(data)
+
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if params["name"] != "Alice" {
+			t.Errorf("params[name]: got %v, want Alice", params["name"])
+		}
+		if metadata == nil {
+			t.Error("metadata should not be nil")
+		}
+	})
+
+	t.Run("empty data", func(t *testing.T) {
+		session := &Session{}
+		_, _, _, err := session.parseRunMessage([]byte{})
+
+		if err == nil {
+			t.Error("expected error for empty data")
+		}
+	})
+
+	t.Run("query with params and metadata", func(t *testing.T) {
+		// Query: "MATCH (n) RETURN n", params: {name: "Alice"}, metadata: {bookmarks: ["bookmark1"], tx_timeout: 30000}
+		queryBytes := encodePackStreamString("MATCH (n) RETURN n")
+		paramsBytes := encodePackStreamMap(map[string]any{
+			"name": "Alice",
+		})
+		metadataBytes := encodePackStreamMap(map[string]any{
+			"bookmarks":  []any{"bookmark1"},
+			"tx_timeout": int64(30000),
+		})
+
+		data := append(append(queryBytes, paramsBytes...), metadataBytes...)
+
+		session := &Session{}
+		query, params, metadata, err := session.parseRunMessage(data)
+
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if query != "MATCH (n) RETURN n" {
+			t.Errorf("query: got %q, want %q", query, "MATCH (n) RETURN n")
+		}
+		if params["name"] != "Alice" {
+			t.Errorf("params[name]: got %v, want Alice", params["name"])
+		}
+		if metadata == nil {
+			t.Error("metadata should not be nil")
+		}
+		bookmarks, ok := metadata["bookmarks"].([]any)
+		if !ok || len(bookmarks) == 0 {
+			t.Error("metadata should contain bookmarks")
+		}
+		txTimeout, ok := metadata["tx_timeout"].(int64)
+		if !ok || txTimeout != 30000 {
+			t.Errorf("metadata[tx_timeout]: got %v, want 30000", txTimeout)
+		}
+	})
+
+	t.Run("bookmark validation", func(t *testing.T) {
+		// Create a server and session for proper bookmark validation
+		server := &Server{
+			txSequence: 100, // Set current sequence to 100
+		}
+		session := &Session{
+			server: server,
+		}
+
+		// Valid bookmark format (sequence <= current)
+		validBookmarks := []any{"nornicdb:bookmark:50"}
+		err := session.validateBookmarks(validBookmarks)
+		if err != nil {
+			t.Errorf("valid bookmark should pass validation: %v", err)
+		}
+
+		// Backward compatibility: legacy placeholder bookmark should be ignored.
+		legacyBookmarks := []any{"nornicdb:tx:auto"}
+		err = session.validateBookmarks(legacyBookmarks)
+		if err != nil {
+			t.Errorf("legacy bookmark should be ignored: %v", err)
+		}
+
+		// Bookmark from the future (sequence > current) - should fail
+		futureBookmarks := []any{"nornicdb:bookmark:200"}
+		err = session.validateBookmarks(futureBookmarks)
+		if err == nil {
+			t.Error("bookmark from the future should fail validation")
+		}
+
+		// Invalid bookmark format (cannot parse sequence)
+		invalidFormatBookmarks := []any{"nornicdb:bookmark:invalid"}
+		err = session.validateBookmarks(invalidFormatBookmarks)
+		if err == nil {
+			t.Error("invalid bookmark format should fail validation")
+		}
+
+		// Invalid bookmark type
+		invalidBookmarks := []any{123}
+		err = session.validateBookmarks(invalidBookmarks)
+		if err == nil {
+			t.Error("invalid bookmark type should fail validation")
+		}
+
+		// Empty bookmarks (should pass)
+		err = session.validateBookmarks([]any{})
+		if err != nil {
+			t.Errorf("empty bookmarks should pass validation: %v", err)
+		}
+
+		// Valid bookmark at current sequence (should pass)
+		currentBookmarks := []any{"nornicdb:bookmark:100"}
+		err = session.validateBookmarks(currentBookmarks)
+		if err != nil {
+			t.Errorf("bookmark at current sequence should pass validation: %v", err)
+		}
+
+		// Unknown bookmark format (not nornicdb:bookmark:*) - should fail
+		unknownFormatBookmarks := []any{"neo4j:bookmark:123"}
+		err = session.validateBookmarks(unknownFormatBookmarks)
+		if err == nil {
+			t.Error("unknown bookmark format should fail validation")
+		}
+
+		// Missing sequence number - should fail
+		missingSeqBookmarks := []any{"nornicdb:bookmark:"}
+		err = session.validateBookmarks(missingSeqBookmarks)
+		if err == nil {
+			t.Error("bookmark with missing sequence number should fail validation")
+		}
+
+		// Negative sequence number - should fail
+		negativeSeqBookmarks := []any{"nornicdb:bookmark:-1"}
+		err = session.validateBookmarks(negativeSeqBookmarks)
+		if err == nil {
+			t.Error("bookmark with negative sequence number should fail validation")
+		}
+	})
+}
+
+func TestHandleRun_UsesRunMetadataDatabase(t *testing.T) {
+	manager := &mockDBManager{
+		stores: map[string]storage.Engine{
+			"nornic":       fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+			"translations": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+		},
+		defaultDB: "nornic",
+	}
+
+	server := &Server{
+		config:    DefaultConfig(),
+		dbManager: manager,
+	}
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+	go func() { _, _ = io.Copy(io.Discard, clientConn) }()
+
+	session := &Session{
+		conn:          serverConn,
+		reader:        bufio.NewReaderSize(serverConn, 8192),
+		writer:        bufio.NewWriterSize(serverConn, 8192),
+		server:        server,
+		executor:      &mockExecutor{},
+		authenticated: true,
+		authResult:    &BoltAuthResult{Authenticated: true, Username: "admin", Roles: []string{"admin"}},
+		messageBuf:    make([]byte, 0, 4096),
+	}
+
+	queryBytes := encodePackStreamString("RETURN 1 AS one")
+	paramsBytes := encodePackStreamMap(map[string]any{})
+	metadataBytes := encodePackStreamMap(map[string]any{"db": "translations"})
+	data := append(append(queryBytes, paramsBytes...), metadataBytes...)
+
+	if err := session.handleRun(data); err != nil {
+		t.Fatalf("handleRun failed: %v", err)
+	}
+	if manager.lastGetDB != "translations" {
+		t.Fatalf("expected db routing to translations, got %q", manager.lastGetDB)
+	}
+	if session.lastQueryDatabase != "translations" {
+		t.Fatalf("expected lastQueryDatabase=translations, got %q", session.lastQueryDatabase)
+	}
+}
+
+func TestHandleRun_UsesBeginDatabaseWhenRunOmitsDatabase(t *testing.T) {
+	manager := &mockDBManager{
+		stores: map[string]storage.Engine{
+			"nornic":       fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+			"translations": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+		},
+		defaultDB: "nornic",
+	}
+
+	server := &Server{
+		config:    DefaultConfig(),
+		dbManager: manager,
+	}
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+	go func() { _, _ = io.Copy(io.Discard, clientConn) }()
+
+	session := &Session{
+		conn:          serverConn,
+		reader:        bufio.NewReaderSize(serverConn, 8192),
+		writer:        bufio.NewWriterSize(serverConn, 8192),
+		server:        server,
+		executor:      &mockExecutor{},
+		authenticated: true,
+		authResult:    &BoltAuthResult{Authenticated: true, Username: "admin", Roles: []string{"admin"}},
+		messageBuf:    make([]byte, 0, 4096),
+	}
+
+	beginData := encodePackStreamMap(map[string]any{"db": "translations"})
+	if err := session.dispatchInner(MsgBegin, beginData, "BEGIN", nil); err != nil {
+		t.Fatalf("handleBegin failed: %v", err)
+	}
+
+	runData := append(encodePackStreamString("RETURN 1 AS one"), 0xA0, 0xA0)
+	if err := session.handleRun(runData); err != nil {
+		t.Fatalf("handleRun failed: %v", err)
+	}
+	if manager.lastGetDB != "translations" {
+		t.Fatalf("expected db routing to translations from BEGIN metadata, got %q", manager.lastGetDB)
+	}
+	if session.lastQueryDatabase != "translations" {
+		t.Fatalf("expected lastQueryDatabase=translations, got %q", session.lastQueryDatabase)
+	}
+}
+
+// =============================================================================
+// Tests for Session with Parameters
+// =============================================================================
+
+func TestSessionExecuteWithParams(t *testing.T) {
+	var receivedQuery string
+	var receivedParams map[string]any
+
+	executor := &mockExecutor{
+		executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+			receivedQuery = query
+			receivedParams = params
+			return &QueryResult{
+				Columns: []string{"n"},
+				Rows:    [][]any{{"result"}},
+			}, nil
+		},
+	}
+
+	// Build a RUN message with query and params
+	queryStr := "MATCH (n {id: $id}) RETURN n"
+	queryBytes := encodePackStreamString(queryStr)
+	paramsBytes := encodePackStreamMap(map[string]any{"id": "test-123"})
+
+	// Combine: query + params
+	runData := append(queryBytes, paramsBytes...)
+
+	// Build full message with struct marker
+	fullMessage := []byte{0xB1, MsgRun}
+	fullMessage = append(fullMessage, runData...)
+
+	// Add chunk header and terminator
+	messageData := []byte{byte(len(fullMessage) >> 8), byte(len(fullMessage))}
+	messageData = append(messageData, fullMessage...)
+	messageData = append(messageData, 0x00, 0x00) // Zero terminator
+
+	conn := &mockConn{readData: messageData}
+	session := newTestSession(conn, executor)
+
+	err := session.handleMessage()
+	if err != nil {
+		t.Errorf("handleMessage error: %v", err)
+	}
+
+	if receivedQuery != queryStr {
+		t.Errorf("query: got %q, want %q", receivedQuery, queryStr)
+	}
+
+	if receivedParams["id"] != "test-123" {
+		t.Errorf("params[id]: got %v, want test-123", receivedParams["id"])
+	}
+}
+
+// =============================================================================
+// Tests for truncateQuery helper
+// =============================================================================
+
+func TestTruncateQuery(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		maxLen   int
+		expected string
+	}{
+		{"short query", "MATCH (n)", 100, "MATCH (n)"},
+		{"exact length", "12345", 5, "12345"},
+		{"needs truncation", "1234567890", 5, "12345..."},
+		{"empty query", "", 10, ""},
+		{"one char max", "hello", 1, "h..."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncateQuery(tt.query, tt.maxLen)
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests for INT encoding variants
+// =============================================================================
+
+func TestEncodePackStreamIntVariants(t *testing.T) {
+	// INT8 is only used for negative values -128 to -17
+	// Positive values > 127 go to INT16
+	tests := []struct {
+		name        string
+		value       int64
+		expectFirst byte
+	}{
+		{"INT8 negative -17", -17, 0xC8},   // -17 requires INT8 (-128 to -17 range)
+		{"INT8 negative -100", -100, 0xC8}, // -100 is in INT8 range
+		{"INT16 positive", 200, 0xC9},      // 200 > 127, goes to INT16
+		{"INT16 negative", -1000, 0xC9},    // -1000 < -128, needs INT16
+		{"INT32 positive", 100000, 0xCA},
+		{"INT32 negative", -100000, 0xCA},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := encodePackStreamInt(tt.value)
+			if len(result) < 2 {
+				t.Fatal("result too short")
+			}
+			if result[0] != tt.expectFirst {
+				t.Errorf("marker: got 0x%02X, want 0x%02X", result[0], tt.expectFirst)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests for STRING encoding variants
+// =============================================================================
+
+func TestEncodePackStreamStringVariants(t *testing.T) {
+	t.Run("STRING8", func(t *testing.T) {
+		// Create a string that requires STRING8 (16-255 chars)
+		str := make([]byte, 50)
+		for i := range str {
+			str[i] = 'a'
+		}
+		result := encodePackStreamString(string(str))
+		if result[0] != 0xD0 { // STRING8 marker
+			t.Errorf("marker: got 0x%02X, want 0xD0", result[0])
+		}
+	})
+
+	t.Run("STRING16", func(t *testing.T) {
+		// Create a string that requires STRING16 (256+ chars)
+		str := make([]byte, 300)
+		for i := range str {
+			str[i] = 'b'
+		}
+		result := encodePackStreamString(string(str))
+		if result[0] != 0xD1 { // STRING16 marker
+			t.Errorf("marker: got 0x%02X, want 0xD1", result[0])
+		}
+	})
+}
+
+// =============================================================================
+// Tests for Decode INT variants
+// =============================================================================
+
+func TestDecodePackStreamIntVariants(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		expected int64
+	}{
+		{"INT8 positive", []byte{0xC8, 0x64}, 100},          // 100
+		{"INT8 negative", []byte{0xC8, 0x9C}, -100},         // -100
+		{"INT16 positive", []byte{0xC9, 0x03, 0xE8}, 1000},  // 1000
+		{"INT16 negative", []byte{0xC9, 0xFC, 0x18}, -1000}, // -1000
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := decodePackStreamValue(tt.data, 0)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("got %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests for Float encoding/decoding
+// =============================================================================
+
+func TestPackStreamFloat(t *testing.T) {
+	testValue := 3.14159
+
+	// Encode
+	encoded := encodePackStreamValue(testValue)
+	if len(encoded) != 9 { // 1 marker + 8 bytes for float64
+		t.Errorf("float64 should encode to 9 bytes, got %d", len(encoded))
+	}
+	if encoded[0] != 0xC1 { // FLOAT64 marker
+		t.Errorf("float64 marker should be 0xC1, got 0x%02X", encoded[0])
+	}
+
+	// Decode
+	decoded, _, err := decodePackStreamValue(encoded, 0)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if decoded != testValue {
+		t.Errorf("got %v, want %v", decoded, testValue)
+	}
+}
+
+// =============================================================================
+// Additional Tests for Coverage Improvement
+// =============================================================================
+
+func TestHandlePull(t *testing.T) {
+	// Create a session with stored results
+	executor := &mockExecutor{
+		executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+			return &QueryResult{
+				Columns: []string{"name", "age"},
+				Rows: [][]any{
+					{"Alice", 30},
+					{"Bob", 25},
+					{"Charlie", 35},
+				},
+			}, nil
+		},
+	}
+
+	// Create a mock connection
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	session := &Session{
+		conn:       server,
+		reader:     bufio.NewReaderSize(server, 8192),
+		writer:     bufio.NewWriterSize(server, 8192),
+		executor:   executor,
+		messageBuf: make([]byte, 0, 4096),
+		lastResult: &QueryResult{
+			Columns: []string{"name", "age"},
+			Rows: [][]any{
+				{"Alice", 30},
+				{"Bob", 25},
+				{"Charlie", 35},
+			},
+		},
+		resultIndex: 0,
+	}
+
+	// Handle PULL in goroutine
+	done := make(chan error, 1)
+	go func() {
+		// Pull all records (nil data means pull all)
+		err := session.handlePull(nil)
+		done <- err
+	}()
+
+	// Read from client side - should receive records
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			_, err := client.Read(buf)
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Give some time for processing
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("handlePull failed: %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		// Timeout is ok - we're testing that it processes
+	}
+}
+
+func TestHandleDiscard(t *testing.T) {
+	// Create a mock connection
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	session := &Session{
+		conn:       server,
+		reader:     bufio.NewReaderSize(server, 8192),
+		writer:     bufio.NewWriterSize(server, 8192),
+		messageBuf: make([]byte, 0, 4096),
+		lastResult: &QueryResult{
+			Columns: []string{"n"},
+			Rows:    [][]any{{"test"}},
+		},
+		resultIndex: 0,
+	}
+
+	// Handle DISCARD
+	done := make(chan error, 1)
+	go func() {
+		err := session.handleDiscard(nil)
+		done <- err
+	}()
+
+	// Read the response
+	go func() {
+		buf := make([]byte, 1024)
+		client.Read(buf)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("handleDiscard failed: %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// lastResult should be cleared
+	if session.lastResult != nil {
+		t.Error("expected lastResult to be nil after DISCARD")
+	}
+}
+
+func TestHandleRoute(t *testing.T) {
+	// Create a mock connection
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	session := &Session{
+		conn:       server,
+		reader:     bufio.NewReaderSize(server, 8192),
+		writer:     bufio.NewWriterSize(server, 8192),
+		messageBuf: make([]byte, 0, 4096),
+	}
+
+	// Handle ROUTE
+	done := make(chan error, 1)
+	go func() {
+		err := session.handleRoute(nil)
+		done <- err
+	}()
+
+	// Read the response
+	go func() {
+		buf := make([]byte, 1024)
+		client.Read(buf)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("handleRoute failed: %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestSendRecord(t *testing.T) {
+	// Create a mock connection
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	session := &Session{
+		conn:       server,
+		reader:     bufio.NewReaderSize(server, 8192),
+		writer:     bufio.NewWriterSize(server, 8192),
+		messageBuf: make([]byte, 0, 4096),
+	}
+
+	// Send a record
+	done := make(chan error, 1)
+	go func() {
+		err := session.sendRecord([]any{"Alice", 30, true, 3.14})
+		done <- err
+	}()
+
+	// Read from client
+	go func() {
+		buf := make([]byte, 1024)
+		client.Read(buf)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("sendRecord failed: %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// =============================================================================
+// Tests for mapBoltQueryError – Neo4j error code extraction
+// =============================================================================
+
+func TestMapBoltQueryError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode string
+		wantMsg  string
+	}{
+		{
+			name:     "nil error returns syntax error code with empty message",
+			err:      nil,
+			wantCode: "Neo.ClientError.Statement.SyntaxError",
+			wantMsg:  "",
+		},
+		{
+			name:     "Neo4j prefixed error with colon splits correctly",
+			err:      fmt.Errorf("Neo.ClientError.Schema.ConstraintViolation: Node already exists"),
+			wantCode: "Neo.ClientError.Schema.ConstraintViolation",
+			wantMsg:  "Node already exists",
+		},
+		{
+			name:     "Neo4j prefixed error without colon returns full message",
+			err:      fmt.Errorf("Neo.ClientError.Statement.SyntaxError"),
+			wantCode: "Neo.ClientError.Statement.SyntaxError",
+			wantMsg:  "Neo.ClientError.Statement.SyntaxError",
+		},
+		{
+			name:     "embedded Neo4j code extracted from middle of message",
+			err:      fmt.Errorf("query failed: Neo.ClientError.Statement.TypeError: invalid type"),
+			wantCode: "Neo.ClientError.Statement.TypeError",
+			wantMsg:  "invalid type",
+		},
+		{
+			name:     "plain error gets default syntax error code",
+			err:      fmt.Errorf("unexpected token at position 5"),
+			wantCode: "Neo.ClientError.Statement.SyntaxError",
+			wantMsg:  "unexpected token at position 5",
+		},
+		{
+			name:     "commit conflict maps to transient transaction error",
+			err:      fmt.Errorf("commit failed: %w: edge nornic:abc changed after transaction start", storage.ErrConflict),
+			wantCode: "Neo.TransientError.Transaction.Outdated",
+			wantMsg:  "commit failed: conflict: edge nornic:abc changed after transaction start",
+		},
+		{
+			name:     "deadlock maps to transient transaction error",
+			err:      fmt.Errorf("%w: waiting for transaction lock", nornicerrors.ErrTransactionDeadlock),
+			wantCode: "Neo.TransientError.Transaction.DeadlockDetected",
+			wantMsg:  "transaction deadlock: waiting for transaction lock",
+		},
+		{
+			name:     "continuation saturation is transient",
+			err:      resultstream.ErrCapacity,
+			wantCode: "Neo.TransientError.General.DatabaseUnavailable",
+			wantMsg:  resultstream.ErrCapacity.Error(),
+		},
+		{
+			name:     "gone continuation is terminal",
+			err:      resultstream.ErrGoneQID,
+			wantCode: "Neo.ClientError.Statement.EntityNotFound",
+			wantMsg:  resultstream.ErrGoneQID.Error(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, msg := mapBoltQueryError(tt.err)
+			if code != tt.wantCode {
+				t.Errorf("code = %q, want %q", code, tt.wantCode)
+			}
+			if msg != tt.wantMsg {
+				t.Errorf("msg = %q, want %q", msg, tt.wantMsg)
+			}
+		})
+	}
+}
+
+type classifiedBoltTestError struct {
+	code string
+	msg  string
+}
+
+func (e *classifiedBoltTestError) Error() string         { return e.msg }
+func (e *classifiedBoltTestError) BoltErrorCode() string { return e.code }
+
+func TestMapBoltQueryErrorUsesTypedClassification(t *testing.T) {
+	err := fmt.Errorf("delete failed: %w", &classifiedBoltTestError{
+		code: "Neo.ClientError.Schema.ConstraintValidationFailed",
+		msg:  "node still has relationships",
+	})
+	code, message := mapBoltQueryError(err)
+	if code != "Neo.ClientError.Schema.ConstraintValidationFailed" {
+		t.Fatalf("code = %q, want constraint validation classification", code)
+	}
+	if message != "delete failed: node still has relationships" {
+		t.Fatalf("message = %q, want wrapped diagnostic", message)
+	}
+}
+
+func TestMapBoltQueryErrorForQueryCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
+	err := nornicerrors.MarkMergeCommitTimeUniqueConflict(fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
+		Type:       storage.ConstraintUnique,
+		Label:      "TerraformResource",
+		Properties: []string{"uid"},
+		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+	}))
+	nonMergeErr := fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
+		Type:       storage.ConstraintUnique,
+		Label:      "TerraformResource",
+		Properties: []string{"uid"},
+		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+	})
+
+	tests := []struct {
+		name     string
+		err      error
+		query    string
+		wantCode string
+	}{
+		{
+			name:     "merge conflict is retryable",
+			err:      err,
+			query:    "MERGE (r:TerraformResource {uid: 'X'}) SET r.name = 'x'",
+			wantCode: nornicerrors.TransientOutdated,
+		},
+		{
+			// A duplicate outside a MERGE race is a constraint violation, as
+			// in Neo4j (#657).
+			name:     "create duplicate is a constraint violation",
+			err:      nonMergeErr,
+			query:    "CREATE (r:TerraformResource {uid: 'X'})",
+			wantCode: "Neo.ClientError.Schema.ConstraintValidationFailed",
+		},
+		{
+			name:     "empty query duplicate is a constraint violation",
+			err:      nonMergeErr,
+			query:    "",
+			wantCode: "Neo.ClientError.Schema.ConstraintValidationFailed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, _ := mapBoltQueryErrorForQuery(tt.err, tt.query)
+			if code != tt.wantCode {
+				t.Fatalf("code = %q, want %q", code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestMapBoltCommitErrorCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
+	err := fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
+		Type:       storage.ConstraintUnique,
+		Label:      "TerraformResource",
+		Properties: []string{"uid"},
+		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+	})
+
+	tests := []struct {
+		name     string
+		canRetry bool
+		wantCode string
+	}{
+		{
+			name:     "merge transaction conflict is retryable",
+			canRetry: true,
+			wantCode: nornicerrors.TransientOutdated,
+		},
+		{
+			// A duplicate outside a MERGE race is a constraint violation, as
+			// in Neo4j (#657).
+			name:     "non-merge transaction duplicate is a constraint violation",
+			canRetry: false,
+			wantCode: "Neo.ClientError.Schema.ConstraintValidationFailed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, _ := mapBoltCommitError(err, tt.canRetry)
+			if code != tt.wantCode {
+				t.Fatalf("code = %q, want %q", code, tt.wantCode)
+			}
+		})
+	}
+}
+
+// uidUniqueViolation is a commit-time UNIQUE violation on TerraformResource.uid.
+var uidUniqueViolation = fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
+	Type:       storage.ConstraintUnique,
+	Label:      "TerraformResource",
+	Properties: []string{"uid"},
+	Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+})
+
+// TestSessionMergeCommitConflictRetryRequiresMergeKeyClash covers #657: only
+// a clash on the MERGE key is a retry-safe race; a SET writing another value to
+// the constrained property fails on every retry, and what can't be decided is
+// not retried.
+func TestSessionMergeCommitConflictRetryRequiresMergeKeyClash(t *testing.T) {
+	props := map[string]any{"uid": "X", "props": map[string]any{"name": "n"}, "withUID": map[string]any{"uid": "X"}, "otherUID": map[string]any{"uid": "Y"}}
+	for query, retrySafe := range map[string]bool{
+		"MERGE (n:TerraformResource {uid: $uid}) SET n.name = $uid":          true,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n += $props":            true,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n += $withUID":          true,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n.uid = 'X'":            true,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n += $otherUID":         false,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n += $missing":          false,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n = m":                  false,
+		"MERGE (n:TerraformResource {name: $uid}) SET n.uid = $uid":          false,
+		"MERGE (n:TerraformResource {name: 'a'}) SET n += {uid: 'x'}":        false,
+		"MERGE (n:TerraformResource {name: 'a'}) ON CREATE SET n.uid = 'x'":  false,
+		"MERGE (n:TerraformResource {name: 'a'}) ON MATCH SET n.`uid` = 'x'": false,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n.uid = toUpper($uid)":  false,
+	} {
+		session := &Session{inTransaction: true}
+		session.recordExplicitTransactionWrite(query, props, true)
+		if got := session.canRetryMergeCommitConflict(uidUniqueViolation); got != retrySafe {
+			t.Fatalf("%s: retry-safe = %v, want %v", query, got, retrySafe)
+		}
+	}
+}
+
+func TestSessionMergeCommitConflictRetryRequiresMergeOnlyTransaction(t *testing.T) {
+	session := &Session{inTransaction: true}
+	session.recordExplicitTransactionWrite("MERGE (n:TerraformResource {uid: $uid})", nil, true)
+	if !session.canRetryMergeCommitConflict(uidUniqueViolation) {
+		t.Fatal("MERGE-only transaction should allow commit-time UNIQUE conflict retry classification")
+	}
+
+	session.recordExplicitTransactionWrite("CREATE (n:TerraformResource {uid: $uid})", nil, true)
+	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
+		t.Fatal("mixed MERGE and non-MERGE write transaction should keep commit-time UNIQUE conflict as a hard commit failure")
+	}
+}
+
+func TestSessionMergeCommitConflictRetryRejectsMixedSingleStatementWrite(t *testing.T) {
+	session := &Session{inTransaction: true}
+	session.recordExplicitTransactionWrite(
+		"CREATE (a:Audit {id: $id}) WITH a MERGE (n:TerraformResource {uid: $uid}) SET n.auditId = a.id",
+		nil,
+		true,
+	)
+	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
+		t.Fatal("single statement mixing CREATE and MERGE should keep commit-time UNIQUE conflict as a hard commit failure")
+	}
+}
+
+func TestSessionMergeCommitConflictRetryRejectsCallWithMerge(t *testing.T) {
+	session := &Session{inTransaction: true}
+	session.recordExplicitTransactionWrite(
+		"CALL custom.writeProc() YIELD value MERGE (n:TerraformResource {uid: value.uid}) RETURN n",
+		nil,
+		true,
+	)
+	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
+		t.Fatal("statement mixing CALL and MERGE should keep commit-time UNIQUE conflict as a hard commit failure")
+	}
+}
+
+// =============================================================================
+// Tests for isShowDatabasesQuery – case/whitespace normalization
+// =============================================================================
+
+func TestIsShowDatabasesQuery(t *testing.T) {
+	tests := []struct {
+		query string
+		want  bool
+	}{
+		{"SHOW DATABASES", true},
+		{"show databases", true},
+		{"  SHOW   DATABASES  ", true},
+		{"Show Databases", true},
+		{"SHOW DATABASE", false},
+		{"SHOW DATABASES YIELD name", false},
+		{"MATCH (n) RETURN n", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			if got := isShowDatabasesQuery(tt.query); got != tt.want {
+				t.Errorf("isShowDatabasesQuery(%q) = %v, want %v", tt.query, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecodePackStreamList_MixedTypes(t *testing.T) {
+	// Test list with mixed types and value verification
+	tests := []struct {
+		name     string
+		data     []byte
+		expected []any
+	}{
+		{
+			name: "list with integers",
+			data: []byte{
+				0x93, // TINY_LIST with 3 elements
+				0x01, // tiny int 1
+				0x02, // tiny int 2
+				0x03, // tiny int 3
+			},
+			expected: []any{int64(1), int64(2), int64(3)},
+		},
+		{
+			name: "list with string and int",
+			data: []byte{
+				0x92, // TINY_LIST with 2 elements
+				0x85, // TINY_STRING "hello" (5 chars)
+				'h', 'e', 'l', 'l', 'o',
+				0x05, // tiny int 5
+			},
+			expected: []any{"hello", int64(5)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := decodePackStreamList(tt.data, 0)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if len(result) != len(tt.expected) {
+				t.Errorf("got %d elements, want %d", len(result), len(tt.expected))
+				return
+			}
+			for i := range tt.expected {
+				if result[i] != tt.expected[i] {
+					t.Errorf("element %d: got %v, want %v", i, result[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}

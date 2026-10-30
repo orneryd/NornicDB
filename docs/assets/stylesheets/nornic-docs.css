@@ -1,0 +1,152 @@
+:root {
+  --nornic-night: #0a0e1a;
+  --nornic-shadow: #141824;
+  --nornic-stone: #1e2433;
+  --nornic-rune: #2a3247;
+  --nornic-fog: #3d4659;
+  --nornic-silver: #9ca3af;
+  --nornic-primary: #10b981;
+  --nornic-secondary: #059669;
+  --nornic-accent: #34d399;
+  --nornic-ice: #4a9eff;
+  --nornic-glacier: #7dd3fc;
+  --nornic-gold: #d4af37;
+  --nornic-amber: #e8b84a;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: var(--nornic-night);
+  --md-default-bg-color--light: var(--nornic-shadow);
+  --md-default-bg-color--lighter: var(--nornic-stone);
+  --md-default-bg-color--lightest: var(--nornic-rune);
+  --md-default-fg-color: #f3f4f6;
+  --md-default-fg-color--light: #d1d5db;
+  --md-default-fg-color--lighter: var(--nornic-silver);
+  --md-default-fg-color--lightest: #6b7280;
+  --md-primary-fg-color: var(--nornic-shadow);
+  --md-primary-fg-color--light: var(--nornic-stone);
+  --md-primary-fg-color--dark: var(--nornic-night);
+  --md-accent-fg-color: var(--nornic-primary);
+  --md-typeset-a-color: var(--nornic-ice);
+  --md-code-bg-color: var(--nornic-shadow);
+  --md-code-fg-color: #e5e7eb;
+  --md-footer-bg-color: var(--nornic-shadow);
+  --md-footer-bg-color--dark: var(--nornic-night);
+  --md-admonition-bg-color: rgb(20 24 36 / 0.7);
+}
+
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #f7fafc;
+  --md-default-bg-color--light: #eef2f7;
+  --md-default-bg-color--lighter: #e2e8f0;
+  --md-default-bg-color--lightest: #d5deea;
+  --md-default-fg-color: #111827;
+  --md-default-fg-color--light: #334155;
+  --md-default-fg-color--lighter: #475569;
+  --md-primary-fg-color: var(--nornic-shadow);
+  --md-primary-fg-color--light: var(--nornic-stone);
+  --md-primary-fg-color--dark: var(--nornic-night);
+  --md-accent-fg-color: var(--nornic-secondary);
+  --md-typeset-a-color: #0f6ad9;
+  --md-code-bg-color: #eef2f7;
+  --md-code-fg-color: #111827;
+  --md-footer-bg-color: var(--nornic-shadow);
+  --md-footer-bg-color--dark: var(--nornic-night);
+}
+
+body,
+input {
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+
+code,
+kbd,
+pre {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+
+.md-header {
+  background: linear-gradient(90deg, var(--nornic-shadow), var(--nornic-stone));
+  border-bottom: 1px solid rgb(52 211 153 / 0.18);
+}
+
+.md-tabs {
+  background-color: var(--nornic-shadow);
+  border-bottom: 1px solid rgb(42 50 71 / 0.9);
+}
+
+.md-search__form {
+  border-radius: 999px;
+}
+
+.md-nav__title,
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  color: inherit;
+}
+
+[data-md-color-scheme="slate"] .md-typeset h1,
+[data-md-color-scheme="slate"] .md-typeset h2,
+[data-md-color-scheme="slate"] .md-typeset h3,
+[data-md-color-scheme="slate"] .md-typeset h4 {
+  color: #ffffff;
+}
+
+[data-md-color-scheme="default"] .md-typeset h1,
+[data-md-color-scheme="default"] .md-typeset h2,
+[data-md-color-scheme="default"] .md-typeset h3,
+[data-md-color-scheme="default"] .md-typeset h4 {
+  color: var(--nornic-shadow);
+}
+
+.md-typeset a:hover {
+  color: var(--nornic-accent);
+}
+
+.md-typeset code {
+  border-radius: 0.35rem;
+}
+
+.md-typeset pre > code {
+  border: 1px solid rgb(42 50 71 / 0.6);
+  border-radius: 0.75rem;
+}
+
+.md-typeset table:not([class]) {
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--nornic-stone);
+  color: var(--nornic-accent);
+}
+
+[data-md-color-scheme="default"] .md-typeset table:not([class]) th {
+  background-color: #e5edf6;
+  color: var(--nornic-secondary);
+}
+
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 0.75rem;
+}
+
+.md-button {
+  border-radius: 999px;
+}
+
+.md-top {
+  background-color: var(--nornic-primary);
+}
+
+.md-footer-meta {
+  background-color: var(--nornic-night);
+}

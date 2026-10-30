@@ -1,0 +1,126 @@
+- id: cyphergraphprocedures.stream_nodes_failed
+  description: Error al transmitir nodos de la proyección. Cause no se traduce.
+  other: "no se pudieron transmitir los nodos: {{.Cause}}"
+- id: cyphergraphprocedures.stream_edges_failed
+  description: Error al transmitir aristas de la proyección. Cause no se traduce.
+  other: "no se pudieron transmitir las aristas: {{.Cause}}"
+- id: cyphergraphprocedures.build_graph_failed
+  description: Error al construir el grafo de predicción de enlaces. Cause no se traduce.
+  other: "no se pudo construir el grafo: {{.Cause}}"
+- id: cyphergraphprocedures.source_node_required
+  description: Falta el parámetro sourceNode. sourceNode no se traduce.
+  other: se requiere el parámetro sourceNode
+- id: cyphergraphprocedures.config_value_out_of_range
+  description: Valor de configuración fuera de su rango. Key, Value y Range no se traducen.
+  other: "El valor de `{{.Key}}` fue `{{.Value}}`, pero debe estar dentro del rango {{.Range}}."
+- id: cyphergraphprocedures.graph_already_exists
+  description: Mensaje de GDS (graph already exists). Los campos no se traducen.
+  other: 'Ya existe un grafo con el nombre ''{{.Graph}}''.'
+- id: cyphergraphprocedures.node_labels_not_found
+  description: Mensaje de GDS (node labels not found). Los campos no se traducen.
+  other: 'Proyección de nodos no válida, no se encontraron una o más etiquetas: ''{{.Labels}}'''
+- id: cyphergraphprocedures.relationship_types_not_found
+  description: Mensaje de GDS (relationship types not found). Los campos no se traducen.
+  other: 'Proyección de relaciones no válida, no se encontraron uno o más tipos de relación: ''{{.Types}}'''
+- id: cyphergraphprocedures.node_properties_not_found
+  description: Mensaje de GDS (node properties not found). Los campos no se traducen.
+  other: 'No se encontraron las propiedades de nodo: ''{{.Properties}}'''
+- id: cyphergraphprocedures.relationship_properties_not_found
+  description: Mensaje de GDS (relationship properties not found). Los campos no se traducen.
+  other: 'No se encontraron las propiedades de relación: ''{{.Properties}}'' (para contar relaciones paralelas, use `property:''*''`).'
+- id: cyphergraphprocedures.unsupported_orientation
+  description: Mensaje de GDS (unsupported orientation). Los campos no se traducen.
+  other: 'La orientación `{{.Orientation}}` no es compatible. Debe ser una de: [NATURAL, REVERSE, UNDIRECTED].'
+- id: cyphergraphprocedures.unsupported_aggregation
+  description: Mensaje de GDS (unsupported aggregation). Los campos no se traducen.
+  other: 'La agregación `{{.Aggregation}}` no es compatible. Debe ser una de: [DEFAULT, NONE, SINGLE, SUM, MIN, MAX, COUNT].'
+- id: cyphergraphprocedures.invalid_projection
+  description: Mensaje de GDS (invalid projection). Los campos no se traducen.
+  other: 'No se puede construir una proyección de {{.Kind}} a partir de {{.Type}}'
+- id: cyphergraphprocedures.config_unexpected_key
+  description: Mensaje de GDS (config unexpected key). Los campos no se traducen.
+  other: 'Clave de configuración inesperada: {{.Key}}'
+- id: cyphergraphprocedures.config_value_missing
+  description: Mensaje de GDS (config value missing). Los campos no se traducen.
+  other: 'No se especificó ningún valor para el parámetro de configuración obligatorio `{{.Key}}`'
+- id: cyphergraphprocedures.config_value_type
+  description: Mensaje de GDS (config value type). Los campos no se traducen.
+  other: 'El valor de `{{.Key}}` debe ser de tipo `{{.Expected}}` pero era `{{.Actual}}`.'
+- id: cyphergraphprocedures.config_value_negative
+  description: Mensaje de GDS (config value negative). Los campos no se traducen.
+  other: 'El valor de `{{.Key}}` no puede ser negativo.'
+- id: cyphergraphprocedures.iteration_weight_type
+  description: Mensaje de GDS (iteration weight type). Los campos no se traducen.
+  other: 'Los pesos de iteración deben ser números, pero se encontró `{{.Value}}` de tipo `{{.Type}}`'
+- id: cyphergraphprocedures.iteration_weights_empty
+  description: Mensaje de GDS (iteration weights empty). Las claves de configuración no se traducen.
+  other: 'El valor de `iterationWeights` no puede estar vacío si `nodeSelfInfluence` es cero.'
+- id: cyphergraphprocedures.feature_properties_required
+  description: Mensaje de GDS (feature properties required). Las claves de configuración no se traducen.
+  other: 'Cuando `propertyRatio` no es cero, `featureProperties` no puede estar vacío.'
+- id: cyphergraphprocedures.feature_properties_missing
+  description: Mensaje de GDS (feature properties missing). Los campos no se traducen.
+  other: 'Las propiedades de características {{.Properties}} no están presentes en todas las etiquetas solicitadas. Etiquetas solicitadas: {{.Labels}}. Propiedades disponibles en todas las etiquetas solicitadas: {{.Available}}'
+- id: cyphergraphprocedures.feature_property_invalid
+  description: Mensaje de GDS (feature property invalid). Los campos no se traducen.
+  other: 'El nodo con ID `{{.Node}}` tiene un valor de propiedad de característica no válido {{.Value}} para la propiedad `{{.Property}}`'
+- id: cyphergraphprocedures.weight_property_not_found
+  description: Mensaje de GDS (weight property not found). Los campos no se traducen.
+  other: 'No se encontró la propiedad de peso de relación `{{.Property}}` en los tipos de relación {{.Types}}. Propiedades existentes en todos los tipos de relación: {{.Available}}'
+- id: cyphergraphprocedures.relationship_property_missing
+  description: Mensaje de GDS (relationship property missing). Los campos no se traducen.
+  other: 'Falta la propiedad de relación `{{.Property}}` en la relación entre los nodos con ids `{{.Source}}` y `{{.Target}}`.'
+- id: cyphergraphprocedures.node_labels_not_in_graph
+  description: Mensaje de GDS (node labels not in graph). Los campos no se traducen.
+  other: 'No se encontraron las `nodeLabels` especificadas {{.Labels}}. Las etiquetas disponibles son {{.Available}}.'
+- id: cyphergraphprocedures.relationship_types_not_in_graph
+  description: Mensaje de GDS (relationship types not in graph). Los campos no se traducen.
+  other: 'No se encontraron los `relationshipTypes` especificados {{.Types}}. Los tipos de relación disponibles son {{.Available}}.'
+- id: cyphergraphprocedures.source_node_not_found
+  description: Mensaje de GDS (source node not found). Los campos no se traducen.
+  other: 'sourceNode `{{.Node}}` no existe en el grafo'
+- id: cyphergraphprocedures.graph_not_found
+  description: GDS's message for a graph the database's catalog doesn't hold. Graph and Database are untranslated.
+  other: 'El grafo con el nombre `{{.Graph}}` no existe en la base de datos `{{.Database}}`. Podría existir en otra base de datos.'
+- id: cyphergraphprocedures.node_property_not_in_graph
+  description: GDS's message for a node property the graph doesn't hold. Property is untranslated.
+  other: 'No existe ninguna proyección de nodos con la propiedad ''{{.Property}}''.'
+- id: cyphergraphprocedures.star_property_requires_count
+  description: GDS's message for a '*' relationship property without COUNT aggregation.
+  other: 'Una clave de propiedad ''*'' solo se puede usar con la agregación count.'
+- id: cyphergraphprocedures.job_id_type
+  description: GDS's message for a jobId that isn't a string. Type is untranslated.
+  other: 'Se esperaba JobId o String. Se recibió {{.Type}}.'
+- id: cyphergraphprocedures.unsupported_gds_value
+  description: Mensaje de GDS (unsupported gds value).
+  other: 'Conversión no compatible a un valor de GDS desde un valor de Neo4j de tipo `{{.Type}}`.'
+- id: cyphergraphprocedures.relationship_end_not_projected
+  description: Mensaje de GDS (relationship end not projected).
+  other: 'No se pudo cargar una relación porque su nodo {{.Side}} con id {{.Node}} no forma parte de la consulta o proyección de nodos. Para ignorar la relación, establezca el parámetro de configuración `validateRelationships` en false.'
+- id: cyphergraphprocedures.unsupported_array_type
+  description: Mensaje de GDS (unsupported array type).
+  other: 'La carga de valores de tipo {{.Type}} no está admitida actualmente'
+- id: cyphergraphprocedures.unsafe_conversion
+  description: Mensaje de GDS (unsafe conversion).
+  other: 'No se puede convertir de forma segura {{.Value}} en {{.Target}}.'
+- id: cyphergraphprocedures.array_lengths_differ
+  description: Mensaje de GDS (array lengths differ).
+  other: 'La propiedad `{{.Property}}` contiene arrays de longitudes distintas `{{.Found}}` y `{{.First}}`.'
+- id: cyphergraphprocedures.unsafe_long_conversion
+  description: Mensaje de GDS (unsafe long conversion).
+  other: 'No se puede convertir de forma segura {{.Value}} en un valor long'
+- id: cyphergraphprocedures.unsafe_long_array_conversion
+  description: Mensaje de GDS (unsafe long array conversion).
+  other: 'No se puede convertir de forma segura {{.Value}} en un Long Array. No se puede convertir de forma segura {{.Fraction}} en un valor long'
+- id: cyphergraphprocedures.property_read_type
+  description: GDS incompatible typed property read. Requested and Stored are untranslated type names.
+  other: 'Se intentó recuperar un valor de tipo {{.Requested}} de propiedades de tipo {{.Stored}}'
+- id: cyphergraphprocedures.relationship_value_type
+  description: GDS nonnumeric relationship property. Type and Value are untranslated.
+  other: 'Tipo [{{.Type}}] no compatible para el valor {{.Value}}. Use una propiedad numérica.'
+- id: cyphergraphprocedures.default_property_type
+  description: GDS incompatible default property value. Expected and Actual are untranslated.
+  other: 'Se esperaba que el valor predeterminado fuera de tipo `{{.Expected}}`, pero es de tipo `{{.Actual}}`.'
+- id: cyphergraphprocedures.unsafe_double_conversion
+  description: Un Long supera el límite de importación de Double.
+  other: 'No se puede convertir de forma segura {{.Value}} en un valor double'

@@ -1,0 +1,290 @@
+package storage
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/dgraph-io/badger/v4"
+)
+
+// A temporal constraint's history index (prefixTemporalIndex) is complete
+// when it has an entry for every stored node the constraint covers. Every
+// write path maintains it (transaction commits through
+// bufferTemporalIndexWrites, the engine's direct node writes through
+// applyTemporalIndexesForNodeChangeInTxn, bulk writes through transactions),
+// and RebuildTemporalIndexes rebuilds it from the stored nodes on start. The
+// one gap is a constraint created over nodes that already exist: they have no
+// entries until the next rebuild.
+//
+// While the index is complete, NO OVERLAP validation reads the history of
+// the written node's own key instead of scanning every node of the label
+// (#1126): with no entries for a key, no stored node has that key. While it
+// is not, validation keeps the label scan.
+
+// temporalConstraintScanHook lets storage tests assert that NO OVERLAP
+// validation with a complete history index does not fall back to scanning
+// the label (the transaction's committed scan and the engine's legacy scan).
+var temporalConstraintScanHook atomic.Pointer[func()]
+
+func runTemporalConstraintScanHook() {
+	if hook := temporalConstraintScanHook.Load(); hook != nil {
+		(*hook)()
+	}
+}
+
+func setTemporalConstraintScanHook(hook func()) func() {
+	previous := temporalConstraintScanHook.Swap(&hook)
+	return func() { temporalConstraintScanHook.Store(previous) }
+}
+
+// temporalIndexCompletenessKey identifies a temporal constraint by what its
+// index entries are keyed on (label and properties), not by name.
+func temporalIndexCompletenessKey(c Constraint) string {
+	return c.Label + "\x00" + strings.Join(c.Properties, "\x00")
+}
+
+// temporalIndexAuthoritative reports whether c's history index covers every
+// stored node c applies to: c was created on an empty label (complete from
+// the start), or the engine's index was rebuilt and c was not created since
+// over existing nodes.
+func (b *BadgerEngine) temporalIndexAuthoritative(sm *SchemaManager, c Constraint) bool {
+	if b == nil || sm == nil {
+		return false
+	}
+	key := temporalIndexCompletenessKey(c)
+	sm.mu.RLock()
+	_, complete := sm.temporalIndexCompleteKeys[key]
+	_, incomplete := sm.temporalIndexIncompleteKeys[key]
+	sm.mu.RUnlock()
+	return complete || (b.temporalIndexReady.Load() && !incomplete)
+}
+
+// forgetTemporalIndexCompleteLocked drops c's runtime completeness marks: a
+// constraint that is (re)registered or dropped starts over.
+func (sm *SchemaManager) forgetTemporalIndexCompleteLocked(c Constraint) {
+	if c.Type != ConstraintTemporal {
+		return
+	}
+	key := temporalIndexCompletenessKey(c)
+	delete(sm.temporalIndexCompleteKeys, key)
+	delete(sm.temporalIndexIncompleteKeys, key)
+}
+
+func (sm *SchemaManager) markTemporalIndexCreated(c Constraint, complete bool) {
+	key := temporalIndexCompletenessKey(c)
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	target := &sm.temporalIndexIncompleteKeys
+	if complete {
+		target = &sm.temporalIndexCompleteKeys
+	}
+	if *target == nil {
+		*target = make(map[string]struct{})
+	}
+	(*target)[key] = struct{}{}
+}
+
+// HasConstraintNamed reports whether a constraint named name is registered.
+func (sm *SchemaManager) HasConstraintNamed(name string) bool {
+	if sm == nil {
+		return false
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	_, ok := sm.constraints[name]
+	return ok
+}
+
+// MarkNewTemporalConstraintsForEngine makes the history index of the
+// temporal node constraints DDL just created complete, and records it:
+//   - on an empty label (the usual schema-first load) there is nothing to
+//     index, and every later write maintains the index;
+//   - over existing nodes, which were written before the constraint and have
+//     no entries, their entries are written now (backfillTemporalIndexForLabel),
+//     so the index never stays incomplete across a restart that skips the
+//     rebuild (a clean shutdown certifies the derived indexes as current).
+//
+// Only an engine that doesn't unwrap to a BadgerEngine leaves a constraint over
+// existing nodes incomplete; it is validated by label scan until a rebuild.
+func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, constraints []Constraint) error {
+	return MarkNewTemporalConstraintsForEngineWithContext(context.Background(), engine, schema, constraints)
+}
+
+// MarkNewTemporalConstraintsForEngineWithContext carries the caller through validation and label materialization.
+func MarkNewTemporalConstraintsForEngineWithContext(ctx context.Context, engine Engine, schema *SchemaManager, constraints []Constraint) error {
+	if engine == nil || schema == nil {
+		return nil
+	}
+	badgerEngine, _ := UnwrapEngine(engine).(*BadgerEngine)
+	for _, c := range constraints {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if c.Type != ConstraintTemporal || c.EntityType == ConstraintEntityRelationship {
+			continue
+		}
+		if badgerEngine == nil {
+			empty, err := labelHasNoNodesWithContext(ctx, engine, c.Label)
+			if err != nil {
+				return err
+			}
+			schema.markTemporalIndexCreated(c, empty)
+			continue
+		}
+		if err := func() error {
+
+			lifecycle, err := badgerEngine.beginMaintenanceWrite(engineScope(engine))
+			if err != nil {
+				return err
+			}
+			defer lifecycle.finish()
+			empty, err := labelHasNoNodesWithContext(ctx, engine, c.Label)
+			if err != nil {
+				return err
+			}
+			if !empty {
+				if err := badgerEngine.backfillTemporalIndexForLabelWithContext(ctx, engine, c.Label); err != nil {
+					return err
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			schema.markTemporalIndexCreated(c, true)
+			return nil
+
+		}(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// engineScope is the database a scoped wrapper of the engine serves, or nil
+// (the whole store) for an unscoped engine.
+func engineScope(engine Engine) []string {
+	for current := engine; current != nil; {
+		if scoped, ok := current.(interface{ Namespace() string }); ok {
+			return []string{scoped.Namespace()}
+		}
+		wrapper, ok := current.(EngineUnwrapper)
+		if !ok {
+			return nil
+		}
+		current = wrapper.GetInnerEngine()
+	}
+	return nil
+}
+
+// backfillTemporalIndexForLabel writes the temporal history entries (and
+// current pointers) of every stored node of label visible through engine (a
+// database-scoped wrapper of b), in chunks: the same per-node work as
+// RebuildTemporalIndexes, for one label instead of the whole store.
+func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string) error {
+	return b.backfillTemporalIndexForLabelWithContext(context.Background(), engine, label)
+}
+
+// backfillTemporalIndexForLabelWithContext carries the caller through validation and label materialization.
+func (b *BadgerEngine) backfillTemporalIndexForLabelWithContext(ctx context.Context, engine Engine, label string) error {
+	var ids []NodeID
+	if err := StreamStoredLabelNodesWithContext(ctx, engine, label, []string{}, func(node *Node) error {
+		if node != nil {
+			ids = append(ids, EnsureNodeIDDatabasePrefixForEngine(engine, node.ID))
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	asOf := time.Now().UTC()
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		part := ids[start:min(start+chunk, len(ids))]
+		if err := b.withUpdate(func(txn *badger.Txn) error {
+			for _, id := range part {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				node, err := b.loadNodeForTemporalTxn(txn, id, false)
+				if err != nil {
+					return err
+				}
+				if err := b.rebuildTemporalNodeInTxn(txn, node, asOf); err != nil {
+					return err
+				}
+			}
+			return ctx.Err()
+		}); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+var errStopLabelProbe = errors.New("label has nodes")
+
+func labelHasNoNodes(engine Engine, label string) (bool, error) {
+	return labelHasNoNodesWithContext(context.Background(), engine, label)
+}
+
+// labelHasNoNodesWithContext carries the caller through validation and label materialization.
+func labelHasNoNodesWithContext(ctx context.Context, engine Engine, label string) (bool, error) {
+	err := StreamStoredLabelNodesWithContext(ctx, engine, label, nil, func(node *Node) error {
+		if node == nil {
+			return nil
+		}
+		return errStopLabelProbe
+	})
+	if errors.Is(err, errStopLabelProbe) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// temporalKeyHistoryNodesLatest returns the stored nodes in the history of
+// node's key under c, read at the latest committed state (the state the label
+// scan reads). Nodes whose entry outlived them (a rebuild racing a delete)
+// are skipped. ok is false when node has no complete key or start.
+func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namespace string, c Constraint, node *Node) (nodes []*Node, ok bool, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var captureErr error
+	target, _, ok := temporalTargetForNode(namespace, node, c)
+	if !ok {
+		return nil, false, nil
+	}
+	var overlay []*Node
+	var touched map[NodeID]bool
+	err = b.withReadView(func(w *WriteBehindBuffer) {
+		captured, readErr := b.readBufferedEntitiesWithContext(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
+		overlay, touched, captureErr = captured.nodes, captured.nodesTouched, readErr
+	}, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr
+		}
+		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, touched: touched, latest: func(node *Node) (bool, error) { nodes = append(nodes, node); return true, nil }})
+		return err
+	})
+	for _, n := range overlay {
+		if err := ctx.Err(); err != nil {
+			return nil, true, err
+		}
+		if namespace == "" || nodeIDInScope(n.ID, namespace+":") {
+			image, err := copyNodeWithContext(ctx, n)
+			if err != nil {
+				return nil, true, err
+			}
+			nodes = append(nodes, image)
+		}
+	}
+	return nodes, true, err
+}

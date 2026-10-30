@@ -1,0 +1,8 @@
+# MCP database pinning and tasks collapse
+
+- [x] Add database-pinned URL routes in pkg/mcp: /mcp/{database}, /mcp/{database}/initialize, /mcp/{database}/tools/list, /mcp/{database}/tools/call. Routing splits the path, transports the pinned database through the request context, and the HTTP handlers inject it as the tool's database argument, replacing any payload database/db so the pin cannot be overridden. tools/list advertises the pinned database as the schema default.
+- [x] Register the pinned variants in pkg/server's MCP route table behind the same PermRead auth as the unpinned routes.
+- [x] Add ServerConfig.DefaultDatabase and SetDefaultDatabase so MCP tools without a pin/payload/context target the configured default database; pkg/server wires it to the database manager's default.
+- [x] Collapse the task tool into tasks: merged schema, argument-based dispatch, dynamic write gating in doCallTool, and removal of ToolTask from handlers, permissions, tool lists and operations helpers. TaskResult stays as the mutation response; TaskParams is removed and TasksParams covers the merged surface.
+- [x] Update MCP and server tests: five-tool surface, tasks create/update/delete/list behavior, pinned-path dispatch, payload override rejection, unauthorized-pin denial, and read-only tasks mutation gating. Update MCP documentation and changelog.
+- [ ] Broader qualification (full repository, races, vet, UI) remains for CI.

@@ -1,0 +1,145 @@
+# NornicDB AMD64 CUDA + Heimdall (Cognitive Guardian)
+# Self-contained build with local embedding AND Heimdall SLM support
+#
+# This image includes:
+# - BGE-M3 embedding model for vector search
+# - qwen3-0.6b-Instruct (Q4_K_M) for Heimdall (cognitive database guardian)
+#
+# Build:
+#   docker build -f docker/Dockerfile.amd64-cuda-heimdall -t timothyswt/nornicdb-amd64-cuda-bge-heimdall .
+#
+# Run:
+#   docker run --gpus all -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data timothyswt/nornicdb-amd64-cuda-bge-heimdall
+#
+# This is a "batteries included" deployment - no additional model downloads required.
+# Heimdall provides: anomaly detection, runtime diagnosis, and memory curation via Bifrost chat.
+
+ARG LLAMA_CUDA_IMAGE=timothyswt/llama-cuda-libs:v0.7.0@sha256:89aa226654e16adcb794d1edc3cc90d945963e993d21d5f650b6d9638c2a98f7
+ARG CUDA_VERSION=12.6.0
+
+# =============================================================================
+# Stage 1: UI
+# =============================================================================
+FROM node:26-alpine AS ui
+WORKDIR /ui
+COPY ui/package*.json ./
+RUN npm ci 2>/dev/null || npm install --legacy-peer-deps
+COPY ui/ .
+RUN npm run build
+
+# =============================================================================
+# Stage 2: Pre-built CUDA libs
+# =============================================================================
+FROM ${LLAMA_CUDA_IMAGE} AS llama
+
+# =============================================================================
+# Stage 3: Go build
+# =============================================================================
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS builder
+
+ENV GO_VERSION=1.26.9
+RUN apt-get update && apt-get install -y wget git gcc g++ libgomp1 && \
+    wget -q https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz && rm go*.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}" CUDA_HOME=/usr/local/cuda
+
+WORKDIR /build
+
+# Copy llama static libraries (before COPY . . for better layer caching)
+COPY --from=llama /output/lib/*.a /build/lib/llama/
+
+# Go dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Source + UI
+COPY . .
+COPY --from=ui /ui/dist ./ui/dist
+
+# Overwrite repo headers with ones matching LLAMA_VERSION (must be AFTER COPY . .)
+# COPY . . would otherwise replace these with the stale headers committed to the repo,
+# causing a struct size mismatch between the compiled library and the CGo bindings.
+COPY --from=llama /output/include/*.h /build/lib/llama/
+
+# Build with CUDA + localllm + heimdall
+RUN echo "Building with CUDA + localllm + heimdall..." && \
+    CGO_ENABLED=1 go build -tags "cuda localllm heimdall" \
+      -ldflags="-s -w -X main.buildTime=$(date -u +%Y%m%d-%H%M%S)" \
+      -o nornicdb ./cmd/nornicdb
+
+# Build APOC plugin
+RUN echo "Building APOC plugin..." && \
+    mkdir -p apoc/built-plugins && \
+    cd apoc/plugin-src/apoc && go build -buildmode=plugin -o ../../../apoc/built-plugins/apoc.so apoc_plugin.go && \
+    echo "✓ Built plugin:" && ls -lh /build/apoc/built-plugins/*.so
+
+# Build Heimdall plugin (must use same tags as main binary for CGO compatibility)
+RUN echo "Building Heimdall plugin..." && \
+    mkdir -p plugins/heimdall/built-plugins && \
+    cd plugins/heimdall/plugin-src/watcher && \
+    CGO_ENABLED=1 go build -tags "cuda localllm heimdall" -buildmode=plugin -o ../../built-plugins/watcher.so watcher_plugin.go && \
+    echo "✓ Built Heimdall plugin:" && ls -lh /build/plugins/heimdall/built-plugins/*.so
+
+# =============================================================================
+# Stage 4: Runtime
+# =============================================================================
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04
+WORKDIR /app
+
+# Install gcc for CUDA stub compilation (graceful fallback when no GPU)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata wget libgomp1 gcc libc6-dev && rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /data /app/models
+
+COPY --from=builder /build/nornicdb /app/
+COPY --from=builder /build/apoc/built-plugins /app/plugins/
+COPY --from=builder /build/plugins/heimdall/built-plugins /app/plugins/heimdall/
+COPY docker/entrypoint.sh /app/entrypoint-real.sh
+COPY docker/cuda-fallback-wrapper.sh /app/entrypoint.sh
+COPY docker/healthcheck.sh /app/
+RUN chmod +x /app/entrypoint.sh /app/entrypoint-real.sh /app/healthcheck.sh
+
+# Embed BGE-M3 (embeddings), BGE-Reranker (search), and Qwen (Heimdall)
+ARG BGE_MODEL_URL=https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf
+ARG BGE_RERANKER_URL=https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf
+ARG QWEN_MODEL_URL=https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
+RUN \
+    echo "Embedding BGE-M3 model..." && \
+    wget -q --show-progress -O /app/models/bge-m3.gguf "$BGE_MODEL_URL" && \
+    echo "✓ Downloaded bge-m3.gguf ($(du -h /app/models/bge-m3.gguf | cut -f1))" && \
+    wget -q --show-progress -O /app/models/bge-reranker-v2-m3.gguf "$BGE_RERANKER_URL" && \
+    echo "✓ Downloaded bge-reranker-v2-m3.gguf ($(du -h /app/models/bge-reranker-v2-m3.gguf | cut -f1))" && \
+    echo "Embedding Heimdall SLM model..." && \
+    wget -q --show-progress -O /app/models/qwen3-0.6b-instruct.gguf "$QWEN_MODEL_URL" && \
+    echo "✓ Downloaded qwen3-0.6b-instruct.gguf ($(du -h /app/models/qwen3-0.6b-instruct.gguf | cut -f1))" && \
+    echo "✓ Heimdall cognitive features + reranker enabled"
+
+EXPOSE 7473 7474 7687 6334 9091
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD /app/healthcheck.sh
+
+ENV NORNICDB_DATA_DIR=/data \
+    NORNICDB_ADDRESS=0.0.0.0 \
+    NORNICDB_HTTP_PORT=7474 \
+    NORNICDB_BOLT_PORT=7687 \
+    NORNICDB_EMBEDDING_ENABLED=true \
+    NORNICDB_EMBEDDING_PROVIDER=local \
+    NORNICDB_EMBEDDING_MODEL=bge-m3 \
+    NORNICDB_EMBEDDING_DIMENSIONS=1024 \
+    NORNICDB_MODELS_DIR=/app/models \
+    NORNICDB_EMBEDDING_GPU_LAYERS=-1 \
+    NORNICDB_NO_AUTH=true \
+    NORNICDB_GPU_ENABLED=true \
+    NORNICDB_PLUGINS_DIR=/app/plugins \
+    NORNICDB_SEARCH_RERANK_ENABLED=false \
+    NORNICDB_SEARCH_RERANK_PROVIDER=local \
+    NORNICDB_SEARCH_RERANK_MODEL=bge-reranker-v2-m3.gguf \
+    NORNICDB_HEIMDALL_ENABLED=true \
+    NORNICDB_HEIMDALL_MODEL=qwen3-0.6b-instruct \
+    NORNICDB_HEIMDALL_PLUGINS_DIR=/app/plugins/heimdall \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -1,0 +1,93 @@
+// Full Top-K Selection Compute Shader for NornicDB
+// SPDX-License-Identifier: Apache-2.0
+//
+// Single-workgroup top-k selection using parallel reduction.
+// Designed for k <= 64 which is typical for similarity search.
+//
+// Algorithm:
+// 1. Each thread scans a portion of the input, keeping track of its top candidate
+// 2. Parallel reduction to find the global maximum
+// 3. Thread 0 marks winner and writes to output
+// 4. Repeat k times
+
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Scores {
+    float scores[];
+};
+
+layout(set = 0, binding = 1) buffer TopIndices {
+    uint top_indices[];
+};
+
+layout(set = 0, binding = 2) buffer TopScores {
+    float top_scores[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint n;     // Total number of scores
+    uint k;     // Number of top elements to find
+} params;
+
+// Shared memory for parallel reduction
+shared float shared_scores[256];
+shared uint shared_indices[256];
+
+// Track which indices have been selected (using negative marking in scores)
+// We read scores into a local copy to avoid modifying the input buffer
+
+void main() {
+    uint lid = gl_LocalInvocationID.x;
+    uint workgroup_size = gl_WorkGroupSize.x;
+    
+    // Process k iterations to find top-k elements
+    for (uint iter = 0; iter < params.k; iter++) {
+        // Phase 1: Each thread finds its local maximum among unselected elements
+        float local_max = -1e30;
+        uint local_idx = 0xFFFFFFFF;
+        
+        // Stride through the data
+        for (uint i = lid; i < params.n; i += workgroup_size) {
+            float score = scores[i];
+            
+            // Check if already selected (we mark by checking output buffer)
+            bool already_selected = false;
+            for (uint j = 0; j < iter; j++) {
+                if (top_indices[j] == i) {
+                    already_selected = true;
+                    break;
+                }
+            }
+            
+            if (!already_selected && score > local_max) {
+                local_max = score;
+                local_idx = i;
+            }
+        }
+        
+        // Store local max to shared memory
+        shared_scores[lid] = local_max;
+        shared_indices[lid] = local_idx;
+        barrier();
+        
+        // Phase 2: Parallel reduction to find global maximum
+        for (uint stride = workgroup_size / 2; stride > 0; stride /= 2) {
+            if (lid < stride) {
+                if (shared_scores[lid + stride] > shared_scores[lid]) {
+                    shared_scores[lid] = shared_scores[lid + stride];
+                    shared_indices[lid] = shared_indices[lid + stride];
+                }
+            }
+            barrier();
+        }
+        
+        // Phase 3: Thread 0 writes the winner
+        if (lid == 0) {
+            top_indices[iter] = shared_indices[0];
+            top_scores[iter] = shared_scores[0];
+        }
+        barrier();  // Ensure all threads see the update before next iteration
+    }
+}

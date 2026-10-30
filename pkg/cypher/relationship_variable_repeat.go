@@ -1,0 +1,155 @@
+package cypher
+
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+)
+
+// A relationship variable named twice in one MATCH (#907).
+//
+// Without a match mode written, MATCH (a)-[r]->()-[r]->(a) is the openCypher
+// TCK's SyntaxError (RelationshipUniquenessViolation, Match3 [29]); the TCK
+// wins over Neo4j 5.26 and 2026.09, which return no rows. With a match mode
+// written (Cypher 25 / GQL) the variable is one relationship bound to both
+// places, as in Neo4j: under DIFFERENT RELATIONSHIPS no relationship appears
+// twice in a MATCH, so the clause matches nothing (an OPTIONAL MATCH binds
+// null); under REPEATABLE ELEMENTS the places join on it. The statement
+// rewrite (desugarLabelExpressions) gives every later place a variable of
+// its own and adds r = <that variable> to the clause's WHERE, so every route
+// reads the clause that way. Places of different kinds (a relationship and a
+// variable-length list) are Neo4j's type mismatch, with or without a mode.
+
+// relationshipPlace is a relationship element of a MATCH pattern: its
+// variable's text query[start:end], and whether it binds a list
+// (variable-length or quantified).
+type relationshipPlace struct {
+	start, end int
+	list       bool
+}
+
+// repeatedRelationshipVariables renames the later places of each
+// relationship variable the MATCH pattern query[start:end] names more than
+// once and returns the predicates that tie them to the first. A variable
+// named both as a relationship and as a list is Neo4j's type mismatch; any
+// other repeat is the TCK's SyntaxError unless modeWritten (see above).
+func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, modeWritten bool) ([]string, error) {
+	q := r.query
+	if indexASCIIFold(q[start:end], "shortestpath") >= 0 {
+		scope := matchSemanticScope{}
+		for _, part := range splitTopLevelComma(q[start:end]) {
+			if err := validateShortestCallBindings(part, scope); err != nil {
+				return nil, err
+			}
+			for _, variable := range extractRelationshipVariables(part) {
+				scope[variable] = matchBindingUnknown
+			}
+		}
+	}
+	places := make(map[string][]relationshipPlace)
+	var order []string
+	for i := start; i < end; i++ {
+		switch c := q[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
+			i = skipCypherQuotedText(q, i, c) - 1
+		case '{':
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
+				i = close
+			}
+		case '[':
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
+			if close < 0 {
+				return nil, nil
+			}
+			name, nameEnd, ok := relationshipVariableAt(q[:close], i)
+			if ok && relationshipBracketAt(q, start, i) {
+				_, _, quantified := quantifierAfterArrow(q, close, end)
+				inner := close
+				if where := elementWhereIndex(q, i, close); where >= 0 {
+					inner = where
+				}
+				if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
+					inner = i + 1 + brace
+				}
+				list := quantified || indexOutsideQuotes(q[i+1:inner], '*') >= 0
+				if _, seen := places[name]; !seen {
+					order = append(order, name)
+				}
+				places[name] = append(places[name], relationshipPlace{start: nameEnd - len(name), end: nameEnd, list: list})
+			}
+			i = close
+		}
+	}
+	var predicates []string
+	for _, name := range order {
+		named := places[name]
+		if len(named) < 2 {
+			continue
+		}
+		for _, place := range named[1:] {
+			if place.list != named[0].list {
+				types := map[bool]string{false: "Relationship", true: "List<Relationship>"}
+				return nil, labelExpressionSyntaxError(localization.CypherMatchingVariableTypeConflict(name, types[named[0].list], types[place.list]))
+			}
+		}
+		if !modeWritten {
+			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "RelationshipUniquenessViolation", localization.CypherMatchingRelationshipVariableRepeated(name))
+		}
+		for _, place := range named[1:] {
+			variable := r.variable()
+			r.edit(place.start, place.end, variable)
+			predicates = append(predicates, name+" = "+variable)
+		}
+	}
+	return predicates, nil
+}
+
+// mayRepeatRelationshipVariable reports whether query may name a
+// relationship variable twice: two relationship brackets that start with the
+// same name. It never answers false for one. It runs for every statement, so
+// it jumps from [ to [ and reads brackets in string literals too (an extra
+// yes only costs the full rewrite, which reads quotes).
+func mayRepeatRelationshipVariable(query string) bool {
+	var seen [8]string
+	count := 0
+	for i := strings.IndexByte(query, '['); i >= 0; {
+		if relationshipBracketAt(query, 0, i) {
+			if name, _, ok := relationshipVariableAt(query, i); ok {
+				if count == len(seen) {
+					return true
+				}
+				for _, earlier := range seen[:count] {
+					if earlier == name {
+						return true
+					}
+				}
+				seen[count] = name
+				count++
+			}
+		}
+		next := strings.IndexByte(query[i+1:], '[')
+		if next < 0 {
+			return false
+		}
+		i += next + 1
+	}
+	return false
+}
+
+// relationshipBracketAt reports whether the [ at query[i] opens a
+// relationship: a - comes right before it, spaces skipped.
+func relationshipBracketAt(query string, start, i int) bool {
+	j := trimRightIndex(query, start, i)
+	return j > start && query[j-1] == '-'
+}
+
+// relationshipVariableAt reads the variable of the relationship bracket at
+// query[open]; IS followed by a space starts a type expression ([IS T]).
+func relationshipVariableAt(query string, open int) (string, int, bool) {
+	name, end, ok := scanSymbolicName(query, skipASCIISpaces(query, open+1, len(query)))
+	if ok && strings.EqualFold(name, "IS") && end < len(query) && cyphertext.IsWhitespaceAt(query, end) {
+		return "", end, false
+	}
+	return name, end, ok
+}

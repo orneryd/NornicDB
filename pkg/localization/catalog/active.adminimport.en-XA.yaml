@@ -1,0 +1,102 @@
+- id: adminimport.open_csv_failed
+  description: Expanded pseudo-locale CSV open failure.
+  other: "[!! failed to open CSV file !!]"
+- id: adminimport.database_name_required
+  description: Expanded pseudo-locale database name validation.
+  other: "[!! database name is required !!]"
+- id: adminimport.node_source_required
+  description: Expanded pseudo-locale node source validation.
+  other: "[!! at least one --nodes source is required !!]"
+- id: adminimport.storage_engine_required
+  description: Expanded pseudo-locale storage engine validation.
+  other: "[!! storage engine is required !!]"
+- id: adminimport.actual_id_unsupported
+  description: Expanded pseudo-locale actual ID mode validation.
+  other: "[!! --id-type=actual is not supported !!]"
+- id: adminimport.relationship_ids_required
+  description: Expanded pseudo-locale relationship endpoint validation.
+  other: "[!! relationship source requires :START_ID and :END_ID columns !!]"
+- id: adminimport.relationship_type_required
+  description: Expanded pseudo-locale relationship type validation.
+  other: "[!! relationship source requires :TYPE column or --relationships=TYPE= prefix !!]"
+- id: adminimport.invalid_vector_dimensions
+  description: Expanded pseudo-locale vector dimension validation.
+  other: "[!! invalid vector dimensions in header: {{.Header}} !!]"
+- id: adminimport.unsupported_header_token
+  description: Expanded pseudo-locale header token validation.
+  other: "[!! unsupported header token: {{.Token}} !!]"
+- id: adminimport.unsupported_property_type
+  description: Expanded pseudo-locale property type validation.
+  other: "[!! unsupported property type: {{.Type}} !!]"
+- id: adminimport.empty_source
+  description: Expanded pseudo-locale empty source validation.
+  other: "[!! empty import source !!]"
+- id: adminimport.relationship_prefix_limit
+  description: Expanded pseudo-locale relationship prefix validation.
+  other: "[!! relationship source accepts at most one type prefix !!]"
+- id: adminimport.custom_quote_unsupported
+  description: Expanded pseudo-locale import quote validation.
+  other: "[!! custom --quote is not supported by the Go CSV reader yet !!]"
+- id: adminimport.zip_single_file_required
+  description: Expanded pseudo-locale ZIP source validation.
+  other: "[!! zip CSV sources must contain exactly one file !!]"
+- id: adminimport.target_not_empty
+  description: Expanded pseudo-locale target database validation.
+  other: "[!! database import full requires an empty target database !!]"
+- id: adminimport.no_csv_files
+  description: Expanded pseudo-locale source discovery validation.
+  other: "[!! no Neo4j-compatible CSV files found in source directory !!]"
+- id: adminimport.no_node_csv_files
+  description: Expanded pseudo-locale node source discovery validation.
+  other: "[!! source directory does not contain any node CSV files !!]"
+- id: adminimport.export_output_directory_required
+  description: Expanded pseudo-locale export directory validation.
+  other: "[!! output directory is required !!]"
+- id: adminimport.export_custom_quote_unsupported
+  description: Expanded pseudo-locale export quote validation.
+  other: "[!! custom quote characters are not supported for Neo4j CSV export !!]"
+- id: adminimport.unsupported_csv_header
+  description: Expanded pseudo-locale CSV header validation.
+  other: "[!! unsupported CSV header in Neo4j source directory: {{.Path}} !!]"
+- id: adminimport.schema_application_failed
+  description: Expanded pseudo-locale schema application failure.
+  other: "[!! schema application failed !!]"
+- id: adminimport.duplicate_node_id
+  description: Expanded pseudo-locale duplicate node ID failure.
+  other: "[!! duplicate node ID at row {{.Row}} !!]"
+- id: adminimport.duplicate_relationship_id
+  description: Expanded pseudo-locale duplicate relationship ID failure.
+  other: "[!! duplicate relationship ID !!]"
+- id: adminimport.duplicate_relationship_id_at_row
+  description: Expanded pseudo-locale duplicate relationship ID row failure.
+  other: "[!! duplicate relationship ID at row {{.Row}} !!]"
+- id: adminimport.bad_start_relationship
+  description: Expanded pseudo-locale missing start node failure.
+  other: "[!! bad relationship at row {{.Row}}: missing start node !!]"
+- id: adminimport.bad_end_relationship
+  description: Expanded pseudo-locale missing end node failure.
+  other: "[!! bad relationship at row {{.Row}}: missing end node !!]"
+- id: adminimport.bad_start_tolerance_exceeded
+  description: Expanded pseudo-locale missing start node tolerance failure.
+  other: "[!! bad relationship tolerance exceeded at row {{.Row}} ({{.BadCount}} > {{.Tolerance}}): missing start node !!]"
+- id: adminimport.bad_end_tolerance_exceeded
+  description: Expanded pseudo-locale missing end node tolerance failure.
+  other: "[!! bad relationship tolerance exceeded at row {{.Row}} ({{.BadCount}} > {{.Tolerance}}): missing end node !!]"
+- id: adminimport.open_gzip_csv_failed
+  description: Expanded pseudo-locale gzip CSV open failure.
+  other: "[!! failed to open gzip CSV file !!]"
+- id: adminimport.open_zip_csv_failed
+  description: Expanded pseudo-locale zip CSV open failure.
+  other: "[!! failed to open zip CSV file !!]"
+- id: adminimport.open_zip_member_failed
+  description: Expanded pseudo-locale zipped CSV member failure.
+  other: "[!! failed to open zipped CSV member !!]"
+- id: adminimport.csv_parse_error
+  description: Expanded pseudo-locale CSV parse failure.
+  other: "[!! CSV parse error at {{.Where}} !!]"
+- id: adminimport.scan_directory_failed
+  description: Expanded pseudo-locale CSV directory scan failure.
+  other: "[!! failed to scan Neo4j CSV directory !!]"
+- id: adminimport.read_header_failed
+  description: Expanded pseudo-locale CSV header read failure.
+  other: "[!! failed to read CSV header !!]"

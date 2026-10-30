@@ -1,0 +1,208 @@
+- id: cyphermatching.match_pattern_required
+  description: MATCH clause has no pattern. MATCH is untranslated Cypher syntax.
+  other: MATCH clause requires a pattern
+- id: cyphermatching.match_node_pattern_required
+  description: MATCH starts with a relationship rather than a node. Keywords are untranslated.
+  other: MATCH clause requires a node pattern, not just a relationship pattern
+- id: cyphermatching.return_expression_required
+  description: RETURN clause has no projection expression. RETURN is untranslated Cypher syntax.
+  other: RETURN clause requires at least one expression
+- id: cyphermatching.return_expression_empty
+  description: RETURN clause contains an empty projection expression. RETURN is untranslated Cypher syntax.
+  other: RETURN clause contains empty expression
+- id: cyphermatching.storage_failed
+  description: Storage failure during matching. Cause is untranslated diagnostic text.
+  other: "storage error: {{.Cause}}"
+- id: cyphermatching.collect_subquery_failed
+  description: COLLECT subquery execution failure. Cause is untranslated diagnostic text.
+  other: "COLLECT subquery failed: {{.Cause}}"
+- id: cyphermatching.match_unwind_clauses_required
+  description: Required MATCH and UNWIND query clauses are missing. Cypher syntax is untranslated.
+  other: "MATCH and UNWIND clauses required (e.g., MATCH (n) UNWIND n.items AS item RETURN item)"
+- id: cyphermatching.unwind_as_required
+  description: UNWIND lacks an AS binding. Cypher syntax is untranslated.
+  other: "UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)"
+- id: cyphermatching.with_return_clauses_required
+  description: Required WITH or RETURN clause is missing. Keywords are untranslated Cypher syntax.
+  other: WITH and RETURN clauses required
+- id: cyphermatching.order_by_parse_failed
+  description: ORDER BY clause parsing failed. Keywords are untranslated Cypher syntax.
+  other: failed to parse ORDER BY clause
+- id: cyphermatching.match_pattern_variable_missing
+  description: MATCH pattern lacks a variable. Clause includes untranslated Go quoting.
+  other: "invalid MATCH pattern: missing variable in {{.Clause}}"
+- id: cyphermatching.traversal_pattern_invalid
+  description: Invalid traversal pattern. Pattern is untranslated Cypher syntax.
+  other: "invalid traversal pattern: {{.Pattern}}"
+- id: cyphermatching.return_after_with_required
+  description: WITH clause lacks a following RETURN. Keywords are untranslated Cypher syntax.
+  other: RETURN clause required after WITH
+- id: cyphermatching.skip_parse_failed
+  description: SKIP clause parsing failed. SKIP is untranslated Cypher syntax.
+  other: failed to parse SKIP clause
+- id: cyphermatching.limit_parse_failed
+  description: LIMIT clause parsing failed. LIMIT is untranslated Cypher syntax.
+  other: failed to parse LIMIT clause
+- id: cyphermatching.path_pattern_invalid
+  description: Invalid shortest-path pattern. Pattern is untranslated Cypher syntax.
+  other: "invalid path pattern: {{.Pattern}}"
+- id: cyphermatching.shortest_path_minimal_length
+  description: "shortestPath or allShortestPaths minimum length above 1. Function is the function name."
+  other: "{{.Function}}(...) does not support a minimal length different from 0 or 1"
+- id: cyphermatching.shortest_path_common_end_nodes
+  description: "shortestPath search whose start and end are the same node (Neo4j text)."
+  other: "The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you\nperform a shortestPath search after a cartesian product that might have the same start and end nodes for some\nof the rows passed to shortestPath. If you would rather not experience this exception, and can accept the\npossibility of missing results for those rows, disable this in the Neo4j configuration by setting\n`dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the\nshortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern\nexpression followed by ordering by path length and limiting to one result."
+- id: cyphermatching.shortest_path_unbound_nodes
+  description: "shortestPath or allShortestPaths expression with an endpoint that is not a bound variable. Function is the function name."
+  other: "A {{.Function}}(...) requires bound nodes when not part of a MATCH clause."
+- id: cyphermatching.shortest_path_relationship_properties
+  description: "Relationship properties in a shortestPath or allShortestPaths pattern. Function is the function name; Properties is the property map as written."
+  other: "{{.Function}}(...) contains properties {{.Properties}}. This is currently not supported."
+- id: cyphermatching.shortest_path_single_relationship
+  description: "shortestPath or allShortestPaths pattern without exactly one relationship. Function is the function name."
+  other: "{{.Function}}(...) requires a pattern containing a single relationship"
+- id: cyphermatching.quantified_path_in_write_pattern
+  description: "Quantified path pattern in CREATE or MERGE. Clause is the clause keyword."
+  other: "Quantified path patterns cannot be used in a {{.Clause}} clause, but only in a MATCH clause."
+- id: cyphermatching.variable_length_in_quantified_path
+  description: "Variable-length relationship with a quantifier."
+  other: "Variable length relationships cannot be part of a quantified path pattern."
+- id: cyphermatching.quantifier_in_expression_pattern
+  description: "Relationship quantifier in a pattern predicate or pattern comprehension. Token is the quantifier character."
+  other: "Invalid input '{{.Token}}': a relationship quantifier is allowed only in a MATCH pattern or a subquery"
+- id: cyphermatching.optional_match_node_endpoint_missing
+  description: OPTIONAL MATCH pattern lacks its first node endpoint. Pattern includes untranslated Go quoting.
+  other: "optional match pattern {{.Pattern}} has no node endpoint"
+- id: cyphermatching.optional_match_node_endpoint_unterminated
+  description: OPTIONAL MATCH pattern has an unterminated first node endpoint. Pattern includes untranslated Go quoting.
+  other: "optional match pattern {{.Pattern}} has an unterminated node endpoint"
+- id: cyphermatching.optional_match_target_endpoint_missing
+  description: OPTIONAL MATCH pattern lacks its target node endpoint. Pattern includes untranslated Go quoting.
+  other: "optional match pattern {{.Pattern}} has no target endpoint"
+- id: cyphermatching.optional_match_target_endpoint_unterminated
+  description: OPTIONAL MATCH pattern has an unterminated target endpoint. Pattern includes untranslated Go quoting.
+  other: "optional match pattern {{.Pattern}} has an unterminated target endpoint"
+- id: cyphermatching.aggregate_call_expected
+  description: Expression is not one complete aggregate call. Expression includes untranslated Go quoting.
+  other: "not a whole aggregate call: {{.Expression}}"
+- id: cyphermatching.function_parameters_insufficient
+  description: Aggregate function has too few parameters. Function is an untranslated machine name.
+  other: "insufficient parameters for function '{{.Function}}'"
+- id: cyphermatching.label_expression_mixed_colon
+  description: A colon-separated label chain also uses label expression symbols. Expression is Cypher text and is not translated.
+  other: "Mixing label expression symbols ('|', '&', '!', and '%') with colon (':') between labels is not allowed. Please only use one set of symbols. This expression could be expressed as :{{.Expression}}."
+- id: cyphermatching.label_expression_mixed_is
+  description: An IS label expression also uses colons between labels. IS and Expression are Cypher text and are not translated.
+  other: "Mixing the IS keyword with colon (':') between labels is not allowed. This expression could be expressed as IS {{.Expression}}."
+- id: cyphermatching.relationship_type_colon_disjunction
+  description: "The legacy |: separator on a relationship with a variable, properties or a length. Expression is Cypher text and is not translated."
+  other: "The semantics of using colon in the separation of alternative relationship types in conjunction with\nthe use of variable binding, inlined property predicates, or variable length is no longer supported.\nPlease separate the relationships types using `:{{.Expression}}` instead."
+- id: cyphermatching.relationship_type_colon_conjunction
+  description: A relationship pattern lists types separated by colons.
+  other: "Relationship types in a relationship type expressions may not be combined using ':'"
+- id: cyphermatching.variable_length_type_expression
+  description: A variable-length relationship uses a type expression other than alternatives.
+  other: "Variable length relationships must not use relationship type expressions."
+- id: cyphermatching.label_expression_in_write_pattern
+  description: A CREATE or MERGE node pattern uses |, ! or %. Clause is a Cypher keyword and is not translated.
+  other: "Label expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause and in expressions"
+- id: cyphermatching.relationship_type_expression_in_write_pattern
+  description: A CREATE or MERGE relationship pattern uses !, & or %. Clause is a Cypher keyword and is not translated.
+  other: "Relationship type expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause"
+- id: cyphermatching.pattern_predicate_in_write_pattern
+  description: "A node or relationship pattern's own WHERE in CREATE or MERGE. Element is Node or Relationship; Clause is the clause keyword."
+  other: "{{.Element}} pattern predicates are not allowed in a {{.Clause}} clause, but only in a MATCH clause or inside a pattern comprehension"
+- id: cyphermatching.pattern_predicate_variable_length
+  description: "A WHERE inside a variable-length relationship pattern."
+  other: "Relationship pattern predicates are not supported for variable-length relationships."
+- id: cyphermatching.return_star_no_variables
+  description: "RETURN * with no variable in scope."
+  other: "RETURN * requires at least one variable in scope"
+- id: cyphermatching.query_cannot_conclude
+  description: "A query or CALL subquery body whose last clause can't conclude it. Clause is a Cypher keyword and is not translated."
+  other: "Query cannot conclude with {{.Clause}} (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+- id: cyphermatching.exists_expression_updates
+  description: "An update clause inside a EXISTS subquery expression, at any depth."
+  other: "An Exists Expression cannot contain any updates"
+- id: cyphermatching.count_expression_updates
+  description: "An update clause inside a COUNT subquery expression, at any depth."
+  other: "A Count Expression cannot contain any updates"
+- id: cyphermatching.collect_expression_updates
+  description: "An update clause inside a COLLECT subquery expression, at any depth."
+  other: "A Collect Expression cannot contain any updates"
+- id: cyphermatching.optional_match_shape_unsupported
+  description: "A MATCH … OPTIONAL MATCH statement the clause pipeline does not run. Query is Cypher text and is not translated."
+  other: "this MATCH … OPTIONAL MATCH form is not supported: {{.Query}}"
+- id: cyphermatching.is_not_operand_invalid
+  description: IS NOT is followed by a label. Input is Cypher text and is not translated.
+  other: "Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED'"
+- id: cyphermatching.single_relationship_type_required
+  description: A CREATE or MERGE relationship pattern lists alternative types. Clause is a Cypher keyword and is not translated.
+  other: "A single relationship type must be specified for {{.Clause}}"
+- id: cyphermatching.aggregation_scope_variable
+  description: A WITH or RETURN with DISTINCT or an aggregation reads, in its WHERE or ORDER BY, a variable it doesn't project. WITH, RETURN and DISTINCT are untranslated Cypher syntax; Variable is the untranslated variable name.
+  other: "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN: {{.Variable}}"
+- id: cyphermatching.path_selector_path_count_not_positive
+  description: "A path selector's path count is 0 (SHORTEST 0, ANY 0)."
+  other: "The path count needs to be greater than 0."
+- id: cyphermatching.path_selector_group_count_not_positive
+  description: "A SHORTEST k GROUPS selector's group count is 0."
+  other: "The group count needs to be greater than 0."
+- id: cyphermatching.path_selector_multiple_patterns
+  description: "A MATCH with a selective path selector (ANY, SHORTEST) has another pattern. MATCH and REPEATABLE ELEMENTS are untranslated Cypher syntax."
+  other: "Multiple path patterns cannot be used in the same clause in combination with a selective path selector. You may want to use multiple MATCH clauses, or you might want to consider using the REPEATABLE ELEMENTS match mode."
+- id: cyphermatching.path_selector_with_shortest_path_function
+  description: "shortestPath or allShortestPaths is used with a path selector, a match mode or a path mode. The Cypher in backquotes is not translated."
+  other: "Mixing shortestPath/allShortestPaths with path selectors (e.g. `ANY SHORTEST`), explicit match modes (e.g. `DIFFERENT RELATIONSHIPS`) or explicit path modes (e.g. `ACYCLIC`) is not allowed."
+- id: cyphermatching.path_mode_variable_length
+  description: "An explicit path mode is used with a variable-length relationship. Mode is a Cypher keyword and is not translated."
+  other: "Using a variable-length relationship such as `-[*]->` together with explicit path mode `{{.Mode}}` is not available."
+- id: cyphermatching.path_selector_in_write_pattern
+  description: "A path selector in CREATE or MERGE. Clause is the clause keyword."
+  other: "Path selectors such as `SHORTEST 1 PATHS` cannot be used in a {{.Clause}} clause, but only in a MATCH clause."
+- id: cyphermatching.path_selector_count_invalid
+  description: "A path selector's count parameter is not positive. Value is the parameter's value."
+  other: "Count requires positive integer argument, got `{{.Value}}`"
+- id: cyphermatching.path_selector_count_type
+  description: "A path selector's count parameter is not an integer. Type is the Cypher type name and is not translated."
+  other: "Expected Integer but got {{.Type}}"
+- id: cyphermatching.pattern_marker_outside_match
+  description: "A path selector or match mode reached a step that does not run path patterns."
+  other: "a path selector or match mode can only be used in a MATCH pattern"
+- id: cyphermatching.variable_type_conflict
+  description: "A variable is bound as two types in one pattern. Variable is the variable name; Defined and Expected are Cypher type names; none is translated."
+  other: "Type mismatch: {{.Variable}} defined with conflicting type {{.Defined}} (expected {{.Expected}})"
+- id: cyphermatching.relationship_variable_repeated
+  description: "A MATCH pattern names a relationship variable twice without a match mode. Variable is the untranslated variable name."
+  other: "relationship variable {{.Variable}} is used more than once in the same pattern"
+- id: cyphermatching.repeatable_elements_unbounded
+  description: "A quantifier without an upper bound in MATCH REPEATABLE ELEMENTS. REPEATABLE ELEMENTS is untranslated Cypher syntax."
+  other: "The quantified path pattern may yield an infinite number of rows under match mode 'REPEATABLE ELEMENTS'. Add an upper bound to the quantified path pattern."
+- id: cyphermatching.repeatable_elements_path_mode
+  description: "A TRAIL or ACYCLIC path mode in MATCH REPEATABLE ELEMENTS. Mode and REPEATABLE ELEMENTS are untranslated Cypher syntax."
+  other: "REPEATABLE ELEMENTS with {{.Mode}} path mode is not supported."
+- id: cyphermatching.quantified_path_zero_limit
+  description: "A quantified path pattern's upper bound is 0."
+  other: "A quantifier for a path pattern must not be limited by 0."
+- id: cyphermatching.quantified_path_variable_outside
+  description: "A variable is named inside and outside a quantified path pattern. Variable is the untranslated variable name."
+  other: "The variable `{{.Variable}}` occurs both inside and outside a quantified path pattern and needs to be renamed."
+- id: cyphermatching.quantified_path_nested
+  description: "A quantified path pattern or quantifier inside a quantified path pattern."
+  other: "Quantified path patterns are not allowed to be nested."
+- id: cyphermatching.quantified_path_no_relationship
+  description: "A quantified path pattern has no relationship."
+  other: "A quantified path pattern needs to have at least one relationship."
+- id: cyphermatching.quantifier_bounds_reversed
+  description: "A path quantifier's lower bound exceeds its upper bound."
+  other: "A quantifier for a path pattern must not have a lower bound which exceeds its upper bound."
+- id: cyphermatching.quantified_path_variable_bound
+  description: "A variable an earlier clause binds is named inside a quantified path pattern. Variable is the untranslated variable name."
+  other: "The variable `{{.Variable}}` is already defined in a previous clause, it cannot be referenced as a node or as a relationship variable inside of a quantified path pattern."
+- id: cyphermatching.parenthesised_path_juxtaposed
+  description: "A parenthesised path without a quantifier next to another pattern element."
+  other: "Juxtaposition is currently only supported for quantified path patterns."
+
+- id: cyphermatching.bound_shortest_relationships
+  description: Neo4j 5.26.30 diagnostic, retained verbatim for compatibility.
+  other: Bound relationships not allowed in {{.Function}}(...)

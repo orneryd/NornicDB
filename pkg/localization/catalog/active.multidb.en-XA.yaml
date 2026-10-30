@@ -1,0 +1,69 @@
+- id: multidb.constituent_alias_required
+  description: Expanded pseudo-locale constituent alias validation.
+  other: "[!! constituent alias cannot be empty !!]"
+- id: multidb.constituent_database_required
+  description: Expanded pseudo-locale constituent database validation.
+  other: "[!! constituent database name cannot be empty !!]"
+- id: multidb.constituent_type_invalid
+  description: Expanded pseudo-locale constituent type validation.
+  other: "[!! constituent type must be 'local' or 'remote' !!]"
+- id: multidb.access_mode_invalid
+  description: Expanded pseudo-locale access mode validation.
+  other: "[!! access mode must be 'read', 'write', or 'read_write' !!]"
+- id: multidb.remote_uri_required
+  description: Expanded pseudo-locale remote URI validation.
+  other: "[!! remote constituent URI cannot be empty !!]"
+- id: multidb.remote_auth_mode_invalid
+  description: Expanded pseudo-locale remote auth mode validation.
+  other: "[!! remote auth mode must be 'oidc_forwarding' or 'user_password' !!]"
+- id: multidb.remote_user_required
+  description: Expanded pseudo-locale remote user validation.
+  other: "[!! remote constituent user cannot be empty when auth mode is user_password !!]"
+- id: multidb.remote_password_required
+  description: Expanded pseudo-locale remote password validation.
+  other: "[!! remote constituent password cannot be empty when auth mode is user_password !!]"
+- id: multidb.oidc_credentials_forbidden
+  description: Expanded pseudo-locale OIDC credential validation.
+  other: "[!! remote constituent user/password cannot be set when auth mode is oidc_forwarding !!]"
+- id: multidb.max_nodes_reached
+  description: Expanded pseudo-locale node quota failure.
+  other: "[!! storage limit exceeded: database '{{.Name}}' has reached max_nodes limit ({{.Current}}/{{.Limit}}) !!]"
+- id: multidb.max_edges_reached
+  description: Expanded pseudo-locale edge quota failure.
+  other: "[!! storage limit exceeded: database '{{.Name}}' has reached max_edges limit ({{.Current}}/{{.Limit}}) !!]"
+- id: multidb.max_bytes_exceeded
+  description: Expanded pseudo-locale byte quota failure.
+  other: "[!! storage limit exceeded: database '{{.Name}}' would exceed max_bytes limit (current: {{.Current}} bytes, limit: {{.Limit}} bytes, new entity: {{.EntitySize}} bytes) !!]"
+- id: multidb.max_concurrent_queries_reached
+  description: Expanded pseudo-locale concurrent query quota failure.
+  other: "[!! query limit exceeded: database '{{.Name}}' has reached max_concurrent_queries limit ({{.Current}}/{{.Limit}}) !!]"
+- id: multidb.query_rate_exceeded
+  description: Expanded pseudo-locale query rate failure.
+  other: "[!! rate limit exceeded: database '{{.Name}}' exceeded max_queries_per_second ({{.Limit}}) !!]"
+- id: multidb.write_rate_exceeded
+  description: Expanded pseudo-locale write rate failure.
+  other: "[!! rate limit exceeded: database '{{.Name}}' exceeded max_writes_per_second ({{.Limit}}) !!]"
+- id: multidb.max_connections_reached
+  description: Expanded pseudo-locale connection quota failure.
+  other: "[!! connection limit exceeded: database '{{.Name}}' has reached max_connections limit ({{.Current}}/{{.Limit}}) !!]"
+- id: multidb.credential_format_invalid
+  description: Expanded pseudo-locale credential format failure.
+  other: "[!! remote credential is not encrypted with expected format !!]"
+- id: multidb.credential_payload_truncated
+  description: Expanded pseudo-locale truncated credential failure.
+  other: "[!! remote credential payload is truncated !!]"
+- id: multidb.remote_password_empty
+  description: Expanded pseudo-locale empty remote password validation.
+  other: "[!! remote constituent password cannot be empty !!]"
+- id: multidb.credential_key_config_required
+  description: Expanded pseudo-locale credential key configuration validation.
+  other: "[!! remote user/password auth requires remote credential encryption key configuration !!]"
+- id: multidb.stored_password_missing
+  description: Expanded pseudo-locale missing stored password failure.
+  other: "[!! remote constituent password is missing !!]"
+- id: multidb.credential_decrypt_key_required
+  description: Expanded pseudo-locale credential decryption key failure.
+  other: "[!! remote credential encryption key is required to decrypt stored remote credentials !!]"
+- id: multidb.invalid_constituent
+  description: Expanded pseudo-locale constituent validation wrapper.
+  other: "[!! invalid constituent at index {{.Index}}: {{.Cause}} !!]"

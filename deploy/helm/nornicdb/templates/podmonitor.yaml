@@ -1,0 +1,24 @@
+{{- if .Values.podMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "nornicdb.fullname" . }}
+  labels:
+    {{- include "nornicdb.labels" . | nindent 4 }}
+    {{- with .Values.podMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "nornicdb.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: telemetry
+      interval: {{ .Values.podMonitor.interval }}
+      scrapeTimeout: {{ .Values.podMonitor.scrapeTimeout }}
+      path: /metrics
+      {{- with .Values.podMonitor.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

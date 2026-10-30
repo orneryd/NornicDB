@@ -1,0 +1,2468 @@
+package storage
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+type mvccNodeRecord struct {
+	Node       *Node
+	Tombstoned bool
+	// undo is set, and Node nil, for an undo record (badger_mvcc_undo.go)
+	// until the loaders resolve it.
+	undo *mvccNodeUndo
+}
+
+type mvccEdgeRecord struct {
+	Edge       *Edge
+	Tombstoned bool
+	// undo is the relationship analogue of mvccNodeRecord.undo.
+	undo *mvccEdgeUndo
+}
+
+type mvccAdjacencyRecord struct {
+	Tombstoned bool
+}
+
+func encodeMVCCNodeRecord(node *Node, tombstoned bool) ([]byte, error) {
+	return msgpack.Marshal(mvccNodeRecord{Node: mvccSnapshotNode(node), Tombstoned: tombstoned})
+}
+
+func decodeMVCCNodeRecord(data []byte) (mvccNodeRecord, error) {
+	if isMVCCUndoRecord(data) {
+		undo, err := decodeMVCCNodeUndo(data)
+		return mvccNodeRecord{undo: undo}, err
+	}
+	var record mvccNodeRecord
+	if err := util.DecodeMsgpackBytes(data, &record); err != nil {
+		return mvccNodeRecord{}, err
+	}
+	return record, nil
+}
+
+func encodeMVCCEdgeRecord(edge *Edge, tombstoned bool) ([]byte, error) {
+	return msgpack.Marshal(mvccEdgeRecord{Edge: copyEdge(edge), Tombstoned: tombstoned})
+}
+
+func mvccSnapshotNode(node *Node) *Node {
+	if node == nil {
+		return nil
+	}
+	snapshot := copyNode(node)
+	// Historical MVCC records keep logical graph state but do not inline large
+	// embedding payloads. The materialized current row continues to store full
+	// embeddings using the existing separate-chunk path.
+	snapshot.ChunkEmbeddings = nil
+	snapshot.NamedEmbeddings = nil
+	snapshot.EmbeddingsStoredSeparately = false
+	return snapshot
+}
+
+func decodeMVCCEdgeRecord(data []byte) (mvccEdgeRecord, error) {
+	if isMVCCUndoRecord(data) {
+		undo, err := decodeMVCCEdgeUndo(data)
+		return mvccEdgeRecord{undo: undo}, err
+	}
+	var record mvccEdgeRecord
+	if err := util.DecodeMsgpackBytes(data, &record); err != nil {
+		return mvccEdgeRecord{}, err
+	}
+	return record, nil
+}
+
+func encodeMVCCAdjacencyRecord(tombstoned bool) []byte {
+	if tombstoned {
+		return []byte{1}
+	}
+	return []byte{0}
+}
+
+func decodeMVCCAdjacencyRecord(data []byte) (mvccAdjacencyRecord, error) {
+	if len(data) != 1 {
+		return mvccAdjacencyRecord{}, fmt.Errorf("invalid mvcc adjacency record length: %d", len(data))
+	}
+	return mvccAdjacencyRecord{Tombstoned: data[0] != 0}, nil
+}
+
+// MVCCHead is written once per entity, updated on every commit, and
+// consulted on every read. Encoded as a compact binary blob to minimize
+// on-disk footprint and allocation pressure:
+//
+//	[0]        : version byte (currently 1 for compact binary)
+//	[1]        : flags (bit 0 = tombstoned, bit 1 = floor != version)
+//	[2..9]     : Version.CommitTimestamp nanos (big-endian int64 UTC)
+//	[10..17]   : Version.CommitSequence (big-endian uint64)
+//	[18..25]   : FloorVersion.CommitTimestamp nanos (only if flag bit 1)
+//	[26..33]   : FloorVersion.CommitSequence (only if flag bit 1)
+//
+// The common case — a fresh CREATE or an update where floor==version —
+// emits only 18 bytes. Prior msgpack encoding was ~170 bytes per head.
+//
+// Legacy msgpack-encoded heads are still decodable via fallback so
+// existing data directories continue to work across the format change.
+const (
+	mvccHeadCompactVersion byte = 1
+	mvccHeadFlagTombstoned byte = 1 << 0
+	mvccHeadFlagHasFloor   byte = 1 << 1
+
+	mvccHeadCompactMinLen  = 18
+	mvccHeadCompactFullLen = 34
+)
+
+func encodeMVCCHead(head MVCCHead) ([]byte, error) {
+	head = normalizeMVCCHead(head)
+	flags := byte(0)
+	if head.Tombstoned {
+		flags |= mvccHeadFlagTombstoned
+	}
+	hasFloor := head.FloorVersion.Compare(head.Version) != 0
+	if hasFloor {
+		flags |= mvccHeadFlagHasFloor
+	}
+	size := mvccHeadCompactMinLen
+	if hasFloor {
+		size = mvccHeadCompactFullLen
+	}
+	buf := make([]byte, size)
+	buf[0] = mvccHeadCompactVersion
+	buf[1] = flags
+	binary.BigEndian.PutUint64(buf[2:10], uint64(head.Version.CommitTimestamp.UTC().UnixNano()))
+	binary.BigEndian.PutUint64(buf[10:18], head.Version.CommitSequence)
+	if hasFloor {
+		binary.BigEndian.PutUint64(buf[18:26], uint64(head.FloorVersion.CommitTimestamp.UTC().UnixNano()))
+		binary.BigEndian.PutUint64(buf[26:34], head.FloorVersion.CommitSequence)
+	}
+	return buf, nil
+}
+
+func decodeMVCCHead(data []byte) (MVCCHead, error) {
+	if len(data) >= 1 && data[0] == mvccHeadCompactVersion {
+		if len(data) < mvccHeadCompactMinLen {
+			return MVCCHead{}, fmt.Errorf("mvcc head truncated: %d bytes", len(data))
+		}
+		flags := data[1]
+		head := MVCCHead{
+			Version: MVCCVersion{
+				CommitTimestamp: time.Unix(0, int64(binary.BigEndian.Uint64(data[2:10]))).UTC(),
+				CommitSequence:  binary.BigEndian.Uint64(data[10:18]),
+			},
+			Tombstoned: flags&mvccHeadFlagTombstoned != 0,
+		}
+		if flags&mvccHeadFlagHasFloor != 0 {
+			if len(data) < mvccHeadCompactFullLen {
+				return MVCCHead{}, fmt.Errorf("mvcc head missing floor: %d bytes", len(data))
+			}
+			head.FloorVersion = MVCCVersion{
+				CommitTimestamp: time.Unix(0, int64(binary.BigEndian.Uint64(data[18:26]))).UTC(),
+				CommitSequence:  binary.BigEndian.Uint64(data[26:34]),
+			}
+		}
+		return normalizeMVCCHead(head), nil
+	}
+	// Legacy msgpack fallback for pre-compact data directories.
+	var head MVCCHead
+	if err := util.DecodeMsgpackBytes(data, &head); err != nil {
+		return MVCCHead{}, err
+	}
+	return normalizeMVCCHead(head), nil
+}
+
+func mvccPruneFloorKey(logical []byte) []byte {
+	key := make([]byte, 1+len(logical))
+	key[0] = prefixMVCCPruneFloor
+	copy(key[1:], logical)
+	return key
+}
+
+func (b *BadgerEngine) loadMVCCFloorKeys(db badgerViewer) error {
+	keys := make(map[[9]byte]struct{})
+	err := db.View(func(txn *badger.Txn) error {
+		prefix := []byte{prefixMVCCPruneFloor}
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		defer it.Close()
+		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			key := it.Item().Key()
+			if len(key) != 10 || (key[1] != prefixMVCCNode && key[1] != prefixMVCCEdge) {
+				continue
+			}
+			var logical [9]byte
+			copy(logical[:], key[1:])
+			keys[logical] = struct{}{}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	b.mvccFloorKeysMu.Lock()
+	b.mvccFloorKeys = keys
+	b.mvccFloorKeysMu.Unlock()
+	return nil
+}
+
+func (b *BadgerEngine) markMVCCFloorKey(logical []byte) {
+	var key [9]byte
+	copy(key[:], logical)
+	b.mvccFloorKeysMu.Lock()
+	if b.mvccFloorKeys == nil {
+		b.mvccFloorKeys = make(map[[9]byte]struct{})
+	}
+	b.mvccFloorKeys[key] = struct{}{}
+	b.mvccFloorKeysMu.Unlock()
+}
+
+func (b *BadgerEngine) hasMVCCFloor(kind byte, numID uint64) bool {
+	var key [9]byte
+	key[0] = kind
+	binary.BigEndian.PutUint64(key[1:], numID)
+	b.mvccFloorKeysMu.RLock()
+	_, known := b.mvccFloorKeys[key]
+	b.mvccFloorKeysMu.RUnlock()
+	return known
+}
+
+func (b *BadgerEngine) applyMVCCPruneFloorInTxn(txn *badger.Txn, logical []byte, head *MVCCHead) error {
+	if len(logical) == 9 && !b.hasMVCCFloor(logical[0], binary.BigEndian.Uint64(logical[1:])) {
+		return nil
+	}
+	item, err := txn.Get(mvccPruneFloorKey(logical))
+	if err == badger.ErrKeyNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return item.Value(func(value []byte) error {
+		if len(value) != 16 {
+			return ErrInvalidData
+		}
+		floor, err := decodeMVCCSortVersion(value)
+		if err != nil {
+			return err
+		}
+		if floor.Compare(head.FloorVersion) > 0 {
+			head.FloorVersion = floor
+		}
+		return nil
+	})
+}
+
+func normalizeMVCCHead(head MVCCHead) MVCCHead {
+	if head.FloorVersion.IsZero() {
+		head.FloorVersion = head.Version
+	}
+	return head
+}
+
+func (b *BadgerEngine) beginMVCCSnapshotRead(version MVCCVersion) (func(), error) {
+	return b.acquireSnapshotReader(SnapshotReaderInfo{
+		SnapshotVersion: version,
+		StartTime:       time.Now(),
+	})
+}
+
+func (b *BadgerEngine) effectiveMVCCPruneOptions(opts MVCCPruneOptions) MVCCPruneOptions {
+	policy := normalizeRetentionPolicy(b.retentionPolicy)
+	effective := opts
+	if effective.MaxVersionsPerKey <= 0 {
+		effective.MaxVersionsPerKey = policy.MaxVersionsPerKey
+	}
+	if effective.MinRetentionAge <= 0 {
+		effective.MinRetentionAge = policy.TTL
+	}
+	if effective.MinRetentionAge < 0 {
+		effective.MinRetentionAge = 0
+	}
+	return effective
+}
+
+func (b *BadgerEngine) writeNodeMVCCVersionInTxn(txn kvWriter, node *Node, version MVCCVersion) error {
+	return writeMVCCVersionInTxn[*Node, nodeMVCCVersionKeyer](b, txn, string(node.ID), node, false, version, encodeMVCCNodeRecord)
+}
+
+// writeMVCCVersionInTxn encodes and writes one entity kind's versioned record
+// (or tombstone) within txn. The record type parameter and the plain encode
+// function keep the instantiation allocation-free; the marker keyer selects
+// the node or edge keyspace, so the version writers cannot drift apart.
+func writeMVCCVersionInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn kvWriter, id string, body R, tombstoned bool, version MVCCVersion, encode func(R, bool) ([]byte, error)) error {
+	var keyer K
+	encoded, err := encode(body, tombstoned)
+	if err != nil {
+		return err
+	}
+	key, err := keyer.versionKey(b, txn, id, version)
+	if err != nil {
+		return err
+	}
+	return txn.Set(key, encoded)
+}
+
+func (b *BadgerEngine) writeNodeMVCCTombstoneInTxn(txn kvWriter, id NodeID, version MVCCVersion) error {
+	return writeMVCCVersionInTxn[*Node, nodeMVCCVersionKeyer](b, txn, string(id), (*Node)(nil), true, version, encodeMVCCNodeRecord)
+}
+
+func (b *BadgerEngine) writeEdgeMVCCVersionInTxn(txn kvWriter, edge *Edge, version MVCCVersion) error {
+	return writeMVCCVersionInTxn[*Edge, edgeMVCCVersionKeyer](b, txn, string(edge.ID), edge, false, version, encodeMVCCEdgeRecord)
+}
+
+func (b *BadgerEngine) writeEdgeMVCCTombstoneInTxn(txn kvWriter, id EdgeID, version MVCCVersion) error {
+	return writeMVCCVersionInTxn[*Edge, edgeMVCCVersionKeyer](b, txn, string(id), (*Edge)(nil), true, version, encodeMVCCEdgeRecord)
+}
+
+func (b *BadgerEngine) writeAdjacencyMVCCVersionInTxn(direction mvccAdjacencyKeyDirection, txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion, tombstoned bool) error {
+	key, err := b.mvccAdjacencyKeyString(direction, txn, nodeID, edgeID, version)
+	if err != nil {
+		return err
+	}
+	return txn.Set(key, encodeMVCCAdjacencyRecord(tombstoned))
+}
+
+func (b *BadgerEngine) writeEdgeAdjacencyDeltaInTxn(txn *badger.Txn, oldEdge, newEdge *Edge, version MVCCVersion) error {
+	write := func(edge *Edge, tombstone bool) error {
+		if err := b.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyOutgoing, txn, edge.StartNode, edge.ID, version, tombstone); err != nil {
+			return err
+		}
+		return b.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyIncoming, txn, edge.EndNode, edge.ID, version, tombstone)
+	}
+	if oldEdge != nil {
+		if err := write(oldEdge, true); err != nil {
+			return err
+		}
+	}
+	if newEdge != nil {
+		if err := write(newEdge, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *BadgerEngine) loadEdgeForAdjacencyTombstoneInTxn(txn *badger.Txn, id EdgeID) (*Edge, error) {
+	item, err := txn.Get(edgeKey(id))
+	if err == nil {
+		var edge *Edge
+		if err := item.Value(func(val []byte) error {
+			var decodeErr error
+			edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+			return decodeErr
+		}); err != nil {
+			return nil, err
+		}
+		return edge, nil
+	}
+	if err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+	head, err := b.loadEdgeMVCCHeadInTxn(txn, id)
+	if err != nil {
+		return nil, err
+	}
+	record, _, err := b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, head.Version)
+	if err != nil {
+		return nil, err
+	}
+	if record.Tombstoned || record.Edge == nil {
+		return nil, ErrNotFound
+	}
+	return copyEdge(record.Edge), nil
+}
+
+// getEdgeAtInTxn resolves the edge's state at version in txn, through the
+// visibility layer when v applies it.
+func (b *BadgerEngine) getEdgeAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion, policy mvccEntityRead) (*Edge, error) {
+	v := policy.visibility
+	head, err := b.loadEdgeMVCCHeadInTxn(txn, id)
+	if err != nil {
+		return nil, err
+	}
+	if version.Compare(head.FloorVersion) < 0 {
+		return nil, ErrNotVisibleAtSnapshot
+	}
+
+	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
+		edge, ok, readErr := b.readEdgeBodyInTxn(txn, id, v)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if ok {
+			return edge, nil
+		}
+	}
+	if head.Tombstoned && version.Compare(head.Version) >= 0 {
+		return nil, ErrNotFound
+	}
+
+	var record mvccEdgeRecord
+	switch {
+	case version.Compare(head.Version) >= 0:
+		record, err = b.loadEdgeMVCCRecordExactInTxn(txn, id, head.Version)
+	case version.Compare(head.FloorVersion) == 0:
+		record, err = b.loadEdgeMVCCRecordExactInTxn(txn, id, head.FloorVersion)
+	default:
+		record, _, err = b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, version)
+	}
+	if err != nil {
+		if err == ErrNotFound && version.Compare(head.Version) >= 0 {
+			record, _, err = b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, head.Version)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if record.Tombstoned || record.Edge == nil {
+		return nil, ErrNotFound
+	}
+	edge := copyEdge(record.Edge)
+	if b.filterEntityByDecay(v, edge, DecayScoringTime()) {
+		return nil, ErrNotFound
+	}
+	return edge, nil
+}
+
+// collectVisibleAdjacencyEdgeIDsInTxn lists the edges in one node's MVCC
+// adjacency prefix whose latest record at or before version is live, newest
+// edge first. Keys are [prefix][edgeNum][version], ascending, so a forward
+// scan bounded to the prefix meets each edge's versions oldest first and the
+// last one at or before version decides. (A reverse scan read past the prefix
+// over deleted keys; see badgerPrefixIteratorOptions.)
+func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(txn *badger.Txn, prefix []byte, version MVCCVersion) ([]EdgeID, error) {
+	return b.collectVisibleAdjacencyEdgeIDsInTxnWithContext(context.Background(), txn, prefix, version)
+}
+
+func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxnWithContext(ctx context.Context, txn *badger.Txn, prefix []byte, version MVCCVersion) ([]EdgeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(prefix) == 0 {
+		return nil, nil
+	}
+	edgeIDs := make([]EdgeID, 0)
+	var (
+		edgeNum uint64
+		have    bool // edgeNum has a record at or before version
+		live    bool // and the latest such record is not a tombstone
+	)
+	flush := func() {
+		if !have || !live {
+			return
+		}
+		if edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum); ok && edgeID != "" {
+			edgeIDs = append(edgeIDs, edgeID)
+		}
+	}
+	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	defer it.Close()
+	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		keyEdgeNum, recordVersion, err := extractEdgeNumIDAndMVCCVersionFromAdjacencyKey(it.Item().Key())
+		if err != nil {
+			return nil, err
+		}
+		if keyEdgeNum != edgeNum {
+			flush()
+			edgeNum, have = keyEdgeNum, false
+		}
+		if recordVersion.Compare(version) > 0 {
+			continue
+		}
+		var record mvccAdjacencyRecord
+		if err := it.Item().Value(func(val []byte) error {
+			var decodeErr error
+			record, decodeErr = decodeMVCCAdjacencyRecord(val)
+			return decodeErr
+		}); err != nil {
+			return nil, err
+		}
+		have, live = true, !record.Tombstoned
+	}
+	flush()
+	if err := reverseSliceWithContext(ctx, edgeIDs); err != nil {
+		return nil, err
+	}
+	return edgeIDs, nil
+}
+
+func (b *BadgerEngine) writeNodeMVCCHeadInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, tombstoned bool) error {
+	return writeMVCCHeadInTxn[nodeMVCCHeadKeyLookup, nodeMVCCHeadKeyWriter](b, txn, string(id), version, tombstoned)
+}
+
+// mvccHeadKeyLookup derives the MVCC head key for one entity kind without a
+// transaction (the fresh-read paths).
+type mvccHeadKeyLookup interface {
+	headKeyLookup(b *BadgerEngine, id string) []byte
+}
+
+type nodeMVCCHeadKeyLookup struct{}
+
+func (nodeMVCCHeadKeyLookup) headKeyLookup(b *BadgerEngine, id string) []byte {
+	return b.mvccNodeHeadKeyStringLookup(NodeID(id))
+}
+
+type edgeMVCCHeadKeyLookup struct{}
+
+func (edgeMVCCHeadKeyLookup) headKeyLookup(b *BadgerEngine, id string) []byte {
+	return b.mvccEdgeHeadKeyStringLookup(EdgeID(id))
+}
+
+// mvccHeadKeyWriter derives the MVCC head key for one entity kind within a
+// transaction (the write paths).
+type mvccHeadKeyWriter interface {
+	headKey(b *BadgerEngine, txn *badger.Txn, id string) ([]byte, error)
+}
+
+type nodeMVCCHeadKeyWriter struct{}
+
+func (nodeMVCCHeadKeyWriter) headKey(b *BadgerEngine, txn *badger.Txn, id string) ([]byte, error) {
+	return b.mvccNodeHeadKeyString(txn, NodeID(id))
+}
+
+type edgeMVCCHeadKeyWriter struct{}
+
+func (edgeMVCCHeadKeyWriter) headKey(b *BadgerEngine, txn *badger.Txn, id string) ([]byte, error) {
+	return b.mvccEdgeHeadKeyString(txn, EdgeID(id))
+}
+
+// loadMVCCHead reads one entity kind's MVCC head via a fresh read transaction.
+// The type argument selects the node or edge key lookup; the rest of the
+// read — key derivation, view, decode and not-found mapping — is shared, so
+// the node and edge head readers cannot drift apart.
+func loadMVCCHead[K mvccHeadKeyLookup](b *BadgerEngine, id string) (MVCCHead, error) {
+	var keyer K
+	key := keyer.headKeyLookup(b, id)
+	if key == nil {
+		return MVCCHead{}, ErrNotFound
+	}
+	var head MVCCHead
+	err := b.db.View(func(rtxn *badger.Txn) error {
+		item, err := rtxn.Get(key)
+		if err != nil {
+			return err
+		}
+		if err := item.Value(func(val []byte) error {
+			var decodeErr error
+			head, decodeErr = decodeMVCCHead(val)
+			return decodeErr
+		}); err != nil {
+			return err
+		}
+		kind := prefixMVCCNode
+		if key[0] == prefixMVCCEdgeHead {
+			kind = prefixMVCCEdge
+		}
+		if !b.hasMVCCFloor(kind, binary.BigEndian.Uint64(key[1:])) {
+			return nil
+		}
+		logical := append([]byte{kind}, key[1:]...)
+		return b.applyMVCCPruneFloorInTxn(rtxn, logical, &head)
+	})
+	if err == badger.ErrKeyNotFound {
+		return MVCCHead{}, ErrNotFound
+	}
+	if err != nil {
+		return MVCCHead{}, err
+	}
+	return head, nil
+}
+
+// writeMVCCHeadWithFloorInTxn encodes and writes one entity kind's MVCC head
+// with an explicit floor version. The type argument selects the node or edge
+// key derivation; encoding and the set are shared.
+func writeMVCCHeadWithFloorInTxn[K mvccHeadKeyWriter](b *BadgerEngine, txn *badger.Txn, id string, version MVCCVersion, tombstoned bool, floorVersion MVCCVersion) error {
+	var keyer K
+	encoded, err := encodeMVCCHead(MVCCHead{Version: version, Tombstoned: tombstoned, FloorVersion: floorVersion})
+	if err != nil {
+		return err
+	}
+	key, err := keyer.headKey(b, txn, id)
+	if err != nil {
+		return err
+	}
+	return txn.Set(key, encoded)
+}
+
+// retentionRetainsHistory reports whether the engine is configured to keep
+// any closed historical MVCC versions. When false, every archival call is a
+// no-op — updates overwrite in place, deletes drop the primary key outright,
+// and there's no write amplification from duplicating bodies into the MVCC
+// keyspace.
+func (b *BadgerEngine) retentionRetainsHistory() bool {
+	return normalizeRetentionPolicy(b.retentionPolicy).RetainsHistory()
+}
+
+// mustArchiveForHistory reports whether an in-flight write MUST archive the
+// superseded body before overwriting the primary key. This is true when
+// either retention is configured OR there's an active snapshot reader that
+// may need to resolve reads at the pre-update version. The latter keeps
+// snapshot isolation correct even when retention is head-only (the
+// archived body stays until pruning fires after all readers drain).
+func (b *BadgerEngine) mustArchiveForHistory() bool {
+	if b.retentionRetainsHistory() {
+		return true
+	}
+	return b.activeMVCCSnapshotReaders.Load() > 0
+}
+
+// archiveNodePrimaryIntoMVCCVersionInTxn moves the current primary-key body
+// into a versioned MVCC record so snapshot reads at prior versions can still
+// resolve it. Callers must invoke this BEFORE overwriting or deleting the
+// primary key. If the primary key doesn't exist yet (brand-new entity, or
+// already archived), this is a no-op. When retention is disabled
+// (MaxVersionsPerKey <= 0) this is also a no-op — callers can invoke
+// unconditionally and pay only a single bool check.
+//
+// Storage-layout invariant (post-refactor): the primary key always holds the
+// CURRENT head body. Historical bodies live at mvccNodeVersionKey(id, v) for
+// each past head version v. A fresh CREATE writes only the primary key + head;
+// UPDATE and DELETE migrate the superseded body here before overwriting.
+func (b *BadgerEngine) archiveNodePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, id NodeID, oldVersion MVCCVersion, next *Node, nextVersion MVCCVersion) error {
+	if !b.mustArchiveForHistory() {
+		return nil
+	}
+	item, err := txn.Get(nodeKey(id))
+	if err == badger.ErrKeyNotFound {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("archiving node %s: reading primary: %w", id, err)
+	}
+	// If a version record already exists at oldVersion (e.g. test seeded both
+	// forms, or legacy data), don't stomp it.
+	if existingKey := b.mvccNodeVersionKeyStringLookup(id, oldVersion); existingKey != nil {
+		if _, existsErr := txn.Get(existingKey); existsErr == nil {
+			return nil
+		} else if existsErr != badger.ErrKeyNotFound {
+			return fmt.Errorf("archiving node %s: probing version: %w", id, existsErr)
+		}
+	}
+	var node *Node
+	if err := item.Value(func(val []byte) error {
+		var decodeErr error
+		node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
+		return decodeErr
+	}); err != nil {
+		return fmt.Errorf("archiving node %s: decoding primary: %w", id, err)
+	}
+	if node == nil {
+		return nil
+	}
+	return b.archiveNodeUpdateBodyInTxn(txn, id, node, next, oldVersion, nextVersion)
+}
+
+// archiveEdgePrimaryIntoMVCCVersionInTxn is the edge analogue of
+// archiveNodePrimaryIntoMVCCVersionInTxn. See that function's doc for invariant.
+func (b *BadgerEngine) archiveEdgePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, id EdgeID, oldVersion MVCCVersion, next *Edge, nextVersion MVCCVersion) error {
+	if !b.mustArchiveForHistory() {
+		return nil
+	}
+	item, err := txn.Get(edgeKey(id))
+	if err == badger.ErrKeyNotFound {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("archiving edge %s: reading primary: %w", id, err)
+	}
+	if existingKey := b.mvccEdgeVersionKeyStringLookup(id, oldVersion); existingKey != nil {
+		if _, existsErr := txn.Get(existingKey); existsErr == nil {
+			return nil
+		} else if existsErr != badger.ErrKeyNotFound {
+			return fmt.Errorf("archiving edge %s: probing version: %w", id, existsErr)
+		}
+	}
+	var edge *Edge
+	if err := item.Value(func(val []byte) error {
+		var decodeErr error
+		edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+		return decodeErr
+	}); err != nil {
+		return fmt.Errorf("archiving edge %s: decoding primary: %w", id, err)
+	}
+	if edge == nil {
+		return nil
+	}
+	edge.ID = id
+	return b.archiveEdgeUpdateBodyInTxn(txn, id, edge, next, oldVersion, nextVersion)
+}
+
+// archiveNodeOnUpdateInTxn archives the current primary-key body (if any) and
+// then writes the new head. Used by update/delete paths. When no prior head
+// exists (fresh insert via upsert), this is equivalent to writing the head.
+// Becomes a pure no-op when retention is disabled.
+func (b *BadgerEngine) archiveNodeOnUpdateInTxn(txn *badger.Txn, id NodeID, next *Node, nextVersion MVCCVersion) error {
+	if !b.mustArchiveForHistory() {
+		return nil
+	}
+	numID, ok := b.idDict.lookupNodeNumID(id)
+	if !ok {
+		return nil
+	}
+	existing, err := b.loadMVCCHeadForLogicalKeyInTxn(txn, append([]byte{prefixMVCCNode}, encodeNumID(numID)...))
+	if err == ErrNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if existing.Tombstoned {
+		return nil
+	}
+	return b.archiveNodePrimaryIntoMVCCVersionInTxn(txn, id, existing.Version, next, nextVersion)
+}
+
+// archiveEdgeOnUpdateInTxn is the edge analogue of archiveNodeOnUpdateInTxn.
+func (b *BadgerEngine) archiveEdgeOnUpdateInTxn(txn *badger.Txn, id EdgeID, next *Edge, nextVersion MVCCVersion) error {
+	if !b.mustArchiveForHistory() {
+		return nil
+	}
+	numID, ok := b.idDict.lookupEdgeNumID(id)
+	if !ok {
+		return nil
+	}
+	existing, err := b.loadMVCCHeadForLogicalKeyInTxn(txn, append([]byte{prefixMVCCEdge}, encodeNumID(numID)...))
+	if err == ErrNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if existing.Tombstoned {
+		return nil
+	}
+	return b.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, id, existing.Version, next, nextVersion)
+}
+
+func (b *BadgerEngine) writeEdgeMVCCHeadInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion, tombstoned bool) error {
+	return writeMVCCHeadInTxn[edgeMVCCHeadKeyLookup, edgeMVCCHeadKeyWriter](b, txn, string(id), version, tombstoned)
+}
+
+// loadEdgeMVCCHead is the edge analogue of loadNodeMVCCHead: the same fresh-
+// transaction head read over the edge key lookup.
+func (b *BadgerEngine) loadEdgeMVCCHead(id EdgeID) (MVCCHead, error) {
+	return loadMVCCHead[edgeMVCCHeadKeyLookup](b, string(id))
+}
+
+// writeEdgeMVCCHeadForFreshCreateInTxn is the edge analogue of
+// writeNodeMVCCHeadForFreshCreateInTxn. Skips the pre-read for OpCreateEdge in
+// the commit loop — fresh edge IDs cannot have an existing head.
+func (b *BadgerEngine) writeEdgeMVCCHeadForFreshCreateInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) error {
+	return b.writeEdgeMVCCHeadWithFloorInTxn(txn, id, version, false, version)
+}
+
+func (b *BadgerEngine) writeNodeMVCCHeadWithFloorInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, tombstoned bool, floorVersion MVCCVersion) error {
+	return writeMVCCHeadWithFloorInTxn[nodeMVCCHeadKeyWriter](b, txn, string(id), version, tombstoned, floorVersion)
+}
+
+func (b *BadgerEngine) writeEdgeMVCCHeadWithFloorInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion, tombstoned bool, floorVersion MVCCVersion) error {
+	return writeMVCCHeadWithFloorInTxn[edgeMVCCHeadKeyWriter](b, txn, string(id), version, tombstoned, floorVersion)
+}
+
+// loadNodeMVCCHead reads the MVCC head record via a fresh read-only
+// transaction. Use this on the writer-side commit path to keep the
+// FloorVersion-carry-forward read out of the user txn's SSI read set
+// (see writeMVCCHeadInTxn). Read-after-write within the SAME
+// transaction is rare for MVCC heads in practice — the user txn writes
+// the head once at materialize time — but if you need it, use
+// loadNodeMVCCHeadInTxn instead.
+func (b *BadgerEngine) loadNodeMVCCHead(id NodeID) (MVCCHead, error) {
+	return loadMVCCHead[nodeMVCCHeadKeyLookup](b, string(id))
+}
+
+func (b *BadgerEngine) loadNodeMVCCHeadInTxn(txn *badger.Txn, id NodeID) (MVCCHead, error) {
+	ref, ok := b.liveNodeRef(id)
+	if !ok {
+		return MVCCHead{}, ErrNotFound
+	}
+	return b.loadNodeMVCCHeadRefInTxn(txn, ref)
+}
+
+// loadNodeMVCCHeadRefInTxn is loadNodeMVCCHeadInTxn for a node the caller
+// has already numbered (label readers number through their snapshot).
+func (b *BadgerEngine) loadNodeMVCCHeadRefInTxn(txn *badger.Txn, ref nodeRef) (MVCCHead, error) {
+	key := mvccNodeHeadKey(ref.num)
+	item, err := txn.Get(key)
+	if err == badger.ErrKeyNotFound {
+		return MVCCHead{}, ErrNotFound
+	}
+	if err != nil {
+		return MVCCHead{}, err
+	}
+	var head MVCCHead
+	err = item.Value(func(val []byte) error {
+		var decodeErr error
+		head, decodeErr = decodeMVCCHead(val)
+		return decodeErr
+	})
+	if err != nil {
+		return MVCCHead{}, err
+	}
+	if b.hasMVCCFloor(prefixMVCCNode, binary.BigEndian.Uint64(key[1:])) {
+		logical := append([]byte{prefixMVCCNode}, key[1:]...)
+		if err := b.applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
+			return MVCCHead{}, err
+		}
+	}
+	return head, nil
+}
+
+func (b *BadgerEngine) loadEdgeMVCCHeadInTxn(txn *badger.Txn, id EdgeID) (MVCCHead, error) {
+	head, _, err := b.loadEdgeMVCCHeadWithPhysicalVersionInTxn(txn, id)
+	return head, err
+}
+
+func (b *BadgerEngine) loadEdgeMVCCHeadWithPhysicalVersionInTxn(txn *badger.Txn, id EdgeID) (MVCCHead, uint64, error) {
+	numID, ok := b.idDict.lookupEdgeNumID(id)
+	if !ok {
+		return MVCCHead{}, 0, ErrNotFound
+	}
+	return b.loadEdgeMVCCHeadByNumWithPhysicalVersionInTxn(txn, numID)
+}
+
+func (b *BadgerEngine) loadEdgeMVCCHeadByNumWithPhysicalVersionInTxn(txn *badger.Txn, numID uint64) (MVCCHead, uint64, error) {
+	head, physicalVersion, err := b.loadEdgeMVCCHeadByNumRawWithPhysicalVersionInTxn(txn, numID)
+	if err != nil {
+		return MVCCHead{}, 0, err
+	}
+	if b.hasMVCCFloor(prefixMVCCEdge, numID) {
+		logical := append([]byte{prefixMVCCEdge}, encodeNumID(numID)...)
+		if err := b.applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
+			return MVCCHead{}, 0, err
+		}
+	}
+	return head, physicalVersion, nil
+}
+
+func (b *BadgerEngine) loadEdgeMVCCHeadByNumRawWithPhysicalVersionInTxn(txn *badger.Txn, numID uint64) (MVCCHead, uint64, error) {
+	var key [1 + 8]byte
+	key[0] = prefixMVCCEdgeHead
+	binary.BigEndian.PutUint64(key[1:], numID)
+	item, err := txn.Get(key[:])
+	if err == badger.ErrKeyNotFound {
+		return MVCCHead{}, 0, ErrNotFound
+	}
+	if err != nil {
+		return MVCCHead{}, 0, err
+	}
+	physicalVersion := item.Version()
+	var head MVCCHead
+	err = item.Value(func(val []byte) error {
+		var decodeErr error
+		head, decodeErr = decodeMVCCHead(val)
+		return decodeErr
+	})
+	if err != nil {
+		return MVCCHead{}, 0, err
+	}
+	return head, physicalVersion, nil
+}
+
+// loadNodeMVCCRecordExactInTxn reads the node version record at version,
+// rebuilding it when it is an undo record (resolveNodeUndoInTxn).
+func (b *BadgerEngine) loadNodeMVCCRecordExactInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (mvccNodeRecord, error) {
+	ref, ok := b.liveNodeRef(id)
+	if !ok {
+		return mvccNodeRecord{}, ErrNotFound
+	}
+	return b.loadNodeMVCCRecordExactRefInTxn(txn, ref, version)
+}
+
+// loadNodeMVCCRecordExactRefInTxn is loadNodeMVCCRecordExactInTxn for a node
+// the caller has already numbered.
+func (b *BadgerEngine) loadNodeMVCCRecordExactRefInTxn(txn *badger.Txn, ref nodeRef, version MVCCVersion) (mvccNodeRecord, error) {
+	record, err := loadMVCCRecordAtKeyInTxn(txn, mvccNodeVersionKey(ref.num, version), decodeMVCCNodeRecord)
+	if err != nil || record.undo == nil {
+		return record, err
+	}
+	return b.resolveNodeUndoInTxn(txn, ref, version, record.undo)
+}
+
+// mvccVersionKeyer derives the exact version key and the version prefix for one
+// entity kind.
+type mvccVersionKeyer interface {
+	versionKeyLookup(b *BadgerEngine, id string, version MVCCVersion) []byte
+	versionPrefix(b *BadgerEngine, id string) []byte
+	versionKey(b *BadgerEngine, txn kvWriter, id string, version MVCCVersion) ([]byte, error)
+}
+
+type nodeMVCCVersionKeyer struct{}
+
+func (nodeMVCCVersionKeyer) versionKeyLookup(b *BadgerEngine, id string, version MVCCVersion) []byte {
+	return b.mvccNodeVersionKeyStringLookup(NodeID(id), version)
+}
+
+func (nodeMVCCVersionKeyer) versionPrefix(b *BadgerEngine, id string) []byte {
+	return b.mvccNodeVersionPrefixString(NodeID(id))
+}
+
+func (nodeMVCCVersionKeyer) versionKey(b *BadgerEngine, txn kvWriter, id string, version MVCCVersion) ([]byte, error) {
+	return b.mvccNodeVersionKeyString(txn, NodeID(id), version)
+}
+
+type edgeMVCCVersionKeyer struct{}
+
+func (edgeMVCCVersionKeyer) versionKeyLookup(b *BadgerEngine, id string, version MVCCVersion) []byte {
+	return b.mvccEdgeVersionKeyStringLookup(EdgeID(id), version)
+}
+
+func (edgeMVCCVersionKeyer) versionPrefix(b *BadgerEngine, id string) []byte {
+	return b.mvccEdgeVersionPrefixString(EdgeID(id))
+}
+
+func (edgeMVCCVersionKeyer) versionKey(b *BadgerEngine, txn kvWriter, id string, version MVCCVersion) ([]byte, error) {
+	return b.mvccEdgeVersionKeyString(txn, EdgeID(id), version)
+}
+
+// loadMVCCRecordExactInTxn reads one entity kind's MVCC record at an exact
+// version within txn. The record type parameter and the plain decode function
+// keep the instantiation allocation-free; the marker keyer selects the node or
+// edge keyspace, so the exact readers cannot drift apart.
+func loadMVCCRecordExactInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn *badger.Txn, id string, version MVCCVersion, decode func([]byte) (R, error)) (R, error) {
+	var zero R
+	var keyer K
+	key := keyer.versionKeyLookup(b, id, version)
+	if key == nil {
+		return zero, ErrNotFound
+	}
+	return loadMVCCRecordAtKeyInTxn(txn, key, decode)
+}
+
+// loadMVCCRecordAtKeyInTxn reads and decodes the MVCC record at an exact
+// version key.
+func loadMVCCRecordAtKeyInTxn[R any](txn *badger.Txn, key []byte, decode func([]byte) (R, error)) (R, error) {
+	var zero R
+	item, err := txn.Get(key)
+	if err == badger.ErrKeyNotFound {
+		return zero, ErrNotFound
+	}
+	if err != nil {
+		return zero, err
+	}
+	var record R
+	err = item.Value(func(val []byte) error {
+		var decodeErr error
+		record, decodeErr = decode(val)
+		return decodeErr
+	})
+	if err != nil {
+		return zero, err
+	}
+	return record, nil
+}
+
+// loadEdgeMVCCRecordExactInTxn is the relationship analogue of
+// loadNodeMVCCRecordExactInTxn.
+func (b *BadgerEngine) loadEdgeMVCCRecordExactInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) (mvccEdgeRecord, error) {
+	record, err := loadMVCCRecordExactInTxn[mvccEdgeRecord, edgeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCEdgeRecord)
+	if err != nil || record.undo == nil {
+		return record, err
+	}
+	return b.resolveEdgeUndoInTxn(txn, id, version, record.undo)
+}
+
+// loadNodeMVCCRecordAtOrBeforeInTxn reads the node version record at or
+// before version, rebuilding it when it is an undo record.
+func (b *BadgerEngine) loadNodeMVCCRecordAtOrBeforeInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (mvccNodeRecord, MVCCVersion, error) {
+	ref, ok := b.liveNodeRef(id)
+	if !ok {
+		return mvccNodeRecord{}, MVCCVersion{}, ErrNotFound
+	}
+	return b.loadNodeMVCCRecordAtOrBeforeRefInTxn(txn, ref, version)
+}
+
+// loadNodeMVCCRecordAtOrBeforeRefInTxn is loadNodeMVCCRecordAtOrBeforeInTxn
+// for a node the caller has already numbered.
+func (b *BadgerEngine) loadNodeMVCCRecordAtOrBeforeRefInTxn(txn *badger.Txn, ref nodeRef, version MVCCVersion) (mvccNodeRecord, MVCCVersion, error) {
+	record, at, err := loadMVCCRecordAtOrBeforePrefixInTxn(txn, mvccNodeVersionPrefix(ref.num), version, decodeMVCCNodeRecord)
+	if err != nil || record.undo == nil {
+		return record, at, err
+	}
+	record, err = b.resolveNodeUndoInTxn(txn, ref, at, record.undo)
+	return record, at, err
+}
+
+// loadMVCCRecordAtOrBeforeInTxn reads one entity kind's MVCC record at or
+// before a version within txn: the greatest version key of the entity's
+// prefix at or below the version, found by descendingPrefixKeys (a plain
+// reverse seek read past the prefix when fewer than two versions lay at or
+// below the target). The record type parameter and the plain decode function
+// keep the instantiation allocation-free; the marker keyer selects the node
+// or edge keyspace.
+func loadMVCCRecordAtOrBeforeInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn *badger.Txn, id string, version MVCCVersion, decode func([]byte) (R, error)) (R, MVCCVersion, error) {
+	var zero R
+	var keyer K
+	prefix := keyer.versionPrefix(b, id)
+	if prefix == nil {
+		return zero, MVCCVersion{}, ErrNotFound
+	}
+	return loadMVCCRecordAtOrBeforePrefixInTxn(txn, prefix, version, decode)
+}
+
+// loadMVCCRecordAtOrBeforePrefixInTxn reads the greatest record of one
+// entity's version prefix at or below version.
+func loadMVCCRecordAtOrBeforePrefixInTxn[R any](txn *badger.Txn, prefix []byte, version MVCCVersion, decode func([]byte) (R, error)) (R, MVCCVersion, error) {
+	var zero R
+	upper := append(append([]byte{}, prefix...), encodeMVCCSortVersion(version)...)
+	var (
+		record        R
+		parsedVersion MVCCVersion
+		found         bool
+	)
+	err := descendingPrefixKeys(txn, prefix, upper, func(item *badger.Item) (bool, error) {
+		found = true
+		var err error
+		if parsedVersion, err = extractMVCCVersionFromKey(item.Key()); err != nil {
+			return false, err
+		}
+		return false, item.Value(func(val []byte) error {
+			record, err = decode(val)
+			return err
+		})
+	})
+	if err != nil {
+		return zero, MVCCVersion{}, err
+	}
+	if !found {
+		return zero, MVCCVersion{}, ErrNotFound
+	}
+	return record, parsedVersion, nil
+}
+
+// loadEdgeMVCCRecordAtOrBeforeInTxn is the relationship analogue of
+// loadNodeMVCCRecordAtOrBeforeInTxn.
+func (b *BadgerEngine) loadEdgeMVCCRecordAtOrBeforeInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) (mvccEdgeRecord, MVCCVersion, error) {
+	record, at, err := loadMVCCRecordAtOrBeforeInTxn[mvccEdgeRecord, edgeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCEdgeRecord)
+	if err != nil || record.undo == nil {
+		return record, at, err
+	}
+	record, err = b.resolveEdgeUndoInTxn(txn, id, at, record.undo)
+	return record, at, err
+}
+
+func (b *BadgerEngine) latestNodeMVCCVersionInTxn(txn *badger.Txn, id NodeID) (mvccNodeRecord, MVCCVersion, error) {
+	return b.loadNodeMVCCRecordAtOrBeforeInTxn(txn, id, maxMVCCVersion())
+}
+
+func (b *BadgerEngine) latestEdgeMVCCVersionInTxn(txn *badger.Txn, id EdgeID) (mvccEdgeRecord, MVCCVersion, error) {
+	return b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, maxMVCCVersion())
+}
+
+func (b *BadgerEngine) AppendNodeVersion(node *Node, version MVCCVersion) error {
+	if node == nil {
+		return ErrInvalidData
+	}
+	return b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.writeNodeMVCCVersionInTxn(txn, node, version); err != nil {
+			return err
+		}
+		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
+	}, writtenEntities{nodes: []NodeID{node.ID}})
+}
+
+func (b *BadgerEngine) AppendNodeTombstone(id NodeID, version MVCCVersion) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.writeNodeMVCCTombstoneInTxn(txn, id, version); err != nil {
+			return err
+		}
+		return b.writeNodeMVCCHeadInTxn(txn, id, version, true)
+	}, writtenEntities{nodes: []NodeID{id}})
+}
+
+func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error {
+	if edge == nil {
+		return ErrInvalidData
+	}
+	return b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.writeEdgeMVCCVersionInTxn(txn, edge, version); err != nil {
+			return err
+		}
+		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
+	}, writtenEntities{edges: []EdgeID{edge.ID}})
+}
+
+func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.writeEdgeMVCCTombstoneInTxn(txn, id, version); err != nil {
+			return err
+		}
+		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
+	}, writtenEntities{edges: []EdgeID{id}})
+}
+
+func (b *BadgerEngine) UpdateNodeCurrentHead(id NodeID, version MVCCVersion, tombstoned bool) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		return b.writeNodeMVCCHeadInTxn(txn, id, version, tombstoned)
+	}, writtenEntities{nodes: []NodeID{id}})
+}
+
+func (b *BadgerEngine) UpdateEdgeCurrentHead(id EdgeID, version MVCCVersion, tombstoned bool) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		return b.writeEdgeMVCCHeadInTxn(txn, id, version, tombstoned)
+	}, writtenEntities{edges: []EdgeID{id}})
+}
+
+func (b *BadgerEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
+		return MVCCHead{}, err
+	}
+
+	var head MVCCHead
+	err := b.withView(func(txn *badger.Txn) error {
+		var innerErr error
+		head, innerErr = b.loadNodeMVCCHeadInTxn(txn, id)
+		return innerErr
+	})
+	return head, err
+}
+
+func (b *BadgerEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
+	if err := b.pendingNamespaceConflict(namespaceForEdgeID(id)); err != nil {
+		return MVCCHead{}, err
+	}
+
+	var head MVCCHead
+	err := b.withView(func(txn *badger.Txn) error {
+		var innerErr error
+		head, innerErr = b.loadEdgeMVCCHeadInTxn(txn, id)
+		return innerErr
+	})
+	return head, err
+}
+
+func (b *BadgerEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
+	node, _, err := b.readLatestEntity(string(id), false, visibleRead)
+	return node, err
+}
+
+func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
+	_, edge, err := b.readLatestEntity(string(id), true, visibleRead)
+	return edge, err
+}
+
+// readLatestEntity first uses the captured current-body owner. Only a missing
+// body consults the committed MVCC head and its retained version records, as
+// required for older persisted stores. All paths apply the same read policy.
+func (b *BadgerEngine) readLatestEntity(id string, isEdge bool, v readVisibility) (*Node, *Edge, error) {
+	var node *Node
+	var edge *Edge
+	var err error
+	if isEdge {
+		edge, err = b.getEdge(EdgeID(id), v)
+	} else {
+		node, err = b.getNode(NodeID(id), v)
+	}
+	if err == nil {
+		return node, edge, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, nil, err
+	}
+	node, edge = nil, nil
+	err = b.withView(func(txn *badger.Txn) error {
+		var head MVCCHead
+		var err error
+		if isEdge {
+			head, err = b.loadEdgeMVCCHeadInTxn(txn, EdgeID(id))
+		} else {
+			head, err = b.loadNodeMVCCHeadInTxn(txn, NodeID(id))
+		}
+		if err != nil {
+			return err
+		}
+		if head.Tombstoned {
+			return ErrNotFound
+		}
+		var entity any
+		if isEdge {
+			record, _, err := b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, EdgeID(id), head.Version)
+			if err != nil {
+				return err
+			}
+			if record.Tombstoned || record.Edge == nil {
+				return ErrNotFound
+			}
+			edge = copyEdge(record.Edge)
+			entity = edge
+		} else {
+			record, _, err := b.loadNodeMVCCRecordAtOrBeforeInTxn(txn, NodeID(id), head.Version)
+			if err != nil {
+				return err
+			}
+			if record.Tombstoned || record.Node == nil {
+				return ErrNotFound
+			}
+			node = copyNode(record.Node)
+			entity = node
+		}
+		if b.filterEntityByDecay(v, entity, DecayScoringTime()) {
+			node, edge = nil, nil
+			return ErrNotFound
+		}
+		return nil
+	})
+	return node, edge, err
+}
+
+func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
+	return readEntityAtWithView(b, id, version, mvccEntityRead{visibility: visibleRead}, b.withView, (*BadgerEngine).getEdgeAtInTxn)
+}
+
+func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	return b.readAdjacentEdgesAtWithView(nodeID, version, Outgoing, b.withView)
+}
+
+func (b *BadgerEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	return b.readAdjacentEdgesAtWithView(nodeID, version, Incoming, b.withView)
+}
+
+func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Node, error) {
+	if err := b.pendingReadConflict(readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids}); err != nil {
+		return nil, err
+	}
+
+	result := make(map[NodeID]*Node, len(ids))
+	for _, id := range ids {
+		node, err := b.GetNodeLatestVisible(id)
+		if err == nil && node != nil {
+			result[id] = node
+		}
+	}
+	return result, nil
+}
+
+// iterateNodesVisibleAtInScopeInTxn is iterateNodesVisibleAtInTxn over one
+// database's nodes, with candidates bounded to its dictionary namespace.
+func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(ctx context.Context, txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error, readOptions ...StreamNodesOptions) error {
+	opts := nodeScanOptions(readOptions)
+	// Post-refactor: we walk the head keyspace (the definitive list of
+	// live node IDs) and resolve each ID to a body. If the request is at
+	// or after the current head version and the entity is live, the body
+	// comes from the primary nodeKey. Otherwise we fall back to historic
+	// mvccNodeVersionKey records (only present when retention > 0).
+	it := b.newNodeIndexReader(ctx, txn, scope, []byte{prefixMVCCNodeHead}, "")
+	defer it.Close()
+
+	nowNanos := DecayScoringTime()
+	var headBuf []byte
+	for it.Next() {
+		// it.Item().Key() stays valid until the next Next(); parse in place
+		// instead of copying a fresh slice per entry.
+		key := it.Item().Key()
+		nodeNum := binary.BigEndian.Uint64(key[1:])
+		nodeID := it.NodeID()
+		// Reuse a scratch buffer across entries: ValueCopy allocates only
+		// while the buffer is still growing (#48).
+		var err error
+		headBuf, err = it.Item().ValueCopy(headBuf[:0])
+		if err != nil {
+			return err
+		}
+		head, err := decodeMVCCHead(headBuf)
+		if err != nil {
+			return err
+		}
+		if b.hasMVCCFloor(prefixMVCCNode, nodeNum) {
+			logical := append([]byte{prefixMVCCNode}, key[1:]...)
+			if err := b.applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
+				return err
+			}
+		}
+		if version.Compare(head.FloorVersion) < 0 {
+			continue
+		}
+		var body *Node
+		if version.Compare(head.Version) >= 0 {
+			if head.Tombstoned {
+				continue
+			}
+			item, getErr := txn.Get(nodeKey(nodeID))
+			if getErr == badger.ErrKeyNotFound {
+				// Primary missing — fall through to version-record lookup.
+			} else if getErr != nil {
+				return getErr
+			} else {
+				if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
+					var readErr error
+					body, readErr = b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
+					if readErr != nil {
+						return readErr
+					}
+				} else if err := item.Value(func(val []byte) error {
+					decoded, decodeErr := b.decodeNodeWithEmbeddings(txn, val, nodeID)
+					if decodeErr != nil {
+						return decodeErr
+					}
+					body = decoded
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		if body == nil {
+			// The head's number came from this snapshot, and so does its
+			// history. At or after the head, only the head's own record
+			// stands in for a missing primary body (DROP removes bodies
+			// physically): an older record would be a different version.
+			ref := nodeRef{id: nodeID, num: nodeNum}
+			var record mvccNodeRecord
+			if version.Compare(head.Version) >= 0 {
+				record, err = b.loadNodeMVCCRecordExactRefInTxn(txn, ref, head.Version)
+			} else {
+				record, _, err = b.loadNodeMVCCRecordAtOrBeforeRefInTxn(txn, ref, version)
+			}
+			if err == ErrNotFound {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if record.Tombstoned || record.Node == nil {
+				continue
+			}
+			if opts.QueryNodes && !opts.WithEmbeddings {
+				body, err = copyNodeForCallerWithContext(ctx, record.Node)
+				if err != nil {
+					return err
+				}
+			} else {
+				body, err = copyNodeWithContext(ctx, record.Node)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if body == nil {
+			continue
+		}
+		if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, body, nowNanos) {
+			continue
+		}
+		if err := yield(body); err != nil {
+			return err
+		}
+	}
+	return it.Err()
+}
+
+func (b *BadgerEngine) iterateEdgesAtInTxn(txn *badger.Txn, version MVCCVersion, v readVisibility, yield func(*Edge) error, prefixes ...string) error {
+	// See iterateNodesVisibleAtInScopeInTxn for the walk-heads pattern and why
+	// we can't just scan the version prefix post-refactor.
+	headPrefix := []byte{prefixMVCCEdgeHead}
+	opts := badgerIteratorOptions()
+	// PrefetchValues stays off: badger v4.9.6 spawns a goroutine per entry
+	// when prefetching, which made TCK allocation churn worse (#48).
+	opts.Prefix = headPrefix
+	it := txn.NewIterator(opts)
+	defer it.Close()
+
+	nowNanos := DecayScoringTime()
+	var headBuf []byte
+	for it.Rewind(); it.Valid(); it.Next() {
+		key := it.Item().Key()
+		if len(key) != 1+8 {
+			continue
+		}
+		edgeNum := binary.BigEndian.Uint64(key[1:])
+		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if len(prefixes) > 0 && !edgeIDInScope(edgeID, prefixes[0]) {
+			continue
+		}
+		if !ok {
+			continue
+		}
+		// Reuse a scratch buffer across entries: ValueCopy allocates only
+		// while the buffer is still growing (#48).
+		var err error
+		headBuf, err = it.Item().ValueCopy(headBuf[:0])
+		if err != nil {
+			return err
+		}
+		head, err := decodeMVCCHead(headBuf)
+		if err != nil {
+			return err
+		}
+		if b.hasMVCCFloor(prefixMVCCEdge, edgeNum) {
+			logical := append([]byte{prefixMVCCEdge}, key[1:]...)
+			if err := b.applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
+				return err
+			}
+		}
+		if version.Compare(head.FloorVersion) < 0 {
+			continue
+		}
+		var body *Edge
+		if version.Compare(head.Version) >= 0 {
+			if head.Tombstoned {
+				continue
+			}
+			item, getErr := txn.Get(edgeKey(edgeID))
+			if getErr == badger.ErrKeyNotFound {
+				// Primary missing — fall through to version-record lookup.
+			} else if getErr != nil {
+				return getErr
+			} else {
+				if err := item.Value(func(val []byte) error {
+					decoded, decodeErr := b.decodeEdgeBodyByID(val, edgeID)
+					if decodeErr != nil {
+						return decodeErr
+					}
+					if decoded != nil {
+						decoded.ID = edgeID
+					}
+					body = decoded
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		if body == nil {
+			record, _, err := b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, edgeID, version)
+			if err == ErrNotFound {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if record.Tombstoned || record.Edge == nil {
+				continue
+			}
+			body = copyEdge(record.Edge)
+		}
+		if body == nil {
+			continue
+		}
+		if b.filterEntityByDecay(v, body, nowNanos) {
+			continue
+		}
+		if err := yield(body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const mvccRebuildScanBatchSize = 512
+
+type nodeHeadWrite struct {
+	id           NodeID
+	version      MVCCVersion
+	tombstoned   bool
+	floorVersion MVCCVersion
+}
+
+type edgeHeadWrite struct {
+	id           EdgeID
+	version      MVCCVersion
+	tombstoned   bool
+	floorVersion MVCCVersion
+}
+
+func nextScanStart(key []byte) []byte {
+	return append(append([]byte(nil), key...), 0x00)
+}
+
+// RebuildMVCCHeads rebuilds every MVCC head from the stored versions and
+// bodies. It replaces the heads wholesale, so it runs as a maintenance write
+// (beginMaintenanceWrite): no write runs across it, and every write-behind
+// commit acknowledged before it is applied first.
+func (b *BadgerEngine) RebuildMVCCHeads(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lifecycle, err := b.beginMaintenanceWrite(nil)
+	if err != nil {
+		return err
+	}
+	defer lifecycle.finish()
+	if err := b.clearBadgerPrefix(ctx, prefixMVCCNodeHead); err != nil {
+		return err
+	}
+	if err := b.clearBadgerPrefix(ctx, prefixMVCCEdgeHead); err != nil {
+		return err
+	}
+	if err := b.rebuildMVCCHeadsFromVersionRecords(ctx); err != nil {
+		return err
+	}
+	return b.bootstrapMVCCHeadsFromCurrentState(ctx)
+}
+
+func (b *BadgerEngine) rebuildMVCCHeadsFromVersionRecords(ctx context.Context) error {
+	if err := b.rebuildNodeMVCCHeadsFromVersions(ctx); err != nil {
+		return err
+	}
+	return b.rebuildEdgeMVCCHeadsFromVersions(ctx)
+}
+
+func (b *BadgerEngine) rebuildNodeMVCCHeadsFromVersions(ctx context.Context) error {
+	start := []byte{prefixMVCCNode}
+	var lastID NodeID
+	var lastHead MVCCHead
+	var firstVersion MVCCVersion
+	var haveLast bool
+	batch := make([]nodeHeadWrite, 0, mvccRebuildScanBatchSize)
+	flush := func() {
+		if !haveLast {
+			return
+		}
+		batch = append(batch, nodeHeadWrite{
+			id:           lastID,
+			version:      lastHead.Version,
+			tombstoned:   lastHead.Tombstoned,
+			floorVersion: firstVersion,
+		})
+		firstVersion = MVCCVersion{}
+	}
+
+	for {
+		lastScanned, reachedEnd, err := b.withViewNodeMVCCVersionsFromKey(start, mvccRebuildScanBatchSize, func(nodeID NodeID, version MVCCVersion, tombstoned bool) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			if haveLast && nodeID != lastID {
+				flush()
+			}
+			if firstVersion.IsZero() {
+				firstVersion = version
+			}
+			lastID = nodeID
+			lastHead = MVCCHead{Version: version, Tombstoned: tombstoned}
+			haveLast = true
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if len(batch) > 0 {
+			if err := b.applyNodeHeadBatch(batch); err != nil {
+				return err
+			}
+			batch = batch[:0]
+		}
+		if reachedEnd {
+			flush()
+			if len(batch) > 0 {
+				if err := b.applyNodeHeadBatch(batch); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		start = nextScanStart(lastScanned)
+	}
+}
+
+func (b *BadgerEngine) rebuildEdgeMVCCHeadsFromVersions(ctx context.Context) error {
+	start := []byte{prefixMVCCEdge}
+	var lastID EdgeID
+	var lastHead MVCCHead
+	var firstVersion MVCCVersion
+	var haveLast bool
+	batch := make([]edgeHeadWrite, 0, mvccRebuildScanBatchSize)
+	flush := func() {
+		if !haveLast {
+			return
+		}
+		batch = append(batch, edgeHeadWrite{
+			id:           lastID,
+			version:      lastHead.Version,
+			tombstoned:   lastHead.Tombstoned,
+			floorVersion: firstVersion,
+		})
+		firstVersion = MVCCVersion{}
+	}
+
+	for {
+		lastScanned, reachedEnd, err := b.withViewEdgeMVCCVersionsFromKey(start, mvccRebuildScanBatchSize, func(edgeID EdgeID, version MVCCVersion, tombstoned bool) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			if haveLast && edgeID != lastID {
+				flush()
+			}
+			if firstVersion.IsZero() {
+				firstVersion = version
+			}
+			lastID = edgeID
+			lastHead = MVCCHead{Version: version, Tombstoned: tombstoned}
+			haveLast = true
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if len(batch) > 0 {
+			if err := b.applyEdgeHeadBatch(batch); err != nil {
+				return err
+			}
+			batch = batch[:0]
+		}
+		if reachedEnd {
+			flush()
+			if len(batch) > 0 {
+				if err := b.applyEdgeHeadBatch(batch); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		start = nextScanStart(lastScanned)
+	}
+}
+
+func (b *BadgerEngine) applyNodeHeadBatch(batch []nodeHeadWrite) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		for _, write := range batch {
+			if err := b.writeNodeMVCCHeadWithFloorInTxn(txn, write.id, write.version, write.tombstoned, write.floorVersion); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (b *BadgerEngine) applyEdgeHeadBatch(batch []edgeHeadWrite) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		for _, write := range batch {
+			if err := b.writeEdgeMVCCHeadWithFloorInTxn(txn, write.id, write.version, write.tombstoned, write.floorVersion); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (b *BadgerEngine) withViewNodeMVCCVersionsFromKey(start []byte, limit int, yield func(NodeID, MVCCVersion, bool) error) ([]byte, bool, error) {
+	var lastScanned []byte
+	reachedEnd := true
+	err := b.withView(func(txn *badger.Txn) error {
+		opts := badgerIteratorOptions()
+		opts.Prefix = []byte{prefixMVCCNode}
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		count := 0
+		for it.Seek(start); it.ValidForPrefix(opts.Prefix); it.Next() {
+			key := append([]byte(nil), it.Item().Key()...)
+			nodeID, version, ok, err := b.nodeVersionKeyIdentity(key)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				lastScanned = key
+				count++
+				if count >= limit {
+					reachedEnd = false
+					break
+				}
+				continue
+			}
+			var tombstoned bool
+			if err := it.Item().Value(func(val []byte) error {
+				record, decodeErr := decodeMVCCNodeRecord(val)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				tombstoned = record.Tombstoned
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := yield(nodeID, version, tombstoned); err != nil {
+				return err
+			}
+			lastScanned = key
+			count++
+			if count >= limit {
+				reachedEnd = false
+				break
+			}
+		}
+		return nil
+	})
+	return lastScanned, reachedEnd, err
+}
+
+func (b *BadgerEngine) withViewEdgeMVCCVersionsFromKey(start []byte, limit int, yield func(EdgeID, MVCCVersion, bool) error) ([]byte, bool, error) {
+	var lastScanned []byte
+	reachedEnd := true
+	err := b.withView(func(txn *badger.Txn) error {
+		opts := badgerIteratorOptions()
+		opts.Prefix = []byte{prefixMVCCEdge}
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		count := 0
+		for it.Seek(start); it.ValidForPrefix(opts.Prefix); it.Next() {
+			key := append([]byte(nil), it.Item().Key()...)
+			edgeID, version, ok, err := b.edgeVersionKeyIdentity(key)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				lastScanned = key
+				count++
+				if count >= limit {
+					reachedEnd = false
+					break
+				}
+				continue
+			}
+			var tombstoned bool
+			if err := it.Item().Value(func(val []byte) error {
+				record, decodeErr := decodeMVCCEdgeRecord(val)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				tombstoned = record.Tombstoned
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := yield(edgeID, version, tombstoned); err != nil {
+				return err
+			}
+			lastScanned = key
+			count++
+			if count >= limit {
+				reachedEnd = false
+				break
+			}
+		}
+		return nil
+	})
+	return lastScanned, reachedEnd, err
+}
+
+func (b *BadgerEngine) bootstrapMVCCHeadsFromCurrentState(ctx context.Context) error {
+	if err := b.bootstrapNodeMVCCFromCurrentState(ctx); err != nil {
+		return err
+	}
+	return b.bootstrapEdgeMVCCFromCurrentState(ctx)
+}
+
+func (b *BadgerEngine) bootstrapNodeMVCCFromCurrentState(ctx context.Context) error {
+	start := []byte{prefixNode}
+	for {
+		batch, lastScanned, reachedEnd, err := b.collectNodeBootstrapBatch(ctx, start, mvccRebuildScanBatchSize)
+		if err != nil {
+			return err
+		}
+		if len(batch) > 0 {
+			if err := b.applyNodeBootstrapBatch(batch); err != nil {
+				return err
+			}
+		}
+		if reachedEnd {
+			return nil
+		}
+		start = nextScanStart(lastScanned)
+	}
+}
+
+func (b *BadgerEngine) collectNodeBootstrapBatch(ctx context.Context, start []byte, limit int) ([]*Node, []byte, bool, error) {
+	nodes := make([]*Node, 0, util.SafePreallocCap(limit))
+	var lastScanned []byte
+	reachedEnd := true
+	err := b.withView(func(txn *badger.Txn) error {
+		opts := badgerIteratorOptions()
+		opts.Prefix = []byte{prefixNode}
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Seek(start); it.ValidForPrefix(opts.Prefix); it.Next() {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			key := append([]byte(nil), it.Item().Key()...)
+			if len(key) <= 1 {
+				continue
+			}
+			id := NodeID(key[1:])
+			var node *Node
+			if err := it.Item().Value(func(val []byte) error {
+				var decodeErr error
+				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
+				return decodeErr
+			}); err != nil {
+				return err
+			}
+			nodes = append(nodes, node)
+			lastScanned = key
+			if len(nodes) >= limit {
+				reachedEnd = false
+				break
+			}
+		}
+		return nil
+	})
+	return nodes, lastScanned, reachedEnd, err
+}
+
+func (b *BadgerEngine) applyNodeBootstrapBatch(nodes []*Node) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		for _, node := range nodes {
+			if node == nil {
+				continue
+			}
+			if _, err := b.loadNodeMVCCHeadInTxn(txn, node.ID); err == nil {
+				continue
+			} else if err != ErrNotFound {
+				return err
+			}
+			version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), mvccBootstrapTime(node.CreatedAt, node.UpdatedAt))
+			if err != nil {
+				return err
+			}
+			// Post-refactor: primary key IS the head body. Bootstrap
+			// only needs to seed the head pointing at a fresh version.
+			if err := b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (b *BadgerEngine) bootstrapEdgeMVCCFromCurrentState(ctx context.Context) error {
+	start := []byte{prefixEdge}
+	for {
+		batch, lastScanned, reachedEnd, err := b.collectEdgeBootstrapBatch(ctx, start, mvccRebuildScanBatchSize)
+		if err != nil {
+			return err
+		}
+		if len(batch) > 0 {
+			if err := b.applyEdgeBootstrapBatch(batch); err != nil {
+				return err
+			}
+		}
+		if reachedEnd {
+			return nil
+		}
+		start = nextScanStart(lastScanned)
+	}
+}
+
+func (b *BadgerEngine) collectEdgeBootstrapBatch(ctx context.Context, start []byte, limit int) ([]*Edge, []byte, bool, error) {
+	edges := make([]*Edge, 0, util.SafePreallocCap(limit))
+	var lastScanned []byte
+	reachedEnd := true
+	err := b.withView(func(txn *badger.Txn) error {
+		opts := badgerIteratorOptions()
+		opts.Prefix = []byte{prefixEdge}
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Seek(start); it.ValidForPrefix(opts.Prefix); it.Next() {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			key := append([]byte(nil), it.Item().Key()...)
+			if len(key) <= 1 {
+				continue
+			}
+			id := EdgeID(key[1:])
+			var edge *Edge
+			if err := it.Item().Value(func(val []byte) error {
+				var decodeErr error
+				edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+				return decodeErr
+			}); err != nil {
+				return err
+			}
+			if edge == nil {
+				continue
+			}
+			edge.ID = id
+			edges = append(edges, edge)
+			lastScanned = key
+			if len(edges) >= limit {
+				reachedEnd = false
+				break
+			}
+		}
+		return nil
+	})
+	return edges, lastScanned, reachedEnd, err
+}
+
+func (b *BadgerEngine) applyEdgeBootstrapBatch(edges []*Edge) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		for _, edge := range edges {
+			if edge == nil {
+				continue
+			}
+			if _, err := b.loadEdgeMVCCHeadInTxn(txn, edge.ID); err == nil {
+				continue
+			} else if err != ErrNotFound {
+				return err
+			}
+			version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), mvccBootstrapTime(edge.CreatedAt, edge.UpdatedAt))
+			if err != nil {
+				return err
+			}
+			// Post-refactor: primary key IS the head body. Bootstrap
+			// only seeds the head pointing at a fresh version.
+			if err := b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (b *BadgerEngine) bootstrapNodeMVCCFromCurrentStateInTxn(txn *badger.Txn) error {
+	opts := badgerIteratorOptions()
+	opts.Prefix = []byte{prefixNode}
+	it := txn.NewIterator(opts)
+	defer it.Close()
+	for it.Rewind(); it.Valid(); it.Next() {
+		key := append([]byte(nil), it.Item().Key()...)
+		if len(key) <= 1 {
+			continue
+		}
+		id := NodeID(key[1:])
+		if _, err := b.loadNodeMVCCHeadInTxn(txn, id); err == nil {
+			continue
+		} else if err != ErrNotFound {
+			return err
+		}
+		var node *Node
+		if err := it.Item().Value(func(val []byte) error {
+			var decodeErr error
+			node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
+			return decodeErr
+		}); err != nil {
+			return err
+		}
+		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), mvccBootstrapTime(node.CreatedAt, node.UpdatedAt))
+		if err != nil {
+			return err
+		}
+		// Primary key already holds the body — just seed the head.
+		if err := b.writeNodeMVCCHeadInTxn(txn, id, version, false); err != nil {
+			return err
+		}
+		_ = node // keep decoded copy for any future hooks
+	}
+	return nil
+}
+
+func (b *BadgerEngine) bootstrapEdgeMVCCFromCurrentStateInTxn(txn *badger.Txn) error {
+	opts := badgerIteratorOptions()
+	opts.Prefix = []byte{prefixEdge}
+	it := txn.NewIterator(opts)
+	defer it.Close()
+	for it.Rewind(); it.Valid(); it.Next() {
+		key := append([]byte(nil), it.Item().Key()...)
+		if len(key) <= 1 {
+			continue
+		}
+		id := EdgeID(key[1:])
+		if _, err := b.loadEdgeMVCCHeadInTxn(txn, id); err == nil {
+			continue
+		} else if err != ErrNotFound {
+			return err
+		}
+		var edge *Edge
+		if err := it.Item().Value(func(val []byte) error {
+			var decodeErr error
+			edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+			return decodeErr
+		}); err != nil {
+			return err
+		}
+		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), mvccBootstrapTime(edge.CreatedAt, edge.UpdatedAt))
+		if err != nil {
+			return err
+		}
+		// Primary key already holds the body — just seed the head.
+		if err := b.writeEdgeMVCCHeadInTxn(txn, id, version, false); err != nil {
+			return err
+		}
+		_ = edge
+	}
+	return nil
+}
+
+func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	b.mvccPruneMu.Lock()
+	defer b.mvccPruneMu.Unlock()
+	if b.ActiveReaders() > 0 {
+		return 0, nil
+	}
+	effectiveOpts := b.effectiveMVCCPruneOptions(opts)
+	var deleted int64
+	for _, kind := range []byte{prefixMVCCNode, prefixMVCCEdge, prefixMVCCOutgoingAdj, prefixMVCCIncomingAdj} {
+		prefix := []byte{kind}
+		err := b.db.View(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+			defer it.Close()
+			var previous []byte
+			for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				logical, _, err := extractMVCCLogicalKeyAndVersion(it.Item().Key())
+				if err != nil {
+					return err
+				}
+				if bytes.Equal(logical, previous) {
+					continue
+				}
+				previous = append(previous[:0], logical...)
+				backoff := 50 * time.Microsecond
+				for {
+					var keyDeleted int64
+					// Ordered after the entity's acknowledged write-behind commits:
+					// one not yet applied is drained first, so the prune reads the
+					// entity's latest head (a tombstone it would reclaim may have
+					// been written over), and none lands over it afterwards.
+					err = b.withUpdate(func(update *badger.Txn) error {
+						var pruneErr error
+						keyDeleted, pruneErr = b.pruneMVCCKeyspaceInTxn(ctx, update, previous, effectiveOpts, false)
+						return pruneErr
+					}, b.mvccLogicalEntities(previous))
+					if !errors.Is(err, badger.ErrConflict) {
+						deleted += keyDeleted
+						break
+					}
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(backoff):
+					}
+					if backoff < 2*time.Millisecond {
+						backoff *= 2
+					}
+				}
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return deleted, err
+		}
+	}
+	return deleted, nil
+}
+
+func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.Txn, prefix []byte, opts MVCCPruneOptions, activeSnapshotReaders bool) (int64, error) {
+	optsIter := badgerIteratorOptions()
+	optsIter.Prefix = prefix
+	it := txn.NewIterator(optsIter)
+	defer it.Close()
+
+	type versionKey struct {
+		logical    []byte
+		full       []byte
+		version    MVCCVersion
+		tombstoned bool
+	}
+
+	currentGroup := make([]versionKey, 0)
+	var currentLogical []byte
+	var deleted int64
+	protectedAfter := time.Time{}
+	if opts.MinRetentionAge > 0 {
+		protectedAfter = time.Now().UTC().Add(-opts.MinRetentionAge)
+	}
+	flush := func() error {
+		if len(currentGroup) == 0 {
+			currentGroup = currentGroup[:0]
+			return nil
+		}
+		deletedBefore := deleted
+		hasExternalHead := len(currentGroup[0].logical) == 1+8
+		var head MVCCHead
+		if hasExternalHead {
+			var err error
+			head, err = b.loadMVCCHeadForLogicalKeyInTxn(txn, currentGroup[0].logical)
+			if err != nil {
+				if err != ErrNotFound {
+					return err
+				}
+				latest := currentGroup[len(currentGroup)-1]
+				head = MVCCHead{Version: latest.version, Tombstoned: latest.tombstoned, FloorVersion: latest.version}
+			}
+		} else {
+			latest := currentGroup[len(currentGroup)-1]
+			head = MVCCHead{Version: latest.version, Tombstoned: latest.tombstoned, FloorVersion: latest.version}
+		}
+
+		if head.Tombstoned && !activeSnapshotReaders && protectedAfter.IsZero() {
+			for _, entry := range currentGroup {
+				if entry.version.Compare(head.Version) == 0 {
+					continue
+				}
+				if err := txn.Delete(entry.full); err != nil {
+					return err
+				}
+				deleted++
+			}
+			// Also drop the tombstone marker + head + dict entry so the
+			// numID is fully reclaimable. This runs only when retention
+			// is not being requested (opts.MaxVersionsPerKey == 0 or the
+			// group is already at one tombstone marker).
+			if opts.MaxVersionsPerKey <= 0 {
+				// Delete the tombstone marker (head.Version entry).
+				for _, entry := range currentGroup {
+					if entry.version.Compare(head.Version) == 0 {
+						if err := txn.Delete(entry.full); err != nil {
+							return err
+						}
+						deleted++
+						break
+					}
+				}
+				// Delete the MVCC head itself, drop the dict entry, and
+				// push the numID onto the debounced freelist so future
+				// allocations can recycle it after the TTL window.
+				if hasExternalHead {
+					logical := currentGroup[0].logical
+					switch logical[0] {
+					case prefixMVCCNode:
+						numID := binary.BigEndian.Uint64(logical[1:])
+						if err := txn.Delete(mvccPruneFloorKey(logical)); err != nil {
+							return err
+						}
+						if err := txn.Delete(mvccNodeHeadKey(numID)); err != nil {
+							return err
+						}
+						if err := deleteIDEntryInTxn(txn, &b.idDict.nodes, nodeForwardShard, nodeReverseShard, nodeIDForwardKey, prefixIDDictNodeReverse, NodeID(""), numID, idPairByNumber); err != nil {
+							return err
+						}
+						if err := b.idDict.pushFreeNodeInTxn(txn, numID); err != nil {
+							return err
+						}
+					case prefixMVCCEdge:
+						numID := binary.BigEndian.Uint64(logical[1:])
+						if err := txn.Delete(mvccPruneFloorKey(logical)); err != nil {
+							return err
+						}
+						if err := txn.Delete(mvccEdgeHeadKey(numID)); err != nil {
+							return err
+						}
+						if err := deleteIDEntryInTxn(txn, &b.idDict.edges, edgeForwardShard, edgeReverseShard, edgeIDForwardKey, prefixIDDictEdgeReverse, EdgeID(""), numID, idPairByNumber); err != nil {
+							return err
+						}
+						if err := b.idDict.pushFreeEdgeInTxn(txn, numID); err != nil {
+							return err
+						}
+					}
+				}
+				currentGroup = currentGroup[:0]
+				return nil
+			}
+			if hasExternalHead && deleted > deletedBefore {
+				b.markMVCCFloorKey(currentGroup[0].logical)
+				if err := txn.Set(mvccPruneFloorKey(currentGroup[0].logical), encodeMVCCSortVersion(head.Version)); err != nil {
+					return err
+				}
+			}
+			currentGroup = currentGroup[:0]
+			return nil
+		}
+
+		// headInGroup is true when the current head version has a
+		// matching record in the version keyspace. Post-refactor this
+		// is no longer guaranteed — the live body lives at the primary
+		// key and the version keyspace holds only archived predecessors
+		// (plus tombstone markers on delete).
+		headInGroup := false
+		for i := range currentGroup {
+			if currentGroup[i].version.Compare(head.Version) == 0 {
+				headInGroup = true
+				break
+			}
+		}
+
+		if len(currentGroup) <= 1 && headInGroup {
+			currentGroup = currentGroup[:0]
+			return nil
+		}
+
+		keepHistorical := opts.MaxVersionsPerKey
+		// maxDeleteIndex bounds the range of entries eligible for
+		// deletion. When the head IS in the group, the last entry is
+		// the head (never delete it here). When the head is NOT in the
+		// group (post-refactor head-only or head-only-plus-archives),
+		// every entry is historical and eligible.
+		maxDeleteIndex := len(currentGroup)
+		if headInGroup {
+			maxDeleteIndex = len(currentGroup) - 1
+		}
+		retainFrom := maxDeleteIndex - keepHistorical
+		if retainFrom < 0 {
+			retainFrom = 0
+		}
+		floorVersion := MVCCVersion{}
+		groupDeleted := false
+		for i := 0; i < maxDeleteIndex; i++ {
+			if currentGroup[i].version.Compare(head.Version) == 0 {
+				if floorVersion.IsZero() {
+					floorVersion = currentGroup[i].version
+				}
+				continue
+			}
+			if i >= retainFrom {
+				if floorVersion.IsZero() {
+					floorVersion = currentGroup[i].version
+				}
+				continue
+			}
+			if !protectedAfter.IsZero() && currentGroup[i].version.CommitTimestamp.After(protectedAfter) {
+				if floorVersion.IsZero() {
+					floorVersion = currentGroup[i].version
+				}
+				continue
+			}
+			if err := txn.Delete(currentGroup[i].full); err != nil {
+				return err
+			}
+			deleted++
+			groupDeleted = true
+		}
+		if floorVersion.IsZero() {
+			floorVersion = head.Version
+		}
+		if hasExternalHead && groupDeleted {
+			b.markMVCCFloorKey(currentGroup[0].logical)
+			if err := txn.Set(mvccPruneFloorKey(currentGroup[0].logical), encodeMVCCSortVersion(floorVersion)); err != nil {
+				return err
+			}
+		}
+		currentGroup = currentGroup[:0]
+		return nil
+	}
+
+	for it.Rewind(); it.Valid(); it.Next() {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		default:
+		}
+		key := append([]byte(nil), it.Item().Key()...)
+		logical, version, err := extractMVCCLogicalKeyAndVersion(key)
+		if err != nil {
+			return 0, err
+		}
+		var tombstoned bool
+		if err := it.Item().Value(func(val []byte) error {
+			switch prefix[0] {
+			case prefixMVCCNode:
+				record, decodeErr := decodeMVCCNodeRecord(val)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				tombstoned = record.Tombstoned
+			case prefixMVCCEdge:
+				record, decodeErr := decodeMVCCEdgeRecord(val)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				tombstoned = record.Tombstoned
+			case prefixMVCCOutgoingAdj, prefixMVCCIncomingAdj:
+				record, decodeErr := decodeMVCCAdjacencyRecord(val)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				tombstoned = record.Tombstoned
+			default:
+				return fmt.Errorf("unsupported mvcc prune prefix: %x", prefix)
+			}
+			return nil
+		}); err != nil {
+			return 0, err
+		}
+		if currentLogical != nil && !bytes.Equal(currentLogical, logical) {
+			if err := flush(); err != nil {
+				return 0, err
+			}
+		}
+		currentLogical = logical
+		currentGroup = append(currentGroup, versionKey{logical: logical, full: key, version: version, tombstoned: tombstoned})
+	}
+	if err := flush(); err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+func (b *BadgerEngine) loadMVCCHeadForLogicalKeyInTxn(txn *badger.Txn, logical []byte) (MVCCHead, error) {
+	if len(logical) != 1+8 {
+		return MVCCHead{}, ErrInvalidData
+	}
+	numID := binary.BigEndian.Uint64(logical[1:])
+	switch logical[0] {
+	case prefixMVCCNode:
+		headKey := mvccNodeHeadKey(numID)
+		item, err := txn.Get(headKey)
+		if err == badger.ErrKeyNotFound {
+			return MVCCHead{}, ErrNotFound
+		}
+		if err != nil {
+			return MVCCHead{}, err
+		}
+		var head MVCCHead
+		err = item.Value(func(val []byte) error {
+			var decodeErr error
+			head, decodeErr = decodeMVCCHead(val)
+			return decodeErr
+		})
+		return head, err
+	case prefixMVCCEdge:
+		headKey := mvccEdgeHeadKey(numID)
+		item, err := txn.Get(headKey)
+		if err == badger.ErrKeyNotFound {
+			return MVCCHead{}, ErrNotFound
+		}
+		if err != nil {
+			return MVCCHead{}, err
+		}
+		var head MVCCHead
+		err = item.Value(func(val []byte) error {
+			var decodeErr error
+			head, decodeErr = decodeMVCCHead(val)
+			return decodeErr
+		})
+		return head, err
+	default:
+		return MVCCHead{}, fmt.Errorf("unknown mvcc logical key prefix: %x", logical[0])
+	}
+}
+
+func (b *BadgerEngine) writeMVCCHeadForLogicalKeyInTxn(txn *badger.Txn, logical []byte, version MVCCVersion, tombstoned bool, floorVersion MVCCVersion) error {
+	if len(logical) != 1+8 {
+		return ErrInvalidData
+	}
+	numID := binary.BigEndian.Uint64(logical[1:])
+	encoded, err := encodeMVCCHead(MVCCHead{Version: version, Tombstoned: tombstoned, FloorVersion: floorVersion})
+	if err != nil {
+		return err
+	}
+	switch logical[0] {
+	case prefixMVCCNode:
+		return txn.Set(mvccNodeHeadKey(numID), encoded)
+	case prefixMVCCEdge:
+		return txn.Set(mvccEdgeHeadKey(numID), encoded)
+	default:
+		return fmt.Errorf("unknown mvcc logical key prefix: %x", logical[0])
+	}
+}
+
+func mvccBootstrapTime(createdAt, updatedAt time.Time) time.Time {
+	if !updatedAt.IsZero() {
+		return updatedAt.UTC()
+	}
+	if !createdAt.IsZero() {
+		return createdAt.UTC()
+	}
+	return time.Now().UTC()
+}
+
+// ----- Plan 04-04-01 RISK-2: read-only accessors for observability D-15b ---
+//
+// PinnedBytes / OldestReaderAgeSeconds / ActiveReaders are pure-read
+// accessors used by the observability MVCC bag's GaugeFunc callbacks
+// (pkg/observability/catalog_mvcc.go). They satisfy the MVCCProbe interface
+// declared next to NewMVCCMetrics — D-02d leaf-package boundary preserved
+// because pkg/observability never imports pkg/storage; the engine here
+// merely satisfies an interface that the observability layer declares.
+//
+// Concurrency: each method either reads an atomic counter or takes the
+// existing reader-registry RWMutex via the lifecycle controller's
+// SnapshotReaderRegistry. No new lock surface is introduced; all three
+// methods are safe to call concurrently with reader open/close and with
+// each other.
+//
+// Fallback path (no lifecycle controller wired): the engine tracks an
+// atomic counter only. PinnedBytes returns 0 (no per-reader byte
+// accounting in fallback); OldestReaderAgeSeconds returns 0 (no per-reader
+// StartTime tracked in fallback); ActiveReaders returns the atomic count.
+// Per RESEARCH RISK-2 the GaugeFunc callbacks tolerate 0 — the metric
+// surface is what matters, not numeric fidelity in the unconfigured path.
+
+// ActiveReaders returns the count of currently-open MVCC reader snapshots.
+// Always non-nil; returns 0 when the engine has no active readers.
+//
+// Plan 04-04-01 RISK-2 fix — used by the observability MVCC bag's
+// active_readers GaugeFunc callback.
+func (b *BadgerEngine) ActiveReaders() int64 {
+	b.mu.RLock()
+	controller := b.lifecycleController
+	b.mu.RUnlock()
+	if controller != nil {
+		if reg := controller.ReaderRegistry(); reg != nil {
+			return reg.ActiveCount()
+		}
+	}
+	return b.activeMVCCSnapshotReaders.Load()
+}
+
+// PinnedBytes returns the cumulative byte count pinned by all active MVCC
+// readers. Returns 0 when no controller is wired (fallback path tracks
+// counts only, not bytes). Always non-nil.
+//
+// Plan 04-04-01 RISK-2 fix — used by the observability MVCC bag's
+// pinned_bytes GaugeFunc callback.
+func (b *BadgerEngine) PinnedBytes() int64 {
+	b.mu.RLock()
+	controller := b.lifecycleController
+	b.mu.RUnlock()
+	if controller == nil {
+		return 0
+	}
+	// Optional accessor: not every controller implementation tracks bytes.
+	// We probe via the optional interface to avoid coupling the storage
+	// types.go MVCCLifecycleController surface to a metric-only accessor.
+	if probe, ok := controller.(interface{ PinnedBytes() int64 }); ok {
+		return probe.PinnedBytes()
+	}
+	return 0
+}
+
+// OldestReaderAgeSeconds returns the wall-clock age (in seconds) of the
+// oldest still-open MVCC reader snapshot. Returns 0 when no readers are
+// active or no controller is wired (atomic-counter fallback does not
+// track per-reader StartTime).
+//
+// Plan 04-04-01 RISK-2 fix — used by the observability MVCC bag's
+// oldest_reader_age_seconds GaugeFunc callback.
+func (b *BadgerEngine) OldestReaderAgeSeconds() float64 {
+	b.mu.RLock()
+	controller := b.lifecycleController
+	b.mu.RUnlock()
+	if controller == nil {
+		return 0
+	}
+	// Probe via optional interface: the lifecycle.ReaderRegistry exposes
+	// OldestReaderAge(); the observability layer wants seconds as float64.
+	type ageProvider interface{ OldestReaderAge() time.Duration }
+	if probe, ok := controller.(ageProvider); ok {
+		return probe.OldestReaderAge().Seconds()
+	}
+	if reg := controller.ReaderRegistry(); reg != nil {
+		if probe, ok := reg.(ageProvider); ok {
+			return probe.OldestReaderAge().Seconds()
+		}
+	}
+	return 0
+}

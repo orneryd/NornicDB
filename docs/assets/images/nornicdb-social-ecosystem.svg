@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="140" y1="40" x2="1040" y2="590" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#08111D"/>
+      <stop offset="1" stop-color="#101C2D"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="180" y1="60" x2="980" y2="560" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6DDEFF"/>
+      <stop offset="1" stop-color="#1EA6FF"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFD873"/>
+      <stop offset="1" stop-color="#C28C12"/>
+    </linearGradient>
+    <linearGradient id="rainbow" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#EF4444" stop-opacity="0.45"/>
+      <stop offset="0.25" stop-color="#F97316" stop-opacity="0.45"/>
+      <stop offset="0.5" stop-color="#22C55E" stop-opacity="0.45"/>
+      <stop offset="0.75" stop-color="#3B82F6" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0.45"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" rx="30" fill="url(#bg)"/>
+  <g opacity="0.14">
+    <circle cx="132" cy="516" r="98" stroke="#4FD1FF"/>
+    <circle cx="1062" cy="114" r="132" stroke="#4FD1FF"/>
+    <path d="M40 610L350 320L580 520L920 180L1160 330" stroke="#4FD1FF"/>
+  </g>
+
+  <rect x="56" y="56" width="1088" height="518" rx="26" fill="#121F31" stroke="#233A53"/>
+
+  <g transform="translate(96 88)">
+    <path d="M 24 82 Q 14 52 32 30 Q 50 8 80 4 Q 110 0 126 18 Q 138 32 126 46" fill="none" stroke="#9CD8FF" stroke-width="10" stroke-linecap="round" opacity="0.95"/>
+    <path d="M 80 0 Q 80 20 68 40 Q 56 60 68 78 Q 80 96 80 116" fill="none" stroke="#9CD8FF" stroke-width="10" stroke-linecap="round"/>
+    <path d="M 136 82 Q 146 52 128 30 Q 110 8 80 4 Q 50 0 34 18 Q 22 32 34 46" fill="none" stroke="#9CD8FF" stroke-width="10" stroke-linecap="round" opacity="0.95"/>
+    <circle cx="80" cy="42" r="10" fill="url(#gold)"/>
+    <circle cx="80" cy="42" r="5" fill="#122138"/>
+  </g>
+
+  <g transform="translate(286 102)">
+   <text x="0" y="0" fill="#87D3FF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" letter-spacing="3">NORNICDB</text>
+    <text x="0" y="58" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="60" font-weight="700">Achieving Psygnosis for AI</text>
+    <text x="0" y="106" fill="#D8E7F8" font-family="Arial, Helvetica, sans-serif" font-size="28">Memory that evolves</text>
+  </g>
+
+  <g transform="translate(96 242)">
+    <rect x="0" y="0" width="624" height="236" rx="22" fill="#0F1B2B" stroke="#28435F"/>
+    <text x="30" y="42" fill="#DDEBFF" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Core platform</text>
+
+    <rect x="30" y="72" width="170" height="54" rx="12" fill="#14314A" stroke="#2BC2FF"/>
+    <text x="115" y="95" text-anchor="middle" fill="#A6C8E8" font-family="Arial, Helvetica, sans-serif" font-size="16">Interfaces</text>
+    <text x="115" y="114" text-anchor="middle" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="18">Bolt • REST • GraphQL</text>
+
+    <rect x="228" y="72" width="168" height="54" rx="12" fill="#14314A" stroke="#2BC2FF"/>
+    <text x="312" y="95" text-anchor="middle" fill="#A6C8E8" font-family="Arial, Helvetica, sans-serif" font-size="16">Execution</text>
+    <text x="312" y="114" text-anchor="middle" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="18">Cypher</text>
+
+    <rect x="424" y="72" width="170" height="54" rx="12" fill="#14314A" stroke="#2BC2FF"/>
+    <text x="509" y="95" text-anchor="middle" fill="#A6C8E8" font-family="Arial, Helvetica, sans-serif" font-size="16">Search</text>
+    <text x="509" y="114" text-anchor="middle" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="18">Hybrid retrieval</text>
+
+    <rect x="30" y="154" width="170" height="54" rx="12" fill="#14314A" stroke="#2BC2FF"/>
+    <text x="115" y="177" text-anchor="middle" fill="#A6C8E8" font-family="Arial, Helvetica, sans-serif" font-size="16">State</text>
+    <text x="115" y="196" text-anchor="middle" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="18">Ledger</text>
+
+    <rect x="228" y="154" width="168" height="54" rx="12" fill="#14314A" stroke="#2BC2FF"/>
+    <text x="312" y="177" text-anchor="middle" fill="#A6C8E8" font-family="Arial, Helvetica, sans-serif" font-size="16">Runtime</text>
+    <text x="312" y="196" text-anchor="middle" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="18">AI-native</text>
+
+    <rect x="424" y="154" width="170" height="54" rx="12" fill="#14314A" stroke="#2BC2FF"/>
+    <text x="509" y="177" text-anchor="middle" fill="#A6C8E8" font-family="Arial, Helvetica, sans-serif" font-size="16">Inference</text>
+    <text x="509" y="196" text-anchor="middle" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="18">Orchestration</text>
+  </g>
+
+  <g transform="translate(770 236)">
+    <rect x="0" y="0" width="332" height="242" rx="22" fill="#0F1B2B" stroke="#28435F"/>
+    <text x="28" y="42" fill="#DDEBFF" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Heimdall</text>
+    <path d="M 66 160 Q 78 128 110 118 Q 142 128 150 160 Q 140 176 110 182 Q 80 176 66 160" fill="#1E3A5F"/>
+    <path d="M110 108L110 88" stroke="#1E3A5F" stroke-width="7" stroke-linecap="round"/>
+    <path d="M62 122Q44 108 36 94" stroke="#1E3A5F" stroke-width="5" stroke-linecap="round"/>
+    <path d="M158 122Q176 108 184 94" stroke="#1E3A5F" stroke-width="5" stroke-linecap="round"/>
+    <ellipse cx="110" cy="144" rx="22" ry="12" stroke="url(#gold)" stroke-width="3"/>
+    <circle cx="110" cy="144" r="8" fill="url(#gold)"/>
+    <path d="M170 184Q198 168 216 136Q228 114 226 96" stroke="#1E3A5F" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="226" cy="96" r="4" fill="url(#gold)"/>
+    <path d="M32 206Q166 126 300 206" stroke="url(#rainbow)" stroke-width="10" stroke-linecap="round"/>
+    <text x="28" y="82" fill="#8CA5C6" font-family="Arial, Helvetica, sans-serif" font-size="18">The watchman layer</text>
+    <text x="28" y="226" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Plugins. Routing. Inference.</text>
+    <text x="28" y="252" fill="#8CA5C6" font-family="Arial, Helvetica, sans-serif" font-size="18">Extensible AI workflows</text>
+  </g>
+
+  <text x="96" y="536" fill="#8CA5C6" font-family="Arial, Helvetica, sans-serif" font-size="22">Graph. Vector. Psygnosis.</text>
+</svg>

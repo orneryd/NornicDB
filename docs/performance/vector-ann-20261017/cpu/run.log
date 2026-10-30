@@ -1,0 +1,228 @@
+== nornicdb / exact: Exact (brute force)
+   configured mode  recall@10 1.0000  p50   6.308 ms  p95   6.579 ms     186.4 qps
+   load 12.6s (6970/s), index ready 4.2s, disk 1213 MB, RSS 3749 MB, strategy: CPU brute-force
+== qdrant / exact: Exact (brute force)
+   configured mode  recall@10 1.0000  p50   3.870 ms  p95   5.000 ms     368.8 qps
+   load 5.3s (16623/s), index ready 1.0s, disk 437 MB, RSS 902 MB, strategy: exact search (exact=true)
+== nornicdb / hnsw-fast: HNSW fast (M=16, efConstruction=100, efSearch=50)
+   preset beam      recall@10 0.9947  p50   0.811 ms  p95   0.986 ms    6322.0 qps
+   hnsw_ef=16       recall@10 0.9705  p50   0.486 ms  p95   0.586 ms    8919.8 qps
+   hnsw_ef=32       recall@10 0.9909  p50   0.631 ms  p95   0.771 ms    7918.9 qps
+   hnsw_ef=64       recall@10 0.9958  p50   0.902 ms  p95   1.100 ms    4593.7 qps
+   hnsw_ef=128      recall@10 0.9988  p50   1.370 ms  p95   1.700 ms    3691.0 qps
+   hnsw_ef=256      recall@10 0.9998  p50   2.231 ms  p95   2.859 ms    2214.0 qps
+   hnsw_ef=512      recall@10 1.0000  p50   3.811 ms  p95   4.976 ms    1273.7 qps
+   load 12.8s (6872/s), index ready 49.4s, disk 1238 MB, RSS 3723 MB, strategy: HNSW
+== qdrant / hnsw-fast: HNSW fast (M=16, efConstruction=100, efSearch=50)
+   preset beam      recall@10 0.9977  p50   0.580 ms  p95   0.714 ms    3317.5 qps
+   hnsw_ef=16       recall@10 0.9831  p50   0.417 ms  p95   0.493 ms    6063.8 qps
+   hnsw_ef=32       recall@10 0.9940  p50   0.517 ms  p95   0.606 ms    3737.2 qps
+   hnsw_ef=64       recall@10 0.9988  p50   0.674 ms  p95   0.783 ms    3301.0 qps
+   hnsw_ef=128      recall@10 0.9998  p50   0.984 ms  p95   1.138 ms    2049.4 qps
+   hnsw_ef=256      recall@10 1.0000  p50   1.510 ms  p95   1.791 ms    1214.2 qps
+   hnsw_ef=512      recall@10 1.0000  p50   2.311 ms  p95   2.742 ms     812.1 qps
+   load 5.4s (16259/s), index ready 4.1s, disk 440 MB, RSS 539 MB, strategy: HNSW m=16 ef_construct=100
+== nornicdb / hnsw-balanced: HNSW balanced (M=16, efConstruction=200, efSearch=100)
+   preset beam      recall@10 0.9992  p50   1.207 ms  p95   1.522 ms    4046.0 qps
+   hnsw_ef=16       recall@10 0.9728  p50   0.490 ms  p95   0.590 ms    8615.0 qps
+   hnsw_ef=32       recall@10 0.9927  p50   0.666 ms  p95   0.843 ms    7612.3 qps
+   hnsw_ef=64       recall@10 0.9984  p50   0.936 ms  p95   1.133 ms    5198.3 qps
+   hnsw_ef=128      recall@10 0.9992  p50   1.416 ms  p95   1.762 ms    3251.6 qps
+   hnsw_ef=256      recall@10 0.9998  p50   2.252 ms  p95   2.828 ms    1975.5 qps
+   hnsw_ef=512      recall@10 1.0000  p50   3.777 ms  p95   4.649 ms    1136.7 qps
+   load 12.7s (6930/s), index ready 71.1s, disk 1239 MB, RSS 3746 MB, strategy: HNSW
+== qdrant / hnsw-balanced: HNSW balanced (M=16, efConstruction=200, efSearch=100)
+   preset beam      recall@10 0.9993  p50   0.931 ms  p95   1.070 ms    1975.6 qps
+   hnsw_ef=16       recall@10 0.9834  p50   0.434 ms  p95   0.498 ms    4318.4 qps
+   hnsw_ef=32       recall@10 0.9942  p50   0.549 ms  p95   0.636 ms    4419.1 qps
+   hnsw_ef=64       recall@10 0.9987  p50   0.723 ms  p95   0.832 ms    2812.7 qps
+   hnsw_ef=128      recall@10 0.9996  p50   1.098 ms  p95   1.285 ms    1901.4 qps
+   hnsw_ef=256      recall@10 0.9999  p50   1.688 ms  p95   1.976 ms    1187.4 qps
+   hnsw_ef=512      recall@10 0.9999  p50   2.687 ms  p95   3.173 ms     747.4 qps
+   load 5.2s (16820/s), index ready 11.1s, disk 442 MB, RSS 538 MB, strategy: HNSW m=16 ef_construct=200
+== nornicdb / hnsw-accurate: HNSW accurate (M=32, efConstruction=400, efSearch=200)
+   preset beam      recall@10 0.9997  p50   2.803 ms  p95   3.532 ms    1685.4 qps
+   hnsw_ef=16       recall@10 0.9837  p50   0.612 ms  p95   0.754 ms    7388.2 qps
+   hnsw_ef=32       recall@10 0.9965  p50   0.857 ms  p95   1.047 ms    5563.7 qps
+   hnsw_ef=64       recall@10 0.9991  p50   1.291 ms  p95   1.598 ms    3840.0 qps
+   hnsw_ef=128      recall@10 0.9994  p50   2.088 ms  p95   2.670 ms    2257.5 qps
+   hnsw_ef=256      recall@10 0.9999  p50   3.395 ms  p95   4.446 ms    1360.2 qps
+   hnsw_ef=512      recall@10 1.0000  p50   5.662 ms  p95   7.103 ms     813.0 qps
+   load 12.7s (6957/s), index ready 144.8s, disk 1238 MB, RSS 3760 MB, strategy: HNSW
+== qdrant / hnsw-accurate: HNSW accurate (M=32, efConstruction=400, efSearch=200)
+   preset beam      recall@10 1.0000  p50   2.030 ms  p95   2.395 ms    1009.3 qps
+   hnsw_ef=16       recall@10 0.9923  p50   0.532 ms  p95   0.622 ms    4283.9 qps
+   hnsw_ef=32       recall@10 0.9984  p50   0.676 ms  p95   0.779 ms    3366.9 qps
+   hnsw_ef=64       recall@10 0.9994  p50   0.976 ms  p95   1.144 ms    2087.7 qps
+   hnsw_ef=128      recall@10 0.9998  p50   1.511 ms  p95   1.762 ms    1328.3 qps
+   hnsw_ef=256      recall@10 1.0000  p50   2.343 ms  p95   2.754 ms     861.4 qps
+   hnsw_ef=512      recall@10 1.0000  p50   3.611 ms  p95   4.245 ms     564.5 qps
+   load 5.3s (16540/s), index ready 20.2s, disk 443 MB, RSS 542 MB, strategy: HNSW m=32 ef_construct=400
+== nornicdb / ivf-hnsw: IVF (k-means routing, IVF-HNSW)
+   configured mode  recall@10 0.9741  p50  18.177 ms  p95  21.607 ms     510.2 qps
+   load 13.0s (6770/s), index ready 54.4s, disk 1238 MB, RSS 3877 MB, strategy: IVF-HNSW (per-cluster HNSW)
+== nornicdb / ivf-pq: IVF-PQ (compressed)
+   configured mode  recall@10 0.9773  p50   5.175 ms  p95   5.707 ms     954.5 qps
+   load 12.9s (6815/s), index ready 106.9s, disk 1651 MB, RSS 3894 MB, strategy: IVFPQ compressed (lists=209 segments=128 bits=8 nprobe=27) [vectors=88155 sample=88155 lists=209 avg_list=421.8 max_list=1244 bytes_per_vector=153.79 duration=1m42.6493685s]
+== nornicdb / sq-int8: HNSW + scalar int8 quantization (rescore)
+   preset beam      recall@10 0.9959  p50   0.551 ms  p95   0.669 ms    7998.4 qps
+   hnsw_ef=16       recall@10 0.9725  p50   0.412 ms  p95   0.534 ms    7817.7 qps
+   hnsw_ef=32       recall@10 0.9931  p50   0.475 ms  p95   0.608 ms    8934.6 qps
+   hnsw_ef=64       recall@10 0.9972  p50   0.583 ms  p95   0.725 ms    8269.8 qps
+   hnsw_ef=128      recall@10 0.9992  p50   0.786 ms  p95   0.932 ms    6313.7 qps
+   hnsw_ef=256      recall@10 0.9998  p50   1.139 ms  p95   1.377 ms    5513.1 qps
+   hnsw_ef=512      recall@10 1.0000  p50   1.751 ms  p95   2.119 ms    3742.9 qps
+   load 13.0s (6804/s), index ready 36.8s, disk 1631 MB, RSS 3221 MB, strategy: HNSW scalar int8 (90623340 encoded bytes)
+== qdrant / sq-int8: HNSW + scalar int8 quantization (rescore)
+   preset beam      recall@10 0.9966  p50   0.349 ms  p95   0.458 ms    7155.6 qps
+   hnsw_ef=16       recall@10 0.9840  p50   0.272 ms  p95   0.306 ms    7418.7 qps
+   hnsw_ef=32       recall@10 0.9941  p50   0.294 ms  p95   0.328 ms    6117.7 qps
+   hnsw_ef=64       recall@10 0.9977  p50   0.329 ms  p95   0.370 ms    6909.2 qps
+   hnsw_ef=128      recall@10 0.9992  p50   0.401 ms  p95   0.460 ms    5950.7 qps
+   hnsw_ef=256      recall@10 0.9997  p50   0.567 ms  p95   0.716 ms    3925.8 qps
+   hnsw_ef=512      recall@10 0.9999  p50   0.799 ms  p95   0.923 ms    2698.4 qps
+   load 5.0s (17642/s), index ready 2.0s, disk 531 MB, RSS 675 MB, strategy: HNSW m=16 ef_construct=100 + scalar quantization
+== nornicdb / pq-x16: HNSW + product quantization x16 (rescore)
+   preset beam      recall@10 0.9892  p50   0.904 ms  p95   1.077 ms    6029.7 qps
+   hnsw_ef=16       recall@10 0.9700  p50   0.734 ms  p95   0.879 ms    7764.6 qps
+   hnsw_ef=32       recall@10 0.9859  p50   0.810 ms  p95   0.978 ms    7662.3 qps
+   hnsw_ef=64       recall@10 0.9914  p50   0.939 ms  p95   1.124 ms    6766.5 qps
+   hnsw_ef=128      recall@10 0.9928  p50   1.220 ms  p95   1.454 ms    5230.1 qps
+   hnsw_ef=256      recall@10 0.9932  p50   1.636 ms  p95   1.995 ms    4177.6 qps
+   hnsw_ef=512      recall@10 0.9936  p50   2.375 ms  p95   2.899 ms    3039.2 qps
+   load 13.2s (6679/s), index ready 40.5s, disk 1632 MB, RSS 3180 MB, strategy: HNSW PQ x16 (23616256 encoded bytes)
+== qdrant / pq-x16: HNSW + product quantization x16 (rescore)
+   preset beam      recall@10 0.9936  p50   0.558 ms  p95   0.621 ms    4783.2 qps
+   hnsw_ef=16       recall@10 0.9783  p50   0.467 ms  p95   0.607 ms    5421.5 qps
+   hnsw_ef=32       recall@10 0.9906  p50   0.507 ms  p95   0.576 ms    5102.7 qps
+   hnsw_ef=64       recall@10 0.9947  p50   0.580 ms  p95   0.652 ms    4527.1 qps
+   hnsw_ef=128      recall@10 0.9960  p50   0.683 ms  p95   0.766 ms    3711.1 qps
+   hnsw_ef=256      recall@10 0.9966  p50   0.849 ms  p95   0.960 ms    2982.2 qps
+   hnsw_ef=512      recall@10 0.9967  p50   1.213 ms  p95   1.510 ms    2329.1 qps
+   load 4.3s (20422/s), index ready 28.3s, disk 480 MB, RSS 579 MB, strategy: HNSW m=16 ef_construct=100 + product quantization
+== nornicdb / bq: HNSW + binary quantization (rescore, 2x oversampling)
+   preset beam      recall@10 0.9803  p50   0.575 ms  p95   0.785 ms    7510.7 qps
+   hnsw_ef=16       recall@10 0.9732  p50   0.517 ms  p95   0.665 ms    7602.8 qps
+   hnsw_ef=32       recall@10 0.9741  p50   0.492 ms  p95   0.620 ms    7010.1 qps
+   hnsw_ef=64       recall@10 0.9805  p50   0.552 ms  p95   0.699 ms    8777.6 qps
+   hnsw_ef=128      recall@10 0.9822  p50   0.647 ms  p95   0.801 ms    7560.5 qps
+   hnsw_ef=256      recall@10 0.9822  p50   0.768 ms  p95   0.954 ms    7100.1 qps
+   hnsw_ef=512      recall@10 0.9828  p50   0.974 ms  p95   1.158 ms    5773.7 qps
+   load 13.0s (6758/s), index ready 35.4s, disk 1629 MB, RSS 3181 MB, strategy: HNSW binary (11283840 encoded bytes)
+== qdrant / bq: HNSW + binary quantization (rescore, 2x oversampling)
+   preset beam      recall@10 0.9944  p50   0.279 ms  p95   0.316 ms    7444.2 qps
+   hnsw_ef=16       recall@10 0.9796  p50   0.269 ms  p95   0.318 ms    6970.3 qps
+   hnsw_ef=32       recall@10 0.9889  p50   0.275 ms  p95   0.304 ms    7426.3 qps
+   hnsw_ef=64       recall@10 0.9954  p50   0.289 ms  p95   0.318 ms    7160.4 qps
+   hnsw_ef=128      recall@10 0.9982  p50   0.318 ms  p95   0.351 ms    6739.5 qps
+   hnsw_ef=256      recall@10 0.9989  p50   0.379 ms  p95   0.431 ms    6210.4 qps
+   hnsw_ef=512      recall@10 0.9989  p50   0.546 ms  p95   0.759 ms    3723.5 qps
+   load 5.7s (15345/s), index ready 1.0s, disk 452 MB, RSS 595 MB, strategy: HNSW m=16 ef_construct=100 + binary quantization
+== nornicdb / bq-asym4: HNSW + binary storage, int4 query (rescore, 2x oversampling)
+   preset beam      recall@10 0.9925  p50   0.644 ms  p95   0.805 ms    5423.7 qps
+   hnsw_ef=16       recall@10 0.9884  p50   0.563 ms  p95   0.704 ms    8569.0 qps
+   hnsw_ef=32       recall@10 0.9886  p50   0.579 ms  p95   0.738 ms    8199.1 qps
+   hnsw_ef=64       recall@10 0.9937  p50   0.646 ms  p95   0.806 ms    7846.4 qps
+   hnsw_ef=128      recall@10 0.9952  p50   0.737 ms  p95   0.902 ms    6901.5 qps
+   hnsw_ef=256      recall@10 0.9955  p50   0.891 ms  p95   1.104 ms    5961.2 qps
+   hnsw_ef=512      recall@10 0.9959  p50   1.235 ms  p95   1.478 ms    4885.6 qps
+   load 13.1s (6744/s), index ready 35.9s, disk 1629 MB, RSS 3180 MB, strategy: HNSW binary query int4 (11283840 encoded bytes)
+== qdrant / bq-asym4: HNSW + binary storage, int4 query (rescore, 2x oversampling)
+   preset beam      recall@10 0.9964  p50   0.286 ms  p95   0.334 ms    7528.8 qps
+   hnsw_ef=16       recall@10 0.9865  p50   0.276 ms  p95   0.363 ms    7203.8 qps
+   hnsw_ef=32       recall@10 0.9932  p50   0.275 ms  p95   0.304 ms    7309.6 qps
+   hnsw_ef=64       recall@10 0.9977  p50   0.292 ms  p95   0.327 ms    7470.3 qps
+   hnsw_ef=128      recall@10 0.9989  p50   0.323 ms  p95   0.359 ms    6872.0 qps
+   hnsw_ef=256      recall@10 0.9997  p50   0.387 ms  p95   0.436 ms    6060.0 qps
+   hnsw_ef=512      recall@10 0.9998  p50   0.529 ms  p95   0.815 ms    3902.4 qps
+   load 5.6s (15711/s), index ready 1.0s, disk 454 MB, RSS 597 MB, strategy: HNSW m=16 ef_construct=100 + binary quantization
+== nornicdb / bq-asym8: HNSW + binary storage, int8 query (rescore, 2x oversampling)
+   preset beam      recall@10 0.9939  p50   0.676 ms  p95   0.849 ms    6696.6 qps
+   hnsw_ef=16       recall@10 0.9879  p50   0.614 ms  p95   0.765 ms    7390.7 qps
+   hnsw_ef=32       recall@10 0.9887  p50   0.622 ms  p95   0.766 ms    8431.7 qps
+   hnsw_ef=64       recall@10 0.9948  p50   0.729 ms  p95   0.889 ms    6559.6 qps
+   hnsw_ef=128      recall@10 0.9967  p50   0.862 ms  p95   1.044 ms    6898.4 qps
+   hnsw_ef=256      recall@10 0.9969  p50   1.110 ms  p95   1.384 ms    5493.5 qps
+   hnsw_ef=512      recall@10 0.9971  p50   1.508 ms  p95   1.893 ms    4218.6 qps
+   load 12.9s (6816/s), index ready 35.6s, disk 1629 MB, RSS 3221 MB, strategy: HNSW binary query int8 (11283840 encoded bytes)
+== qdrant / bq-asym8: HNSW + binary storage, int8 query (rescore, 2x oversampling)
+   preset beam      recall@10 0.9971  p50   0.296 ms  p95   0.342 ms    7341.0 qps
+   hnsw_ef=16       recall@10 0.9862  p50   0.280 ms  p95   0.344 ms    7601.2 qps
+   hnsw_ef=32       recall@10 0.9932  p50   0.280 ms  p95   0.309 ms    7206.8 qps
+   hnsw_ef=64       recall@10 0.9978  p50   0.299 ms  p95   0.330 ms    7158.3 qps
+   hnsw_ef=128      recall@10 0.9997  p50   0.339 ms  p95   0.374 ms    6836.5 qps
+   hnsw_ef=256      recall@10 1.0000  p50   0.412 ms  p95   0.464 ms    5745.2 qps
+   hnsw_ef=512      recall@10 1.0000  p50   0.625 ms  p95   0.874 ms    4094.2 qps
+   load 5.8s (15247/s), index ready 1.0s, disk 453 MB, RSS 594 MB, strategy: HNSW m=16 ef_construct=100 + binary quantization
+== nornicdb / pq-x4: HNSW + product quantization x4 (rescore)
+   preset beam      recall@10 0.9958  p50   1.757 ms  p95   2.135 ms    3901.7 qps
+   hnsw_ef=16       recall@10 0.9736  p50   1.299 ms  p95   1.611 ms    4982.9 qps
+   hnsw_ef=32       recall@10 0.9929  p50   1.552 ms  p95   1.901 ms    4108.1 qps
+   hnsw_ef=64       recall@10 0.9972  p50   1.911 ms  p95   2.328 ms    3568.8 qps
+   hnsw_ef=128      recall@10 0.9992  p50   2.761 ms  p95   3.272 ms    2597.9 qps
+   hnsw_ef=256      recall@10 0.9998  p50   4.249 ms  p95   5.129 ms    1679.3 qps
+   hnsw_ef=512      recall@10 1.0000  p50   6.904 ms  p95   8.326 ms    1105.2 qps
+   load 13.1s (6726/s), index ready 44.7s, disk 1631 MB, RSS 3202 MB, strategy: HNSW PQ x4 (91319296 encoded bytes)
+== qdrant / pq-x4: HNSW + product quantization x4 (rescore)
+   preset beam      recall@10 0.9908  p50   1.285 ms  p95   1.517 ms    1798.9 qps
+   hnsw_ef=16       recall@10 0.9730  p50   1.017 ms  p95   1.132 ms    2196.2 qps
+   hnsw_ef=32       recall@10 0.9870  p50   1.136 ms  p95   1.265 ms    1896.5 qps
+   hnsw_ef=64       recall@10 0.9929  p50   1.357 ms  p95   1.504 ms    1790.6 qps
+   hnsw_ef=128      recall@10 0.9955  p50   1.746 ms  p95   2.025 ms    1432.3 qps
+   hnsw_ef=256      recall@10 0.9963  p50   2.458 ms  p95   2.930 ms    1117.7 qps
+   hnsw_ef=512      recall@10 0.9964  p50   3.841 ms  p95   4.585 ms     868.4 qps
+   load 4.2s (20842/s), index ready 79.8s, disk 546 MB, RSS 650 MB, strategy: HNSW m=16 ef_construct=100 + product quantization
+== nornicdb / pq-x8: HNSW + product quantization x8 (rescore)
+   preset beam      recall@10 0.9947  p50   1.221 ms  p95   1.492 ms    5557.1 qps
+   hnsw_ef=16       recall@10 0.9726  p50   0.934 ms  p95   1.100 ms    6471.3 qps
+   hnsw_ef=32       recall@10 0.9920  p50   1.039 ms  p95   1.256 ms    6144.5 qps
+   hnsw_ef=64       recall@10 0.9968  p50   1.379 ms  p95   1.670 ms    5161.9 qps
+   hnsw_ef=128      recall@10 0.9990  p50   1.728 ms  p95   2.105 ms    4110.5 qps
+   hnsw_ef=256      recall@10 0.9994  p50   2.485 ms  p95   2.941 ms    2775.6 qps
+   hnsw_ef=512      recall@10 0.9996  p50   3.912 ms  p95   4.671 ms    1859.4 qps
+   load 12.9s (6809/s), index ready 42.5s, disk 1630 MB, RSS 3204 MB, strategy: HNSW PQ x8 (46183936 encoded bytes)
+== qdrant / pq-x8: HNSW + product quantization x8 (rescore)
+   preset beam      recall@10 0.9896  p50   0.826 ms  p95   0.927 ms    2987.1 qps
+   hnsw_ef=16       recall@10 0.9673  p50   0.701 ms  p95   0.773 ms    3317.7 qps
+   hnsw_ef=32       recall@10 0.9852  p50   0.766 ms  p95   0.844 ms    3261.6 qps
+   hnsw_ef=64       recall@10 0.9906  p50   0.842 ms  p95   0.981 ms    2925.4 qps
+   hnsw_ef=128      recall@10 0.9918  p50   1.047 ms  p95   1.164 ms    2379.7 qps
+   hnsw_ef=256      recall@10 0.9920  p50   1.392 ms  p95   1.630 ms    1832.4 qps
+   hnsw_ef=512      recall@10 0.9921  p50   2.013 ms  p95   2.372 ms    1365.8 qps
+   load 4.4s (20216/s), index ready 55.6s, disk 503 MB, RSS 600 MB, strategy: HNSW m=16 ef_construct=100 + product quantization
+== nornicdb / pq-x32: HNSW + product quantization x32 (rescore)
+   preset beam      recall@10 0.9528  p50   0.683 ms  p95   0.822 ms    6429.3 qps
+   hnsw_ef=16       recall@10 0.9378  p50   0.571 ms  p95   0.698 ms    8100.0 qps
+   hnsw_ef=32       recall@10 0.9508  p50   0.620 ms  p95   0.758 ms    8579.2 qps
+   hnsw_ef=64       recall@10 0.9539  p50   0.699 ms  p95   0.835 ms    4858.7 qps
+   hnsw_ef=128      recall@10 0.9553  p50   0.856 ms  p95   1.034 ms    7253.0 qps
+   hnsw_ef=256      recall@10 0.9556  p50   1.123 ms  p95   1.344 ms    5691.0 qps
+   hnsw_ef=512      recall@10 0.9555  p50   1.554 ms  p95   1.905 ms    4143.8 qps
+   load 13.0s (6757/s), index ready 38.8s, disk 1630 MB, RSS 3169 MB, strategy: HNSW PQ x32 (12332416 encoded bytes)
+== qdrant / pq-x32: HNSW + product quantization x32 (rescore)
+   preset beam      recall@10 0.9874  p50   0.439 ms  p95   0.506 ms    5816.3 qps
+   hnsw_ef=16       recall@10 0.9709  p50   0.389 ms  p95   0.446 ms    6620.4 qps
+   hnsw_ef=32       recall@10 0.9843  p50   0.374 ms  p95   0.421 ms    6281.2 qps
+   hnsw_ef=64       recall@10 0.9880  p50   0.399 ms  p95   0.457 ms    6047.0 qps
+   hnsw_ef=128      recall@10 0.9891  p50   0.500 ms  p95   0.574 ms    4757.4 qps
+   hnsw_ef=256      recall@10 0.9903  p50   0.612 ms  p95   0.756 ms    4024.3 qps
+   hnsw_ef=512      recall@10 0.9904  p50   0.773 ms  p95   0.895 ms    3352.2 qps
+   load 4.3s (20399/s), index ready 23.2s, disk 470 MB, RSS 567 MB, strategy: HNSW m=16 ef_construct=100 + product quantization
+== nornicdb / pq-x64: HNSW + product quantization x64 (rescore)
+   preset beam      recall@10 0.8571  p50   0.595 ms  p95   0.730 ms    8798.9 qps
+   hnsw_ef=16       recall@10 0.8435  p50   0.515 ms  p95   0.647 ms    8473.5 qps
+   hnsw_ef=32       recall@10 0.8535  p50   0.542 ms  p95   0.674 ms    7311.4 qps
+   hnsw_ef=64       recall@10 0.8576  p50   0.620 ms  p95   0.762 ms    8331.1 qps
+   hnsw_ef=128      recall@10 0.8590  p50   0.679 ms  p95   0.827 ms    6909.1 qps
+   hnsw_ef=256      recall@10 0.8592  p50   0.844 ms  p95   1.009 ms    7456.0 qps
+   hnsw_ef=512      recall@10 0.8595  p50   1.128 ms  p95   1.362 ms    5266.9 qps
+   load 13.0s (6805/s), index ready 38.4s, disk 1630 MB, RSS 3222 MB, strategy: HNSW PQ x64 (6690496 encoded bytes)
+== qdrant / pq-x64: HNSW + product quantization x64 (rescore)
+   preset beam      recall@10 0.9136  p50   0.381 ms  p95   0.444 ms    6874.0 qps
+   hnsw_ef=16       recall@10 0.8899  p50   0.318 ms  p95   0.356 ms    7208.4 qps
+   hnsw_ef=32       recall@10 0.9088  p50   0.328 ms  p95   0.382 ms    6826.4 qps
+   hnsw_ef=64       recall@10 0.9155  p50   0.356 ms  p95   0.459 ms    6561.2 qps
+   hnsw_ef=128      recall@10 0.9191  p50   0.382 ms  p95   0.442 ms    6205.1 qps
+   hnsw_ef=256      recall@10 0.9202  p50   0.482 ms  p95   0.571 ms    5237.1 qps
+   hnsw_ef=512      recall@10 0.9208  p50   0.631 ms  p95   0.757 ms    3742.2 qps
+   load 4.4s (20020/s), index ready 16.2s, disk 464 MB, RSS 557 MB, strategy: HNSW m=16 ef_construct=100 + product quantization

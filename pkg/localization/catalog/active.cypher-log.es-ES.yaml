@@ -1,0 +1,24 @@
+- id: cypher.log.slow_query
+  description: Aviso para operadores cuando una consulta de Cypher supera el umbral configurado. El texto de la consulta permanece como datos estructurados.
+  other: consulta lenta
+- id: cypher.log.create_database_invoked
+  description: Registro de depuración para operadores cuando comienza CREATE DATABASE.
+  other: se invocó executeCreateDatabase
+- id: cypher.log.create_database_failed
+  description: Registro de error para operadores cuando falla CREATE DATABASE.
+  other: CreateDatabase falló
+- id: cypher.log.create_database_succeeded
+  description: Registro informativo para operadores cuando CREATE DATABASE se completa correctamente.
+  other: CreateDatabase se completó correctamente
+- id: cypher.log.vector_search_disabled
+  description: Aviso para operadores cuando se llama a la búsqueda vectorial en una base de datos donde está deshabilitada. El procedimiento y el nombre del índice permanecen como datos estructurados.
+  other: se llamó a db.index.vector.queryNodes en una base de datos con vectores deshabilitados; se devuelve un resultado vacío
+- id: cypher.log.orphaned_embedding_detected
+  description: Aviso para operadores cuando la búsqueda vectorial encuentra una incrustación sin nodo almacenado. El identificador del nodo permanece como dato estructurado.
+  other: se detectó una incrustación huérfana; se elimina de los índices
+- id: cypher.log.orphaned_embedding_removal_failed
+  description: Error para operadores cuando no se puede eliminar una incrustación huérfana. El identificador del nodo y el error permanecen como datos estructurados.
+  other: no se pudo eliminar la incrustación huérfana
+- id: cypher.log.decay_subsystem_disabled
+  description: Aviso para operadores cuando se llama a una función de decaimiento mientras el subsistema está deshabilitado.
+  other: se llamó a la función de decaimiento, pero el subsistema de decaimiento está deshabilitado; se devuelven puntuaciones neutras

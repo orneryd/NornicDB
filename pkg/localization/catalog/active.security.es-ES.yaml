@@ -1,0 +1,12 @@
+- id: security.invalid_header
+  description: Respuesta HTTP para un encabezado rechazado. Name y Cause no se traducen.
+  other: "Encabezado {{.Name}} no válido: {{.Cause}}"
+- id: security.invalid_authorization_token
+  description: Respuesta HTTP para un token de autorización rechazado. Cause no se traduce.
+  other: "Token de autorización no válido: {{.Cause}}"
+- id: security.invalid_token_parameter
+  description: Respuesta HTTP para un parámetro token rechazado. Cause no se traduce.
+  other: "Parámetro token no válido: {{.Cause}}"
+- id: security.invalid_url_parameter
+  description: Respuesta HTTP para un parámetro URL rechazado. Name y Cause no se traducen.
+  other: "Parámetro {{.Name}} no válido: {{.Cause}}"

@@ -1,0 +1,57 @@
+- id: storagecomposite.constituent_not_found
+  description: Composite lookup failure. Alias is an untranslated constituent identifier.
+  other: "constituent '{{.Alias}}' not found"
+- id: storagecomposite.no_writable_constituents
+  description: Composite write failure when no constituent accepts writes.
+  other: no writable constituents available
+- id: storagecomposite.write_target_ambiguous
+  description: Composite write routing failure. USE <composite.constituent> and properties.database_id are machine syntax.
+  other: "ambiguous composite write target: use USE <composite.constituent> or set properties.database_id to a writable constituent"
+- id: storagecomposite.edge_required
+  description: Composite edge validation failure for a nil edge.
+  other: edge cannot be nil
+- id: storagecomposite.read_only_start_node
+  description: Composite edge routing failure. Alias is an untranslated constituent identifier.
+  other: "start node found in read-only constituent '{{.Alias}}', cannot create edge"
+- id: storagecomposite.start_node_not_found
+  description: Composite edge routing failure when no constituent contains the start node.
+  other: start node not found in any constituent
+- id: storagecomposite.constituent_query_failed
+  description: Constituent query wrapper. Alias and Cause are untranslated diagnostic values.
+  other: "error querying constituent '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.bulk_write_target_ambiguous
+  description: Composite bulk write routing failure. USE <composite.constituent> and properties.database_id are machine syntax.
+  other: "ambiguous composite write target in bulk create: use USE <composite.constituent> or set properties.database_id"
+- id: storagecomposite.constituent_lookup_failed
+  description: Constituent lookup wrapper during a bulk write. Alias and Cause are untranslated diagnostic values.
+  other: "failed to get constituent '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.node_bulk_create_failed
+  description: Constituent node bulk-create wrapper. Alias and Cause are untranslated diagnostic values.
+  other: "failed to create nodes in constituent '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.start_node_check_failed
+  description: Start-node routing lookup wrapper. Cause is an untranslated diagnostic value.
+  other: "error checking start node: {{.Cause}}"
+- id: storagecomposite.edge_bulk_create_failed
+  description: Constituent edge bulk-create wrapper. Alias and Cause are untranslated diagnostic values.
+  other: "failed to create edges in constituent '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.default_constituent_lookup_failed
+  description: Default constituent lookup wrapper. Cause is an untranslated diagnostic value.
+  other: "failed to get default constituent: {{.Cause}}"
+- id: storagecomposite.unrouted_edge_bulk_create_failed
+  description: Fallback edge bulk-create wrapper. Cause is an untranslated diagnostic value.
+  other: "failed to create unrouted edges: {{.Cause}}"
+- id: storagecomposite.constituent_close_failed
+  description: Constituent close wrapper. Alias and Cause are untranslated diagnostic values.
+  other: "error closing constituent '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.node_count_failed
+  description: Constituent node-count wrapper. Alias and Cause are untranslated diagnostic values.
+  other: "error counting nodes in constituent '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.edge_count_failed
+  description: Constituent edge-count wrapper. Alias and Cause are untranslated diagnostic values.
+  other: "error counting edges in constituent '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.delete_by_prefix_unsupported
+  description: Unsupported composite operation. DeleteByPrefix is a machine API identifier.
+  other: DeleteByPrefix not supported on composite databases - delete from constituent databases instead
+- id: storagecomposite.constituent_stream_failed
+  description: Constituent stream wrapper. Alias and Cause are untranslated diagnostic values.
+  other: "error streaming from constituent '{{.Alias}}': {{.Cause}}"

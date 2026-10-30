@@ -1,0 +1,25 @@
+File: nornicdb-memory-current
+Type: inuse_space
+Time: 2026-10-17 14:07:37 MST
+Showing nodes accounting for 645.24MB, 95.31% of 676.98MB total
+Dropped 177 nodes (cum <= 3.38MB)
+Showing top 18 nodes out of 160
+      flat  flat%   sum%        cum   cum%
+  280.62MB 41.45% 41.45%   280.62MB 41.45%  github.com/dgraph-io/ristretto/v2/z.Calloc (inline)
+  166.41MB 24.58% 66.03%   166.41MB 24.58%  github.com/dgraph-io/badger/v4/skl.newArena
+   42.44MB  6.27% 72.30%    73.22MB 10.82%  github.com/orneryd/nornicdb/pkg/search.(*Service).indexNodeLocked
+   34.63MB  5.11% 77.42%    36.13MB  5.34%  github.com/orneryd/nornicdb/pkg/storage.copyNode
+   34.06MB  5.03% 82.45%    34.06MB  5.03%  github.com/orneryd/nornicdb/pkg/search.cloneNestedStringMaps
+   15.65MB  2.31% 84.76%    15.65MB  2.31%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).addLocked
+   11.61MB  1.72% 86.48%    11.61MB  1.72%  github.com/orneryd/nornicdb/pkg/search.(*Service).commitNodeIndexCapacityLocked (inline)
+   10.86MB  1.60% 88.08%    10.86MB  1.60%  github.com/orneryd/nornicdb/pkg/search.cloneStringSlices
+   10.55MB  1.56% 89.64%    10.55MB  1.56%  github.com/orneryd/nornicdb/pkg/search.(*FulltextIndexV2).IndexBatch
+    8.72MB  1.29% 90.93%     8.72MB  1.29%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).nodePairStore
+    5.50MB  0.81% 91.74%   286.12MB 42.26%  github.com/dgraph-io/badger/v4/table.(*Table).block
+    5.38MB   0.8% 92.53%     5.38MB   0.8%  github.com/orneryd/nornicdb/pkg/search.(*hnswQuantizedVectors).grow
+    4.62MB  0.68% 93.22%     4.62MB  0.68%  github.com/orneryd/nornicdb/pkg/search.(*VectorFileStore).Add
+    4.59MB  0.68% 93.89%     4.59MB  0.68%  github.com/dgraph-io/ristretto/v2.(*lockedMap[go.shape.*uint8]).Set
+    4.04MB   0.6% 94.49%     4.04MB   0.6%  runtime.mallocgc
+       4MB  0.59% 95.08%        4MB  0.59%  fmt.Sprintf
+    1.03MB  0.15% 95.24%     3.46MB  0.51%  github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
+    0.51MB 0.076% 95.31%    36.64MB  5.41%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).putNodeLocked

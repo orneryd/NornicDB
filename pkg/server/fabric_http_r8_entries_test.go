@@ -1,0 +1,177 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txsession"
+	"github.com/stretchr/testify/require"
+)
+
+func TestReviewR8HTTPCommitEntries(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		for _, mode := range []string{"timeout", "final_statement", "implicit", "implicit_single"} {
+			t.Run(fmt.Sprintf("native_%v/%s", native, mode), func(t *testing.T) {
+				if mode != "disconnect" {
+					t.Setenv("NORNICDB_HTTP_TX_TIMEOUT", "500ms")
+				} else {
+					t.Setenv("NORNICDB_HTTP_TX_TIMEOUT", "5s")
+				}
+				server, auth := setupTestServer(t)
+				token := "Bearer " + getAuthToken(t, auth, "admin")
+				require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "idleblocked"}))
+				leaf, err := server.dbManager.GetStorage("idleblocked")
+				require.NoError(t, err)
+				_, err = leaf.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Seed"}})
+				require.NoError(t, err)
+				require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "commitcomp", []multidb.ConstituentRef{{Alias: "l", DatabaseName: "idleblocked", Type: "local", AccessMode: "read_write"}}))
+				// Warm the public planner before measuring a sub-second COMMIT budget.
+				// Cold parser initialization is statement work and is independently bounded.
+				for i := 0; i < 2; i++ {
+					warm := httptest.NewRecorder()
+					req := httptest.NewRequest(http.MethodPost, "/db/commitcomp/tx/commit", strings.NewReader(`{"statements":[{"statement":"USE commitcomp.l MATCH (n:Seed) RETURN n"}]}`))
+					req.Header.Set("Authorization", token)
+					req.Header.Set("Content-Type", "application/json")
+					if native {
+						req.URL.Path = strings.ReplaceAll(req.URL.Path, "commitcomp", "idleblocked")
+					}
+					server.buildRouter().ServeHTTP(warm, req)
+				}
+				setter, ok := unwrapInnerStorage(leaf).(interface {
+					SetLifecycleController(storage.MVCCLifecycleController)
+				})
+				require.True(t, ok)
+				controller := &idleSnapshotLock{entered: make(chan struct{}), finished: make(chan struct{})}
+				setter.SetLifecycleController(controller)
+				defer setter.SetLifecycleController(nil)
+				controller.mu.Lock()
+				var release sync.Once
+				defer release.Do(controller.mu.Unlock)
+				server.txSessions = txsession.NewManager(time.Minute, server.newExecutorForDatabase, server.shutdown.workContext)
+				// buildRouter includes the production middleware.
+				httpServer := httptest.NewServer(server.buildRouter())
+				defer func() { release.Do(controller.mu.Unlock); httpServer.Close() }()
+				post := func(ctx context.Context, path, body string) (*http.Response, error) {
+					if native {
+						path = strings.ReplaceAll(path, "/db/commitcomp/", "/db/idleblocked/")
+						body = strings.ReplaceAll(body, "USE commitcomp.l ", "")
+					}
+					if !strings.HasPrefix(path, "http") {
+						path = httpServer.URL + path
+					}
+					req, err := http.NewRequestWithContext(ctx, http.MethodPost, path, strings.NewReader(body))
+					if err != nil {
+						return nil, err
+					}
+					req.Header.Set("Authorization", token)
+					req.Header.Set("Content-Type", "application/json")
+					return httpServer.Client().Do(req)
+				}
+				var opened TransactionResponse
+				if !strings.HasPrefix(mode, "implicit") {
+					begin, err := post(context.Background(), "/db/commitcomp/tx", `{"statements":[{"statement":"USE commitcomp.l CREATE (:ReviewR7Outcome {id:'late'}) RETURN 7 AS k"}]}`)
+					require.NoError(t, err)
+					require.NoError(t, json.NewDecoder(begin.Body).Decode(&opened))
+					begin.Body.Close()
+					require.Empty(t, opened.Errors)
+				}
+				reqCtx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				type outcome struct {
+					response *http.Response
+					err      error
+				}
+				done := make(chan outcome, 1)
+				early := false
+				commitPath, commitBody := opened.Commit, `{"statements":[]}`
+				if mode == "final_statement" {
+					commitBody = `{"statements":[{"statement":"RETURN 7 AS k"}]}`
+				}
+				if mode == "implicit" {
+					commitPath = "/db/commitcomp/tx/commit"
+					commitBody = `{"statements":[{"statement":"USE commitcomp.l CREATE (:ReviewR7Outcome {id:'late'}) RETURN 7 AS k"},{"statement":"RETURN 8 AS k"}]}`
+				}
+				if mode == "implicit_single" {
+					commitPath = "/db/commitcomp/tx/commit"
+					commitBody = `{"statements":[{"statement":"USE commitcomp.l CREATE (:ReviewR7Outcome {id:'late'}) RETURN 7 AS k"}]}`
+				}
+				go func() { r, e := post(reqCtx, commitPath, commitBody); done <- outcome{r, e} }()
+				select {
+				case <-controller.entered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("commit not admitted")
+				}
+				if mode == "disconnect" {
+					cancel()
+				}
+				if mode != "disconnect" {
+					select {
+					case out := <-done:
+						early = true
+						if out.response != nil {
+							body, _ := io.ReadAll(out.response.Body)
+							out.response.Body.Close()
+							t.Errorf("COMMIT returned before outcome: HTTP %d %s", out.response.StatusCode, body)
+						}
+						if out.err != nil {
+							t.Errorf("COMMIT returned before outcome: %v", out.err)
+						}
+					case <-time.After(1200 * time.Millisecond):
+						t.Log("connected COMMIT still owns outcome beyond configured 500ms request timeout")
+					}
+				} else {
+					select {
+					case out := <-done:
+						require.Error(t, out.err)
+					case <-time.After(3 * time.Second):
+						t.Fatal("disconnected client did not return")
+					}
+				}
+				require.Equal(t, int64(1), server.activeTxReqs.Load(), "terminal handler should still own commit")
+				if mode == "disconnect" {
+					time.Sleep(32 * time.Second)
+					require.Equal(t, int64(1), server.activeTxReqs.Load())
+					t.Log("disconnected commit still has one owner beyond 30 seconds")
+				}
+				release.Do(controller.mu.Unlock)
+				if mode != "disconnect" && !early {
+					select {
+					case out := <-done:
+						require.NoError(t, out.err)
+						defer out.response.Body.Close()
+						require.Equal(t, http.StatusOK, out.response.StatusCode)
+						var result TransactionResponse
+						require.NoError(t, json.NewDecoder(out.response.Body).Decode(&result))
+						require.Empty(t, result.Errors)
+					case <-time.After(5 * time.Second):
+						t.Fatal("COMMIT outcome not delivered after release")
+					}
+				}
+				require.Eventually(t, func() bool { return server.activeTxReqs.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
+				nodes, err := leaf.GetNodesByLabel("ReviewR7Outcome")
+				require.NoError(t, err)
+				require.Len(t, nodes, 1)
+				if !strings.HasPrefix(mode, "implicit") {
+					req, err := http.NewRequest(http.MethodPost, strings.TrimSuffix(opened.Commit, "/commit"), strings.NewReader(`{"statements":[]}`))
+					require.NoError(t, err)
+					req.Header.Set("Authorization", token)
+					retired, err := httpServer.Client().Do(req)
+					require.NoError(t, err)
+					retired.Body.Close()
+					require.Equal(t, http.StatusNotFound, retired.StatusCode)
+				}
+				t.Logf("%s: committed exactly one node; active handler drained and session retired", mode)
+			})
+		}
+	}
+}

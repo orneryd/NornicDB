@@ -1,0 +1,2 @@
+main.go
+ok  	nornicdb-uuid-memory-spike	2.045s

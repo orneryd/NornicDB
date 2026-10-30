@@ -1,0 +1,159 @@
+package storage
+
+import "context"
+
+type adjacencyRead uint8
+
+const (
+	adjacencyOutgoing adjacencyRead = iota
+	adjacencyIncoming
+	adjacencyBetween
+	adjacencyBoth
+)
+
+// readAdjacency owns request routing, direction order and result projection.
+// Only an actual namespace view qualifies IDs. Optional providers are bound on
+// its immediate decorator; native physical readers are never found by unwrap.
+func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility) (out, in []*Edge, err error) {
+	return readAdjacencyWithContext(context.Background(), engine, kind, start, end, version, visibility)
+}
+
+// readAdjacencyWithContext keeps preparation in the same captured directional
+// reader while carrying the caller through cache, overlay and record selection.
+func readAdjacencyWithContext(ctx context.Context, engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility) (out, in []*Edge, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	var namespace *NamespacedEngine
+	if n, ok := engine.(*NamespacedEngine); ok {
+		namespace = n
+		engine = n.inner
+		start = n.PrefixNodeID(start)
+		if kind == adjacencyBetween {
+			end = n.PrefixNodeID(end)
+		}
+	}
+	var wantOut, wantIn bool
+	switch kind {
+	case adjacencyOutgoing, adjacencyBetween:
+		wantOut = true
+	case adjacencyIncoming:
+		wantIn = true
+	case adjacencyBoth:
+		wantOut, wantIn = true, true
+	default:
+		return nil, nil, ErrInvalidData
+	}
+	// The dispatcher is the sole owner of ordering and partial-result policy.
+	consume := func(read func(bool) ([]*Edge, error)) error {
+		if wantOut {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			out, err = read(true)
+			if err != nil {
+				return err
+			}
+		}
+		if wantIn {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			in, err = read(false)
+		}
+		return err
+	}
+	if version != nil {
+		provider, ok := engine.(MVCCIndexedVisibilityEngine)
+		if !ok {
+			return nil, nil, ErrNotImplemented
+		}
+		if kind == adjacencyBoth {
+			return nil, nil, ErrInvalidData
+		}
+		err = consume(func(outgoing bool) ([]*Edge, error) {
+			if kind == adjacencyBetween {
+				return provider.GetEdgesBetweenVisibleAt(start, end, *version)
+			}
+			if outgoing {
+				return provider.GetOutgoingEdgesVisibleAt(start, *version)
+			}
+			return provider.GetIncomingEdgesVisibleAt(start, *version)
+		})
+	} else {
+		native, isNative := engine.(*BadgerEngine)
+		if isNative && kind != adjacencyBetween {
+			reader, captureErr := native.captureAdjacencyReader(ctx, start, wantOut, wantIn, visibility)
+			if captureErr != nil {
+				err = captureErr
+			} else {
+				if reader.view != nil {
+					defer reader.view.Close()
+				}
+				err = consume(reader.read)
+				// End physical ownership before any namespace copying/projection.
+				if reader.view != nil {
+					reader.view.Close()
+				}
+			}
+		} else {
+			var combined AdjacentEdgesEngine
+			var contextualCombined interface {
+				GetAdjacentEdgesWithContext(context.Context, NodeID) ([]*Edge, []*Edge, error)
+			}
+			if kind == adjacencyBoth {
+				combined, _ = engine.(AdjacentEdgesEngine)
+				if ownsDirectionalContext(engine) {
+					contextualCombined, _ = engine.(interface {
+						GetAdjacentEdgesWithContext(context.Context, NodeID) ([]*Edge, []*Edge, error)
+					})
+				}
+			}
+			if contextualCombined != nil {
+				out, in, err = contextualCombined.GetAdjacentEdgesWithContext(ctx, start)
+			} else if combined != nil {
+				out, in, err = combined.GetAdjacentEdges(start)
+			} else {
+				err = consume(func(outgoing bool) ([]*Edge, error) {
+					if kind == adjacencyBetween {
+						return engine.GetEdgesBetween(start, end)
+					}
+					if outgoing {
+						if reader, ok := engine.(interface {
+							GetOutgoingEdgesWithContext(context.Context, NodeID) ([]*Edge, error)
+						}); ok && ownsDirectionalContext(engine) {
+							return reader.GetOutgoingEdgesWithContext(ctx, start)
+						}
+						return engine.GetOutgoingEdges(start)
+					}
+					if reader, ok := engine.(interface {
+						GetIncomingEdgesWithContext(context.Context, NodeID) ([]*Edge, error)
+					}); ok && ownsDirectionalContext(engine) {
+						return reader.GetIncomingEdgesWithContext(ctx, start)
+					}
+					return engine.GetIncomingEdges(start)
+				})
+			}
+		}
+	}
+
+	if namespace != nil {
+		if err != nil {
+			return nil, nil, err
+		}
+		pinned := version != nil
+		// Physical reader leases have ended before copying namespace projections.
+		out, err = namespace.toUserEdgesInNamespaceWithContext(ctx, out, false, pinned)
+		if err != nil {
+			return nil, nil, err
+		}
+		in, err = namespace.toUserEdgesInNamespaceWithContext(ctx, in, false, pinned)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	return out, in, err
+}

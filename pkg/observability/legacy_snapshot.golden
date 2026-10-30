@@ -1,0 +1,36 @@
+# HELP nornicdb_active_requests Currently active HTTP requests
+# TYPE nornicdb_active_requests gauge
+nornicdb_active_requests 3
+# HELP nornicdb_edges_total Total edges in database
+# TYPE nornicdb_edges_total gauge
+nornicdb_edges_total 200
+# HELP nornicdb_embedding_worker_running Embedding worker running flag (1=running, 0=stopped)
+# TYPE nornicdb_embedding_worker_running gauge
+nornicdb_embedding_worker_running 1
+# HELP nornicdb_embeddings_failed Total embeddings that failed processing
+# TYPE nornicdb_embeddings_failed counter
+nornicdb_embeddings_failed 5
+# HELP nornicdb_embeddings_processed Total embeddings processed successfully
+# TYPE nornicdb_embeddings_processed counter
+nornicdb_embeddings_processed 50
+# HELP nornicdb_errors_total Total HTTP 5xx responses
+# TYPE nornicdb_errors_total counter
+nornicdb_errors_total 2
+# HELP nornicdb_info Build information (version, backend)
+# TYPE nornicdb_info gauge
+nornicdb_info{backend="badger",version="1.0.0"} 1
+# HELP nornicdb_nodes_total Total nodes in database
+# TYPE nornicdb_nodes_total gauge
+nornicdb_nodes_total 100
+# HELP nornicdb_requests_total Total HTTP requests
+# TYPE nornicdb_requests_total counter
+nornicdb_requests_total 12
+# HELP nornicdb_slow_queries_total Total slow Cypher queries observed
+# TYPE nornicdb_slow_queries_total counter
+nornicdb_slow_queries_total 7
+# HELP nornicdb_slow_query_threshold_ms Slow-query threshold in milliseconds (legacy unit; new metric is *_seconds)
+# TYPE nornicdb_slow_query_threshold_ms gauge
+nornicdb_slow_query_threshold_ms 1000
+# HELP nornicdb_uptime_seconds Server uptime in seconds
+# TYPE nornicdb_uptime_seconds gauge
+nornicdb_uptime_seconds 42.00

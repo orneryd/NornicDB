@@ -1,0 +1,31 @@
+📄 Loaded config from: /Users/tjsweet/.nornicdb/config.yaml
+🚀 Starting NornicDB v1.4.1
+   Data directory:  /Users/tjsweet/src/NornicDB/bench-data/nornic
+   Bolt protocol:   bolt://localhost:17687
+   HTTP API:        http://localhost:17474
+   Embeddings:      ❌ disabled (set NORNICDB_EMBEDDING_ENABLED=true or use --embedding-enabled)
+   Embedding:       local GGUF (./models/bge-m3.gguf.gguf, 1024 dims, GPU: auto)
+   Parallel exec:   ✅ enabled (14 workers, batch size 1000)
+   Memory limit:    unlimited
+   Object pooling:  ✅ enabled
+   Query cache:     ✅ 1000 entries, TTL 5m0s
+
+📂 Opening database...
+🎮 Initializing GPU acceleration...
+   ✅ GPU enabled: Apple M4 Pro (metal, 38338MB)
+
+✅ NornicDB is ready!
+
+Endpoints:
+  • HTTP API:     http://localhost:17474
+  • Bolt:         bolt://localhost:17687
+  • Health:       http://localhost:17474/health
+  • Search:       POST http://localhost:17474/nornicdb/search
+  • Cypher:       POST http://localhost:17474/db/nornicdb/tx/commit
+  • MCP:          http://localhost:17474/mcp
+  • Telemetry:    http://localhost:9090/metrics
+
+
+Press Ctrl+C to stop
+
+✅ Server stopped gracefully

@@ -1,0 +1,74 @@
+name: Nightly (develop)
+
+# Manually requested develop verification; automatic nightly runs are paused.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run even if develop did not change in the last 24 hours"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-develop
+  cancel-in-progress: false
+
+jobs:
+  changed:
+    name: Did develop change?
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          set -euo pipefail
+          if ! commit="$(gh api "repos/${GITHUB_REPOSITORY}/commits/develop" 2>/dev/null)"; then
+            echo "develop does not exist; nothing to check"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sha="$(jq -r .sha <<<"$commit")"
+          date="$(jq -r .commit.committer.date <<<"$commit")"
+          age=$(( $(date +%s) - $(date -d "$date" +%s) ))
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          if [[ "${FORCE}" == "true" || ${age} -lt 90000 ]]; then
+            echo "develop ${sha:0:9} (last commit ${date}): running the nightly suite"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "develop ${sha:0:9} has not changed since ${date}: skipping"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ci:
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.changed.outputs.sha }}
+    secrets:
+      COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+
+  conformance:
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    uses: ./.github/workflows/cypher-conformance.yml
+    with:
+      ref: ${{ needs.changed.outputs.sha }}
+      allocation_base: main
+
+  differential-ratchet:
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    uses: ./.github/workflows/cypher-differential-ratchet.yml
+    with:
+      ref: ${{ needs.changed.outputs.sha }}

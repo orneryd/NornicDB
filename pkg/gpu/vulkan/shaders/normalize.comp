@@ -1,0 +1,76 @@
+// Vector Normalization Compute Shader for NornicDB
+// SPDX-License-Identifier: Apache-2.0
+//
+// Normalizes N vectors to unit length (L2 normalization).
+// Based on llama.cpp's l2_norm.comp shader.
+//
+// Each workgroup normalizes one vector using parallel reduction
+// for computing the L2 norm.
+
+#version 450
+
+// Workgroup size - should match vector dimensions or be a power of 2
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Input/output vectors (in-place normalization)
+layout(set = 0, binding = 0) buffer Vectors {
+    float vectors[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint n;          // Number of vectors
+    uint dimensions; // Vector dimensions
+} params;
+
+// Shared memory for parallel reduction
+shared float shared_sum[256];
+
+void main() {
+    uint vector_idx = gl_WorkGroupID.x;  // Which vector this workgroup normalizes
+    uint lid = gl_LocalInvocationID.x;   // Thread index within workgroup
+    uint workgroup_size = gl_WorkGroupSize.x;
+    
+    if (vector_idx >= params.n) {
+        return;
+    }
+    
+    uint base = vector_idx * params.dimensions;
+    
+    // Phase 1: Each thread computes partial sum of squares
+    float local_sum = 0.0;
+    for (uint d = lid; d < params.dimensions; d += workgroup_size) {
+        float v = vectors[base + d];
+        local_sum += v * v;
+    }
+    
+    shared_sum[lid] = local_sum;
+    barrier();
+    
+    // Phase 2: Parallel reduction to compute total sum
+    for (uint stride = workgroup_size / 2; stride > 0; stride /= 2) {
+        if (lid < stride) {
+            shared_sum[lid] += shared_sum[lid + stride];
+        }
+        barrier();
+    }
+    
+    // Phase 3: Compute inverse norm and apply to all elements
+    float inv_norm = 0.0;
+    if (lid == 0) {
+        float norm_sq = shared_sum[0];
+        if (norm_sq > 1e-20) {
+            inv_norm = inversesqrt(norm_sq);
+        }
+        shared_sum[0] = inv_norm;  // Broadcast to all threads
+    }
+    barrier();
+    
+    inv_norm = shared_sum[0];
+    
+    // Phase 4: Normalize all elements
+    if (inv_norm > 0.0) {
+        for (uint d = lid; d < params.dimensions; d += workgroup_size) {
+            vectors[base + d] *= inv_norm;
+        }
+    }
+}

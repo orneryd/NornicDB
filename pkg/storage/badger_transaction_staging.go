@@ -1,0 +1,264 @@
+package storage
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/localization"
+)
+
+// kvWriter is the write target of the helpers that allocate numeric IDs
+// (resolveOrAllocate*NumIDInTxn and the index-key builders on top of them)
+// and archive superseded MVCC bodies. It is either a *badger.Txn, which the
+// engine's own writes and the commit phase pass, or a transaction's stagedKV,
+// which its statement-time operations pass.
+type kvWriter interface {
+	Set(key, value []byte) error
+	Delete(key []byte) error
+	NewIterator(opt badger.IteratorOptions) *badger.Iterator
+}
+
+// stagedKV is a BadgerTransaction seen as a kvWriter. Its writes join the
+// transaction's buffered writes (pendingWrites / pendingDeletes), which
+// Commit writes in as many Badger batches as the transaction needs; reads
+// and iteration go to the transaction's Badger transaction. Staging keeps
+// statement-time writes out of that Badger transaction, so no statement can
+// outgrow Badger's per-batch limit before commit (#703). Converting a
+// *BadgerTransaction to *stagedKV is free.
+type stagedKV BadgerTransaction
+
+func (tx *BadgerTransaction) staged() *stagedKV { return (*stagedKV)(tx) }
+
+func (tx *BadgerTransaction) bufferEdgePhysicalWritesLocked(edge *Edge) error {
+	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.staged(), namespaceForEdgeID(edge.ID), edge)
+	if err != nil {
+		return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
+	}
+	tx.bufferSet(edgeKey(edge.ID), edgeBytes)
+	outKey, err := tx.engine.outgoingIndexKeyString(tx.staged(), edge.StartNode, edge.ID)
+	if err != nil {
+		return fmt.Errorf("outgoing index: %w", err)
+	}
+	header := adjacencyValueFromRecord(edgeBytes)
+	tx.bufferSet(outKey, header)
+	inKey, err := tx.engine.incomingIndexKeyString(tx.staged(), edge.EndNode, edge.ID)
+	if err != nil {
+		return fmt.Errorf("incoming index: %w", err)
+	}
+	tx.bufferSet(inKey, header)
+	typeKey, err := tx.engine.edgeTypeIndexKeyString(tx.staged(), edge.Type, edge.ID)
+	if err != nil {
+		return fmt.Errorf("edge type index: %w", err)
+	}
+	tx.bufferSet(typeKey, []byte{})
+	if err := tx.bufferSetEdgeBetweenIndexes(edge); err != nil {
+		return fmt.Errorf("edge-between index: %w", err)
+	}
+	return nil
+}
+
+func (tx *BadgerTransaction) materializeDeferredEdgeLocked(identifier EdgeID) error {
+	if _, deferred := tx.deferredEdgeWrites[identifier]; !deferred {
+		return nil
+	}
+	if err := tx.bufferEdgePhysicalWritesLocked(tx.pendingEdges[identifier]); err != nil {
+		return err
+	}
+	delete(tx.deferredEdgeWrites, identifier)
+	return nil
+}
+
+func (tx *BadgerTransaction) materializeDeferredEdgesLocked(ctx context.Context) error {
+	if len(tx.deferredEdgeWrites) == 0 {
+		return nil
+	}
+	for _, operation := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if operation.Type != OpCreateEdge {
+			continue
+		}
+		if err := tx.materializeDeferredEdgeLocked(operation.EdgeID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (tx *BadgerTransaction) physicalOperationsLocked(ctx context.Context) ([]Operation, error) {
+	if len(tx.cancelledEdgeWrites) == 0 {
+		return tx.operations, ctx.Err()
+	}
+	operations := make([]Operation, 0, len(tx.operations))
+	for _, operation := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, cancelled := tx.cancelledEdgeWrites[operation.EdgeID]; cancelled &&
+			(operation.Type == OpCreateEdge || operation.Type == OpDeleteEdge) {
+			continue
+		}
+		operations = append(operations, operation)
+	}
+	return operations, nil
+}
+
+// Set stages key = value. Like Badger's Txn.Set, it keeps value without
+// copying it; the caller must not modify it afterwards.
+func (s *stagedKV) Set(key, value []byte) error {
+	tx := (*BadgerTransaction)(s)
+	keyStr := string(key)
+	delete(tx.pendingDeletes, keyStr)
+	tx.pendingWrites[keyStr] = value
+	return nil
+}
+
+// Delete stages the deletion of key.
+func (s *stagedKV) Delete(key []byte) error {
+	(*BadgerTransaction)(s).bufferDelete(key)
+	return nil
+}
+
+// NewIterator iterates the transaction's Badger transaction. Staged writes
+// are not visible to it; the only staged-write-aware iteration is the
+// numeric-ID freelist pop, which skips entries this transaction already
+// popped (kvStagedDeleted).
+func (s *stagedKV) NewIterator(opt badger.IteratorOptions) *badger.Iterator {
+	return (*BadgerTransaction)(s).badgerTx.NewIterator(opt)
+}
+
+// kvWriterTxn returns the Badger transaction w belongs to: the key under
+// which the ID and property-key dictionaries stage counters for it.
+func kvWriterTxn(w kvWriter) *badger.Txn {
+	if s, ok := w.(*stagedKV); ok {
+		return s.badgerTx
+	}
+	return w.(*badger.Txn)
+}
+
+// kvStagedDeleted reports whether w has staged the deletion of key, which
+// its iterator does not reflect. A *badger.Txn's iterator already hides its
+// own deletions.
+func kvStagedDeleted(w kvWriter, key []byte) bool {
+	if s, ok := w.(*stagedKV); ok {
+		return s.pendingDeletes[string(key)]
+	}
+	return false
+}
+
+// kvHas reports whether key exists for w, staged writes included.
+func kvHas(w kvWriter, key []byte) (bool, error) {
+	var txn *badger.Txn
+	if s, ok := w.(*stagedKV); ok {
+		if s.pendingDeletes[string(key)] {
+			return false, nil
+		}
+		if _, ok := s.pendingWrites[string(key)]; ok {
+			return true, nil
+		}
+		txn = s.badgerTx
+	} else {
+		txn = w.(*badger.Txn)
+	}
+	_, err := txn.Get(key)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// acquireCommitPublicationLocked takes the count locks a commit needs from
+// the moment its writes can reach Badger until they are published. Scalar
+// label and edge-type count changes append unique delta keys (blind writes,
+// never conflicting), so they need no lock; the positional (label, type)
+// tier still read-modify-writes its absolute keys and keeps the
+// edgeTypeCountWriteMu across the follow-up transaction.
+//
+// The engine's write barrier is taken earlier, at the start of Commit
+// (commitReleaseWrite). An ordinary commit takes the count locks just before
+// its Badger commit; a large commit before its first batch, ahead of the
+// exclusive commit gate (lock order: write barrier, count locks, commit
+// gate). Idempotent.
+func (tx *BadgerTransaction) acquireCommitPublicationLocked() {
+	if tx.commitCountsHeld {
+		return
+	}
+	tx.commitCountsHeld = true
+	if len(tx.pendingEdgeTypeLabelCountDeltas) > 0 {
+		tx.engine.edgeTypeCountWriteMu.Lock()
+		tx.commitEdgeTypeCounts = true
+	}
+}
+
+func (tx *BadgerTransaction) releaseEdgeTypeCountLockLocked() {
+	if tx.commitEdgeTypeCounts {
+		tx.commitEdgeTypeCounts = false
+		tx.engine.edgeTypeCountWriteMu.Unlock()
+	}
+}
+
+// writeScalarCountDeltasInCommitLocked writes the commit's scalar label and
+// edge-type count deltas into the commit writer, atomic with the entity and
+// index writes. The scalar tiers append unique delta keys (blind writes, never
+// conflicting), so they need no count lock and never join the user
+// transaction's conflict set. Writing them here instead of in separate
+// follow-up transactions removes a second pass through Badger's commit queue
+// per statement (PR #1043 retest @39f0f03f, issue C) and closes the
+// publication gap where committed entities were briefly visible without their
+// deltas.
+func (tx *BadgerTransaction) writeScalarCountDeltasInCommitLocked(w *batchWriter) error {
+	for key, delta := range tx.pendingLabelCountDeltas {
+		if err := w.write(func(t *badger.Txn) error {
+			return tx.engine.adjustLabelCountInTxn(t, key.namespace, key.label, delta)
+		}); err != nil {
+			return err
+		}
+	}
+	for key, delta := range tx.pendingEdgeTypeCountDeltas {
+		if err := w.write(func(t *badger.Txn) error {
+			return tx.engine.adjustEdgeTypeCountInTxn(t, key.namespace, key.edgeType, delta)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (tx *BadgerTransaction) releaseWriteBarrierLocked() {
+	if tx.commitReleaseWrite != nil {
+		release := tx.commitReleaseWrite
+		tx.commitReleaseWrite = nil
+		release()
+	}
+}
+
+// abortCommitLocked ends a commit that failed: a large commit's written
+// batches are rolled back, the count locks are released, and the
+// transaction is closed as rolled back. It is the one place a Badger write
+// conflict found while committing (a peer committed between the snapshot
+// validation and the write, whether on an ordinary commit or a large
+// commit's first batch) becomes the commit-conflict error.
+func (tx *BadgerTransaction) abortCommitLocked(err error) error {
+	if errors.Is(err, badger.ErrConflict) && !errors.Is(err, ErrConflict) {
+		err = commitConflictError(err)
+	}
+	if tx.commitW != nil {
+		if abortErr := tx.commitW.abort(); abortErr != nil {
+			tx.engine.log.Error("rolling back a failed large commit failed; storage refuses writes until restart",
+				"subsystem", "transaction",
+				"transaction_id", tx.ID,
+				slog.Any("commit_error", err),
+				slog.Any("rollback_error", abortErr),
+			)
+			err = fmt.Errorf("%w (%w)", err, abortErr)
+		}
+		tx.commitW = nil
+	}
+	tx.releaseEdgeTypeCountLockLocked()
+	tx.closeLocked(TxStatusRolledBack, true, nil)
+	return err
+}

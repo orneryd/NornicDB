@@ -1,0 +1,62 @@
+package cypher
+
+import (
+	"context"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+// undirectedIncidentEdges returns each incident relationship once. Storage
+// correctly exposes a self-relationship as both incoming and outgoing, but an
+// undirected Cypher expansion has only one orientation for that relationship.
+func undirectedIncidentEdges(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	outgoing, incoming, err := incidentEdgeLists(store, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	return combineIncidentEdges(context.Background(), nodeID, outgoing, incoming)
+}
+
+func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, incoming []*storage.Edge) ([]*storage.Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	edges := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+	for index, edge := range outgoing {
+		if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		edges = append(edges, edge)
+	}
+	for index, edge := range incoming {
+		if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if edge != nil && edge.StartIdentity() == edge.EndIdentity() {
+			continue
+		}
+		edges = append(edges, edge)
+	}
+	return edges, nil
+}
+
+// incidentEdgeLists returns a node's outgoing and incoming relationships
+// (a self-relationship is in both). A store that reads both directions at
+// once (storage.AdjacentEdgesEngine) is read with one call.
+func incidentEdgeLists(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
+	return incidentEdgeListsContext(context.Background(), store, nodeID, "both")
+}
+
+// incidentEdgeListsContext is the single storage reader for selected paths.
+// Directed reads avoid loading the other direction; both directions use one
+// adjacency call when supported. Cancellation and read errors reach the caller.
+func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
+	if direction == "outgoing" {
+		edges, err := storage.GetOutgoingEdgesWithContext(ctx, store, nodeID)
+		return edges, nil, err
+	}
+	if direction == "incoming" {
+		edges, err := storage.GetIncomingEdgesWithContext(ctx, store, nodeID)
+		return nil, edges, err
+	}
+	return storage.GetAdjacentEdgesWithContext(ctx, store, nodeID)
+}

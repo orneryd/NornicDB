@@ -1,0 +1,71 @@
+package storage
+
+import (
+	"context"
+	"strings"
+
+	"github.com/dgraph-io/badger/v4"
+)
+
+// labelScanPointLookups is how many of a label's nodes a scan reads with one
+// record lookup each before it may switch to a single pass over the node
+// records. A scan stopped within this prefix (LIMIT) stays on point lookups.
+const labelScanPointLookups = 1024
+
+// labelScanMaxBuffered bounds the one-pass tail. Larger scans fall back to
+// streaming point reads rather than retaining every remaining node body.
+const labelScanMaxBuffered = 1024
+
+// readNodeRecordsInOnePass calls read with the stored record of each of ids
+// that exists, walking scope's node records once ("" is every database)
+// instead of looking each record up. read's order is the records' key order;
+// an error from read stops the walk and is returned.
+func readNodeRecordsInOnePass(ctx context.Context, txn *badger.Txn, scope string, ids []NodeID, read func(NodeID, *badger.Item) error) error {
+	wanted := make(map[NodeID]struct{}, len(ids))
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		wanted[id] = struct{}{}
+	}
+	prefix := []byte{prefixNode}
+	if scope != "" {
+		prefix = nodeKey(NodeID(scope))
+	}
+	records := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	defer records.Close()
+	for records.Rewind(); records.Valid() && len(wanted) > 0; records.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		item := records.Item()
+		nodeID := NodeID(item.Key()[1:])
+		if _, ok := wanted[nodeID]; !ok {
+			continue
+		}
+		delete(wanted, nodeID)
+		if err := read(nodeID, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// labelCoversScope reports whether label is on at least half of the nodes in
+// scope ("" is every database), by the stored node and label counts. Above
+// that share a single pass over the node records costs less than a label
+// index walk with one record lookup per node.
+func (b *BadgerEngine) labelCoversScope(ctx context.Context, scope, label string) bool {
+	var total, labelled int64
+	var err error
+	if scope == "" {
+		total = b.nodeCount.Load()
+		labelled, err = b.NodeCountByLabelWithContext(ctx, label)
+	} else {
+		if total, err = b.NodeCountByPrefix(scope); err == nil {
+			namespace, _, _ := strings.Cut(scope, ":")
+			labelled, err = b.NodeCountByLabelInNamespaceWithContext(ctx, namespace, label)
+		}
+	}
+	return err == nil && total > 0 && labelled*2 >= total
+}

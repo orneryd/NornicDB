@@ -1,0 +1,34 @@
+# Default ownership
+
+* @orneryd
+
+# Core engine and query/runtime surfaces
+
+/pkg/ @orneryd
+/cmd/ @orneryd
+/apoc/ @orneryd
+
+# Badger layouts, codecs, key construction, migrations, and policy metadata
+
+/pkg/storage/ @orneryd
+/pkg/knowledgepolicy/ @orneryd
+/.github/CODEOWNERS @orneryd
+
+# UI and web assets
+
+/ui/ @orneryd
+
+# Build, release, and container definitions
+
+/.github/ @orneryd
+/docker/ @orneryd
+/scripts/ @orneryd
+/Makefile @orneryd
+
+# Documentation and project metadata
+
+/docs/ @orneryd
+/README.md @orneryd
+/CHANGELOG.md @orneryd
+/CONTRIBUTING.md @orneryd
+/AGENTS.md @orneryd

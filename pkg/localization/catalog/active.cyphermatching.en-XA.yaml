@@ -1,0 +1,208 @@
+- id: cyphermatching.match_pattern_required
+  description: Expanded pseudo-locale missing MATCH pattern.
+  other: "[!! MATCH clause requires a pattern !!]"
+- id: cyphermatching.match_node_pattern_required
+  description: Expanded pseudo-locale missing MATCH node pattern.
+  other: "[!! MATCH clause requires a node pattern, not just a relationship pattern !!]"
+- id: cyphermatching.return_expression_required
+  description: Expanded pseudo-locale missing RETURN expression.
+  other: "[!! RETURN clause requires at least one expression !!]"
+- id: cyphermatching.return_expression_empty
+  description: Expanded pseudo-locale empty RETURN expression.
+  other: "[!! RETURN clause contains empty expression !!]"
+- id: cyphermatching.storage_failed
+  description: Expanded pseudo-locale storage failure.
+  other: "[!! storage error: {{.Cause}} !!]"
+- id: cyphermatching.collect_subquery_failed
+  description: Expanded pseudo-locale COLLECT subquery failure.
+  other: "[!! COLLECT subquery failed: {{.Cause}} !!]"
+- id: cyphermatching.match_unwind_clauses_required
+  description: Expanded pseudo-locale missing MATCH or UNWIND clauses.
+  other: "[!! MATCH and UNWIND clauses required (e.g., MATCH (n) UNWIND n.items AS item RETURN item) !!]"
+- id: cyphermatching.unwind_as_required
+  description: Expanded pseudo-locale missing UNWIND AS clause.
+  other: "[!! UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x) !!]"
+- id: cyphermatching.with_return_clauses_required
+  description: Expanded pseudo-locale missing WITH or RETURN clause.
+  other: "[!! WITH and RETURN clauses required !!]"
+- id: cyphermatching.order_by_parse_failed
+  description: Expanded pseudo-locale ORDER BY parse failure.
+  other: "[!! failed to parse ORDER BY clause !!]"
+- id: cyphermatching.match_pattern_variable_missing
+  description: Expanded pseudo-locale missing MATCH variable.
+  other: "[!! invalid MATCH pattern: missing variable in {{.Clause}} !!]"
+- id: cyphermatching.traversal_pattern_invalid
+  description: Expanded pseudo-locale invalid traversal pattern.
+  other: "[!! invalid traversal pattern: {{.Pattern}} !!]"
+- id: cyphermatching.return_after_with_required
+  description: Expanded pseudo-locale missing RETURN after WITH.
+  other: "[!! RETURN clause required after WITH !!]"
+- id: cyphermatching.skip_parse_failed
+  description: Expanded pseudo-locale SKIP parse failure.
+  other: "[!! failed to parse SKIP clause !!]"
+- id: cyphermatching.limit_parse_failed
+  description: Expanded pseudo-locale LIMIT parse failure.
+  other: "[!! failed to parse LIMIT clause !!]"
+- id: cyphermatching.path_pattern_invalid
+  description: Expanded pseudo-locale invalid path pattern.
+  other: "[!! invalid path pattern: {{.Pattern}} !!]"
+- id: cyphermatching.shortest_path_minimal_length
+  description: "Expanded pseudo-locale shortestPath minimal length."
+  other: "[!! {{.Function}}(...) does not support a minimal length different from 0 or 1 !!]"
+- id: cyphermatching.shortest_path_common_end_nodes
+  description: "Expanded pseudo-locale shortestPath common end nodes."
+  other: "[!! The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you\nperform a shortestPath search after a cartesian product that might have the same start and end nodes for some\nof the rows passed to shortestPath. If you would rather not experience this exception, and can accept the\npossibility of missing results for those rows, disable this in the Neo4j configuration by setting\n`dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the\nshortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern\nexpression followed by ordering by path length and limiting to one result. !!]"
+- id: cyphermatching.shortest_path_unbound_nodes
+  description: "Expanded pseudo-locale shortestPath unbound nodes."
+  other: "[!! A {{.Function}}(...) requires bound nodes when not part of a MATCH clause. !!]"
+- id: cyphermatching.shortest_path_relationship_properties
+  description: "Expanded pseudo-locale shortestPath relationship properties."
+  other: "[!! {{.Function}}(...) contains properties {{.Properties}}. This is currently not supported. !!]"
+- id: cyphermatching.shortest_path_single_relationship
+  description: "Expanded pseudo-locale shortestPath single relationship."
+  other: "[!! {{.Function}}(...) requires a pattern containing a single relationship !!]"
+- id: cyphermatching.quantified_path_in_write_pattern
+  description: "Expanded pseudo-locale quantified path in a write pattern."
+  other: "[!! Quantified path patterns cannot be used in a {{.Clause}} clause, but only in a MATCH clause. !!]"
+- id: cyphermatching.variable_length_in_quantified_path
+  description: "Expanded pseudo-locale variable-length relationship in a quantified path."
+  other: "[!! Variable length relationships cannot be part of a quantified path pattern. !!]"
+- id: cyphermatching.quantifier_in_expression_pattern
+  description: "Expanded pseudo-locale quantifier in an expression pattern."
+  other: "[!! Invalid input '{{.Token}}': a relationship quantifier is allowed only in a MATCH pattern or a subquery !!]"
+- id: cyphermatching.optional_match_node_endpoint_missing
+  description: Expanded pseudo-locale missing optional node endpoint.
+  other: "[!! optional match pattern {{.Pattern}} has no node endpoint !!]"
+- id: cyphermatching.optional_match_node_endpoint_unterminated
+  description: Expanded pseudo-locale unterminated optional node endpoint.
+  other: "[!! optional match pattern {{.Pattern}} has an unterminated node endpoint !!]"
+- id: cyphermatching.optional_match_target_endpoint_missing
+  description: Expanded pseudo-locale missing optional target endpoint.
+  other: "[!! optional match pattern {{.Pattern}} has no target endpoint !!]"
+- id: cyphermatching.optional_match_target_endpoint_unterminated
+  description: Expanded pseudo-locale unterminated optional target endpoint.
+  other: "[!! optional match pattern {{.Pattern}} has an unterminated target endpoint !!]"
+- id: cyphermatching.aggregate_call_expected
+  description: Expanded pseudo-locale expected whole aggregate call.
+  other: "[!! not a whole aggregate call: {{.Expression}} !!]"
+- id: cyphermatching.function_parameters_insufficient
+  description: Expanded pseudo-locale insufficient function parameters.
+  other: "[!! insufficient parameters for function '{{.Function}}' !!]"
+- id: cyphermatching.label_expression_mixed_colon
+  description: Expanded pseudo-locale label expression mixed colon.
+  other: "[!! Mixing label expression symbols ('|', '&', '!', and '%') with colon (':') between labels is not allowed. Please only use one set of symbols. This expression could be expressed as :{{.Expression}}. !!]"
+- id: cyphermatching.label_expression_mixed_is
+  description: Expanded pseudo-locale label expression mixed is.
+  other: "[!! Mixing the IS keyword with colon (':') between labels is not allowed. This expression could be expressed as IS {{.Expression}}. !!]"
+- id: cyphermatching.relationship_type_colon_disjunction
+  description: Expanded pseudo-locale relationship type colon disjunction.
+  other: "[!! The semantics of using colon in the separation of alternative relationship types in conjunction with\nthe use of variable binding, inlined property predicates, or variable length is no longer supported.\nPlease separate the relationships types using `:{{.Expression}}` instead. !!]"
+- id: cyphermatching.relationship_type_colon_conjunction
+  description: Expanded pseudo-locale relationship type colon conjunction.
+  other: "[!! Relationship types in a relationship type expressions may not be combined using ':' !!]"
+- id: cyphermatching.variable_length_type_expression
+  description: Expanded pseudo-locale variable length type expression.
+  other: "[!! Variable length relationships must not use relationship type expressions. !!]"
+- id: cyphermatching.label_expression_in_write_pattern
+  description: Expanded pseudo-locale label expression in write pattern.
+  other: "[!! Label expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause and in expressions !!]"
+- id: cyphermatching.relationship_type_expression_in_write_pattern
+  description: Expanded pseudo-locale relationship type expression in write pattern.
+  other: "[!! Relationship type expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause !!]"
+- id: cyphermatching.pattern_predicate_in_write_pattern
+  description: "Expanded pseudo-locale pattern predicate in a write pattern."
+  other: "[!! {{.Element}} pattern predicates are not allowed in a {{.Clause}} clause, but only in a MATCH clause or inside a pattern comprehension !!]"
+- id: cyphermatching.pattern_predicate_variable_length
+  description: "Expanded pseudo-locale pattern predicate on a variable-length relationship."
+  other: "[!! Relationship pattern predicates are not supported for variable-length relationships. !!]"
+- id: cyphermatching.return_star_no_variables
+  description: "Expanded pseudo-locale RETURN * with no variables."
+  other: "[!! RETURN * requires at least one variable in scope !!]"
+- id: cyphermatching.query_cannot_conclude
+  description: "Expanded pseudo-locale query that cannot conclude with a clause."
+  other: "[!! Query cannot conclude with {{.Clause}} (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD). !!]"
+- id: cyphermatching.exists_expression_updates
+  description: "Expanded pseudo-locale update inside a EXISTS subquery expression."
+  other: "[!! An Exists Expression cannot contain any updates !!]"
+- id: cyphermatching.count_expression_updates
+  description: "Expanded pseudo-locale update inside a COUNT subquery expression."
+  other: "[!! A Count Expression cannot contain any updates !!]"
+- id: cyphermatching.collect_expression_updates
+  description: "Expanded pseudo-locale update inside a COLLECT subquery expression."
+  other: "[!! A Collect Expression cannot contain any updates !!]"
+- id: cyphermatching.optional_match_shape_unsupported
+  description: "Expanded pseudo-locale MATCH … OPTIONAL MATCH form unsupported."
+  other: "[!! this MATCH … OPTIONAL MATCH form is not supported: {{.Query}} !!]"
+- id: cyphermatching.is_not_operand_invalid
+  description: Expanded pseudo-locale is not operand invalid.
+  other: "[!! Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED' !!]"
+- id: cyphermatching.single_relationship_type_required
+  description: Expanded pseudo-locale single relationship type required.
+  other: "[!! A single relationship type must be specified for {{.Clause}} !!]"
+- id: cyphermatching.aggregation_scope_variable
+  description: Expanded pseudo-locale variable out of scope after DISTINCT or an aggregation.
+  other: "[!! In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN: {{.Variable}} !!]"
+- id: cyphermatching.path_selector_path_count_not_positive
+  description: "Expanded pseudo-locale path selector path count not positive."
+  other: "[!! The path count needs to be greater than 0. !!]"
+- id: cyphermatching.path_selector_group_count_not_positive
+  description: "Expanded pseudo-locale path selector group count not positive."
+  other: "[!! The group count needs to be greater than 0. !!]"
+- id: cyphermatching.path_selector_multiple_patterns
+  description: "Expanded pseudo-locale path selector multiple patterns."
+  other: "[!! Multiple path patterns cannot be used in the same clause in combination with a selective path selector. You may want to use multiple MATCH clauses, or you might want to consider using the REPEATABLE ELEMENTS match mode. !!]"
+- id: cyphermatching.path_selector_with_shortest_path_function
+  description: "Expanded pseudo-locale path selector with shortest path function."
+  other: "[!! Mixing shortestPath/allShortestPaths with path selectors (e.g. `ANY SHORTEST`), explicit match modes (e.g. `DIFFERENT RELATIONSHIPS`) or explicit path modes (e.g. `ACYCLIC`) is not allowed. !!]"
+- id: cyphermatching.path_mode_variable_length
+  description: "Expanded pseudo-locale path mode variable length."
+  other: "[!! Using a variable-length relationship such as `-[*]->` together with explicit path mode `{{.Mode}}` is not available. !!]"
+- id: cyphermatching.path_selector_in_write_pattern
+  description: "Expanded pseudo-locale path selector in write pattern."
+  other: "[!! Path selectors such as `SHORTEST 1 PATHS` cannot be used in a {{.Clause}} clause, but only in a MATCH clause. !!]"
+- id: cyphermatching.path_selector_count_invalid
+  description: "Expanded pseudo-locale path selector count invalid."
+  other: "[!! Count requires positive integer argument, got `{{.Value}}` !!]"
+- id: cyphermatching.path_selector_count_type
+  description: "Expanded pseudo-locale path selector count type."
+  other: "[!! Expected Integer but got {{.Type}} !!]"
+- id: cyphermatching.pattern_marker_outside_match
+  description: "Expanded pseudo-locale pattern marker outside match."
+  other: "[!! a path selector or match mode can only be used in a MATCH pattern !!]"
+- id: cyphermatching.variable_type_conflict
+  description: "Expanded pseudo-locale variable type conflict."
+  other: "[!! Type mismatch: {{.Variable}} defined with conflicting type {{.Defined}} (expected {{.Expected}}) !!]"
+- id: cyphermatching.relationship_variable_repeated
+  description: "Expanded pseudo-locale relationship variable repeated."
+  other: "[!! relationship variable {{.Variable}} is used more than once in the same pattern !!]"
+- id: cyphermatching.repeatable_elements_unbounded
+  description: "Expanded pseudo-locale repeatable elements unbounded."
+  other: "[!! The quantified path pattern may yield an infinite number of rows under match mode 'REPEATABLE ELEMENTS'. Add an upper bound to the quantified path pattern. !!]"
+- id: cyphermatching.repeatable_elements_path_mode
+  description: "Expanded pseudo-locale repeatable elements path mode."
+  other: "[!! REPEATABLE ELEMENTS with {{.Mode}} path mode is not supported. !!]"
+- id: cyphermatching.quantified_path_zero_limit
+  description: "Expanded pseudo-locale quantified path zero limit."
+  other: "[!! A quantifier for a path pattern must not be limited by 0. !!]"
+- id: cyphermatching.quantified_path_variable_outside
+  description: "Expanded pseudo-locale quantified path variable outside."
+  other: "[!! The variable `{{.Variable}}` occurs both inside and outside a quantified path pattern and needs to be renamed. !!]"
+- id: cyphermatching.quantified_path_nested
+  description: "Expanded pseudo-locale quantified path nested."
+  other: "[!! Quantified path patterns are not allowed to be nested. !!]"
+- id: cyphermatching.quantified_path_no_relationship
+  description: "Expanded pseudo-locale quantified path no relationship."
+  other: "[!! A quantified path pattern needs to have at least one relationship. !!]"
+- id: cyphermatching.quantifier_bounds_reversed
+  description: "Expanded pseudo-locale quantifier bounds reversed."
+  other: "[!! A quantifier for a path pattern must not have a lower bound which exceeds its upper bound. !!]"
+- id: cyphermatching.quantified_path_variable_bound
+  description: "Expanded pseudo-locale quantified path variable bound."
+  other: "[!! The variable `{{.Variable}}` is already defined in a previous clause, it cannot be referenced as a node or as a relationship variable inside of a quantified path pattern. !!]"
+- id: cyphermatching.parenthesised_path_juxtaposed
+  description: "Expanded pseudo-locale parenthesised path juxtaposed."
+  other: "[!! Juxtaposition is currently only supported for quantified path patterns. !!]"
+
+- id: cyphermatching.bound_shortest_relationships
+  description: Neo4j 5.26.30 diagnostic, retained verbatim for compatibility.
+  other: Bound relationships not allowed in {{.Function}}(...)

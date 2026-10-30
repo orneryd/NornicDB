@@ -1,0 +1,181 @@
+package differential
+
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"regexp"
+	"strings"
+)
+
+// shape is what a statement's last RETURN clause says about its columns.
+type shape struct {
+	// sortKeys are the columns the RETURN's ORDER BY sorts on, when every
+	// sort key is a returned column; nil otherwise.
+	sortKeys []int
+	// tokenColumns are the columns that return labels(…) or keys(…).
+	tokenColumns []int
+}
+
+var (
+	returnKeyword = regexp.MustCompile(`(?i)(?:^|[^.\w$])RETURN\b`)
+	returnEnd     = regexp.MustCompile(`(?i)\b(ORDER\s+BY|SKIP|OFFSET|LIMIT|UNION)\b`)
+	orderByEnd    = regexp.MustCompile(`(?i)\b(SKIP|OFFSET|LIMIT|UNION)\b`)
+	distinctWord  = regexp.MustCompile(`(?i)^\s*DISTINCT\b`)
+	aliasKeyword  = regexp.MustCompile(`(?i)\bAS\b`)
+	sortDirection = regexp.MustCompile(`(?i)\s+(ASC|ASCENDING|DESC|DESCENDING)\s*$`)
+	tokenFunction = regexp.MustCompile(`(?i)^(labels|keys)\s*\(`)
+)
+
+// returnShape reads query's last top-level RETURN clause. Its items match
+// columns by position; a RETURN * or an item count that isn't the column
+// count gives an empty shape.
+func returnShape(query string, columns []string) shape {
+	facts := inspectClauseRoles(query)
+	query, masked := maskQuery(query, maskNestedSyntax)
+	masked = facts.roleMask(masked, true)
+	returns := returnKeyword.FindAllStringIndex(masked, -1)
+	if len(returns) == 0 {
+		return shape{}
+	}
+	start := returns[len(returns)-1][1]
+	end := len(masked)
+	if found := returnEnd.FindStringIndex(masked[start:]); found != nil {
+		end = start + found[0]
+	}
+	if found := distinctWord.FindStringIndex(masked[start:end]); found != nil {
+		start += found[1]
+	}
+	items := splitTopLevel(query[start:end], masked[start:end])
+	if len(items) != len(columns) {
+		return shape{}
+	}
+	var result shape
+	expressions := make([]string, len(items))
+	names := make([]string, len(items))
+	for index, item := range items {
+		expression, name := item.text, item.text
+		if aliases := aliasKeyword.FindAllStringIndex(item.masked, -1); len(aliases) > 0 {
+			last := aliases[len(aliases)-1]
+			expression, name = item.text[:last[0]], item.text[last[1]:]
+		}
+		expressions[index], names[index] = normalizeText(expression), normalizeText(name)
+		if expressions[index] == "*" {
+			return shape{}
+		}
+		if tokenFunction.MatchString(expressions[index]) {
+			result.tokenColumns = append(result.tokenColumns, index)
+		}
+	}
+	if found := returnEnd.FindStringIndex(masked[end:]); found == nil || !strings.HasPrefix(strings.ToUpper(masked[end+found[0]:]), "ORDER") {
+		return result
+	}
+	orderStart := end + len(returnEnd.FindString(masked[end:]))
+	orderEnd := len(masked)
+	if found := orderByEnd.FindStringIndex(masked[orderStart:]); found != nil {
+		orderEnd = orderStart + found[0]
+	}
+	var keys []int
+	for _, item := range splitTopLevel(query[orderStart:orderEnd], masked[orderStart:orderEnd]) {
+		key := normalizeText(sortDirection.ReplaceAllString(item.text, ""))
+		column := -1
+		for index := range items {
+			if key == names[index] || key == expressions[index] {
+				column = index
+				break
+			}
+		}
+		if column < 0 {
+			return result
+		}
+		keys = append(keys, column)
+	}
+	result.sortKeys = keys
+	return result
+}
+
+// part is a piece of a statement and the same piece of its mask.
+type part struct{ text, masked string }
+
+// splitTopLevel splits text at the commas its mask has kept.
+func splitTopLevel(text, masked string) []part {
+	var parts []part
+	start := 0
+	for index := 0; index <= len(masked); index++ {
+		if index == len(masked) || masked[index] == ',' {
+			parts = append(parts, part{text: text[start:index], masked: masked[start:index]})
+			start = index + 1
+		}
+	}
+	return parts
+}
+
+type queryMaskPolicy uint8
+
+const (
+	maskOpaqueSyntax queryMaskPolicy = iota
+	maskNestedSyntax
+)
+
+// maskQuery owns the oracle's lexical views. It shares Unicode/quote/comment
+// primitives, not the executor or its syntax-confusable normalization. Opaque
+// tokens never contribute query effects; the shape view also hides nested text.
+// Offsets refer to the once-projected clean text returned alongside the mask.
+func maskQuery(raw string, policy queryMaskPolicy) (clean, masked string) {
+	source := cyphertext.ProjectUnicode(context.Background(), raw)
+	if source.Err != nil {
+		return "", ""
+	}
+	query := source.Text
+	blanked := []byte(query)
+	hidden := []byte(query)
+	depth := 0
+	for index := 0; index < len(query); index++ {
+		if end := cyphertext.CommentEnd(query, index); end >= 0 {
+			for ; index < end; index++ {
+				blanked[index], hidden[index] = ' ', ' '
+			}
+			index--
+			continue
+		}
+		if cyphertext.IsQuote(query[index]) {
+			end, _ := cyphertext.ScanQuotedText(query, index)
+			for ; index < end; index++ {
+				hidden[index] = '_'
+			}
+			index--
+			continue
+		}
+		if width := cyphertext.WhitespaceAt(query, index); width > 0 {
+			for end := index + width; index < end; index++ {
+				hidden[index] = ' '
+			}
+			index--
+			continue
+		}
+		switch query[index] {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+			if policy == maskNestedSyntax {
+				hidden[index] = '_'
+			}
+			continue
+		}
+		if depth > 0 && policy == maskNestedSyntax {
+			hidden[index] = '_'
+		}
+	}
+	return string(blanked), string(hidden)
+}
+
+// normalizeText is text with its spacing collapsed and one pair of
+// surrounding backticks removed.
+func normalizeText(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) >= 2 && cyphertext.IsBacktick(text[0]) && cyphertext.IsBacktick(text[len(text)-1]) {
+		text = text[1 : len(text)-1]
+	}
+	return text
+}

@@ -1,0 +1,68 @@
+{
+  "name": "nornicdb-search-quality",
+  "description": "Search quality tests for memory retrieval",
+  "version": "1.0.0",
+  "created": "2025-12-01T00:00:00Z",
+  "test_cases": [
+    {
+      "name": "ML concept retrieval",
+      "query": "machine learning neural networks",
+      "expected": ["mem-ml-intro", "mem-ml-algos", "mem-deep-learning"],
+      "relevance_grades": {
+        "mem-ml-intro": 3,
+        "mem-ml-algos": 2,
+        "mem-deep-learning": 2,
+        "mem-python": 1
+      },
+      "tags": ["ml", "concepts"]
+    },
+    {
+      "name": "Database decisions",
+      "query": "database architecture decisions",
+      "expected": ["decision-postgres", "decision-nornicdb"],
+      "tags": ["database", "decisions"]
+    },
+    {
+      "name": "Code search - functions",
+      "query": "authentication middleware function",
+      "expected": ["code-auth-middleware", "code-jwt-handler"],
+      "tags": ["code", "search"]
+    },
+    {
+      "name": "Task retrieval - pending",
+      "query": "pending tasks implementation",
+      "expected": ["task-api-design", "task-testing"],
+      "tags": ["tasks"]
+    },
+    {
+      "name": "Semantic similarity",
+      "query": "how to process user input safely",
+      "expected": ["mem-input-validation", "mem-sanitization", "mem-security-best-practices"],
+      "relevance_grades": {
+        "mem-input-validation": 3,
+        "mem-sanitization": 2,
+        "mem-security-best-practices": 2,
+        "mem-xss-prevention": 1
+      },
+      "tags": ["security", "semantic"]
+    },
+    {
+      "name": "Cross-domain retrieval",
+      "query": "performance optimization techniques",
+      "expected": ["mem-caching", "mem-indexing", "mem-query-optimization"],
+      "tags": ["performance"]
+    },
+    {
+      "name": "Recent context",
+      "query": "what did we discuss about the API design",
+      "expected": ["conv-api-design-1", "conv-api-design-2"],
+      "tags": ["conversation", "context"]
+    },
+    {
+      "name": "Error patterns",
+      "query": "timeout errors and retry logic",
+      "expected": ["mem-timeout-handling", "mem-retry-patterns", "mem-circuit-breaker"],
+      "tags": ["errors", "patterns"]
+    }
+  ]
+}

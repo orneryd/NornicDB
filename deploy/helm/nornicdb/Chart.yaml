@@ -1,0 +1,14 @@
+apiVersion: v2
+name: nornicdb
+description: NornicDB - A high-performance graph database with vector search
+type: application
+version: 0.1.0
+appVersion: "1.1.0"
+keywords:
+  - graph-database
+  - vector-search
+  - cypher
+  - neo4j-compatible
+home: https://github.com/orneryd/nornicdb
+maintainers:
+  - name: orneryd

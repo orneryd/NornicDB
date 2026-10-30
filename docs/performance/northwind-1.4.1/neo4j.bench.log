@@ -1,0 +1,72 @@
+[neo4j] seeding Northwind (categories=96 suppliers=144 customers=1200 products=48000 orders=48000, batch_size=500 parallel=4 seed=42)
+  .. wrote 5000 / 48000 rows
+  .. wrote 10000 / 48000 rows
+  .. wrote 15000 / 48000 rows
+  .. wrote 20000 / 48000 rows
+  .. wrote 25000 / 48000 rows
+  .. wrote 30000 / 48000 rows
+  .. wrote 35000 / 48000 rows
+  .. wrote 40000 / 48000 rows
+  .. wrote 45000 / 48000 rows
+  .. wrote 48000 / 48000 rows
+  .. wrote 5000 / 48000 rows
+  .. wrote 10000 / 48000 rows
+  .. wrote 15000 / 48000 rows
+  .. wrote 20000 / 48000 rows
+  .. wrote 25000 / 48000 rows
+  .. wrote 30000 / 48000 rows
+  .. wrote 35000 / 48000 rows
+  .. wrote 40000 / 48000 rows
+  .. wrote 45000 / 48000 rows
+  .. wrote 48000 / 48000 rows
+  .. wrote 5000 / 168050 rows
+  .. wrote 10000 / 168050 rows
+  .. wrote 15000 / 168050 rows
+  .. wrote 20000 / 168050 rows
+  .. wrote 25000 / 168050 rows
+  .. wrote 30000 / 168050 rows
+  .. wrote 35000 / 168050 rows
+  .. wrote 40000 / 168050 rows
+  .. wrote 45000 / 168050 rows
+  .. wrote 50000 / 168050 rows
+  .. wrote 55000 / 168050 rows
+  .. wrote 60000 / 168050 rows
+  .. wrote 65000 / 168050 rows
+  .. wrote 70000 / 168050 rows
+  .. wrote 75000 / 168050 rows
+  .. wrote 80000 / 168050 rows
+  .. wrote 85000 / 168050 rows
+  .. wrote 90000 / 168050 rows
+  .. wrote 95000 / 168050 rows
+  .. wrote 100000 / 168050 rows
+  .. wrote 105000 / 168050 rows
+  .. wrote 110000 / 168050 rows
+  .. wrote 115000 / 168050 rows
+  .. wrote 120000 / 168050 rows
+  .. wrote 125000 / 168050 rows
+  .. wrote 130000 / 168050 rows
+  .. wrote 135000 / 168050 rows
+  .. wrote 140000 / 168050 rows
+  .. wrote 145000 / 168050 rows
+  .. wrote 150000 / 168050 rows
+  .. wrote 155000 / 168050 rows
+  .. wrote 160000 / 168050 rows
+  .. wrote 165000 / 168050 rows
+  .. wrote 168050 / 168050 rows
+[neo4j] seeded in 5390.9ms (97440 nodes, 312050 rels, ~35.4 MiB payload)
+[neo4j] seed verified: categories=96 suppliers=144 customers=1200 products=48000 orders=48000 part_of=48000 supplies=48000 purchased=48000 orders_edges=168050
+[neo4j] products_per_category              mean=   6.33ms p95=   7.35ms ops/s=   157.5 rows=96
+[neo4j] customer_category_distinct_orders  mean= 172.48ms p95= 182.50ms ops/s=     5.8 rows=10
+[neo4j] optional_match_orders_count        mean=  53.05ms p95=  54.88ms ops/s=    18.8 rows=100
+[neo4j] revenue_by_product                 mean=  67.65ms p95=  70.47ms ops/s=    14.8 rows=10
+[neo4j] products_by_supplier               mean=   6.87ms p95=   8.75ms ops/s=   145.3 rows=25
+[neo4j] orders_by_customer                 mean=   6.74ms p95=   6.89ms ops/s=   148.1 rows=25
+[neo4j] revenue_by_category                mean=  63.18ms p95=  68.46ms ops/s=    15.8 rows=96
+[neo4j] revenue_by_supplier                mean=  60.92ms p95=  62.69ms ops/s=    16.4 rows=25
+[neo4j] revenue_by_customer                mean=  69.97ms p95=  72.59ms ops/s=    14.3 rows=25
+[neo4j] order_line_sales_by_country        mean=  48.79ms p95=  50.78ms ops/s=    20.5 rows=15
+[neo4j] low_stock_products                 mean=   7.57ms p95=   7.79ms ops/s=   131.5 rows=100
+[neo4j] products_in_category               mean=   0.95ms p95=   1.07ms ops/s=  1015.9 rows=100
+[neo4j] order_line_quantity_distribution   mean=  22.58ms p95=  25.98ms ops/s=    44.3 rows=25
+[neo4j] customer_order_details             mean=   0.95ms p95=   1.22ms ops/s=  1018.2 rows=100
+[neo4j] wrote /Users/tjsweet/src/NornicDB/scripts/benchmark_reports/20261009_093018/neo4j.results.json

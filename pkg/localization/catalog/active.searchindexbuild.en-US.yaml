@@ -1,0 +1,54 @@
+- id: search.vector_file_magic_invalid
+  description: Vector index load error for an invalid file header signature.
+  other: invalid vector file magic
+- id: search.vector_file_version_unsupported
+  description: Vector index load error for an unsupported file version. Version is numeric.
+  other: "unsupported vector file version {{.Version}}"
+- id: search.vector_file_dimensions_mismatch
+  description: Vector index load error for incompatible file and store dimensions.
+  other: "vector file dimensions {{.FileDimensions}} != store dimensions {{.StoreDimensions}}"
+- id: search.vector_meta_dimensions_mismatch
+  description: Vector metadata load error for incompatible metadata and store dimensions.
+  other: "meta dimensions {{.MetaDimensions}} != store dimensions {{.StoreDimensions}}"
+- id: search.gpu_not_enabled
+  description: GPU index synchronization prerequisite error.
+  other: gpu not enabled
+- id: search.vector_dimensions_invalid
+  description: GPU index synchronization error for invalid vector dimensions.
+  other: invalid vector dimensions
+- id: search.ivfpq_vector_store_required
+  description: IVFPQ public build validation error when no vector file store was supplied.
+  other: vector file store is required
+- id: search.ivfpq_dimensions_invalid
+  description: IVFPQ public build validation error for invalid dimensions.
+  other: invalid dimensions
+- id: search.ivfpq_segments_invalid
+  description: IVFPQ public build validation error. Dimensions and Segments are numeric.
+  other: "invalid pq segments: dimensions={{.Dimensions}} segments={{.Segments}}"
+- id: search.ivfpq_training_vectors_insufficient
+  description: IVFPQ training validation error. VectorCount and ListCount are numeric.
+  other: "insufficient training vectors ({{.VectorCount}}) for ivf lists ({{.ListCount}})"
+- id: search.ivf_coarse_training_failed
+  description: IVFPQ coarse training failure. Cause is diagnostic text and is not translated.
+  other: "ivf coarse training failed: {{.Cause}}"
+- id: search.pq_codebook_training_failed
+  description: PQ codebook training failure. Cause is diagnostic text and is not translated.
+  other: "pq codebook training failed: {{.Cause}}"
+- id: search.hnsw_gpu_build_dimension_invalid
+  description: HNSW GPU build validation error. Dimensions is numeric.
+  other: "invalid HNSW GPU build dimension {{.Dimensions}}"
+- id: search.gpu_accelerator_unavailable
+  description: HNSW build error when no GPU accelerator can be initialized.
+  other: no GPU accelerator available
+- id: search.cuda_not_available
+  description: CUDA HNSW build error when CUDA is unavailable.
+  other: "cuda: CUDA is not available on this system"
+- id: search.vulkan_not_available
+  description: Vulkan HNSW build error when Vulkan is unavailable.
+  other: "vulkan: Vulkan is not available on this system"
+- id: search.vulkan_device_not_initialized
+  description: Vulkan HNSW build error when its device or compute context is not initialized.
+  other: "vulkan: device not initialized"
+- id: search.ivfpq_vector_store_unavailable
+  description: IVFPQ service build error when its vector file store is unavailable.
+  other: vector file store unavailable for IVFPQ build

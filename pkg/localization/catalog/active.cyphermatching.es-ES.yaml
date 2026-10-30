@@ -1,0 +1,208 @@
+- id: cyphermatching.match_pattern_required
+  description: La cláusula MATCH no tiene patrón. MATCH no se traduce.
+  other: la cláusula MATCH requiere un patrón
+- id: cyphermatching.match_node_pattern_required
+  description: MATCH comienza con una relación en lugar de un nodo. Las palabras clave no se traducen.
+  other: la cláusula MATCH requiere un patrón de nodo, no solo un patrón de relación
+- id: cyphermatching.return_expression_required
+  description: La cláusula RETURN no tiene expresión de proyección. RETURN no se traduce.
+  other: la cláusula RETURN requiere al menos una expresión
+- id: cyphermatching.return_expression_empty
+  description: La cláusula RETURN contiene una expresión de proyección vacía. RETURN no se traduce.
+  other: la cláusula RETURN contiene una expresión vacía
+- id: cyphermatching.storage_failed
+  description: Error de almacenamiento durante la coincidencia. Cause no se traduce.
+  other: "error de almacenamiento: {{.Cause}}"
+- id: cyphermatching.collect_subquery_failed
+  description: Error al ejecutar la subconsulta COLLECT. Cause no se traduce.
+  other: "error de subconsulta COLLECT: {{.Cause}}"
+- id: cyphermatching.match_unwind_clauses_required
+  description: Faltan las cláusulas MATCH y UNWIND requeridas. La sintaxis no se traduce.
+  other: "se requieren las cláusulas MATCH y UNWIND (p. ej., MATCH (n) UNWIND n.items AS item RETURN item)"
+- id: cyphermatching.unwind_as_required
+  description: UNWIND no tiene enlace AS. La sintaxis no se traduce.
+  other: "UNWIND requiere una cláusula AS (p. ej., UNWIND [1,2,3] AS x)"
+- id: cyphermatching.with_return_clauses_required
+  description: Falta una cláusula WITH o RETURN requerida. Las palabras clave no se traducen.
+  other: se requieren las cláusulas WITH y RETURN
+- id: cyphermatching.order_by_parse_failed
+  description: Error al analizar ORDER BY. Las palabras clave no se traducen.
+  other: no se pudo analizar la cláusula ORDER BY
+- id: cyphermatching.match_pattern_variable_missing
+  description: Al patrón MATCH le falta una variable. Clause conserva las comillas de Go.
+  other: "patrón MATCH no válido: falta una variable en {{.Clause}}"
+- id: cyphermatching.traversal_pattern_invalid
+  description: Patrón de recorrido no válido. Pattern no se traduce.
+  other: "patrón de recorrido no válido: {{.Pattern}}"
+- id: cyphermatching.return_after_with_required
+  description: La cláusula WITH no tiene un RETURN posterior. Las palabras clave no se traducen.
+  other: se requiere una cláusula RETURN después de WITH
+- id: cyphermatching.skip_parse_failed
+  description: Error al analizar SKIP. SKIP no se traduce.
+  other: no se pudo analizar la cláusula SKIP
+- id: cyphermatching.limit_parse_failed
+  description: Error al analizar LIMIT. LIMIT no se traduce.
+  other: no se pudo analizar la cláusula LIMIT
+- id: cyphermatching.path_pattern_invalid
+  description: Patrón de ruta más corta no válido. Pattern no se traduce.
+  other: "patrón de ruta no válido: {{.Pattern}}"
+- id: cyphermatching.shortest_path_minimal_length
+  description: "Longitud mínima de shortestPath o allShortestPaths mayor que 1. Function es el nombre de la función."
+  other: "{{.Function}}(...) no admite una longitud mínima distinta de 0 o 1"
+- id: cyphermatching.shortest_path_common_end_nodes
+  description: "Búsqueda shortestPath cuyo nodo inicial y final son el mismo (texto de Neo4j)."
+  other: "El algoritmo de camino más corto no funciona cuando los nodos inicial y final son el mismo. Esto puede ocurrir si se busca un shortestPath tras un producto cartesiano que puede tener el mismo nodo inicial y final en algunas de las filas pasadas a shortestPath. Si prefiere no ver esta excepción y puede aceptar que falten resultados para esas filas, desactívela en la configuración de Neo4j estableciendo `dbms.cypher.forbid_shortestpath_common_nodes` en false. Si no puede aceptar que falten resultados y necesita el shortestPath entre dos nodos comunes, reescriba la consulta con un patrón Cypher de longitud variable estándar, ordenado por la longitud del camino y limitado a un resultado."
+- id: cyphermatching.shortest_path_unbound_nodes
+  description: "Expresión shortestPath o allShortestPaths con un extremo que no es una variable enlazada. Function es el nombre de la función."
+  other: "Un {{.Function}}(...) requiere nodos enlazados cuando no forma parte de una cláusula MATCH."
+- id: cyphermatching.shortest_path_relationship_properties
+  description: "Propiedades de relación en un patrón shortestPath o allShortestPaths. Function es el nombre de la función; Properties es el mapa tal como se escribió."
+  other: "{{.Function}}(...) contiene propiedades {{.Properties}}. Esto no se admite actualmente."
+- id: cyphermatching.shortest_path_single_relationship
+  description: "Patrón shortestPath o allShortestPaths sin exactamente una relación. Function es el nombre de la función."
+  other: "{{.Function}}(...) requiere un patrón con una sola relación"
+- id: cyphermatching.quantified_path_in_write_pattern
+  description: "Patrón de camino cuantificado en CREATE o MERGE. Clause es la palabra clave de la cláusula."
+  other: "Los patrones de camino cuantificados no se pueden usar en una cláusula {{.Clause}}, solo en una cláusula MATCH."
+- id: cyphermatching.variable_length_in_quantified_path
+  description: "Relación de longitud variable con un cuantificador."
+  other: "Las relaciones de longitud variable no pueden formar parte de un patrón de camino cuantificado."
+- id: cyphermatching.quantifier_in_expression_pattern
+  description: "Cuantificador de relación en un predicado o comprensión de patrón. Token es el carácter del cuantificador."
+  other: "Entrada no válida '{{.Token}}': un cuantificador de relación solo se admite en un patrón MATCH o en una subconsulta"
+- id: cyphermatching.optional_match_node_endpoint_missing
+  description: Al patrón OPTIONAL MATCH le falta el primer nodo. Pattern conserva las comillas de Go.
+  other: "el patrón de coincidencia opcional {{.Pattern}} no tiene un nodo inicial"
+- id: cyphermatching.optional_match_node_endpoint_unterminated
+  description: El primer nodo del patrón OPTIONAL MATCH no está terminado. Pattern conserva las comillas de Go.
+  other: "el patrón de coincidencia opcional {{.Pattern}} tiene un nodo inicial sin terminar"
+- id: cyphermatching.optional_match_target_endpoint_missing
+  description: Al patrón OPTIONAL MATCH le falta el nodo de destino. Pattern conserva las comillas de Go.
+  other: "el patrón de coincidencia opcional {{.Pattern}} no tiene un nodo de destino"
+- id: cyphermatching.optional_match_target_endpoint_unterminated
+  description: El nodo de destino del patrón OPTIONAL MATCH no está terminado. Pattern conserva las comillas de Go.
+  other: "el patrón de coincidencia opcional {{.Pattern}} tiene un nodo de destino sin terminar"
+- id: cyphermatching.aggregate_call_expected
+  description: La expresión no es una llamada de agregado completa. Expression conserva las comillas de Go.
+  other: "no es una llamada de agregado completa: {{.Expression}}"
+- id: cyphermatching.function_parameters_insufficient
+  description: La función de agregado tiene pocos parámetros. Function no se traduce.
+  other: "parámetros insuficientes para la función '{{.Function}}'"
+- id: cyphermatching.label_expression_mixed_colon
+  description: Una cadena de etiquetas separadas por dos puntos también usa símbolos de expresión de etiquetas. Expression es texto Cypher y no se traduce.
+  other: "No se permite mezclar los símbolos de expresión de etiquetas ('|', '&', '!' y '%') con los dos puntos (':') entre etiquetas. Use un solo conjunto de símbolos. Esta expresión podría escribirse como :{{.Expression}}."
+- id: cyphermatching.label_expression_mixed_is
+  description: Una expresión de etiquetas IS también usa dos puntos entre etiquetas. IS y Expression son texto Cypher y no se traducen.
+  other: "No se permite mezclar la palabra clave IS con los dos puntos (':') entre etiquetas. Esta expresión podría escribirse como IS {{.Expression}}."
+- id: cyphermatching.relationship_type_colon_disjunction
+  description: "El separador antiguo |: en una relación con variable, propiedades o longitud. Expression es texto Cypher y no se traduce."
+  other: "Ya no se admite separar tipos de relación alternativos con dos puntos junto con\nuna variable, predicados de propiedades en línea o longitud variable.\nSepare los tipos de relación con `:{{.Expression}}`."
+- id: cyphermatching.relationship_type_colon_conjunction
+  description: Un patrón de relación separa tipos con dos puntos.
+  other: "Los tipos de relación de una expresión de tipos de relación no se pueden combinar con ':'"
+- id: cyphermatching.variable_length_type_expression
+  description: Una relación de longitud variable usa una expresión de tipos distinta de alternativas.
+  other: "Las relaciones de longitud variable no deben usar expresiones de tipos de relación."
+- id: cyphermatching.label_expression_in_write_pattern
+  description: Un patrón de nodo de CREATE o MERGE usa |, ! o %. Clause es una palabra clave de Cypher y no se traduce.
+  other: "Las expresiones de etiquetas en patrones no se permiten en una cláusula {{.Clause}}, solo en una cláusula MATCH y en expresiones"
+- id: cyphermatching.relationship_type_expression_in_write_pattern
+  description: Un patrón de relación de CREATE o MERGE usa !, & o %. Clause es una palabra clave de Cypher y no se traduce.
+  other: "Las expresiones de tipos de relación en patrones no se permiten en una cláusula {{.Clause}}, solo en una cláusula MATCH"
+- id: cyphermatching.pattern_predicate_in_write_pattern
+  description: "WHERE propio de un patrón de nodo o relación en CREATE o MERGE. Element es Node o Relationship; Clause es la cláusula."
+  other: "Los predicados de patrón de {{.Element}} no se permiten en una cláusula {{.Clause}}, solo en una cláusula MATCH o dentro de una comprensión de patrones"
+- id: cyphermatching.pattern_predicate_variable_length
+  description: "WHERE dentro de un patrón de relación de longitud variable."
+  other: "Los predicados de patrón de relación no se admiten en relaciones de longitud variable."
+- id: cyphermatching.return_star_no_variables
+  description: "RETURN * sin ninguna variable en el ámbito."
+  other: "RETURN * requiere al menos una variable en el ámbito"
+- id: cyphermatching.query_cannot_conclude
+  description: "Una consulta o el cuerpo de una subconsulta CALL cuya última cláusula no puede concluirla. Clause es una palabra clave de Cypher y no se traduce."
+  other: "La consulta no puede concluir con {{.Clause}} (debe ser una cláusula RETURN, una cláusula FINISH, una cláusula de actualización, una llamada a subconsulta unitaria o una llamada a procedimiento sin YIELD)."
+- id: cyphermatching.exists_expression_updates
+  description: "Una cláusula de actualización dentro de una expresión de subconsulta EXISTS, a cualquier profundidad."
+  other: "Una expresión Exists no puede contener actualizaciones"
+- id: cyphermatching.count_expression_updates
+  description: "Una cláusula de actualización dentro de una expresión de subconsulta COUNT, a cualquier profundidad."
+  other: "Una expresión Count no puede contener actualizaciones"
+- id: cyphermatching.collect_expression_updates
+  description: "Una cláusula de actualización dentro de una expresión de subconsulta COLLECT, a cualquier profundidad."
+  other: "Una expresión Collect no puede contener actualizaciones"
+- id: cyphermatching.optional_match_shape_unsupported
+  description: "Una sentencia MATCH … OPTIONAL MATCH que la canalización de cláusulas no ejecuta. Query es texto Cypher y no se traduce."
+  other: "esta forma de MATCH … OPTIONAL MATCH no se admite: {{.Query}}"
+- id: cyphermatching.is_not_operand_invalid
+  description: IS NOT va seguido de una etiqueta. Input es texto Cypher y no se traduce.
+  other: "Entrada no válida '{{.Input}}': se esperaba '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' o 'TYPED'"
+- id: cyphermatching.single_relationship_type_required
+  description: Un patrón de relación de CREATE o MERGE enumera tipos alternativos. Clause es una palabra clave de Cypher y no se traduce.
+  other: "Se debe especificar un único tipo de relación para {{.Clause}}"
+- id: cyphermatching.aggregation_scope_variable
+  description: Un WITH o RETURN con DISTINCT o una agregación lee, en su WHERE u ORDER BY, una variable que no proyecta. WITH, RETURN y DISTINCT no se traducen; Variable es el nombre de la variable, sin traducir.
+  other: "En un WITH/RETURN con DISTINCT o una agregación no se puede acceder a variables declaradas antes del WITH/RETURN: {{.Variable}}"
+- id: cyphermatching.path_selector_path_count_not_positive
+  description: "El número de caminos de un selector es 0 (SHORTEST 0, ANY 0)."
+  other: "El número de caminos debe ser mayor que 0."
+- id: cyphermatching.path_selector_group_count_not_positive
+  description: "El número de grupos de un selector SHORTEST k GROUPS es 0."
+  other: "El número de grupos debe ser mayor que 0."
+- id: cyphermatching.path_selector_multiple_patterns
+  description: "Un MATCH con un selector de caminos selectivo (ANY, SHORTEST) tiene otro patrón. MATCH y REPEATABLE ELEMENTS no se traducen."
+  other: "No se pueden usar varios patrones de camino en la misma cláusula junto con un selector de caminos selectivo. Puede usar varias cláusulas MATCH o el modo de coincidencia REPEATABLE ELEMENTS."
+- id: cyphermatching.path_selector_with_shortest_path_function
+  description: "shortestPath o allShortestPaths se usa con un selector de caminos, un modo de coincidencia o un modo de camino. El Cypher entre comillas invertidas no se traduce."
+  other: "No se permite combinar shortestPath/allShortestPaths con selectores de caminos (p. ej. `ANY SHORTEST`), modos de coincidencia explícitos (p. ej. `DIFFERENT RELATIONSHIPS`) o modos de camino explícitos (p. ej. `ACYCLIC`)."
+- id: cyphermatching.path_mode_variable_length
+  description: "Un modo de camino explícito se usa con una relación de longitud variable. Mode es una palabra clave de Cypher y no se traduce."
+  other: "No se puede usar una relación de longitud variable como `-[*]->` junto con el modo de camino explícito `{{.Mode}}`."
+- id: cyphermatching.path_selector_in_write_pattern
+  description: "Selector de caminos en CREATE o MERGE. Clause es la palabra clave de la cláusula."
+  other: "Los selectores de caminos como `SHORTEST 1 PATHS` no se pueden usar en una cláusula {{.Clause}}, solo en una cláusula MATCH."
+- id: cyphermatching.path_selector_count_invalid
+  description: "El parámetro de número de un selector de caminos no es positivo. Value es el valor del parámetro."
+  other: "El número requiere un entero positivo; se recibió `{{.Value}}`"
+- id: cyphermatching.path_selector_count_type
+  description: "El parámetro de número de un selector de caminos no es un entero. Type es el nombre del tipo de Cypher y no se traduce."
+  other: "Se esperaba Integer pero se recibió {{.Type}}"
+- id: cyphermatching.pattern_marker_outside_match
+  description: "Un selector de caminos o un modo de coincidencia llegó a un paso que no ejecuta patrones de camino."
+  other: "un selector de caminos o un modo de coincidencia solo se puede usar en un patrón de MATCH"
+- id: cyphermatching.variable_type_conflict
+  description: "Una variable se vincula con dos tipos en un patrón. Variable es el nombre de la variable; Defined y Expected son nombres de tipos de Cypher; ninguno se traduce."
+  other: "Tipos incompatibles: {{.Variable}} está definida con el tipo {{.Defined}} (se esperaba {{.Expected}})"
+- id: cyphermatching.relationship_variable_repeated
+  description: "Un patrón de MATCH nombra dos veces una variable de relación sin modo de coincidencia. Variable es el nombre de la variable, sin traducir."
+  other: "la variable de relación {{.Variable}} se usa más de una vez en el mismo patrón"
+- id: cyphermatching.repeatable_elements_unbounded
+  description: "Un cuantificador sin límite superior en MATCH REPEATABLE ELEMENTS. REPEATABLE ELEMENTS no se traduce."
+  other: "El patrón de camino cuantificado puede producir un número infinito de filas con el modo de coincidencia 'REPEATABLE ELEMENTS'. Añada un límite superior al patrón de camino cuantificado."
+- id: cyphermatching.repeatable_elements_path_mode
+  description: "Un modo de camino TRAIL o ACYCLIC en MATCH REPEATABLE ELEMENTS. Mode y REPEATABLE ELEMENTS no se traducen."
+  other: "REPEATABLE ELEMENTS con el modo de camino {{.Mode}} no es compatible."
+- id: cyphermatching.quantified_path_zero_limit
+  description: "El límite superior de un patrón de camino cuantificado es 0."
+  other: "Un cuantificador de un patrón de camino no puede estar limitado por 0."
+- id: cyphermatching.quantified_path_variable_outside
+  description: "Una variable aparece dentro y fuera de un patrón de camino cuantificado. Variable es el nombre de la variable, sin traducir."
+  other: "La variable `{{.Variable}}` aparece dentro y fuera de un patrón de camino cuantificado y se debe renombrar."
+- id: cyphermatching.quantified_path_nested
+  description: "Un patrón de camino cuantificado o un cuantificador dentro de otro patrón de camino cuantificado."
+  other: "No se permite anidar patrones de camino cuantificados."
+- id: cyphermatching.quantified_path_no_relationship
+  description: "Un patrón de camino cuantificado no tiene relaciones."
+  other: "Un patrón de camino cuantificado debe tener al menos una relación."
+- id: cyphermatching.quantifier_bounds_reversed
+  description: "El límite inferior de un cuantificador de camino supera al superior."
+  other: "El límite inferior de un cuantificador de un patrón de camino no puede superar su límite superior."
+- id: cyphermatching.quantified_path_variable_bound
+  description: "Una variable vinculada por una cláusula anterior aparece dentro de un patrón de camino cuantificado. Variable es el nombre de la variable, sin traducir."
+  other: "La variable `{{.Variable}}` ya está definida en una cláusula anterior; no se puede usar como variable de nodo o de relación dentro de un patrón de camino cuantificado."
+- id: cyphermatching.parenthesised_path_juxtaposed
+  description: "Un camino entre paréntesis sin cuantificador junto a otro elemento del patrón."
+  other: "La yuxtaposición solo se admite por ahora en los patrones de camino cuantificados."
+
+- id: cyphermatching.bound_shortest_relationships
+  description: Neo4j 5.26.30 diagnostic, retained verbatim for compatibility.
+  other: Bound relationships not allowed in {{.Function}}(...)

@@ -1,0 +1,64 @@
+- id: multidb.composite.constituent_database_not_found
+  other: "no se encontró la base de datos constituyente '{{.Database}}': {{.Cause}}"
+- id: multidb.composite.database_as_constituent
+  other: "no se puede usar la base de datos compuesta '{{.Database}}' como constituyente"
+- id: multidb.composite.duplicate_alias
+  other: "alias constituyente duplicado: '{{.Alias}}'"
+- id: multidb.composite.secure_remote_credentials_failed
+  other: "no se pudieron proteger las credenciales remotas del alias '{{.Alias}}': {{.Cause}}"
+- id: multidb.composite.database_not_composite
+  other: "la base de datos '{{.Database}}' no es una base de datos compuesta"
+- id: multidb.composite.persist_metadata_after_drop_failed
+  other: "no se pudieron guardar los metadatos después de eliminar: {{.Cause}}"
+- id: multidb.composite.alias_exists
+  other: "el alias constituyente '{{.Alias}}' ya existe"
+- id: multidb.composite.alias_not_found
+  other: "no se encontró el alias constituyente '{{.Alias}}'"
+- id: multidb.manager.delete_database_data_failed
+  other: "no se pudieron eliminar los datos de la base de datos: {{.Cause}}"
+- id: multidb.manager.resolve_remote_credentials_failed
+  other: "no se pudieron resolver las credenciales remotas del constituyente '{{.Alias}}': {{.Cause}}"
+- id: multidb.manager.get_remote_storage_failed
+  other: "no se pudo obtener el almacenamiento remoto del constituyente '{{.Alias}}': {{.Cause}}"
+- id: multidb.manager.get_constituent_storage_failed
+  other: "no se pudo obtener el almacenamiento del constituyente '{{.Database}}': {{.Cause}}"
+- id: multidb.manager.remote_engine_factory_not_configured
+  other: "no se puede abrir el constituyente remoto '{{.Alias}}': la fábrica de motores remotos no está configurada"
+- id: multidb.manager.remote_engine_factory_returned_nil
+  other: "la fábrica de motores remotos devolvió nil para el constituyente '{{.Alias}}'"
+- id: multidb.manager.invalid_status
+  other: "estado no válido: {{.Status}} (debe ser 'online' u 'offline')"
+- id: multidb.manager.alias_contains_whitespace
+  other: "nombre de alias no válido: '{{.Alias}}' (no puede contener espacios en blanco)"
+- id: multidb.manager.alias_reserved
+  other: "nombre de alias no válido: '{{.Alias}}' (nombre reservado)"
+- id: multidb.metadata.parse_failed
+  other: "no se pudieron analizar los metadatos de la base de datos: {{.Cause}}"
+- id: multidb.metadata.serialize_failed
+  other: "no se pudieron serializar los metadatos de la base de datos: {{.Cause}}"
+- id: multidb.storage.get_node_count_failed
+  other: "no se pudo obtener el número de nodos: {{.Cause}}"
+- id: multidb.storage.get_edge_count_failed
+  other: "no se pudo obtener el número de relaciones: {{.Cause}}"
+- id: multidb.storage.get_size_failed
+  other: "no se pudo obtener el tamaño del almacenamiento: {{.Cause}}"
+- id: multidb.storage.calculate_node_size_failed
+  other: "no se pudo calcular el tamaño del nodo: {{.Cause}}"
+- id: multidb.storage.calculate_edge_size_failed
+  other: "no se pudo calcular el tamaño de la relación: {{.Cause}}"
+- id: multidb.storage.get_all_nodes_failed
+  other: "no se pudieron obtener todos los nodos: {{.Cause}}"
+- id: multidb.storage.get_all_edges_failed
+  other: "no se pudieron obtener todas las relaciones: {{.Cause}}"
+- id: multidb.storage.encode_node_failed
+  other: "no se pudo codificar el nodo: {{.Cause}}"
+- id: multidb.storage.encode_edge_failed
+  other: "no se pudo codificar la relación: {{.Cause}}"
+- id: multidb.storage.get_all_nodes_for_size_calculation_failed
+  other: "no se pudieron obtener todos los nodos para calcular el tamaño: {{.Cause}}"
+- id: multidb.storage.get_all_edges_for_size_calculation_failed
+  other: "no se pudieron obtener todas las relaciones para calcular el tamaño: {{.Cause}}"
+- id: multidb.storage.get_outgoing_edges_failed
+  other: "no se pudieron obtener las relaciones salientes: {{.Cause}}"
+- id: multidb.storage.get_incoming_edges_failed
+  other: "no se pudieron obtener las relaciones entrantes: {{.Cause}}"

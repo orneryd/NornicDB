@@ -1,0 +1,50 @@
+// HNSW Build Cosine Matrix Compute Shader for NornicDB
+// SPDX-License-Identifier: Apache-2.0
+//
+// Computes dot products between all frontier vectors and all query vectors
+// in a 2D dispatch grid. Both inputs are pre-normalized.
+//
+// Grid: (frontier_n, query_n, 1) - 16x16 threadgroups
+//   - gl_GlobalInvocationID.x = frontier index (fid)
+//   - gl_GlobalInvocationID.y = query index (qid)
+//
+// Output: scores[qid * frontier_n + fid] row-major layout
+
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Frontier {
+    float frontier[];  // [frontier_n * dimensions]
+};
+
+layout(set = 0, binding = 1) readonly buffer Queries {
+    float queries[];   // [query_n * dimensions]
+};
+
+layout(set = 0, binding = 2) writeonly buffer Scores {
+    float scores[];    // [query_n * frontier_n]
+};
+
+layout(push_constant) uniform PushConstants {
+    uint frontier_n;
+    uint query_n;
+    uint dimensions;
+} pc;
+
+void main() {
+    uint fid = gl_GlobalInvocationID.x;
+    uint qid = gl_GlobalInvocationID.y;
+
+    if (fid >= pc.frontier_n || qid >= pc.query_n) return;
+
+    float dot = 0.0;
+    uint fbase = fid * pc.dimensions;
+    uint qbase = qid * pc.dimensions;
+
+    for (uint d = 0; d < pc.dimensions; d++) {
+        dot += frontier[fbase + d] * queries[qbase + d];
+    }
+
+    scores[qid * pc.frontier_n + fid] = dot;
+}

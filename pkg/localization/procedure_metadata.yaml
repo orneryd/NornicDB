@@ -1,0 +1,436 @@
+- {
+    name: db.awaitIndex,
+    en: "Wait for an index to come online (for example: CALL db.awaitIndex(\"MyIndex\", 300)).",
+    es: "Espera a que un índice esté en línea",
+  }
+- {
+    name: db.awaitIndexes,
+    en: "Wait for all indexes to come online (for example: CALL db.awaitIndexes(300)).",
+    es: "Espera a que todos los índices estén en línea",
+  }
+- {
+    name: db.clearQueryCaches,
+    en: "Clears all query caches.",
+    es: "Borra las cachés de consultas",
+  }
+- {
+    name: db.constraints,
+    en: "Lists all constraints in the database",
+    es: "Enumera todas las restricciones de la base de datos",
+  }
+- {
+    name: db.create.setNodeVectorProperty,
+    en: "Sets vector property on a node",
+    es: "Establece una propiedad vectorial en un nodo",
+  }
+- {
+    name: db.create.setRelationshipVectorProperty,
+    en: "Sets vector property on a relationship",
+    es: "Establece una propiedad vectorial en una relación",
+  }
+- {
+    name: db.index.fulltext.createNodeIndex,
+    en: "Creates fulltext index on nodes",
+    es: "Crea un índice de texto completo en nodos",
+  }
+- {
+    name: db.index.fulltext.createRelationshipIndex,
+    en: "Creates fulltext index on relationships",
+    es: "Crea un índice de texto completo en relaciones",
+  }
+- {
+    name: db.index.fulltext.drop,
+    en: "Drops fulltext index",
+    es: "Elimina un índice de texto completo",
+  }
+- {
+    name: db.index.fulltext.listAvailableAnalyzers,
+    en: "List the available analyzers that the full-text indexes can be configured with.",
+    es: "Enumera los analizadores disponibles",
+  }
+- {
+    name: db.index.fulltext.queryNodes,
+    en: "Query the given full-text index. Returns the matching nodes and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n",
+    es: "Busca texto completo en nodos",
+  }
+- {
+    name: db.index.fulltext.queryRelationships,
+    en: "Query the given full-text index. Returns the matching relationships and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n",
+    es: "Busca texto completo en relaciones",
+  }
+- {
+    name: db.index.stats,
+    en: "Returns index statistics",
+    es: "Devuelve estadísticas del índice",
+  }
+- {
+    name: db.index.vector.createNodeIndex,
+    en: "Create a named node vector index for the specified label and property with the given vector dimensionality using either the EUCLIDEAN or COSINE similarity function.\nBoth similarity functions are case-insensitive.\nUse the `db.index.vector.queryNodes` procedure to query the named index.\n",
+    es: "Crea un índice vectorial en nodos",
+  }
+- {
+    name: db.index.vector.createRelationshipIndex,
+    en: "Creates vector index on relationships",
+    es: "Crea un índice vectorial en relaciones",
+  }
+- {
+    name: db.index.vector.drop,
+    en: "Drops vector index",
+    es: "Elimina un índice vectorial",
+  }
+- {
+    name: db.index.vector.embed,
+    en: "Embeds text using configured embedder",
+    es: "Genera el embedding del texto con el generador configurado",
+  }
+- {
+    name: db.index.vector.queryNodes,
+    en: "Query the given node vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n",
+    es: "Realiza una búsqueda vectorial en nodos",
+  }
+- {
+    name: db.index.vector.queryRelationships,
+    en: "Query the given relationship vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n",
+    es: "Realiza una búsqueda vectorial en relaciones",
+  }
+- {
+    name: db.indexes,
+    en: "Lists all indexes in the database",
+    es: "Enumera todos los índices de la base de datos",
+  }
+- {
+    name: db.infer,
+    en: "LLM inference procedure",
+    es: "Procedimiento de inferencia LLM",
+  }
+- {
+    name: db.info,
+    en: "Provides information regarding the database.",
+    es: "Devuelve información de la base de datos",
+  }
+- {
+    name: db.labels,
+    en: "List all labels attached to nodes within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those labels.",
+    es: "Enumera todas las etiquetas de la base de datos",
+  }
+- {
+    name: db.ping,
+    en: "This procedure can be used by client side tooling to test whether they are correctly connected to a database. The procedure is available in all databases and always returns true. A faulty connection can be detected by not being able to call this procedure.",
+    es: "Comprueba la conectividad de la base de datos",
+  }
+- {
+    name: db.propertyKeys,
+    en: "List all property keys in the database.",
+    es: "Enumera todas las claves de propiedad de la base de datos",
+  }
+- {
+    name: db.relationshipTypes,
+    en: "List all types attached to relationships within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those relationship types.",
+    es: "Enumera todos los tipos de relación de la base de datos",
+  }
+- {
+    name: db.rerank,
+    en: "Standalone rerank procedure",
+    es: "Procedimiento independiente de reordenación",
+  }
+- {
+    name: db.resampleIndex,
+    en: "Schedule resampling of an index (for example: CALL db.resampleIndex(\"MyIndex\")).",
+    es: "Vuelve a muestrear las estadísticas del índice",
+  }
+- {
+    name: db.retrieve,
+    en: "Hybrid retrieval procedure",
+    es: "Procedimiento de recuperación híbrida",
+  }
+- {
+    name: db.retrieveGraph,
+    en: "Hybrid retrieval over nodes and relationships in one ranking",
+    es: "Recuperación híbrida sobre nodos y relaciones en una sola clasificación",
+  }
+- {
+    name: db.rretrieveGraph,
+    en: "Hybrid retrieval over nodes and relationships in one ranking, reranked with the configured reranker",
+    es: "Recuperación híbrida sobre nodos y relaciones en una sola clasificación, reordenada con el reordenador configurado",
+  }
+- {
+    name: db.retrieveRelationships,
+    en: "Hybrid retrieval over relationship properties",
+    es: "Recuperación híbrida sobre las propiedades de las relaciones",
+  }
+- {
+    name: db.rretrieve,
+    en: "Hybrid retrieval + rerank procedure",
+    es: "Procedimiento de recuperación híbrida y reordenación",
+  }
+- {
+    name: db.schema.nodeProperties,
+    en: "Returns node properties by label",
+    es: "Devuelve las propiedades de nodo por etiqueta",
+  }
+- {
+    name: db.schema.relProperties,
+    en: "Returns relationship properties by type",
+    es: "Devuelve las propiedades de relación por tipo",
+  }
+- {
+    name: db.schema.nodeTypeProperties,
+    en: "Show the derived property schema of the nodes in tabular form.",
+    es: "Muestra en forma de tabla el esquema de propiedades derivado de los nodos.",
+  }
+- {
+    name: db.schema.relTypeProperties,
+    en: "Show the derived property schema of the relationships in tabular form.",
+    es: "Muestra en forma de tabla el esquema de propiedades derivado de las relaciones.",
+  }
+- {
+    name: db.schema.visualization,
+    en: "Visualizes the schema of the data based on available statistics. A new node is returned for each label. The properties represented on the node include: `name` (label name), `indexes` (list of indexes), and `constraints` (list of constraints). A relationship of a given type is returned for all possible combinations of start and end nodes. The properties represented on the relationship include: `name` (type name). Note that this may include additional relationships that do not exist in the data from independently observed start and end label sets. ",
+    es: "Visualiza el esquema",
+  }
+- {
+    name: db.stats.clear,
+    en: "Clear collected data of a given data section. Valid sections are 'QUERIES'",
+    es: "Borra las estadísticas recopiladas",
+  }
+- {
+    name: db.stats.collect,
+    en: "Start data collection of a given data section. Valid sections are 'QUERIES'",
+    es: "Inicia la recopilación de estadísticas",
+  }
+- {
+    name: db.stats.retrieve,
+    en: "Retrieve statistical data about the current database. Valid sections are 'GRAPH COUNTS', 'TOKENS', 'QUERIES', 'META'",
+    es: "Recupera las estadísticas recopiladas",
+  }
+- {
+    name: db.stats.retrieveAllAnTheStats,
+    en: "Retrieves all statistics",
+    es: "Recupera todas las estadísticas",
+  }
+- {
+    name: db.stats.status,
+    en: "Retrieve the status of all available collector daemons, for this database.",
+    es: "Devuelve el estado de la recopilación de estadísticas",
+  }
+- {
+    name: db.stats.stop,
+    en: "Stop data collection of a given data section. Valid sections are 'QUERIES'",
+    es: "Detiene la recopilación de estadísticas",
+  }
+- {
+    name: db.temporal.asOf,
+    en: "Reads temporal graph at point in time",
+    es: "Lee el grafo temporal en un instante",
+  }
+- {
+    name: db.temporal.assertNoOverlap,
+    en: "Checks temporal overlap constraints",
+    es: "Comprueba las restricciones de solapamiento temporal",
+  }
+- {
+    name: db.cdc.current,
+    en: "Returns the change identifier just after the last committed change",
+    es: "Devuelve el identificador de cambio justo después del último cambio confirmado",
+  }
+- {
+    name: db.cdc.earliest,
+    en: "Returns the change identifier just before the earliest retained change",
+    es: "Devuelve el identificador de cambio justo antes del cambio retenido más antiguo",
+  }
+- {
+    name: db.cdc.query,
+    en: "Returns the committed changes after a change identifier, optionally filtered by selectors",
+    es: "Devuelve los cambios confirmados después de un identificador de cambio, opcionalmente filtrados por selectores",
+  }
+- {
+    name: db.txlog.byTxId,
+    en: "Returns WAL entries for a transaction id",
+    es: "Devuelve las entradas WAL de un identificador de transacción",
+  }
+- {
+    name: db.txlog.entries,
+    en: "Returns transaction log entries",
+    es: "Devuelve las entradas del registro de transacciones",
+  }
+- {
+    name: dbms.clientConfig,
+    en: "Returns client config",
+    es: "Devuelve la configuración del cliente",
+  }
+- {
+    name: dbms.components,
+    en: "List DBMS components and their versions.",
+    es: "Enumera los componentes del DBMS",
+  }
+- { name: dbms.functions, en: "Lists functions", es: "Enumera las funciones" }
+- {
+    name: dbms.info,
+    en: "Provides information regarding the DBMS.",
+    es: "Devuelve información del DBMS",
+  }
+- {
+    name: dbms.listConfig,
+    en: "List the currently active configuration settings of NornicDB.",
+    es: "Enumera la configuración del DBMS",
+  }
+- {
+    name: dbms.listConnections,
+    en: "List all accepted network connections at this instance that are visible to the user.",
+    es: "Enumera las conexiones activas del DBMS",
+  }
+- {
+    name: dbms.procedures,
+    en: "Lists procedures",
+    es: "Enumera los procedimientos",
+  }
+- {
+    name: gds.fastRP.stats,
+    en: "Runs FastRP and returns statistics",
+    es: "Ejecuta FastRP y devuelve estadísticas",
+  }
+- {
+    name: gds.fastRP.stream,
+    en: "Streams FastRP embeddings",
+    es: "Transmite embeddings de FastRP",
+  }
+- {
+    name: gds.graph.drop,
+    en: "Drops projected GDS graph",
+    es: "Elimina un grafo GDS proyectado",
+  }
+- {
+    name: gds.graph.exists,
+    en: "Checks if a graph exists in the catalog.",
+    es: "Comprueba si un grafo existe en el catálogo.",
+  }
+- {
+    name: gds.graph.list,
+    en: "Lists projected GDS graphs",
+    es: "Enumera los grafos GDS proyectados",
+  }
+- {
+    name: gds.graph.project,
+    en: "Projects graph into GDS catalog",
+    es: "Proyecta el grafo en el catálogo GDS",
+  }
+- {
+    name: gds.linkPrediction.adamicAdar.stream,
+    en: "Runs Adamic-Adar link prediction",
+    es: "Ejecuta la predicción de enlaces Adamic-Adar",
+  }
+- {
+    name: gds.linkPrediction.commonNeighbors.stream,
+    en: "Runs common neighbors link prediction",
+    es: "Ejecuta la predicción de enlaces por vecinos comunes",
+  }
+- {
+    name: gds.linkPrediction.jaccard.stream,
+    en: "Runs Jaccard link prediction",
+    es: "Ejecuta la predicción de enlaces Jaccard",
+  }
+- {
+    name: gds.linkPrediction.predict.stream,
+    en: "Runs model-based link prediction",
+    es: "Ejecuta la predicción de enlaces basada en modelos",
+  }
+- {
+    name: gds.linkPrediction.preferentialAttachment.stream,
+    en: "Runs preferential attachment link prediction",
+    es: "Ejecuta la predicción de enlaces por asociación preferente",
+  }
+- {
+    name: gds.linkPrediction.resourceAllocation.stream,
+    en: "Runs resource-allocation link prediction",
+    es: "Ejecuta la predicción de enlaces por asignación de recursos",
+  }
+- {
+    name: gds.version,
+    en: "Returns GDS version",
+    es: "Devuelve la versión de GDS",
+  }
+- {
+    name: kp.decayInfo,
+    en: "Returns knowledge-layer scoring configuration",
+    es: "Devuelve la configuración de puntuación de la capa de conocimiento",
+  }
+- {
+    name: kp.deindexStatus,
+    en: "Returns knowledge-layer deindex queue status",
+    es: "Devuelve el estado de la cola de desindexación de la capa de conocimiento",
+  }
+- {
+    name: kp.info,
+    en: "Returns knowledge-layer profile and policy catalog counts",
+    es: "Devuelve los recuentos del catálogo de perfiles y políticas de la capa de conocimiento",
+  }
+- {
+    name: kp.policies,
+    en: "Returns knowledge-layer promotion profiles and policies",
+    es: "Devuelve los perfiles y las políticas de promoción de la capa de conocimiento",
+  }
+- {
+    name: kp.profiles,
+    en: "Returns knowledge-layer decay bundles and bindings",
+    es: "Devuelve los paquetes y enlaces de decaimiento de la capa de conocimiento",
+  }
+- {
+    name: kp.resolve,
+    en: "Resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type",
+    es: "Resuelve la política de puntuación efectiva de la capa de conocimiento para una entidad, un conjunto de etiquetas o un tipo de arista",
+  }
+- {
+    name: kp.suppress,
+    en: "Hides a node or relationship from queries and search until kp.unsuppress shows it again",
+    es: "Oculta un nodo o una relación de las consultas y la búsqueda hasta que kp.unsuppress lo vuelva a mostrar",
+  }
+- {
+    name: kp.unsuppress,
+    en: "Shows a node or relationship hidden by kp.suppress again",
+    es: "Vuelve a mostrar un nodo o una relación ocultos por kp.suppress",
+  }
+- {
+    name: nornicdb.decay.info,
+    en: "Deprecated alias of kp.decayInfo: returns knowledge-layer scoring configuration",
+    es: "Alias obsoleto de kp.decayInfo: devuelve la configuración de puntuación de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.deindexStatus,
+    en: "Deprecated alias of kp.deindexStatus: returns knowledge-layer deindex queue status",
+    es: "Alias obsoleto de kp.deindexStatus: devuelve el estado de la cola de desindexación de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.info,
+    en: "Deprecated alias of kp.info: returns knowledge-layer profile and policy catalog counts",
+    es: "Alias obsoleto de kp.info: devuelve los recuentos del catálogo de perfiles y políticas de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.policies,
+    en: "Deprecated alias of kp.policies: returns knowledge-layer promotion profiles and policies",
+    es: "Alias obsoleto de kp.policies: devuelve los perfiles y las políticas de promoción de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.profiles,
+    en: "Deprecated alias of kp.profiles: returns knowledge-layer decay bundles and bindings",
+    es: "Alias obsoleto de kp.profiles: devuelve los paquetes y enlaces de decaimiento de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.resolve,
+    en: "Deprecated alias of kp.resolve: resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type",
+    es: "Alias obsoleto de kp.resolve: resuelve la política de puntuación efectiva de la capa de conocimiento para una entidad, un conjunto de etiquetas o un tipo de arista",
+  }
+- {
+    name: nornicdb.stats,
+    en: "Returns NornicDB stats",
+    es: "Devuelve estadísticas de NornicDB",
+  }
+- {
+    name: nornicdb.version,
+    en: "Returns NornicDB version",
+    es: "Devuelve la versión de NornicDB",
+  }
+- {
+    name: tx.setMetaData,
+    en: "Attaches a map of data to the transaction. The data will be printed when listing queries, and inserted into the query log.",
+    es: "Establece los metadatos de la transacción",
+  }

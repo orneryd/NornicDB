@@ -1,0 +1,552 @@
+package cypher
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/fabric"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+func TestResidualCompositePreambles(t *testing.T) {
+	for _, mode := range []string{"nornic", "antlr"} {
+		t.Run(mode, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(mode)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			manager := newCompositeNativeManager(t, nil)
+			var err error
+			t.Cleanup(func() { require.NoError(t, manager.Close()) })
+			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "preamble_shard"}))
+			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "preamble_cmp", []multidb.ConstituentRef{
+				{Alias: "sh", DatabaseName: "preamble_shard", Type: "local", AccessMode: "read_write"},
+			}))
+			shard, err := manager.GetStorage("preamble_shard")
+			require.NoError(t, err)
+			_, err = NewStorageExecutor(shard).Execute(context.Background(), "CREATE (:T)", nil)
+			require.NoError(t, err)
+			store, err := manager.GetStorage("preamble_cmp")
+			require.NoError(t, err)
+			exec := NewStorageExecutor(store)
+			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+			_, err = exec.Execute(context.Background(), "BEGIN", nil)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_, rollbackError := exec.Execute(context.Background(), "ROLLBACK", nil)
+				require.NoError(t, rollbackError)
+			})
+			for _, prefix := range []string{"EXPLAIN", "PROFILE", "CYPHER 5", "CYPHER 5 EXPLAIN", "EXPLAIN CYPHER 5"} {
+				t.Run(prefix, func(t *testing.T) {
+					result, err := exec.Execute(context.Background(), prefix+" USE preamble_cmp.sh MATCH (n:T) RETURN count(n) AS count", nil)
+					require.NoError(t, err)
+					if strings.Contains(prefix, "EXPLAIN") {
+						require.Empty(t, result.Rows)
+					} else {
+						require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+					}
+					if strings.Contains(prefix, "EXPLAIN") || prefix == "PROFILE" {
+						require.NotNil(t, result.Metadata["plan"])
+					}
+				})
+			}
+			_, err = exec.Execute(context.Background(), "USE preamble_cmp.sh EXPLAIN RETURN 1", nil)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestCompositeExplicitTx_SecondWriteShardRejected(t *testing.T) {
+	mgr := newCompositeNativeManager(t, nil)
+	var err error
+	defer mgr.Close()
+
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_a"}))
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_b"}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
+		{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
+		{Alias: "b", DatabaseName: "shard_b", Type: "local", AccessMode: "read_write"},
+	}))
+
+	cmpStore, err := mgr.GetStorage("cmp")
+	require.NoError(t, err)
+
+	exec := NewStorageExecutor(cmpStore)
+	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+	ctx := context.Background()
+	t.Logf("composite executor storage type: %T", exec.storage)
+
+	_, err = exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	require.NotNil(t, exec.txContext)
+	require.IsType(t, &fabric.FabricTransaction{}, exec.txContext.tx)
+
+	firstWrite := "CALL { USE cmp.a CREATE (n:W {id: '1'}) RETURN count(n) AS c } RETURN c"
+	secondWrite := "CALL { USE cmp.b CREATE (n:W {id: '2'}) RETURN count(n) AS c } RETURN c"
+	_, err = exec.Execute(ctx, firstWrite, nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, secondWrite, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Writing to more than one database per transaction is not allowed")
+
+	_, err = exec.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+}
+
+func TestCompositeExplicitTx_BeginCommitLifecycle(t *testing.T) {
+	mgr := newCompositeNativeManager(t, nil)
+	var err error
+	defer mgr.Close()
+
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_c"}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp2", []multidb.ConstituentRef{
+		{Alias: "c", DatabaseName: "shard_c", Type: "local", AccessMode: "read_write"},
+	}))
+
+	cmpStore, err := mgr.GetStorage("cmp2")
+	require.NoError(t, err)
+
+	exec := NewStorageExecutor(cmpStore)
+	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+	ctx := context.Background()
+
+	_, err = exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "CALL { USE cmp2.c CREATE (n:T {id: 'ok'}) RETURN count(n) AS c } RETURN c", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "COMMIT", nil)
+	require.NoError(t, err)
+}
+
+func TestGh683_CompositeTerminalContext(t *testing.T) {
+	for _, canceledCommit := range []bool{false, true} {
+		t.Run(fmt.Sprint(canceledCommit), func(t *testing.T) {
+			manager := newCompositeNativeManager(t, nil)
+			var err error
+			defer manager.Close()
+			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "share_shard"}))
+			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "cmp_sh", []multidb.ConstituentRef{{Alias: "sh", DatabaseName: "share_shard", Type: "local", AccessMode: "read_write"}}))
+			store, err := manager.GetStorage("cmp_sh")
+			require.NoError(t, err)
+			exec := NewStorageExecutor(store)
+			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+			ctx := context.Background()
+			_, err = exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+			runCtx, cancelRun := context.WithCancel(ctx)
+			_, err = exec.Execute(runCtx, "USE cmp_sh.sh CREATE (:TxShare {id:1})", nil)
+			require.NoError(t, err)
+			cancelRun()
+			commitCtx, cancelCommit := context.WithCancel(ctx)
+			defer cancelCommit()
+			if canceledCommit {
+				cancelCommit()
+			}
+			_, err = exec.Execute(commitCtx, "COMMIT", nil)
+			if canceledCommit {
+				require.ErrorIs(t, err, context.Canceled)
+				_, err = exec.Execute(ctx, "ROLLBACK", nil)
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			shard, err := manager.GetStorage("share_shard")
+			require.NoError(t, err)
+			nodes, err := shard.GetNodesByLabel("TxShare")
+			require.NoError(t, err)
+			if canceledCommit {
+				require.Empty(t, nodes)
+			} else {
+				require.Len(t, nodes, 1)
+			}
+		})
+	}
+}
+
+func TestCompositeExplicitTx_DocumentationExamples(t *testing.T) {
+	mgr := newCompositeNativeManager(t, nil)
+	var err error
+	defer mgr.Close()
+
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "nornic_cmp_tx", []multidb.ConstituentRef{
+		{Alias: "tr", DatabaseName: "nornic_tr", Type: "local", AccessMode: "read_write"},
+		{Alias: "txt", DatabaseName: "nornic_txt", Type: "local", AccessMode: "read_write"},
+	}))
+
+	cmpStore, err := mgr.GetStorage("nornic_cmp_tx")
+	require.NoError(t, err)
+	exec := NewStorageExecutor(cmpStore)
+	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+	ctx := context.Background()
+
+	// Docs example: one write shard per explicit transaction succeeds.
+	_, err = exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+CALL {
+  USE nornic_cmp_tx.tr
+  CREATE (t:Translation {id: "tr-tx-1", textKey: "ORDERS_WHERE"})
+  RETURN count(t) AS c
+}
+RETURN c
+`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "COMMIT", nil)
+	require.NoError(t, err)
+
+	// Docs example: second write shard in same explicit transaction is rejected.
+	_, err = exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+CALL {
+  USE nornic_cmp_tx.tr
+  CREATE (t:Translation {id: "tr-tx-2"})
+  RETURN count(t) AS c
+}
+RETURN c
+`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+CALL {
+  USE nornic_cmp_tx.txt
+  CREATE (tt:TranslationText {translationId: "tr-tx-2", locale: "en-US", value: "Where are my orders?"})
+  RETURN count(tt) AS c
+}
+RETURN c
+`, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Writing to more than one database per transaction is not allowed")
+	_, err = exec.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+}
+
+// A composite explicit transaction that fails releases its local
+// participants' MERGE key locks when it fails, not when the client ends it: a
+// competing MERGE of the key completes while the failed transaction is still
+// open. Ending it then releases nothing a second time (the competitor keeps
+// its key), and the participant's write is discarded.
+func TestCompositeExplicitTx_FailureReleasesParticipantMergeKeys(t *testing.T) {
+	failures := []struct{ name, statement string }{
+		{"outer statement error", "RETURN ("},
+		{"second write shard", "CALL { USE cmp_mk.b CREATE (n:W) RETURN count(n) AS c } RETURN c"},
+	}
+	for _, mode := range []string{"nornic", "antlr"} {
+		for _, failure := range failures {
+			for _, end := range []string{"ROLLBACK", "COMMIT"} {
+				t.Run(mode+"/"+failure.name+"/"+end, func(t *testing.T) {
+					previous := config.GetParserType()
+					config.SetParserType(mode)
+					t.Cleanup(func() { config.SetParserType(previous) })
+					mgr := newCompositeNativeManager(t, nil)
+					var err error
+					t.Cleanup(func() { require.NoError(t, mgr.Close()) })
+					require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "mk_a"}))
+					require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "mk_b"}))
+					require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_mk", []multidb.ConstituentRef{
+						{Alias: "a", DatabaseName: "mk_a", Type: "local", AccessMode: "read_write"},
+						{Alias: "b", DatabaseName: "mk_b", Type: "local", AccessMode: "read_write"},
+					}))
+					shard, err := mgr.GetStorage("mk_a")
+					require.NoError(t, err)
+					ctx := context.Background()
+					_, err = NewStorageExecutor(shard).Execute(ctx, "CREATE CONSTRAINT mk_u FOR (u:U) REQUIRE u.k IS UNIQUE", nil)
+					require.NoError(t, err)
+					mergeKey := func(exec *StorageExecutor) <-chan error {
+						done := make(chan error, 1)
+						go func() {
+							_, err := exec.Execute(ctx, "MERGE (u:U {k: 1}) RETURN u.k AS k", nil)
+							done <- err
+						}()
+						return done
+					}
+
+					cmpStore, err := mgr.GetStorage("cmp_mk")
+					require.NoError(t, err)
+					exec := NewStorageExecutor(cmpStore)
+					exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+					_, err = exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+					_, err = exec.Execute(ctx, "CALL { USE cmp_mk.a MERGE (u:U {k: 1}) RETURN u.k AS k } RETURN k", nil)
+					require.NoError(t, err)
+					_, err = exec.Execute(ctx, failure.statement, nil)
+					require.Error(t, err)
+
+					competitor := NewStorageExecutor(shard)
+					_, err = competitor.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = competitor.Execute(ctx, "ROLLBACK", nil) })
+					select {
+					case err := <-mergeKey(competitor):
+						require.NoError(t, err)
+					case <-time.After(10 * time.Second):
+						t.Fatal("a MERGE of the failed transaction's key waits for the failed transaction to end")
+					}
+
+					third := mergeKey(NewStorageExecutor(shard))
+					_, err = exec.Execute(ctx, end, nil)
+					if end == "COMMIT" {
+						require.ErrorContains(t, err, "rolled back because a statement in it failed")
+					} else {
+						require.NoError(t, err)
+					}
+					select {
+					case err := <-third:
+						t.Fatalf("ending the failed transaction released the competitor's key (MERGE returned %v)", err)
+					case <-time.After(300 * time.Millisecond):
+					}
+					_, err = competitor.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+					select {
+					case err := <-third:
+						require.NoError(t, err)
+					case <-time.After(10 * time.Second):
+						t.Fatal("a MERGE of the key waits after its holder committed")
+					}
+
+					res, err := NewStorageExecutor(shard).Execute(ctx, "MATCH (u:U {k: 1}) RETURN count(u) AS c", nil)
+					require.NoError(t, err)
+					require.Equal(t, [][]interface{}{{int64(1)}}, res.Rows)
+				})
+			}
+		}
+	}
+}
+
+type compositeTxTestOperation string
+
+const (
+	compositeTxTestCommit   compositeTxTestOperation = "COMMIT"
+	compositeTxTestRollback compositeTxTestOperation = "ROLLBACK"
+)
+
+func TestCompositeExplicitTx_LocalTerminalWrites(t *testing.T) {
+	cases := []struct {
+		operation                                      compositeTxTestOperation
+		shard, composite, alias, writeQuery, readQuery string
+		wantCount                                      int64
+	}{
+		{compositeTxTestRollback, "rollback_shard", "cmp_rb", "rb", `
+CALL {
+  USE cmp_rb.rb
+  CREATE (n:TxRollback {id: 'rb-1'})
+  RETURN count(n) AS c
+}
+RETURN c
+`, "CALL { USE cmp_rb.rb MATCH (n:TxRollback {id: 'rb-1'}) RETURN count(n) AS c } RETURN c", 0},
+		{compositeTxTestCommit, "commit_shard", "cmp_cm", "cm", `
+CALL {
+  USE cmp_cm.cm
+  CREATE (n:TxCommit {id: 'cm-1'})
+  RETURN count(n) AS c
+}
+RETURN c
+`, "CALL { USE cmp_cm.cm MATCH (n:TxCommit {id: 'cm-1'}) RETURN count(n) AS c } RETURN c", 1},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.operation), func(t *testing.T) {
+			mgr := newCompositeNativeManager(t, nil)
+			var err error
+			defer mgr.Close()
+
+			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: tc.shard}))
+			require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), tc.composite, []multidb.ConstituentRef{
+				{Alias: tc.alias, DatabaseName: tc.shard, Type: "local", AccessMode: "read_write"},
+			}))
+
+			cmpStore, err := mgr.GetStorage(tc.composite)
+			require.NoError(t, err)
+
+			exec := NewStorageExecutor(cmpStore)
+			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+			ctx := context.Background()
+
+			_, err = exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+
+			_, err = exec.Execute(ctx, tc.writeQuery, nil)
+			require.NoError(t, err)
+
+			_, err = exec.Execute(ctx, string(tc.operation), nil)
+			require.NoError(t, err)
+
+			verify := NewStorageExecutor(cmpStore)
+			verify.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+			res, err := verify.Execute(ctx, tc.readQuery, nil)
+			require.NoError(t, err)
+			require.Len(t, res.Rows, 1)
+			require.Equal(t, tc.wantCount, res.Rows[0][0])
+
+		})
+	}
+}
+
+func TestCompositeExplicitTx_RemoteParticipantTerminalLifecycle(t *testing.T) {
+	cases := []struct {
+		operation                              compositeTxTestOperation
+		database, composite, path, txID, query string
+		wantCommit, wantRollback               int
+	}{
+		{compositeTxTestCommit, "tenant_remote", "cmp_remote", "/db/tenant_remote/tx", "1", "CALL { USE cmp_remote.r CREATE (n:RemoteTx {id: 'r1'}) RETURN count(n) AS c } RETURN c", 1, 0},
+		{compositeTxTestRollback, "tenant_remote_rb", "cmp_remote_rb", "/db/tenant_remote_rb/tx", "2", "CALL { USE cmp_remote_rb.r CREATE (n:RemoteTx {id: 'r2'}) RETURN count(n) AS c } RETURN c", 0, 1},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.operation), func(t *testing.T) {
+			var (
+				openCount     int
+				execCount     int
+				commitCount   int
+				rollbackCount int
+			)
+			var remote *httptest.Server
+			remote = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, tc.path):
+					openCount++
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"results": []any{},
+						"errors":  []any{},
+						"commit":  remote.URL + tc.path + "/" + tc.txID + "/commit",
+					})
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, tc.path+"/"+tc.txID):
+					execCount++
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"results": []any{
+							map[string]any{
+								"columns": []string{"c"},
+								"data":    []any{map[string]any{"row": []any{1}}},
+							},
+						},
+						"errors": []any{},
+					})
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, tc.path+"/"+tc.txID+"/commit"):
+					commitCount++
+					_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}, "errors": []any{}})
+				case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, tc.path+"/"+tc.txID):
+					rollbackCount++
+					_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}, "errors": []any{}})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer remote.Close()
+
+			mgr := newCompositeNativeManager(t, &multidb.Config{
+				DefaultDatabase: "nornic",
+				SystemDatabase:  "system",
+				RemoteEngineFactory: func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
+					return storage.NewRemoteEngine(storage.RemoteEngineConfig{
+						URI:       ref.URI,
+						Database:  ref.DatabaseName,
+						AuthToken: authToken,
+						User:      ref.User,
+						Password:  ref.Password,
+					})
+				},
+			})
+			var err error
+			defer mgr.Close()
+
+			require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), tc.composite, []multidb.ConstituentRef{
+				{Alias: "r", DatabaseName: tc.database, Type: "remote", AccessMode: "read_write", URI: remote.URL, AuthMode: "oidc_forwarding"},
+			}))
+
+			cmpStore, err := mgr.GetStorageWithAuth(tc.composite, "Bearer tx-token")
+			require.NoError(t, err)
+			exec := NewStorageExecutor(cmpStore)
+			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+			ctx := context.Background()
+
+			_, err = exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, tc.query, nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, string(tc.operation), nil)
+			require.NoError(t, err)
+
+			require.Equal(t, 1, openCount)
+			require.Equal(t, 1, execCount)
+			require.Equal(t, tc.wantCommit, commitCount)
+			require.Equal(t, tc.wantRollback, rollbackCount)
+
+		})
+	}
+}
+
+// TestCompositeExplicitTx_StatementsShareShardTransaction: the statements of
+// an explicit transaction on a composite database run in one transaction per
+// constituent. A statement sees what earlier ones wrote, and COMMIT keeps
+// every statement's writes, as in Neo4j; the relationship counters (count by
+// type and by label and type) stay equal to a scan.
+func TestCompositeExplicitTx_StatementsShareShardTransaction(t *testing.T) {
+	mgr := newCompositeNativeManager(t, nil)
+	var err error
+	defer mgr.Close()
+
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "share_shard"}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_sh", []multidb.ConstituentRef{
+		{Alias: "sh", DatabaseName: "share_shard", Type: "local", AccessMode: "read_write"},
+	}))
+	cmpStore, err := mgr.GetStorage("cmp_sh")
+	require.NoError(t, err)
+	ctx := context.Background()
+	count := func(exec *StorageExecutor) interface{} {
+		res, err := exec.Execute(ctx, "USE cmp_sh.sh MATCH (n:TxShare) RETURN count(n) AS c", nil)
+		require.NoError(t, err)
+		require.Len(t, res.Rows, 1)
+		return res.Rows[0][0]
+	}
+	// requireRelationshipCounts compares the counter-served relationship
+	// counts with a scan that must read every relationship.
+	requireRelationshipCounts := func(exec *StorageExecutor, want int64) {
+		for _, query := range []string{
+			"USE cmp_sh.sh MATCH ()-[r:TS]->() RETURN count(r) AS c",
+			"USE cmp_sh.sh MATCH (:TxShare)-[r:TS]->() RETURN count(r) AS c",
+			"USE cmp_sh.sh MATCH ()-[r:TS]->() WHERE r.missing IS NULL RETURN count(r) AS c",
+		} {
+			res, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, want, res.Rows[0][0], query)
+		}
+	}
+
+	for _, end := range []string{"COMMIT", "ROLLBACK"} {
+		exec := NewStorageExecutor(cmpStore)
+		exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+		_, err = exec.Execute(ctx, "BEGIN", nil)
+		require.NoError(t, err)
+		_, err = exec.Execute(ctx, "USE cmp_sh.sh CREATE (:TxShare {id: 1})-[:TS]->(:TxEnd)", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), count(exec), end)
+		_, err = exec.Execute(ctx, "USE cmp_sh.sh CREATE (:TxShare {id: 2})-[:TS]->(:TxEnd)", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), count(exec), end)
+		_, err = exec.Execute(ctx, end, nil)
+		require.NoError(t, err)
+
+		verify := NewStorageExecutor(cmpStore)
+		verify.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+		if end == "COMMIT" {
+			require.Equal(t, int64(2), count(verify))
+			requireRelationshipCounts(verify, 2)
+			_, err = verify.Execute(ctx, "USE cmp_sh.sh MATCH (n) DETACH DELETE n", nil)
+			require.NoError(t, err)
+		} else {
+			require.Equal(t, int64(0), count(verify))
+		}
+		requireRelationshipCounts(verify, 0)
+	}
+}

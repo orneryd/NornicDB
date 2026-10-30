@@ -1,0 +1,6 @@
+{
+  "author": "#1667 implementation lane (Codex)",
+  "record": "storage-context-boundaries.json",
+  "sha256": "a0427d1b7cc0cbe76fdca1575b38dd7722075be274c42bb5587479050bf240c1",
+  "responsibility": "Exact direct context-boundary population and compiled class proofs; deviations remain OPEN."
+}

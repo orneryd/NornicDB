@@ -1,0 +1,144 @@
+- id: cyphersubqueries.call_not_found
+  description: Missing CALL keyword in a Cypher query.
+  other: CALL not found in query
+- id: cyphersubqueries.match_before_call_not_found
+  description: Missing MATCH keyword before CALL. Keywords are untranslated Cypher syntax.
+  other: MATCH not found before CALL
+- id: cyphersubqueries.node_pattern_invalid
+  description: Invalid node pattern. Pattern is untranslated Cypher syntax.
+  other: "could not parse node pattern: {{.Pattern}}"
+- id: cyphersubqueries.outer_match_bindings_failed
+  description: Outer MATCH binding failure. Cause is untranslated diagnostic text.
+  other: "failed to evaluate outer MATCH bindings: {{.Cause}}"
+- id: cyphersubqueries.node_load_failed
+  description: Node loading failure. Cause is untranslated diagnostic text.
+  other: "failed to get nodes: {{.Cause}}"
+- id: cyphersubqueries.call_for_node_failed
+  description: Procedure failure for a bound node. Node and Cause are untranslated diagnostic values.
+  other: "failed to execute CALL for node {{.Node}}: {{.Cause}}"
+- id: cyphersubqueries.outer_match_seeds_failed
+  description: Outer MATCH seed failure. Cause is untranslated diagnostic text.
+  other: "failed to evaluate outer MATCH seeds: {{.Cause}}"
+- id: cyphersubqueries.call_body_empty
+  description: Empty CALL subquery body. CALL syntax is untranslated.
+  other: "invalid CALL {} subquery: empty body"
+- id: cyphersubqueries.correlated_union_parse_failed
+  description: Correlated CALL UNION parse failure. Keywords are untranslated Cypher syntax.
+  other: failed to parse UNION branches in correlated CALL subquery
+- id: cyphersubqueries.union_with_imports_failed
+  description: UNION WITH import parse failure. Branch and Cause are untranslated diagnostic values.
+  other: "failed to parse UNION branch {{.Branch}} WITH imports: {{.Cause}}"
+- id: cyphersubqueries.static_union_branch_failed
+  description: Static UNION branch failure. Branch and Cause are untranslated diagnostic values.
+  other: "failed static UNION subquery branch {{.Branch}}: {{.Cause}}"
+- id: cyphersubqueries.correlated_union_branch_failed
+  description: Correlated UNION branch failure. Branch, Seed, and Cause are untranslated diagnostic values.
+  other: "failed correlated UNION subquery branch {{.Branch}} for seed {{.Seed}}: {{.Cause}}"
+- id: cyphersubqueries.collect_single_column
+  description: COLLECT subquery with a RETURN of another column count. Columns is an untranslated count.
+  other: "a COLLECT subquery must return exactly one column (got {{.Columns}})"
+- id: cyphersubqueries.correlated_import_failed
+  description: Correlated import resolution failure. Import and Cause are untranslated diagnostic values.
+  other: "failed to resolve correlated import {{.Import}}: {{.Cause}}"
+- id: cyphersubqueries.optional_import_fallback_failed
+  description: Optional import fallback failure. Import and Cause are untranslated diagnostic values.
+  other: "failed optional import fallback for {{.Import}}: {{.Cause}}"
+- id: cyphersubqueries.with_import_unknown_variable
+  description: Unknown WITH import. Variable is an untranslated Cypher identifier.
+  other: "CALL subquery WITH imports unknown variable: {{.Variable}}"
+- id: cyphersubqueries.correlated_variable_empty
+  description: Empty correlated variable validation failure.
+  other: empty correlated variable
+- id: cyphersubqueries.outer_match_projection_missing
+  description: Missing outer MATCH projection. Variable includes untranslated Go quoting.
+  other: "outer MATCH did not project correlated variable {{.Variable}}"
+- id: cyphersubqueries.batch_size_invalid
+  description: Invalid CALL IN TRANSACTIONS batch size. Value is untranslated Cypher input.
+  other: "CALL IN TRANSACTIONS requires a positive INTEGER batch size, got {{.Value}}"
+- id: cyphersubqueries.call_body_expected
+  description: Empty CALL subquery body with expected syntax. Syntax is untranslated.
+  other: "invalid CALL {} subquery: empty body (expected CALL { <query> })"
+- id: cyphersubqueries.call_error
+  description: CALL subquery execution wrapper. Cause is untranslated diagnostic text.
+  other: "CALL subquery error: {{.Cause}}"
+- id: cyphersubqueries.transaction_import_shape_unsupported
+  description: Unsupported transactional CALL import. Variable is an untranslated Cypher identifier.
+  other: "unsupported CALL ({{.Variable}}) IN TRANSACTIONS import shape"
+- id: cyphersubqueries.transaction_body_empty
+  description: Empty transactional CALL body. Variable is an untranslated Cypher identifier.
+  other: "invalid CALL ({{.Variable}}) IN TRANSACTIONS: empty body"
+- id: cyphersubqueries.transaction_batch_failed
+  description: Transactional CALL batch failure. Variable, Batch, and Cause are untranslated diagnostic values.
+  other: "CALL ({{.Variable}}) IN TRANSACTIONS batch {{.Batch}} failed: {{.Cause}}"
+- id: cyphersubqueries.execution_failed
+  description: Subquery execution failure. Cause is untranslated diagnostic text.
+  other: "subquery execution failed: {{.Cause}}"
+- id: cyphersubqueries.first_batch_failed
+  description: First batch execution failure. Cause is untranslated diagnostic text.
+  other: "batch 1 failed: {{.Cause}}"
+- id: cyphersubqueries.batch_failed
+  description: Iterative batch execution failure. Batch and Cause are untranslated diagnostic values.
+  other: "batch {{.Batch}} failed: {{.Cause}}"
+- id: cyphersubqueries.batch_progress_failed
+  description: Counted batch execution failure. Batch, Total, and Cause are untranslated diagnostic values.
+  other: "batch {{.Batch}}/{{.Total}} failed: {{.Cause}}"
+- id: cyphersubqueries.after_call_clause_unsupported
+  description: Unsupported clause after CALL. Clause and supported keywords are untranslated Cypher syntax.
+  other: "unsupported clause after CALL {}: {{.Clause}} (supported: RETURN, ORDER BY, SKIP, LIMIT)"
+- id: cyphersubqueries.chained_transactions_unsupported
+  description: Unsupported chained transactional CALL. BatchSize is an untranslated count.
+  other: "CALL {} IN TRANSACTIONS is not supported in chained CALL subqueries (batchSize={{.BatchSize}})"
+- id: cyphersubqueries.with_query_clause_required
+  description: WITH import lacks a following query clause. Keywords are untranslated Cypher syntax.
+  other: "invalid CALL {} subquery: WITH must be followed by a query clause"
+- id: cyphersubqueries.with_body_empty
+  description: WITH import has an empty query body. Keywords are untranslated Cypher syntax.
+  other: "invalid CALL {} subquery: empty query body after WITH"
+- id: cyphersubqueries.with_import_expression_invalid
+  description: Invalid WITH import expression. Expression includes untranslated Go quoting.
+  other: "invalid WITH import expression: {{.Expression}}"
+- id: cyphersubqueries.with_imports_required
+  description: WITH clause imports no variables. Keywords are untranslated Cypher syntax.
+  other: "invalid CALL {} subquery: WITH clause does not import variables"
+- id: cyphersubqueries.seed_row_missing_variable
+  description: Correlated seed row lacks a variable. Variable is an untranslated Cypher identifier.
+  other: "CALL subquery seed row missing variable: {{.Variable}}"
+- id: cyphersubqueries.batched_lookup_failed
+  description: Batched correlated CALL lookup failure. Cause is untranslated diagnostic text.
+  other: "batched correlated CALL lookup failed: {{.Cause}}"
+- id: cyphersubqueries.batched_lookup_columns_unexpected
+  description: Batched correlated CALL returned unexpected columns. Columns is untranslated diagnostic text.
+  other: "batched correlated CALL lookup produced unexpected columns: {{.Columns}}"
+- id: cyphersubqueries.rag_candidates_required
+  description: db.rerank requires candidates. Procedure name is untranslated.
+  other: db.rerank requires non-empty candidates
+- id: cyphersubqueries.inference_manager_unavailable
+  description: Inference service configuration failure.
+  other: inference manager is not configured
+- id: cyphersubqueries.infer_messages_empty
+  description: db.infer received no valid messages. Procedure name is untranslated.
+  other: db.infer messages cannot be empty
+- id: cyphersubqueries.infer_prompt_or_messages_required
+  description: db.infer lacks input. Procedure and request field names are untranslated.
+  other: db.infer requires prompt or messages
+- id: cyphersubqueries.query_required
+  description: Retrieval request lacks query text. Request field name is untranslated.
+  other: query is required
+- id: cyphersubqueries.rag_candidate_id_required
+  description: db.rerank candidate lacks an id. Procedure and field name are untranslated.
+  other: db.rerank candidate id is required
+- id: cyphersubqueries.rag_fail_closed_invalid
+  description: db.retrieve failClosed received an invalid field. Procedure, flag, and Field are untranslated machine names.
+  other: "db.retrieve failClosed has an invalid {{.Field}} value"
+- id: cyphersubqueries.where_filter_invalid
+  description: A retrieval procedure received a where option that is not a STRING. Procedure is an untranslated machine name; STRING and node are Cypher terms.
+  other: "{{.Procedure}} where must be a STRING: a predicate on node"
+- id: cyphersubqueries.rag_fail_closed_embedding_unavailable
+  description: db.retrieve failClosed could not obtain a usable query embedding. Cause is untranslated diagnostic text.
+  other: "db.retrieve failClosed requires a usable query embedding: {{.Cause}}"
+- id: cyphersubqueries.batch_context_invalid
+  description: Invalid transactional CALL placement or unsupported option. Reason is untranslated diagnostic detail.
+  other: "invalid transactional CALL context: {{.Reason}}"
+- id: cyphersubqueries.batch_aggregate_invalid
+  description: An aggregate was evaluated outside an aggregation operator.
+  other: "Aggregations should not be used like this."

@@ -1,0 +1,3187 @@
+[
+  {
+    "name": "monster 728 unfiltered product aggregate",
+    "setup": ["CREATE (:Doc {v: 1}), (:Doc {v: 2}), (:Doc {v: 3})"],
+    "query": "MATCH (a:Doc), (b:Doc) RETURN count(*) AS c, sum(a.v + b.v) AS total"
+  },
+  {
+    "name": "monster 728 grouped product aggregate",
+    "setup": ["CREATE (:Doc {v: 1}), (:Doc {v: 2}), (:Doc {v: 3})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a.v AS value, sum(b.v) AS total RETURN value, total ORDER BY value",
+    "ordered": true
+  },
+  {
+    "name": "monster 640 bare endpoint relationship merge",
+    "query": "MERGE (a)-[r:R]->(b) RETURN count(a) AS nodes, count(r) AS relationships"
+  },
+  {
+    "name": "monster 640 undirected endpoint relationship merge",
+    "query": "MERGE (a)-[r:R]-(b) RETURN count(a) AS nodes, count(r) AS relationships"
+  },
+  {
+    "name": "monster 640 labeled endpoint relationship merge",
+    "query": "MERGE (a:Source)-[r:R]->(b) RETURN count(a) AS nodes, count(r) AS relationships"
+  },
+  {
+    "name": "monster 648 transactional call preserves outer count",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) CALL (t) { CREATE (:X {i: t.id}) } IN TRANSACTIONS RETURN count(*) AS c"
+  },
+  {
+    "name": "monster 648 empty transactional call",
+    "query": "MATCH (t:T) CALL (t) { CREATE (:X {i: t.id}) } IN TRANSACTIONS RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind unfiltered range count",
+    "query": "UNWIND range(1, 30000) AS x RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind unfiltered range sum",
+    "query": "UNWIND range(1, 30000) AS x RETURN sum(x) AS s"
+  },
+  {
+    "name": "unwind unfiltered range projection count",
+    "query": "UNWIND range(1, 30000) AS x WITH x RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind incremental grouped with window",
+    "query": "UNWIND range(1, 4) AS x WITH x % 2 AS parity, sum(x) AS total ORDER BY total DESC LIMIT 1 RETURN parity, total"
+  },
+  {
+    "name": "unwind incremental nested aggregate expressions",
+    "query": "UNWIND [1, 2, 3] AS x RETURN {total: sum(x), counts: [count(*), count(DISTINCT x)]} AS stats, sum(x) + count(*) AS combined"
+  },
+  {
+    "name": "unwind incremental empty aggregates",
+    "query": "UNWIND [] AS x RETURN count(*), sum(x), avg(x), min(x), max(x), collect(x), stDev(x), stDevP(x)"
+  },
+  {
+    "name": "unwind incremental percentile and deviation",
+    "query": "UNWIND [1, 2, 3] AS x RETURN stDev(x), stDevP(x), percentileCont(x, 0.5), percentileDisc(x, 0.5)"
+  },
+  {
+    "name": "unwind incremental conversion error",
+    "query": "UNWIND range(1, 2) AS x RETURN collect(toInteger([x]))"
+  },
+  {
+    "name": "unwind incremental percentile first argument",
+    "query": "UNWIND range(1, 2) AS x RETURN percentileCont(x, x)"
+  },
+  {
+    "name": "unwind incremental percentile argument error",
+    "query": "UNWIND range(1, 2) AS x RETURN percentileCont(x, x + 1)"
+  },
+  {
+    "name": "unwind shared integer aggregation types",
+    "query": "UNWIND [1,2,3] AS x RETURN sum(x) AS s, count(x) AS c, avg(x) AS a, min(x) AS mn, max(x) AS mx, collect(x)[..2] AS cs"
+  },
+  {
+    "name": "unwind lazy range filter count",
+    "query": "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind range window before filter",
+    "query": "UNWIND range(1, 4) AS x WITH x LIMIT 2 WHERE x > 2 RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind range projected filters",
+    "query": "UNWIND range(1, 4) AS x WITH x + 1 AS y WHERE y > 2 WITH y * 2 AS z WHERE z < 9 RETURN collect(z) AS zs"
+  },
+  {
+    "name": "unwind descending range ordered limit",
+    "query": "UNWIND range(5, 1, -2) AS x WITH x ORDER BY x LIMIT 2 RETURN collect(x) AS xs"
+  },
+  {
+    "name": "unwind nested range filter",
+    "query": "UNWIND [1, 2] AS start UNWIND range(start, 2) AS x WITH x WHERE x > 1 RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind range shared mutation",
+    "query": "UNWIND range(1, 3) AS x WITH x WHERE x > 1 CREATE (n:RangeRow {v: x}) RETURN n.v ORDER BY n.v",
+    "ordered": true
+  },
+  {
+    "name": "monster 514 malformed reduce before create",
+    "query": "CREATE (a:T {n: reduce(s = 0, x IN [1, 2] \\| s + x)}) RETURN a.n"
+  },
+  {
+    "name": "monster 514 malformed comprehension before create",
+    "query": "CREATE (n:T {a: [x IN [1, 2] \\| x * 2]}) RETURN n.a"
+  },
+  {
+    "name": "monster 514 malformed second create has no partial effects",
+    "query": "CREATE (:Before) CREATE (a:T {n: reduce(s = 0, x IN [1, 2] \\| s + x)}) RETURN a.n"
+  },
+  {
+    "name": "monster 514 literal optional tab garbage",
+    "setup": ["CREATE (:K {id: 1})-[:R]->(:K {id: 2})"],
+    "query": "MATCH (n:K {id: 1}) OPTIONAL<tab>MATCH (n)-[:R]->(m) RETURN n.id"
+  },
+  {
+    "name": "monster 657 missing startNode argument member access",
+    "query": "RETURN startNode(r).id AS s"
+  },
+  {
+    "name": "monster 657 missing endNode argument member access",
+    "query": "RETURN endNode(r).id AS s"
+  },
+  {
+    "name": "monster 657 missing endpoint before mutation",
+    "query": "CREATE (n:T) SET n.x = startNode(r).id RETURN n"
+  },
+  {
+    "name": "monster 698 floating string formatting",
+    "query": "RETURN toString(1.0), toString(1e-7), toString(1e16), toString(123456789.0), toString(-0.0)"
+  },
+  {
+    "name": "monster 698 full uppercase expansion",
+    "query": "RETURN toUpper('\u00df'), upper('stra\u00dfe')"
+  },
+  {
+    "name": "monster 698 boolean numeric conversions",
+    "query": "RETURN toInteger(true), toInteger(false), toBoolean(1), toBoolean(0), toFloatOrNull(true)"
+  },
+  {
+    "name": "monster 698 known function nulls",
+    "query": "RETURN toUpper(null), toLower(null), substring(null, 1), substring('abc', null), left(null, 1), right(null, 1), replace(null, 'a', 'b'), split(null, ','), tail(null)"
+  },
+  {
+    "name": "monster 698 null function property values",
+    "query": "CREATE (n:T {upper: toUpper(null), text: toString(null), part: substring(null, 1), rest: tail(null)}) RETURN properties(n)"
+  },
+  {
+    "name": "monster 698 exact integer float equality",
+    "query": "RETURN 9007199254740993 = 9007199254740992.0, 9007199254740992 = 9007199254740992.0"
+  },
+  {
+    "name": "foreach merge on create retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1, 2] | MERGE (w:W {id: i}) ON CREATE SET w.x = i) RETURN t.id"
+  },
+  {
+    "name": "foreach merge on create and set retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1, 2] | MERGE (w:W {id: i}) ON CREATE SET w.x = i SET w.y = 1) RETURN t.id"
+  },
+  {
+    "name": "foreach create set retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1, 2] | CREATE (w:W {id: i}) SET w.y = 1) RETURN t.id"
+  },
+  {
+    "name": "foreach merge set retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1, 2] | MERGE (w:W {id: i}) SET w.y = 1) RETURN t.id"
+  },
+  {
+    "name": "create merge on create set property",
+    "query": "CREATE (a:B) MERGE (n:UK {k: 2}) ON CREATE SET n.k = 1 RETURN n.k"
+  },
+  {
+    "name": "create merge set label ordering",
+    "unordered_labels": true,
+    "query": "CREATE (a:B) MERGE (n:UK {k: 2}) SET n:X RETURN labels(n)"
+  },
+  {
+    "name": "merge expression after with arithmetic",
+    "query": "MERGE (a:T {id:1}) SET a.x=5 WITH a MERGE (b:X {k:a.x+1}) RETURN b.k"
+  },
+  {
+    "name": "merge undefined property variable",
+    "query": "MERGE (n:F {v: undefinedvar})"
+  },
+  {
+    "name": "create property list comprehension",
+    "query": "CREATE (n:T {a:[x IN [1,2] | x*2]}) RETURN n.a"
+  },
+  {
+    "name": "merge property list comprehension",
+    "query": "MERGE (n:T {a:[x IN [1,2] | x*2]}) RETURN n.a"
+  },
+  {
+    "name": "second create property list comprehension",
+    "query": "CREATE (a:B), (n:T {a:[x IN [1,2] | x*2]}) RETURN n.a"
+  },
+  {
+    "name": "empty terminal with",
+    "query": "MATCH (n:INC) WITH n.name AS x WITH"
+  },
+  {
+    "name": "call star includes outer scalar",
+    "query": "WITH 1 AS i CALL (i) { RETURN i * 2 AS d } RETURN *"
+  },
+  {
+    "name": "call star includes unimported outer scalar",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) WITH t, 5 AS z CALL (t) { RETURN t.id * 2 AS d } RETURN *"
+  },
+  {
+    "name": "unscoped call outer integer column name",
+    "query": "WITH 1 AS v CALL { RETURN 2 AS c } RETURN v,c"
+  },
+  {
+    "name": "unscoped call outer string column name",
+    "query": "WITH 'abc' AS v CALL { RETURN 2 AS c } RETURN v,c"
+  },
+  {
+    "name": "unscoped call multiple outer column names",
+    "query": "WITH 1 AS v, 3 AS w CALL { RETURN 2 AS c } RETURN v,c,w"
+  },
+  {
+    "name": "scoped call create in transactions",
+    "query": "UNWIND [1,2,3] AS i CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS"
+  },
+  {
+    "name": "scoped call merge in transactions",
+    "query": "UNWIND [1,2,3] AS i CALL (i) { MERGE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS"
+  },
+  {
+    "name": "scoped call set in transactions",
+    "query": "UNWIND [1,2,3] AS i CALL (i) { CREATE (n:X {i:i}) SET n.x = 1 } IN TRANSACTIONS OF 2 ROWS"
+  },
+  {
+    "name": "standalone call create in transactions",
+    "query": "CALL { CREATE (:X {i:1}) } IN TRANSACTIONS"
+  },
+  {
+    "name": "standalone call merge in transactions",
+    "query": "CALL { MERGE (:X {i:1}) } IN TRANSACTIONS"
+  },
+  {
+    "name": "standalone call set in transactions",
+    "query": "CALL { CREATE (n:X {i:1}) SET n.x = 1 } IN TRANSACTIONS"
+  },
+  {
+    "name": "where integer literal is syntax error",
+    "query": "MATCH (n) WHERE 1 RETURN n"
+  },
+  {
+    "name": "where list literal is syntax error",
+    "query": "MATCH (n) WHERE [1] RETURN n"
+  },
+  {
+    "name": "where projected integer is syntax error",
+    "query": "WITH 1 AS x WHERE x RETURN x"
+  },
+  {
+    "name": "where unwound computed string is syntax error",
+    "query": "UNWIND ['a'] AS x WITH x WHERE x+1 RETURN x"
+  },
+  {
+    "name": "where procedure computed string is syntax error",
+    "query": "CALL db.labels() YIELD label WHERE label+1 RETURN label"
+  },
+  {
+    "name": "where procedure string is syntax error",
+    "query": "CALL db.labels() YIELD label WHERE label RETURN label"
+  },
+  {
+    "name": "where arithmetic boolean operand is type error",
+    "setup": ["CREATE (:W709p {id:'a', f:true})"],
+    "query": "MATCH (n:W709p) WHERE (n.id + 'z') AND n.f RETURN n.id"
+  },
+  {
+    "name": "where negated arithmetic is type error",
+    "setup": ["CREATE (:W709p {id:'a'})"],
+    "query": "MATCH (n:W709p) WHERE NOT (n.id + 'z') RETURN n.id"
+  },
+  {
+    "name": "where computed dynamic string filters rows",
+    "setup": ["CREATE (:W709p {id:'a'})"],
+    "query": "MATCH (n:W709p) WHERE n.id + 'z' RETURN n.id"
+  },
+  {
+    "name": "where arithmetic and true filters rows",
+    "setup": ["CREATE (:W1 {id:'a'})"],
+    "query": "MATCH (n:W1) WHERE n.id + 'z' AND true RETURN n.id"
+  },
+  {
+    "name": "where arithmetic or comparison keeps matching row",
+    "setup": ["CREATE (:W1 {id:'a'})"],
+    "query": "MATCH (n:W1) WHERE n.id + 'z' OR n.id = 'a' RETURN n.id"
+  },
+  {
+    "name": "where multiplication is statically nonboolean",
+    "setup": ["CREATE (:W1 {id:1})"],
+    "query": "MATCH (n:W1) WHERE n.id * 0 RETURN n.id"
+  },
+  {
+    "name": "comprehension arithmetic predicate is type error",
+    "setup": ["CREATE (:W1 {id:1})"],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x + n.id] AS l"
+  },
+  {
+    "name": "foreach trailing garbage rejected before writes",
+    "setup": ["CREATE (:T {id:1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = 1 garbage here) RETURN t.id"
+  },
+  {
+    "name": "foreach trailing garbage rejected without rows",
+    "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = 1 garbage here) RETURN t.id"
+  },
+  {
+    "name": "foreach empty assignment rejected before writes",
+    "setup": ["CREATE (:T {id:1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = ) RETURN t.id"
+  },
+  {
+    "name": "foreach empty assignment rejected without rows",
+    "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = ) RETURN t.id"
+  },
+  {
+    "name": "where bare dynamic string is type error",
+    "setup": ["CREATE (:W709p {id:'a'})"],
+    "query": "MATCH (n:W709p) WHERE n.id RETURN n.id"
+  },
+  {
+    "name": "importing with cannot filter",
+    "setup": ["CREATE (:W709p {id:'a'})"],
+    "query": "MATCH (i:W709p) CALL { WITH i WHERE i.id <> 'a' RETURN i.id AS id } RETURN id"
+  },
+  {
+    "name": "call integer sum preserves type",
+    "query": "CALL { UNWIND [10,20,30] AS x RETURN x } RETURN sum(x) AS total"
+  },
+  {
+    "name": "where node is syntax error",
+    "query": "MATCH (n) WHERE n RETURN n"
+  },
+  {
+    "name": "where map is syntax error",
+    "query": "MATCH (n) WHERE {a:1} RETURN n"
+  },
+  {
+    "name": "where string literal is syntax error",
+    "query": "MATCH (n) WHERE 'x' RETURN n"
+  },
+  {
+    "name": "integer division truncates",
+    "query": "RETURN 7 / 2 AS value",
+    "ordered": true
+  },
+  {
+    "name": "floating division retains fraction",
+    "query": "RETURN 7.0 / 2 AS value",
+    "ordered": true
+  },
+  {
+    "name": "exponentiation returns floating point",
+    "query": "RETURN 2 ^ 3 AS value",
+    "ordered": true
+  },
+  {
+    "name": "list comprehension filters and projects",
+    "query": "RETURN [x IN range(1, 5) WHERE x % 2 = 1 | x * x] AS values",
+    "ordered": true
+  },
+  {
+    "name": "conditional aggregation reads node properties",
+    "setup": [
+      "CREATE (:File {embedded: true}), (:File {embedded: false})"
+    ],
+    "query": "MATCH (f:File) RETURN count(f) AS files, sum(CASE WHEN f.embedded = true THEN 1 ELSE 0 END) AS embedded",
+    "ordered": true
+  },
+  {
+    "name": "comma separated create patterns share scope",
+    "query": "CREATE (a:Fixture {name: 'a'}), (b:Fixture {name: 'b'}), (a)-[:NEXT]->(b)",
+    "ordered": true
+  },
+  {
+    "name": "merge property after set with uses bound node value",
+    "query": "MERGE (a:T {id: 1}) SET a.q = 1 WITH a MERGE (b:X {k: a.id}) RETURN b.k AS k",
+    "ordered": true
+  },
+  {
+    "name": "create merge set keeps merged variable",
+    "query": "CREATE (a:T {id: 1}) MERGE (n:X {k: a.id}) SET n.extra = 2 RETURN n.k AS k, n.extra AS extra",
+    "ordered": true
+  },
+  {
+    "name": "correlated call with projected where filters rows",
+    "query": "UNWIND [1, 2, 3] AS i CALL (i) { WITH i AS j WHERE j > 1 RETURN j AS value } RETURN value ORDER BY value",
+    "ordered": true
+  },
+  {
+    "name": "unit write subquery executes once per outer row",
+    "query": "UNWIND [1, 2] AS i CALL () { CREATE (:X) } RETURN count(*) AS count",
+    "ordered": true
+  },
+  {
+    "name": "foreach merge retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (a:T) FOREACH (v IN [1, 2] | MERGE (:X {k: v})) RETURN a.id AS id",
+    "ordered": true
+  },
+  {
+    "name": "monster 728 consecutive match shared source",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc) MATCH (b:Doc) RETURN count(*) AS c, count(b) AS b, sum(a.id) AS s"
+  },
+  {
+    "name": "monster 728 product with both nodes",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a,b RETURN count(*) AS c, sum(a.id) AS s"
+  },
+  {
+    "name": "monster 728 product with one node",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a RETURN count(*) AS c, sum(a.id) AS s"
+  },
+  {
+    "name": "monster 728 product with scalar projection",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a.id AS x RETURN count(*) AS c, sum(x) AS s"
+  },
+  {
+    "name": "monster 728 composed match with grouped aggregates",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc) WITH a MATCH (b:Doc) WITH a.id % 2 AS k,b RETURN k,count(*) AS c,sum(b.id) AS s ORDER BY k",
+    "ordered": true
+  },
+  {
+    "name": "monster 728 blocking distinct with product",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH DISTINCT a.id AS x RETURN sum(x) AS s"
+  },
+  {
+    "name": "monster 728 product window before aggregate",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a,b ORDER BY a.id,b.id SKIP 1 LIMIT 2 RETURN sum(a.id) AS s"
+  },
+  {
+    "name": "monster 728 product projected filter",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a.id AS x WHERE x = 1 RETURN count(*) AS c"
+  },
+  {
+    "name": "monster 728 product empty with aggregation",
+    "setup": ["CREATE (:Doc {id: 0})"],
+    "query": "MATCH (a:Doc), (b:Missing) WITH a.id AS x RETURN count(*) AS c, sum(x) AS s"
+  },
+  {
+    "name": "monster 514 computed literal map property",
+    "query": "CREATE (n:T {s: 'a' + 'b', l: size([1,2]), m: {k: 1}.k}) RETURN n.s,n.l,n.m"
+  },
+  {
+    "name": "monster 514 incomplete create arithmetic admission",
+    "query": "CREATE (n:T {v: 1 +}) RETURN n.v"
+  },
+  {
+    "name": "monster 514 incomplete second create no partial effects",
+    "query": "CREATE (:Before) CREATE (n:T {v: 1 +}) RETURN n.v"
+  },
+  {
+    "name": "monster 514 incomplete merge arithmetic admission",
+    "query": "MERGE (n:T {v: 1 +}) RETURN n.v"
+  },
+  {
+    "name": "monster 514 incomplete set arithmetic admission",
+    "setup": ["CREATE (:T {v: 1})"],
+    "query": "MATCH (n:T) SET n.v = 1 + RETURN n.v"
+  },
+  {
+    "name": "monster 698 full lowercase dotted I",
+    "query": "RETURN toLower('\u0130') AS l,toLower('\u0130I') AS l2,lower('\u0130') AS l3"
+  },
+  {
+    "name": "monster 698 lowercase row null and sigma",
+    "query": "UNWIND ['\u0130I', null, '\u039f\u03a3'] AS s RETURN toLower(s) AS l",
+    "ordered": true
+  },
+  {
+    "name": "monster 668 temporal node property",
+    "query": "CREATE (n:D {d: date('2020-01-02')}) RETURN n"
+  },
+  {
+    "name": "monster 668 temporal relationship property",
+    "query": "CREATE ()-[r:R {d: date('2020-01-02')}]->() RETURN r"
+  },
+  {
+    "name": "monster 668 temporal property nested entity",
+    "query": "CREATE (n:D {t: datetime('2020-01-02T03:04:05Z')}) RETURN [n] AS l"
+  },
+  {
+    "name": "monster 668 temporal list property on entity",
+    "query": "CREATE (n:D {d: [date('2020-01-02')]}) RETURN n"
+  },
+  {
+    "name": "monster 738 system graph read admission",
+    "query": "USE system MATCH (n) RETURN count(n) AS c"
+  },
+  {
+    "name": "canonical indexed comprehension map projection",
+    "query": "WITH [{k: 1, texts: ['a']}, {k: 2, texts: ['b']}] AS grouped WITH [g IN grouped WHERE g.k = 1][0] AS hit RETURN hit.texts AS texts"
+  },
+  {
+    "name": "residual grammar single quoted multiline string",
+    "query": "RETURN 'line1\nline2' AS text"
+  },
+  {
+    "name": "residual grammar double quoted multiline string",
+    "query": "RETURN \"line1\nline2\" AS text"
+  },
+  {
+    "name": "residual grammar post-index parameter property",
+    "query": "RETURN $items[0].name AS name",
+    "parameters": {"items": [{"name": "alice"}]}
+  },
+  {
+    "name": "residual grammar post-index property in where",
+    "query": "UNWIND [$items] AS items WITH items WHERE items[0].name = 'alice' RETURN items[0].name AS name",
+    "parameters": {"items": [{"name": "alice"}]}
+  },
+  {
+    "name": "residual grammar call-tail pagination",
+    "setup": ["CREATE (:ResidualYieldAlpha), (:ResidualYieldBeta)"],
+    "query": "CALL db.labels() YIELD label AS name WHERE name STARTS WITH 'ResidualYield' ORDER BY name DESC SKIP 1 LIMIT 1 RETURN name",
+    "ordered": true
+  },
+  {
+    "name": "residual grammar scoped call subquery union",
+    "query": "UNWIND [1,2] AS x CALL (x) { WITH x RETURN x AS value UNION WITH x RETURN x + 2 AS value } RETURN value ORDER BY value",
+    "ordered": true
+  },
+  {
+    "name": "monster math round null precision",
+    "query": "RETURN round(1.5, null) AS value",
+    "no_effects": true
+  },
+  {
+    "name": "monster math round negative precision",
+    "query": "RETURN round(1.5, -1) AS value",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "expected_message": "Precision argument to 'round()' cannot be negative",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "monster math round invalid mode",
+    "query": "RETURN round(1.5, 0, 'BAD') AS value",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "expected_message": "Unknown rounding mode. Valid values are: CEILING, FLOOR, UP, DOWN, HALF_EVEN, HALF_UP, HALF_DOWN, UNNECESSARY.",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "monster math acos half",
+    "query": "RETURN acos(.5) AS value",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 full unicode fi ligature uppercase aliases",
+    "query": "RETURN toUpper('\ufb01') AS first, upper('\ufb01') AS second, toUpper('a\ufb01z') AS embedded, upper('a\ufb01z') AS embeddedAlias",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 float string lower threshold",
+    "parameters": {"below": 0.0009999999999999998, "at": 0.001, "above": 0.0010000000000000002},
+    "query": "RETURN toString($below) AS below, toString($at) AS at, toString($above) AS above, toString(-$below) AS negativeBelow, toString(-$at) AS negativeAt",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 float string upper threshold",
+    "parameters": {"below": 9999999.999999998, "at": 10000000.0, "above": 10000000.000000002},
+    "query": "RETURN toString($below) AS below, toString($at) AS at, toString($above) AS above, toString(-$below) AS negativeBelow, toString(-$at) AS negativeAt",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 float string threshold literals",
+    "query": "RETURN toString(0.0009999999999999998) AS belowSmall, toString(1e-3) AS small, toString(9999999.999999998) AS belowLarge, toString(1e7) AS large",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 large float reverse concatenation and list conversion",
+    "parameters": {"value": 1.5e20},
+    "query": "RETURN toString($value) AS text, reverse(toString($value)) AS reversed, 'v=' + $value AS prefix, $value + '=v' AS suffix, toStringList([$value, 1.5e20, -0.0, null]) AS strings",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 structured parameter conversion types",
+    "parameters": {"values": [1, 1.0, null, true, "2", "BAD"], "nested": {"large": 9007199254740993, "float": 1.0}},
+    "query": "RETURN toIntegerList($values) AS integers, toFloatList($values) AS floats, toStringList($values) AS strings, $nested.large AS large, $nested.float AS floating",
+    "no_effects": true
+  },
+  {"name": "division matrix integer one by integer one", "parameters": {"lhs": 1, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by integer zero", "parameters": {"lhs": 1, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by float one", "parameters": {"lhs": 1, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by positive zero", "parameters": {"lhs": 1, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by negative zero", "parameters": {"lhs": 1, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by null", "parameters": {"lhs": 1, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by integer one", "parameters": {"lhs": 0, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by integer zero", "parameters": {"lhs": 0, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by float one", "parameters": {"lhs": 0, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by positive zero", "parameters": {"lhs": 0, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by negative zero", "parameters": {"lhs": 0, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by null", "parameters": {"lhs": 0, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by integer one", "parameters": {"lhs": 1.0, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by integer zero", "parameters": {"lhs": 1.0, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by float one", "parameters": {"lhs": 1.0, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by positive zero", "parameters": {"lhs": 1.0, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by negative zero", "parameters": {"lhs": 1.0, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by null", "parameters": {"lhs": 1.0, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by integer one", "parameters": {"lhs": 0.0, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by integer zero", "parameters": {"lhs": 0.0, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by float one", "parameters": {"lhs": 0.0, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by positive zero", "parameters": {"lhs": 0.0, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by negative zero", "parameters": {"lhs": 0.0, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by null", "parameters": {"lhs": 0.0, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by integer one", "parameters": {"lhs": -0.0, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by integer zero", "parameters": {"lhs": -0.0, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by float one", "parameters": {"lhs": -0.0, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by positive zero", "parameters": {"lhs": -0.0, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by negative zero", "parameters": {"lhs": -0.0, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by null", "parameters": {"lhs": -0.0, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by integer one", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by integer zero", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by float one", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by positive zero", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by negative zero", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by null", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by integer one", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by integer zero", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by float one", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by positive zero", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by negative zero", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by null", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by integer one", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by integer zero", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by float one", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by positive zero", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by negative zero", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by null", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {
+    "name": "division literal integer zero diagnostic",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "RETURN 1 / 0 AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division literal negative integer truncation",
+    "query": "RETURN -7 / 2 AS negative, 7 / -2 AS denominator, -7 / -2 AS both",
+    "no_effects": true
+  },
+  {
+    "name": "division literal signed zeros and null",
+    "query": "RETURN 1.0 / 0.0 AS positive, 1.0 / -0.0 AS negative, 0.0 / 0.0 AS nan, null / 0 AS missing, -0.0 / 1.0 AS zero",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime WHERE integer zero diagnostic",
+    "setup": ["CREATE (:Division {numerator: 1, denominator: 0})"],
+    "query": "MATCH (n:Division) WHERE n.numerator / n.denominator > 0 RETURN n.numerator AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime function integer zero diagnostic",
+    "parameters": {"numerator": 1, "denominator": 0},
+    "query": "RETURN abs($numerator / $denominator) AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime property integer zero diagnostic",
+    "setup": ["CREATE (:Division {numerator: 1, denominator: 0, value: 7})"],
+    "query": "MATCH (n:Division) SET n.value = n.numerator / n.denominator RETURN n.value AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime create integer zero has no effects",
+    "parameters": {"numerator": 1, "denominator": 0},
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE (n:Division {value: $numerator / $denominator}) RETURN n.value AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime WHERE floating zero",
+    "setup": ["CREATE (:Division {numerator: 1.0, denominator: -0.0})"],
+    "query": "MATCH (n:Division) WHERE n.numerator / n.denominator < 0 RETURN toString(n.numerator / n.denominator) AS value",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime function floating zero",
+    "parameters": {"numerator": 0.0, "denominator": -0.0},
+    "query": "RETURN toString(abs($numerator / $denominator)) AS value",
+    "no_effects": true
+  },
+  {
+    "name": "division literal null by integer zero diagnostic",
+    "query": "RETURN null / 0 AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division parameter null by integer zero diagnostic",
+    "parameters": {"lhs": null, "rhs": 0},
+    "query": "RETURN $lhs / $rhs AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 computed CREATE unary nested null remainder power",
+    "parameters": {"value": 5, "missing": null},
+    "query": "CREATE (n:Computed {negative: -($value + 1), nested: (($value + 2) * (3 - 1)), missing: ($missing + 1) * 2, remainder: ($value + 2) % 3, power: ($value - 3) ^ 3}) RETURN properties(n) AS properties"
+  },
+  {
+    "name": "monster 514 computed MERGE unary nested remainder power",
+    "parameters": {"value": 5},
+    "query": "MERGE (n:Computed {negative: -($value + 1), nested: (($value + 2) * (3 - 1)), remainder: ($value + 2) % 3, power: ($value - 3) ^ 3}) RETURN properties(n) AS properties"
+  },
+  {
+    "name": "monster 514 computed MERGE null has no effects",
+    "parameters": {"missing": null},
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "MERGE (n:Computed {missing: ($missing + 1) * 2}) RETURN properties(n) AS properties",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 computed SET unary nested null remainder power",
+    "parameters": {"value": 5, "missing": null},
+    "setup": ["CREATE (:Computed {missing: 7})"],
+    "query": "MATCH (n:Computed) SET n.negative = -($value + 1), n.nested = (($value + 2) * (3 - 1)), n.missing = ($missing + 1) * 2, n.remainder = ($value + 2) % 3, n.power = ($value - 3) ^ 3 RETURN properties(n) AS properties"
+  },
+  {
+    "name": "monster 514 computed relationship CREATE unary nested null remainder power",
+    "parameters": {"value": 5, "missing": null},
+    "query": "CREATE ()-[r:COMPUTED {negative: -($value + 1), nested: (($value + 2) * (3 - 1)), missing: ($missing + 1) * 2, remainder: ($value + 2) % 3, power: ($value - 3) ^ 3}]->() RETURN properties(r) AS properties"
+  },
+  {
+    "name": "monster 514 computed relationship MERGE unary nested remainder power",
+    "parameters": {"value": 5},
+    "setup": ["CREATE (:Endpoint {id: 1}), (:Endpoint {id: 2})"],
+    "query": "MATCH (a:Endpoint {id: 1}), (b:Endpoint {id: 2}) MERGE (a)-[r:COMPUTED {negative: -($value + 1), nested: (($value + 2) * (3 - 1)), remainder: ($value + 2) % 3, power: ($value - 3) ^ 3}]->(b) RETURN properties(r) AS properties"
+  },
+  {
+    "name": "monster 514 computed relationship MERGE null has no effects",
+    "parameters": {"missing": null},
+    "setup": ["CREATE (:Endpoint {id: 1}), (:Endpoint {id: 2})"],
+    "query": "MATCH (a:Endpoint {id: 1}), (b:Endpoint {id: 2}) MERGE (a)-[r:COMPUTED {missing: ($missing + 1) * 2}]->(b) RETURN properties(r) AS properties",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 computed relationship SET unary nested null remainder power",
+    "parameters": {"value": 5, "missing": null},
+    "setup": ["CREATE ()-[:COMPUTED {missing: 7}]->()"],
+    "query": "MATCH ()-[r:COMPUTED]->() SET r.negative = -($value + 1), r.nested = (($value + 2) * (3 - 1)), r.missing = ($missing + 1) * 2, r.remainder = ($value + 2) % 3, r.power = ($value - 3) ^ 3 RETURN properties(r) AS properties"
+  },
+  {
+    "name": "monster 514 malformed CREATE closer no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE (n:Broken {value: (1 + 2]}) RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed MERGE closer no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) MERGE (n:Broken {value: [1, 2)}) RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed SET closer no effects",
+    "setup": ["CREATE (:Broken {value: 7})"],
+    "query": "MATCH (n:Broken) SET n.value = (1 + 2] RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed relationship closer no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE ()-[r:BROKEN {value: (1 + 2]}]->() RETURN r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed CREATE comma no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE (n:Broken {value: 1,, other: 2}) RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed MERGE comma no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) MERGE (n:Broken {value: 1,, other: 2}) RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed SET comma no effects",
+    "setup": ["CREATE (:Broken {value: 7})"],
+    "query": "MATCH (n:Broken) SET n.value = 1,, n.other = 2 RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed relationship comma no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE ()-[r:BROKEN {value: 1,, other: 2}]->() RETURN r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "PR771 unit call legacy filtered delete",
+    "setup": ["CREATE (:T {id: 1, x: 5}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL { WITH n WITH n WHERE n.id = 2 DETACH DELETE n } RETURN count(*) AS c"
+  },
+  {
+    "name": "PR771 unit call legacy filtered set",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL { WITH n WITH n WHERE n.id = 2 SET n.k = 1 } RETURN count(*) AS c"
+  },
+  {
+    "name": "PR771 unit call scoped filtered set",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n WHERE n.id = 2 SET n.k = 1 } RETURN n.id AS id ORDER BY id",
+    "ordered": true
+  },
+  {
+    "name": "PR771 unit call legacy inner match filter",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL { WITH n MATCH (n) WHERE n.id = 2 SET n.k = 1 } RETURN count(*) AS c"
+  },
+  {
+    "name": "PR771 unit call all inner rows filtered",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n WHERE false SET n.k = 1 } RETURN n.id AS id ORDER BY id",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "PR771 unit call multiple inner rows",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n UNWIND [1, 2] AS value WITH n, value WHERE n.id = 2 SET n.k = value } RETURN n.id AS id ORDER BY id",
+    "ordered": true
+  },
+  {
+    "name": "PR771 returning call still filters outer rows",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n WHERE n.id = 2 RETURN n.id AS inner } RETURN n.id AS id, inner",
+    "no_effects": true
+  },
+  {
+    "name": "PR771 unit call empty outer input",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:Missing) CALL (n) { WITH n WHERE n.id = 2 SET n.k = 1 } RETURN count(*) AS c",
+    "no_effects": true
+  },
+  {
+    "name": "PR771 transactional unit call scoped filtered set",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n WHERE n.id = 2 SET n.k = 1 } IN TRANSACTIONS OF 1 ROW RETURN n.id AS id ORDER BY id",
+    "ordered": true
+  },
+  {
+    "name": "PR771 transactional unit call legacy filtered set",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL { WITH n WITH n WHERE n.id = 2 SET n.k = 1 } IN TRANSACTIONS OF 1 ROW RETURN n.id AS id ORDER BY id",
+    "ordered": true
+  },
+  {
+    "name": "GH657 remaining/boolean property string subscript",
+    "setup": ["CREATE (:A {b: true, l: [1, 2], s: 'a', v: 5})"],
+    "query": "MATCH (n:A) RETURN n.b['a']",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/list property string subscript",
+    "setup": ["CREATE (:A {b: true, l: [1, 2], s: 'a', v: 5})"],
+    "query": "MATCH (n:A) RETURN n.l['a']",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/string function arithmetic argument",
+    "query": "MATCH (n:A) RETURN toUpper(n.s * 2)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/string function unary argument",
+    "query": "MATCH (n:A) RETURN toUpper(-n.v)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/size arithmetic argument",
+    "query": "MATCH (n:A) RETURN size(n.v * 2)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/missing vector index",
+    "setup": ["CREATE (:A {v: 5})"],
+    "query": "CALL db.index.vector.queryNodes('nope668', 1, [1.0]) YIELD node RETURN node",
+    "expected_code": "Neo.ClientError.Procedure.ProcedureCallFailed",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/coalesce undefined arithmetic",
+    "query": "RETURN coalesce(a / b, 2)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/quantifier scalar binding",
+    "query": "WITH 5 AS v RETURN any(x IN v WHERE x = 5) AS r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/property syntax before missing parameter",
+    "query": "WITH $m + 1 AS m RETURN m.a",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/count unwind outer shadow",
+    "query": "WITH 5 AS s RETURN COUNT { UNWIND [{a: 1}] AS s RETURN s.a } AS r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/count with outer shadow",
+    "query": "WITH 5 AS s RETURN COUNT { WITH {a: 1} AS s RETURN s.a } AS r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/too many function arguments",
+    "query": "RETURN toUpper('a', 'b') AS x",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/missing function argument",
+    "query": "RETURN toUpper() AS x",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/string function arity",
+    "query": "RETURN toUpper('a') AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/optional arity and grammar",
+    "query": "RETURN round(1.25) AS a, substring('abc', 1) AS b, ltrim(' a') AS c, normalize('a', NFC) AS d, trim(LEADING FROM ' a') AS e",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/numeric arithmetic function",
+    "setup": ["CREATE (:A {v: 5})"],
+    "query": "MATCH (n:A) RETURN abs(n.v * 2) AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/map and list subscripts",
+    "query": "WITH {a: 1} AS m, [2, 3] AS l RETURN m['a'] AS a, l[0] AS b",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/graph property integer subscript",
+    "setup": ["CREATE (:A {l: [1, 2]})"],
+    "query": "MATCH (n:A) RETURN n.l[0] AS x, n['l'][0] AS y",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/list quantifier and iterator shadow",
+    "query": "WITH 5 AS x, [1, 2] AS v RETURN any(x IN v WHERE x = 2) AS r",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/count identity import",
+    "query": "WITH 5 AS s RETURN COUNT { WITH s AS s RETURN s } AS r",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/count fresh local",
+    "query": "WITH 5 AS s RETURN COUNT { WITH {a: 1} AS inner RETURN inner.a } AS r",
+    "no_effects": true
+  },
+  {
+    "name": "issue 744 rejects semicolon chained statements before writes",
+    "query": "CREATE (:Semi); MATCH (n:Semi) RETURN count(n) AS c"
+  },
+  {
+    "name": "issue 744 conflicting explain profile is argument error",
+    "query": "EXPLAIN PROFILE RETURN 1"
+  },
+  {
+    "name": "issue 744 conflicting profile explain is argument error",
+    "query": "PROFILE EXPLAIN RETURN 1"
+  },
+  {
+    "name": "issue 744 profile match summary",
+    "setup": ["CREATE (:ProfileBoundary {id: 1})"],
+    "query": "PROFILE MATCH (n) RETURN n"
+  },
+  {
+    "name": "issue 743 union return finish output mismatch",
+    "query": "RETURN 1 AS x UNION FINISH"
+  },
+  {
+    "name": "issue 743 union return finish rejects writes before execution",
+    "query": "CREATE (:Semi) RETURN 1 AS x UNION FINISH"
+  },
+  {
+    "name": "issue 739 unwind scoped call ordered rows",
+    "ordered": true,
+    "query": "UNWIND [1, 2] AS x CALL (x) { RETURN x * 2 AS y } RETURN y ORDER BY y"
+  },
+  {
+    "name": "monster531 text index admission",
+    "query": "CREATE TEXT INDEX s530_text FOR (n:S530) ON (n.t)"
+  },
+  {
+    "name": "monster531 point index admission",
+    "query": "CREATE POINT INDEX s530_point FOR (n:S530) ON (n.p)"
+  },
+  {
+    "name": "monster530 typed indexes show kinds",
+    "setup": ["CREATE TEXT INDEX s530_text FOR (n:S530) ON (n.t)", "CREATE POINT INDEX s530_point FOR (n:S530) ON (n.p)"],
+    "query": "SHOW INDEXES YIELD name, type, properties WHERE name STARTS WITH 's530_' RETURN name, type, properties ORDER BY name",
+    "ordered": true
+  },
+  {
+    "name": "monster531 named composite node unique admission",
+    "query": "CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"
+  },
+  {
+    "name": "monster531 unnamed composite node unique admission",
+    "query": "CREATE CONSTRAINT FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"
+  },
+  {
+    "name": "monster531 composite unique if not exists",
+    "setup": ["CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"],
+    "query": "CREATE CONSTRAINT cu1 IF NOT EXISTS FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"
+  },
+  {
+    "name": "monster531 composite unique allows distinct and incomplete tuples",
+    "setup": ["CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"],
+    "query": "CREATE (:CU {a: 1, b: 2}), (:CU {a: 1, b: 3}), (:CU {a: 1}), (:CU {a: 1}) RETURN 4 AS created"
+  },
+  {
+    "name": "monster531 composite unique rejects duplicate tuple",
+    "setup": ["CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE", "CREATE (:CU {a: 1, b: 2})"],
+    "query": "CREATE (:CU {a: 1, b: 2})"
+  },
+  {
+    "name": "monster531 composite unique rejects existing duplicates atomically",
+    "setup": ["CREATE (:CU {a: 1, b: 2}), (:CU {a: 1, b: 2})"],
+    "query": "CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"
+  },
+  {
+    "name": "monster531 duplicate constraint same name same definition",
+    "setup": ["CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"],
+    "query": "CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"
+  },
+  {
+    "name": "monster531 duplicate constraint different name same definition",
+    "setup": ["CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"],
+    "query": "CREATE CONSTRAINT other FOR (n:T) REQUIRE n.u IS UNIQUE"
+  },
+  {
+    "name": "monster531 duplicate constraint same name different definition",
+    "setup": ["CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"],
+    "query": "CREATE CONSTRAINT dupc FOR (n:U) REQUIRE n.v IS UNIQUE"
+  },
+  {
+    "name": "monster531 reject neo4j4 node key syntax",
+    "query": "CREATE CONSTRAINT mykey ON (n:L) ASSERT (n.a) IS NODE KEY"
+  },
+  {
+    "name": "monster531 reject neo4j4 unique syntax",
+    "query": "CREATE CONSTRAINT myuniq ON (n:L) ASSERT n.b IS UNIQUE"
+  },
+  {
+    "name": "monster530 yield where static type empty",
+    "query": "CALL db.labels() YIELD label WHERE label + 1 RETURN label"
+  },
+  {
+    "name": "monster530 yield where static type populated",
+    "setup": ["CREATE (:T)"],
+    "query": "CALL db.labels() YIELD label WHERE label + 1 RETURN label"
+  },
+  {
+    "name": "GH775 typed node TEXT index metadata",
+    "setup": ["CREATE TEXT INDEX ti FOR (n:P) ON (n.name)"],
+    "query": "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties WHERE name = 'ti' RETURN name, type, entityType, labelsOrTypes, properties",
+    "no_effects": true
+  },
+  {
+    "name": "GH775 typed node POINT index metadata",
+    "setup": ["CREATE POINT INDEX pi FOR (n:P) ON (n.loc)"],
+    "query": "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties WHERE name = 'pi' RETURN name, type, entityType, labelsOrTypes, properties",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control signed hexadecimal and octal literals",
+    "query": "RETURN -0x1 AS hex, -0o7 AS octal, [-0x1, 0x2] AS values",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control subtraction without whitespace",
+    "query": "RETURN 3-1 AS integer, 3.5-1.5 AS floating",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control zero padded exponents",
+    "query": "RETURN [2E-01, 'text', null, 71034856, false] AS literal, 1e+003 AS x, -2e-001 AS y",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control repeated logical negation",
+    "query": "RETURN NOT NOT true AS t, NOT NOT false AS f, NOT NOT null AS n",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control missing relationship asterisk",
+    "query": "MATCH (a)-[:LIKES..]->(c) RETURN a",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control CASE label predicate",
+    "setup": ["CREATE (:Ignored), (:Other)"],
+    "query": "MATCH (n) RETURN count(CASE WHEN n:Ignored THEN 1 END) AS count",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control undefined label predicate receiver",
+    "setup": ["CREATE (:Ignored), (:Other)"],
+    "query": "MATCH (n) RETURN count(CASE WHEN missing:Ignored THEN 1 END)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual undefined coalesce",
+    "query": "RETURN coalesce(a / b, 2)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual scalar reduce",
+    "query": "WITH 5 AS l RETURN reduce(acc = 0, x IN l | acc + x) AS v",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual list string key",
+    "query": "WITH [1, 2, 3] AS l RETURN l['a'] AS v",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual map integer key",
+    "query": "WITH {a: 1} AS m RETURN m[1] AS v",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual string receiver",
+    "query": "WITH 'abc' AS s RETURN s[0] AS v",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control boolean receiver",
+    "query": "WITH true AS value RETURN value[0]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control list boolean key",
+    "query": "WITH [1, 2] AS value RETURN value[false]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control list float key",
+    "query": "WITH [1, 2] AS value RETURN value[1.0]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control direct integer receiver",
+    "query": "RETURN 5[0]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control direct list float key",
+    "query": "RETURN [1, 2, 3][1.5]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control parameter map integer key",
+    "query": "WITH $value AS value, $key AS key RETURN value[key]",
+    "parameters": {"value": {"name": "Mats"}, "key": 0},
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control parameter string receiver",
+    "query": "WITH $value AS value, $key AS key RETURN value[key]",
+    "parameters": {"value": "abc", "key": 0},
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control parameter list float key runtime",
+    "query": "WITH $value AS value, $key AS key RETURN value[key]",
+    "parameters": {"value": [1, 2], "key": 1.5},
+    "expected_code": "Neo.ClientError.Statement.TypeError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control valid map list keys",
+    "query": "WITH {a: 1} AS m, [2, 3] AS l RETURN m['a'] AS a, l[0] AS b",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control null slice",
+    "query": "WITH [1, 2, 3] AS value RETURN value[null..2] AS value",
+    "no_effects": true
+  },
+  {
+    "name": "GH781 residual empty FINISH UNION",
+    "query": "FINISH UNION FINISH",
+    "no_effects": true
+  },
+  {
+    "name": "GH781 residual write FINISH UNION",
+    "query": "CREATE (:U) FINISH UNION CREATE (:V) FINISH"
+  },
+  {
+    "name": "GH781 residual write FINISH UNION ALL",
+    "query": "CREATE (:U) FINISH UNION ALL CREATE (:V) FINISH"
+  },
+  {
+    "name": "GH781 control mismatched UNION columns before writes",
+    "query": "CREATE (:Semi) RETURN 1 AS x UNION RETURN 2 AS y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH781 control mismatched UNION ALL columns before writes",
+    "query": "CREATE (:Semi) RETURN 1 AS x UNION ALL RETURN 2 AS y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH782 residual leading CREATE FINISH CALL return",
+    "query": "CALL { CREATE (:U) FINISH } RETURN 1 AS x"
+  },
+  {
+    "name": "GH782 residual leading CREATE FINISH CALL no return",
+    "query": "CALL { CREATE (:U) FINISH }"
+  },
+  {
+    "name": "GH782 residual scoped SET FINISH",
+    "setup": ["CREATE (:T {k: 0})"],
+    "query": "MATCH (t:T) CALL (t) { SET t.k = coalesce(t.k, 0) + 1 FINISH } RETURN t.k"
+  },
+  {
+    "name": "GH784 residual doubled terminator",
+    "query": "RETURN 1 AS x;;",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH784 residual repeated EXPLAIN",
+    "query": "EXPLAIN EXPLAIN RETURN 1 AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH784 residual repeated PROFILE",
+    "query": "PROFILE PROFILE RETURN 1 AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH783 residual empty scoped import",
+    "query": "WITH 1 AS x CALL () { RETURN x AS y } RETURN y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH783 residual property expression import",
+    "query": "WITH {y: 1} AS x CALL (x.y) { RETURN 1 AS y } RETURN y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH783 control empty imports reject before writes",
+    "query": "CREATE (:Before) WITH 1 AS x CALL () { RETURN x AS y } RETURN y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH783 control valid empty scoped import",
+    "query": "WITH 1 AS x CALL () { RETURN 2 AS y } RETURN x, y",
+    "no_effects": true
+  },
+  {
+    "name": "GH815 residual AS parameter UNWIND",
+    "query": "UNWIND $as AS k RETURN k",
+    "parameters": {"as": ["a"]},
+    "no_effects": true
+  },
+  {
+    "name": "GH815 residual AS parameter UNWIND MATCH",
+    "setup": ["CREATE (:P {k: 'a', v: 1})"],
+    "query": "UNWIND $as AS k MATCH (n:P) WHERE n.k = k RETURN n.v AS v",
+    "parameters": {"as": ["a"]},
+    "no_effects": true
+  },
+  {
+    "name": "GH815 residual AS parameter RETURN",
+    "query": "RETURN $as AS x",
+    "parameters": {"as": ["a"]},
+    "no_effects": true
+  },
+  {
+    "name": "GH815 control AS parameter IN predicate",
+    "setup": ["CREATE (:P {k: 'a', v: 1})"],
+    "query": "MATCH (n:P) WHERE n.k IN $as RETURN n.v AS v",
+    "parameters": {"as": ["a"]},
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless inline equality",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n {k: 'a'}) RETURN n.v AS v ORDER BY v",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless WHERE equality",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k = 'a' RETURN n.v AS v ORDER BY v",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless parameter equality",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k = $k RETURN n.v AS v ORDER BY v",
+    "parameters": {"k": "a"},
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless IN literal",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k IN ['a'] RETURN n.v AS v ORDER BY v",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless IN parameter",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k IN $ks RETURN n.v AS v ORDER BY v",
+    "parameters": {"ks": ["a"]},
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless OR equality",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k = 'a' OR n.k = 'zz' RETURN n.v AS v ORDER BY v",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless count",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n {k: 'a'}) RETURN count(n) AS c",
+    "no_effects": true
+  },
+  {
+    "name": "GH814 control labeled nonindexed property",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n:Q {k: 'a'}) RETURN n.v",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 residual comma bound shortestPath",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), (b:P {k: 'to'}), p = shortestPath((a)-[:R*]->(b)) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 residual comma bound allShortestPaths",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), (b:P {k: 'to'}), p = allShortestPaths((a)-[:R*]->(b)) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 residual comma bound start with inline end",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), p = shortestPath((a)-[:R*]->(b:P {k: 'to'})) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 residual comma bound variable length path",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), (b:P {k: 'to'}), p = (a)-[:R*]->(b) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 control preceding clause shortestPath",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), (b:P {k: 'to'}) MATCH p = shortestPath((a)-[:R*]->(b)) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 control inline endpoint shortestPath",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH p = shortestPath((a:P {k: 'from'})-[:R*]->(b:P {k: 'to'})) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH785 residual repeated UNIQUE property",
+    "query": "CREATE CONSTRAINT cu FOR (n:P) REQUIRE (n.a, n.a) IS UNIQUE",
+    "expected_code": "Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema",
+    "no_effects": true
+  },
+  {
+    "name": "GH785 residual quoted repeated UNIQUE property",
+    "query": "CREATE CONSTRAINT cu FOR (n:P) REQUIRE (n.a, n.`a`) IS UNIQUE",
+    "expected_code": "Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 residual empty SHOW integer predicate",
+    "query": "SHOW INDEXES YIELD name WHERE 1 RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 residual empty SHOW arithmetic predicate",
+    "query": "SHOW INDEXES YIELD name WHERE name + 1 RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 residual populated SHOW integer predicate",
+    "setup": ["CREATE INDEX named FOR (n:P) ON (n.k)"],
+    "query": "SHOW INDEXES YIELD name WHERE 1 RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 residual populated SHOW arithmetic predicate",
+    "setup": ["CREATE INDEX named FOR (n:P) ON (n.k)"],
+    "query": "SHOW INDEXES YIELD name WHERE name + 1 RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 control valid SHOW name alias predicate",
+    "setup": ["CREATE INDEX named FOR (n:P) ON (n.k)"],
+    "query": "SHOW INDEXES YIELD name AS indexName WHERE indexName = 'named' RETURN indexName",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual unsupported CYPHER 5.0",
+    "query": "CYPHER 5.0 CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual unsupported CYPHER 3.5",
+    "query": "CYPHER 3.5 CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual unsupported CYPHER 4.4",
+    "query": "CYPHER 4.4 CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual unknown CYPHER option",
+    "query": "CYPHER bogus=foo CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid runtime option",
+    "query": "CYPHER runtime=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid planner option",
+    "query": "CYPHER planner=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid expression engine option",
+    "query": "CYPHER expressionEngine=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid EXPLAIN preamble",
+    "query": "EXPLAIN CYPHER runtime=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid PROFILE preamble",
+    "query": "PROFILE CYPHER runtime=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual bare CYPHER option",
+    "query": "CYPHER foo CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 control EXPLAIN preamble",
+    "query": "EXPLAIN CYPHER 5 runtime=slotted RETURN 1 AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 control PROFILE preamble",
+    "query": "PROFILE CYPHER 5 runtime=slotted RETURN 1 AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext procedure signature metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, mode WHERE name = 'db.index.fulltext.queryNodes' RETURN name, signature, mode",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext procedure rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, argumentDescription, returnDescription WHERE name = 'db.index.fulltext.queryNodes' RETURN argumentDescription, returnDescription",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext procedure status metadata",
+    "query": "SHOW PROCEDURES YIELD name, worksOnSystem, admin, rolesExecution, rolesBoostedExecution, isDeprecated, deprecatedBy, option WHERE name = 'db.index.fulltext.queryNodes' RETURN worksOnSystem, admin, rolesExecution, rolesBoostedExecution, isDeprecated, deprecatedBy, option",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext procedure relationship metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, argumentDescription, returnDescription, worksOnSystem, admin, isDeprecated, deprecatedBy, option WHERE name = 'db.index.fulltext.queryRelationships' RETURN name, signature, argumentDescription, returnDescription, worksOnSystem, admin, isDeprecated, deprecatedBy, option",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 range function argument metadata",
+    "query": "SHOW FUNCTIONS YIELD name, category, signature, argumentDescription, returnDescription, aggregating WHERE name = 'range' RETURN name, category, signature, argumentDescription, returnDescription, aggregating ORDER BY signature",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 database identity presence",
+    "query": "SHOW DATABASES YIELD databaseID, serverID RETURN count(*) AS databases, count(databaseID) = count(*) AS databaseIDsPresent, count(serverID) = count(*) AS serverIDsPresent, count(DISTINCT serverID) AS servers",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 database creation representations",
+    "query": "SHOW DATABASES YIELD creationTime, lastStartTime RETURN count(creationTime) = count(*) AS creationTimesPresent, count(lastStartTime) = count(*) AS startTimesPresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 database info truthful metadata",
+    "query": "CALL db.info() YIELD id, creationDate RETURN id IS NOT NULL AND size(id) > 0 AS identityPresent, creationDate IS NOT NULL AND datetime(creationDate) IS NOT NULL AS creationDateValid",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS info system metadata",
+    "query": "CALL dbms.info() YIELD id, name, creationDate RETURN id IS NOT NULL AND size(id) > 0 AS identityPresent, name = 'system' AS isSystemDatabase, creationDate IS NOT NULL AND datetime(creationDate) IS NOT NULL AS creationDateValid",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 temporal clock timezone values",
+    "query": "RETURN date.statement('UTC') IS NOT NULL AS datePresent, datetime.statement('UTC') IS NOT NULL AS datetimePresent, localdatetime.statement('UTC') IS NOT NULL AS localdatetimePresent, localtime.statement('UTC') IS NOT NULL AS localtimePresent, time.statement('UTC') IS NOT NULL AS timePresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 temporal statement clock stability",
+    "query": "UNWIND [1, 2, 3] AS i WITH datetime.statement('UTC') AS instant RETURN count(DISTINCT instant) AS instants",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 temporal default truncation values",
+    "query": "RETURN date.truncate('year').month = 1 AS dateTruncated, datetime.truncate('day').hour = 0 AS datetimeTruncated, localdatetime.truncate('day').hour = 0 AS localdatetimeTruncated, localtime.truncate('hour').minute = 0 AS localtimeTruncated, time.truncate('hour').minute = 0 AS timeTruncated",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 CSV metadata outside LOAD CSV",
+    "query": "RETURN file() AS source, linenumber() AS line",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 syntax shaped function rich metadata",
+    "query": "SHOW FUNCTIONS YIELD name, category, description, signature, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy WHERE name IN ['all', 'any', 'none', 'single', 'reduce'] RETURN name, category, description, signature, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy ORDER BY name",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 temporal spatial and CSV function rich metadata",
+    "query": "SHOW FUNCTIONS YIELD name, category, description, signature, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy WHERE name IN ['datetime.statement', 'datetime.fromepoch', 'date.truncate', 'point.distance', 'point.withinBBox', 'file', 'linenumber', 'graph.byName', 'graph.byElementId', 'id'] RETURN name, category, description, signature, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy ORDER BY name, signature",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 token procedure rich metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name IN ['db.labels', 'db.relationshipTypes', 'db.propertyKeys'] RETURN * ORDER BY name",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 label token creation order",
+    "setup": ["CREATE (:S530TokenBb), (:S530TokenAa)"],
+    "query": "CALL db.labels() YIELD label WHERE label IN ['S530TokenBb', 'S530TokenAa'] RETURN label",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 relationship token creation order",
+    "setup": ["CREATE (b:S530TokenBb)-[:S530TokenYy]->(a:S530TokenAa), (a)-[:S530TokenXx]->(b)"],
+    "query": "CALL db.relationshipTypes() YIELD relationshipType WHERE relationshipType IN ['S530TokenYy', 'S530TokenXx'] RETURN relationshipType",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 label token limit creation order",
+    "setup": ["CREATE (:S530TokenBb), (:S530TokenAa)"],
+    "query": "CALL db.labels() YIELD label WHERE label IN ['S530TokenBb', 'S530TokenAa'] LIMIT 1 RETURN label",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 label token recreated creation order",
+    "setup": ["CREATE (:S530TokenBb), (:S530TokenAa)", "MATCH (b:S530TokenBb) DELETE b", "CREATE (:S530TokenBb)"],
+    "query": "CALL db.labels() YIELD label WHERE label IN ['S530TokenBb', 'S530TokenAa'] RETURN label",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 transaction metadata empty map void output",
+    "query": "CALL tx.setMetaData({})",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 transaction metadata nonempty map void output",
+    "query": "CALL tx.setMetaData({app: 's530', requestId: 17})",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 shared administrative procedure rich metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name IN ['db.awaitIndex', 'db.awaitIndexes', 'db.clearQueryCaches', 'db.ping', 'db.resampleIndex', 'dbms.info', 'tx.setMetaData'] RETURN * ORDER BY name",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 await index void output",
+    "setup": ["CREATE INDEX s530_await FOR (n:S530Await) ON (n.value)"],
+    "query": "CALL db.awaitIndex($name)",
+    "parameters": {"name": "s530_await"},
+    "no_effects": true
+  },
+  {
+    "name": "GH530 await indexes void output",
+    "query": "CALL db.awaitIndexes()",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 resample index void output",
+    "setup": ["CREATE INDEX s530_resample FOR (n:S530Resample) ON (n.value)"],
+    "query": "CALL db.resampleIndex($name)",
+    "parameters": {"name": "s530_resample"},
+    "no_effects": true
+  },
+  {
+    "name": "GH530 await missing index diagnostics",
+    "query": "CALL db.awaitIndex('s530_missing_index')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 resample missing index diagnostics",
+    "query": "CALL db.resampleIndex('s530_missing_index')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 vector node setter void output",
+    "setup": ["CREATE (:S530Vector {key: 'node'})"],
+    "query": "MATCH (n:S530Vector {key: 'node'}) CALL db.create.setNodeVectorProperty(n, 'embedding', $vector)",
+    "parameters": {"vector": [1.0, 2.0]}
+  },
+  {
+    "name": "GH530 vector relationship setter void output",
+    "setup": ["CREATE (:S530Vector)-[:S530VectorRel {key: 'relationship'}]->(:S530Vector)"],
+    "query": "MATCH ()-[r:S530VectorRel {key: 'relationship'}]->() CALL db.create.setRelationshipVectorProperty(r, 'embedding', $vector)",
+    "parameters": {"vector": [1.0, 2.0]}
+  },
+  {
+    "name": "GH530 vector node setter preserves outer return",
+    "setup": ["CREATE (:S530Vector {key: 'node'})"],
+    "query": "MATCH (n:S530Vector {key: 'node'}) WITH n CALL db.create.setNodeVectorProperty(n, 'embedding', $vector) RETURN n.key AS key, n.embedding AS embedding",
+    "parameters": {"vector": [1.0, 2.0]}
+  },
+  {
+    "name": "GH530 vector relationship setter preserves outer return",
+    "setup": ["CREATE (:S530Vector)-[:S530VectorRel {key: 'relationship'}]->(:S530Vector)"],
+    "query": "MATCH ()-[r:S530VectorRel {key: 'relationship'}]->() WITH r CALL db.create.setRelationshipVectorProperty(r, 'embedding', $vector) RETURN r.key AS key, r.embedding AS embedding",
+    "parameters": {"vector": [1.0, 2.0]}
+  },
+  {
+    "name": "GH530 vector creation void output",
+    "query": "CALL db.index.vector.createNodeIndex('s530_vector', 'S530Vector', 'embedding', 3, 'cosine')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 vector creation parameterized comma names",
+    "query": "CALL db.index.vector.createNodeIndex($name, $label, $property, $dimension, $similarity)",
+    "parameters": {"name": "s530,vector", "label": "S530,Vector", "property": "embedding,vector", "dimension": 3, "similarity": "COSINE"},
+    "no_effects": true
+  },
+  {
+    "name": "GH530 vector creation schema effects",
+    "setup": ["CALL db.index.vector.createNodeIndex('s530_vector', 'S530Vector', 'embedding', 3, 'cosine')"],
+    "query": "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties WHERE name = 's530_vector' RETURN name, type, entityType, labelsOrTypes, properties",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 vector procedure rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name IN ['db.create.setNodeVectorProperty', 'db.create.setRelationshipVectorProperty', 'db.index.vector.createNodeIndex', 'db.index.vector.queryNodes', 'db.index.vector.queryRelationships'] RETURN * ORDER BY name",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext analyzer shared field metadata",
+    "query": "SHOW PROCEDURES YIELD name, description, mode, worksOnSystem, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name = 'db.index.fulltext.listAvailableAnalyzers' RETURN name, description, mode, worksOnSystem, returnDescription[0..3] AS sharedReturns, admin, isDeprecated, deprecatedBy, option",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext analyzer stopword column presence",
+    "query": "CALL db.index.fulltext.listAvailableAnalyzers() YIELD analyzer, stopwords RETURN count(analyzer) > 0 AS analyzersPresent, count(stopwords) > 0 AS stopwordMetadataPresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 schema visualization rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name = 'db.schema.visualization' RETURN *",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 schema visualization virtual node labels",
+    "setup": ["CREATE (:S530VizStart)-[:S530VizRel]->(:S530VizEnd)"],
+    "query": "CALL db.schema.visualization() YIELD nodes UNWIND nodes AS n RETURN labels(n) AS labels ORDER BY labels(n)[0]",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 schema visualization virtual relationship types",
+    "setup": ["CREATE (:S530VizStart)-[:S530VizRel]->(:S530VizEnd)"],
+    "query": "CALL db.schema.visualization() YIELD relationships UNWIND relationships AS r RETURN type(r) AS type",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 schema visualization marginal combinations",
+    "setup": ["CREATE (:S530VizStartA)-[:S530VizRel]->(:S530VizEndA), (:S530VizStartB)-[:S530VizRel]->(:S530VizEndB)"],
+    "query": "CALL db.schema.visualization() YIELD nodes, relationships RETURN size(nodes) AS labels, size(relationships) AS combinations",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS config rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name = 'dbms.listConfig' RETURN *",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS config empty filter result",
+    "query": "CALL dbms.listConfig($search)",
+    "parameters": {"search": "s530_unknown_setting"},
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS connection rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name = 'dbms.listConnections' RETURN *",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS connection populated fields",
+    "query": "CALL dbms.listConnections() YIELD connectionId, connectTime, connector, userAgent, serverAddress, clientAddress RETURN count(connectionId) > 0 AS connectionsPresent, count(connectTime) = count(connectionId) AS timestampsPresent, count(connector) = count(connectionId) AS protocolsPresent, count(userAgent) = count(connectionId) AS agentsPresent, count(serverAddress) = count(connectionId) AS serversPresent, count(clientAddress) = count(connectionId) AS clientsPresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name IN ['db.stats.clear', 'db.stats.collect', 'db.stats.retrieve', 'db.stats.status', 'db.stats.stop'] RETURN * ORDER BY name",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics clear while collecting",
+    "setup": ["CALL db.stats.collect('QUERIES')"],
+    "query": "CALL db.stats.clear('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics clear after stop",
+    "setup": ["CALL db.stats.stop('QUERIES')"],
+    "query": "CALL db.stats.clear('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics idle status",
+    "setup": ["CALL db.stats.stop('QUERIES')", "CALL db.stats.clear('QUERIES')"],
+    "query": "CALL db.stats.status()",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics collect result",
+    "setup": ["CALL db.stats.stop('QUERIES')"],
+    "query": "CALL db.stats.collect('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics collecting status",
+    "setup": ["CALL db.stats.stop('QUERIES')", "CALL db.stats.collect('QUERIES')"],
+    "query": "CALL db.stats.status()",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics stop result",
+    "setup": ["CALL db.stats.collect('QUERIES')"],
+    "query": "CALL db.stats.stop('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics cleared query rows",
+    "setup": ["CALL db.stats.stop('QUERIES')", "CALL db.stats.clear('QUERIES')"],
+    "query": "CALL db.stats.retrieve('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics executed query retrieval",
+    "setup": ["CALL db.stats.stop('QUERIES')", "CALL db.stats.clear('QUERIES')", "CALL db.stats.collect('QUERIES')", "RETURN 530 AS value", "CALL db.stats.stop('QUERIES')"],
+    "query": "CALL db.stats.retrieve('QUERIES') YIELD data WHERE data.query = 'RETURN 530 AS value' RETURN data.query AS query",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics graph label count",
+    "setup": ["CREATE (:S530StatsStart)-[:S530_STATS]->(:S530StatsEnd)"],
+    "query": "CALL db.stats.retrieve('GRAPH COUNTS') YIELD data UNWIND data.nodes AS node WITH node WHERE node.label = 'S530StatsStart' RETURN node.count AS count",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics graph relationship count",
+    "setup": ["CREATE (:S530StatsStart)-[:S530_STATS]->(:S530StatsEnd)"],
+    "query": "CALL db.stats.retrieve('GRAPH COUNTS') YIELD data UNWIND data.relationships AS rel WITH rel WHERE rel.relationshipType = 'S530_STATS' AND rel.startLabel IS NULL AND rel.endLabel IS NULL RETURN rel.count AS count",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics live token inventory",
+    "setup": ["CREATE (:S530StatsStart {statsProperty: 1})-[:S530_STATS]->(:S530StatsEnd)"],
+    "query": "CALL db.stats.retrieve('TOKENS') YIELD data RETURN 'S530StatsStart' IN data.labels AS labelPresent, 'S530_STATS' IN data.relationshipTypes AS typePresent, 'statsProperty' IN data.propertyKeys AS propertyPresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics unknown section status",
+    "query": "CALL db.stats.collect('S530_INVALID')",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 plain index same name equivalent definition",
+    "setup": ["CREATE INDEX dupidx FOR (n:T) ON (n.id)"],
+    "query": "CREATE INDEX dupidx FOR (n:T) ON (n.id)",
+    "expected_code": "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 plain index same name different definition",
+    "setup": ["CREATE INDEX dupidx FOR (n:T) ON (n.id)"],
+    "query": "CREATE INDEX dupidx FOR (n:U) ON (n.x)",
+    "expected_code": "Neo.ClientError.Schema.IndexWithNameAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 plain index different name equivalent definition",
+    "setup": ["CREATE INDEX dupidx FOR (n:T) ON (n.id)"],
+    "query": "CREATE INDEX otheridx FOR (n:T) ON (n.id)",
+    "expected_code": "Neo.ClientError.Schema.IndexAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 vector index same name changed dimensions",
+    "setup": ["CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}"],
+    "query": "CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 8, `vector.similarity_function`: 'cosine'}}",
+    "expected_code": "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 vector index same name different schema",
+    "setup": ["CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}"],
+    "query": "CREATE VECTOR INDEX vdup FOR (n:Z) ON (n.z) OPTIONS {indexConfig: {`vector.dimensions`: 8, `vector.similarity_function`: 'cosine'}}",
+    "expected_code": "Neo.ClientError.Schema.IndexWithNameAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 guarded duplicate index preserves original metadata",
+    "setup": ["CREATE INDEX dupidx FOR (n:T) ON (n.id)", "CREATE INDEX dupidx IF NOT EXISTS FOR (n:U) ON (n.x)", "CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", "CREATE VECTOR INDEX vdup IF NOT EXISTS FOR (n:Z) ON (n.z) OPTIONS {indexConfig: {`vector.dimensions`: 8, `vector.similarity_function`: 'cosine'}}", "CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"],
+    "query": "SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE name IN ['dupidx', 'vdup', 'dupc'] RETURN name, labelsOrTypes, properties ORDER BY name, labelsOrTypes",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH817 cartesian point value",
+    "query": "RETURN point({x: 1, y: 2}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 geographic 3D point value",
+    "query": "RETURN point({latitude: 1.5, longitude: 2.5, height: 10}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point toString forms",
+    "query": "RETURN toString(point({x: 1, y: 2})) AS a, toString(point({latitude: 1.5, longitude: 2.5})) AS b, toString(point({x: 1, y: 2, z: 3})) AS c, toString(point({latitude: 1, longitude: 2, height: 3})) AS d",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point fields",
+    "query": "WITH point({latitude: 1.5, longitude: 2.5, height: 10}) AS p RETURN p.latitude AS lat, p.longitude AS lon, p.height AS h, p.x AS x, p.y AS y, p.z AS z, p.crs AS crs, p.srid AS srid",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point distance and bounding box",
+    "query": "RETURN point.distance(point({x: 0, y: 0}), point({x: 3, y: 4})) AS d, point.distance(point({latitude: 0, longitude: 0}), point({latitude: 0, longitude: 1})) AS w, point.distance(point({x: 0, y: 0}), point({latitude: 0, longitude: 1})) AS mixed, point.withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}), point({x: 2, y: 2})) AS inside",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point equality",
+    "query": "RETURN point({x: 1, y: 2}) = point({x: 1.0, y: 2.0}) AS eq, point({x: 1, y: 2}) = point({latitude: 2, longitude: 1}) AS crossCrs, point({x: 1, y: 2}) <> point({x: 1, y: 3}) AS ne, point({x: 1, y: 2}) < point({x: 2, y: 2}) AS lt",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point order",
+    "query": "UNWIND [point({x: 2, y: 1}), point({latitude: 1, longitude: 1}), point({x: 1, y: 5}), point({x: 1, y: 2, z: 0})] AS p RETURN p ORDER BY p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point longitude wraps",
+    "query": "RETURN point({latitude: 0, longitude: 200}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point null coordinate",
+    "query": "RETURN point({x: null, y: 1}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point invalid latitude",
+    "query": "RETURN point({latitude: 100, longitude: 0}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point properties stored",
+    "query": "CREATE (n:Pt {loc: point({x: 1, y: 2}), w: point({latitude: 1.5, longitude: 2.5, height: 3}), pts: [point({x: 1, y: 1}), point({x: 2, y: 2})]}) RETURN n.loc AS loc, n.w AS w, n.pts AS pts"
+  },
+  {
+    "name": "GH817 point property read back",
+    "setup": ["CREATE (:Pt {loc: point({x: 3, y: 4})})"],
+    "query": "MATCH (n:Pt) WHERE n.loc = point({x: 3, y: 4}) RETURN n.loc AS loc, n.loc.x AS x, point.distance(n.loc, point({x: 0, y: 0})) AS d",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point mixed CRS list property",
+    "query": "CREATE (:Pt {bad: [point({x: 1, y: 1}), point({latitude: 1, longitude: 1})]})",
+    "no_effects": true
+  },
+  {
+    "name": "GH837 order across types",
+    "query": "UNWIND [1, 'a', true, date('2020-01-01'), [1], {a: 1}, datetime('2020-01-01T00:00Z'), duration('P1D'), localtime('12:00'), point({x: 1, y: 1})] AS v RETURN v ORDER BY v",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext same name equivalent definition",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR (n:Doc) ON EACH [n.title]"],
+    "query": "CREATE FULLTEXT INDEX fdup FOR (n:Doc) ON EACH [n.title]",
+    "expected_code": "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext same name different definition",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR (n:Doc) ON EACH [n.title]"],
+    "query": "CREATE FULLTEXT INDEX fdup FOR (n:Other) ON EACH [n.body]",
+    "expected_code": "Neo.ClientError.Schema.IndexWithNameAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext relationship equivalent ordered schema",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR ()-[r:R1|R2]-() ON EACH [r.title, r.body]"],
+    "query": "CREATE FULLTEXT INDEX other FOR ()-[r:R1|R2]-() ON EACH [r.title, r.body]",
+    "expected_code": "Neo.ClientError.Schema.IndexAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext relationship reversed ordered schema control",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR ()-[r:R1|R2]-() ON EACH [r.title, r.body]"],
+    "query": "CREATE FULLTEXT INDEX other FOR ()-[r:R2|R1]-() ON EACH [r.body, r.title]"
+  },
+  {
+    "name": "issue531 fulltext guarded original metadata",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR (n:Doc) ON EACH [n.title]", "CREATE FULLTEXT INDEX fdup IF NOT EXISTS FOR (n:Other) ON EACH [n.body]"],
+    "query": "SHOW INDEXES YIELD name, entityType, labelsOrTypes, properties WHERE name = 'fdup' RETURN name, entityType, labelsOrTypes, properties",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 text equivalent definition",
+    "setup": ["CREATE TEXT INDEX tdup FOR (n:Doc) ON (n.title)"],
+    "query": "CREATE TEXT INDEX other FOR (n:Doc) ON (n.title)",
+    "expected_code": "Neo.ClientError.Schema.IndexAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 point same name equivalent definition",
+    "setup": ["CREATE POINT INDEX pdup FOR (n:Place) ON (n.location)"],
+    "query": "CREATE POINT INDEX pdup FOR (n:Place) ON (n.location)",
+    "expected_code": "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 point same name different definition",
+    "setup": ["CREATE POINT INDEX pdup FOR (n:Place) ON (n.location)"],
+    "query": "CREATE POINT INDEX pdup FOR (n:OtherPlace) ON (n.position)",
+    "expected_code": "Neo.ClientError.Schema.IndexWithNameAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext relationship type order only",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR ()-[r:R1|R2]-() ON EACH [r.title, r.body]"],
+    "query": "CREATE FULLTEXT INDEX other FOR ()-[r:R2|R1]-() ON EACH [r.title, r.body]"
+  },
+  {
+    "name": "GH838 type predicates on scalars",
+    "query": "RETURN 1 IS :: INTEGER AS a, 'a' IS :: STRING NOT NULL AS b, null IS :: INTEGER AS c, null IS :: INTEGER NOT NULL AS d, 1 IS NOT :: STRING AS e, 1.5 IS :: INTEGER | FLOAT AS f, 1 IS :: FLOAT AS g, 1 :: INTEGER AS h, 1 IS TYPED INTEGER AS i, 1 IS NOT TYPED INTEGER AS j",
+    "no_effects": true
+  },
+  {
+    "name": "GH838 type predicate synonyms",
+    "query": "RETURN 1 IS :: SIGNED INTEGER AS a, 'a' IS :: VARCHAR AS b, true IS :: BOOL AS c, localtime() IS :: TIME WITHOUT TIME ZONE AS d, time() IS :: TIME WITH TIME ZONE AS e, localdatetime() IS :: TIMESTAMP WITHOUT TIME ZONE AS f, datetime() IS :: TIMESTAMP WITH TIME ZONE AS g, {a: 1} IS :: ANY MAP AS h, 1 IS :: ANY VALUE AS i",
+    "no_effects": true
+  },
+  {
+    "name": "GH838 type predicates on lists",
+    "query": "RETURN [1, null] IS :: LIST<INTEGER> AS a, [1, null] IS :: LIST<INTEGER NOT NULL> AS b, [] IS :: LIST<NOTHING> AS c, [1, 'a'] IS :: LIST<INTEGER | STRING> AS d, [1, 'a'] IS :: LIST<INTEGER> | LIST<STRING> AS e, [1, 2] IS :: ARRAY<INT> AS f, 1 IS :: ANY<INTEGER | FLOAT> AS g",
+    "no_effects": true
+  },
+  {
+    "name": "GH838 NULL NOTHING ANY and PROPERTY VALUE",
+    "query": "RETURN null IS :: NULL AS a, 1 IS :: NULL AS b, null IS :: NOTHING AS c, null IS :: ANY NOT NULL AS d, 1 IS :: PROPERTY VALUE AS e, [1, 2] IS :: PROPERTY VALUE AS f, {a: 1} IS :: PROPERTY VALUE AS g, [1, 'a'] IS :: PROPERTY VALUE AS h, null IS NOT :: STRING NOT NULL AS i",
+    "no_effects": true
+  },
+  {
+    "name": "GH838 type predicate filters rows",
+    "setup": ["UNWIND [1, 'a', 2.5, null] AS x CREATE (:T838 {v: x, i: 1})"],
+    "query": "MATCH (n:T838) RETURN count(CASE WHEN n.v IS :: INTEGER | FLOAT THEN 1 END) AS numeric, count(CASE WHEN n.v IS NOT :: STRING THEN 1 END) AS notString, count(CASE WHEN n.v IS :: STRING THEN 1 END) AS stringOrNull",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 index reuses constraint name",
+    "setup": ["CREATE CONSTRAINT shared FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE INDEX shared FOR (n:U) ON (n.other)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 guarded index reuses constraint name",
+    "setup": ["CREATE CONSTRAINT shared FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE INDEX shared IF NOT EXISTS FOR (n:U) ON (n.other)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 constraint reuses index name",
+    "setup": ["CREATE INDEX shared FOR (n:T) ON (n.id)"],
+    "query": "CREATE CONSTRAINT shared FOR (n:U) REQUIRE n.other IS UNIQUE",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 index overlaps constraint backing schema",
+    "setup": ["CREATE CONSTRAINT shared FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE INDEX other FOR (n:T) ON (n.id)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 guarded constraint reuses index name",
+    "setup": ["CREATE INDEX shared FOR (n:T) ON (n.id)"],
+    "query": "CREATE CONSTRAINT shared IF NOT EXISTS FOR (n:U) REQUIRE n.other IS UNIQUE",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 lookup same name equivalent definition",
+    "query": "CREATE LOOKUP INDEX index_343aff4e FOR (n) ON EACH labels(n)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 lookup name on another entity",
+    "query": "CREATE LOOKUP INDEX index_343aff4e FOR ()-[r]-() ON EACH type(r)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 lookup reuses constraint name",
+    "setup": ["CREATE CONSTRAINT taken FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE LOOKUP INDEX taken FOR (n) ON EACH labels(n)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 guarded lookup reuses constraint name",
+    "setup": ["CREATE CONSTRAINT taken FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE LOOKUP INDEX taken IF NOT EXISTS FOR (n) ON EACH labels(n)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 composite index after single property index",
+    "setup": ["CREATE INDEX ix_a FOR (n:P) ON (n.a)", "CREATE INDEX ix_ab FOR (n:P) ON (n.a, n.b)"],
+    "query": "SHOW INDEXES YIELD name, properties WHERE name IN ['ix_a', 'ix_ab'] RETURN name, properties ORDER BY name",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext node label union inventory",
+    "setup": ["CREATE FULLTEXT INDEX ft2l FOR (n:FtA|FtB) ON EACH [n.t]"],
+    "query": "SHOW INDEXES YIELD name, labelsOrTypes WHERE name = 'ft2l' RETURN labelsOrTypes",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext node label union retrieval",
+    "setup": ["CREATE (:FtA {t: 'hello one'}), (:FtB {t: 'hello two'})", "CREATE FULLTEXT INDEX ft2l FOR (n:FtA|FtB) ON EACH [n.t]", "CALL db.awaitIndexes()"],
+    "query": "CALL db.index.fulltext.queryNodes('ft2l', 'hello') YIELD node RETURN node.t AS text ORDER BY text",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 missing legacy constraint drop class",
+    "query": "DROP CONSTRAINT mykey",
+    "expected_code": "Neo.DatabaseError.Schema.ConstraintDropFailed",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 missing index drop class control",
+    "query": "DROP INDEX does_not_exist",
+    "expected_code": "Neo.DatabaseError.Schema.IndexDropFailed",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 vector procedure duplicate changed dimensions",
+    "setup": ["CREATE VECTOR INDEX duplicate FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}"],
+    "query": "CALL db.index.vector.createNodeIndex('duplicate', 'V', 'e', 8, 'cosine')",
+    "expected_code": "Neo.ClientError.Procedure.ProcedureCallFailed",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 vector procedure index name collision",
+    "setup": ["CREATE INDEX taken FOR (n:T) ON (n.id)"],
+    "query": "CALL db.index.vector.createNodeIndex('taken', 'V', 'e', 3, 'cosine')",
+    "expected_code": "Neo.ClientError.Procedure.ProcedureCallFailed",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 vector procedure constraint name collision",
+    "setup": ["CREATE CONSTRAINT taken FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CALL db.index.vector.createNodeIndex('taken', 'V', 'e', 3, 'cosine')",
+    "expected_code": "Neo.ClientError.Procedure.ProcedureCallFailed",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional count groups projected product names",
+    "setup": ["CREATE (p1:Product {productName: 'A'}), (p2:Product {productName: 'A'}), (:Product {productName: 'B'}), (o1:Order), (o2:Order), (o1)-[:ORDERS]->(p1), (o2)-[:ORDERS]->(p2)"],
+    "query": "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS orderCount ORDER BY orderCount DESC",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional count filters incoming source label",
+    "setup": ["CREATE (p:Product {productName: 'A'}), (:Product {productName: 'B'}), (o1:Order), (o2:Order), (c1:Customer), (c2:Customer), (c3:Customer), (o1)-[:ORDERS]->(p), (o2)-[:ORDERS]->(p), (c1)-[:ORDERS]->(p), (c2)-[:ORDERS]->(p), (c3)-[:ORDERS]->(p)"],
+    "query": "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS orderCount ORDER BY orderCount DESC",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional aggregate expression pagination",
+    "setup": ["CREATE (a:Anchor), (p1:Product {productName: 'A'}), (p2:Product {productName: 'B'}), (p3:Product {productName: 'C'}), (a)-[:HAS]->(p1), (a)-[:HAS]->(p2), (a)-[:HAS]->(p3)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName AS name, count(o) AS nodes, count(r) AS relationships ORDER BY name SKIP $skip LIMIT 0 + $take",
+    "parameters": {"skip": 1, "take": 1},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional plain arithmetic pagination",
+    "setup": ["CREATE (a:Anchor), (p1:Product {productName: 'A'}), (p2:Product {productName: 'B'}), (p3:Product {productName: 'C'}), (a)-[:HAS]->(p1), (a)-[:HAS]->(p2), (a)-[:HAS]->(p3)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName AS name ORDER BY name SKIP 0 + 1 LIMIT 0 + 1",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional missing entity null pagination",
+    "setup": ["CREATE (a:Anchor), (p1:Product {productName: 'A'}), (p2:Product {productName: 'B'}), (p3:Product {productName: 'C'}), (a)-[:HAS]->(p1), (a)-[:HAS]->(p2), (a)-[:HAS]->(p3)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName AS name, o IS NULL AS nodeMissing, r IS NULL AS relationshipMissing ORDER BY name SKIP $skip LIMIT $take",
+    "parameters": {"skip": 1, "take": 1},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional matched entity count pagination",
+    "setup": ["CREATE (a:Anchor), (p1:Product {productName: 'A'}), (p2:Product {productName: 'B'}), (p3:Product {productName: 'C'}), (a)-[:HAS]->(p1), (a)-[:HAS]->(p2), (a)-[:HAS]->(p3), (:Order)-[:ORDERS]->(p2)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName AS name, count(o) AS nodes, count(r) AS relationships ORDER BY name SKIP $skip LIMIT $take",
+    "parameters": {"skip": 1, "take": 1},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional empty count argument rejected",
+    "setup": ["CREATE (a:Anchor)-[:HAS]->(:Product)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN count() AS c",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional empty count expression rejected",
+    "setup": ["CREATE (a:Anchor)-[:HAS]->(:Product)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN count() + 1 AS c",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal continuous percentile projection",
+    "setup": ["CREATE (a:Anchor), (n1:Value {x: 1}), (n2:Value {x: 3}), (a)-[:HAS]->(n1), (a)-[:HAS]->(n2)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(n:Value) RETURN percentileCont(n.x, 0.5) + 0 AS median",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal discrete percentile projection",
+    "setup": ["CREATE (a:Anchor), (n1:Value {x: 1}), (n2:Value {x: 3}), (a)-[:HAS]->(n1), (a)-[:HAS]->(n2)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(n:Value) RETURN percentileDisc(n.x, 0.5) + 0 AS median",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 cartesian exact integer sum projection",
+    "setup": ["CREATE (:Anchor), (:Value {x: 9007199254740993}), (:Value {x: 1})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN toString(sum(n.x)) AS exactTotal",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal exact integer sum projection",
+    "setup": ["CREATE (a:Anchor), (n1:Value {x: 9007199254740993}), (n2:Value {x: 1}), (a)-[:HAS]->(n1), (a)-[:HAS]->(n2)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(n:Value) RETURN toString(sum(n.x)) AS exactTotal",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 call aggregate retains named path bindings",
+    "setup": ["CREATE (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}), (c:Person {name: 'Charlie'}), (a)-[:FRIEND]->(b), (b)-[:COLLEAGUE]->(c)"],
+    "query": "MATCH (seed:Person {name: 'Alice'}) CALL { WITH seed MATCH path = (seed)-[r*1..2]-(connected) RETURN collect(DISTINCT {name: connected.name, rel: type(head(r)), labels: labels(connected), distance: length(path)}) AS neighbors } RETURN neighbors",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match aggregate parameter row bindings",
+    "setup": ["CREATE (o:OriginalText {pagePath: '/benefits/page'}), (t:TranslatedText {language: 'es', isReviewed: false}), (o)-[:TRANSLATES_TO]->(t)"],
+    "query": "MATCH (t:TranslatedText) WHERE t.language = $language AND t.isReviewed = false MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t) WHERE o.pagePath STARTS WITH $pagePath RETURN count(t) AS translations",
+    "parameters": {"language": "es", "pagePath": "/benefits"},
+    "no_effects": true
+  },
+  {
+    "name": "graphify source body parameter keys gentle update",
+    "setup": ["CREATE (:Code {id: 'pkg_math_vector_similarity_cosinesimilarity', label: 'CosineSimilarity()', body: '// short'})"],
+    "query": "UNWIND $rows AS row MATCH (n:Code {id: row.id}) WHERE NOT all(k IN keys(row.props) WHERE k = 'updated_at' OR n[k] = row.props[k]) SET n += row.props RETURN properties(n) AS props",
+    "parameters": {
+      "rows": [{
+        "id": "pkg_math_vector_similarity_cosinesimilarity",
+        "props": {
+          "id": "pkg_math_vector_similarity_cosinesimilarity",
+          "label": "CosineSimilarity()",
+          "file_type": "code",
+          "source_file": "pkg/math/vector/similarity.go",
+          "source_location": "L34",
+          "body_start_line": 34,
+          "updated_at": 1765762184.6631913,
+          "body": "// CosineSimilarity calculates cosine similarity between two float32 vectors.\n// Returns value in range [-1, 1] where 1 = identical, 0 = orthogonal, -1 = opposite.\n//\n// This is the STANDARD implementation for all non-GPU code.\n// Uses float64 accumulation for high precision, even with float32 inputs.\n//\n// Example:\n//\n//\ta := []float32{1.0, 2.0, 3.0}\n//\tb := []float32{4.0, 5.0, 6.0}\n//\tsim := CosineSimilarity(a, b)  // Returns 0.9746318461970762\nfunc CosineSimilarity(a, b []float32) float64 {\n\tif len(a) != len(b) || len(a) == 0 {\n\t\treturn 0\n\t}\n\n\tvar dotProd, normA, normB float64\n\tfor i := range a {\n\t\tdotProd += float64(a[i] * b[i])\n\t\tnormA += float64(a[i] * a[i])\n\t\tnormB += float64(b[i] * b[i])\n\t}\n\n\tif normA == 0 || normB == 0 {\n\t\treturn 0\n\t}\n\n\treturn dotProd / (math.Sqrt(normA) * math.Sqrt(normB))\n}"
+        }
+      }]
+    }
+  },
+  {
+    "name": "issue713 multi match literal projection window",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value SKIP 1 LIMIT 2",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match parameter projection window",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value SKIP $skip LIMIT $limit",
+    "parameters": {"skip": 1, "limit": 2},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match arithmetic projection window",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value SKIP $skip + 1 LIMIT $limit - 1",
+    "parameters": {"skip": 0, "limit": 3},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match distinct projection window",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN DISTINCT n.x % 2 AS value ORDER BY value SKIP $skip LIMIT $limit",
+    "parameters": {"skip": 0, "limit": 2},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match hidden projection sort key",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x % 2 AS value ORDER BY n.x DESC SKIP 1 LIMIT 2",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match bound parameter projection",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x + $offset AS value ORDER BY value SKIP 1 LIMIT 2",
+    "parameters": {"offset": 10},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match empty projection columns",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Missing) RETURN n.x AS value ORDER BY value",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match zero limit projection columns",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value LIMIT 0",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 create zero limit preserves writes",
+    "query": "CREATE (n:Value {x: 1}) RETURN n.x AS value LIMIT 0"
+  },
+  {
+    "name": "issue713 create parameter skip preserves writes",
+    "query": "CREATE (n:Value {x: 1}) RETURN n.x AS value SKIP $skip",
+    "parameters": {"skip": 1}
+  },
+  {
+    "name": "issue713 create distinct projection",
+    "query": "CREATE (n:Value {x: 1}) RETURN DISTINCT n.x AS value"
+  },
+  {
+    "name": "issue713 create original parameter column name",
+    "query": "CREATE (n:Value {x: 1}) RETURN $p",
+    "parameters": {"p": 7}
+  },
+  {
+    "name": "issue713 create typed float parameter column",
+    "query": "CREATE (n:Value {x: 1}) RETURN $whole",
+    "parameters": {"whole": 7.0}
+  },
+  {
+    "name": "issue713 create typed map parameter column",
+    "query": "CREATE (n:Value {x: 1}) RETURN $payload",
+    "parameters": {"payload": {"value": 2}}
+  },
+  {
+    "name": "issue713 create quoted projection alias",
+    "query": "CREATE (n:Value {x: 1}) RETURN n.x + $p AS `expr value`",
+    "parameters": {"p": 7}
+  },
+  {
+    "name": "issue713 create shared aggregate projection control",
+    "query": "CREATE (n:Value {x: 1}) RETURN collect(n.x) AS values, count(*) AS total"
+  },
+  {
+    "name": "issue713 create projection arithmetic error publishes nothing",
+    "query": "CREATE (n:Value {x: 1}) RETURN n.x / 0 AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 compiled relationship batch ordinary column",
+    "setup": ["CREATE (:Service {key:'svc-a'}), (:Topic {key:'topic-b'}), (:Tenant {key:'tenant-c'})"],
+    "query": "UNWIND $rows AS row MATCH (source:Service {key: row.source_key}) MATCH (target:Topic {key: row.target_key}) MATCH (tenant:Tenant {key: row.tenant}) MERGE (source)-[rel:PUBLISHES {uuid: row.uuid, tenant: row.tenant}]->(target) SET rel = row WITH rel, row CALL db.create.setRelationshipVectorProperty(rel, 'embedding', row.embedding) RETURN row.uuid AS uuid",
+    "parameters": {"rows": [{"source_key": "svc-a", "target_key": "topic-b", "tenant": "tenant-c", "uuid": "edge-1", "fact": "stored", "embedding": [1.0, 0.0, 0.0]}]}
+  },
+  {
+    "name": "issue713 compiled relationship batch quoted column",
+    "setup": ["CREATE (:Service {key:'svc-a'}), (:Topic {key:'topic-b'}), (:Tenant {key:'tenant-c'})"],
+    "query": "UNWIND $rows AS row MATCH (source:Service {key: row.source_key}) MATCH (target:Topic {key: row.target_key}) MATCH (tenant:Tenant {key: row.tenant}) MERGE (source)-[rel:PUBLISHES {uuid: row.uuid, tenant: row.tenant}]->(target) SET rel = row WITH rel, row CALL db.create.setRelationshipVectorProperty(rel, 'embedding', row.embedding) RETURN row.uuid AS `edge id`",
+    "parameters": {"rows": [{"source_key": "svc-a", "target_key": "topic-b", "tenant": "tenant-c", "uuid": "edge-1", "fact": "stored", "embedding": [1.0, 0.0, 0.0]}]}
+  },
+  {
+    "name": "issue713 compiled relationship batch escaped column",
+    "setup": ["CREATE (:Service {key:'svc-a'}), (:Topic {key:'topic-b'}), (:Tenant {key:'tenant-c'})"],
+    "query": "UNWIND $rows AS row MATCH (source:Service {key: row.source_key}) MATCH (target:Topic {key: row.target_key}) MATCH (tenant:Tenant {key: row.tenant}) MERGE (source)-[rel:PUBLISHES {uuid: row.uuid, tenant: row.tenant}]->(target) SET rel = row WITH rel, row CALL db.create.setRelationshipVectorProperty(rel, 'embedding', row.embedding) RETURN row.uuid AS `a``b`",
+    "parameters": {"rows": [{"source_key": "svc-a", "target_key": "topic-b", "tenant": "tenant-c", "uuid": "edge-1", "fact": "stored", "embedding": [1.0, 0.0, 0.0]}]}
+  },
+  {
+    "name": "issue713 compiled relationship batch inferred column",
+    "setup": ["CREATE (:Service {key:'svc-a'}), (:Topic {key:'topic-b'}), (:Tenant {key:'tenant-c'})"],
+    "query": "UNWIND $rows AS row MATCH (source:Service {key: row.source_key}) MATCH (target:Topic {key: row.target_key}) MATCH (tenant:Tenant {key: row.tenant}) MERGE (source)-[rel:PUBLISHES {uuid: row.uuid, tenant: row.tenant}]->(target) SET rel = row WITH rel, row CALL db.create.setRelationshipVectorProperty(rel, 'embedding', row.embedding) RETURN row.uuid",
+    "parameters": {"rows": [{"source_key": "svc-a", "target_key": "topic-b", "tenant": "tenant-c", "uuid": "edge-1", "fact": "stored", "embedding": [1.0, 0.0, 0.0]}]}
+  },
+  {
+    "name": "issue713 compiled count ordinary column",
+    "setup": ["CREATE CONSTRAINT compiled_count_unique FOR (n:Counted) REQUIRE n.id IS UNIQUE"],
+    "query": "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN count(n) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled count quoted column",
+    "setup": ["CREATE CONSTRAINT compiled_count_unique FOR (n:Counted) REQUIRE n.id IS UNIQUE"],
+    "query": "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN count(n) AS `node total`",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled count escaped column",
+    "setup": ["CREATE CONSTRAINT compiled_count_unique FOR (n:Counted) REQUIRE n.id IS UNIQUE"],
+    "query": "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN count(n) AS `a``b`",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled count inferred column",
+    "setup": ["CREATE CONSTRAINT compiled_count_unique FOR (n:Counted) REQUIRE n.id IS UNIQUE"],
+    "query": "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN count(n)",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled count zero limit preserves writes",
+    "setup": ["CREATE CONSTRAINT compiled_count_unique FOR (n:Counted) REQUIRE n.id IS UNIQUE"],
+    "query": "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN count(n) AS total LIMIT 0",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled count parameter skip preserves writes",
+    "setup": ["CREATE CONSTRAINT compiled_count_unique FOR (n:Counted) REQUIRE n.id IS UNIQUE"],
+    "query": "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN count(n) AS total SKIP $skip",
+    "parameters": {"skip": 1, "rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled count ordered window preserves writes",
+    "setup": ["CREATE CONSTRAINT compiled_count_unique FOR (n:Counted) REQUIRE n.id IS UNIQUE"],
+    "query": "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN count(n) AS total ORDER BY total LIMIT 1",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled count distinct preserves writes",
+    "setup": ["CREATE CONSTRAINT compiled_count_unique FOR (n:Counted) REQUIRE n.id IS UNIQUE"],
+    "query": "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN count(DISTINCT n) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled count missing alias rejected without writes",
+    "query": "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN count(n) AS",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]},
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 compiled WITH ordinary alias persists values",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH n, row, row.value AS score MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH quoted alias persists values",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH n, row, row.value AS `score` MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH aggregate uses shared grouping",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH n, row, count(n) AS score MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH DISTINCT uses shared projection",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH DISTINCT n, row, row.value AS score MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH zero limit preserves preceding writes",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH n, row, row.value AS score LIMIT 0 MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH shadowed alias reads incoming value",
+    "query": "UNWIND $rows AS row MERGE (n:ScopeSeed {id: row.id}) WITH n, row, row.value AS x WITH n, row, 2 AS x, x AS previous MERGE (m:ScopeValue {id: row.id}) SET m.value = previous RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}]}
+  },
+  {
+    "name": "issue713 compiled WITH reversed alias order control",
+    "query": "UNWIND $rows AS row MERGE (n:ScopeSeed {id: row.id}) WITH n, row, row.value AS x WITH n, row, x AS previous, 2 AS x MERGE (m:ScopeValue {id: row.id}) SET m.value = previous RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}]}
+  },
+  {
+    "name": "issue713 compiled WITH arithmetic failure rolls back writes",
+    "query": "UNWIND $rows AS row MERGE (n:ScopeSeed {id: row.id}) WITH n, row, 1 / $zero AS value MERGE (m:ScopeValue {id: row.id}) SET m.value = value RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a"}], "zero": 0},
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 simple MATCH literal limit control",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n LIMIT 2"
+  },
+  {
+    "name": "issue713 simple MATCH complete arithmetic limit",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n LIMIT 1 + 1"
+  },
+  {
+    "name": "issue713 simple MATCH parameter limit",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n LIMIT $limit",
+    "parameters": {"limit": 2}
+  },
+  {
+    "name": "issue713 simple MATCH quoted column",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n AS `node value` LIMIT 2"
+  },
+  {
+    "name": "issue713 simple MATCH escaped column",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n AS `a``b` LIMIT 2"
+  },
+  {
+    "name": "issue713 simple MATCH zero limit quoted column",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n AS `node value` LIMIT 0"
+  },
+  {
+    "name": "issue713 quoted comma standalone projection",
+    "query": "RETURN 1 AS `left,right`",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 quoted comma CALL projection",
+    "query": "CALL { RETURN 1 AS `left,right` } RETURN `left,right`",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 quoted comma correlated CALL projection",
+    "query": "UNWIND [1, 2] AS value CALL { WITH value RETURN value AS `left,right` } RETURN `left,right` ORDER BY `left,right`",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 escaped string CALL projection",
+    "query": "CALL { RETURN 'escaped\\', comma' AS value } RETURN value",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 DISTINCT CALL tail canonical column",
+    "query": "CALL { RETURN 1 AS value UNION ALL RETURN 1 AS value } RETURN DISTINCT value",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 quoted comma empty CALL columns",
+    "query": "CALL { MATCH (n:Missing) RETURN n AS `left,right` } RETURN `left,right`",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal unknown function preserves graph",
+    "setup": ["CREATE (:ProjectionSeed {id: 1})-[:LINK]->(:ProjectionTarget {id: 2})"],
+    "query": "MATCH (n:ProjectionSeed)-[:LINK]->(target) OPTIONAL MATCH (target)-[:NONE]->(missing) SET n.flag = true RETURN missingFunction(n) AS value",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal arithmetic failure preserves graph",
+    "setup": ["CREATE (:ProjectionSeed {id: 1})-[:LINK]->(:ProjectionTarget {id: 2})"],
+    "query": "MATCH (n:ProjectionSeed)-[:LINK]->(target) OPTIONAL MATCH (target)-[:NONE]->(missing) SET n.flag = true RETURN 1 / $zero AS value",
+    "parameters": {"zero": 0},
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal optional property remains null",
+    "setup": ["CREATE (:ProjectionSeed {id: 1})-[:LINK]->(:ProjectionTarget {id: 2})"],
+    "query": "MATCH (n:ProjectionSeed)-[:LINK]->(target) OPTIONAL MATCH (target)-[:NONE]->(missing) RETURN missing.name AS value",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 SET WITH UNWIND arithmetic window",
+    "setup": ["CREATE (:SetUnwindProjection {score: 0})"],
+    "query": "MATCH (n:SetUnwindProjection) SET n.score = 7 WITH n UNWIND [1,2] AS x RETURN x + 1 AS next ORDER BY next DESC LIMIT 1"
+  },
+  {
+    "name": "issue713 SET WITH UNWIND grouped count",
+    "setup": ["CREATE (:SetUnwindProjection {score: 0})"],
+    "query": "MATCH (n:SetUnwindProjection) SET n.score = 7 WITH n UNWIND [1,2,2] AS x RETURN x, count(*) AS c ORDER BY x"
+  },
+  {
+    "name": "issue713 SET WITH UNWIND quoted window",
+    "setup": ["CREATE (:SetUnwindProjection {score: 0})"],
+    "query": "MATCH (n:SetUnwindProjection) SET n.score = 7 WITH n UNWIND [1,2] AS x RETURN n.score + x AS `score value` ORDER BY `score value` DESC SKIP 1 LIMIT 1"
+  },
+  {
+    "name": "issue728 shared binding arithmetic parameters",
+    "setup": ["CREATE (:WhereScratch {age:30, name:'alice=admin'}), (:WhereScratch {age:20, name:'bob'}), (:WhereScratch {name:'missing'})"],
+    "query": "MATCH (n:WhereScratch) WHERE n.age + $offset = $expected RETURN n.name",
+    "parameters": {"offset":1, "expected":31},
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared null negation",
+    "setup": ["CREATE (:WhereScratch {age:30}), (:WhereScratch {age:20})"],
+    "query": "MATCH (n:WhereScratch) WHERE NOT (n.missing + 1 = 0 OR false) RETURN n.age",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared WITH typed map predicate",
+    "setup": ["CREATE (:WhereScratch {age:30, name:'alice=admin'}), (:WhereScratch {age:20, name:'bob'})"],
+    "query": "MATCH (n:WhereScratch) WITH n WHERE all(k IN keys($props) WHERE n[k] = $props[k]) RETURN n.name",
+    "parameters": {"props":{"age":30, "name":"alice=admin"}},
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared WITH arithmetic failure rolls back",
+    "setup": ["CREATE (:WhereScratch {age:30}), (:WhereScratch {age:20})"],
+    "query": "MATCH (n:WhereScratch) SET n.flag = true WITH n WHERE 1 / $zero > 0 RETURN n.age",
+    "parameters": {"zero":0},
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared quoted property arithmetic",
+    "setup": ["CREATE (:WhereScratch {`a+b`:3, name:'quoted'})"],
+    "query": "MATCH (n:WhereScratch) WHERE n.`a+b` + 1 = 4 RETURN n.name",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared escaped literal arithmetic",
+    "query": "RETURN 'a\\' + b' + 'z' AS value",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared relationship property arithmetic",
+    "setup": ["CREATE (:WhereScratch {name:'first'})-[:LINK {age:41}]->(:WhereScratch {name:'second'})"],
+    "query": "MATCH (a:WhereScratch) MATCH (a)-[r:LINK]->(b) WHERE r.age + 1 = $expected RETURN a.name, type(r)",
+    "parameters": {"expected":42},
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared native relationship type predicate",
+    "setup": ["CREATE (:WhereScratch {name:'first'})-[:LINK {age:41}]->(:WhereScratch {name:'second'})"],
+    "query": "MATCH (a:WhereScratch) MATCH (a)-[r:LINK]->(b) WHERE type(r) = 'LINK' RETURN a.name, type(r)",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared native relationship type arithmetic",
+    "setup": ["CREATE (:WhereScratch {name:'first'})-[:LINK {age:41}]->(:WhereScratch {name:'second'})"],
+    "query": "MATCH (a:WhereScratch) MATCH (a)-[r:LINK]->(b) WHERE type(r) = 'LINK' AND r.age + 1 = $expected RETURN a.name, type(r)",
+    "parameters": {"expected":42},
+    "no_effects": true
+  },
+  {
+    "name": "issue728 compiled comparison unknown under negation",
+    "setup": ["CREATE (:HandlerNull {present:1}), (:HandlerPeer {present:1})"],
+    "query": "MATCH (n:HandlerNull) MATCH (m:HandlerPeer) WHERE NOT (n.missing = 1 OR m.present = 2) RETURN n.present, m.present",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 compiled comparison false dominates unknown",
+    "setup": ["CREATE (:HandlerNull {present:1}), (:HandlerPeer {present:1})"],
+    "query": "MATCH (n:HandlerNull) MATCH (m:HandlerPeer) WHERE NOT (n.missing = 1 AND m.present = 2) RETURN n.present, m.present",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 folded statement clock evaluation",
+    "query": "RETURN DATETIME.statement() = datetime.statement() AS same",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 adjacent CREATE retains DELETE",
+    "query": "CREATE (a:X) CREATE (b:Y) DELETE a"
+  },
+  {
+    "name": "issue908 CREATE WITH filter retains created node",
+    "query": "CREATE (a:X) WITH a WHERE false DELETE a"
+  },
+  {
+    "name": "issue908 CREATE DELETE retains count alias",
+    "query": "CREATE (a:X) WITH a DELETE a RETURN count(*) AS n"
+  },
+  {
+    "name": "issue908 CREATE connected DELETE rejects without effects",
+    "query": "CREATE (a:X)-[r:R]->(b:Y) WITH a DELETE a",
+    "expected_code": "Neo.ClientError.Schema.ConstraintValidationFailed",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CREATE connected DETACH DELETE control",
+    "query": "CREATE (a:X)-[r:R]->(b:Y) WITH a DETACH DELETE a"
+  },
+  {
+    "name": "issue908 flat CREATE SET uses typed parameters",
+    "query": "CREATE (n:X {value:$value}) SET n.values = $values RETURN n.value, n.values",
+    "parameters": {"value":7, "values":[2,3]}
+  },
+  {
+    "name": "issue908 flat CREATE SET RETURN failure rolls back",
+    "query": "CREATE (n:X) SET n.value = 1 RETURN n.value / 0",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH CREATE SET retains typed parameters",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:$start}), (b:Converge {id:$end}) CREATE (a)-[r:R]->(b) SET r += $props RETURN r.since, r.kind",
+    "parameters": {"start":1, "end":2, "props":{"since":2024, "kind":"shared"}}
+  },
+  {
+    "name": "issue908 MATCH CREATE multiple horizons retain writes",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:1}) MATCH (b:Converge {id:2}) CREATE (a)-[:R]->(b) WITH a, b MATCH (c:Converge {id:1}) CREATE (c)-[:R]->(b) RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 outgoing predicate sees own CREATE",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:1}), (b:Converge {id:2}) CREATE (a)-[:R]->(b) WITH a, b WHERE NOT (a)-[:R]->(b) CREATE (:Unexpected) RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 incoming predicate sees own CREATE",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:1}), (b:Converge {id:2}) CREATE (b)-[:R]->(a) WITH a, b WHERE NOT (a)<-[:R]-(b) CREATE (:Unexpected) RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 undirected predicate sees own CREATE",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:1}), (b:Converge {id:2}) CREATE (b)-[:R]->(a) WITH a, b WHERE NOT (a)-[:R]-(b) CREATE (:Unexpected) RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 shared invalid SET label rejects without effects",
+    "query": "CREATE (n:Converge) SET n: RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue894 shared YIELD alias arithmetic",
+    "query": "WITH 3 AS yield RETURN 1 + yield AS value",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH MERGE ON actions preserve matched rows",
+    "setup": ["CREATE (a1:MergeSource {name:'a1'}), (a2:MergeSource {name:'a2'}), (b1:MergeEnd {name:'b1'}), (b2:MergeEnd {name:'b2'}), (a1)-[:R]->(b1), (a1)-[:R]->(b2), (a2)-[:R]->(b1)"],
+    "query": "MATCH (a:MergeSource)-[r:R]->(b:MergeEnd) MERGE (m:MergeTarget {id:a.name}) ON CREATE SET m.created=1 ON MATCH SET m.seen=1 SET m.touched=1 RETURN a.name AS a, b.name AS b, type(r) AS relationship ORDER BY a, b"
+  },
+  {
+    "name": "issue908 MATCH MERGE window preserves relationship bindings",
+    "setup": ["CREATE (:WindowSource {id:1})-[:WINDOW_EDGE]->(:WindowEnd {id:1}), (:WindowSource)-[:WINDOW_EDGE]->(:WindowEnd {id:2}), (:WindowSource {id:3})-[:WINDOW_EDGE]->(:WindowEnd {id:3})"],
+    "query": "MATCH (n:WindowSource)-[r:WINDOW_EDGE]->(m:WindowEnd) WHERE n.id IS NOT NULL WITH n, r, m ORDER BY n.id SKIP 1 LIMIT 2 MERGE (target:WindowTarget {id:n.id}) RETURN n.id AS id, type(r) AS relationship, m.id AS endpoint ORDER BY id"
+  },
+  {
+    "name": "issue908 MATCH MERGE empty window suppresses writes",
+    "setup": ["CREATE (:WindowSource {id:1})"],
+    "query": "MATCH (n:WindowSource) WITH n LIMIT 0 MERGE (target:WindowTarget {id:n.id}) RETURN target.id AS id",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 standalone MERGE match is a no-op",
+    "setup": ["CREATE (:MergeNoop {id:1})"],
+    "query": "MERGE (n:MergeNoop {id:1})",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 endpoint MERGE outgoing unbound start reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (endpoint)-[:R]->(bound) WITH bound, endpoint MERGE (again)-[:R]->(bound) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE outgoing unbound end reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (bound)-[:R]->(endpoint) WITH bound, endpoint MERGE (bound)-[:R]->(again) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE incoming unbound start reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (endpoint)<-[:R]-(bound) WITH bound, endpoint MERGE (again)<-[:R]-(bound) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE incoming unbound end reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (bound)<-[:R]-(endpoint) WITH bound, endpoint MERGE (bound)<-[:R]-(again) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE undirected unbound start reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (endpoint)-[:R]-(bound) WITH bound, endpoint MERGE (again)-[:R]-(bound) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE undirected unbound end reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (bound)-[:R]-(endpoint) WITH bound, endpoint MERGE (bound)-[:R]-(again) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 malformed MERGE pattern rejects without effects",
+    "query": "MERGE bad-pattern",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MERGE chain bound MATCH checks its pattern",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (n:MergeBound {id:1}) WITH n MATCH (n:MergeBound {id:2}) MERGE (:Unexpected) RETURN count(*) AS count",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION correlated distinct rows",
+    "query": "UNWIND [1,2] AS x CALL (x) { RETURN x AS y UNION RETURN x AS y } RETURN x,y ORDER BY x,y",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION ALL correlated duplicate rows",
+    "query": "UNWIND [1,2] AS x CALL (x) { RETURN x AS y UNION ALL RETURN x AS y } RETURN x,y ORDER BY x,y",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION preserves numeric and string values",
+    "query": "CALL { RETURN 1 AS value UNION RETURN '1' AS value } RETURN value",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION ALL preserves branch writes",
+    "query": "UNWIND [1,2] AS x CALL (x) { CREATE (n:CallUnionWrite {value:x,branch:1}) RETURN n.value AS value UNION ALL CREATE (n:CallUnionWrite {value:x,branch:2}) RETURN n.value AS value } RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 CALL rejects undeclared import with empty outer match",
+    "query": "MATCH (:Person) CALL { WITH seed RETURN seed } RETURN seed",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL rejects terminal bare ORDER BY",
+    "query": "CALL { RETURN 1 AS value } ORDER BY value",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION failure prevents later branch writes",
+    "query": "CALL { RETURN 1 / 0 AS value UNION ALL CREATE (n:CallUnionErrorCopy {value:1}) RETURN n.value AS value } RETURN value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH procedure empty input requires explicit outputs",
+    "query": "MATCH (n:ProcedureEmpty) CALL dbms.components()",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH procedure empty input preserves aliases",
+    "query": "MATCH (n:ProcedureEmpty) CALL dbms.components() YIELD name AS component, versions RETURN component, versions",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH procedure empty input validates arity",
+    "query": "MATCH (n:ProcedureEmpty) CALL dbms.components(1) YIELD name RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH procedure empty input rejects unknown procedure",
+    "query": "MATCH (n:ProcedureEmpty) CALL db.unknownPipelineProcedure() YIELD value RETURN value",
+    "expected_code": "Neo.ClientError.Procedure.ProcedureNotFound",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH mutation before procedure uses shared routing",
+    "setup": ["CREATE (:ProcedureBefore {value:1})"],
+    "query": "MATCH (n:ProcedureBefore) SET n.value = 2 WITH n CALL dbms.components() YIELD name RETURN n.value AS value"
+  },
+  {
+    "name": "issue908 MATCH mutation requires WITH before procedure",
+    "setup": ["CREATE (:ProcedureBefore {value:1})"],
+    "query": "MATCH (n:ProcedureBefore) SET n.value = 2 CALL dbms.components() YIELD name RETURN n.value AS value",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 merge null property",
+    "query": "UNWIND [{k: null}, {k: null}] AS row MERGE (n:P {k: row.k}) RETURN count(*) AS c",
+    "expected_code": "Neo.ClientError.Statement.SemanticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 merge set ordering",
+    "setup": ["UNWIND [1] AS x MERGE (n:P {k: x}) ON CREATE SET n.v = 1 SET n.v = 2 RETURN count(*) AS c"],
+    "query": "MATCH (n:P) RETURN n.v"
+  },
+  {
+    "name": "issue908 optional count after merge",
+    "query": "UNWIND [1, 2] AS x OPTIONAL MATCH (m:Missing {k: x}) MERGE (n:P {k: x}) RETURN count(m) AS c"
+  },
+  {
+    "name": "issue908 property comparison count",
+    "setup": ["CREATE (:L {a: 1, b: 1}), (:L {a: 1, b: 2})"],
+    "query": "MATCH (n:L) WHERE n.a = n.b RETURN count(n) AS c"
+  },
+  {
+    "name": "issue908 xor count",
+    "setup": ["CREATE (:A {id: 1}), (:A {id: 2})"],
+    "query": "MATCH (a:A) WHERE a.id = 1 XOR a.id = 2 RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 path predicate precedence",
+    "setup": ["CREATE (:L {a: 1, b: 0, c: 0})-[:R]->(:M), (:L {a: 0, b: 2, c: 3})-[:R]->(:M)"],
+    "query": "MATCH (n:L)-[:R]->(m) WHERE n.a = 1 OR n.b = 2 AND n.c = 3 RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 outer predicate precedence",
+    "setup": ["CREATE (:O {flag: true}), (:L)-[:R]->(:M {y: 0, z: 0})"],
+    "query": "MATCH (o:O) WITH o.flag AS f MATCH (a:L)-[:R]->(b) WHERE f = true OR b.y = 2 AND b.z = 3 RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 seed inline properties",
+    "setup": ["CREATE (:A {k: 1, x: 5})-[:R]->(:B {n: 'ok'}), (:A {k: 2, x: 5})-[:R]->(:B {n: 'bad'})"],
+    "query": "MATCH (a:A {k: 1})-[:R]->(b) WHERE a.x = 5 RETURN b.n AS n"
+  },
+  {
+    "name": "issue908 indexed seed all labels",
+    "setup": ["CREATE INDEX FOR (a:A) ON (a.x)", "CREATE (:A {x: 1})-[:R]->(:M)"],
+    "query": "MATCH (a:A:B {x: 1})-[:R]->(b) RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 optional relationship properties",
+    "setup": ["CREATE (:P {name: 'a'})-[:KNOWS {since: 2019}]->(:P {name: 'b'})"],
+    "query": "MATCH (a:P {name: 'a'}) OPTIONAL MATCH (a)-[r:KNOWS {since: 2020}]->(b) RETURN b.name AS b"
+  },
+  {
+    "name": "issue908 optional bound source labels",
+    "setup": ["CREATE (:P {name: 'a'})-[:KNOWS]->(:P {name: 'b'})"],
+    "query": "MATCH (a:P {name: 'a'}) OPTIONAL MATCH (a:Missing)-[r]->(b) RETURN b.name AS b"
+  },
+  {
+    "name": "issue908 zero length identity path",
+    "setup": ["CREATE (:N)-[:R]->(:N)"],
+    "query": "MATCH (a)-[*0..1]->(a) RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 comma relationship uniqueness",
+    "setup": ["CREATE (:N)-[:R]->(:N)"],
+    "query": "MATCH (a)-[r1]->(b), (c)-[r2]->(d) RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 anonymous relationship uniqueness",
+    "setup": ["CREATE (:P {name: 'a'})-[:KNOWS]->(:P {name: 'b'}), (:P {name: 'c'})-[:KNOWS]->(:P {name: 'd'})"],
+    "query": "MATCH ()-[:KNOWS]->(), ()-[:KNOWS]->() RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 anonymous node multiplicity",
+    "setup": ["CREATE (:A {x: 1}), (:A {x: 2}), (:B), (:B), (:B)"],
+    "query": "MATCH (a:A), (:B) RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 numeric join equality",
+    "setup": ["CREATE (:A {v: 1}), (:B {v: 1.0})"],
+    "query": "MATCH (a:A), (b:B) WHERE a.v = b.v RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 invalid create suffix",
+    "query": "CREATE (:P {x: 1}) -- note",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {"name": "temporal map spring gap resolves forward", "query": "RETURN toString(datetime({year:2026,month:3,day:8,hour:2,minute:30,timezone:'America/New_York'})) AS t"},
+  {"name": "temporal parameter map spring gap resolves forward", "parameters": {"fields": {"year": 2026, "month": 3, "day": 8, "hour": 2, "minute": 30, "timezone": "America/New_York"}}, "query": "RETURN toString(datetime($fields)) AS t"},
+  {"name": "temporal map overlap prefers later instant", "query": "RETURN toString(datetime({year:2026,month:10,day:25,hour:1,minute:30,timezone:'Europe/London'})) AS t"},
+  {"name": "temporal string overlap prefers earlier instant", "query": "RETURN toString(datetime('2026-10-25T01:30:00[Europe/London]')) AS t"},
+  {
+    "name": "comprehension reverse arithmetic predicate is type error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE n.id + x] AS l"
+  },
+  {
+    "name": "comprehension arithmetic empty match has no runtime error",
+    "query": "MATCH (n:MissingW1) RETURN [x IN [1,2] WHERE x + n.id] AS l"
+  },
+  {
+    "name": "where row dependent numeric addition filters instead of compile error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) WHERE n.id + 1 RETURN n.id"
+  },
+  {
+    "name": "comprehension known addition remains syntax error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x + 1] AS l"
+  },
+  {
+    "name": "comprehension multiplication remains syntax error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x * n.id] AS l"
+  },
+  {
+    "name": "round IEEE boundary one argument unwind",
+    "query": "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x RETURN x, round(x) AS v"
+  },
+  {
+    "name": "round IEEE boundary one argument parameters",
+    "parameters": {
+      "values": [
+        0.49999999999999994,
+        4503599627370497.0,
+        -4503599627370497.0,
+        9007199254740991.0,
+        -9007199254740991.0,
+        -2.5,
+        -0.5,
+        0.5
+      ]
+    },
+    "query": "UNWIND $values AS x RETURN x, round(x) AS v"
+  },
+  {
+    "name": "round IEEE boundary one argument property",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) RETURN n.x AS x, round(n.x) AS v"
+  },
+  {
+    "name": "round IEEE boundary one argument with",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) WITH n.x AS x, round(n.x) AS v RETURN x,v"
+  },
+  {
+    "name": "round IEEE boundary integer zero unwind",
+    "query": "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x RETURN x, round(x, 0) AS v"
+  },
+  {
+    "name": "round IEEE boundary integer zero parameters",
+    "parameters": {
+      "values": [
+        0.49999999999999994,
+        4503599627370497.0,
+        -4503599627370497.0,
+        9007199254740991.0,
+        -9007199254740991.0,
+        -2.5,
+        -0.5,
+        0.5
+      ]
+    },
+    "query": "UNWIND $values AS x RETURN x, round(x, 0) AS v"
+  },
+  {
+    "name": "round IEEE boundary integer zero property",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) RETURN n.x AS x, round(n.x, 0) AS v"
+  },
+  {
+    "name": "round IEEE boundary integer zero with",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) WITH n.x AS x, round(n.x, 0) AS v RETURN x,v"
+  },
+  {
+    "name": "round IEEE boundary float zero unwind",
+    "query": "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x RETURN x, round(x, 0.0) AS v"
+  },
+  {
+    "name": "round IEEE boundary float zero parameters",
+    "parameters": {
+      "values": [
+        0.49999999999999994,
+        4503599627370497.0,
+        -4503599627370497.0,
+        9007199254740991.0,
+        -9007199254740991.0,
+        -2.5,
+        -0.5,
+        0.5
+      ]
+    },
+    "query": "UNWIND $values AS x RETURN x, round(x, 0.0) AS v"
+  },
+  {
+    "name": "round IEEE boundary float zero property",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) RETURN n.x AS x, round(n.x, 0.0) AS v"
+  },
+  {
+    "name": "round IEEE boundary float zero with",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) WITH n.x AS x, round(n.x, 0.0) AS v RETURN x,v"
+  },
+  {
+    "name": "round IEEE boundary fraction zero unwind",
+    "query": "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x RETURN x, round(x, 0.5) AS v"
+  },
+  {
+    "name": "round IEEE boundary fraction zero parameters",
+    "parameters": {
+      "values": [
+        0.49999999999999994,
+        4503599627370497.0,
+        -4503599627370497.0,
+        9007199254740991.0,
+        -9007199254740991.0,
+        -2.5,
+        -0.5,
+        0.5
+      ]
+    },
+    "query": "UNWIND $values AS x RETURN x, round(x, 0.5) AS v"
+  },
+  {
+    "name": "round IEEE boundary fraction zero property",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) RETURN n.x AS x, round(n.x, 0.5) AS v"
+  },
+  {
+    "name": "round IEEE boundary fraction zero with",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) WITH n.x AS x, round(n.x, 0.5) AS v RETURN x,v"
+  }
+]

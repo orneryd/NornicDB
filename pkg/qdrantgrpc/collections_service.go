@@ -1,0 +1,264 @@
+package qdrantgrpc
+
+import (
+	"context"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/search"
+	qpb "github.com/qdrant/go-client/qdrant"
+	"google.golang.org/grpc/codes"
+)
+
+// CollectionsService implements the Qdrant Collections gRPC service.
+type CollectionsService struct {
+	qpb.UnimplementedCollectionsServer
+	collections CollectionStore
+	checker     DatabaseAccessChecker // optional; when set, enforces per-database (per-collection) RBAC
+	localizer   *localization.Manager
+}
+
+// NewCollectionsService creates a new Collections service.
+func NewCollectionsService(collections CollectionStore, checker DatabaseAccessChecker) *CollectionsService {
+	return &CollectionsService{
+		collections: collections,
+		checker:     checker,
+	}
+}
+
+func (s *CollectionsService) allowAccess(ctx context.Context, collectionName string, write bool) error {
+	if s.checker == nil {
+		return nil
+	}
+	return s.checker.AllowDatabaseAccess(ctx, collectionName, write)
+}
+
+func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollection) (*qpb.CollectionOperationResponse, error) {
+	start := time.Now()
+
+	if req.GetCollectionName() == "" {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
+	}
+	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+		return nil, err
+	}
+
+	// Extract vector config
+	var dims int
+	var distance qpb.Distance
+
+	if req.VectorsConfig == nil {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vectors_config"), grpcresponse.QdrantSourceFallback)
+	}
+
+	switch cfg := req.VectorsConfig.Config.(type) {
+	case *qpb.VectorsConfig_Params:
+		dims = int(cfg.Params.Size)
+		distance = cfg.Params.Distance
+	case *qpb.VectorsConfig_ParamsMap:
+		// Multi-vector: use first entry for now
+		for _, params := range cfg.ParamsMap.Map {
+			dims = int(params.Size)
+			distance = params.Distance
+			break
+		}
+	default:
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantInvalidVectorsConfig(), grpcresponse.QdrantSourceFallback)
+	}
+
+	if dims <= 0 {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantVectorSizeMustBePositive(), grpcresponse.QdrantSourceFallback)
+	}
+
+	quantization, err := collectionQuantizationConfig(req)
+	if err != nil {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantInvalidQuantizationConfig(err), grpcresponse.QdrantSourceFallback)
+	}
+	var createErr error
+	if quantization != nil {
+		configured, ok := s.collections.(quantizedCollectionStore)
+		if !ok {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.Unimplemented, localization.QdrantInvalidQuantizationConfig(fmt.Errorf("collection store cannot persist quantization")), grpcresponse.QdrantSourceFallback)
+		}
+		createErr = configured.CreateWithQuantization(ctx, req.CollectionName, dims, distance, quantization)
+	} else {
+		createErr = s.collections.Create(ctx, req.CollectionName, dims, distance)
+	}
+	if err := createErr; err != nil {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.AlreadyExists, localization.QdrantCreateCollectionFailed(err), grpcresponse.QdrantSourceFallback)
+	}
+
+	return &qpb.CollectionOperationResponse{
+		Result: true,
+		Time:   time.Since(start).Seconds(),
+	}, nil
+}
+
+func (s *CollectionsService) Get(ctx context.Context, req *qpb.GetCollectionInfoRequest) (*qpb.GetCollectionInfoResponse, error) {
+	start := time.Now()
+
+	if req.GetCollectionName() == "" {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
+	}
+	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+		return nil, err
+	}
+
+	meta, err := s.collections.GetMeta(ctx, req.CollectionName)
+	if err != nil {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFoundWithCause(err), grpcresponse.QdrantSourceFallback)
+	}
+
+	// Get point count
+	var pointsCount uint64
+	if count, err := s.collections.PointCount(ctx, req.CollectionName); err == nil {
+		pointsCount = uint64(count)
+	}
+
+	hnswM := uint64(search.HNSWConfigFromEnv().M)
+	hnswEfConstruct := uint64(search.HNSWConfigFromEnv().EfConstruction)
+	hnswFullScanThreshold := uint64(10_000)
+
+	optimizerDeletedThreshold := float64(0.2)
+	optimizerVacuumMinVectorNumber := uint64(1000)
+	optimizerDefaultSegmentNumber := uint64(1)
+	optimizerFlushIntervalSec := uint64(5)
+
+	walCapacityMb := uint64(32)
+	walSegmentsAhead := uint64(0)
+	walRetainClosed := uint64(0)
+
+	return &qpb.GetCollectionInfoResponse{
+		Result: &qpb.CollectionInfo{
+			Status:              qpb.CollectionStatus_Green,
+			PointsCount:         &pointsCount,
+			IndexedVectorsCount: &pointsCount,
+			Config: &qpb.CollectionConfig{
+				QuantizationConfig: meta.Quantization,
+				Params: &qpb.CollectionParams{
+					VectorsConfig: &qpb.VectorsConfig{
+						Config: &qpb.VectorsConfig_Params{
+							Params: &qpb.VectorParams{
+								Size:     uint64(meta.Dimensions),
+								Distance: meta.Distance,
+							},
+						},
+					},
+				},
+				HnswConfig: &qpb.HnswConfigDiff{
+					M:                 &hnswM,
+					EfConstruct:       &hnswEfConstruct,
+					FullScanThreshold: &hnswFullScanThreshold,
+				},
+				OptimizerConfig: &qpb.OptimizersConfigDiff{
+					DeletedThreshold:      &optimizerDeletedThreshold,
+					VacuumMinVectorNumber: &optimizerVacuumMinVectorNumber,
+					DefaultSegmentNumber:  &optimizerDefaultSegmentNumber,
+					FlushIntervalSec:      &optimizerFlushIntervalSec,
+				},
+				WalConfig: &qpb.WalConfigDiff{
+					WalCapacityMb:    &walCapacityMb,
+					WalSegmentsAhead: &walSegmentsAhead,
+					WalRetainClosed:  &walRetainClosed,
+				},
+			},
+		},
+		Time: time.Since(start).Seconds(),
+	}, nil
+}
+
+func (s *CollectionsService) List(ctx context.Context, req *qpb.ListCollectionsRequest) (*qpb.ListCollectionsResponse, error) {
+	start := time.Now()
+
+	names, err := s.collections.List(ctx)
+	if err != nil {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.Internal, localization.QdrantListCollectionsFailed(err), grpcresponse.QdrantSourceFallback)
+	}
+	if s.checker != nil {
+		names, err = s.checker.VisibleDatabases(ctx, names)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	collections := make([]*qpb.CollectionDescription, len(names))
+	for i, name := range names {
+		collections[i] = &qpb.CollectionDescription{Name: name}
+	}
+
+	return &qpb.ListCollectionsResponse{
+		Collections: collections,
+		Time:        time.Since(start).Seconds(),
+	}, nil
+}
+
+func (s *CollectionsService) Delete(ctx context.Context, req *qpb.DeleteCollection) (*qpb.CollectionOperationResponse, error) {
+	start := time.Now()
+
+	if req.GetCollectionName() == "" {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
+	}
+	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+		return nil, err
+	}
+
+	if err := s.collections.Drop(ctx, req.CollectionName); err != nil {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantDeleteCollectionFailed(err), grpcresponse.QdrantSourceFallback)
+	}
+
+	return &qpb.CollectionOperationResponse{
+		Result: true,
+		Time:   time.Since(start).Seconds(),
+	}, nil
+}
+
+// Update acknowledges tuning requests for an existing collection. NornicDB
+// manages HNSW/optimizer tuning internally. Quantization changes are rejected;
+// Create owns the durable compression policy.
+func (s *CollectionsService) Update(ctx context.Context, req *qpb.UpdateCollection) (*qpb.CollectionOperationResponse, error) {
+	start := time.Now()
+
+	if req.GetCollectionName() == "" {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
+	}
+	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+		return nil, err
+	}
+
+	// Verify collection exists
+	if !s.collections.Exists(req.CollectionName) {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
+	}
+
+	if req.QuantizationConfig != nil {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.Unimplemented, localization.QdrantInvalidQuantizationConfig(fmt.Errorf("changing quantization requires creating a collection with the desired configuration")), grpcresponse.QdrantSourceFallback)
+	}
+
+	// NornicDB manages HNSW/optimizer parameters automatically
+	// This call succeeds if the collection exists
+
+	return &qpb.CollectionOperationResponse{
+		Result: true,
+		Time:   time.Since(start).Seconds(),
+	}, nil
+}
+
+func (s *CollectionsService) CollectionExists(ctx context.Context, req *qpb.CollectionExistsRequest) (*qpb.CollectionExistsResponse, error) {
+	start := time.Now()
+
+	if req.GetCollectionName() == "" {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
+	}
+	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+		return nil, err
+	}
+
+	exists := s.collections.Exists(req.CollectionName)
+
+	return &qpb.CollectionExistsResponse{
+		Result: &qpb.CollectionExists{Exists: exists},
+		Time:   time.Since(start).Seconds(),
+	}, nil
+}

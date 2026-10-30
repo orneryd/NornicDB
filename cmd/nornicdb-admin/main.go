@@ -1,0 +1,421 @@
+// Package main provides the NornicDB admin CLI entrypoint.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/orneryd/nornicdb/pkg/adminimport"
+	"github.com/orneryd/nornicdb/pkg/buildinfo"
+	"github.com/orneryd/nornicdb/pkg/cli"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+func main() {
+	localizer, err := newCommandLocalizer()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, localization.AdminCLIErrorPrefix().Fallback, err)
+		os.Exit(1)
+	}
+	rootCmd := cli.NewRoot("nornicdb-admin", localizer, localization.AdminCLIRootShort(), localization.Message{})
+	registerAdminCommands(rootCmd, localizer)
+	localizeCobraHelp(rootCmd, localizer)
+	rootCmd.SilenceErrors = true
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(rootCmd.ErrOrStderr(), cli.Render(localizer, localization.AdminCLIErrorPrefix()), renderCommandError(localizer, err))
+		os.Exit(exitCodeForError(err))
+	}
+}
+
+func newCommandLocalizer() (*localization.Manager, error) {
+	preferences, err := localization.ResolveProcessPreferences(localization.AutoLanguage)
+	if err != nil {
+		return nil, err
+	}
+	return localization.NewManager(preferences.Preferences, nil)
+}
+
+func renderCommandError(manager *localization.Manager, err error) string {
+	var commandErr *localizedCommandError
+	if errors.As(err, &commandErr) {
+		return cli.Render(manager, commandErr.message)
+	}
+	var importErr *adminimport.Error
+	if !errors.As(err, &importErr) || importErr.LocalizedMessage.ID == "" {
+		return err.Error()
+	}
+	text := cli.Render(manager, importErr.LocalizedMessage)
+	if importErr.Err != nil {
+		text += ": " + importErr.Err.Error()
+	}
+	return text
+}
+
+type localizedCommandError struct {
+	message localization.Message
+}
+
+func (e *localizedCommandError) Error() string {
+	return e.message.Fallback
+}
+
+func newLocalizedCommandError(message localization.Message) error {
+	return &localizedCommandError{message: message}
+}
+
+// registerAdminCommands owns the admin binary's commands; pkg/cli owns the
+// shared localized root construction used by both binaries.
+func registerAdminCommands(rootCmd *cobra.Command, manager *localization.Manager) {
+	text := func(message localization.Message) string {
+		return cli.Render(manager, message)
+	}
+
+	dataDir := rootCmd.PersistentFlags().String("data-dir", "./data", text(localization.AdminCLIDataDirectoryFlag()))
+
+	databaseCmd := &cobra.Command{Use: "database", Short: text(localization.AdminCLIDatabaseShort())}
+	importCmd := &cobra.Command{Use: "import", Short: text(localization.AdminCLIImportShort())}
+
+	fullCmd := &cobra.Command{
+		Use:   "full <db-name>",
+		Short: text(localization.AdminCLIFullImportShort()),
+		Args:  localizedExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runImportFull(args[0], *dataDir, cmd)
+		},
+	}
+	fullCmd.Flags().StringSlice("nodes", nil, text(localization.AdminCLINodesFlag()))
+	fullCmd.Flags().StringSlice("relationships", nil, text(localization.AdminCLIRelationshipsFlag()))
+	fullCmd.Flags().String("from-path", "", text(localization.AdminCLIFromPathFlag()))
+	fullCmd.Flags().String("schema", "", text(localization.AdminCLISchemaFlag()))
+	fullCmd.Flags().Bool("build-indexes", true, text(localization.AdminCLIBuildIndexesFlag()))
+	fullCmd.Flags().Bool("skip-bad-relationships", false, text(localization.AdminCLISkipBadRelationshipsFlag()))
+	fullCmd.Flags().Bool("skip-duplicate-nodes", false, text(localization.AdminCLISkipDuplicateNodesFlag()))
+	fullCmd.Flags().Bool("normalize-types", true, text(localization.AdminCLINormalizeTypesFlag()))
+	fullCmd.Flags().Bool("ignore-extra-columns", false, text(localization.AdminCLIIgnoreExtraColumnsFlag()))
+	fullCmd.Flags().Bool("ignore-empty-strings", false, text(localization.AdminCLIIgnoreEmptyStringsFlag()))
+	fullCmd.Flags().String("report-file", "", text(localization.AdminCLIReportFileFlag()))
+	fullCmd.Flags().String("id-type", "string", text(localization.AdminCLIIDTypeFlag()))
+	fullCmd.Flags().Int("bad-tolerance", 0, text(localization.AdminCLIBadToleranceFlag()))
+	fullCmd.Flags().Int("chunk-size", 1000, text(localization.AdminCLIChunkSizeFlag()))
+	fullCmd.Flags().String("delimiter", ",", text(localization.AdminCLIDelimiterFlag()))
+	fullCmd.Flags().String("array-delimiter", ";", text(localization.AdminCLIArrayDelimiterFlag()))
+	fullCmd.Flags().String("vector-delimiter", ";", text(localization.AdminCLIVectorDelimiterFlag()))
+	fullCmd.Flags().String("quote", "\"", text(localization.AdminCLIQuoteFlag()))
+	fullCmd.Flags().String("constraints-file", "", text(localization.AdminCLIConstraintsFileFlag()))
+	fullCmd.Flags().Bool("verbose", false, text(localization.AdminCLIVerboseFlag()))
+
+	incrementalCmd := &cobra.Command{
+		Use:   "incremental <db-name>",
+		Short: text(localization.AdminCLIIncrementalImportShort()),
+		Args:  localizedExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newLocalizedCommandError(localization.AdminCLIIncrementalNotImplemented())
+		},
+	}
+
+	importCmd.AddCommand(fullCmd, incrementalCmd)
+	exportCmd := &cobra.Command{Use: "export", Short: text(localization.AdminCLIExportShort())}
+	exportNeo4jCSVCmd := &cobra.Command{
+		Use:   "neo4j-csv <db-name>",
+		Short: text(localization.AdminCLINeo4jCSVExportShort()),
+		Args:  localizedExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runExportNeo4jCSV(args[0], *dataDir, cmd)
+		},
+	}
+	exportNeo4jCSVCmd.Flags().String("to-path", "", text(localization.AdminCLIToPathFlag()))
+	exportNeo4jCSVCmd.Flags().String("delimiter", ",", text(localization.AdminCLIDelimiterFlag()))
+	exportNeo4jCSVCmd.Flags().String("array-delimiter", ";", text(localization.AdminCLIArrayDelimiterFlag()))
+	exportNeo4jCSVCmd.Flags().String("vector-delimiter", ";", text(localization.AdminCLIVectorDelimiterFlag()))
+	exportNeo4jCSVCmd.Flags().String("quote", "\"", text(localization.AdminCLIQuoteFlag()))
+	exportCmd.AddCommand(exportNeo4jCSVCmd)
+	databaseCmd.AddCommand(importCmd)
+	databaseCmd.AddCommand(exportCmd)
+	checkIDsCmd := &cobra.Command{
+		Use:   "check-ids",
+		Short: text(localization.AdminCLICheckIDsShort()),
+		Args:  localizedNoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCheckIDs(*dataDir, cmd, text)
+		},
+	}
+	checkIDsCmd.Flags().Bool("repair", false, text(localization.AdminCLIRepairFlag()))
+	databaseCmd.AddCommand(checkIDsCmd)
+	databaseCmd.AddCommand(&cobra.Command{Use: "info <db-name>", Args: localizedExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return newLocalizedCommandError(localization.AdminCLIDatabaseInfoNotImplemented())
+	}})
+	rootCmd.AddCommand(databaseCmd)
+	serverCmd := &cobra.Command{Use: "server", Short: text(localization.AdminCLIServerShort())}
+	serverCmd.AddCommand(&cobra.Command{Use: "status", Short: text(localization.AdminCLIServerStatusShort()), Args: localizedNoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		return newLocalizedCommandError(localization.AdminCLIServerStatusNotImplemented())
+	}})
+	rootCmd.AddCommand(serverCmd)
+	rootCmd.AddCommand(&cobra.Command{Use: "version", Short: text(localization.AdminCLIVersionShort()), Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println(buildinfo.DisplayVersion())
+	}})
+}
+
+func localizedExactArgs(expected int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) != expected {
+			return newLocalizedCommandError(localization.AdminCLIExactArgs(expected, len(args)))
+		}
+		return nil
+	}
+}
+
+func localizedNoArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 {
+		return newLocalizedCommandError(localization.AdminCLIUnknownCommand(args[0], cmd.CommandPath()))
+	}
+	return nil
+}
+
+func localizeCobraHelp(root *cobra.Command, manager *localization.Manager) {
+	text := func(message localization.Message) string {
+		return cli.Render(manager, message)
+	}
+	root.SetUsageTemplate(localizedUsageTemplate(manager))
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	for _, command := range root.Commands() {
+		switch command.Name() {
+		case "help":
+			command.Short = text(localization.AdminCLIHelpCommandShort())
+			command.Long = text(localization.AdminCLIHelpCommandLong(root.DisplayName()))
+		case "completion":
+			command.Short = text(localization.AdminCLICompletionCommandShort())
+			command.Long = text(localization.AdminCLICompletionCommandLong(root.DisplayName()))
+			command.Args = localizedNoArgs
+		}
+	}
+	localizeHelpFlags(root, manager)
+}
+
+func localizeHelpFlags(command *cobra.Command, manager *localization.Manager) {
+	command.InitDefaultHelpFlag()
+	if helpFlag := command.Flags().Lookup("help"); helpFlag != nil {
+		helpFlag.Usage = cli.Render(manager, localization.AdminCLIHelpFlag(command.DisplayName()))
+	}
+	for _, child := range command.Commands() {
+		localizeHelpFlags(child, manager)
+	}
+}
+
+func localizedUsageTemplate(manager *localization.Manager) string {
+	text := func(message localization.Message) string {
+		return cli.Render(manager, message)
+	}
+	return text(localization.AdminCLIUsageHeading()) + `{{if .Runnable}}
+  {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
+  {{.CommandPath}} [command]{{end}}{{if gt (len .Aliases) 0}}
+
+` + text(localization.AdminCLIAliasesHeading()) + `
+  {{.NameAndAliases}}{{end}}{{if .HasExample}}
+
+` + text(localization.AdminCLIExamplesHeading()) + `
+{{.Example}}{{end}}{{if .HasAvailableSubCommands}}{{$cmds := .Commands}}{{if eq (len .Groups) 0}}
+
+` + text(localization.AdminCLIAvailableCommandsHeading()) + `{{range $cmds}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{else}}{{range $group := .Groups}}
+
+{{.Title}}{{range $cmds}}{{if (and (eq .GroupID $group.ID) (or .IsAvailableCommand (eq .Name "help")))}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
+
+` + text(localization.AdminCLIAdditionalCommandsHeading()) + `{{range $cmds}}{{if (and (eq .GroupID "") (or .IsAvailableCommand (eq .Name "help")))}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
+
+` + text(localization.AdminCLIFlagsHeading()) + `
+{{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
+
+` + text(localization.AdminCLIGlobalFlagsHeading()) + `
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasHelpSubCommands}}
+
+` + text(localization.AdminCLIAdditionalHelpTopicsHeading()) + `{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
+  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
+
+` + text(localization.AdminCLIHelpMoreInformation("{{.CommandPath}}")) + `{{end}}
+`
+}
+
+func runImportFull(dbName string, dataDir string, cmd *cobra.Command) error {
+	nodes, _ := cmd.Flags().GetStringSlice("nodes")
+	rels, _ := cmd.Flags().GetStringSlice("relationships")
+	fromPath, _ := cmd.Flags().GetString("from-path")
+	reportFile, _ := cmd.Flags().GetString("report-file")
+	schemaFile, _ := cmd.Flags().GetString("schema")
+	idType, _ := cmd.Flags().GetString("id-type")
+	delimiter, _ := cmd.Flags().GetString("delimiter")
+	arrayDelimiter, _ := cmd.Flags().GetString("array-delimiter")
+	vectorDelimiter, _ := cmd.Flags().GetString("vector-delimiter")
+	quote, _ := cmd.Flags().GetString("quote")
+	chunkSize, _ := cmd.Flags().GetInt("chunk-size")
+	normalize, _ := cmd.Flags().GetBool("normalize-types")
+	ignoreExtra, _ := cmd.Flags().GetBool("ignore-extra-columns")
+	ignoreEmpty, _ := cmd.Flags().GetBool("ignore-empty-strings")
+	buildIndexes, _ := cmd.Flags().GetBool("build-indexes")
+	skipBad, _ := cmd.Flags().GetBool("skip-bad-relationships")
+	skipDup, _ := cmd.Flags().GetBool("skip-duplicate-nodes")
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	badTol, _ := cmd.Flags().GetInt("bad-tolerance")
+	constraintsFile, _ := cmd.Flags().GetString("constraints-file")
+	if schemaFile == "" {
+		schemaFile = constraintsFile
+	}
+	if fromPath != "" && schemaFile == "" {
+		candidate := adminimport.DefaultNeo4jCSVNornicSchemaPath(fromPath)
+		if _, err := os.Stat(candidate); err == nil {
+			schemaFile = candidate
+		} else {
+			candidate = adminimport.DefaultNeo4jCSVSchemaPath(fromPath)
+			if _, err := os.Stat(candidate); err == nil {
+				schemaFile = candidate
+			}
+		}
+	}
+	if fromPath != "" {
+		discoveredNodes, discoveredRels, err := adminimport.DiscoverNeo4jCSVSources(fromPath, adminimport.Options{
+			Delimiter:       firstRune(delimiter, ','),
+			ArrayDelimiter:  firstRune(arrayDelimiter, ';'),
+			VectorDelimiter: firstRune(vectorDelimiter, ';'),
+			Quote:           firstRune(quote, '"'),
+		})
+		if err != nil {
+			return err
+		}
+		nodes = append(nodes, discoveredNodes...)
+		rels = append(rels, discoveredRels...)
+	}
+
+	engine, err := storage.NewBadgerEngine(dataDir)
+	if err != nil {
+		return err
+	}
+	defer engine.Close()
+
+	report, err := adminimport.ImportFull(context.Background(), engine, adminimport.Options{
+		DatabaseName:         dbName,
+		NodeSources:          nodes,
+		RelSources:           rels,
+		DataDir:              dataDir,
+		Delimiter:            firstRune(delimiter, ','),
+		ArrayDelimiter:       firstRune(arrayDelimiter, ';'),
+		VectorDelimiter:      firstRune(vectorDelimiter, ';'),
+		Quote:                firstRune(quote, '"'),
+		IDType:               idType,
+		NormalizeTypes:       normalize,
+		IgnoreExtraColumns:   ignoreExtra,
+		IgnoreEmptyStrings:   ignoreEmpty,
+		BadTolerance:         badTol,
+		SkipBadRelationships: skipBad,
+		SkipDuplicateNodes:   skipDup,
+		ReportFile:           reportFile,
+		SchemaFile:           schemaFile,
+		BuildIndexes:         buildIndexes,
+		ChunkSize:            chunkSize,
+		Verbose:              verbose,
+	})
+	if err != nil {
+		return err
+	}
+	_ = report
+	return nil
+}
+
+func runExportNeo4jCSV(dbName string, dataDir string, cmd *cobra.Command) error {
+	toPath, _ := cmd.Flags().GetString("to-path")
+	delimiter, _ := cmd.Flags().GetString("delimiter")
+	arrayDelimiter, _ := cmd.Flags().GetString("array-delimiter")
+	vectorDelimiter, _ := cmd.Flags().GetString("vector-delimiter")
+	quote, _ := cmd.Flags().GetString("quote")
+	if strings.TrimSpace(toPath) == "" {
+		return newLocalizedCommandError(localization.AdminCLIToPathRequired())
+	}
+
+	engine, err := storage.NewBadgerEngine(dataDir)
+	if err != nil {
+		return err
+	}
+	defer engine.Close()
+
+	namespaced := storage.NewNamespacedEngine(engine, dbName)
+	return adminimport.ExportNeo4jCSV(namespaced, adminimport.Neo4jCSVExportOptions{
+		OutputDir:       toPath,
+		Delimiter:       firstRune(delimiter, ','),
+		ArrayDelimiter:  firstRune(arrayDelimiter, ';'),
+		VectorDelimiter: firstRune(vectorDelimiter, ';'),
+		Quote:           firstRune(quote, '"'),
+	})
+}
+
+// runCheckIDs lists the stored nodes and relationships without an
+// ID-dictionary entry and, with --repair, restores those the index keys
+// identify (#907, I29).
+func runCheckIDs(dataDir string, cmd *cobra.Command, text func(localization.Message) string) error {
+	repair, _ := cmd.Flags().GetBool("repair")
+	engine, err := storage.NewBadgerEngine(dataDir)
+	if err != nil {
+		return err
+	}
+	defer engine.Close()
+	report, err := engine.CheckIDDictionary()
+	if repair && err == nil {
+		report, err = engine.RepairIDDictionary()
+	}
+	if err != nil {
+		return err
+	}
+	printIDDictionaryReport(cmd.OutOrStdout(), text, report, repair)
+	return nil
+}
+
+// printIDDictionaryReport writes check-ids' report: each entity without an
+// ID-dictionary entry, each whose entry its index keys don't use, and with
+// repair what it restored.
+func printIDDictionaryReport(out io.Writer, text func(localization.Message) string, report *storage.IDDictionaryReport, repair bool) {
+	fmt.Fprintln(out, text(localization.AdminCLICheckIDsSummary(len(report.Nodes), len(report.Edges))))
+	for _, id := range report.Nodes {
+		fmt.Fprintln(out, "  "+text(localization.AdminCLICheckIDsNode(string(id))))
+	}
+	for _, id := range report.Edges {
+		fmt.Fprintln(out, "  "+text(localization.AdminCLICheckIDsRelationship(string(id))))
+	}
+	fmt.Fprintln(out, text(localization.AdminCLICheckIDsMismatchedSummary(len(report.MismatchedNodes), len(report.MismatchedEdges))))
+	for _, id := range report.MismatchedNodes {
+		fmt.Fprintln(out, "  "+text(localization.AdminCLICheckIDsNode(string(id))))
+	}
+	for _, id := range report.MismatchedEdges {
+		fmt.Fprintln(out, "  "+text(localization.AdminCLICheckIDsRelationship(string(id))))
+	}
+	if repair {
+		fmt.Fprintln(out, text(localization.AdminCLIRepairIDsSummary(len(report.RestoredNodes), len(report.RestoredEdges), len(report.UnresolvedNodes), len(report.UnresolvedEdges))))
+	}
+}
+
+func firstRune(value string, fallback rune) rune {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return []rune(value)[0]
+}
+
+func exitCodeForError(err error) int {
+	if err == nil {
+		return adminimport.ExitOK
+	}
+	var importErr *adminimport.Error
+	if errors.As(err, &importErr) {
+		if importErr.ExitCode > 0 {
+			return importErr.ExitCode
+		}
+	}
+	return 1
+}

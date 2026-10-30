@@ -1,0 +1,28 @@
+- [x] Confirm the Go helper API migration with the maintainer.
+- [x] Extend the existing ValidateURL owner with a typed policy and remove the forwarding API.
+- [x] Migrate every Go caller and security-guide example without changing client protocol behavior.
+- [x] Preserve production zero-policy defaults with fail-first tests and explicit length boundaries.
+- [x] Preserve development, APOC and eval access policies, including long local/remote eval URLs.
+- [x] Review and update only changed diagnostic-sink fingerprints; retain all detection rules.
+- [ ] Complete final make test and installed duplicate analysis before publication (using the maintainer's generated-ANTLR exclusion).
+- [x] Converge OAuth issuer URL checks into the typed owner and migrate startup, discovery, provider and OAuth consumers; preserve their absolute credential-free policy.
+- [x] Consolidate provider orchestration, column-bearing remote queries and compiled sensitive-name classification; retire redundant owners and migrate consumers.
+- [x] Review all 26 added/moved diagnostic inventory entries and 10 removed entries; guard actual shared public error boundaries.
+- [x] Consolidate all compatible provider construction in the existing factory and full Bolt discovery in its wire-response owner, retiring redundant constructors and body-only production helper.
+- [x] Converge reported remote entity CRUD, edge-list, count and degree families through shared owners and public QueryCypher; verify exact public query/data/error/context contracts.
+- [ ] Run the unchanged installed check-in entry point and make test from the primary single worktree; resolve every returned finding before publication.
+- [x] Consolidate the five reported provider-test overlaps into existing table owners and singular/plural edge lookup construction into one owner; preserve all assertions and exact query contracts.
+
+- [x] Consolidate accepted source changes into the primary worktree; preserve immutable checker and installed hooks.
+- [x] Run installed checker on staged tree 9d461a350e16f5724caf481b4c444349a1371a8c: 400 functions, six moves, no findings.
+- [x] Preserve full make test failure evidence; correct ignored archived-clone placement without weakening ownership guards.
+- [x] Propagate caller cancellation/version through query readers and avoid grammar redaction for nonrecording spans; affected public contract tests pass.
+- [ ] Run the installed checker on the integrated context/owner correction and resolve every finding against the release graph.
+- [x] Follow the maintainer decision to keep ANTLR unmodified; document the cold-prediction limitation, preserve its failing focused evidence and unchanged assertions, and verify no newer Go runtime release fixes it. Final make test remains a separate pending gate.
+
+- [x] Converge all seven reported test overlaps, retaining every original query and assertion; reproduce and correct the shared grammar-extraction layout regression.
+- [x] Converge the six execution-owner families in `converge-query-duplicate-owners`; verify affected Cypher and full Fabric contracts and workload-specific FOREACH CPU/allocation comparisons.
+- [x] Preserve cancellation through the unreleased Fabric projection interface by migrating its existing signature and all consumers; keep published context-free boundaries explicit.
+- [x] Complete the independent bounded core-reader audit; retain its concrete authorization-result finding for correction below.
+- [x] Correct canceled authorization classification without changing live entitlements or the no-checker contract; verify fail-first public cancellation/deadline/checkpoint controls (red-to-green, 1.071s affected suite).
+- [ ] Publish the validated integrated candidate, update PR acceptance evidence and Linear status, and leave merging to the maintainer.

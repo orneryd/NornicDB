@@ -1,0 +1,160 @@
+# =============================================================================
+# NornicDB Configuration for macOS
+# =============================================================================
+# 
+# This file is managed by the NornicDB menu bar app.
+# Edit via Settings (click menu bar icon → Settings, or press ⌘,)
+#
+# Configuration Precedence:
+#   1. Command-line flags (highest)
+#   2. Environment variables
+#   3. This config file
+#   4. Built-in defaults (lowest)
+#
+# Documentation: https://github.com/orneryd/nornicdb/docs
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# SERVER SETTINGS
+# -----------------------------------------------------------------------------
+server:
+  # Bolt protocol port (Neo4j driver compatible)
+  # The menu bar app edits this as "port"
+  port: 7687
+  bolt_port: 7687
+  
+  # HTTP API port (Web UI and REST endpoints)
+  http_port: 7474
+  
+  # Bind address: "127.0.0.1" for localhost, "0.0.0.0" for all interfaces
+  host: "127.0.0.1"
+
+# -----------------------------------------------------------------------------
+# AUTHENTICATION
+# -----------------------------------------------------------------------------
+auth:
+  # Admin username
+  username: "admin"
+  
+  # Admin password (minimum 8 characters)
+  password: "password"
+  
+  # JWT secret for signing tokens (leave empty for auto-generation)
+  # Set a consistent value if you need tokens to persist across restarts
+  jwt_secret: ""
+
+# -----------------------------------------------------------------------------
+# DATA STORAGE
+# -----------------------------------------------------------------------------
+storage:
+  # Data directory for database files
+  path: "/usr/local/var/nornicdb/data"
+
+# -----------------------------------------------------------------------------
+# DATABASE
+# -----------------------------------------------------------------------------
+database:
+  # Enable full database encryption at rest (all-or-nothing)
+  # When enabled, ALL data is encrypted using AES-256
+  encryption_enabled: false
+  
+  # Encryption password for data at rest
+  # Required when encryption_enabled is true
+  # WARNING: Keep this password safe - data cannot be recovered without it!
+  encryption_password: ""
+
+# -----------------------------------------------------------------------------
+# EMBEDDING (Vector Search)
+# -----------------------------------------------------------------------------
+embedding:
+  # Enable embedding generation for semantic search
+  enabled: false
+  
+  # Provider: "local" (GGUF), "ollama", or "openai"
+  provider: "local"
+  
+  # Model filename (GGUF)
+  model: "bge-m3.gguf"
+  
+  # API URL (for ollama/openai)
+  url: "http://localhost:11434"
+  
+  # Embedding dimensions (must match model)
+  dimensions: 1024
+
+# -----------------------------------------------------------------------------
+# K-MEANS CLUSTERING
+# -----------------------------------------------------------------------------
+kmeans:
+  # Enable K-means clustering for node organization
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# SEARCH RERANKING (Stage-2 reranking)
+# -----------------------------------------------------------------------------
+search_rerank:
+  # Enable reranking for vector/hybrid search
+  enabled: false
+
+  # Provider: "local" (GGUF), "ollama", "openai", or "http"
+  provider: "local"
+
+  # Local reranker model (GGUF)
+  model: "bge-reranker-v2-m3-Q4_K_M.gguf"
+
+  # API URL and key (for external providers)
+  api_url: ""
+  api_key: ""
+
+# -----------------------------------------------------------------------------
+# AUTO-TLP (Topology Link Prediction)
+# -----------------------------------------------------------------------------
+auto_tlp:
+  # Enable automatic link prediction
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# HEIMDALL (AI Assistant)
+# -----------------------------------------------------------------------------
+heimdall:
+  # Enable Heimdall AI assistant
+  enabled: false
+  
+  # Model for Heimdall (GGUF format)
+  model: "qwen3-0.6b-instruct.gguf"
+  
+  # Models directory
+  models_dir: "/usr/local/var/nornicdb/models"
+  
+  # GPU layers: -1 (auto), 0 (CPU only), >0 (specific layers)
+  gpu_layers: -1
+
+# -----------------------------------------------------------------------------
+# PLUGINS (APOC & Heimdall)
+# -----------------------------------------------------------------------------
+plugins:
+  # APOC plugins directory (extended Cypher functions)
+  # Full Edition installs plugins to /usr/local/share/nornicdb/plugins
+  dir: "/usr/local/share/nornicdb/plugins/apoc"
+  
+  # Heimdall plugins directory (AI integration)
+  heimdall_dir: "/usr/local/share/nornicdb/plugins/heimdall"
+
+# -----------------------------------------------------------------------------
+# MEMORY DECAY
+# -----------------------------------------------------------------------------
+memory:
+  # Enable natural memory decay
+  decay_enabled: true
+  
+  # Access metadata flush interval (seconds)
+  decay_interval: 2
+  
+  # Visibility threshold (0.0-1.0) - nodes below this score are suppressed
+  visibility_threshold: 0.05
+
+# -----------------------------------------------------------------------------
+# AUTO-START
+# -----------------------------------------------------------------------------
+# Note: Auto-start is managed by LaunchAgent, not this config file.
+# The menu bar app controls the LaunchAgent registration.

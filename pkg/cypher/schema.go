@@ -1,0 +1,2490 @@
+// Schema command parsing and execution for Cypher.
+//
+// This file implements Neo4j schema management commands:
+//   - CREATE CONSTRAINT
+//   - CREATE INDEX
+//   - CREATE RANGE INDEX
+//   - CREATE FULLTEXT INDEX
+//   - CREATE VECTOR INDEX
+package cypher
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strconv"
+	"strings"
+
+	nerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+// isCompositeRoot returns true if the storage engine is a composite database root.
+// Schema DDL and introspection commands must be rejected on composite roots —
+// callers must target a specific constituent via USE <composite>.<alias>.
+func isCompositeRoot(engine storage.Engine) bool {
+	type compositeChecker interface {
+		IsComposite() bool
+	}
+	if cc, ok := engine.(compositeChecker); ok {
+		return cc.IsComposite()
+	}
+	return false
+}
+
+// isCompositeAllowedCommand returns true for system/admin commands that are
+// valid at composite root level without requiring a constituent target.
+func isCompositeAllowedCommand(cypher string) bool {
+	upper := upperASCII(strings.TrimSpace(cypher))
+	prefixes := []string{
+		"SHOW DATABASE", "SHOW COMPOSITE", "SHOW CONSTITUENTS",
+		"SHOW ALIASES", "SHOW LIMITS", "SHOW PROCEDURES", "SHOW FUNCTIONS", "SHOW SETTING",
+		// Schema introspection/DDL commands pass through to their own handlers
+		// which return more specific composite-root error messages.
+		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX", "SHOW LOOKUP INDEX",
+		"SHOW CONSTRAINT",
+		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX", "CREATE LOOKUP INDEX", "CREATE TEXT INDEX", "CREATE POINT INDEX",
+		"CREATE CONSTRAINT",
+		"DROP INDEX", "DROP CONSTRAINT",
+		"CREATE DATABASE", "DROP DATABASE",
+		"CREATE COMPOSITE", "DROP COMPOSITE", "ALTER COMPOSITE",
+		"CREATE ALIAS", "DROP ALIAS",
+		"BEGIN", "COMMIT", "ROLLBACK",
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(upper, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// executeSchemaCommand handles CREATE CONSTRAINT and CREATE INDEX commands.
+func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if isCompositeRoot(e.storage) {
+		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+	}
+	if err := e.prepareSchemaTransaction(ctx); err != nil {
+		return nil, err
+	}
+	if schema := e.storage.GetSchema(); schema != nil {
+		release := schema.LockSchemaMutation()
+		defer release()
+	}
+	resumeWrites, err := pauseAsyncWritesForSchemaDDL(e.storage)
+	defer resumeWrites()
+	if err != nil {
+		return nil, err
+	}
+
+	upper := upperASCII(cypher)
+
+	// Order matters: check more specific patterns first
+	var run func(context.Context, string) (*ExecuteResult, error)
+	if strings.Contains(upper, "CREATE CONSTRAINT") {
+		run = e.executeCreateConstraint
+	} else if strings.Contains(upper, "DROP CONSTRAINT") {
+		run = e.executeDropConstraint
+	} else if startsWithKeywords(cypher, "DROP", "INDEX") {
+		run = e.executeDropIndex
+	} else if strings.Contains(upper, "CREATE FULLTEXT INDEX") {
+		run = e.executeCreateFulltextIndex
+	} else if strings.Contains(upper, "CREATE VECTOR INDEX") {
+		run = e.executeCreateVectorIndex
+	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
+		run = e.executeCreateRangeIndex
+	} else if startsWithKeywords(cypher, "CREATE", "TEXT INDEX") || startsWithKeywords(cypher, "CREATE", "POINT INDEX") {
+		run = e.executeCreateTypedPropertyIndex
+	} else if startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX") {
+		run = e.executeCreateLookupIndex
+	} else if strings.Contains(upper, "CREATE INDEX") {
+		run = e.executeCreateIndex
+	} else {
+		return nil, localizedError(localization.CypherSchemaUnknownCommand(cypher), nil)
+	}
+	result, err := e.countSchemaChanges(ctx, cypher, run)
+	if err == nil {
+		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+			err = wrapper.tx.StageSchemaChangesWithContext(ctx)
+		}
+	}
+	if err != nil && startsWithKeywords(cypher, "CREATE", "CONSTRAINT") {
+		var violation *storage.ConstraintViolationError
+		if errors.As(err, &violation) {
+			return nil, &classifiedCypherError{cause: err, code: "Neo.DatabaseError.Schema.ConstraintCreationFailed", detail: "ConstraintCreationFailed"}
+		}
+	}
+
+	// Invalidate query cache — cached SHOW INDEXES/CONSTRAINTS results are now stale.
+	if err == nil && e.cache != nil {
+		e.cache.Invalidate()
+	}
+
+	return result, err
+}
+
+// countSchemaChanges runs a schema command and reports the indexes and
+// constraints it created or dropped in the result's counters, as Neo4j's
+// summary does (#507): CREATE INDEX -> indexes_added 1, DROP CONSTRAINT ->
+// constraints_removed 1, and nothing for an IF [NOT] EXISTS that did nothing.
+// The counts are the difference in the schema's objects across the command
+// (SchemaObjectCounts), so every CREATE / DROP form is counted the same way.
+func (e *StorageExecutor) countSchemaChanges(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	schema := e.storage.GetSchema()
+	if schema == nil {
+		return run(ctx, cypher)
+	}
+	indexesBefore, constraintsBefore := schema.SchemaObjectCounts()
+	result, err := run(ctx, cypher)
+	if err != nil || result == nil {
+		return result, err
+	}
+	indexesAfter, constraintsAfter := schema.SchemaObjectCounts()
+	if indexesAfter == indexesBefore && constraintsAfter == constraintsBefore {
+		return result, nil
+	}
+	if result.Stats == nil {
+		result.Stats = &QueryStats{}
+	}
+	result.Stats.IndexesAdded += max(indexesAfter-indexesBefore, 0)
+	result.Stats.IndexesRemoved += max(indexesBefore-indexesAfter, 0)
+	result.Stats.ConstraintsAdded += max(constraintsAfter-constraintsBefore, 0)
+	result.Stats.ConstraintsRemoved += max(constraintsBefore-constraintsAfter, 0)
+	return result, nil
+}
+
+// pauseAsyncWritesForSchemaDDL previously flushed and held every async write
+// cache in the engine stack while a schema command validated stored data
+// (#700). Writes now commit synchronously through their transactions, so
+// there is no cached write to hold: a schema command observes every
+// acknowledged write without a pause. The returned function is always safe to
+// call.
+func pauseAsyncWritesForSchemaDDL(_ storage.Engine) (func(), error) {
+	return func() {}, nil
+}
+
+// executeCreateConstraint handles CREATE CONSTRAINT commands.
+//
+// Supported syntax (Neo4j 5.x):
+//
+//	CREATE CONSTRAINT constraint_name IF NOT EXISTS FOR (n:Label) REQUIRE n.property IS UNIQUE
+//
+// Supported syntax (Neo4j 4.x):
+//
+//	CREATE CONSTRAINT FOR (n:Label) REQUIRE (n.first, n.last) IS UNIQUE
+func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	onPosition := keywordIndexFrom(cypher, "ON", 0, defaultKeywordScanOpts())
+	forPosition := keywordIndexFrom(cypher, "FOR", 0, defaultKeywordScanOpts())
+	if onPosition >= 0 && (forPosition < 0 || onPosition < forPosition) {
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
+	}
+	// Every spelling of a uniqueness or key requirement becomes the one the
+	// shapes below read (canonicalConstraintRequirement).
+	cypher, err := e.canonicalConstraintRequirement(cypher)
+	if err != nil {
+		return nil, err
+	}
+	if parsed, err := e.parseCreateConstraintForRequireDDL(cypher); err == nil {
+		if kind, properties, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(parsed.requireExpr); ok && kind == "unique" {
+			seen := make(map[string]struct{}, len(properties))
+			for _, property := range properties {
+				if _, duplicate := seen[property]; duplicate {
+					return nil, newSemanticError("Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema", "RepeatedPropertyInCompositeSchema",
+						"A composite schema cannot contain the same property more than once: "+property)
+				}
+				seen[property] = struct{}{}
+			}
+		}
+	}
+	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
+	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
+	if result, handled, err := e.executeCreateConstraintContract(ctx, cypher, ifNotExists); handled {
+		return result, err
+	}
+
+	if parsed, err := e.parseCreateConstraintNodeKeyDDL(cypher); err == nil {
+		if len(parsed.properties) == 0 {
+			return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("NODE KEY"), nil)
+		}
+		constraintName := parsed.name
+		if constraintName == "" {
+			constraintName = fmt.Sprintf("constraint_%s_%s_node_key", parsed.label, strings.Join(parsed.properties, "_"))
+		}
+
+		constraint := storage.Constraint{
+			Name:       constraintName,
+			Type:       storage.ConstraintNodeKey,
+			Label:      parsed.label,
+			Properties: parsed.properties,
+		}
+
+		if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+			return nil, err
+		}
+		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+			return nil, err
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	if parsed, err := e.parseCreateConstraintTemporalDDL(cypher); err == nil {
+		if parsed.isRelationship {
+			if len(parsed.properties) < 3 {
+				return nil, localizedError(localization.CypherSchemaTemporalRelationshipArityRequired(), nil)
+			}
+			constraintName := parsed.name
+			if constraintName == "" {
+				constraintName = fmt.Sprintf("constraint_%s_%s_temporal", parsed.label, strings.Join(parsed.properties, "_"))
+			}
+			constraint := storage.Constraint{
+				Name:       constraintName,
+				Type:       storage.ConstraintTemporal,
+				EntityType: storage.ConstraintEntityRelationship,
+				Label:      parsed.label,
+				Properties: parsed.properties,
+			}
+			if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+				return nil, err
+			}
+			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+				return nil, err
+			}
+			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		}
+
+		// Like relationships: (key..., valid_from, valid_to) with a 1..n property grouping key.
+		if len(parsed.properties) < 3 {
+			return nil, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
+		}
+		constraintName := parsed.name
+		if constraintName == "" {
+			constraintName = fmt.Sprintf("constraint_%s_%s_temporal", parsed.label, strings.Join(parsed.properties, "_"))
+		}
+		constraint := storage.Constraint{
+			Name:       constraintName,
+			Type:       storage.ConstraintTemporal,
+			Label:      parsed.label,
+			Properties: parsed.properties,
+		}
+		if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+			return nil, err
+		}
+		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+			return nil, err
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	if parsed, err := e.parseCreateConstraintDomainDDL(cypher); err == nil {
+		allowedValues, err := parseDomainValueList(parsed.allowedRaw)
+		if err != nil {
+			return nil, localizedError(localization.CypherSchemaDomainValueListInvalid(err), err)
+		}
+		if len(allowedValues) == 0 {
+			return nil, localizedError(localization.CypherSchemaDomainAllowedValueRequired(), nil)
+		}
+		constraintName := parsed.name
+		if constraintName == "" {
+			constraintName = fmt.Sprintf("constraint_%s_%s_domain", parsed.label, parsed.property)
+		}
+		constraint := storage.Constraint{
+			Name:          constraintName,
+			Type:          storage.ConstraintDomain,
+			Label:         parsed.label,
+			Properties:    []string{parsed.property},
+			AllowedValues: allowedValues,
+		}
+		if parsed.isRelationship {
+			constraint.EntityType = storage.ConstraintEntityRelationship
+		}
+		if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+			return nil, err
+		}
+		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+			return nil, err
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	if parsed, err := e.parseCreateConstraintSimplePropertyDDL(cypher); err == nil {
+		if parsed.kind == "unique" {
+			if parsed.isRelationship {
+				constraintName := parsed.name
+				if constraintName == "" {
+					constraintName = fmt.Sprintf("constraint_%s_%s_unique", parsed.label, parsed.property)
+				}
+				constraint := storage.Constraint{
+					Name:       constraintName,
+					Type:       storage.ConstraintUnique,
+					EntityType: storage.ConstraintEntityRelationship,
+					Label:      parsed.label,
+					Properties: []string{parsed.property},
+				}
+				if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+					return nil, err
+				}
+				if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+					return nil, err
+				}
+				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+			}
+
+			constraintName := parsed.name
+			if constraintName == "" {
+				constraintName = fmt.Sprintf("constraint_%s_%s", parsed.label, parsed.property)
+			}
+			constraint := storage.Constraint{
+				Name:       constraintName,
+				Type:       storage.ConstraintUnique,
+				Label:      parsed.label,
+				Properties: []string{parsed.property},
+			}
+			if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+				return nil, err
+			}
+			schema := e.storage.GetSchema()
+			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+				return nil, err
+			}
+			if err := storage.RefreshUniqueConstraintValuesForEngineWithContext(ctx, e.storage, schema); err != nil {
+				return nil, err
+			}
+			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		}
+
+		if parsed.kind == "exists" {
+			constraintName := parsed.name
+			if constraintName == "" {
+				suffix := "exists"
+				if parsed.isRelationship {
+					constraintName = fmt.Sprintf("constraint_%s_%s_%s", parsed.label, parsed.property, suffix)
+				} else {
+					constraintName = fmt.Sprintf("constraint_%s_%s_%s", parsed.label, parsed.property, suffix)
+				}
+			}
+			constraint := storage.Constraint{
+				Name:       constraintName,
+				Type:       storage.ConstraintExists,
+				Label:      parsed.label,
+				Properties: []string{parsed.property},
+			}
+			if parsed.isRelationship {
+				constraint.EntityType = storage.ConstraintEntityRelationship
+			}
+			if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+				return nil, err
+			}
+			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+				return nil, err
+			}
+			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		}
+	}
+
+	if parsed, err := e.parseCreateConstraintTypeDDL(cypher); err == nil {
+		constraintName := parsed.name
+		if constraintName == "" {
+			constraintName = fmt.Sprintf("constraint_%s_%s_type", parsed.label, parsed.property)
+		}
+		ptc := storage.PropertyTypeConstraint{
+			Name:         constraintName,
+			Label:        parsed.label,
+			Property:     parsed.property,
+			ExpectedType: parsed.expectedType,
+		}
+		opts := storage.PropertyTypeConstraintOptions{IfNotExists: ifNotExists}
+		if parsed.isRelationship {
+			ptc.EntityType = storage.ConstraintEntityRelationship
+			opts.EntityType = storage.ConstraintEntityRelationship
+		}
+		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngineWithContext(ctx, e.storage, ptc); err != nil {
+			return nil, err
+		}
+		if err := e.storage.GetSchema().AddPropertyTypeConstraintWithOptions(constraintName, parsed.label, parsed.property, parsed.expectedType, opts); err != nil {
+			return nil, err
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
+		(strings.Contains(upperASCII(cypher), " IS ::") || strings.Contains(upperASCII(cypher), " IS TYPED")) &&
+		strings.Contains(upperASCII(err.Error()), "UNSUPPORTED PROPERTY TYPE") {
+		return nil, err
+	}
+
+	// Single-property UNIQUE/EXISTS branches are handled by parseCreateConstraintSimplePropertyDDL.
+
+	// =========================================================================
+	// Relationship constraint patterns
+	// =========================================================================
+
+	if parsed, err := e.parseCreateConstraintCardinalityDDL(cypher); err == nil {
+		constraintName := parsed.name
+		if constraintName == "" {
+			directionSuffix := "outgoing"
+			if parsed.direction == "INCOMING" {
+				directionSuffix = "incoming"
+			}
+			constraintName = fmt.Sprintf("constraint_%s_max_%s_%d", parsed.relType, directionSuffix, parsed.maxCount)
+		}
+		constraint := storage.Constraint{
+			Name:       constraintName,
+			Type:       storage.ConstraintCardinality,
+			EntityType: storage.ConstraintEntityRelationship,
+			Label:      parsed.relType,
+			MaxCount:   parsed.maxCount,
+			Direction:  parsed.direction,
+		}
+		if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+			return nil, err
+		}
+		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+			return nil, err
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
+		strings.Contains(upperASCII(cypher), "REQUIRE MAX COUNT") {
+		return nil, err
+	}
+
+	if parsed, err := e.parseCreateConstraintPolicyDDL(cypher); err == nil {
+		constraintName := parsed.name
+		if constraintName == "" {
+			constraintName = fmt.Sprintf("constraint_%s_%s_%s_%s", parsed.sourceLabel, parsed.relType, parsed.targetLabel, lowerASCII(parsed.policyMode))
+		}
+		constraint := storage.Constraint{
+			Name:        constraintName,
+			Type:        storage.ConstraintPolicy,
+			EntityType:  storage.ConstraintEntityRelationship,
+			Label:       parsed.relType,
+			SourceLabel: parsed.sourceLabel,
+			TargetLabel: parsed.targetLabel,
+			PolicyMode:  parsed.policyMode,
+		}
+		if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+			return nil, err
+		}
+		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+			return nil, err
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
+		(strings.Contains(upperASCII(cypher), "REQUIRE ALLOWED") || strings.Contains(upperASCII(cypher), "REQUIRE DISALLOWED")) {
+		return nil, err
+	}
+
+	// Relationship temporal/domain branches are handled by parseCreateConstraintTemporalDDL and parseCreateConstraintDomainDDL.
+
+	if parsed, err := e.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(cypher); err == nil {
+		if len(parsed.properties) == 0 {
+			if parsed.kind == "rel_key" {
+				return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("RELATIONSHIP KEY"), nil)
+			}
+			return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("UNIQUE"), nil)
+		}
+
+		constraint := storage.Constraint{
+			Label:      parsed.label,
+			Properties: parsed.properties,
+		}
+		if parsed.isRelationship {
+			constraint.EntityType = storage.ConstraintEntityRelationship
+		}
+		if parsed.kind == "rel_key" {
+			constraint.Type = storage.ConstraintRelationshipKey
+			constraint.Name = parsed.name
+			if constraint.Name == "" {
+				constraint.Name = fmt.Sprintf("constraint_%s_%s_rel_key", parsed.label, strings.Join(parsed.properties, "_"))
+			}
+		} else {
+			constraint.Type = storage.ConstraintUnique
+			constraint.Name = parsed.name
+			if constraint.Name == "" {
+				constraint.Name = fmt.Sprintf("constraint_%s_%s_unique", parsed.label, strings.Join(parsed.properties, "_"))
+			}
+		}
+
+		if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
+			return nil, err
+		}
+		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
+			return nil, err
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	// Relationship single-property UNIQUE/EXISTS branches are handled by parseCreateConstraintSimplePropertyDDL.
+
+	// Relationship property type branches are handled by parseCreateConstraintTypeDDL.
+
+	return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
+}
+
+// executeDropIndex handles DROP INDEX commands.
+//
+// Supported syntax:
+//
+//	DROP INDEX index_name
+//	DROP INDEX index_name IF EXISTS
+func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if isCompositeRoot(e.storage) {
+		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+	}
+
+	rest := strings.TrimSpace(strings.TrimSpace(cypher)[len("DROP INDEX"):])
+	if rest == "" {
+		return nil, localizedError(localization.CypherSchemaNameRequired("DROP INDEX", "index"), nil)
+	}
+	name, ifExists, ok := parseDropSchemaName(rest)
+	if !ok {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherSchemaInvalidSyntax("DROP INDEX"))
+	}
+
+	if err := e.dropIndexByName(name, ifExists); err != nil {
+		return nil, err
+	}
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+// parseDropSchemaName reads the rest of DROP INDEX / DROP CONSTRAINT: one
+// name, plain or backtick-quoted, with IF EXISTS after it (Neo4j's form) or
+// before it. Anything else is no such statement: Neo4j's SyntaxError for
+// DROP INDEX name -> text (#528), where the text was read as part of the
+// name.
+func parseDropSchemaName(rest string) (name string, ifExists, ok bool) {
+	at := 0
+	if matchKeywordAt(rest, at, "IF") {
+		if next := skipASCIISpaces(rest, at+len("IF"), len(rest)); matchKeywordAt(rest, next, "EXISTS") {
+			ifExists, at = true, skipASCIISpaces(rest, next+len("EXISTS"), len(rest))
+		}
+	}
+	written, end, scanned := scanSymbolicName(rest, at)
+	if !scanned {
+		return "", false, false
+	}
+	at = skipASCIISpaces(rest, end, len(rest))
+	if !ifExists && matchKeywordAt(rest, at, "IF") {
+		if next := skipASCIISpaces(rest, at+len("IF"), len(rest)); matchKeywordAt(rest, next, "EXISTS") {
+			ifExists, at = true, skipASCIISpaces(rest, next+len("EXISTS"), len(rest))
+		}
+	}
+	if at != len(rest) {
+		return "", false, false
+	}
+	return symbolicNameValue(written), ifExists, true
+}
+
+// dropIndexByName removes the named index from the schema and tears down the
+// in-memory data that belongs to it. It is the single drop path for DROP INDEX
+// and the db.index.vector.drop / db.index.fulltext.drop procedures. A missing
+// index is a Neo.DatabaseError.Schema.IndexDropFailed error unless ifExists is set.
+func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
+	// Look up the schema entry BEFORE dropping it so we can also tear down
+	// any in-memory index data the schema entry was the only handle for.
+	// Vector indexes carry their declared (label, property) — when the user
+	// drops one we must also delete every "<nodeID>-prop-<property>" vector
+	// from the search service, otherwise a recreate-from-scratch of the same
+	// index inherits orphaned vectors that still match queries.
+	var droppedVectorIndex *storage.VectorIndex
+	if schema := e.storage.GetSchema(); schema != nil {
+		if vi, ok := schema.GetVectorIndex(name); ok && vi != nil {
+			copyVI := *vi
+			droppedVectorIndex = &copyVI
+		}
+	}
+
+	if err := e.storage.GetSchema().DropIndex(name); err != nil {
+		var missing *localization.LocalizedError
+		if errors.As(err, &missing) && missing.Message.ID == localization.MessageStorageSchemaIndexNotFound {
+			if ifExists {
+				return nil
+			}
+			return newSemanticError("Neo.DatabaseError.Schema.IndexDropFailed", "MissingIndex", err.Error())
+		}
+		return err
+	}
+
+	// Tear down the matching in-memory vector data after the schema entry
+	// is gone so concurrent reads can't see a half-dropped index.
+	if droppedVectorIndex != nil {
+		e.afterSchemaCommit(context.Background(), func() {
+			if svc := e.search(); svc != nil && droppedVectorIndex.Property != "" {
+				svc.RemovePropertyVectorIndex(droppedVectorIndex.Property)
+			}
+			e.unregisterVectorSpace(name)
+		})
+	}
+
+	// Invalidate query cache — cached SHOW INDEXES results are now stale.
+	if e.cache != nil {
+		e.cache.Invalidate()
+	}
+	return nil
+}
+
+// executeDropConstraint handles DROP CONSTRAINT commands.
+func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	trimmed := strings.TrimSpace(cypher)
+	upper := upperASCII(trimmed)
+	if !strings.HasPrefix(upper, "DROP CONSTRAINT") {
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
+	}
+
+	rest := strings.TrimSpace(trimmed[len("DROP CONSTRAINT"):])
+	if rest == "" {
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
+	}
+
+	name, ifExists, ok := parseDropSchemaName(rest)
+	if !ok {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"))
+	}
+
+	if err := e.storage.GetSchema().DropConstraint(name); err != nil {
+		var missing *localization.LocalizedError
+		if errors.As(err, &missing) && missing.Message.ID == localization.MessageStorageSchemaConstraintNotFound {
+			if ifExists {
+				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+			}
+			return nil, newSemanticError("Neo.DatabaseError.Schema.ConstraintDropFailed", "MissingConstraint", err.Error())
+		}
+		return nil, err
+	}
+
+	if e.cache != nil {
+		e.cache.Invalidate()
+	}
+
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+// executeCreateIndex handles CREATE INDEX commands.
+//
+// Supported syntax:
+//
+//	CREATE INDEX index_name IF NOT EXISTS FOR (n:Label) ON (n.property)
+//	CREATE INDEX index_name IF NOT EXISTS FOR (n:Label) ON (n.prop1, n.prop2)
+//	CREATE INDEX IF NOT EXISTS FOR (n:Label) ON (n.prop1, n.prop2, n.prop3)
+//
+// Supports both single-property and composite (multi-property) indexes.
+func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if parsed, err := e.parseCreateIndexDDL(cypher, "CREATE INDEX"); err == nil {
+		indexName := parsed.indexName
+		if indexName == "" {
+			propsJoined := strings.Join(parsed.properties, "_")
+			entity := parsed.label
+			if parsed.isRelationship {
+				entity = parsed.relationshipType
+			}
+			indexName = fmt.Sprintf("index_%s_%s", entity, propsJoined)
+		}
+
+		entityType := storage.ConstraintEntityNode
+		label := parsed.label
+		if parsed.isRelationship {
+			entityType = storage.ConstraintEntityRelationship
+			label = parsed.relationshipType
+		}
+		create, err := e.admitIndexCreation(cypher, indexName, "RANGE", label, parsed.properties, entityType)
+		if err != nil {
+			return nil, err
+		}
+		if !create {
+			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		}
+
+		if parsed.isRelationship {
+			// Relationship property indexes are persisted as relationship-scoped
+			// range metadata (Neo4j-compatible SHOW INDEXES shape).
+			if err := e.storage.GetSchema().AddRangeIndexForEntity(
+				indexName,
+				parsed.relationshipType,
+				parsed.properties,
+				storage.ConstraintEntityRelationship,
+			); err != nil {
+				return nil, err
+			}
+			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		}
+
+		if err := e.addPropertyIndex(ctx, indexName, parsed.label, parsed.properties); err != nil {
+			return nil, err
+		}
+
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	// Neo4j legacy syntax: CREATE INDEX [name] ON :Label(prop[, prop2])
+	if parsed, err := e.parseCreateIndexLegacyDDL(cypher); err == nil {
+		indexName := parsed.indexName
+		if indexName == "" {
+			propsJoined := strings.Join(parsed.properties, "_")
+			indexName = fmt.Sprintf("index_%s_%s", parsed.label, propsJoined)
+		}
+		if err := e.addPropertyIndex(ctx, indexName, parsed.label, parsed.properties); err != nil {
+			return nil, err
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE INDEX"), nil)
+}
+
+// executeCreateRangeIndex handles CREATE RANGE INDEX. In Neo4j 5 a RANGE
+// index is the default index CREATE INDEX makes, so the statement runs as
+// CREATE INDEX: single or composite properties, node or relationship
+// patterns, as SHOW INDEXES' createStatement writes it (#531, #530).
+func (e *StorageExecutor) executeCreateRangeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	start := findMultiWordKeywordIndex(cypher, "CREATE", "RANGE INDEX")
+	end, ok := keywordSpanAt(cypher, start, "CREATE RANGE INDEX")
+	if start < 0 || !ok {
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE RANGE INDEX"), nil)
+	}
+	return e.executeCreateIndex(ctx, "CREATE INDEX"+cypher[end:])
+}
+
+type parsedCreateIndexDDL struct {
+	indexName        string
+	label            string
+	relationshipType string
+	properties       []string
+	isRelationship   bool
+	optionsClause    string
+}
+
+func keywordSpanAt(s string, pos int, keyword string) (int, bool) {
+	ks, ke := trimKeywordWSBounds(keyword)
+	return keywordMatchAt(s, pos, keyword, ks, ke)
+}
+
+func parseOptionalDDLName(segment string) (string, error) {
+	segment = strings.TrimSpace(segment)
+	if segment == "" {
+		return "", nil
+	}
+
+	ifPos := keywordIndexFrom(segment, "IF NOT EXISTS", 0, defaultKeywordScanOpts())
+	if ifPos < 0 {
+		if !isValidDDLIdentifierSegment(segment) {
+			return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
+		}
+		name := normalizeIdentifierToken(segment)
+		if name == "" {
+			return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
+		}
+		return name, nil
+	}
+
+	ifEnd, ok := keywordSpanAt(segment, ifPos, "IF NOT EXISTS")
+	if !ok || strings.TrimSpace(segment[ifEnd:]) != "" {
+		return "", localizedError(localization.CypherSchemaInvalidIfNotExistsClause(), nil)
+	}
+
+	namePart := strings.TrimSpace(segment[:ifPos])
+	if namePart == "" {
+		return "", nil
+	}
+	if !isValidDDLIdentifierSegment(namePart) {
+		return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
+	}
+	name := normalizeIdentifierToken(namePart)
+	if name == "" {
+		return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
+	}
+	return name, nil
+}
+
+func isValidDDLIdentifierSegment(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if strings.HasPrefix(s, "`") {
+		if !strings.HasSuffix(s, "`") {
+			return false
+		}
+		return normalizeIdentifierToken(s) != ""
+	}
+	return len(strings.Fields(s)) == 1
+}
+
+func extractIndexPropertiesSegment(onClause string) (string, string, error) {
+	onClause = strings.TrimSpace(onClause)
+	if onClause == "" {
+		return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
+	}
+
+	if strings.HasPrefix(onClause, "(") {
+		inside, rest, ok := extractParenSection(onClause)
+		if !ok {
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("ON"), nil)
+		}
+		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
+	}
+
+	optionsPos := keywordIndexFrom(onClause, "OPTIONS", 0, defaultKeywordScanOpts())
+	if optionsPos < 0 {
+		return strings.TrimSpace(onClause), "", nil
+	}
+	return strings.TrimSpace(onClause[:optionsPos]), strings.TrimSpace(onClause[optionsPos:]), nil
+}
+
+func parseCreateIndexForPattern(forClause string) (label string, relationshipType string, isRelationship bool, err error) {
+	forClause = strings.TrimSpace(forClause)
+	if forClause == "" {
+		return "", "", false, localizedError(localization.CypherSchemaEmptyClause("FOR"), nil)
+	}
+
+	if strings.Contains(forClause, "[") {
+		bracketStart := strings.Index(forClause, "[")
+		if bracketStart < 0 {
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
+		}
+		inside, rest, ok := extractBracketSection(forClause[bracketStart:])
+		if !ok {
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
+		}
+
+		prefix := strings.TrimSpace(forClause[:bracketStart])
+		suffix := strings.TrimSpace(rest)
+		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
+		}
+
+		colon := strings.Index(inside, ":")
+		if colon < 0 {
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
+		}
+		relRaw := strings.TrimSpace(inside[colon+1:])
+		if relRaw == "" {
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
+		}
+		relType := normalizeIdentifierToken(relRaw)
+		if relType == "" {
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
+		}
+		return "", relType, true, nil
+	}
+
+	inside, rest, ok := extractParenSection(forClause)
+	if !ok || strings.TrimSpace(rest) != "" {
+		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
+	}
+
+	colon := strings.Index(inside, ":")
+	if colon < 0 {
+		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
+	}
+	labelRaw := strings.TrimSpace(inside[colon+1:])
+	label = normalizeIdentifierToken(labelRaw)
+	if label == "" {
+		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
+	}
+	return label, "", false, nil
+}
+
+func (e *StorageExecutor) parseCreateIndexDDL(cypher string, prefixKeyword string) (parsedCreateIndexDDL, error) {
+	q := strings.TrimSpace(cypher)
+	if q == "" {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
+	}
+
+	prefixPos := keywordIndexFrom(q, prefixKeyword, 0, defaultKeywordScanOpts())
+	if prefixPos != 0 {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+	prefixEnd, ok := keywordSpanAt(q, 0, prefixKeyword)
+	if !ok {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+
+	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
+	if forPos < 0 {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
+	}
+	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
+	if !ok {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
+	}
+
+	onPos := keywordIndexFrom(q, "ON", forEnd, defaultKeywordScanOpts())
+	if onPos < 0 {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ON"), nil)
+	}
+	onEnd, ok := keywordSpanAt(q, onPos, "ON")
+	if !ok {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
+	}
+
+	name, err := parseOptionalDDLName(q[prefixEnd:forPos])
+	if err != nil {
+		return parsedCreateIndexDDL{}, err
+	}
+
+	label, relType, isRelationship, err := parseCreateIndexForPattern(q[forEnd:onPos])
+	if err != nil {
+		return parsedCreateIndexDDL{}, err
+	}
+
+	propsSegment, tail, err := extractIndexPropertiesSegment(q[onEnd:])
+	if err != nil {
+		return parsedCreateIndexDDL{}, err
+	}
+	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+	}
+	// ON EACH [...] is fulltext-index syntax; for CREATE [RANGE|VECTOR] INDEX
+	// every item must be a plain variable.property reference, otherwise the
+	// leftover text (e.g. "p]") would be stored as the property name.
+	if startsWithKeywordFold(propsSegment, "EACH") || strings.HasPrefix(propsSegment, "[") ||
+		!qualifiedIndexPropertiesWellFormed(propsSegment) {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("ON"), nil)
+	}
+
+	properties := e.parseQualifiedIndexProperties(propsSegment)
+	if len(properties) == 0 {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaIndexPropertiesRequired(), nil)
+	}
+
+	return parsedCreateIndexDDL{
+		indexName:        name,
+		label:            label,
+		relationshipType: relType,
+		properties:       properties,
+		isRelationship:   isRelationship,
+		optionsClause:    tail,
+	}, nil
+}
+
+func (e *StorageExecutor) parseCreateIndexLegacyDDL(cypher string) (parsedCreateIndexDDL, error) {
+	q := strings.TrimSpace(cypher)
+	if q == "" {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
+	}
+
+	prefixPos := keywordIndexFrom(q, "CREATE INDEX", 0, defaultKeywordScanOpts())
+	if prefixPos != 0 {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE INDEX")
+	if !ok {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+
+	onPos := keywordIndexFrom(q, "ON", prefixEnd, defaultKeywordScanOpts())
+	if onPos < 0 {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ON"), nil)
+	}
+	onEnd, ok := keywordSpanAt(q, onPos, "ON")
+	if !ok {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
+	}
+
+	name, err := parseOptionalDDLName(q[prefixEnd:onPos])
+	if err != nil {
+		return parsedCreateIndexDDL{}, err
+	}
+
+	onClause := strings.TrimSpace(q[onEnd:])
+	if !strings.HasPrefix(onClause, ":") {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
+	}
+	onClause = strings.TrimSpace(onClause[1:])
+
+	openParen := strings.Index(onClause, "(")
+	if openParen < 0 {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
+	}
+	label := normalizeIdentifierToken(strings.TrimSpace(onClause[:openParen]))
+	if label == "" {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
+	}
+
+	inside, tail, ok := extractParenSection(onClause[openParen:])
+	if !ok {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
+	}
+	tail = strings.TrimSpace(tail)
+	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+	}
+
+	properties := e.parseIndexProperties(inside)
+	if len(properties) == 0 {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaIndexPropertiesRequired(), nil)
+	}
+
+	return parsedCreateIndexDDL{
+		indexName:      name,
+		label:          label,
+		properties:     properties,
+		isRelationship: false,
+		optionsClause:  tail,
+	}, nil
+}
+
+func extractVectorOptionValue(optionsClause, key string) (string, bool) {
+	if optionsClause == "" || key == "" {
+		return "", false
+	}
+	for index := 0; index < len(optionsClause); {
+		name, ok := cyphertext.ScanIdentifier(optionsClause, index)
+		if !ok && isCypherStringQuoteByte(optionsClause[index]) {
+			if quotedEnd, closed := scanCypherQuotedText(optionsClause, index, optionsClause[index]); closed {
+				name.Value, ok = cyphertext.DecodeString(optionsClause[index:quotedEnd], cyphertext.AcceptedSource)
+				name.End = quotedEnd
+			}
+		}
+		if !ok {
+			index++
+			continue
+		}
+		index = name.End
+		if !strings.EqualFold(name.Value, key) {
+			continue
+		}
+		separator := queryGapEnd(optionsClause, name.End)
+		if separator >= len(optionsClause) || optionsClause[separator] != ':' {
+			continue
+		}
+		start := queryGapEnd(optionsClause, separator+1)
+		if start >= len(optionsClause) {
+			return "", false
+		}
+		if finish, closed := scanCypherQuotedText(optionsClause, start, optionsClause[start]); closed {
+			if value, quoted := cyphertext.DecodeString(optionsClause[start:finish], cyphertext.AcceptedSource); quoted {
+				return strings.TrimSpace(value), true
+			}
+		}
+		depth := 0
+		for j := start; j < len(optionsClause); j++ {
+			if finish, quoted := skipCypherLexicalToken(optionsClause, j); quoted {
+				j = finish - 1
+				continue
+			}
+			c := optionsClause[j]
+			switch c {
+			case '(', '[', '{':
+				depth++
+			case ')', ']', '}':
+				if depth == 0 {
+					return strings.TrimSpace(optionsClause[start:j]), true
+				}
+				depth--
+			}
+			if depth == 0 && (c == ',' || c == '\n' || c == '\r') {
+				return strings.TrimSpace(optionsClause[start:j]), true
+			}
+		}
+		return strings.TrimSpace(optionsClause[start:]), true
+	}
+	return "", false
+}
+
+func parseVectorOptions(optionsClause string, defaultDimensions int, defaultSimilarity string) (int, string) {
+	dimensions := defaultDimensions
+	similarity := defaultSimilarity
+
+	if raw, ok := extractVectorOptionValue(optionsClause, "vector.dimensions"); ok {
+		if dim, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
+			dimensions = dim
+		}
+	}
+
+	if raw, ok := extractVectorOptionValue(optionsClause, "vector.similarity_function"); ok {
+		raw = strings.TrimSpace(raw)
+		if raw != "" {
+			similarity = raw
+		}
+	}
+
+	return dimensions, similarity
+}
+
+type parsedCreateFulltextIndexDDL struct {
+	indexName         string
+	label             string
+	labels            []string
+	relationshipTypes []string
+	properties        []string
+	isRelationship    bool
+}
+
+func parseCreateFulltextForPattern(forClause string) (label string, relationshipTypes []string, isRelationship bool, err error) {
+	label, relTypeRaw, isRelationship, err := parseCreateIndexForPattern(forClause)
+	if err != nil {
+		// Neo4j compatibility: allow non-parenthesized node pattern `n:Label`.
+		if !strings.Contains(forClause, "[") {
+			parts := strings.SplitN(strings.TrimSpace(forClause), ":", 2)
+			if len(parts) == 2 {
+				compatLabel := normalizeIdentifierToken(strings.TrimSpace(parts[1]))
+				if compatLabel != "" {
+					return compatLabel, nil, false, nil
+				}
+			}
+		}
+		return "", nil, false, err
+	}
+	if !isRelationship {
+		return label, nil, false, nil
+	}
+	relTypes, err := parseFulltextRelationshipTypes(relTypeRaw)
+	if err != nil {
+		return "", nil, false, err
+	}
+	return "", relTypes, true, nil
+}
+
+func extractFulltextPropertiesSegment(onClause string) (string, string, error) {
+	onClause = strings.TrimSpace(onClause)
+	if onClause == "" {
+		return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
+	}
+
+	if startsWithKeywordFold(onClause, "EACH") {
+		eachEnd, ok := keywordSpanAt(onClause, 0, "EACH")
+		if !ok {
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("EACH"), nil)
+		}
+		onClause = strings.TrimSpace(onClause[eachEnd:])
+	}
+
+	if onClause == "" {
+		return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
+	}
+
+	if strings.HasPrefix(onClause, "[") {
+		inside, rest, ok := extractBracketSection(onClause)
+		if !ok {
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("ON EACH"), nil)
+		}
+		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
+	}
+
+	if strings.HasPrefix(onClause, "(") {
+		inside, rest, ok := extractParenSection(onClause)
+		if !ok {
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("ON"), nil)
+		}
+		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
+	}
+
+	optionsPos := keywordIndexFrom(onClause, "OPTIONS", 0, defaultKeywordScanOpts())
+	if optionsPos < 0 {
+		return strings.TrimSpace(onClause), "", nil
+	}
+	return strings.TrimSpace(onClause[:optionsPos]), strings.TrimSpace(onClause[optionsPos:]), nil
+}
+
+func (e *StorageExecutor) parseCreateFulltextIndexDDL(cypher string) (parsedCreateFulltextIndexDDL, error) {
+	q := strings.TrimSpace(cypher)
+	if q == "" {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
+	}
+
+	prefixPos := keywordIndexFrom(q, "CREATE FULLTEXT INDEX", 0, defaultKeywordScanOpts())
+	if prefixPos != 0 {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE FULLTEXT INDEX")
+	if !ok {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+
+	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
+	if forPos < 0 {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
+	}
+	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
+	if !ok {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
+	}
+
+	onPos := keywordIndexFrom(q, "ON", forEnd, defaultKeywordScanOpts())
+	if onPos < 0 {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ON"), nil)
+	}
+	onEnd, ok := keywordSpanAt(q, onPos, "ON")
+	if !ok {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
+	}
+
+	name, err := parseOptionalDDLName(q[prefixEnd:forPos])
+	if err != nil {
+		return parsedCreateFulltextIndexDDL{}, err
+	}
+	if name == "" {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaIndexNameRequired(), nil)
+	}
+
+	label, relationshipTypes, isRelationship, err := parseCreateFulltextForPattern(q[forEnd:onPos])
+	if err != nil {
+		return parsedCreateFulltextIndexDDL{}, err
+	}
+	var labels []string
+	if !isRelationship {
+		pattern := strings.TrimSpace(q[forEnd:onPos])
+		if inside, _, ok := extractParenSection(pattern); ok {
+			pattern = inside
+		}
+		_, targets, _ := strings.Cut(pattern, ":")
+		labels, err = parseFulltextRelationshipTypes(targets)
+		if err != nil {
+			return parsedCreateFulltextIndexDDL{}, err
+		}
+	}
+
+	propsSegment, tail, err := extractFulltextPropertiesSegment(q[onEnd:])
+	if err != nil {
+		return parsedCreateFulltextIndexDDL{}, err
+	}
+	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+	}
+
+	properties := e.parseQualifiedIndexProperties(propsSegment)
+	if len(properties) == 0 {
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaFulltextPropertiesRequired(), nil)
+	}
+
+	return parsedCreateFulltextIndexDDL{
+		indexName:         name,
+		label:             label,
+		labels:            labels,
+		relationshipTypes: relationshipTypes,
+		properties:        properties,
+		isRelationship:    isRelationship,
+	}, nil
+}
+
+type parsedSimplePropertyConstraintDDL struct {
+	name           string
+	label          string
+	property       string
+	isRelationship bool
+	kind           string // unique | exists
+}
+
+type parsedTypeConstraintDDL struct {
+	name           string
+	label          string
+	property       string
+	expectedType   storage.PropertyType
+	isRelationship bool
+}
+
+type parsedNodeKeyConstraintDDL struct {
+	name       string
+	label      string
+	properties []string
+}
+
+type parsedRelationshipKeyOrCompositeUniqueDDL struct {
+	name           string
+	label          string
+	properties     []string
+	kind           string // rel_key | unique
+	isRelationship bool
+}
+
+type parsedConstraintForRequireDDL struct {
+	name           string
+	label          string
+	isRelationship bool
+	requireExpr    string
+}
+
+type parsedTemporalConstraintDDL struct {
+	name           string
+	label          string
+	isRelationship bool
+	properties     []string
+}
+
+type parsedDomainConstraintDDL struct {
+	name           string
+	label          string
+	isRelationship bool
+	property       string
+	allowedRaw     string
+}
+
+type parsedCardinalityConstraintDDL struct {
+	name      string
+	relType   string
+	direction string // OUTGOING | INCOMING
+	maxCount  int
+}
+
+type parsedPolicyConstraintDDL struct {
+	name        string
+	sourceLabel string
+	relType     string
+	targetLabel string
+	policyMode  string // ALLOWED | DISALLOWED
+}
+
+func splitDDLOptionsTail(s string) (expr string, optionsTail string) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", ""
+	}
+	if idx := keywordIndexFrom(s, "OPTIONS", 0, defaultKeywordScanOpts()); idx >= 0 {
+		return strings.TrimSpace(s[:idx]), strings.TrimSpace(s[idx:])
+	}
+	return s, ""
+}
+
+// parseConstraintQualifiedProperty reads a constraint's single property,
+// n.prop, also in the parentheses Neo4j writes it with in a createStatement:
+// (n.prop).
+func parseConstraintQualifiedProperty(expr string) (string, string, bool) {
+	expr = strings.TrimSpace(expr)
+	if inner, wrapped := stripEnclosingExpressionParentheses(expr); wrapped {
+		expr = strings.TrimSpace(inner)
+	}
+	if strings.ContainsAny(expr, ",()") {
+		return "", "", false
+	}
+	dot := strings.LastIndex(expr, ".")
+	if dot <= 0 || dot >= len(expr)-1 {
+		return "", "", false
+	}
+	left := strings.TrimSpace(expr[:dot])
+	right := normalizeIdentifierToken(expr[dot+1:])
+	if left == "" || right == "" {
+		return "", "", false
+	}
+	return left, right, true
+}
+
+func parseConstraintPredicate(predicateRaw string) (kind string, property string, ok bool) {
+	predicateRaw = strings.TrimSpace(predicateRaw)
+	if predicateRaw == "" {
+		return "", "", false
+	}
+
+	upper := upperASCII(predicateRaw)
+	if strings.HasPrefix(upper, "EXISTS") {
+		rest := strings.TrimSpace(predicateRaw[len("EXISTS"):])
+		inside, trailing, ok := extractParenSection(rest)
+		if !ok || strings.TrimSpace(trailing) != "" {
+			return "", "", false
+		}
+		if _, prop, ok := parseConstraintQualifiedProperty(inside); ok {
+			return "exists", prop, true
+		}
+		return "", "", false
+	}
+
+	if idx := keywordIndexFrom(predicateRaw, "IS UNIQUE", 0, defaultKeywordScanOpts()); idx >= 0 {
+		end, ok := keywordSpanAt(predicateRaw, idx, "IS UNIQUE")
+		if ok && strings.TrimSpace(predicateRaw[end:]) == "" {
+			if _, prop, ok := parseConstraintQualifiedProperty(predicateRaw[:idx]); ok {
+				return "unique", prop, true
+			}
+		}
+	}
+
+	if idx := keywordIndexFrom(predicateRaw, "IS NOT NULL", 0, defaultKeywordScanOpts()); idx >= 0 {
+		end, ok := keywordSpanAt(predicateRaw, idx, "IS NOT NULL")
+		if ok && strings.TrimSpace(predicateRaw[end:]) == "" {
+			if _, prop, ok := parseConstraintQualifiedProperty(predicateRaw[:idx]); ok {
+				return "exists", prop, true
+			}
+		}
+	}
+
+	return "", "", false
+}
+
+func parseConstraintTypePredicate(predicateRaw string) (property string, typeName string, ok bool) {
+	predicateRaw = strings.TrimSpace(predicateRaw)
+	if predicateRaw == "" {
+		return "", "", false
+	}
+
+	idx := keywordIndexFrom(predicateRaw, "IS", 0, defaultKeywordScanOpts())
+	if idx < 0 {
+		return "", "", false
+	}
+	isEnd, ok := keywordSpanAt(predicateRaw, idx, "IS")
+	if !ok {
+		return "", "", false
+	}
+
+	_, prop, ok := parseConstraintQualifiedProperty(predicateRaw[:idx])
+	if !ok {
+		return "", "", false
+	}
+
+	rhs := strings.TrimSpace(predicateRaw[isEnd:])
+	rhsUpper := upperASCII(rhs)
+	if strings.HasPrefix(rhsUpper, "::") {
+		typeName = strings.TrimSpace(rhs[2:])
+	} else if strings.HasPrefix(rhsUpper, "TYPED") {
+		typeName = strings.TrimSpace(rhs[len("TYPED"):])
+	} else {
+		return "", "", false
+	}
+	if typeName == "" {
+		return "", "", false
+	}
+	return prop, typeName, true
+}
+
+func (e *StorageExecutor) parseNodeKeyPropertyList(expr string) ([]string, bool) {
+	expr = strings.TrimSpace(expr)
+	inside, rest, ok := extractParenSection(expr)
+	if !ok {
+		return nil, false
+	}
+	rest = strings.TrimSpace(rest)
+	idx := keywordIndexFrom(rest, "IS NODE KEY", 0, defaultKeywordScanOpts())
+	if idx != 0 {
+		return nil, false
+	}
+	end, ok := keywordSpanAt(rest, 0, "IS NODE KEY")
+	if !ok || strings.TrimSpace(rest[end:]) != "" {
+		return nil, false
+	}
+	props := e.parseConstraintProperties(inside)
+	return props, true
+}
+
+// parseCreateConstraintForRequireHead parses the shared CREATE CONSTRAINT
+// [name] FOR <pattern> REQUIRE prefix used by every constraint DDL shape.
+// It returns the parsed optional name, the FOR-pattern span, and the require
+// expression with any OPTIONS tail stripped. Error messages are shared so
+// every constraint shape rejects malformed prefixes identically.
+func (e *StorageExecutor) parseCreateConstraintForRequireHead(cypher string) (name string, patternSpan string, requireExpr string, err error) {
+	q := strings.TrimSpace(cypher)
+	if q == "" {
+		return "", "", "", localizedError(localization.CypherSchemaEmptyStatement(), nil)
+	}
+	if keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts()) != 0 {
+		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
+	if !ok {
+		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
+	if forPos < 0 {
+		return "", "", "", localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
+	}
+	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
+	if !ok {
+		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
+	}
+	reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts())
+	if reqPos < 0 {
+		return "", "", "", localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
+	}
+	reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
+	if !ok {
+		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
+	}
+	name, err = parseOptionalDDLName(q[prefixEnd:forPos])
+	if err != nil {
+		return "", "", "", err
+	}
+	requireExpr, tail := splitDDLOptionsTail(q[reqEnd:])
+	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
+		return "", "", "", localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+	}
+	return name, q[forEnd:reqPos], requireExpr, nil
+}
+
+func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(cypher string) (parsedNodeKeyConstraintDDL, error) {
+	q := strings.TrimSpace(cypher)
+	if q == "" {
+		return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
+	}
+
+	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
+	if prefixPos != 0 {
+		return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
+	if !ok {
+		return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+
+	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
+	onPos := keywordIndexFrom(q, "ON", prefixEnd, defaultKeywordScanOpts())
+
+	if forPos >= 0 && (onPos < 0 || forPos < onPos) {
+		name, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(q)
+		if err != nil {
+			return parsedNodeKeyConstraintDDL{}, err
+		}
+
+		label, _, isRelationship, err := parseCreateIndexForPattern(patternSpan)
+		if err != nil || isRelationship {
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("NODE KEY"), nil)
+		}
+
+		props, ok := e.parseNodeKeyPropertyList(requireExpr)
+		if !ok {
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("NODE KEY"), nil)
+		}
+		return parsedNodeKeyConstraintDDL{name: name, label: label, properties: props}, nil
+	}
+
+	if onPos >= 0 {
+		onEnd, ok := keywordSpanAt(q, onPos, "ON")
+		if !ok {
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
+		}
+		assertPos := keywordIndexFrom(q, "ASSERT", onEnd, defaultKeywordScanOpts())
+		if assertPos < 0 {
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ASSERT"), nil)
+		}
+		assertEnd, ok := keywordSpanAt(q, assertPos, "ASSERT")
+		if !ok {
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ASSERT"), nil)
+		}
+
+		_, err := parseOptionalDDLName(q[prefixEnd:onPos])
+		if err != nil {
+			return parsedNodeKeyConstraintDDL{}, err
+		}
+		label, _, isRelationship, err := parseCreateIndexForPattern(q[onEnd:assertPos])
+		if err != nil || isRelationship {
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("ASSERT"), nil)
+		}
+
+		predicateExpr, tail := splitDDLOptionsTail(q[assertEnd:])
+		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+		}
+		props, ok := e.parseNodeKeyPropertyList(predicateExpr)
+		if !ok {
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("NODE KEY"), nil)
+		}
+		return parsedNodeKeyConstraintDDL{name: "", label: label, properties: props}, nil
+	}
+
+	return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
+}
+
+func (e *StorageExecutor) parseRelationshipKeyOrCompositeUniquePredicate(predicateExpr string) (string, []string, bool) {
+	predicateExpr = strings.TrimSpace(predicateExpr)
+	if predicateExpr == "" {
+		return "", nil, false
+	}
+
+	if inside, rest, ok := extractParenSection(predicateExpr); ok {
+		rest = strings.TrimSpace(rest)
+		if idx := keywordIndexFrom(rest, "IS RELATIONSHIP KEY", 0, defaultKeywordScanOpts()); idx == 0 {
+			end, ok := keywordSpanAt(rest, 0, "IS RELATIONSHIP KEY")
+			if ok && strings.TrimSpace(rest[end:]) == "" {
+				return "rel_key", e.parseConstraintProperties(inside), true
+			}
+		}
+		if idx := keywordIndexFrom(rest, "IS UNIQUE", 0, defaultKeywordScanOpts()); idx == 0 {
+			end, ok := keywordSpanAt(rest, 0, "IS UNIQUE")
+			if ok && strings.TrimSpace(rest[end:]) == "" {
+				return "unique", e.parseConstraintProperties(inside), true
+			}
+		}
+	}
+
+	if idx := keywordIndexFrom(predicateExpr, "IS RELATIONSHIP KEY", 0, defaultKeywordScanOpts()); idx >= 0 {
+		end, ok := keywordSpanAt(predicateExpr, idx, "IS RELATIONSHIP KEY")
+		if ok && strings.TrimSpace(predicateExpr[end:]) == "" {
+			_, prop, ok := parseConstraintQualifiedProperty(predicateExpr[:idx])
+			if ok {
+				return "rel_key", []string{prop}, true
+			}
+		}
+	}
+
+	return "", nil, false
+}
+
+func (e *StorageExecutor) parseCreateConstraintForRequireDDL(cypher string) (parsedConstraintForRequireDDL, error) {
+	name, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(cypher)
+	if err != nil {
+		return parsedConstraintForRequireDDL{}, err
+	}
+	label, relType, isRelationship, err := parseCreateIndexForPattern(patternSpan)
+	if err != nil {
+		return parsedConstraintForRequireDDL{}, err
+	}
+	out := parsedConstraintForRequireDDL{name: name, isRelationship: isRelationship, requireExpr: requireExpr}
+	if isRelationship {
+		out.label = relType
+	} else {
+		out.label = label
+	}
+	return out, nil
+}
+
+func (e *StorageExecutor) parseTemporalConstraintPredicate(requireExpr string) ([]string, bool) {
+	requireExpr = strings.TrimSpace(requireExpr)
+	inside, rest, ok := extractParenSection(requireExpr)
+	if !ok {
+		return nil, false
+	}
+	rest = strings.TrimSpace(rest)
+	if idx := keywordIndexFrom(rest, "IS TEMPORAL", 0, defaultKeywordScanOpts()); idx != 0 {
+		return nil, false
+	}
+	end, ok := keywordSpanAt(rest, 0, "IS TEMPORAL")
+	if !ok {
+		return nil, false
+	}
+	tail := strings.TrimSpace(rest[end:])
+	if tail != "" {
+		if idx := keywordIndexFrom(tail, "NO OVERLAP", 0, defaultKeywordScanOpts()); idx != 0 {
+			return nil, false
+		}
+		end2, ok := keywordSpanAt(tail, 0, "NO OVERLAP")
+		if !ok || strings.TrimSpace(tail[end2:]) != "" {
+			return nil, false
+		}
+	}
+	return e.parseConstraintProperties(inside), true
+}
+
+func (e *StorageExecutor) parseCreateConstraintTemporalDDL(cypher string) (parsedTemporalConstraintDDL, error) {
+	parsed, err := e.parseCreateConstraintForRequireDDL(cypher)
+	if err != nil {
+		return parsedTemporalConstraintDDL{}, err
+	}
+	props, ok := e.parseTemporalConstraintPredicate(parsed.requireExpr)
+	if !ok {
+		return parsedTemporalConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("temporal"), nil)
+	}
+	return parsedTemporalConstraintDDL{name: parsed.name, label: parsed.label, isRelationship: parsed.isRelationship, properties: props}, nil
+}
+
+func parseDomainConstraintPredicate(requireExpr string) (property string, allowedRaw string, ok bool) {
+	requireExpr = strings.TrimSpace(requireExpr)
+	if requireExpr == "" {
+		return "", "", false
+	}
+	inPos := keywordIndexFrom(requireExpr, "IN", 0, defaultKeywordScanOpts())
+	if inPos < 0 {
+		return "", "", false
+	}
+	inEnd, ok := keywordSpanAt(requireExpr, inPos, "IN")
+	if !ok {
+		return "", "", false
+	}
+	_, prop, ok := parseConstraintQualifiedProperty(requireExpr[:inPos])
+	if !ok {
+		return "", "", false
+	}
+	rhs := strings.TrimSpace(requireExpr[inEnd:])
+	inside, rest, ok := extractBracketSection(rhs)
+	if !ok || strings.TrimSpace(rest) != "" {
+		return "", "", false
+	}
+	return prop, inside, true
+}
+
+func (e *StorageExecutor) parseCreateConstraintDomainDDL(cypher string) (parsedDomainConstraintDDL, error) {
+	parsed, err := e.parseCreateConstraintForRequireDDL(cypher)
+	if err != nil {
+		return parsedDomainConstraintDDL{}, err
+	}
+	property, allowedRaw, ok := parseDomainConstraintPredicate(parsed.requireExpr)
+	if !ok {
+		return parsedDomainConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("domain"), nil)
+	}
+	return parsedDomainConstraintDDL{name: parsed.name, label: parsed.label, isRelationship: parsed.isRelationship, property: property, allowedRaw: allowedRaw}, nil
+}
+
+func parseRelationshipForDirection(forClause string) (relType string, direction string, ok bool) {
+	forClause = strings.TrimSpace(forClause)
+	if forClause == "" {
+		return "", "", false
+	}
+	bracketStart := strings.Index(forClause, "[")
+	if bracketStart < 0 {
+		return "", "", false
+	}
+	inside, rest, ok := extractBracketSection(forClause[bracketStart:])
+	if !ok {
+		return "", "", false
+	}
+	prefix := strings.TrimSpace(forClause[:bracketStart])
+	suffix := strings.TrimSpace(rest)
+
+	colon := strings.Index(inside, ":")
+	if colon < 0 {
+		return "", "", false
+	}
+	relType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
+	if relType == "" {
+		return "", "", false
+	}
+
+	if strings.Contains(suffix, "->") {
+		direction = "OUTGOING"
+	} else if strings.Contains(prefix, "<-") {
+		direction = "INCOMING"
+	} else {
+		return "", "", false
+	}
+	return relType, direction, true
+}
+
+func parseCardinalityRequireExpr(requireExpr string) (int, bool) {
+	requireExpr = strings.TrimSpace(requireExpr)
+	idx := keywordIndexFrom(requireExpr, "MAX COUNT", 0, defaultKeywordScanOpts())
+	if idx != 0 {
+		return 0, false
+	}
+	end, ok := keywordSpanAt(requireExpr, 0, "MAX COUNT")
+	if !ok {
+		return 0, false
+	}
+	raw := strings.TrimSpace(requireExpr[end:])
+	if raw == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 1 {
+		return 0, false
+	}
+	return v, true
+}
+
+func (e *StorageExecutor) parseCreateConstraintCardinalityDDL(cypher string) (parsedCardinalityConstraintDDL, error) {
+	name, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(cypher)
+	if err != nil {
+		return parsedCardinalityConstraintDDL{}, err
+	}
+	relType, direction, ok := parseRelationshipForDirection(patternSpan)
+	if !ok {
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("cardinality FOR"), nil)
+	}
+	maxCount, ok := parseCardinalityRequireExpr(requireExpr)
+	if !ok {
+		if startsWithKeywordFold(strings.TrimSpace(requireExpr), "MAX COUNT") {
+			end, spanOK := keywordSpanAt(strings.TrimSpace(requireExpr), 0, "MAX COUNT")
+			if spanOK {
+				raw := strings.TrimSpace(strings.TrimSpace(requireExpr)[end:])
+				if raw != "" {
+					digitsOnly := isAllDigits(raw)
+					if digitsOnly {
+						v, convErr := strconv.Atoi(raw)
+						if convErr != nil || v < 1 {
+							return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaPositiveMaxCountRequired(raw), convErr)
+						}
+					}
+				}
+			}
+		}
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidClause("cardinality require"), nil)
+	}
+
+	return parsedCardinalityConstraintDDL{name: name, relType: relType, direction: direction, maxCount: maxCount}, nil
+}
+
+func parseNodeLabelOnlyPattern(inner string) (string, bool) {
+	inner = strings.TrimSpace(inner)
+	if inner == "" {
+		return "", false
+	}
+	if !strings.HasPrefix(inner, ":") {
+		return "", false
+	}
+	label := normalizeIdentifierToken(strings.TrimSpace(inner[1:]))
+	if label == "" {
+		return "", false
+	}
+	return label, true
+}
+
+func parsePolicyForClause(forClause string) (sourceLabel string, relType string, targetLabel string, ok bool) {
+	forClause = strings.TrimSpace(forClause)
+	if !strings.HasPrefix(forClause, "(") {
+		return "", "", "", false
+	}
+	leftInside, leftRest, ok := extractParenSection(forClause)
+	if !ok {
+		return "", "", "", false
+	}
+	sourceLabel, ok = parseNodeLabelOnlyPattern(leftInside)
+	if !ok {
+		return "", "", "", false
+	}
+
+	leftRest = strings.TrimSpace(leftRest)
+	if !strings.HasPrefix(leftRest, "-") {
+		return "", "", "", false
+	}
+	bracketStart := strings.Index(leftRest, "[")
+	if bracketStart < 0 {
+		return "", "", "", false
+	}
+	relInside, relRest, ok := extractBracketSection(leftRest[bracketStart:])
+	if !ok {
+		return "", "", "", false
+	}
+	colon := strings.Index(relInside, ":")
+	if colon < 0 {
+		return "", "", "", false
+	}
+	relType = normalizeIdentifierToken(strings.TrimSpace(relInside[colon+1:]))
+	if relType == "" {
+		return "", "", "", false
+	}
+
+	relRest = strings.TrimSpace(relRest)
+	if !strings.HasPrefix(relRest, "->") {
+		return "", "", "", false
+	}
+	relRest = strings.TrimSpace(relRest[2:])
+	if !strings.HasPrefix(relRest, "(") {
+		return "", "", "", false
+	}
+	rightInside, trailing, ok := extractParenSection(relRest)
+	if !ok || strings.TrimSpace(trailing) != "" {
+		return "", "", "", false
+	}
+	targetLabel, ok = parseNodeLabelOnlyPattern(rightInside)
+	if !ok {
+		return "", "", "", false
+	}
+	return sourceLabel, relType, targetLabel, true
+}
+
+func parsePolicyModeRequireExpr(requireExpr string) (string, bool) {
+	requireExpr = strings.TrimSpace(requireExpr)
+	if startsWithKeywordFold(requireExpr, "ALLOWED") {
+		end, ok := keywordSpanAt(requireExpr, 0, "ALLOWED")
+		if ok && strings.TrimSpace(requireExpr[end:]) == "" {
+			return "ALLOWED", true
+		}
+	}
+	if startsWithKeywordFold(requireExpr, "DISALLOWED") {
+		end, ok := keywordSpanAt(requireExpr, 0, "DISALLOWED")
+		if ok && strings.TrimSpace(requireExpr[end:]) == "" {
+			return "DISALLOWED", true
+		}
+	}
+	return "", false
+}
+
+func (e *StorageExecutor) parseCreateConstraintPolicyDDL(cypher string) (parsedPolicyConstraintDDL, error) {
+	name, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(cypher)
+	if err != nil {
+		return parsedPolicyConstraintDDL{}, err
+	}
+	source, relType, target, ok := parsePolicyForClause(patternSpan)
+	if !ok {
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("policy FOR"), nil)
+	}
+	mode, ok := parsePolicyModeRequireExpr(requireExpr)
+	if !ok {
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidClause("policy require"), nil)
+	}
+
+	return parsedPolicyConstraintDDL{name: name, sourceLabel: source, relType: relType, targetLabel: target, policyMode: mode}, nil
+}
+
+func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(cypher string) (parsedRelationshipKeyOrCompositeUniqueDDL, error) {
+	name, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(cypher)
+	if err != nil {
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, err
+	}
+
+	label, relType, isRelationship, err := parseCreateIndexForPattern(patternSpan)
+	if err != nil {
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("relationship FOR"), nil)
+	}
+
+	kind, props, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(requireExpr)
+	if !ok || (!isRelationship && kind != "unique") {
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("relationship key/unique"), nil)
+	}
+	patternExpr := strings.TrimSpace(patternSpan)
+	var patternInside string
+	if isRelationship {
+		patternInside, _, ok = extractBracketSection(patternExpr[strings.Index(patternExpr, "["):])
+	} else {
+		patternInside, _, ok = extractParenSection(patternExpr)
+	}
+	colon := strings.Index(patternInside, ":")
+	if !ok || colon < 0 {
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("constraint FOR"), nil)
+	}
+	variable := normalizeIdentifierToken(patternInside[:colon])
+	propertyExpr := requireExpr
+	if inside, _, wrapped := extractParenSection(requireExpr); wrapped {
+		propertyExpr = inside
+	} else if isPos := keywordIndexFrom(requireExpr, "IS", 0, defaultKeywordScanOpts()); isPos >= 0 {
+		propertyExpr = requireExpr[:isPos]
+	}
+	if !qualifiedIndexPropertiesWellFormed(propertyExpr) {
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)
+	}
+	seen := make(map[string]bool, len(props))
+	for _, reference := range strings.Split(propertyExpr, ",") {
+		qualifier, property, valid := parseConstraintQualifiedProperty(reference)
+		if !valid || normalizeIdentifierToken(qualifier) != variable || seen[property] {
+			return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)
+		}
+		seen[property] = true
+	}
+
+	if isRelationship {
+		label = relType
+	}
+	return parsedRelationshipKeyOrCompositeUniqueDDL{name: name, label: label, properties: props, kind: kind, isRelationship: isRelationship}, nil
+}
+
+func (e *StorageExecutor) parseCreateConstraintTypeDDL(cypher string) (parsedTypeConstraintDDL, error) {
+	q := strings.TrimSpace(cypher)
+	if q == "" {
+		return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
+	}
+
+	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
+	if prefixPos != 0 {
+		return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
+	if !ok {
+		return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+
+	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
+	onPos := keywordIndexFrom(q, "ON", prefixEnd, defaultKeywordScanOpts())
+
+	if forPos >= 0 && (onPos < 0 || forPos < onPos) {
+		name, patternSpan, predicateExpr, err := e.parseCreateConstraintForRequireHead(q)
+		if err != nil {
+			return parsedTypeConstraintDDL{}, err
+		}
+
+		label, relType, isRelationship, err := parseCreateIndexForPattern(patternSpan)
+		if err != nil {
+			return parsedTypeConstraintDDL{}, err
+		}
+
+		property, typeName, ok := parseConstraintTypePredicate(predicateExpr)
+		if !ok {
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("type"), nil)
+		}
+		expectedType, err := parsePropertyType(typeName)
+		if err != nil {
+			return parsedTypeConstraintDDL{}, err
+		}
+
+		out := parsedTypeConstraintDDL{name: name, property: property, expectedType: expectedType, isRelationship: isRelationship}
+		if isRelationship {
+			out.label = relType
+		} else {
+			out.label = label
+		}
+		return out, nil
+	}
+
+	if onPos >= 0 {
+		onEnd, ok := keywordSpanAt(q, onPos, "ON")
+		if !ok {
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
+		}
+		assertPos := keywordIndexFrom(q, "ASSERT", onEnd, defaultKeywordScanOpts())
+		if assertPos < 0 {
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ASSERT"), nil)
+		}
+		assertEnd, ok := keywordSpanAt(q, assertPos, "ASSERT")
+		if !ok {
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ASSERT"), nil)
+		}
+
+		name, err := parseOptionalDDLName(q[prefixEnd:onPos])
+		if err != nil {
+			return parsedTypeConstraintDDL{}, err
+		}
+		label, _, isRelationship, err := parseCreateIndexForPattern(q[onEnd:assertPos])
+		if err != nil || isRelationship {
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("ASSERT"), nil)
+		}
+
+		predicateExpr, tail := splitDDLOptionsTail(q[assertEnd:])
+		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+		}
+		property, typeName, ok := parseConstraintTypePredicate(predicateExpr)
+		if !ok {
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("type"), nil)
+		}
+		expectedType, err := parsePropertyType(typeName)
+		if err != nil {
+			return parsedTypeConstraintDDL{}, err
+		}
+		return parsedTypeConstraintDDL{name: name, label: label, property: property, expectedType: expectedType}, nil
+	}
+
+	return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
+}
+
+func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(cypher string) (parsedSimplePropertyConstraintDDL, error) {
+	q := strings.TrimSpace(cypher)
+	if q == "" {
+		return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
+	}
+
+	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
+	if prefixPos != 0 {
+		return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
+	if !ok {
+		return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+	}
+
+	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
+	onPos := keywordIndexFrom(q, "ON", prefixEnd, defaultKeywordScanOpts())
+
+	if forPos >= 0 && (onPos < 0 || forPos < onPos) {
+		name, patternSpan, predicateExpr, err := e.parseCreateConstraintForRequireHead(q)
+		if err != nil {
+			return parsedSimplePropertyConstraintDDL{}, err
+		}
+
+		label, relType, isRelationship, err := parseCreateIndexForPattern(patternSpan)
+		if err != nil {
+			return parsedSimplePropertyConstraintDDL{}, err
+		}
+
+		kind, property, ok := parseConstraintPredicate(predicateExpr)
+		if !ok {
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint"), nil)
+		}
+
+		out := parsedSimplePropertyConstraintDDL{name: name, property: property, kind: kind, isRelationship: isRelationship}
+		if isRelationship {
+			out.label = relType
+		} else {
+			out.label = label
+		}
+		return out, nil
+	}
+
+	if onPos >= 0 {
+		onEnd, ok := keywordSpanAt(q, onPos, "ON")
+		if !ok {
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
+		}
+		assertPos := keywordIndexFrom(q, "ASSERT", onEnd, defaultKeywordScanOpts())
+		if assertPos < 0 {
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ASSERT"), nil)
+		}
+		assertEnd, ok := keywordSpanAt(q, assertPos, "ASSERT")
+		if !ok {
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ASSERT"), nil)
+		}
+
+		name, err := parseOptionalDDLName(q[prefixEnd:onPos])
+		if err != nil {
+			return parsedSimplePropertyConstraintDDL{}, err
+		}
+
+		label, _, isRelationship, err := parseCreateIndexForPattern(q[onEnd:assertPos])
+		if err != nil || isRelationship {
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("ASSERT"), nil)
+		}
+
+		predicateExpr, tail := splitDDLOptionsTail(q[assertEnd:])
+		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+		}
+		kind, property, ok := parseConstraintPredicate(predicateExpr)
+		if !ok {
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint"), nil)
+		}
+		return parsedSimplePropertyConstraintDDL{name: name, label: label, property: property, kind: kind, isRelationship: false}, nil
+	}
+
+	return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
+}
+
+// parseIndexProperties parses property list from index ON clause.
+//
+// Handles both single and composite property syntax:
+//   - "n.property"           -> ["property"]
+//   - "n.prop1, n.prop2"     -> ["prop1", "prop2"]
+//   - "n.a, n.b, n.c"        -> ["a", "b", "c"]
+func (e *StorageExecutor) parseIndexProperties(propertiesStr string) []string {
+	return e.parseIndexPropertiesWithMode(propertiesStr, true)
+}
+
+// addSchemaConstraint adds constraint and, when it is a single-property
+// uniqueness or node key constraint, fills the property index it owns from
+// the stored nodes (#875), as addPropertyIndex fills a new index: equality
+// and IN seeks then use it inside transactions as they use an index of its
+// own. A constraint whose fill fails is dropped again, since a half-filled
+// index would make seeks drop rows.
+func (e *StorageExecutor) addSchemaConstraint(ctx context.Context, constraint storage.Constraint, ifNotExists bool) error {
+	schema := e.storage.GetSchema()
+	_, existed, selectionErr := schema.ConstraintPropertyIndexWithContext(ctx, constraint.Name)
+	if selectionErr != nil {
+		return selectionErr
+	}
+	registered := schema.HasConstraintNamed(constraint.Name)
+	if err := schema.AddConstraint(constraint, ifNotExists); err != nil {
+		return err
+	}
+	// A new temporal constraint's history index is authoritative when its
+	// label is empty; over existing nodes it isn't until the next rebuild
+	// (#1126). IF NOT EXISTS on an existing constraint changes nothing.
+	if !registered && constraint.Type == storage.ConstraintTemporal {
+		if err := storage.MarkNewTemporalConstraintsForEngineWithContext(ctx, e.storage, schema, []storage.Constraint{constraint}); err != nil {
+			return err
+		}
+	}
+	index, owned, selectionErr := schema.ConstraintPropertyIndexWithContext(ctx, constraint.Name)
+	if selectionErr != nil {
+		if !registered {
+			_ = schema.DropConstraint(constraint.Name)
+		}
+		return selectionErr
+	}
+	if existed || !owned {
+		return nil
+	}
+	if err := e.backfillCompositeIndex(ctx, index.Name, index.Label, index.Properties); err != nil {
+		_ = schema.DropConstraint(constraint.Name)
+		return err
+	}
+	return nil
+}
+
+// addPropertyIndex creates an equality index (arity-1 or composite) and,
+// when it didn't exist yet, fills it from the label's nodes. An existing
+// index is left as it is: it is already maintained, and filling it again
+// would list its nodes twice. A new index whose fill fails is dropped again:
+// index lookups trust an index to hold every node with the value, so a
+// half-filled one would drop rows.
+func (e *StorageExecutor) addPropertyIndex(ctx context.Context, name, label string, properties []string) error {
+	schema := e.storage.GetSchema()
+	_, existed := schema.GetCompositeIndex(name)
+	if err := schema.AddCompositeIndex(name, label, properties); err != nil {
+		return err
+	}
+	if existed {
+		return nil
+	}
+	if err := e.backfillCompositeIndex(ctx, name, label, properties); err != nil {
+		_ = schema.DropIndex(name)
+		return err
+	}
+	return nil
+}
+
+// backfillCompositeIndex fills a newly created equality index from the
+// label's stored nodes, those the visibility layer hides from reads included:
+// an index lookup finds them once they are shown again, and a NODE KEY check
+// that trusts the index sees their values. A new index whose fill fails is
+// dropped by addPropertyIndex / addSchemaConstraint, since index lookups
+// trust an index to hold every matching node.
+func (e *StorageExecutor) backfillCompositeIndex(ctx context.Context, name, label string, properties []string) error {
+	schema := e.storage.GetSchema()
+	if schema == nil {
+		return nil
+	}
+	nodes, err := storage.GetStoredNodesByLabelWithContext(ctx, e.storage, label)
+	if err != nil {
+		return localizedError(localization.CypherSchemaBackfillIndexFailed(label, err), err)
+	}
+	entries := make(map[storage.NodeID]map[string]interface{}, len(nodes))
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if node == nil || node.Properties == nil {
+			continue
+		}
+		entries[storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, node.ID)] = node.Properties
+	}
+	if err := schema.BackfillCompositeIndexWithContext(ctx, name, entries); err != nil {
+		property := ""
+		if len(properties) > 0 {
+			property = properties[0]
+		}
+		return localizedError(localization.CypherSchemaBackfillPropertyIndexFailed(label, property, err), err)
+	}
+	return nil
+}
+
+// qualifiedIndexPropertiesWellFormed reports whether every comma-separated item
+// of an index ON clause is a variable.property reference whose two parts are
+// identifiers or backtick-quoted names. An empty list is left to the caller's
+// "properties required" error.
+func qualifiedIndexPropertiesWellFormed(propertiesStr string) bool {
+	if strings.TrimSpace(propertiesStr) == "" {
+		return true
+	}
+	for _, part := range splitTopLevelComma(propertiesStr) {
+		part = strings.TrimSpace(part)
+		variable, property, ok := splitPostfixPropertyAccess(part)
+		if !ok || !isPatternVariableName(strings.TrimSpace(variable)) || property == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *StorageExecutor) parseQualifiedIndexProperties(propertiesStr string) []string {
+	return e.parseIndexPropertiesWithMode(propertiesStr, false)
+}
+
+func (e *StorageExecutor) parseIndexPropertiesWithMode(propertiesStr string, allowBare bool) []string {
+	// Split by comma
+	parts := strings.Split(propertiesStr, ",")
+	var properties []string
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		// Extract property name after dot (e.g., "n.prop" -> "prop")
+		if dotIdx := strings.LastIndex(part, "."); dotIdx >= 0 && dotIdx < len(part)-1 {
+			propName := normalizeIdentifierToken(part[dotIdx+1:])
+			if propName != "" {
+				properties = append(properties, propName)
+			}
+		} else if allowBare {
+			// Also support bare property names used by legacy syntax ON :Label(prop)
+			propName := normalizeIdentifierToken(part)
+			if propName != "" {
+				properties = append(properties, propName)
+			}
+		}
+	}
+
+	return properties
+}
+
+func (e *StorageExecutor) parseConstraintProperties(propertiesStr string) []string {
+	parts := strings.Split(propertiesStr, ",")
+	properties := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if dotIdx := strings.LastIndex(part, "."); dotIdx >= 0 && dotIdx < len(part)-1 {
+			propName := normalizeIdentifierToken(part[dotIdx+1:])
+			if propName != "" {
+				properties = append(properties, propName)
+			}
+		}
+	}
+	return properties
+}
+
+// executeCreateFulltextIndex handles CREATE FULLTEXT INDEX commands.
+//
+// Supported syntax:
+//
+//	CREATE FULLTEXT INDEX index_name [IF NOT EXISTS]
+//	FOR (n:Label) ON EACH [n.prop1, n.prop2]
+//
+//	CREATE FULLTEXT INDEX index_name [IF NOT EXISTS]
+//	FOR ()-[r:RelType]-() ON EACH [r.prop1, r.prop2]
+//
+// The relationship form binds an index to a relationship type (or
+// types — Neo4j allows `:R1|R2`); the runtime then scopes
+// db.index.fulltext.queryRelationships to those types instead of
+// scanning every edge.
+func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	schema := e.storage.GetSchema()
+	if schema == nil {
+		return nil, localizedError(localization.CypherSchemaManagerUnavailable(), nil)
+	}
+
+	parsed, err := e.parseCreateFulltextIndexDDL(cypher)
+	if err != nil {
+		return nil, err
+	}
+
+	entityType := storage.ConstraintEntityNode
+	targets := parsed.labels
+	if parsed.isRelationship {
+		entityType = storage.ConstraintEntityRelationship
+		targets = parsed.relationshipTypes
+	}
+	create, err := e.admitIndexCreationForTargets(cypher, parsed.indexName, "FULLTEXT", targets, parsed.properties, entityType)
+	if err != nil {
+		return nil, err
+	}
+	if !create {
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	if parsed.isRelationship {
+		if err := schema.AddFulltextRelationshipIndex(parsed.indexName, parsed.relationshipTypes, parsed.properties); err != nil {
+			return nil, localizedError(localization.CypherSchemaAddFulltextRelationshipIndexFailed(err), err)
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	if err := schema.AddFulltextIndex(parsed.indexName, parsed.labels, parsed.properties); err != nil {
+		return nil, localizedError(localization.CypherSchemaAddFulltextIndexFailed(err), err)
+	}
+
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+// parseDomainValueList parses a comma-separated list of literal values from a domain constraint.
+// Supports strings ('value' or "value"), integers, and floats.
+func parseDomainValueList(raw string) ([]interface{}, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	var values []interface{}
+	for _, item := range splitTopLevelComma(raw) {
+		token := strings.TrimSpace(item)
+		if token == "" {
+			continue
+		}
+		if value, quoted := cyphertext.DecodeString(token, cyphertext.AcceptedSource); quoted {
+			values = append(values, value)
+		} else if isCypherStringQuoteByte(token[0]) {
+			return nil, localizedError(localization.CypherSchemaUnterminatedString(token), nil)
+		} else {
+			// Numeric or boolean literal
+			// Try integer
+			if intVal, err := strconv.ParseInt(token, 10, 64); err == nil {
+				values = append(values, intVal)
+			} else if floatVal, err := strconv.ParseFloat(token, 64); err == nil {
+				values = append(values, floatVal)
+			} else if token == "true" {
+				values = append(values, true)
+			} else if token == "false" {
+				values = append(values, false)
+			} else {
+				// Treat as bare string
+				values = append(values, token)
+			}
+		}
+
+	}
+
+	return values, nil
+}
+
+func parseFulltextRelationshipTypes(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nerrors.ErrInvalidFulltextRelationshipTypes
+	}
+
+	types := make([]string, 0, 2)
+	var cur strings.Builder
+
+	flush := func() error {
+		part := normalizeIdentifierToken(strings.TrimSpace(cur.String()))
+		cur.Reset()
+		if part == "" {
+			return nerrors.ErrInvalidFulltextRelationshipTypes
+		}
+		types = append(types, part)
+		return nil
+	}
+
+	for index := 0; index < len(raw); index++ {
+		if isCypherBacktickByte(raw[index]) {
+			end, closed := scanCypherQuotedText(raw, index, raw[index])
+			if !closed {
+				return nil, nerrors.ErrInvalidFulltextRelationshipTypes
+			}
+			cur.WriteString(raw[index:end])
+			index = end - 1
+			continue
+		}
+		switch raw[index] {
+		case '|':
+			if err := flush(); err != nil {
+				return nil, err
+			}
+		default:
+			cur.WriteByte(raw[index])
+		}
+	}
+	if err := flush(); err != nil {
+		return nil, err
+	}
+	return types, nil
+}
+
+func normalizeIdentifierToken(v string) string {
+	s := strings.TrimSpace(v)
+	if len(s) >= 2 && strings.HasPrefix(s, "`") && strings.HasSuffix(s, "`") {
+		s = s[1 : len(s)-1]
+		s = strings.ReplaceAll(s, "``", "`")
+	}
+	return strings.TrimSpace(s)
+}
+
+// executeCreateVectorIndex handles CREATE VECTOR INDEX commands.
+//
+// Supported syntax:
+//
+//	CREATE VECTOR INDEX index_name IF NOT EXISTS
+//	FOR (n:Label) ON (n.property)
+//	OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}
+func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	parsed, err := e.parseCreateIndexDDL(cypher, "CREATE VECTOR INDEX")
+	if err != nil {
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE VECTOR INDEX"), nil)
+	}
+	if len(parsed.properties) != 1 || parsed.indexName == "" ||
+		(!parsed.isRelationship && parsed.label == "") ||
+		(parsed.isRelationship && parsed.relationshipType == "") {
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE VECTOR INDEX"), nil)
+	}
+
+	indexName := parsed.indexName
+	label := parsed.label
+	if parsed.isRelationship {
+		label = parsed.relationshipType
+	}
+	property := parsed.properties[0]
+
+	// Parse OPTIONS if present - use configured default dimensions
+	dimensions := e.GetDefaultEmbeddingDimensions()
+	similarityFunc := "cosine" // Default
+
+	dimensions, similarityFunc = parseVectorOptions(parsed.optionsClause, dimensions, similarityFunc)
+
+	// Add vector index. The schema entry is recorded regardless of the
+	// vector master switch so SHOW INDEXES still reflects operator intent
+	// and DROP INDEX has something to remove. The actual in-memory vector
+	// space is only registered when vector search is enabled — otherwise
+	// the operator explicitly turned vector indexing off and we must not
+	// allocate or warm any vector backend on their behalf.
+	entityType := storage.ConstraintEntityNode
+	if parsed.isRelationship {
+		entityType = storage.ConstraintEntityRelationship
+	}
+	create, err := e.admitIndexCreation(cypher, indexName, "VECTOR", label, parsed.properties, entityType)
+	if err != nil {
+		return nil, err
+	}
+	if !create {
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+	if err := e.storage.GetSchema().AddVectorIndexForEntity(indexName, label, property, dimensions, similarityFunc, entityType); err != nil {
+		return nil, err
+	}
+
+	// Relationship vector indexes are consumed by relationship vector procedures
+	// directly from relationship properties and schema metadata.
+	// registerVectorSpace is node-vector specific; keep relationship indexes out.
+	if svc := e.search(); !parsed.isRelationship && (svc == nil || svc.VectorEnabled()) {
+		e.afterSchemaCommit(ctx, func() {
+			e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
+		})
+	}
+
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}

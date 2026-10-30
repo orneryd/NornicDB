@@ -1,0 +1,21 @@
+- id: search.gpu_kmeans_clustered_index_required
+  description: Direct GPU k-means candidate-generation error when no clustered index is available.
+  other: gpu k-means candidate gen requires clustered index
+- id: search.cluster_hnsw_lookup_not_configured
+  description: Direct IVF-HNSW candidate-generation error when per-cluster index lookup is unavailable. HNSW is an API identifier.
+  other: cluster HNSW lookup not configured
+- id: search.ivfpq_index_not_configured
+  description: Direct IVF/PQ candidate-generation error when its index is unavailable. IVFPQ is an API identifier.
+  other: ivfpq index not configured
+- id: search.cluster_query_dimensions_mismatch
+  description: Cluster search validation error. QueryDimensions and IndexDimensions are numeric vector dimensions.
+  other: "cluster search failed: query dimensions {{.QueryDimensions}} != index dimensions {{.IndexDimensions}}"
+- id: search.cluster_search_failed
+  description: Cluster candidate-generation failure. Cause is diagnostic text and is not translated.
+  other: "cluster search failed: {{.Cause}}"
+- id: search.hnsw_index_creation_failed
+  description: Vector search failure while creating an HNSW index. Cause is diagnostic text and is not translated.
+  other: "failed to create HNSW index: {{.Cause}}"
+- id: search.vector_index_nil
+  description: Vector search initialization error when no vector index exists.
+  other: vector index is nil

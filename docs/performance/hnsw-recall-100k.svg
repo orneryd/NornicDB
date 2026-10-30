@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="450" viewBox="0 0 1000 450" role="img" aria-labelledby="title desc">
+  <title id="title">HNSW recall at 10 on uniform and clustered 100,000-vector corpora</title>
+  <desc id="desc">NornicDB after the graph construction fix closely tracks hnswlib at ef 50, 200, 800, and 3200.</desc>
+  <style>
+    text { font: 13px system-ui, sans-serif; fill: #24292f; }
+    .title { font-size: 19px; font-weight: 600; }
+    .panel { font-size: 16px; font-weight: 600; }
+    .grid { stroke: #d8dee4; stroke-width: 1; }
+    .axis { stroke: #57606a; stroke-width: 1.5; }
+    .nornic { fill: none; stroke: #0969da; stroke-width: 3; }
+    .reference { fill: none; stroke: #bf8700; stroke-width: 3; stroke-dasharray: 7 5; }
+    .nornic-point { fill: #0969da; }
+    .reference-point { fill: #bf8700; }
+  </style>
+  <rect width="1000" height="450" fill="#fff"/>
+  <text class="title" x="500" y="28" text-anchor="middle">Recall@10 — 100k vectors, 128 dimensions, M=16, efConstruction=100</text>
+  <line class="nornic" x1="345" y1="48" x2="385" y2="48"/><text x="393" y="53">NornicDB</text>
+  <line class="reference" x1="500" y1="48" x2="540" y2="48"/><text x="548" y="53">hnswlib reference</text>
+
+  <text class="panel" x="255" y="83" text-anchor="middle">Uniform</text>
+  <text class="panel" x="735" y="83" text-anchor="middle">Clustered chunks</text>
+  <g>
+    <line class="grid" x1="90" y1="95" x2="420" y2="95"/><line class="grid" x1="570" y1="95" x2="900" y2="95"/>
+    <line class="grid" x1="90" y1="155" x2="420" y2="155"/><line class="grid" x1="570" y1="155" x2="900" y2="155"/>
+    <line class="grid" x1="90" y1="215" x2="420" y2="215"/><line class="grid" x1="570" y1="215" x2="900" y2="215"/>
+    <line class="grid" x1="90" y1="275" x2="420" y2="275"/><line class="grid" x1="570" y1="275" x2="900" y2="275"/>
+    <line class="grid" x1="90" y1="335" x2="420" y2="335"/><line class="grid" x1="570" y1="335" x2="900" y2="335"/>
+    <text x="78" y="100" text-anchor="end">1.0</text><text x="558" y="100" text-anchor="end">1.0</text>
+    <text x="78" y="160" text-anchor="end">0.8</text><text x="558" y="160" text-anchor="end">0.8</text>
+    <text x="78" y="220" text-anchor="end">0.6</text><text x="558" y="220" text-anchor="end">0.6</text>
+    <text x="78" y="280" text-anchor="end">0.4</text><text x="558" y="280" text-anchor="end">0.4</text>
+    <text x="78" y="340" text-anchor="end">0.2</text><text x="558" y="340" text-anchor="end">0.2</text>
+  </g>
+  <line class="axis" x1="90" y1="95" x2="90" y2="335"/><line class="axis" x1="90" y1="335" x2="420" y2="335"/>
+  <line class="axis" x1="570" y1="95" x2="570" y2="335"/><line class="axis" x1="570" y1="335" x2="900" y2="335"/>
+
+  <polyline class="reference" points="90,274.4 200,217.4 310,133.1 420,96.8"/>
+  <polyline class="nornic" points="90,276.7 200,218.0 310,133.1 420,98.0"/>
+  <polyline class="reference" points="570,143.9 680,143.3 790,141.5 900,122.9"/>
+  <polyline class="nornic" points="570,145.9 680,143.8 790,139.3 900,122.8"/>
+  <g class="reference-point">
+    <circle cx="90" cy="274.4" r="4"/><circle cx="200" cy="217.4" r="4"/><circle cx="310" cy="133.1" r="4"/><circle cx="420" cy="96.8" r="4"/>
+    <circle cx="570" cy="143.9" r="4"/><circle cx="680" cy="143.3" r="4"/><circle cx="790" cy="141.5" r="4"/><circle cx="900" cy="122.9" r="4"/>
+  </g>
+  <g class="nornic-point">
+    <circle cx="90" cy="276.7" r="4"/><circle cx="200" cy="218.0" r="4"/><circle cx="310" cy="133.1" r="4"/><circle cx="420" cy="98.0" r="4"/>
+    <circle cx="570" cy="145.9" r="4"/><circle cx="680" cy="143.8" r="4"/><circle cx="790" cy="139.3" r="4"/><circle cx="900" cy="122.8" r="4"/>
+  </g>
+  <g text-anchor="middle">
+    <text x="90" y="357">50</text><text x="200" y="357">200</text><text x="310" y="357">800</text><text x="420" y="357">3200</text>
+    <text x="570" y="357">50</text><text x="680" y="357">200</text><text x="790" y="357">800</text><text x="900" y="357">3200</text>
+    <text x="255" y="382">ef</text><text x="735" y="382">ef</text>
+  </g>
+  <text x="500" y="420" text-anchor="middle">Apple M3 Max · Go benchmark on 2026-09-19 · hnswlib values reproduced from issue #433</text>
+</svg>

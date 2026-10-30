@@ -1,0 +1,1680 @@
+package storage
+
+import (
+	"context"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"reflect"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/localization"
+)
+
+// ============================================================================
+// Allocation-free keyword scanning helpers (same style as pkg/cypher/keyword_scan.go).
+// Written locally because pkg/storage must not import pkg/cypher.
+// ============================================================================
+
+// ccSkipSpaces advances past whitespace.
+func ccSkipSpaces(s string, i int) int { end, _ := cyphertext.GapEnd(s, i); return end }
+
+// ccScanComparator reads a comparison operator at position i.
+func ccScanComparator(s string, i int) (string, int) {
+	if i >= len(s) {
+		return "", i
+	}
+	if i+1 < len(s) {
+		two := s[i : i+2]
+		switch two {
+		case "<=", ">=", "<>", "!=":
+			return two, i + 2
+		}
+	}
+	switch s[i] {
+	case '=', '<', '>':
+		return s[i : i+1], i + 1
+	}
+	return "", i
+}
+
+// ccExpectByte checks s[i]==b, returns i+1 or -1.
+func ccExpectByte(s string, i int, b byte) int {
+	if i < len(s) && s[i] == b {
+		return i + 1
+	}
+	return -1
+}
+
+// ccScanLabels reads zero or more `:Label` sequences starting at i.
+func ccScanLabels(s string, i int) ([]string, int) {
+	var labels []string
+	for {
+		p := ccSkipSpaces(s, i)
+		if p >= len(s) || s[p] != ':' {
+			return labels, i
+		}
+		p++ // skip ':'
+		p = ccSkipSpaces(s, p)
+		label, next := cyphertext.IdentifierValue(s, p)
+		if label == "" {
+			return labels, i // colon without ident — don't consume
+		}
+		labels = append(labels, label)
+		i = next
+	}
+}
+
+// ccScanNodeContents reads the inside of a node pattern (...) starting after '('.
+// Returns any labels found and the position after ')'.
+func ccScanNodeContents(s string, i int) ([]string, int, bool) {
+	p := ccSkipSpaces(s, i)
+	// Optional variable name
+	if _, next := cyphertext.IdentifierValue(s, p); next > p {
+		p = next
+	}
+	// Zero or more :Label
+	labels, p := ccScanLabels(s, p)
+	p = ccSkipSpaces(s, p)
+	p = ccExpectByte(s, p, ')')
+	if p == -1 {
+		return nil, 0, false
+	}
+	return labels, p, true
+}
+
+// hasAllLabels checks that all required labels exist on the node.
+func hasAllLabels(labels []string, required []string) bool {
+	for _, req := range required {
+		if !hasLabel(labels, req) {
+			return false
+		}
+	}
+	return true
+}
+
+const (
+	ConstraintContractKindPrimitiveNode         = "primitive-node"
+	ConstraintContractKindPrimitiveRelationship = "primitive-relationship"
+	ConstraintContractKindBooleanNode           = "boolean-node"
+	ConstraintContractKindBooleanRelationship   = "boolean-relationship"
+)
+
+// ConstraintContractEntryName is the name of the primitive constraint compiled
+// from the entry at index idx (0-based) of a contract.
+func ConstraintContractEntryName(contractName string, idx int) string {
+	return fmt.Sprintf("%s__entry_%02d", contractName, idx+1)
+}
+
+type ConstraintContract struct {
+	Name              string                    `json:"name"`
+	TargetEntityType  string                    `json:"target_entity_type"`
+	TargetLabelOrType string                    `json:"target_label_or_type"`
+	Definition        string                    `json:"definition"`
+	Entries           []ConstraintContractEntry `json:"entries,omitempty"`
+}
+
+type ConstraintContractEntry struct {
+	Kind          string   `json:"kind"`
+	PrimitiveType string   `json:"primitive_type,omitempty"`
+	Properties    []string `json:"properties,omitempty"`
+	Property      string   `json:"property,omitempty"`
+	ExpectedType  string   `json:"expected_type,omitempty"`
+	Expression    string   `json:"expression,omitempty"`
+}
+
+func cloneConstraintContractEntry(entry ConstraintContractEntry) ConstraintContractEntry {
+	cloned, _ := cloneConstraintContractEntryWithContext(context.Background(), entry)
+	return cloned
+}
+
+func cloneConstraintContractEntryWithContext(ctx context.Context, entry ConstraintContractEntry) (ConstraintContractEntry, error) {
+	cloned := entry
+	if len(entry.Properties) > 0 {
+		var err error
+		cloned.Properties, err = copySliceWithContext(ctx, entry.Properties)
+		if err != nil {
+			return ConstraintContractEntry{}, err
+		}
+	}
+	return cloned, ctx.Err()
+}
+
+func cloneConstraintContract(contract ConstraintContract) ConstraintContract {
+	cloned, _ := cloneConstraintContractWithContext(context.Background(), contract)
+	return cloned
+}
+
+func cloneConstraintContractWithContext(ctx context.Context, contract ConstraintContract) (ConstraintContract, error) {
+	cloned := contract
+	if len(contract.Entries) > 0 {
+		cloned.Entries = make([]ConstraintContractEntry, 0, len(contract.Entries))
+		for _, entry := range contract.Entries {
+			if err := ctx.Err(); err != nil {
+				return ConstraintContract{}, err
+			}
+			copy, err := cloneConstraintContractEntryWithContext(ctx, entry)
+			if err != nil {
+				return ConstraintContract{}, err
+			}
+			cloned.Entries = append(cloned.Entries, copy)
+		}
+	}
+	return cloned, ctx.Err()
+}
+
+func constraintContractEqual(a, b ConstraintContract) bool {
+	if a.Name != b.Name ||
+		a.TargetEntityType != b.TargetEntityType ||
+		a.TargetLabelOrType != b.TargetLabelOrType ||
+		a.Definition != b.Definition ||
+		len(a.Entries) != len(b.Entries) {
+		return false
+	}
+	for i := range a.Entries {
+		left := a.Entries[i]
+		right := b.Entries[i]
+		if left.Kind != right.Kind ||
+			left.PrimitiveType != right.PrimitiveType ||
+			left.Property != right.Property ||
+			left.ExpectedType != right.ExpectedType ||
+			left.Expression != right.Expression ||
+			len(left.Properties) != len(right.Properties) {
+			return false
+		}
+		for j := range left.Properties {
+			if left.Properties[j] != right.Properties[j] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (sm *SchemaManager) GetAllConstraintContracts() []ConstraintContract {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	contracts := make([]ConstraintContract, 0, len(sm.constraintContracts))
+	for _, contract := range sm.constraintContracts {
+		contracts = append(contracts, cloneConstraintContract(contract))
+	}
+	sort.Slice(contracts, func(i, j int) bool {
+		return contracts[i].Name < contracts[j].Name
+	})
+	return contracts
+}
+
+// HasAnyConstraintContract reports whether this schema has at least one
+// constraint contract registered. Callers use it to short-circuit work in
+// the per-commit validator (the expensive adjacency walk is pointless when
+// no contract exists).
+func (sm *SchemaManager) HasAnyConstraintContract() bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.constraintContracts) > 0
+}
+
+func (sm *SchemaManager) GetConstraintContractsForTarget(entityType ConstraintEntityType, labelOrType string) []ConstraintContract {
+	contracts, _ := sm.GetConstraintContractsForTargetWithContext(context.Background(), entityType, labelOrType)
+	return contracts
+}
+
+// GetConstraintContractsForTargetWithContext prepares the same name-ordered
+// target population under the caller's cancellable validation lifetime.
+func (sm *SchemaManager) GetConstraintContractsForTargetWithContext(ctx context.Context, entityType ConstraintEntityType, labelOrType string) ([]ConstraintContract, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	contracts := make([]ConstraintContract, 0)
+	for _, contract := range sm.constraintContracts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if contract.TargetEntityType != string(entityType) || contract.TargetLabelOrType != labelOrType {
+			continue
+		}
+		cloned, err := cloneConstraintContractWithContext(ctx, contract)
+		if err != nil {
+			return nil, err
+		}
+		contracts = append(contracts, cloned)
+	}
+	if err := sortIndexCandidatesWithContext(ctx, contracts, func(a, b ConstraintContract) bool { return a.Name < b.Name }); err != nil {
+		return nil, err
+	}
+	return contracts, ctx.Err()
+}
+
+func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract, compiledConstraints []Constraint, compiledTypes []PropertyTypeConstraint, ifNotExists bool) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	snapshot := sm.exportDefinitionLocked()
+
+	if existing, exists := sm.constraintContracts[contract.Name]; exists {
+		if ifNotExists && constraintContractEqual(existing, contract) {
+			return nil
+		}
+		return localizedError(localization.StorageSchemaConstraintContractAlreadyExists(contract.Name), nil)
+	}
+	if _, exists := sm.constraints[contract.Name]; exists {
+		return localizedError(localization.StorageSchemaConstraintContractNameConflict(contract.Name), nil)
+	}
+	if _, exists := sm.propertyTypeConstraints[contract.Name]; exists {
+		return localizedError(localization.StorageSchemaConstraintContractNameConflict(contract.Name), nil)
+	}
+
+	for _, compiled := range compiledConstraints {
+		if _, err := sm.addConstraintLocked(compiled, false); err != nil {
+			sm.replaceFromDefinitionLocked(snapshot)
+			return err
+		}
+	}
+	for _, compiled := range compiledTypes {
+		if _, err := sm.addPropertyTypeConstraintValueLocked(compiled, false); err != nil {
+			sm.replaceFromDefinitionLocked(snapshot)
+			return err
+		}
+	}
+
+	sm.constraintContracts[contract.Name] = cloneConstraintContract(contract)
+
+	if sm.persist != nil {
+		def := sm.exportDefinitionLocked()
+		if err := sm.persist(def); err != nil {
+			sm.replaceFromDefinitionLocked(snapshot)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ValidateConstraintContractOnCreationForEngine(engine Engine, contract ConstraintContract) error {
+	return ValidateConstraintContractOnCreationForEngineWithContext(context.Background(), engine, contract)
+}
+
+// ValidateConstraintContractOnCreationForEngineWithContext carries the caller through validation and label materialization.
+func ValidateConstraintContractOnCreationForEngineWithContext(ctx context.Context, engine Engine, contract ConstraintContract) error {
+	if err := ValidateConstraintContractExpressionsWithContext(ctx, contract); err != nil {
+		return err
+	}
+	entityType := ConstraintEntityType(contract.TargetEntityType)
+	switch entityType {
+	case ConstraintEntityNode:
+		nodes, err := GetStoredNodesByLabelWithContext(ctx, engine, contract.TargetLabelOrType)
+		if err != nil {
+			return localizedError(localization.StorageSchemaScanNodesFailed(err), err)
+		}
+		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			if err := validateConstraintContractForNodeEngine(ctx, engine, contract, node); err != nil {
+				return err
+			}
+		}
+	case ConstraintEntityRelationship:
+		// Stream the relationship type (scoped to the engine's database)
+		// instead of loading every edge of the type into memory.
+		var violation error
+		err := StreamStoredEdgesByType(ctx, engine, contract.TargetLabelOrType, func(edge *Edge) error {
+			if edge == nil {
+				return nil
+			}
+			if err := validateConstraintContractForEdgeEngine(ctx, engine, contract, edge); err != nil {
+				violation = err
+				return err
+			}
+			return nil
+		})
+		if violation != nil {
+			return violation
+		}
+		if err != nil {
+			return localizedError(localization.StorageSchemaScanRelationshipsFailed(err), err)
+		}
+	default:
+		return localizedError(localization.StorageSchemaUnsupportedContractTargetEntityType(contract.TargetEntityType), nil)
+	}
+	return nil
+}
+
+func validateConstraintContractForNodeEngine(ctx context.Context, engine Engine, contract ConstraintContract, node *Node) error {
+	for _, entry := range contract.Entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.Kind != ConstraintContractKindBooleanNode {
+			continue
+		}
+		ok, err := evaluateNodeConstraintContractExpression(engineConstraintView{engine: engine, ctx: ctx}, node, entry.Expression)
+		if err != nil {
+			return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
+		}
+		if !ok {
+			return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
+		}
+	}
+	return nil
+}
+
+func validateConstraintContractForEdgeEngine(ctx context.Context, engine Engine, contract ConstraintContract, edge *Edge) error {
+	for _, entry := range contract.Entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.Kind != ConstraintContractKindBooleanRelationship {
+			continue
+		}
+		ok, err := evaluateRelationshipConstraintContractExpression(engineConstraintView{engine: engine, ctx: ctx}, edge, entry.Expression)
+		if err != nil {
+			return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
+		}
+		if !ok {
+			return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
+		}
+	}
+	return nil
+}
+
+// constraintGraphView is the read surface the constraint-contract evaluators
+// need: adjacency and node lookup over every stored entity, those the
+// visibility layer hides included. Both an Engine and a locked Badger
+// transaction provide it, so the evaluator logic is written once and the two
+// call paths cannot drift apart.
+type constraintGraphView interface {
+	Context() context.Context
+	OutgoingEdges(id NodeID) ([]*Edge, error)
+	IncomingEdges(id NodeID) ([]*Edge, error)
+	Node(id NodeID) (*Node, error)
+}
+
+type engineConstraintView struct {
+	engine Engine
+	ctx    context.Context
+}
+
+func (v engineConstraintView) Context() context.Context {
+	if v.ctx == nil {
+		return context.Background()
+	}
+	return v.ctx
+}
+
+func (v engineConstraintView) OutgoingEdges(id NodeID) ([]*Edge, error) {
+	return GetStoredOutgoingEdgesWithContext(v.Context(), v.engine, id)
+}
+func (v engineConstraintView) IncomingEdges(id NodeID) ([]*Edge, error) {
+	return GetStoredIncomingEdgesWithContext(v.Context(), v.engine, id)
+}
+func (v engineConstraintView) Node(id NodeID) (*Node, error) {
+	return GetStoredNode(v.engine, id)
+}
+
+type txConstraintView struct{ tx *BadgerTransaction }
+
+func (v txConstraintView) Context() context.Context { return v.tx.validationContextLocked() }
+
+func (v txConstraintView) OutgoingEdges(id NodeID) ([]*Edge, error) {
+	return v.tx.currentOutgoingEdgesLocked(id)
+}
+func (v txConstraintView) IncomingEdges(id NodeID) ([]*Edge, error) {
+	return v.tx.currentIncomingEdgesLocked(id)
+}
+func (v txConstraintView) Node(id NodeID) (*Node, error) {
+	return v.tx.currentNodeLocked(id)
+}
+
+func evaluateNodeConstraintContractExpressionEngine(engine Engine, node *Node, expr string) (bool, error) {
+	return evaluateNodeConstraintContractExpression(engineConstraintView{engine: engine}, node, expr)
+}
+
+func evaluateNodeConstraintContractExpression(view constraintGraphView, node *Node, expr string) (bool, error) {
+	predicate, err := compileNodeConstraintContractExpression(expr)
+	if err != nil {
+		return false, err
+	}
+	return predicate(view, node)
+}
+
+// contractNodePredicate / contractRelationshipPredicate are compiled runtime
+// contract entries. Compiling is pure parsing, so contract creation compiles
+// every boolean entry up front (an unsupported predicate is rejected at
+// CREATE CONSTRAINT instead of blocking every later write), and write-time
+// evaluation goes through the same compiler.
+type contractNodePredicate func(view constraintGraphView, node *Node) (bool, error)
+type contractRelationshipPredicate func(view constraintGraphView, edge *Edge) (bool, error)
+
+// Property predicates (`x.p IN [...]`, `x.p > v`) follow SQL CHECK semantics:
+// an absent property satisfies them, the same way primitive domain and type
+// constraints accept null. Presence is required with `x.p IS NOT NULL`.
+func compileNodeConstraintContractExpression(expr string) (contractNodePredicate, error) {
+	if matched, values, property, err := parsePropertyInExpression(expr); err != nil {
+		return nil, err
+	} else if matched {
+		return func(view constraintGraphView, node *Node) (bool, error) {
+			return evaluatePropertyInExpressionWithContext(view.Context(), node.Properties[property], values)
+		}, nil
+	}
+
+	if matched, property, comparator, value, err := parseRelationshipPropertyComparisonExpression(expr); err != nil {
+		return nil, err
+	} else if matched {
+		return func(_ constraintGraphView, node *Node) (bool, error) {
+			return compareConstraintExpressionValue(node.Properties[property], comparator, value), nil
+		}, nil
+	}
+
+	if matched, pattern, comparator, threshold, err := parseCountPatternExpression(expr); err != nil {
+		return nil, err
+	} else if matched {
+		return func(view constraintGraphView, node *Node) (bool, error) {
+			count, err := countMatchingPatternEdges(view, node, pattern)
+			if err != nil {
+				return false, err
+			}
+			return compareInt(count, comparator, threshold), nil
+		}, nil
+	}
+
+	if matched, pattern, err := parseNotExistsPatternExpression(expr); err != nil {
+		return nil, err
+	} else if matched {
+		return func(view constraintGraphView, node *Node) (bool, error) {
+			count, err := countMatchingPatternEdges(view, node, pattern)
+			if err != nil {
+				return false, err
+			}
+			return count == 0, nil
+		}, nil
+	}
+
+	return nil, localizedError(localization.StorageSchemaUnsupportedNodePredicate(), nil)
+}
+
+func evaluateRelationshipConstraintContractExpressionEngine(engine Engine, edge *Edge, expr string) (bool, error) {
+	return evaluateRelationshipConstraintContractExpression(engineConstraintView{engine: engine}, edge, expr)
+}
+
+func evaluateRelationshipConstraintContractExpression(view constraintGraphView, edge *Edge, expr string) (bool, error) {
+	predicate, err := compileRelationshipConstraintContractExpression(expr)
+	if err != nil {
+		return false, err
+	}
+	return predicate(view, edge)
+}
+
+func compileRelationshipConstraintContractExpression(expr string) (contractRelationshipPredicate, error) {
+	if matched, property, values, err := parseRelationshipPropertyInExpression(expr); err != nil {
+		return nil, err
+	} else if matched {
+		return func(view constraintGraphView, edge *Edge) (bool, error) {
+			return evaluatePropertyInExpressionWithContext(view.Context(), edge.Properties[property], values)
+		}, nil
+	}
+
+	if isDistinctEndpointsExpression(expr) {
+		return func(_ constraintGraphView, edge *Edge) (bool, error) {
+			return edge.StartNode != edge.EndNode, nil
+		}, nil
+	}
+
+	if matched, leftProp, rightProp := parseEndpointPropertyEqualityExpression(expr); matched {
+		return func(view constraintGraphView, edge *Edge) (bool, error) {
+			startNode, err := view.Node(edge.StartNode)
+			if err != nil {
+				return false, err
+			}
+			endNode, err := view.Node(edge.EndNode)
+			if err != nil {
+				return false, err
+			}
+			if startNode == nil || endNode == nil {
+				return false, localizedError(localization.StorageSchemaMissingRelationshipEndpoint(), nil)
+			}
+			return compareValues(startNode.Properties[leftProp], endNode.Properties[rightProp]), nil
+		}, nil
+	}
+
+	if matched, property, comparator, value, err := parseRelationshipPropertyComparisonExpression(expr); err != nil {
+		return nil, err
+	} else if matched {
+		return func(_ constraintGraphView, edge *Edge) (bool, error) {
+			return compareConstraintExpressionValue(edge.Properties[property], comparator, value), nil
+		}, nil
+	}
+
+	return nil, localizedError(localization.StorageSchemaUnsupportedRelationshipPredicate(), nil)
+}
+
+// ValidateConstraintContractExpressions compiles every boolean entry of a
+// contract so unsupported predicates fail at creation, even on an empty graph.
+func ValidateConstraintContractExpressions(contract ConstraintContract) error {
+	return ValidateConstraintContractExpressionsWithContext(context.Background(), contract)
+}
+
+// ValidateConstraintContractExpressionsWithContext compiles the same boolean
+// entry grammar while preserving caller-owned DDL preparation cancellation.
+func ValidateConstraintContractExpressionsWithContext(ctx context.Context, contract ConstraintContract) error {
+	for _, entry := range contract.Entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var err error
+		switch entry.Kind {
+		case ConstraintContractKindBooleanNode:
+			_, err = compileNodeConstraintContractExpression(entry.Expression)
+		case ConstraintContractKindBooleanRelationship:
+			_, err = compileRelationshipConstraintContractExpression(entry.Expression)
+		default:
+			continue
+		}
+		if err != nil {
+			return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
+		}
+	}
+	return nil
+}
+
+type contractPattern struct {
+	Direction    string
+	RelationType string
+	TargetLabels []string
+}
+
+// ============================================================================
+// Expression parsers — keyword scanning, no regex.
+// ============================================================================
+
+// parsePropertyInExpression: ident.property IN [values]
+func parsePropertyInExpression(expr string) (bool, []interface{}, string, error) {
+	s := strings.TrimSpace(expr)
+	p := 0
+
+	// ident (variable name)
+	_, p = cyphertext.IdentifierValue(s, p)
+	if p == 0 {
+		return false, nil, "", nil
+	}
+	// .
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '.') == -1 {
+		return false, nil, "", nil
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	// property name
+	property, next := cyphertext.IdentifierValue(s, p)
+	if property == "" {
+		return false, nil, "", nil
+	}
+	p = next
+	// IN keyword
+	p = ccSkipSpaces(s, p)
+	if end := cyphertext.KeywordEnd(s, p, "IN", cyphertext.CypherWord); end == -1 {
+		return false, nil, "", nil
+	} else {
+		p = end
+	}
+	// [
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '[') == -1 {
+		return false, nil, "", nil
+	}
+	p++
+	// Raw REQUIRE text keeps canonical quote/comment boundaries across packages.
+	bracketStart := p
+	p = cyphertext.FindMatchingDelimiter(s, p-1, '[', ']', cyphertext.OpeningDelimiter)
+	if p < 0 {
+		return false, nil, "", nil
+	}
+	listContent := s[bracketStart:p]
+	p++ // skip ']'
+	// Must be at end
+	if ccSkipSpaces(s, p) != len(s) {
+		return false, nil, "", nil
+	}
+	values, err := parseContractLiteralList(listContent)
+	if err != nil {
+		return false, nil, "", err
+	}
+	return true, values, property, nil
+}
+
+// parseRelationshipPropertyInExpression delegates to parsePropertyInExpression
+// with swapped return order for callers that expect (matched, property, values, err).
+func parseRelationshipPropertyInExpression(expr string) (bool, string, []interface{}, error) {
+	matched, values, property, err := parsePropertyInExpression(expr)
+	if !matched || err != nil {
+		return matched, property, values, err
+	}
+	return true, property, values, nil
+}
+
+// parseCountPatternExpression: COUNT { [MATCH] pattern } comparator threshold
+func parseCountPatternExpression(expr string) (bool, contractPattern, string, int, error) {
+	s := strings.TrimSpace(expr)
+	p := 0
+
+	// COUNT
+	if end := cyphertext.KeywordEnd(s, p, "COUNT", cyphertext.CypherWord); end == -1 {
+		return false, contractPattern{}, "", 0, nil
+	} else {
+		p = end
+	}
+	// {
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '{') == -1 {
+		return false, contractPattern{}, "", 0, nil
+	}
+	p++
+	// Find matching }
+	braceStart := p
+	p = cyphertext.FindMatchingDelimiter(s, p-1, '{', '}', cyphertext.OpeningDelimiter)
+	if p < 0 {
+		return false, contractPattern{}, "", 0, nil
+	}
+	inner := strings.TrimSpace(s[braceStart:p])
+	p++ // skip '}'
+
+	// Optional MATCH keyword inside braces
+	if end := cyphertext.KeywordEnd(inner, 0, "MATCH", cyphertext.CypherWord); end != -1 {
+		inner = strings.TrimSpace(inner[end:])
+	}
+
+	pattern, err := parseConstraintPattern(inner)
+	if err != nil {
+		return false, contractPattern{}, "", 0, err
+	}
+
+	// comparator
+	p = ccSkipSpaces(s, p)
+	comparator, next := ccScanComparator(s, p)
+	if comparator == "" {
+		return false, contractPattern{}, "", 0, nil
+	}
+	p = next
+
+	// threshold (integer, possibly negative)
+	p = ccSkipSpaces(s, p)
+	numStart := p
+	if p < len(s) && s[p] == '-' {
+		p++
+	}
+	token, ok := cyphertext.ScanNumber(s, p)
+	if !ok || token.Invalid || token.Base != 10 || token.Fraction || token.Exponent || token.Grouped || token.Suffix != 0 {
+		return false, contractPattern{}, "", 0, nil
+	}
+	p = token.End
+	threshold, err := strconv.Atoi(s[numStart:p])
+	if err != nil {
+		return false, contractPattern{}, "", 0, err
+	}
+	if ccSkipSpaces(s, p) != len(s) {
+		return false, contractPattern{}, "", 0, nil
+	}
+	return true, pattern, comparator, threshold, nil
+}
+
+// parseNotExistsPatternExpression: NOT EXISTS { [MATCH] pattern }
+func parseNotExistsPatternExpression(expr string) (bool, contractPattern, error) {
+	s := strings.TrimSpace(expr)
+	p := 0
+
+	// NOT
+	if end := cyphertext.KeywordEnd(s, p, "NOT", cyphertext.CypherWord); end == -1 {
+		return false, contractPattern{}, nil
+	} else {
+		p = end
+	}
+	// EXISTS
+	p = ccSkipSpaces(s, p)
+	if end := cyphertext.KeywordEnd(s, p, "EXISTS", cyphertext.CypherWord); end == -1 {
+		return false, contractPattern{}, nil
+	} else {
+		p = end
+	}
+	// {
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '{') == -1 {
+		return false, contractPattern{}, nil
+	}
+	p++
+	// Find matching }
+	braceStart := p
+	p = cyphertext.FindMatchingDelimiter(s, p-1, '{', '}', cyphertext.OpeningDelimiter)
+	if p < 0 {
+		return false, contractPattern{}, nil
+	}
+	inner := strings.TrimSpace(s[braceStart:p])
+	p++ // skip '}'
+
+	if ccSkipSpaces(s, p) != len(s) {
+		return false, contractPattern{}, nil
+	}
+
+	// Optional MATCH keyword
+	if end := cyphertext.KeywordEnd(inner, 0, "MATCH", cyphertext.CypherWord); end != -1 {
+		inner = strings.TrimSpace(inner[end:])
+	}
+
+	pattern, err := parseConstraintPattern(inner)
+	if err != nil {
+		return false, contractPattern{}, err
+	}
+	return true, pattern, nil
+}
+
+// parseConstraintPattern: (node)-[:TYPE]->(node) or (node)<-[:TYPE]-(node)
+// Supports n-arity labels on both source and target: (n:A:B)-[:R]->(:X:Y:Z)
+func parseConstraintPattern(raw string) (contractPattern, error) {
+	s := strings.TrimSpace(raw)
+	p := 0
+
+	// Source node: ( ... )
+	if ccExpectByte(s, p, '(') == -1 {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+	p++
+	_, p, ok := ccScanNodeContents(s, p)
+	if !ok {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+
+	// Arrow start: - or <-
+	p = ccSkipSpaces(s, p)
+	direction := ""
+	if p+1 < len(s) && s[p] == '<' && s[p+1] == '-' {
+		direction = "INCOMING"
+		p += 2
+	} else if p < len(s) && s[p] == '-' {
+		p++
+	} else {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+
+	// Relationship: [ :TYPE ]
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '[') == -1 {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, ':') == -1 {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	relType, next := cyphertext.IdentifierValue(s, p)
+	if relType == "" {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+	p = next
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, ']') == -1 {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+	p++
+
+	// Arrow end: -> or -
+	p = ccSkipSpaces(s, p)
+	if direction == "" {
+		// Must be outgoing: ->
+		if p+1 < len(s) && s[p] == '-' && s[p+1] == '>' {
+			direction = "OUTGOING"
+			p += 2
+		} else {
+			return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+		}
+	} else {
+		// INCOMING: expect -
+		if ccExpectByte(s, p, '-') == -1 {
+			return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+		}
+		p++
+	}
+
+	// Target node: ( ... )
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '(') == -1 {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+	p++
+	targetLabels, p, ok := ccScanNodeContents(s, p)
+	if !ok {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+
+	if ccSkipSpaces(s, p) != len(s) {
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
+	}
+
+	return contractPattern{
+		Direction:    direction,
+		RelationType: relType,
+		TargetLabels: targetLabels,
+	}, nil
+}
+
+// isDistinctEndpointsExpression: startNode(r) <> endNode(r)
+func isDistinctEndpointsExpression(expr string) bool {
+	s := strings.TrimSpace(expr)
+	p := 0
+
+	// startNode
+	if end := cyphertext.KeywordEnd(s, p, "startNode", cyphertext.CypherWord); end == -1 {
+		return false
+	} else {
+		p = end
+	}
+	// ( ident )
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '(') == -1 {
+		return false
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	if _, next := cyphertext.IdentifierValue(s, p); next == p {
+		return false
+	} else {
+		p = next
+	}
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, ')') == -1 {
+		return false
+	}
+	p++
+	// <>
+	p = ccSkipSpaces(s, p)
+	comp, next := ccScanComparator(s, p)
+	if comp != "<>" {
+		return false
+	}
+	p = next
+	// endNode
+	p = ccSkipSpaces(s, p)
+	if end := cyphertext.KeywordEnd(s, p, "endNode", cyphertext.CypherWord); end == -1 {
+		return false
+	} else {
+		p = end
+	}
+	// ( ident )
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '(') == -1 {
+		return false
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	if _, next := cyphertext.IdentifierValue(s, p); next == p {
+		return false
+	} else {
+		p = next
+	}
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, ')') == -1 {
+		return false
+	}
+	p++
+	return ccSkipSpaces(s, p) == len(s)
+}
+
+// parseEndpointPropertyEqualityExpression: startNode(r).prop = endNode(r).prop
+func parseEndpointPropertyEqualityExpression(expr string) (bool, string, string) {
+	s := strings.TrimSpace(expr)
+	p := 0
+
+	// startNode ( ident ) . property
+	if end := cyphertext.KeywordEnd(s, p, "startNode", cyphertext.CypherWord); end == -1 {
+		return false, "", ""
+	} else {
+		p = end
+	}
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '(') == -1 {
+		return false, "", ""
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	if _, next := cyphertext.IdentifierValue(s, p); next == p {
+		return false, "", ""
+	} else {
+		p = next
+	}
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, ')') == -1 {
+		return false, "", ""
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '.') == -1 {
+		return false, "", ""
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	leftProp, next := cyphertext.IdentifierValue(s, p)
+	if leftProp == "" {
+		return false, "", ""
+	}
+	p = next
+
+	// =
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '=') == -1 {
+		return false, "", ""
+	}
+	p++
+
+	// endNode ( ident ) . property
+	p = ccSkipSpaces(s, p)
+	if end := cyphertext.KeywordEnd(s, p, "endNode", cyphertext.CypherWord); end == -1 {
+		return false, "", ""
+	} else {
+		p = end
+	}
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '(') == -1 {
+		return false, "", ""
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	if _, next := cyphertext.IdentifierValue(s, p); next == p {
+		return false, "", ""
+	} else {
+		p = next
+	}
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, ')') == -1 {
+		return false, "", ""
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '.') == -1 {
+		return false, "", ""
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	rightProp, next := cyphertext.IdentifierValue(s, p)
+	if rightProp == "" {
+		return false, "", ""
+	}
+	p = next
+
+	if ccSkipSpaces(s, p) != len(s) {
+		return false, "", ""
+	}
+	return true, leftProp, rightProp
+}
+
+// parseRelationshipPropertyComparisonExpression: ident.property comparator value
+// Excludes IN expressions (those are handled by parsePropertyInExpression).
+func parseRelationshipPropertyComparisonExpression(expr string) (bool, string, string, interface{}, error) {
+	s := strings.TrimSpace(expr)
+	p := 0
+
+	// ident (variable)
+	_, next := cyphertext.IdentifierValue(s, p)
+	if next == p {
+		return false, "", "", nil, nil
+	}
+	p = next
+	// .
+	p = ccSkipSpaces(s, p)
+	if ccExpectByte(s, p, '.') == -1 {
+		return false, "", "", nil, nil
+	}
+	p++
+	p = ccSkipSpaces(s, p)
+	// property
+	property, next := cyphertext.IdentifierValue(s, p)
+	if property == "" {
+		return false, "", "", nil, nil
+	}
+	p = next
+	// comparator
+	p = ccSkipSpaces(s, p)
+	comparator, next := ccScanComparator(s, p)
+	if comparator == "" {
+		return false, "", "", nil, nil
+	}
+	p = next
+
+	// Guard: if it's an IN expression, don't match as comparison
+	if _, _, prop, err := parsePropertyInExpression(expr); err == nil && prop != "" {
+		return false, "", "", nil, nil
+	}
+
+	// remaining = value
+	rest := strings.TrimSpace(s[p:])
+	if rest == "" {
+		return false, "", "", nil, nil
+	}
+	value, err := parseContractLiteral(rest)
+	if err != nil {
+		return false, "", "", nil, err
+	}
+	return true, property, comparator, value, nil
+}
+
+func parseContractLiteralList(raw string) ([]interface{}, error) {
+	parts := splitTopLevelCSV(raw)
+	values := make([]interface{}, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		value, err := parseContractLiteral(part)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+func parseContractLiteral(raw string) (interface{}, error) {
+	raw = strings.TrimSpace(raw)
+	if cyphertext.IsWholeString(raw) {
+		if value, ok := cyphertext.DecodeString(raw, cyphertext.RawSource); ok {
+			return value, nil
+		}
+	}
+	if i, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return i, nil
+	}
+	if f, err := strconv.ParseFloat(raw, 64); err == nil {
+		return f, nil
+	}
+	if strings.EqualFold(raw, "true") {
+		return true, nil
+	}
+	if strings.EqualFold(raw, "false") {
+		return false, nil
+	}
+	if strings.EqualFold(raw, "null") {
+		return nil, nil
+	}
+	return nil, localizedError(localization.StorageSchemaUnsupportedConstraintLiteral(raw), nil)
+}
+
+func splitTopLevelCSV(raw string) []string {
+	parts := make([]string, 0)
+	depth, start := 0, 0
+	for index := 0; index < len(raw); index++ {
+		if end, skipped := cyphertext.SkipToken(raw, index); skipped {
+			index = end - 1
+			continue
+		}
+		switch raw[index] {
+		case '[', '(', '{':
+			depth++
+		case ']', ')', '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				parts = append(parts, strings.TrimSpace(raw[start:index]))
+				start = index + 1
+			}
+		}
+	}
+	if start < len(raw) {
+		parts = append(parts, strings.TrimSpace(raw[start:]))
+	}
+	return parts
+}
+
+func evaluatePropertyInExpression(actual interface{}, values []interface{}) bool {
+	matched, _ := evaluatePropertyInExpressionWithContext(context.Background(), actual, values)
+	return matched
+}
+
+func evaluatePropertyInExpressionWithContext(ctx context.Context, actual interface{}, values []interface{}) (bool, error) {
+	if actual == nil {
+		return true, ctx.Err()
+	}
+	for _, value := range values {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if compareValues(actual, value) {
+			return true, nil
+		}
+	}
+	return false, ctx.Err()
+}
+
+func compareConstraintExpressionValue(actual interface{}, comparator string, expected interface{}) bool {
+	if actual == nil {
+		return true
+	}
+	switch comparator {
+	case "=":
+		return compareValues(actual, expected)
+	case "<>", "!=":
+		return !compareValues(actual, expected)
+	case ">":
+		return compareGreaterConstraint(actual, expected)
+	case ">=":
+		return compareGreaterConstraint(actual, expected) || compareValues(actual, expected)
+	case "<":
+		return compareLessConstraint(actual, expected)
+	case "<=":
+		return compareLessConstraint(actual, expected) || compareValues(actual, expected)
+	default:
+		return false
+	}
+}
+
+// compareGreaterConstraint and compareLessConstraint order numbers through the
+// exact owner compareValues also uses, so >= and <= (ordering OR equality)
+// never mix rounded order with exact identity. Numeric strings and other
+// values keep their parsed and printed comparisons.
+func compareGreaterConstraint(actual interface{}, expected interface{}) bool {
+	if order, numeric, ordered := compareConstraintNumbers(reflect.ValueOf(actual), reflect.ValueOf(expected)); numeric {
+		return ordered && order > 0
+	}
+	actualFloat, actualOK := convert.ToFloat64(actual)
+	expectedFloat, expectedOK := convert.ToFloat64(expected)
+	if actualOK && expectedOK {
+		return actualFloat > expectedFloat
+	}
+	return fmt.Sprintf("%v", actual) > fmt.Sprintf("%v", expected)
+}
+
+func compareLessConstraint(actual interface{}, expected interface{}) bool {
+	if order, numeric, ordered := compareConstraintNumbers(reflect.ValueOf(actual), reflect.ValueOf(expected)); numeric {
+		return ordered && order < 0
+	}
+	actualFloat, actualOK := convert.ToFloat64(actual)
+	expectedFloat, expectedOK := convert.ToFloat64(expected)
+	if actualOK && expectedOK {
+		return actualFloat < expectedFloat
+	}
+	return fmt.Sprintf("%v", actual) < fmt.Sprintf("%v", expected)
+}
+
+func compareInt(actual int, comparator string, expected int) bool {
+	switch comparator {
+	case "=":
+		return actual == expected
+	case "<>", "!=":
+		return actual != expected
+	case ">":
+		return actual > expected
+	case ">=":
+		return actual >= expected
+	case "<":
+		return actual < expected
+	case "<=":
+		return actual <= expected
+	default:
+		return false
+	}
+}
+
+func countMatchingPatternEdgesEngine(engine Engine, node *Node, pattern contractPattern) (int, error) {
+	return countMatchingPatternEdges(engineConstraintView{engine: engine}, node, pattern)
+}
+
+func countMatchingPatternEdges(view constraintGraphView, node *Node, pattern contractPattern) (int, error) {
+	ctx := view.Context()
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	var edges []*Edge
+	var err error
+	if pattern.Direction == "INCOMING" {
+		edges, err = view.IncomingEdges(node.ID)
+	} else {
+		edges, err = view.OutgoingEdges(node.ID)
+	}
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		if edge.Type != pattern.RelationType {
+			continue
+		}
+		if len(pattern.TargetLabels) > 0 {
+			otherID := edge.EndNode
+			if pattern.Direction == "INCOMING" {
+				otherID = edge.StartNode
+			}
+			otherNode, err := view.Node(otherID)
+			if err != nil {
+				return 0, err
+			}
+			if otherNode == nil || !hasAllLabels(otherNode.Labels, pattern.TargetLabels) {
+				continue
+			}
+		}
+		count++
+	}
+	return count, nil
+}
+
+func (tx *BadgerTransaction) validateConstraintContracts() error {
+	ctx := tx.validationContextLocked()
+	// Early-out: if NO namespace referenced by the transaction has any
+	// constraint contracts declared, there is nothing to validate and we
+	// can skip the entire expensive adjacency-walk. Previously we always
+	// called currentAdjacentEdgesLocked(node.ID) for every affected node,
+	// which does a per-node Badger read even when no contract needed the
+	// edges. That accounted for the CPU time stuck in skl.findNear during
+	// bulk seed commits — see the bulk-write profile in RESEARCH notes.
+	//
+	// We check each namespace that the transaction touches (derived from
+	// node/edge ID prefixes) and short-circuit when all of them report
+	// zero contracts. Constraint contracts are rare in practice —
+	// typical workloads declare only unique constraints + range indexes,
+	// not boolean predicates.
+	touches, err := tx.transactionTouchesConstraintContracts(ctx)
+	if err != nil {
+		return err
+	}
+	if !touches {
+		return nil
+	}
+
+	affectedNodes := make(map[NodeID]struct{})
+	affectedEdges := make(map[EdgeID]struct{})
+
+	for nodeID := range tx.pendingNodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		affectedNodes[nodeID] = struct{}{}
+	}
+	for edgeID, edge := range tx.pendingEdges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		affectedEdges[edgeID] = struct{}{}
+		affectedNodes[edge.StartNode] = struct{}{}
+		affectedNodes[edge.EndNode] = struct{}{}
+	}
+	for _, op := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if op.OldEdge != nil {
+			affectedNodes[op.OldEdge.StartNode] = struct{}{}
+			affectedNodes[op.OldEdge.EndNode] = struct{}{}
+		}
+	}
+
+	for nodeID := range affectedNodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		node, err := tx.currentNodeLocked(nodeID)
+		if err != nil {
+			return err
+		}
+		if node == nil {
+			continue
+		}
+		if err := tx.validateConstraintContractsForNodeLocked(node); err != nil {
+			return err
+		}
+		adjacent, err := tx.currentAdjacentEdgesLocked(node.ID)
+		if err != nil {
+			return err
+		}
+		for _, edge := range adjacent {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := tx.validateConstraintContractsForEdgeLocked(edge); err != nil {
+				return err
+			}
+		}
+	}
+	for edgeID := range affectedEdges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		edge, err := tx.currentEdgeLocked(edgeID)
+		if err != nil {
+			return err
+		}
+		if edge == nil {
+			continue
+		}
+		if err := tx.validateConstraintContractsForEdgeLocked(edge); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// transactionTouchesConstraintContracts reports whether any namespace
+// referenced by the pending transaction has at least one constraint
+// contract declared. When false, validateConstraintContracts has no work
+// to do and can short-circuit.
+func (tx *BadgerTransaction) transactionTouchesConstraintContracts(ctx context.Context) (bool, error) {
+	namespaces := make(map[string]struct{}, 2)
+	for id := range tx.pendingNodes {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if ns, ok := constraintContractNamespaceFromID(string(id)); ok {
+			namespaces[ns] = struct{}{}
+		}
+	}
+	for _, edge := range tx.pendingEdges {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if ns, ok := constraintContractNamespaceFromID(string(edge.ID)); ok {
+			namespaces[ns] = struct{}{}
+		}
+	}
+	for _, op := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if op.OldEdge != nil {
+			if ns, ok := constraintContractNamespaceFromID(string(op.OldEdge.ID)); ok {
+				namespaces[ns] = struct{}{}
+			}
+		}
+	}
+	for ns := range namespaces {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		schema := tx.engine.GetSchemaForNamespace(ns)
+		if schema == nil {
+			continue
+		}
+		if schema.HasAnyConstraintContract() {
+			return true, nil
+		}
+	}
+	return false, ctx.Err()
+}
+
+// constraintContractNamespaceFromID returns the namespace encoded in a
+// prefixed ID (e.g. "nornic:abc" → "nornic"). Returns false when the ID
+// has no recognisable prefix, matching constraintContractNamespaceForNode's
+// behaviour for that edge case.
+func constraintContractNamespaceFromID(id string) (string, bool) {
+	ns, _, ok := ParseDatabasePrefix(id)
+	return ns, ok
+}
+
+func (tx *BadgerTransaction) validateConstraintContractsForNodeLocked(node *Node) error {
+	dbName, ok := constraintContractNamespaceForNode(node)
+	if !ok {
+		return nil
+	}
+	return tx.validateConstraintContractsLocked(dbName, ConstraintEntityNode, node.Labels, ConstraintContractKindBooleanNode, node, nil)
+}
+
+// validateConstraintContractsLocked is the shared validation core for node and
+// edge contract checks: namespace/schema resolution, contract collection
+// (name-deduplicated across the entity's targets in target order, with each
+// target's contracts in the schema's name-sorted order — deterministic, and
+// the single-target edge path preserves its previous evaluation order),
+// boolean-kind filtering, evaluation and the invalid/violated error wrapping
+// are one implementation. Exactly one of node/edge is non-nil and selects the
+// entity-specific evaluator; the per-entry dispatch keeps the kernel
+// allocation-free on the commit path.
+func (tx *BadgerTransaction) validateConstraintContractsLocked(dbName string, entity ConstraintEntityType, targets []string, kind string, node *Node, edge *Edge) error {
+	ctx := tx.validationContextLocked()
+	schema := tx.engine.GetSchemaForNamespace(dbName)
+	if schema == nil {
+		return nil
+	}
+	// Single pass: collect and validate in target order (label order for
+	// nodes, the single relationship type for edges) with each target's
+	// contracts in the schema's name-sorted order — deterministic, and the
+	// single-target edge path preserves its previous evaluation order.
+	// Name dedup keeps the first occurrence of a contract that applies to
+	// several of the entity's targets.
+	seen := make(map[string]struct{})
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		contracts, err := schema.GetConstraintContractsForTargetWithContext(ctx, entity, target)
+		if err != nil {
+			return err
+		}
+		for _, contract := range contracts {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if _, dup := seen[contract.Name]; dup {
+				continue
+			}
+			seen[contract.Name] = struct{}{}
+			for _, entry := range contract.Entries {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if entry.Kind != kind {
+					continue
+				}
+				var ok bool
+				var err error
+				if node != nil {
+					ok, err = tx.evaluateNodeConstraintContractExpressionLocked(node, entry.Expression)
+				} else {
+					ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, entry.Expression)
+				}
+				if err != nil {
+					return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
+				}
+				if !ok {
+					return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (tx *BadgerTransaction) validateConstraintContractsForEdgeLocked(edge *Edge) error {
+	dbName, ok := constraintContractNamespaceForEdge(edge)
+	if !ok {
+		return nil
+	}
+	return tx.validateConstraintContractsLocked(dbName, ConstraintEntityRelationship, []string{edge.Type}, ConstraintContractKindBooleanRelationship, nil, edge)
+}
+
+func (tx *BadgerTransaction) evaluateNodeConstraintContractExpressionLocked(node *Node, expr string) (bool, error) {
+	return evaluateNodeConstraintContractExpression(txConstraintView{tx}, node, expr)
+}
+
+func (tx *BadgerTransaction) evaluateRelationshipConstraintContractExpressionLocked(edge *Edge, expr string) (bool, error) {
+	return evaluateRelationshipConstraintContractExpression(txConstraintView{tx}, edge, expr)
+}
+
+func (tx *BadgerTransaction) countMatchingPatternEdgesLocked(node *Node, pattern contractPattern) (int, error) {
+	return countMatchingPatternEdges(txConstraintView{tx}, node, pattern)
+}
+
+func (tx *BadgerTransaction) currentNodeLocked(nodeID NodeID) (*Node, error) {
+	if _, deleted := tx.deletedNodes[nodeID]; deleted {
+		return nil, nil
+	}
+	if pending, exists := tx.pendingNodes[nodeID]; exists {
+		return copyNode(pending), nil
+	}
+	node, err := tx.getCommittedNodeLocked(nodeID)
+	if err == ErrNotFound {
+		return nil, nil
+	}
+	return node, err
+}
+
+func (tx *BadgerTransaction) currentEdgeLocked(edgeID EdgeID) (*Edge, error) {
+	if _, deleted := tx.deletedEdges[edgeID]; deleted {
+		return nil, nil
+	}
+	if pending, exists := tx.pendingEdges[edgeID]; exists {
+		return copyEdge(pending), nil
+	}
+	edge, err := tx.getCommittedEdgeLocked(edgeID)
+	if err == ErrNotFound {
+		return nil, nil
+	}
+	return edge, err
+}
+
+func (tx *BadgerTransaction) currentOutgoingEdgesLocked(nodeID NodeID) ([]*Edge, error) {
+	ctx := tx.validationContextLocked()
+	committed, _, err := readAdjacencyWithContext(ctx, tx.engine, adjacencyOutgoing, nodeID, "", nil, storedRead)
+	if err != nil {
+		return nil, err
+	}
+	edges := make(map[EdgeID]*Edge)
+	for _, edge := range committed {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, deleted := tx.deletedEdges[edge.ID]; deleted {
+			continue
+		}
+		if pending, exists := tx.pendingEdges[edge.ID]; exists {
+			if pending.StartNode == nodeID {
+				edges[edge.ID] = copyEdge(pending)
+			}
+			continue
+		}
+		if edge.StartNode == nodeID {
+			edges[edge.ID] = edge
+		}
+	}
+	for edgeID, edge := range tx.pendingEdges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if edge.StartNode == nodeID {
+			edges[edgeID] = copyEdge(edge)
+		}
+	}
+	result := make([]*Edge, 0, len(edges))
+	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		result = append(result, edge)
+	}
+	return result, nil
+}
+
+func constraintContractNamespaceForNode(node *Node) (string, bool) {
+	if node == nil {
+		return "", false
+	}
+	dbName, _, ok := ParseDatabasePrefix(string(node.ID))
+	return dbName, ok
+}
+
+func constraintContractNamespaceForEdge(edge *Edge) (string, bool) {
+	if edge == nil {
+		return "", false
+	}
+	if dbName, _, ok := ParseDatabasePrefix(string(edge.ID)); ok {
+		return dbName, true
+	}
+	if dbName, _, ok := ParseDatabasePrefix(string(edge.StartNode)); ok {
+		return dbName, true
+	}
+	if dbName, _, ok := ParseDatabasePrefix(string(edge.EndNode)); ok {
+		return dbName, true
+	}
+	return "", false
+}
+
+func (tx *BadgerTransaction) currentIncomingEdgesLocked(nodeID NodeID) ([]*Edge, error) {
+	ctx := tx.validationContextLocked()
+	_, committed, err := readAdjacencyWithContext(ctx, tx.engine, adjacencyIncoming, nodeID, "", nil, storedRead)
+	if err != nil {
+		return nil, err
+	}
+	edges := make(map[EdgeID]*Edge)
+	for _, edge := range committed {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, deleted := tx.deletedEdges[edge.ID]; deleted {
+			continue
+		}
+		if pending, exists := tx.pendingEdges[edge.ID]; exists {
+			if pending.EndNode == nodeID {
+				edges[edge.ID] = copyEdge(pending)
+			}
+			continue
+		}
+		if edge.EndNode == nodeID {
+			edges[edge.ID] = edge
+		}
+	}
+	for edgeID, edge := range tx.pendingEdges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if edge.EndNode == nodeID {
+			edges[edgeID] = copyEdge(edge)
+		}
+	}
+	result := make([]*Edge, 0, len(edges))
+	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		result = append(result, edge)
+	}
+	return result, nil
+}
+
+func (tx *BadgerTransaction) currentAdjacentEdgesLocked(nodeID NodeID) ([]*Edge, error) {
+	ctx := tx.validationContextLocked()
+	outgoing, err := tx.currentOutgoingEdgesLocked(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	incoming, err := tx.currentIncomingEdgesLocked(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	edges := make(map[EdgeID]*Edge)
+	for _, edge := range outgoing {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		edges[edge.ID] = edge
+	}
+	for _, edge := range incoming {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		edges[edge.ID] = edge
+	}
+	result := make([]*Edge, 0, len(edges))
+	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		result = append(result, edge)
+	}
+	return result, nil
+}

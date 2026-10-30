@@ -1,0 +1,205 @@
+package storage
+
+import (
+	"bytes"
+	"encoding/gob"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/stretchr/testify/require"
+)
+
+// writeLegacyGobNode is a test helper that writes a header-less gob body
+// for a node directly under the prefixNode key — what pre-msgpack engines
+// produced. The migration tool's whole purpose is to rewrite these.
+func writeLegacyGobNode(t *testing.T, db *badger.DB, node *Node) {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&buf).Encode(node))
+	require.NoError(t, db.Update(func(txn *badger.Txn) error {
+		return txn.Set(nodeKey(node.ID), buf.Bytes())
+	}))
+}
+
+func writeLegacyGobEdge(t *testing.T, db *badger.DB, edge *Edge) {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&buf).Encode(edge))
+	require.NoError(t, db.Update(func(txn *badger.Txn) error {
+		return txn.Set(edgeKey(edge.ID), buf.Bytes())
+	}))
+}
+
+func TestLegacySerializerMigration(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		dry   bool
+		nodes []*Node
+		edges []*Edge
+	}{
+		{name: "live", nodes: []*Node{
+			{ID: "test:node-1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}},
+			{ID: "test:node-2", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}},
+		}, edges: []*Edge{{ID: "test:edge-1", StartNode: "test:node-1", EndNode: "test:node-2", Type: "KNOWS"}}},
+		{name: "dry-run", dry: true, nodes: []*Node{{ID: "test:dry1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+			if db != nil {
+				fixtureowner.Own(t, db)
+			}
+			require.NoError(t, err)
+
+			for _, node := range tc.nodes {
+				writeLegacyGobNode(t, db, node)
+			}
+			for _, edge := range tc.edges {
+				writeLegacyGobEdge(t, db, edge)
+			}
+			if tc.dry {
+				require.NoError(t, db.Close())
+				stats, err := MigrateBadgerToMsgpack(dir, SerializerMigrationOptions{DryRun: true, BatchSize: 10})
+				require.NoError(t, err)
+				require.True(t, stats.HasLegacyData)
+				require.Greater(t, stats.NodesConverted, 0)
+				return
+			}
+			stats, err := MigrateBadgerToMsgpackWithDB(db, dir, SerializerMigrationOptions{
+				BatchSize: 10,
+			})
+			require.NoError(t, err)
+			require.True(t, stats.HasLegacyData)
+			require.Greater(t, stats.NodesConverted+stats.EdgesConverted, 0)
+
+			// Re-running the migration finds nothing left to convert.
+			stats2, err := MigrateBadgerToMsgpackWithDB(db, dir, SerializerMigrationOptions{
+				BatchSize: 10,
+			})
+			require.NoError(t, err)
+			require.Equal(t, 0, stats2.NodesConverted+stats2.EdgesConverted+stats2.EmbeddingsConverted)
+			require.Greater(t, stats2.SkippedExisting, 0)
+			require.NoError(t, db.Close())
+
+			// Reopen via the engine and confirm reads still work. The data
+			// directory is at V0 (msgpack-headered bodies, no schema version)
+			// so we authorize the upgrade chain to advance it to V2.
+			base2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}))
+			require.NoError(t, err)
+			defer base2.Close()
+			engine2 := NewNamespacedEngine(base2, "test")
+			node, err := engine2.GetNode(NodeID("node-1"))
+			require.NoError(t, err)
+			require.Equal(t, NodeID("node-1"), node.ID)
+
+		})
+	}
+}
+
+func TestMigrateBadgerToMsgpackWithDB_EdgeCases(t *testing.T) {
+	t.Run("nil db fails fast", func(t *testing.T) {
+		_, err := MigrateBadgerToMsgpackWithDB(nil, "", SerializerMigrationOptions{})
+		require.ErrorContains(t, err, "nil badger db")
+	})
+
+	t.Run("empty database reports no legacy data", func(t *testing.T) {
+		dir := t.TempDir()
+		db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+
+		stats, err := MigrateBadgerToMsgpackWithDB(db, dir, SerializerMigrationOptions{})
+		require.NoError(t, err)
+		require.False(t, stats.HasLegacyData)
+		require.Equal(t, 0, stats.TotalScanned)
+	})
+
+	t.Run("dry run counts conversions without rewriting payloads", func(t *testing.T) {
+		dir := t.TempDir()
+		db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+
+		writeLegacyGobNode(t, db, &Node{
+			ID:         NodeID("test:dry-run-node"),
+			Labels:     []string{"Doc"},
+			Properties: map[string]any{"name": "draft"},
+		})
+
+		before, hasData, err := detectStoredSerializer(db)
+		require.NoError(t, err)
+		require.True(t, hasData)
+		require.Equal(t, detectedGob, before)
+
+		stats, err := MigrateBadgerToMsgpackWithDB(db, dir, SerializerMigrationOptions{
+			DryRun: true,
+		})
+		require.NoError(t, err)
+		require.True(t, stats.HasLegacyData)
+		require.Greater(t, stats.NodesConverted, 0)
+		require.Equal(t, 0, stats.SkippedExisting)
+
+		after, hasData, err := detectStoredSerializer(db)
+		require.NoError(t, err)
+		require.True(t, hasData)
+		require.Equal(t, detectedGob, after)
+	})
+}
+
+func TestDetectStoredSerializer(t *testing.T) {
+	t.Run("nil db and empty db", func(t *testing.T) {
+		_, _, err := detectStoredSerializer(nil)
+		require.ErrorContains(t, err, "nil badger db")
+
+		dir := t.TempDir()
+		db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+
+		serializer, hasData, err := detectStoredSerializer(db)
+		require.NoError(t, err)
+		require.False(t, hasData)
+		require.Equal(t, detectedNone, serializer)
+	})
+
+	t.Run("detects gob and msgpack payloads", func(t *testing.T) {
+		gobDir := t.TempDir()
+		gobDB, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(gobDir).WithLogger(nil)))
+		if gobDB != nil {
+			fixtureowner.Own(t, gobDB)
+		}
+		require.NoError(t, err)
+		writeLegacyGobNode(t, gobDB, &Node{ID: "detect:gob", Labels: []string{"Test"}})
+
+		serializer, hasData, err := detectStoredSerializer(gobDB)
+		require.NoError(t, err)
+		require.True(t, hasData)
+		require.Equal(t, detectedGob, serializer)
+		require.NoError(t, gobDB.Close())
+
+		msgpackDir := t.TempDir()
+		msgpackEngine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: msgpackDir}))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = msgpackEngine.Close() })
+		_, err = msgpackEngine.CreateNode(&Node{ID: "detect:msgpack", Labels: []string{"Test"}})
+		require.NoError(t, err)
+
+		serializer, hasData, err = detectStoredSerializer(msgpackEngine.db)
+		require.NoError(t, err)
+		require.True(t, hasData)
+		require.Equal(t, detectedTokenizedV2, serializer)
+	})
+}
+
+func TestMigrateBadgerToMsgpack_InvalidDir(t *testing.T) {
+	// A directory below a regular file can't be created by any user
+	// (root included), so opening Badger there always fails.
+	file := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(file, nil, 0o600))
+	_, err := MigrateBadgerToMsgpack(filepath.Join(file, "badger"), SerializerMigrationOptions{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "open badger")
+}

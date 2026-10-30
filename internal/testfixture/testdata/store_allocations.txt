@@ -1,0 +1,139 @@
+github.com/orneryd/nornicdb/cmd/kmeans-test-data.importTextToStorage
+github.com/orneryd/nornicdb/cmd/kmeans-test-data.importTextToStorage -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine calls=1
+github.com/orneryd/nornicdb/cmd/kmeans-test-data.importToStorage
+github.com/orneryd/nornicdb/cmd/kmeans-test-data.importToStorage -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine calls=1
+github.com/orneryd/nornicdb/cmd/kmeans-test-data.main
+github.com/orneryd/nornicdb/cmd/kmeans-test-data.main -> github.com/orneryd/nornicdb/cmd/kmeans-test-data.importTextToStorage calls=1
+github.com/orneryd/nornicdb/cmd/kmeans-test-data.main -> github.com/orneryd/nornicdb/cmd/kmeans-test-data.importToStorage calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.main
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.main -> github.com/orneryd/nornicdb/cmd/nornicdb-admin.registerAdminCommands calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.registerAdminCommands
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.registerAdminCommands -> github.com/orneryd/nornicdb/cmd/nornicdb-admin.runCheckIDs calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.registerAdminCommands -> github.com/orneryd/nornicdb/cmd/nornicdb-admin.runExportNeo4jCSV calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.registerAdminCommands -> github.com/orneryd/nornicdb/cmd/nornicdb-admin.runImportFull calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.runCheckIDs
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.runCheckIDs -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.runExportNeo4jCSV
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.runExportNeo4jCSV -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.runImportFull
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.runImportFull -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb.*DBQueryExecutor.BeginTransaction
+github.com/orneryd/nornicdb/cmd/nornicdb.*DBQueryExecutor.BeginTransaction -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb.*httpAdapter.Start
+github.com/orneryd/nornicdb/cmd/nornicdb.*httpAdapter.Start -> github.com/orneryd/nornicdb/pkg/server.*Server.Start calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb.runDecayStats
+github.com/orneryd/nornicdb/cmd/nornicdb.runDecayStats -> github.com/orneryd/nornicdb/pkg/nornicdb.Open calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb.runDecaySuppress
+github.com/orneryd/nornicdb/cmd/nornicdb.runDecaySuppress -> github.com/orneryd/nornicdb/pkg/nornicdb.Open calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb.runServe
+github.com/orneryd/nornicdb/cmd/nornicdb.runServe -> github.com/orneryd/nornicdb/pkg/nornicdb.Open calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb.runServe -> github.com/orneryd/nornicdb/pkg/server.*Server.Start calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb.runShell
+github.com/orneryd/nornicdb/cmd/nornicdb.runShell -> github.com/orneryd/nornicdb/pkg/nornicdb.Open calls=1
+github.com/orneryd/nornicdb/cmd/recall-bench.main
+github.com/orneryd/nornicdb/cmd/recall-bench.main -> github.com/orneryd/nornicdb/cmd/recall-bench.runIngest calls=1
+github.com/orneryd/nornicdb/cmd/recall-bench.main -> github.com/orneryd/nornicdb/cmd/recall-bench.runRetrieval calls=1
+github.com/orneryd/nornicdb/cmd/recall-bench.runIngest
+github.com/orneryd/nornicdb/cmd/recall-bench.runIngest -> github.com/orneryd/nornicdb/pkg/nornicdb.Open calls=1
+github.com/orneryd/nornicdb/cmd/recall-bench.runRetrieval
+github.com/orneryd/nornicdb/cmd/recall-bench.runRetrieval -> github.com/orneryd/nornicdb/pkg/nornicdb.Open calls=1
+github.com/orneryd/nornicdb/internal/testutil.RequireCatalogOptionContext
+github.com/orneryd/nornicdb/internal/testutil.RequireCatalogOptionContext -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=1
+github.com/orneryd/nornicdb/internal/testutil/remotegraph.New
+github.com/orneryd/nornicdb/internal/testutil/remotegraph.New -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=2
+github.com/orneryd/nornicdb/internal/transactionalcalltest.CheckExecute
+github.com/orneryd/nornicdb/internal/transactionalcalltest.CheckExecute -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineInMemory calls=1
+github.com/orneryd/nornicdb/pkg/cypher/testutil.SetupTestExecutor
+github.com/orneryd/nornicdb/pkg/cypher/testutil.SetupTestExecutor -> github.com/orneryd/nornicdb/pkg/cypher/testutil.setupTestExecutorTB calls=1
+github.com/orneryd/nornicdb/pkg/cypher/testutil.SetupTestExecutorBench
+github.com/orneryd/nornicdb/pkg/cypher/testutil.SetupTestExecutorBench -> github.com/orneryd/nornicdb/pkg/cypher/testutil.setupTestExecutorTB calls=1
+github.com/orneryd/nornicdb/pkg/cypher/testutil.setupTestExecutorTB
+github.com/orneryd/nornicdb/pkg/cypher/testutil.setupTestExecutorTB -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=1
+github.com/orneryd/nornicdb/pkg/nornicdb.Open
+github.com/orneryd/nornicdb/pkg/nornicdb.Open -> github.com/orneryd/nornicdb/pkg/nornicdb.recoverBadgerFromSnapshotAndWAL calls=1
+github.com/orneryd/nornicdb/pkg/nornicdb.Open -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
+github.com/orneryd/nornicdb/pkg/nornicdb.Open -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=1
+github.com/orneryd/nornicdb/pkg/nornicdb.recoverBadgerFromSnapshotAndWAL
+github.com/orneryd/nornicdb/pkg/nornicdb.recoverBadgerFromSnapshotAndWAL -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.Start
+github.com/orneryd/nornicdb/pkg/server.*Server.Start -> github.com/orneryd/nornicdb/pkg/server.*Server.buildRouter calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.buildRouter
+github.com/orneryd/nornicdb/pkg/server.*Server.buildRouter -> github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.buildRouter -> github.com/orneryd/nornicdb/pkg/server.*Server.registerGraphQLRoutes calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.buildRouter -> github.com/orneryd/nornicdb/pkg/server.*Server.registerHealthRoutes calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.buildRouter -> github.com/orneryd/nornicdb/pkg/server.*Server.registerHeimdallRoutes calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.buildRouter -> github.com/orneryd/nornicdb/pkg/server.*Server.registerMCPRoutes calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.buildRouter -> github.com/orneryd/nornicdb/pkg/server.*Server.registerNeo4jRoutes calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.buildRouter -> github.com/orneryd/nornicdb/pkg/server.*Server.registerProductRoutes calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.handleDatabaseEndpoint
+github.com/orneryd/nornicdb/pkg/server.*Server.handleDatabaseEndpoint -> github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.handleImplicitTransaction
+github.com/orneryd/nornicdb/pkg/server.*Server.handleImplicitTransaction -> github.com/orneryd/nornicdb/pkg/server.*Server.runOneShotTransaction calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.handleOpenTransaction
+github.com/orneryd/nornicdb/pkg/server.*Server.handleOpenTransaction -> github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint
+github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint -> github.com/orneryd/nornicdb/pkg/server.*Server.handleImplicitTransaction calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint -> github.com/orneryd/nornicdb/pkg/server.*Server.handleOpenTransaction calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction
+github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenRequestForOwner calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.registerAdminRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerAdminRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=2
+github.com/orneryd/nornicdb/pkg/server.*Server.registerGraphQLRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerGraphQLRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=2
+github.com/orneryd/nornicdb/pkg/server.*Server.registerHealthRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerHealthRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=2
+github.com/orneryd/nornicdb/pkg/server.*Server.registerHeimdallRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerHeimdallRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=6
+github.com/orneryd/nornicdb/pkg/server.*Server.registerMCPRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerMCPRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=8
+github.com/orneryd/nornicdb/pkg/server.*Server.registerNeo4jRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerNeo4jRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.registerProductRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerProductRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable
+github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.runOneShotTransaction
+github.com/orneryd/nornicdb/pkg/server.*Server.runOneShotTransaction -> github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction calls=2
+github.com/orneryd/nornicdb/pkg/server.*Server.withAuth
+github.com/orneryd/nornicdb/pkg/server.*Server.withAuth -> github.com/orneryd/nornicdb/pkg/server.*Server.handleDatabaseEndpoint calls=2
+github.com/orneryd/nornicdb/pkg/storage.*BadgerEngine.reopenForPostMigrationCompaction
+github.com/orneryd/nornicdb/pkg/storage.*BadgerEngine.reopenForPostMigrationCompaction -> github.com/orneryd/nornicdb/pkg/storage.openManagedBadger calls=1
+github.com/orneryd/nornicdb/pkg/storage.MigrateBadgerToMsgpack
+github.com/orneryd/nornicdb/pkg/storage.MigrateBadgerToMsgpack -> github.com/orneryd/nornicdb/pkg/storage.openManagedBadger calls=1
+github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine
+github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
+github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineInMemory
+github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineInMemory -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
+github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
+github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions -> github.com/orneryd/nornicdb/pkg/storage.*BadgerEngine.reopenForPostMigrationCompaction calls=1
+github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions -> github.com/orneryd/nornicdb/pkg/storage.openManagedBadger calls=1
+github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine
+github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineInMemory calls=1
+github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithMVCCHistory
+github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithMVCCHistory -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
+github.com/orneryd/nornicdb/pkg/storage.RecoverFromWAL
+github.com/orneryd/nornicdb/pkg/storage.RecoverFromWAL -> github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithLogger calls=1
+github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithLogger
+github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithLogger -> github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithResult calls=1
+github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithResult
+github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithResult -> github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore calls=1
+github.com/orneryd/nornicdb/pkg/storage.RecoverWithTransactions
+github.com/orneryd/nornicdb/pkg/storage.RecoverWithTransactions -> github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore calls=1
+github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore
+github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=1
+github.com/orneryd/nornicdb/pkg/storage.openManagedBadger
+github.com/orneryd/nornicdb/pkg/storage.openManagedBadger -> github.com/dgraph-io/badger/v4.OpenManaged calls=1
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner calls=1
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.openForOwner calls=1
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenRequestForOwner
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenRequestForOwner -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.openForOwner calls=1
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.openForOwner
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.openForOwner -> github.com/orneryd/nornicdb/pkg/txsession.newExecutorFactory calls=1
+github.com/orneryd/nornicdb/scripts/migrate_storage_serializer.main
+github.com/orneryd/nornicdb/scripts/migrate_storage_serializer.main -> github.com/orneryd/nornicdb/pkg/storage.MigrateBadgerToMsgpack calls=1
+github.com/orneryd/nornicdb/scripts/perf_direct.main
+github.com/orneryd/nornicdb/scripts/perf_direct.main -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1

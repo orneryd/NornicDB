@@ -1,0 +1,176 @@
+- id: cypherproceduremetadata.db_awaitindex
+  other: "Wait for an index to come online (for example: CALL db.awaitIndex(\"MyIndex\", 300))."
+- id: cypherproceduremetadata.db_awaitindexes
+  other: "Wait for all indexes to come online (for example: CALL db.awaitIndexes(300))."
+- id: cypherproceduremetadata.db_cdc_current
+  other: "Returns the change identifier just after the last committed change"
+- id: cypherproceduremetadata.db_cdc_earliest
+  other: "Returns the change identifier just before the earliest retained change"
+- id: cypherproceduremetadata.db_cdc_query
+  other: "Returns the committed changes after a change identifier, optionally filtered by selectors"
+- id: cypherproceduremetadata.db_clearquerycaches
+  other: "Clears all query caches."
+- id: cypherproceduremetadata.db_constraints
+  other: "Lists all constraints in the database"
+- id: cypherproceduremetadata.db_create_setnodevectorproperty
+  other: "Sets vector property on a node"
+- id: cypherproceduremetadata.db_create_setrelationshipvectorproperty
+  other: "Sets vector property on a relationship"
+- id: cypherproceduremetadata.db_index_fulltext_createnodeindex
+  other: "Creates fulltext index on nodes"
+- id: cypherproceduremetadata.db_index_fulltext_createrelationshipindex
+  other: "Creates fulltext index on relationships"
+- id: cypherproceduremetadata.db_index_fulltext_drop
+  other: "Drops fulltext index"
+- id: cypherproceduremetadata.db_index_fulltext_listavailableanalyzers
+  other: "List the available analyzers that the full-text indexes can be configured with."
+- id: cypherproceduremetadata.db_index_fulltext_querynodes
+  other: "Query the given full-text index. Returns the matching nodes and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n"
+- id: cypherproceduremetadata.db_index_fulltext_queryrelationships
+  other: "Query the given full-text index. Returns the matching relationships and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n"
+- id: cypherproceduremetadata.db_index_stats
+  other: "Returns index statistics"
+- id: cypherproceduremetadata.db_index_vector_createnodeindex
+  other: "Create a named node vector index for the specified label and property with the given vector dimensionality using either the EUCLIDEAN or COSINE similarity function.\nBoth similarity functions are case-insensitive.\nUse the `db.index.vector.queryNodes` procedure to query the named index.\n"
+- id: cypherproceduremetadata.db_index_vector_createrelationshipindex
+  other: "Creates vector index on relationships"
+- id: cypherproceduremetadata.db_index_vector_drop
+  other: "Drops vector index"
+- id: cypherproceduremetadata.db_index_vector_embed
+  other: "Embeds text using configured embedder"
+- id: cypherproceduremetadata.db_index_vector_querynodes
+  other: "Query the given node vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n"
+- id: cypherproceduremetadata.db_index_vector_queryrelationships
+  other: "Query the given relationship vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n"
+- id: cypherproceduremetadata.db_indexes
+  other: "Lists all indexes in the database"
+- id: cypherproceduremetadata.db_infer
+  other: "LLM inference procedure"
+- id: cypherproceduremetadata.db_info
+  other: "Provides information regarding the database."
+- id: cypherproceduremetadata.db_labels
+  other: "List all labels attached to nodes within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those labels."
+- id: cypherproceduremetadata.db_ping
+  other: "This procedure can be used by client side tooling to test whether they are correctly connected to a database. The procedure is available in all databases and always returns true. A faulty connection can be detected by not being able to call this procedure."
+- id: cypherproceduremetadata.db_propertykeys
+  other: "List all property keys in the database."
+- id: cypherproceduremetadata.db_relationshiptypes
+  other: "List all types attached to relationships within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those relationship types."
+- id: cypherproceduremetadata.db_rerank
+  other: "Standalone rerank procedure"
+- id: cypherproceduremetadata.db_resampleindex
+  other: "Schedule resampling of an index (for example: CALL db.resampleIndex(\"MyIndex\"))."
+- id: cypherproceduremetadata.db_retrieve
+  other: "Hybrid retrieval procedure"
+- id: cypherproceduremetadata.db_retrievegraph
+  other: "Hybrid retrieval over nodes and relationships in one ranking"
+- id: cypherproceduremetadata.db_retrieverelationships
+  other: "Hybrid retrieval over relationship properties"
+- id: cypherproceduremetadata.db_rretrieve
+  other: "Hybrid retrieval + rerank procedure"
+- id: cypherproceduremetadata.db_rretrievegraph
+  other: "Hybrid retrieval over nodes and relationships in one ranking, reranked with the configured reranker"
+- id: cypherproceduremetadata.db_schema_nodeproperties
+  other: "Returns node properties by label"
+- id: cypherproceduremetadata.db_schema_nodetypeproperties
+  other: "Show the derived property schema of the nodes in tabular form."
+- id: cypherproceduremetadata.db_schema_relproperties
+  other: "Returns relationship properties by type"
+- id: cypherproceduremetadata.db_schema_reltypeproperties
+  other: "Show the derived property schema of the relationships in tabular form."
+- id: cypherproceduremetadata.db_schema_visualization
+  other: "Visualizes the schema of the data based on available statistics. A new node is returned for each label. The properties represented on the node include: `name` (label name), `indexes` (list of indexes), and `constraints` (list of constraints). A relationship of a given type is returned for all possible combinations of start and end nodes. The properties represented on the relationship include: `name` (type name). Note that this may include additional relationships that do not exist in the data from independently observed start and end label sets. "
+- id: cypherproceduremetadata.db_stats_clear
+  other: "Clear collected data of a given data section. Valid sections are 'QUERIES'"
+- id: cypherproceduremetadata.db_stats_collect
+  other: "Start data collection of a given data section. Valid sections are 'QUERIES'"
+- id: cypherproceduremetadata.db_stats_retrieve
+  other: "Retrieve statistical data about the current database. Valid sections are 'GRAPH COUNTS', 'TOKENS', 'QUERIES', 'META'"
+- id: cypherproceduremetadata.db_stats_retrieveallanthestats
+  other: "Retrieves all statistics"
+- id: cypherproceduremetadata.db_stats_status
+  other: "Retrieve the status of all available collector daemons, for this database."
+- id: cypherproceduremetadata.db_stats_stop
+  other: "Stop data collection of a given data section. Valid sections are 'QUERIES'"
+- id: cypherproceduremetadata.db_temporal_asof
+  other: "Reads temporal graph at point in time"
+- id: cypherproceduremetadata.db_temporal_assertnooverlap
+  other: "Checks temporal overlap constraints"
+- id: cypherproceduremetadata.db_txlog_bytxid
+  other: "Returns WAL entries for a transaction id"
+- id: cypherproceduremetadata.db_txlog_entries
+  other: "Returns transaction log entries"
+- id: cypherproceduremetadata.dbms_clientconfig
+  other: "Returns client config"
+- id: cypherproceduremetadata.dbms_components
+  other: "List DBMS components and their versions."
+- id: cypherproceduremetadata.dbms_functions
+  other: "Lists functions"
+- id: cypherproceduremetadata.dbms_info
+  other: "Provides information regarding the DBMS."
+- id: cypherproceduremetadata.dbms_listconfig
+  other: "List the currently active configuration settings of NornicDB."
+- id: cypherproceduremetadata.dbms_listconnections
+  other: "List all accepted network connections at this instance that are visible to the user."
+- id: cypherproceduremetadata.dbms_procedures
+  other: "Lists procedures"
+- id: cypherproceduremetadata.gds_fastrp_stats
+  other: "Runs FastRP and returns statistics"
+- id: cypherproceduremetadata.gds_fastrp_stream
+  other: "Streams FastRP embeddings"
+- id: cypherproceduremetadata.gds_graph_drop
+  other: "Drops projected GDS graph"
+- id: cypherproceduremetadata.gds_graph_exists
+  other: "Checks if a graph exists in the catalog."
+- id: cypherproceduremetadata.gds_graph_list
+  other: "Lists projected GDS graphs"
+- id: cypherproceduremetadata.gds_graph_project
+  other: "Projects graph into GDS catalog"
+- id: cypherproceduremetadata.gds_linkprediction_adamicadar_stream
+  other: "Runs Adamic-Adar link prediction"
+- id: cypherproceduremetadata.gds_linkprediction_commonneighbors_stream
+  other: "Runs common neighbors link prediction"
+- id: cypherproceduremetadata.gds_linkprediction_jaccard_stream
+  other: "Runs Jaccard link prediction"
+- id: cypherproceduremetadata.gds_linkprediction_predict_stream
+  other: "Runs model-based link prediction"
+- id: cypherproceduremetadata.gds_linkprediction_preferentialattachment_stream
+  other: "Runs preferential attachment link prediction"
+- id: cypherproceduremetadata.gds_linkprediction_resourceallocation_stream
+  other: "Runs resource-allocation link prediction"
+- id: cypherproceduremetadata.gds_version
+  other: "Returns GDS version"
+- id: cypherproceduremetadata.kp_decayinfo
+  other: "Returns knowledge-layer scoring configuration"
+- id: cypherproceduremetadata.kp_deindexstatus
+  other: "Returns knowledge-layer deindex queue status"
+- id: cypherproceduremetadata.kp_info
+  other: "Returns knowledge-layer profile and policy catalog counts"
+- id: cypherproceduremetadata.kp_policies
+  other: "Returns knowledge-layer promotion profiles and policies"
+- id: cypherproceduremetadata.kp_profiles
+  other: "Returns knowledge-layer decay bundles and bindings"
+- id: cypherproceduremetadata.kp_resolve
+  other: "Resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type"
+- id: cypherproceduremetadata.kp_suppress
+  other: "Hides a node or relationship from queries and search until kp.unsuppress shows it again"
+- id: cypherproceduremetadata.kp_unsuppress
+  other: "Shows a node or relationship hidden by kp.suppress again"
+- id: cypherproceduremetadata.nornicdb_decay_info
+  other: "Deprecated alias of kp.decayInfo: returns knowledge-layer scoring configuration"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_deindexstatus
+  other: "Deprecated alias of kp.deindexStatus: returns knowledge-layer deindex queue status"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_info
+  other: "Deprecated alias of kp.info: returns knowledge-layer profile and policy catalog counts"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_policies
+  other: "Deprecated alias of kp.policies: returns knowledge-layer promotion profiles and policies"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_profiles
+  other: "Deprecated alias of kp.profiles: returns knowledge-layer decay bundles and bindings"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_resolve
+  other: "Deprecated alias of kp.resolve: resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type"
+- id: cypherproceduremetadata.nornicdb_stats
+  other: "Returns NornicDB stats"
+- id: cypherproceduremetadata.nornicdb_version
+  other: "Returns NornicDB version"
+- id: cypherproceduremetadata.tx_setmetadata
+  other: "Attaches a map of data to the transaction. The data will be printed when listing queries, and inserted into the query log."

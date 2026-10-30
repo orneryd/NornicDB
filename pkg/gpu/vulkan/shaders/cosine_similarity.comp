@@ -1,0 +1,81 @@
+// Cosine Similarity Compute Shader for NornicDB
+// SPDX-License-Identifier: Apache-2.0
+//
+// Computes cosine similarity between a query vector and N embedding vectors.
+// Each workgroup processes one embedding vector in parallel.
+//
+// Usage:
+//   - embeddings: N x dimensions float32 matrix (row-major)
+//   - query: dimensions float32 vector
+//   - scores: N float32 output scores
+//   - Push constants: n (count), dimensions, normalized flag
+
+#version 450
+
+// Workgroup configuration - 256 threads per group for efficient GPU utilization
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Storage buffers
+layout(set = 0, binding = 0) readonly buffer Embeddings {
+    float embeddings[];
+};
+
+layout(set = 0, binding = 1) readonly buffer Query {
+    float query[];
+};
+
+layout(set = 0, binding = 2) writeonly buffer Scores {
+    float scores[];
+};
+
+// Push constants for parameters
+layout(push_constant) uniform PushConstants {
+    uint n;          // Number of embeddings
+    uint dimensions; // Vector dimensions
+    uint normalized; // 1 if vectors are pre-normalized, 0 otherwise
+} params;
+
+// Shared memory for parallel reduction within workgroup
+shared float shared_dot[256];
+shared float shared_norm_e[256];
+shared float shared_norm_q[256];
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;  // Which embedding this thread computes
+    uint lid = gl_LocalInvocationID.x;   // Thread index within workgroup
+    
+    // Each thread computes the full dot product for one embedding
+    // This is efficient when n >> dimensions
+    if (gid >= params.n) {
+        return;
+    }
+    
+    // Compute dot product and norms for this embedding
+    float dot = 0.0;
+    float norm_e = 0.0;
+    float norm_q = 0.0;
+    
+    uint base = gid * params.dimensions;
+    
+    for (uint d = 0; d < params.dimensions; d++) {
+        float e = embeddings[base + d];
+        float q = query[d];
+        dot += e * q;
+        
+        if (params.normalized == 0) {
+            norm_e += e * e;
+            norm_q += q * q;
+        }
+    }
+    
+    // Compute final score
+    float score;
+    if (params.normalized != 0) {
+        score = dot;
+    } else {
+        float denom = sqrt(norm_e) * sqrt(norm_q);
+        score = (denom > 1e-10) ? (dot / denom) : 0.0;
+    }
+    
+    scores[gid] = score;
+}

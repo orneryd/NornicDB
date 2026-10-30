@@ -1,0 +1,395 @@
+package cypher
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string, values map[string]interface{}) (value interface{}, matched bool, resolved bool, err error) {
+	name := lowerASCII(function)
+	// An argument's error is the function's: eval keeps the first one, and it
+	// replaces whatever the function would return.
+	var argumentErr error
+	defer func() {
+		if argumentErr != nil {
+			value, resolved, err = nil, false, argumentErr
+		}
+	}()
+	eval := func(expression string) (interface{}, bool) {
+		value, ok, err := e.evaluateRowValue(strings.TrimSpace(expression), values)
+		if err != nil {
+			if argumentErr == nil {
+				argumentErr = err
+			}
+			return nil, false
+		}
+		return value, ok
+	}
+	one := func() (interface{}, bool) { return eval(argument) }
+	var cachedArgs []interface{}
+	var argsEvaluated bool
+	args := func() ([]interface{}, bool) {
+		if argsEvaluated {
+			return cachedArgs, true
+		}
+		parts := splitTopLevelComma(argument)
+		out := make([]interface{}, len(parts))
+		for index, part := range parts {
+			value, ok := eval(part)
+			if !ok {
+				return nil, false
+			}
+			out[index] = value
+		}
+		cachedArgs, argsEvaluated = out, true
+		return out, true
+	}
+	if handler, found := pluginFunctionHandler(function); found {
+		arguments, ok := args()
+		if !ok {
+			return nil, true, false, nil
+		}
+		result, handled, err := callPluginFunction(rowStatementContextOrBackground(values), function, handler, arguments)
+		if err != nil {
+			return nil, true, false, err
+		}
+		if handled {
+			return result, true, true, nil
+		}
+	}
+	if isNativeAPOCFunction(function) {
+		arguments, ok := args()
+		if !ok {
+			return nil, true, false, nil
+		}
+		value, matched, err := e.evaluateNativeAPOCFunction(rowStatementContextOrBackground(values), function, arguments)
+		return value, matched, err == nil, err
+	}
+	if value, matched, resolved, err := e.evaluateRowTemporalComponent(name, argument, values); matched {
+		return value, true, resolved, err
+	}
+	switch name {
+	case "rand":
+		if strings.TrimSpace(argument) != "" {
+			return nil, true, false, nil
+		}
+		return randomCypherFloat(), true, true, nil
+	case "randomuuid":
+		if strings.TrimSpace(argument) != "" {
+			return nil, true, false, nil
+		}
+		return e.generateUUID(), true, true, nil
+	case "toupper", "tolower", "tostring", "tostringornull", "tointeger", "toint", "tointegerornull", "tofloat", "tofloatornull", "toboolean", "tobooleanornull":
+		value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		return value, true, resolved, err
+	case "substring", "left", "right", "replace", "split", "tail":
+		value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		return value, true, resolved, err
+	case "lpad", "rpad":
+		arguments, ok := args()
+		if !ok || len(arguments) < 2 || len(arguments) > 3 {
+			return nil, true, false, nil
+		}
+		text, textOK := arguments[0].(string)
+		length, lengthOK := toInt(arguments[1])
+		if !textOK || !lengthOK || length < 0 {
+			return nil, true, false, nil
+		}
+		padding := " "
+		if len(arguments) == 3 {
+			var paddingOK bool
+			padding, paddingOK = arguments[2].(string)
+			if !paddingOK || padding == "" {
+				return nil, true, false, nil
+			}
+		}
+		return padRowString(text, length, padding, name == "lpad"), true, true, nil
+	case "format":
+		value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		return value, true, resolved, err
+	case "apoc.create.uuid":
+		return e.generateUUID(), true, true, nil
+	case "apoc.text.join":
+		values, ok := args()
+		if !ok || len(values) != 2 {
+			return nil, true, false, nil
+		}
+		separator, separatorOK := values[1].(string)
+		if !separatorOK {
+			return nil, true, false, nil
+		}
+		items, _ := cypherListValue(values[0])
+		parts := make([]string, len(items))
+		for index, item := range items {
+			parts[index] = fmt.Sprint(item)
+		}
+		return strings.Join(parts, separator), true, true, nil
+	case "apoc.coll.flatten":
+		values, ok := args()
+		if !ok || len(values) == 0 || len(values) > 2 {
+			return nil, true, false, nil
+		}
+		return flattenList(values[0], len(values) == 2 && values[1] == true), true, true, nil
+	case "apoc.coll.toset", "apoc.coll.sum", "apoc.coll.avg", "apoc.coll.min", "apoc.coll.max", "apoc.coll.reverse":
+		value, ok := one()
+		if !ok {
+			return nil, true, false, nil
+		}
+		switch name {
+		case "apoc.coll.toset":
+			return apocCollToSet(value), true, true, nil
+		case "apoc.coll.sum":
+			return apocCollSum(value), true, true, nil
+		case "apoc.coll.avg":
+			return apocCollAvg(value), true, true, nil
+		case "apoc.coll.min":
+			return apocCollMin(value), true, true, nil
+		case "apoc.coll.reverse":
+			return apocCollReverse(value), true, true, nil
+		default:
+			return apocCollMax(value), true, true, nil
+		}
+	case "apoc.convert.tojson":
+		value, ok := one()
+		if !ok {
+			return nil, true, false, nil
+		}
+		text, encoded := apocConvertToJSON(value)
+		return text, true, encoded, nil
+	case "apoc.convert.fromjsonmap", "apoc.convert.fromjsonlist":
+		value, ok := one()
+		if !ok {
+			return nil, true, false, nil
+		}
+		result, err := apocConvertFromJSON(name == "apoc.convert.fromjsonmap", value)
+		return result, true, err == nil, err
+	case "apoc.meta.type":
+		value, ok := one()
+		return apocValueTypeName(value), true, ok, nil
+	case "apoc.meta.istype":
+		values, ok := args()
+		if !ok || len(values) != 2 {
+			return nil, true, false, nil
+		}
+		typeName, typeOK := values[1].(string)
+		return strings.EqualFold(apocValueTypeName(values[0]), typeName), true, typeOK, nil
+	case "kalman.init", "kalman.adaptive.init":
+		var config map[string]interface{}
+		if strings.TrimSpace(argument) != "" {
+			value, ok := one()
+			if !ok {
+				return nil, true, false, nil
+			}
+			config, _ = value.(map[string]interface{})
+		}
+		if name == "kalman.init" {
+			return kalmanInit(config), true, true, nil
+		}
+		return kalmanAdaptiveInit(config), true, true, nil
+	case "kalman.process", "kalman.predict", "kalman.state", "kalman.reset", "kalman.velocity.init", "kalman.velocity.process", "kalman.velocity.predict", "kalman.adaptive.process":
+		values, ok := args()
+		if !ok {
+			return nil, true, false, nil
+		}
+		return evaluateRowKalman(name, values), true, true, nil
+	}
+	return nil, false, false, nil
+}
+
+func padRowString(value string, length int, padding string, left bool) string {
+	characters := []rune(value)
+	if len(characters) >= length {
+		return string(characters[:length])
+	}
+	padCharacters := []rune(padding)
+	needed := length - len(characters)
+	result := make([]rune, 0, length)
+	if !left {
+		result = append(result, characters...)
+	}
+	for index := 0; index < needed; index++ {
+		result = append(result, padCharacters[index%len(padCharacters)])
+	}
+	if left {
+		result = append(result, characters...)
+	}
+	return string(result)
+}
+
+func (e *StorageExecutor) evaluateRowTemporalComponent(name, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
+	if name == "timestamp" {
+		if strings.TrimSpace(argument) != "" {
+			return nil, true, false, nil
+		}
+		return time.Now().UnixMilli(), true, true, nil
+	}
+	if name == "localtime" || name == "localdatetime" || name == "datetime" || name == "date" || name == "time" || name == "duration" || strings.HasSuffix(name, ".truncate") {
+		return nil, false, false, nil // constructors are handled by evaluateTemporalConstructor
+	}
+	dot := strings.IndexByte(name, '.')
+	if dot < 0 {
+		return nil, false, false, nil
+	}
+	kind, component := name[:dot], name[dot+1:]
+	if kind != "date" && kind != "datetime" {
+		return nil, false, false, nil
+	}
+	value, ok, err := e.evaluateRowValue(strings.TrimSpace(argument), values)
+	if err != nil {
+		return nil, true, false, err
+	}
+	if !ok {
+		return nil, true, false, nil
+	}
+	result, known := temporalComponent(component, value)
+	return result, known, known, nil
+}
+
+// temporalComponent is the date.<component> / datetime.<component> accessor
+// both evaluators read (#1105): the component of a temporal value or a
+// temporal string, null for a value that isn't one, and known false for a
+// component that isn't an accessor.
+func temporalComponent(component string, value interface{}) (interface{}, bool) {
+	if !isTemporalComponent(component) {
+		return nil, false
+	}
+	temporal, valid := rowTemporalTime(value)
+	if !valid {
+		return nil, true
+	}
+	switch component {
+	case "year":
+		return int64(temporal.Year()), true
+	case "month":
+		return int64(temporal.Month()), true
+	case "day":
+		return int64(temporal.Day()), true
+	case "hour":
+		return int64(temporal.Hour()), true
+	case "minute":
+		return int64(temporal.Minute()), true
+	case "second":
+		return int64(temporal.Second()), true
+	case "week":
+		_, week := temporal.ISOWeek()
+		return int64(week), true
+	case "quarter":
+		return int64((int(temporal.Month())-1)/3 + 1), true
+	case "dayofweek":
+		day := int64(temporal.Weekday())
+		if day == 0 {
+			day = 7
+		}
+		return day, true
+	case "dayofyear", "ordinalday":
+		return int64(temporal.YearDay()), true
+	}
+	year, _ := temporal.ISOWeek() // weekyear
+	return int64(year), true
+}
+
+// isTemporalComponent reports whether component is one of the accessors
+// date.<component> and datetime.<component> name.
+func isTemporalComponent(component string) bool {
+	switch component {
+	case "year", "month", "day", "hour", "minute", "second", "week", "quarter", "dayofweek", "dayofyear", "ordinalday", "weekyear":
+		return true
+	}
+	return false
+}
+
+func rowTemporalTime(value interface{}) (time.Time, bool) {
+	switch typed := value.(type) {
+	case time.Time:
+		return typed, true
+	case CypherDate:
+		return typed.Time, true
+	case CypherDateTime:
+		return typed.Time, true
+	case CypherLocalDateTime:
+		return typed.Time, true
+	case CypherTime:
+		return typed.Time, true
+	case CypherLocalTime:
+		return typed.Time, true
+	case string:
+		if parsed := parseDateTime(typed); !parsed.IsZero() {
+			return parsed, true
+		}
+		// parseDateTime's failure is the zero time, which is also the valid
+		// instant 0001-01-01T00:00:00Z: read that text itself.
+		for _, layout := range [...]string{"2006-01-02", time.RFC3339Nano} {
+			if parsed, err := time.Parse(layout, strings.TrimSpace(typed)); err == nil {
+				return parsed, true
+			}
+		}
+		return time.Time{}, false
+	default:
+		return time.Time{}, false
+	}
+}
+
+func evaluateRowKalman(name string, values []interface{}) interface{} {
+	switch name {
+	case "kalman.process":
+		if len(values) < 2 {
+			return nil
+		}
+		measurement, _ := toFloat64(values[0])
+		state, _ := values[1].(string)
+		target := 0.0
+		if len(values) > 2 {
+			target, _ = toFloat64(values[2])
+		}
+		return kalmanProcess(measurement, state, target)
+	case "kalman.predict":
+		if len(values) != 2 {
+			return nil
+		}
+		state, _ := values[0].(string)
+		steps, _ := toInt(values[1])
+		return kalmanPredict(state, steps)
+	case "kalman.state":
+		if len(values) != 1 {
+			return nil
+		}
+		state, _ := values[0].(string)
+		return kalmanStateValue(state)
+	case "kalman.reset":
+		if len(values) != 1 {
+			return nil
+		}
+		state, _ := values[0].(string)
+		return kalmanReset(state)
+	case "kalman.velocity.init":
+		if len(values) < 2 {
+			return kalmanVelocityInit(0, 0, false)
+		}
+		pos, _ := toFloat64(values[0])
+		vel, _ := toFloat64(values[1])
+		return kalmanVelocityInit(pos, vel, true)
+	case "kalman.velocity.process":
+		if len(values) != 2 {
+			return nil
+		}
+		measurement, _ := toFloat64(values[0])
+		state, _ := values[1].(string)
+		return kalmanVelocityProcess(measurement, state)
+	case "kalman.velocity.predict":
+		if len(values) != 2 {
+			return nil
+		}
+		state, _ := values[0].(string)
+		steps, _ := toInt(values[1])
+		return kalmanVelocityPredict(state, steps)
+	case "kalman.adaptive.process":
+		if len(values) != 2 {
+			return nil
+		}
+		measurement, _ := toFloat64(values[0])
+		state, _ := values[1].(string)
+		return kalmanAdaptiveProcess(measurement, state)
+	}
+	return nil
+}

@@ -1,0 +1,107 @@
+package cypher
+
+import (
+	"context"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+type temporalViewportKeyType struct{}
+
+var temporalViewportKey = temporalViewportKeyType{}
+
+type TemporalViewportMode int
+
+const (
+	TemporalViewportLive TemporalViewportMode = iota
+	TemporalViewportAsOf
+)
+
+type TemporalViewport struct {
+	Mode TemporalViewportMode
+	AsOf time.Time
+}
+
+func CurrentTemporalViewport() TemporalViewport {
+	return TemporalViewport{Mode: TemporalViewportLive}
+}
+
+func AsOfTemporalViewport(asOf time.Time) TemporalViewport {
+	return TemporalViewport{Mode: TemporalViewportAsOf, AsOf: asOf.UTC()}
+}
+
+func (v TemporalViewport) Enabled() bool {
+	return v.Mode == TemporalViewportAsOf && !v.AsOf.IsZero()
+}
+
+func WithTemporalViewport(ctx context.Context, viewport TemporalViewport) context.Context {
+	return context.WithValue(ctx, temporalViewportKey, viewport)
+}
+
+func TemporalViewportFromContext(ctx context.Context) (TemporalViewport, bool) {
+	viewport, ok := ctx.Value(temporalViewportKey).(TemporalViewport)
+	return viewport, ok
+}
+
+type temporalCurrentNodeChecker interface {
+	IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error)
+}
+
+func filterNodesByTemporalViewport(ctx context.Context, nodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) ([]*storage.Node, error) {
+	if !viewport.Enabled() || checker == nil {
+		return nodes, nil
+	}
+	filtered := make([]*storage.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if node == nil {
+			continue
+		}
+		visible, err := storage.IsCurrentTemporalNodeWithContext(ctx, checker, node, viewport.AsOf)
+		if err != nil {
+			return nil, err
+		}
+		if !visible {
+			continue
+		}
+		filtered = append(filtered, node)
+	}
+	return filtered, nil
+}
+
+func nodeVisibleInTemporalViewport(ctx context.Context, node *storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) (bool, error) {
+	if !viewport.Enabled() || checker == nil || node == nil {
+		return true, nil
+	}
+	return storage.IsCurrentTemporalNodeWithContext(ctx, checker, node, viewport.AsOf)
+}
+
+func filterNodesByRequiredLabels(nodes []*storage.Node, labels []string) []*storage.Node {
+	if len(labels) <= 1 {
+		return nodes
+	}
+	filtered := make([]*storage.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if mergeNodeHasLabels(node, labels) {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
+}
+
+func (e *StorageExecutor) loadNodesWithTemporalViewport(ctx context.Context, labels []string) ([]*storage.Node, error) {
+	return e.loadPatternNodes(ctx, labels, nil)
+}
+
+// loadPatternNodes returns the nodes of a node pattern (labels, inline
+// properties) visible in the temporal viewport. Traversal seeds use the same
+// label-indexed, viewport-aware streaming collector as node MATCH, which
+// avoids a second physical scan path that materialises GetNodesByLabel inside
+// explicit transactions. Passing the properties lets a pattern without labels
+// take the projected scan instead of decoding every node (#857).
+func (e *StorageExecutor) loadPatternNodes(ctx context.Context, labels []string, properties map[string]interface{}) ([]*storage.Node, error) {
+	return e.collectNodesWithStreaming(ctx, labels, properties, "", "", -1)
+}

@@ -1,0 +1,1982 @@
+[
+  {
+    "id": "apoc_coll_temporal_bench_test.go:BenchmarkApocTemporalEquivalence:toSet:1",
+    "file": "apoc_coll_temporal_bench_test.go",
+    "caller": "BenchmarkApocTemporalEquivalence",
+    "callee": "toSet",
+    "contract": "equivalence adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_coll_temporal_equality_test.go:TestApocCollectionsTemporalParameters:cypherEquality:1",
+    "file": "apoc_coll_temporal_equality_test.go",
+    "caller": "TestApocCollectionsTemporalParameters",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_coll_temporal_equality_test.go:TestApocCollectionsTemporalParameters:cypherEquality:2",
+    "file": "apoc_coll_temporal_equality_test.go",
+    "caller": "TestApocCollectionsTemporalParameters",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_coll_temporal_equality_test.go:TestTemporalEquivalenceCanonicalOwner:cypherEquality:1",
+    "file": "apoc_coll_temporal_equality_test.go",
+    "caller": "TestTemporalEquivalenceCanonicalOwner",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_coll_temporal_equality_test.go:TestTemporalEquivalenceCanonicalOwner:cypherValueEquals:1",
+    "file": "apoc_coll_temporal_equality_test.go",
+    "caller": "TestTemporalEquivalenceCanonicalOwner",
+    "callee": "cypherValueEquals",
+    "contract": "equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_coll_temporal_equality_test.go:TestTemporalEquivalenceCanonicalOwner:cypherValueKey:1",
+    "file": "apoc_coll_temporal_equality_test.go",
+    "caller": "TestTemporalEquivalenceCanonicalOwner",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_coll_temporal_equality_test.go:TestTemporalEquivalenceCanonicalOwner:cypherValueKey:2",
+    "file": "apoc_coll_temporal_equality_test.go",
+    "caller": "TestTemporalEquivalenceCanonicalOwner",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_coll_temporal_semantics_test.go:TestApocCollectionsTemporalSemantics:cypherValueEquals:1",
+    "file": "apoc_coll_temporal_semantics_test.go",
+    "caller": "TestApocCollectionsTemporalSemantics",
+    "callee": "cypherValueEquals",
+    "contract": "equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_coll_temporal_semantics_test.go:TestApocCollectionsTemporalSemantics:cypherValueKey:1",
+    "file": "apoc_coll_temporal_semantics_test.go",
+    "caller": "TestApocCollectionsTemporalSemantics",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_coll_temporal_semantics_test.go:TestApocCollectionsTemporalSemantics:cypherValueKey:2",
+    "file": "apoc_coll_temporal_semantics_test.go",
+    "caller": "TestApocCollectionsTemporalSemantics",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_collections.go:apocCollContains:cypherValueEquals:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollContains",
+    "callee": "cypherValueEquals",
+    "contract": "equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "apoc_collections.go:apocCollContainsAll:apocValueSet:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollContainsAll",
+    "callee": "apocValueSet",
+    "contract": "equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "apoc_collections.go:apocCollContainsAll:hasByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollContainsAll",
+    "callee": "hasByContract",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "apoc_collections.go:apocCollContainsAny:apocValueSet:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollContainsAny",
+    "callee": "apocValueSet",
+    "contract": "equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "apoc_collections.go:apocCollContainsAny:hasByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollContainsAny",
+    "callee": "hasByContract",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "apoc_collections.go:apocCollFrequencies:addPositionByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollFrequencies",
+    "callee": "addPositionByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "apoc_collections.go:apocCollIndexOf:cypherValueEquals:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollIndexOf",
+    "callee": "cypherValueEquals",
+    "contract": "equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "apoc_collections.go:apocCollIntersection:addByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollIntersection",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "apoc_collections.go:apocCollIntersection:addByContract:2",
+    "file": "apoc_collections.go",
+    "caller": "apocCollIntersection",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "apoc_collections.go:apocCollIntersection:hasByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollIntersection",
+    "callee": "hasByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "apoc_collections.go:apocCollOccurrences:cypherValueEquals:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollOccurrences",
+    "callee": "cypherValueEquals",
+    "contract": "equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "apoc_collections.go:apocCollSplit:cypherValueEquals:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollSplit",
+    "callee": "cypherValueEquals",
+    "contract": "equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "apoc_collections.go:apocCollSubtract:addByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollSubtract",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "apoc_collections.go:apocCollSubtract:addByContract:2",
+    "file": "apoc_collections.go",
+    "caller": "apocCollSubtract",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "apoc_collections.go:apocCollSubtract:hasByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollSubtract",
+    "callee": "hasByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "apoc_collections.go:apocCollToSet:toSet:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollToSet",
+    "callee": "toSet",
+    "contract": "equivalence adapter",
+    "line": 0,
+    "reason": "Collection set/deduplication adapter selects equivalence explicitly inside its canonical calls."
+  },
+  {
+    "id": "apoc_collections.go:apocCollUnion:toSet:1",
+    "file": "apoc_collections.go",
+    "caller": "apocCollUnion",
+    "callee": "toSet",
+    "contract": "equivalence adapter",
+    "line": 0,
+    "reason": "Collection set/deduplication adapter selects equivalence explicitly inside its canonical calls."
+  },
+  {
+    "id": "apoc_collections.go:apocSameValue:compareTemporalByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "apocSameValue",
+    "callee": "compareTemporalByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "apoc.map.clean removal-set equivalence retains overlap occurrence identity; Java numeric-kind policy stays separate."
+  },
+  {
+    "id": "apoc_collections.go:apocSameValue:cypherValueKeyWithNumericPolicy:1",
+    "file": "apoc_collections.go",
+    "caller": "apocSameValue",
+    "callee": "cypherValueKeyWithNumericPolicy",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "apoc.map.clean removal-set equivalence retains overlap occurrence identity; Java numeric-kind policy stays separate."
+  },
+  {
+    "id": "apoc_collections.go:apocSameValue:cypherValueKeyWithNumericPolicy:2",
+    "file": "apoc_collections.go",
+    "caller": "apocSameValue",
+    "callee": "cypherValueKeyWithNumericPolicy",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "apoc.map.clean removal-set equivalence retains overlap occurrence identity; Java numeric-kind policy stays separate."
+  },
+  {
+    "id": "apoc_collections.go:apocValueSet:addByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "apocValueSet",
+    "callee": "addByContract",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "apoc_collections.go:toSet:addByContract:1",
+    "file": "apoc_collections.go",
+    "caller": "toSet",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "apoc_functions_test.go:TestToSet:toSet:1",
+    "file": "apoc_functions_test.go",
+    "caller": "TestToSet",
+    "callee": "toSet",
+    "contract": "equivalence adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "apoc_map_null_contract.go:apocMapConstructor:apocSameValue:1",
+    "file": "apoc_map_null_contract.go",
+    "caller": "apocMapConstructor",
+    "callee": "apocSameValue",
+    "contract": "equivalence removal adapter (numeric kinds preserved)",
+    "line": 0,
+    "reason": "apoc.map.clean uses a Java-object removal set, retaining overlap occurrence identity and numeric kinds."
+  },
+  {
+    "id": "apoc_map_null_contract.go:apocMapConstructor:apocSameValue:2",
+    "file": "apoc_map_null_contract.go",
+    "caller": "apocMapConstructor",
+    "callee": "apocSameValue",
+    "contract": "equivalence removal adapter (numeric kinds preserved)",
+    "line": 0,
+    "reason": "apoc.map.clean string-coercion removal uses the same Java-object equivalence policy while preserving numeric kinds."
+  },
+  {
+    "id": "apoc_native_functions.go:*StorageExecutor.nativeAPOCPath:cypherEqualityValue:1",
+    "file": "apoc_native_functions.go",
+    "caller": "*StorageExecutor.nativeAPOCPath",
+    "callee": "cypherEqualityValue",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "case_evaluation.go:runCaseExpression:cypherEquality:1",
+    "file": "case_evaluation.go",
+    "caller": "runCaseExpression",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "clauses.go:*StorageExecutor.executeUnion:addTupleByContract:1",
+    "file": "clauses.go",
+    "caller": "*StorageExecutor.executeUnion",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "coll_functions.go:fnCollDistinct:addByContract:1",
+    "file": "coll_functions.go",
+    "caller": "fnCollDistinct",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "coll_functions.go:fnCollIndexOf:cypherEquality:1",
+    "file": "coll_functions.go",
+    "caller": "fnCollIndexOf",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "comparison.go:*StorageExecutor.compareEqual:cypherEquality:1",
+    "file": "comparison.go",
+    "caller": "*StorageExecutor.compareEqual",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "comparison.go:nodePropertiesMatch:cypherEquality:1",
+    "file": "comparison.go",
+    "caller": "nodePropertiesMatch",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "create.go:*StorageExecutor.buildCombinationsUsingWhereJoin:cartesianShiftValueKey:1",
+    "file": "create.go",
+    "caller": "*StorageExecutor.buildCombinationsUsingWhereJoin",
+    "callee": "cartesianShiftValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "create.go:*StorageExecutor.buildCombinationsUsingWhereJoin:cypherValueKey:1",
+    "file": "create.go",
+    "caller": "*StorageExecutor.buildCombinationsUsingWhereJoin",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "create.go:*StorageExecutor.buildCombinationsUsingWhereJoin:cypherValueKey:2",
+    "file": "create.go",
+    "caller": "*StorageExecutor.buildCombinationsUsingWhereJoin",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "create.go:*StorageExecutor.buildCombinationsUsingWhereJoin:cypherValueKey:3",
+    "file": "create.go",
+    "caller": "*StorageExecutor.buildCombinationsUsingWhereJoin",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "create.go:*StorageExecutor.buildCombinationsUsingWhereJoin:cypherValueKey:4",
+    "file": "create.go",
+    "caller": "*StorageExecutor.buildCombinationsUsingWhereJoin",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "create.go:*StorageExecutor.buildCombinationsUsingWhereJoin:cypherValueKey:5",
+    "file": "create.go",
+    "caller": "*StorageExecutor.buildCombinationsUsingWhereJoin",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "executor_subqueries.go:compareValuesForSort:compareTemporalOrdering:1",
+    "file": "executor_subqueries.go",
+    "caller": "compareValuesForSort",
+    "callee": "compareTemporalOrdering",
+    "contract": "ordering (separate contract)",
+    "line": 0,
+    "reason": "Ordering is a separate temporal contract, outside equality/equivalence identity."
+  },
+  {
+    "id": "functions_eval_operators.go:cypherMembership:cypherEquality:1",
+    "file": "functions_eval_operators.go",
+    "caller": "cypherMembership",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "functions_neo5.go:fnNullIf:cypherEquality:1",
+    "file": "functions_neo5.go",
+    "caller": "fnNullIf",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "gds_functions.go:fnGDSSameCommunity:cypherEquality:1",
+    "file": "gds_functions.go",
+    "caller": "fnGDSSameCommunity",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "internal_branch_coverage_boost_test.go:TestLowerCoverageHelpers_Branches:cypherValueKey:1",
+    "file": "internal_branch_coverage_boost_test.go",
+    "caller": "TestLowerCoverageHelpers_Branches",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "internal_branch_coverage_boost_test.go:TestLowerCoverageHelpers_Branches:cypherValueKey:2",
+    "file": "internal_branch_coverage_boost_test.go",
+    "caller": "TestLowerCoverageHelpers_Branches",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_index_seek.go:*StorageExecutor.tryCollectNodesFromPropertyIndexAnyOf:cypherEquality:1",
+    "file": "match_index_seek.go",
+    "caller": "*StorageExecutor.tryCollectNodesFromPropertyIndexAnyOf",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "match_multi.go:*StorageExecutor.applyCartesianWherePushdown:collectPropValues:1",
+    "file": "match_multi.go",
+    "caller": "*StorageExecutor.applyCartesianWherePushdown",
+    "callee": "collectPropValues",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "match_multi.go:*StorageExecutor.applyCartesianWherePushdown:collectPropValues:2",
+    "file": "match_multi.go",
+    "caller": "*StorageExecutor.applyCartesianWherePushdown",
+    "callee": "collectPropValues",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "match_multi.go:*StorageExecutor.applyCartesianWherePushdown:cypherValueKey:1",
+    "file": "match_multi.go",
+    "caller": "*StorageExecutor.applyCartesianWherePushdown",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "match_multi.go:*StorageExecutor.applyCartesianWherePushdown:filterNodesByAllowedPropSet:1",
+    "file": "match_multi.go",
+    "caller": "*StorageExecutor.applyCartesianWherePushdown",
+    "callee": "filterNodesByAllowedPropSet",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "match_multi.go:*StorageExecutor.applyCartesianWherePushdown:filterNodesByAllowedPropSet:2",
+    "file": "match_multi.go",
+    "caller": "*StorageExecutor.applyCartesianWherePushdown",
+    "callee": "filterNodesByAllowedPropSet",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "match_multi.go:*StorageExecutor.applyCartesianWherePushdown:filterNodesByAllowedPropSet:3",
+    "file": "match_multi.go",
+    "caller": "*StorageExecutor.applyCartesianWherePushdown",
+    "callee": "filterNodesByAllowedPropSet",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "match_multi.go:*StorageExecutor.applyCartesianWherePushdown:shiftCartesianIntKeySet:1",
+    "file": "match_multi.go",
+    "caller": "*StorageExecutor.applyCartesianWherePushdown",
+    "callee": "shiftCartesianIntKeySet",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "match_multi.go:*StorageExecutor.applyCartesianWherePushdown:shiftCartesianIntKeySet:2",
+    "file": "match_multi.go",
+    "caller": "*StorageExecutor.applyCartesianWherePushdown",
+    "callee": "shiftCartesianIntKeySet",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "match_multi.go:cartesianShiftValueKey:cypherValueKey:1",
+    "file": "match_multi.go",
+    "caller": "cartesianShiftValueKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "match_multi.go:cartesianShiftValueKey:cypherValueKey:2",
+    "file": "match_multi.go",
+    "caller": "cartesianShiftValueKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "match_multi.go:collectPropValues:cypherValueKey:1",
+    "file": "match_multi.go",
+    "caller": "collectPropValues",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "match_multi.go:filterNodesByAllowedPropSet:cypherValueKey:1",
+    "file": "match_multi.go",
+    "caller": "filterNodesByAllowedPropSet",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:collectPropValues:1",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "collectPropValues",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:cypherValueKey:1",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:cypherValueKey:2",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:cypherValueKey:3",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:cypherValueKey:4",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:cypherValueKey:5",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:cypherValueKey:6",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:cypherValueKey:7",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:filterNodesByAllowedPropSet:1",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "filterNodesByAllowedPropSet",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianHelpers_ParseAndFilterBranches:filterNodesByAllowedPropSet:2",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianHelpers_ParseAndFilterBranches",
+    "callee": "filterNodesByAllowedPropSet",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianOffsetArithmeticExact:cartesianShiftValueKey:1",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianOffsetArithmeticExact",
+    "callee": "cartesianShiftValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianOffsetArithmeticExact:cartesianShiftValueKey:2",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianOffsetArithmeticExact",
+    "callee": "cartesianShiftValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianOffsetArithmeticExact:cartesianShiftValueKey:3",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianOffsetArithmeticExact",
+    "callee": "cartesianShiftValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianOffsetArithmeticExact:cypherValueKey:1",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianOffsetArithmeticExact",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "match_multi_helpers_aggregation_test.go:TestCartesianOffsetArithmeticExact:cypherValueKey:2",
+    "file": "match_multi_helpers_aggregation_test.go",
+    "caller": "TestCartesianOffsetArithmeticExact",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "mixed_entity_order_regression_test.go:TestPathIdentityEqualityAndEquivalenceAcrossCarriers:cypherEquality:1",
+    "file": "mixed_entity_order_regression_test.go",
+    "caller": "TestPathIdentityEqualityAndEquivalenceAcrossCarriers",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "mixed_entity_order_regression_test.go:TestPathIdentityEqualityAndEquivalenceAcrossCarriers:cypherEquality:2",
+    "file": "mixed_entity_order_regression_test.go",
+    "caller": "TestPathIdentityEqualityAndEquivalenceAcrossCarriers",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "mixed_entity_order_regression_test.go:TestPathIdentityEqualityAndEquivalenceAcrossCarriers:cypherValueKey:1",
+    "file": "mixed_entity_order_regression_test.go",
+    "caller": "TestPathIdentityEqualityAndEquivalenceAcrossCarriers",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "mixed_entity_order_regression_test.go:TestPathIdentityEqualityAndEquivalenceAcrossCarriers:cypherValueKey:2",
+    "file": "mixed_entity_order_regression_test.go",
+    "caller": "TestPathIdentityEqualityAndEquivalenceAcrossCarriers",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "mixed_entity_order_regression_test.go:TestRemoteNilGraphCarriersKeepNullSortAndIdentity:cypherEquality:1",
+    "file": "mixed_entity_order_regression_test.go",
+    "caller": "TestRemoteNilGraphCarriersKeepNullSortAndIdentity",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "mixed_entity_order_regression_test.go:TestRemoteNilGraphCarriersKeepNullSortAndIdentity:cypherValueKey:1",
+    "file": "mixed_entity_order_regression_test.go",
+    "caller": "TestRemoteNilGraphCarriersKeepNullSortAndIdentity",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "mixed_entity_order_regression_test.go:TestRemoteNilGraphCarriersKeepNullSortAndIdentity:cypherValueKey:2",
+    "file": "mixed_entity_order_regression_test.go",
+    "caller": "TestRemoteNilGraphCarriersKeepNullSortAndIdentity",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "operators.go:*StorageExecutor.evaluateComparisonExpr:cypherEquality:1",
+    "file": "operators.go",
+    "caller": "*StorageExecutor.evaluateComparisonExpr",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "percentile_semantics.go:*StorageExecutor.evaluatePipelinePercentile:addByContract:1",
+    "file": "percentile_semantics.go",
+    "caller": "*StorageExecutor.evaluatePipelinePercentile",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+  },
+  {
+    "id": "pipeline_aggregate_stream.go:*StorageExecutor.pipelineAggregateGroups:addTupleByContract:1",
+    "file": "pipeline_aggregate_stream.go",
+    "caller": "*StorageExecutor.pipelineAggregateGroups",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
+  },
+  {
+    "id": "pipeline_aggregate_stream.go:*StorageExecutor.tryCartesianAggregatePartitions:addTupleByContract:1",
+    "file": "pipeline_aggregate_stream.go",
+    "caller": "*StorageExecutor.tryCartesianAggregatePartitions",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
+  },
+  {
+    "id": "pipeline_aggregate_stream.go:*pipelineAggregateState.add:addByContract:1",
+    "file": "pipeline_aggregate_stream.go",
+    "caller": "*pipelineAggregateState.add",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
+  },
+  {
+    "id": "pipeline_projection.go:deduplicatePipelineResultRows:addTupleByContract:1",
+    "file": "pipeline_projection.go",
+    "caller": "deduplicatePipelineResultRows",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
+  },
+  {
+    "id": "pipeline_projection.go:deduplicatePipelineRowsWithScopes:addTupleByContract:1",
+    "file": "pipeline_projection.go",
+    "caller": "deduplicatePipelineRowsWithScopes",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
+  },
+  {
+    "id": "row_expression.go:compareCypherOrderedValues:compareTemporalOrdering:1",
+    "file": "row_expression.go",
+    "caller": "compareCypherOrderedValues",
+    "callee": "compareTemporalOrdering",
+    "contract": "ordering (separate contract)",
+    "line": 0,
+    "reason": "Ordering is a separate temporal contract, outside equality/equivalence identity."
+  },
+  {
+    "id": "row_expression.go:compareCypherOrderedValues:cypherEquality:1",
+    "file": "row_expression.go",
+    "caller": "compareCypherOrderedValues",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "row_expression.go:compareCypherPredicateGeneralValue:cypherEquality:1",
+    "file": "row_expression.go",
+    "caller": "compareCypherPredicateGeneralValue",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "row_expression.go:compareCypherPredicateValue:cypherEquality:1",
+    "file": "row_expression.go",
+    "caller": "compareCypherPredicateValue",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "row_expression.go:rowMembershipOfValues:cypherEquality:1",
+    "file": "row_expression.go",
+    "caller": "rowMembershipOfValues",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:addByContract:1",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "addByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:addByContract:2",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "addByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:addTupleValuesByContract:1",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "addTupleValuesByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:addTupleValuesByContract:2",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "addTupleValuesByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:cypherValueHash:1",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:cypherValueHash:2",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_accessors.go:compareTemporalByContract:temporalIdentityParts:1",
+    "file": "temporal_accessors.go",
+    "caller": "compareTemporalByContract",
+    "callee": "temporalIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:compareTemporalByContract:temporalIdentityParts:2",
+    "file": "temporal_accessors.go",
+    "caller": "compareTemporalByContract",
+    "callee": "temporalIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:compareTemporalOrdering:temporalOrderParts:1",
+    "file": "temporal_accessors.go",
+    "caller": "compareTemporalOrdering",
+    "callee": "temporalOrderParts",
+    "contract": "ordering (separate contract)",
+    "line": 0,
+    "reason": "Ordering is a separate temporal contract, outside equality/equivalence identity."
+  },
+  {
+    "id": "temporal_accessors.go:compareTemporalOrdering:temporalOrderParts:2",
+    "file": "temporal_accessors.go",
+    "caller": "compareTemporalOrdering",
+    "callee": "temporalOrderParts",
+    "contract": "ordering (separate contract)",
+    "line": 0,
+    "reason": "Ordering is a separate temporal contract, outside equality/equivalence identity."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:clockEqualityParts:1",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "clockEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:clockEqualityParts:2",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "clockEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:clockEqualityParts:3",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "clockEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:clockEqualityParts:4",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "clockEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:dateEqualityParts:1",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "dateEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:dateEqualityParts:2",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "dateEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:durationEqualityParts:1",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "durationEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:durationEqualityParts:2",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "durationEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:localDateTimeEqualityParts:1",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "localDateTimeEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:localDateTimeEqualityParts:2",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "localDateTimeEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:zonedDateTimeIdentityParts:1",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "zonedDateTimeIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:zonedDateTimeIdentityParts:2",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "zonedDateTimeIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:zonedDateTimeIdentityParts:3",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "zonedDateTimeIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:temporalIdentityParts:zonedDateTimeIdentityParts:4",
+    "file": "temporal_accessors.go",
+    "caller": "temporalIdentityParts",
+    "callee": "zonedDateTimeIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_accessors.go:zonedDateTimeIdentityParts:localDateTimeEqualityParts:1",
+    "file": "temporal_accessors.go",
+    "caller": "zonedDateTimeIdentityParts",
+    "callee": "localDateTimeEqualityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "temporal_contract_index_test.go:TestTemporalContractIndexAllocations:addPositionByContract:1",
+    "file": "temporal_contract_index_test.go",
+    "caller": "TestTemporalContractIndexAllocations",
+    "callee": "addPositionByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_contract_index_test.go:TestTemporalContractIndexAllocations:addPositionByContract:2",
+    "file": "temporal_contract_index_test.go",
+    "caller": "TestTemporalContractIndexAllocations",
+    "callee": "addPositionByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_contract_index_test.go:TestTemporalContractIndexAllocations:hasByContract:1",
+    "file": "temporal_contract_index_test.go",
+    "caller": "TestTemporalContractIndexAllocations",
+    "callee": "hasByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalCanonicalKeyAllocations:addByContract:1",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalCanonicalKeyAllocations",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalCanonicalKeyAllocations:addPositionByContract:1",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalCanonicalKeyAllocations",
+    "callee": "addPositionByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalCanonicalKeyAllocations:cypherValueEquals:1",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalCanonicalKeyAllocations",
+    "callee": "cypherValueEquals",
+    "contract": "equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalCanonicalKeyAllocations:hasByContract:1",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalCanonicalKeyAllocations",
+    "callee": "hasByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalCanonicalKeyAllocations:temporalIdentityParts:1",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalCanonicalKeyAllocations",
+    "callee": "temporalIdentityParts",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalCanonicalKeyAllocations:temporalIdentityParts:2",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalCanonicalKeyAllocations",
+    "callee": "temporalIdentityParts",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalContractKeyAllocations:apocSameValue:1",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalContractKeyAllocations",
+    "callee": "apocSameValue",
+    "contract": "equivalence removal adapter (numeric kinds preserved)",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalContractKeyAllocations:compareTemporalByContract:1",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalContractKeyAllocations",
+    "callee": "compareTemporalByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalContractKeyAllocations:temporalIdentityParts:1",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalContractKeyAllocations",
+    "callee": "temporalIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalContractKeyAllocations:temporalIdentityParts:2",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalContractKeyAllocations",
+    "callee": "temporalIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalContractKeyAllocations:temporalIdentityParts:3",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalContractKeyAllocations",
+    "callee": "temporalIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "temporal_key_allocations_test.go:TestTemporalContractKeyAllocations:temporalIdentityParts:4",
+    "file": "temporal_key_allocations_test.go",
+    "caller": "TestTemporalContractKeyAllocations",
+    "callee": "temporalIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equality.go:cypherEquality:cypherEqualityValue:1",
+    "file": "value_equality.go",
+    "caller": "cypherEquality",
+    "callee": "cypherEqualityValue",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "value_equality.go:cypherEqualityValue:compareTemporalByContract:1",
+    "file": "value_equality.go",
+    "caller": "cypherEqualityValue",
+    "callee": "compareTemporalByContract",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "value_equality.go:cypherEqualityValue:cypherEquality:1",
+    "file": "value_equality.go",
+    "caller": "cypherEqualityValue",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "value_equality.go:cypherEqualityValue:cypherEquality:2",
+    "file": "value_equality.go",
+    "caller": "cypherEqualityValue",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "value_equality.go:cypherEqualityValue:cypherEquality:3",
+    "file": "value_equality.go",
+    "caller": "cypherEqualityValue",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "value_equality_test.go:TestCypherListEqualityPropagatesOnlyUnresolvedNullComparisons:cypherEquality:1",
+    "file": "value_equality_test.go",
+    "caller": "TestCypherListEqualityPropagatesOnlyUnresolvedNullComparisons",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equality_test.go:TestCypherListEqualityPropagatesOnlyUnresolvedNullComparisons:cypherEquality:2",
+    "file": "value_equality_test.go",
+    "caller": "TestCypherListEqualityPropagatesOnlyUnresolvedNullComparisons",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equality_test.go:TestCypherListEqualityPropagatesOnlyUnresolvedNullComparisons:cypherEquality:3",
+    "file": "value_equality_test.go",
+    "caller": "TestCypherListEqualityPropagatesOnlyUnresolvedNullComparisons",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equality_test.go:TestCypherListEqualityPropagatesOnlyUnresolvedNullComparisons:cypherEquality:4",
+    "file": "value_equality_test.go",
+    "caller": "TestCypherListEqualityPropagatesOnlyUnresolvedNullComparisons",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence.go:*cypherValueSet.addByContract:addPositionByContract:1",
+    "file": "value_equivalence.go",
+    "caller": "*cypherValueSet.addByContract",
+    "callee": "addPositionByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:*cypherValueSet.addPositionByContract:cypherValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "*cypherValueSet.addPositionByContract",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:*cypherValueSet.addPositionByContract:temporalIdentityParts:1",
+    "file": "value_equivalence.go",
+    "caller": "*cypherValueSet.addPositionByContract",
+    "callee": "temporalIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:*cypherValueSet.hasByContract:cypherValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "*cypherValueSet.hasByContract",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:*cypherValueSet.hasByContract:temporalIdentityParts:1",
+    "file": "value_equivalence.go",
+    "caller": "*cypherValueSet.hasByContract",
+    "callee": "temporalIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:appendNestedValueKey:cypherValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "appendNestedValueKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:appendNestedValueKey:cypherValueKeyWithNumericPolicy:1",
+    "file": "value_equivalence.go",
+    "caller": "appendNestedValueKey",
+    "callee": "cypherValueKeyWithNumericPolicy",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:appendValueKey:appendNestedValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "appendValueKey",
+    "callee": "appendNestedValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:appendValueKey:appendNestedValueKey:2",
+    "file": "value_equivalence.go",
+    "caller": "appendValueKey",
+    "callee": "appendNestedValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:appendValueKey:appendNestedValueKey:3",
+    "file": "value_equivalence.go",
+    "caller": "appendValueKey",
+    "callee": "appendNestedValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:appendValueKey:appendTemporalValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "appendValueKey",
+    "callee": "appendTemporalValueKey",
+    "contract": "already canonical temporal key",
+    "line": 0,
+    "reason": "Serialize an already constructed typed key; its caller has explicitly selected the contract."
+  },
+  {
+    "id": "value_equivalence.go:appendValueKey:temporalIdentityParts:1",
+    "file": "value_equivalence.go",
+    "caller": "appendValueKey",
+    "callee": "temporalIdentityParts",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:cypherValueEquals:compareTemporalByContract:1",
+    "file": "value_equivalence.go",
+    "caller": "cypherValueEquals",
+    "callee": "compareTemporalByContract",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "value_equivalence.go:cypherValueEquals:cypherValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "cypherValueEquals",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "value_equivalence.go:cypherValueEquals:cypherValueKey:2",
+    "file": "value_equivalence.go",
+    "caller": "cypherValueEquals",
+    "callee": "cypherValueKey",
+    "contract": "cypherValueEqualityContract",
+    "line": 0,
+    "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
+  },
+  {
+    "id": "value_equivalence.go:cypherValueKey:appendValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "cypherValueKey",
+    "callee": "appendValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:cypherValueKeyWithNumericPolicy:appendValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "cypherValueKeyWithNumericPolicy",
+    "callee": "appendValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:cypherValueKeyWithNumericPolicy:cypherValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "cypherValueKeyWithNumericPolicy",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:cypherValueKeyWithNumericPolicy:cypherValueKey:2",
+    "file": "value_equivalence.go",
+    "caller": "cypherValueKeyWithNumericPolicy",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addByContract:addTupleValuesByContract:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addByContract",
+    "callee": "addTupleValuesByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addByContract:cypherComparableKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addByContract",
+    "callee": "cypherComparableKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addByContract:cypherValueHash:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addByContract",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleByContract:addByContract:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addTupleByContract",
+    "callee": "addByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleByContract:addTupleValuesByContract:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addTupleByContract",
+    "callee": "addTupleValuesByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleByContract:cypherValueHash:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addTupleByContract",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleValuesByContract:cypherValuesMatch:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addTupleValuesByContract",
+    "callee": "cypherValuesMatch",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:2",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:3",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:4",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:5",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValueHash:cypherComparableKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValueHash",
+    "callee": "cypherComparableKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValueHash:cypherValueHash:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValueHash",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValueHash:cypherValueHash:2",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValueHash",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValuesMatch:cypherComparableKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValuesMatch",
+    "callee": "cypherComparableKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValuesMatch:cypherComparableKey:2",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValuesMatch",
+    "callee": "cypherComparableKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValuesMatch",
+    "callee": "cypherValuesMatch",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:2",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValuesMatch",
+    "callee": "cypherValuesMatch",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addByContract:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addByContract:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addTupleValuesByContract:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addTupleValuesByContract:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueHash:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueHash",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueHash:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueHash",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:3",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:4",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:5",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:6",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleByContract:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleByContract:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:3",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:4",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:5",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:6",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:7",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:1",
+    "file": "value_equivalence_test.go",
+    "caller": "TestCypherEquivalenceKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:2",
+    "file": "value_equivalence_test.go",
+    "caller": "TestCypherEquivalenceKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:3",
+    "file": "value_equivalence_test.go",
+    "caller": "TestCypherEquivalenceKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:4",
+    "file": "value_equivalence_test.go",
+    "caller": "TestCypherEquivalenceKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:5",
+    "file": "value_equivalence_test.go",
+    "caller": "TestCypherEquivalenceKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:6",
+    "file": "value_equivalence_test.go",
+    "caller": "TestCypherEquivalenceKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:7",
+    "file": "value_equivalence_test.go",
+    "caller": "TestCypherEquivalenceKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:8",
+    "file": "value_equivalence_test.go",
+    "caller": "TestCypherEquivalenceKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:9",
+    "file": "value_equivalence_test.go",
+    "caller": "TestCypherEquivalenceKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_ordering.go:compareCypherComparableValues:cypherEquality:1",
+    "file": "value_ordering.go",
+    "caller": "compareCypherComparableValues",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "value_ordering.go:cypherSortRank:temporalOrderParts:1",
+    "file": "value_ordering.go",
+    "caller": "cypherSortRank",
+    "callee": "temporalOrderParts",
+    "contract": "ordering (separate contract)",
+    "line": 0,
+    "reason": "Ordering is a separate temporal contract, outside equality/equivalence identity."
+  }
+]

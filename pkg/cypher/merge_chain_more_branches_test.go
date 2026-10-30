@@ -1,0 +1,172 @@
+package cypher
+
+import (
+	"context"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+func TestExecuteMergeWithChain_ChainBreakSkipsIntermediateClauses(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "merge_chain_skip_cov")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	res, err := exec.Execute(ctx, `
+		MERGE (a:Node {id:'a-skip'})
+		MERGE (b:Node {id:'b-skip'})
+		WITH a, b
+		MATCH (m:Missing {id:'none'})
+		FOREACH (i IN [1,2] | CREATE (tmp:Tmp {k:i}))
+		RETURN a.id AS aid, b.id AS bid
+	`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"aid", "bid"}, res.Columns)
+	require.Empty(t, res.Rows)
+
+	// Initial MERGE clauses still execute before the chain break.
+	verifyNodes, err := exec.Execute(ctx, "MATCH (n:Node) WHERE n.id IN ['a-skip','b-skip'] RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, verifyNodes.Rows[0][0])
+
+	// FOREACH must be skipped after chain break.
+	verifyTmp, err := exec.Execute(ctx, "MATCH (t:Tmp) RETURN count(t)", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, verifyTmp.Rows[0][0])
+}
+
+func TestApplyWithProjection_EmptyProjectionKeepsContext(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_with_empty_cov"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "WITH MATCH (n) RETURN n", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+}
+
+func TestExecuteMergeWithContext_RelationshipChainAndSet(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "merge_ctx_rel_chain_cov")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	a := &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "a"}}
+	b := &storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "b"}}
+	c := &storage.Node{ID: "c", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "c"}}
+	_, err := store.CreateNode(a)
+	require.NoError(t, err)
+	_, err = store.CreateNode(b)
+	require.NoError(t, err)
+	_, err = store.CreateNode(c)
+	require.NoError(t, err)
+
+	q := "MATCH (a:Person {id: 'a'}), (b:Person {id: 'b'}), (c:Person {id: 'c'}) MERGE (a)-[r:KNOWS]->(b) SET r.weight = 1 MERGE (b)-[s:KNOWS]->(c) RETURN r.weight AS rw"
+	res, err := exec.Execute(ctx, q, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"rw"}, res.Columns)
+	require.Len(t, res.Rows, 1)
+	require.EqualValues(t, 1, res.Rows[0][0])
+	require.EqualValues(t, 2, res.Stats.RelationshipsCreated)
+
+	verify, err := exec.Execute(ctx, "MATCH (x:Person {id:'a'})-[r:KNOWS]->(y:Person {id:'b'}) RETURN r.weight", nil)
+	require.NoError(t, err)
+	require.Len(t, verify.Rows, 1)
+	require.EqualValues(t, 1, verify.Rows[0][0])
+
+	// Second execution should reuse existing relationships (MERGE semantics).
+	res2, err := exec.Execute(ctx, q, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, res2.Stats.RelationshipsCreated)
+}
+
+func TestExecuteMergeWithChain_RelationshipBranchesAndChainBreak(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "merge_chain_rel_branches_cov")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	res, err := exec.Execute(ctx, `
+		MERGE (a:A {id:'a'})
+		MERGE (b:B {id:'b'})
+		MERGE (a)-[:R0]->(b)
+		WITH a
+		MATCH (b:B {id:'b'}) MERGE (a)-[:R1]->(b)
+		MERGE (a)-[:R2]->(b)
+		RETURN a.id AS aid
+	`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"aid"}, res.Columns)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "a", res.Rows[0][0])
+	require.EqualValues(t, 3, res.Stats.RelationshipsCreated)
+
+	verify, err := exec.Execute(ctx, "MATCH (a:A {id:'a'})-[r]->(b:B {id:'b'}) RETURN count(r)", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, verify.Rows[0][0])
+
+	// Malformed MATCH rejects the statement before any MERGE writes.
+	_, err = exec.Execute(ctx, `
+		MERGE (x:A {id:'x'})
+		WITH x
+		MATCH (bad
+		RETURN x.id AS xid
+	`, nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	verify, err = exec.Execute(ctx, "MATCH (x:A {id:'x'}) RETURN count(x)", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, verify.Rows[0][0])
+}
+
+func TestApplyWithProjection_Populations(t *testing.T) {
+	fallbackNode := &storage.Node{ID: "n1", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "alice"}}
+	n := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
+	r := &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{}}
+	input := []pipelineRow{{"n": n, "r": r, "answer": int64(42)}}
+	type projectionCase struct {
+		clause  string
+		rows    []pipelineRow
+		failure bool
+	}
+	for _, group := range []struct {
+		name, namespace      string
+		input                []pipelineRow
+		cases                []projectionCase
+		checkMissingProperty bool
+	}{
+		{"TestApplyWithProjection_ExpressionFallbackBranches", "merge_with_more_cov", []pipelineRow{{"n": fallbackNode, "score": int64(7)}}, []projectionCase{{"WITH toUpper(n.name) AS upper", []pipelineRow{{"upper": "ALICE"}}, false}}, true},
+		{"TestApplyWithProjection_Branches", "test", input, []projectionCase{
+			{"WITH *", input, false},
+			{"WITH n", []pipelineRow{{"n": n}}, false},
+			{"WITH answer AS projected", []pipelineRow{{"projected": int64(42)}}, false},
+			{"WITH n + 1 AS invalid", nil, true},
+		}, false},
+	} {
+		t.Run(group.name, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), group.namespace))
+			ctx := context.Background()
+			for _, test := range group.cases {
+				operationCtx := ctx
+				if test.failure {
+					operationCtx = withExpressionFailureSlot(ctx)
+				}
+				projected, ok := exec.pipelineApplyWith(operationCtx, group.input, test.clause, nil, false)
+				if test.failure {
+					require.False(t, ok)
+					require.Nil(t, projected)
+					require.Error(t, getExpressionFailure(operationCtx))
+					require.Contains(t, statusText(getExpressionFailure(operationCtx)), "Neo.ClientError.Statement.TypeError")
+				} else {
+					require.True(t, ok)
+					require.Equal(t, test.rows, projected)
+				}
+			}
+			if group.checkMissingProperty {
+				_, err := exec.Execute(ctx, "WITH 7 AS score WITH ghost.prop AS g RETURN g", nil)
+				require.Error(t, err)
+				require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+			}
+		})
+	}
+}

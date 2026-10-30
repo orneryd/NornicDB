@@ -1,0 +1,129 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"sort"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+)
+
+func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows []pipelineRow, name, expression string, distinct bool) (interface{}, bool) {
+	arguments := e.splitFunctionArgs(expression)
+	if len(arguments) != 2 {
+		return nil, false
+	}
+
+	percentile := float64(0)
+	if len(rows) > 0 {
+		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[1]), rows[0])
+		if !resolved {
+			return nil, false
+		}
+		var numeric bool
+		percentile, _, _, numeric = pipelineAggregateNumber(value)
+		if !numeric || math.IsNaN(percentile) || percentile < 0 || percentile > 1 {
+			return nil, false
+		}
+	}
+
+	type percentileValue struct {
+		numeric  float64
+		original interface{}
+	}
+	values := make([]percentileValue, 0, len(rows))
+	var seen cypherValueIndex
+	for _, row := range rows {
+		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[0]), row)
+		if !resolved {
+			return nil, false
+		}
+		if value == nil {
+			continue
+		}
+		numeric, _, _, valid := pipelineAggregateNumber(value)
+		if !valid {
+			// Neo4j's percentiles take numbers only: any other value is a
+			// TypeError.
+			recordExpressionFailure(ctx, aggregateValueError(name, value))
+			return nil, false
+		}
+		if distinct {
+			if _, exists := seen.addByContract(value, cypherEquivalenceContract); exists {
+				continue
+			}
+		}
+		values = append(values, percentileValue{numeric: numeric, original: value})
+	}
+	if len(values) == 0 {
+		return nil, true
+	}
+	// Ordered as ORDER BY orders numbers (compareValuesForSort): NaN after
+	// every number, -0.0 before 0.0, integers and floats exactly (#907).
+	sort.SliceStable(values, func(left, right int) bool {
+		return compareValuesForSort(values[left].original, values[right].original) < 0
+	})
+
+	if name == "percentiledisc" {
+		index := int(math.Ceil(percentile*float64(len(values)))) - 1
+		if index < 0 {
+			index = 0
+		}
+		return values[index].original, true
+	}
+	position := percentile * float64(len(values)-1)
+	lower := int(math.Floor(position))
+	upper := int(math.Ceil(position))
+	if lower == upper {
+		return values[lower].original, true
+	}
+	fraction := position - float64(lower)
+	return values[lower].numeric + (values[upper].numeric-values[lower].numeric)*fraction, true
+}
+
+func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelineRow) error {
+	for _, function := range []string{"percentilecont", "percentiledisc"} {
+		for _, argumentText := range namedFunctionArguments(expression, function) {
+			arguments := e.splitFunctionArgs(argumentText)
+			if len(arguments) != 2 {
+				continue
+			}
+			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(arguments[1]), row)
+			if err != nil {
+				return err
+			}
+			if !resolved {
+				continue
+			}
+			if value == nil {
+				// Neo4j can't read null as the percentile number: a
+				// TypeError, not the range check's ArgumentError (#907).
+				return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+					localization.CypherCorePercentileNotNumber("NO_VALUE"))
+			}
+			percentile, _, _, numeric := pipelineAggregateNumber(value)
+			if !numeric || math.IsNaN(percentile) || percentile < 0 || percentile > 1 {
+				return newSemanticError(
+					"Neo.ClientError.Statement.ArgumentError",
+					"NumberOutOfRange",
+					fmt.Sprintf("%s() percentile must be between 0.0 and 1.0", function),
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func (e *StorageExecutor) validatePipelinePercentileArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
+	if len(rows) == 0 {
+		rows = []pipelineRow{{}}
+	}
+	for _, expression := range projectionExpressions(ctx, clause, keyword) {
+		if err := e.validatePercentileCalls(expression, rows[0]); err != nil {
+			return err
+		}
+	}
+	return nil
+}

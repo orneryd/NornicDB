@@ -1,0 +1,262 @@
+package cypher
+
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/math/angle"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/convert"
+)
+
+// trimBOM removes UTF-8 BOM (0xEF, 0xBB, 0xBF) from the start of s.
+// Some clients (browsers, UIs) send this; it breaks routing (e.g. CREATE DATABASE)
+// because strings.HasPrefix(upperQuery, "CREATE") is false when BOM is present.
+func trimBOM(s string) string {
+	return strings.TrimPrefix(s, "\xef\xbb\xbf")
+}
+
+// toFloat64 is a package-level alias to convert.ToFloat64 for internal use.
+// This avoids updating 100+ call sites while still consolidating the implementation.
+func toFloat64(v interface{}) (float64, bool) {
+	return convert.ToFloat64(v)
+}
+
+// toFloat64Slice keeps the numeric fast paths and reads other runtime lists
+// through the same input owner as collection functions.
+func toFloat64Slice(v interface{}) ([]float64, bool) {
+	return convert.ToFloat64Slice(v)
+}
+
+// findKeywordIndex finds a keyword at word boundaries in the string.
+// This prevents matching substrings like "RemoveReturn" when searching for "RETURN".
+// Also prevents matching labels like ":Return" as keywords.
+// Returns -1 if not found.
+func findKeywordIndex(s, keyword string) int {
+	return keywordIndex(s, keyword)
+}
+
+// containsKeywordOutsideStrings checks if a keyword exists in the string but NOT inside
+// string literals. This prevents matching keywords inside user data content.
+func containsKeywordOutsideStrings(s, keyword string) bool {
+	return findKeywordIndex(s, keyword) != -1
+}
+
+// containsOutsideStrings checks if a substring exists in the string but NOT inside
+// string literals. Unlike containsKeywordOutsideStrings, this does exact substring matching
+// without word boundary checks (useful for symbols like -> and <-).
+func containsOutsideStrings(s, substr string) bool {
+	found, _ := inspectOutsideStrings(s, substr)
+	return found
+}
+
+// inspectOutsideStrings also retains unfinished comments for statement admission.
+// It uses the same lexical walk as symbol lookup, including when normalization
+// is disabled, so admission does not add a second pass over ordinary statements.
+func inspectOutsideStrings(s, substr string) (bool, int) {
+	return cyphertext.FindOutside(s, substr)
+}
+
+// ========================================
+// Spatial Helper Functions
+// ========================================
+
+// getXY extracts x, y coordinates from a map
+func getXY(m map[string]interface{}) (float64, float64, bool) {
+	x, okX := toFloat64(m["x"])
+	y, okY := toFloat64(m["y"])
+	return x, y, okX && okY
+}
+
+// getLatLon extracts latitude, longitude from a map
+func getLatLon(m map[string]interface{}) (float64, float64, bool) {
+	lat, okLat := toFloat64(m["latitude"])
+	if !okLat {
+		lat, okLat = toFloat64(m["lat"])
+	}
+	lon, okLon := toFloat64(m["longitude"])
+	if !okLon {
+		lon, okLon = toFloat64(m["lon"])
+	}
+	return lat, lon, okLat && okLon
+}
+
+// haversineDistance is the great-circle distance in meters between two
+// latitude / longitude points in degrees, on the Earth radius Neo4j's
+// point.distance uses (greatCircleAngle).
+func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
+	return earthRadiusMeters * greatCircleAngle(lat1, lon1, lat2, lon2)
+}
+
+// greatCircleAngle is the central angle in radians between two latitude /
+// longitude points in degrees, by the haversine formula as Neo4j 5.26.30
+// computes it: each coordinate converted to radians once (angle), then
+// differenced. Converting the degree differences instead, or both, differs
+// from Neo4j in the last bits, and by up to 1e-10 for points close together
+// (#907).
+func greatCircleAngle(lat1, lon1, lat2, lon2 float64) float64 {
+	lat1Rad, lat2Rad := angle.ToRadians(lat1), angle.ToRadians(lat2)
+	deltaLat := lat2Rad - lat1Rad
+	deltaLon := angle.ToRadians(lon2) - angle.ToRadians(lon1)
+	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) + math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(deltaLon/2)*math.Sin(deltaLon/2)
+	return 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
+
+// pointInPolygon uses the ray casting algorithm to determine if a point is inside a polygon.
+// The polygon is defined by a list of points, or maps with x,y or latitude,longitude coordinates.
+// Returns true if the point is inside or on the boundary of the polygon.
+func pointInPolygon(px, py float64, polygonPoints []interface{}) bool {
+	if len(polygonPoints) < 3 {
+		return false // A valid polygon needs at least 3 points
+	}
+
+	// Extract coordinates from polygon points
+	coords := make([][2]float64, 0, len(polygonPoints))
+	for _, p := range polygonPoints {
+		pm, ok := spatialMap(p)
+		if !ok {
+			return false
+		}
+
+		// Try x/y coordinates
+		x, y, hasXY := getXY(pm)
+		if hasXY {
+			coords = append(coords, [2]float64{x, y})
+			continue
+		}
+
+		// Try lat/lon coordinates
+		lat, lon, hasLatLon := getLatLon(pm)
+		if hasLatLon {
+			coords = append(coords, [2]float64{lat, lon})
+			continue
+		}
+
+		return false // Invalid point format
+	}
+
+	if len(coords) < 3 {
+		return false
+	}
+
+	// Ray casting algorithm: count how many times a ray from the point
+	// to infinity crosses the polygon edges. Odd = inside, Even = outside.
+	inside := false
+	j := len(coords) - 1
+
+	for i := 0; i < len(coords); i++ {
+		xi, yi := coords[i][0], coords[i][1]
+		xj, yj := coords[j][0], coords[j][1]
+
+		// Check if point is on a horizontal edge
+		if yi == py && yj == py && ((xi <= px && px <= xj) || (xj <= px && px <= xi)) {
+			return true // On boundary
+		}
+
+		// Ray casting check
+		if ((yi > py) != (yj > py)) &&
+			(px < (xj-xi)*(py-yi)/(yj-yi)+xi) {
+			inside = !inside
+		}
+
+		j = i
+	}
+
+	return inside
+}
+
+// extractPolygonPoints extracts point list from a polygon/lineString map
+func extractPolygonPoints(geom map[string]interface{}) []interface{} {
+	if points, ok := geom["points"]; ok {
+		if pointList, ok := points.([]interface{}); ok {
+			return pointList
+		}
+	}
+	// Try "coordinates" as alternative (GeoJSON style)
+	if coords, ok := geom["coordinates"]; ok {
+		if coordList, ok := coords.([]interface{}); ok {
+			return coordList
+		}
+	}
+	return nil
+}
+
+// startsWithKeywords reports whether s starts, at its first byte, with
+// firstWord followed by secondWord: findMultiWordKeywordIndex(s, firstWord,
+// secondWord) == 0, checked at the start of s instead of by scanning all of
+// it (whitespace between the words; word boundaries; the first word not
+// used as a name, clauseKeywordUsedAsName).
+func startsWithKeywords(s, firstWord, secondWord string) bool {
+	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
+	secondStart, secondEnd := trimKeywordWSBounds(secondWord)
+	if firstStart >= firstEnd || secondStart >= secondEnd {
+		return false
+	}
+	afterFirst, ok := keywordMatchAt(s, 0, firstWord, firstStart, firstEnd)
+	if !ok || !keywordBoundaryOK(s, afterFirst, keywordBoundaryWord, keywordAfter) {
+		return false
+	}
+	// (An operator WITH, as in STARTS WITH, needs a word before it, so
+	// it can't start the statement.)
+	if clauseKeywordUsedAsName(s, 0, afterFirst, firstWord[firstStart:firstEnd]) {
+		return false
+	}
+	j, unfinished := cyphertext.GapEnd(s, afterFirst)
+	if j <= afterFirst || unfinished >= 0 {
+		return false
+	}
+	afterSecond, ok := keywordMatchAt(s, j, secondWord, secondStart, secondEnd)
+	return ok && keywordBoundaryOK(s, afterSecond, keywordBoundaryWord, keywordAfter)
+}
+
+// findMultiWordKeywordIndex finds a multi-word keyword with flexible whitespace.
+// For example, "SHOW DATABASES" will match "SHOW DATABASES", "SHOW\tDATABASES", "SHOW\nDATABASES", etc.
+// This is used for keywords like "SHOW DATABASES", "CREATE DATABASE", "DROP DATABASE", "OPTIONAL MATCH".
+//
+// Parameters:
+//   - s: The string to search in
+//   - firstWord: First word of the keyword (e.g., "SHOW")
+//   - secondWord: Second word of the keyword (e.g., "DATABASES")
+//
+// Returns the position of the first word if the multi-word keyword is found, -1 otherwise.
+func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
+	opts := defaultKeywordScanOpts()
+
+	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
+	secondStart, secondEnd := trimKeywordWSBounds(secondWord)
+	if firstStart >= firstEnd || secondStart >= secondEnd {
+		return -1
+	}
+
+	searchFrom := 0
+	for {
+		idx := keywordIndexFrom(s, firstWord[firstStart:firstEnd], searchFrom, opts)
+		if idx == -1 {
+			return -1
+		}
+
+		afterFirst, ok := keywordMatchAt(s, idx, firstWord, firstStart, firstEnd)
+		if !ok {
+			searchFrom = idx + 1
+			continue
+		}
+
+		j, unfinished := cyphertext.GapEnd(s, afterFirst)
+		if j <= afterFirst || unfinished >= 0 {
+			searchFrom = idx + 1
+			continue
+		}
+
+		afterSecond, ok := keywordMatchAt(s, j, secondWord, secondStart, secondEnd)
+		if !ok {
+			searchFrom = idx + 1
+			continue
+		}
+
+		if keywordBoundaryOK(s, afterSecond, opts.Boundary, keywordAfter) {
+			return idx
+		}
+
+		searchFrom = idx + 1
+	}
+}

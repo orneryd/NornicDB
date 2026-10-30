@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="140" y1="40" x2="1030" y2="590" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#121E31"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="180" y1="120" x2="1020" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#13263C" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#0D1828" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="150" y1="0" x2="980" y2="500" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4FD1FF"/>
+      <stop offset="1" stop-color="#19A7FF"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#F4C95D"/>
+      <stop offset="1" stop-color="#C69214"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" rx="32" fill="url(#bg)"/>
+  <g opacity="0.16" stroke="#4FD1FF" stroke-width="1">
+    <path d="M0 80L220 0"/>
+    <path d="M130 630L430 320"/>
+    <path d="M380 0L760 380"/>
+    <path d="M760 0L1200 340"/>
+    <path d="M780 630L1200 420"/>
+    <path d="M0 450L510 190"/>
+  </g>
+
+  <rect x="58" y="58" width="1084" height="514" rx="24" fill="url(#panel)" stroke="#244766"/>
+  <rect x="86" y="86" width="1028" height="458" rx="20" stroke="#2CC2FF" stroke-width="2" opacity="0.65"/>
+
+  <g transform="translate(110 130)">
+    <circle cx="84" cy="92" r="72" fill="none" stroke="#1E3A5F" stroke-width="10" opacity="0.2"/>
+    <path d="M 24 140 Q 14 100 34 70 Q 54 40 84 35 Q 114 30 129 55 Q 139 75 124 90" fill="none" stroke="#9CD8FF" stroke-width="14" stroke-linecap="round" opacity="0.95"/>
+    <path d="M 84 25 Q 84 50 69 75 Q 54 100 69 120 Q 84 140 84 165" fill="none" stroke="#9CD8FF" stroke-width="14" stroke-linecap="round"/>
+    <path d="M 144 140 Q 154 100 134 70 Q 114 40 84 35 Q 54 30 39 55 Q 29 75 44 90" fill="none" stroke="#9CD8FF" stroke-width="14" stroke-linecap="round" opacity="0.95"/>
+    <circle cx="84" cy="85" r="13" fill="url(#gold)"/>
+    <circle cx="84" cy="85" r="8" fill="#122138"/>
+    <circle cx="84" cy="85" r="4" fill="url(#gold)"/>
+    <circle cx="39" cy="65" r="4.5" fill="url(#gold)" opacity="0.85"/>
+    <circle cx="129" cy="65" r="4.5" fill="url(#gold)" opacity="0.85"/>
+    <circle cx="84" cy="140" r="4.5" fill="url(#gold)" opacity="0.85"/>
+  </g>
+
+  <g transform="translate(355 130)">
+   <text x="0" y="0" fill="#8CCBFF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" letter-spacing="3">NORNICDB</text>
+    <text x="0" y="62" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="60" font-weight="700">The Graph Database That Learns</text>
+    <text x="0" y="118" fill="#DDEBFF" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="500">Achieving Psygnosis for AI</text>
+    <text x="0" y="172" fill="#8CA5C6" font-family="Arial, Helvetica, sans-serif" font-size="24">Neo4j-compatible • Memory that evolves</text>
+  </g>
+
+  <g transform="translate(355 360)">
+    <rect x="0" y="0" width="230" height="72" rx="16" fill="#11263B" stroke="#2CC2FF"/>
+    <text x="26" y="30" fill="#A6C8E8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Graph</text>
+    <text x="26" y="52" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="20">Connected knowledge</text>
+
+    <rect x="270" y="0" width="250" height="72" rx="16" fill="#11263B" stroke="#2CC2FF"/>
+    <text x="296" y="30" fill="#A6C8E8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Vector</text>
+    <text x="296" y="52" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="20">Semantic memory</text>
+
+    <rect x="560" y="0" width="230" height="72" rx="16" fill="#11263B" stroke="#2CC2FF"/>
+    <text x="586" y="30" fill="#A6C8E8" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Runtime</text>
+    <text x="586" y="52" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="20">AI-native execution</text>
+
+    <path d="M230 36H270" stroke="url(#cyan)" stroke-width="4" stroke-linecap="round"/>
+    <path d="M520 36H560" stroke="url(#cyan)" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="250" cy="36" r="5" fill="#72E8FF" filter="url(#glow)"/>
+    <circle cx="540" cy="36" r="5" fill="#72E8FF" filter="url(#glow)"/>
+  </g>
+
+  <g transform="translate(854 352)">
+    <ellipse cx="120" cy="82" rx="124" ry="46" fill="#DCEBFF" opacity="0.94"/>
+    <path d="M-4 82V16C-4 -10 52 -30 120 -30C188 -30 244 -10 244 16V82" fill="url(#cyan)" opacity="0.72"/>
+    <ellipse cx="120" cy="16" rx="124" ry="46" fill="#1B2140" stroke="#7DD5FF" stroke-width="6"/>
+    <ellipse cx="120" cy="16" rx="88" ry="30" fill="none" stroke="#A48DFF" opacity="0.4"/>
+    <ellipse cx="120" cy="16" rx="56" ry="18" fill="none" stroke="#7FA1FF" opacity="0.35"/>
+    <circle cx="72" cy="-2" r="7" fill="#2CE8FF" filter="url(#glow)"/>
+    <circle cx="154" cy="-24" r="5" fill="#33F0C8" filter="url(#glow)"/>
+    <path d="M154 -24C154 -24 174 -2 186 28" stroke="#33F0C8" stroke-width="3" stroke-linecap="round"/>
+    <path d="M120 -2V38" stroke="url(#gold)" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
+  </g>
+
+  <text x="110" y="547" fill="#7B93B2" font-family="Arial, Helvetica, sans-serif" font-size="20">Graph. Vector. Memory. Learning.</text>
+</svg>

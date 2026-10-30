@@ -1,0 +1,1803 @@
+openapi: 3.0.3
+info:
+  title: NornicDB REST API
+  description: |
+    Complete REST API documentation for NornicDB - A production-ready graph database with GPU acceleration, Neo4j compatibility, and advanced AI integration.
+
+    ## Authentication
+
+    NornicDB supports multiple authentication methods:
+
+    - **Basic Auth** (Neo4j compatible): `Authorization: Basic base64(username:password)`
+    - **Bearer Token** (JWT): `Authorization: Bearer <token>`
+    - **Cookie**: `Cookie: nornicdb_token=<token>`
+    - **Query Parameter**: `?token=<token>`
+
+    ## Base URL
+
+    Default: `http://localhost:7474`
+
+    ## Neo4j Compatibility
+
+    All Neo4j HTTP API endpoints are supported for full compatibility.
+  version: 1.0.0
+  contact:
+    name: NornicDB Support
+    url: https://github.com/orneryd/nornicdb
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:7474
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server (example)
+
+tags:
+  - name: Health
+    description: Health check and status endpoints
+  - name: Authentication
+    description: Authentication and user management
+  - name: Neo4j Compatible
+    description: Neo4j-compatible endpoints for database operations
+  - name: Search
+    description: Vector and hybrid search endpoints
+  - name: Graph
+    description: Graph Explorer and temporal graph endpoints
+  - name: Embeddings
+    description: Embedding generation and management
+  - name: Admin
+    description: Administrative endpoints (admin only)
+  - name: GPU
+    description: GPU acceleration control
+  - name: GDPR
+    description: GDPR compliance endpoints
+  - name: GraphQL
+    description: GraphQL API endpoints
+  - name: MCP
+    description: Model Context Protocol endpoints
+  - name: Heimdall
+    description: Heimdall AI Assistant endpoints
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Public health check endpoint (no authentication required)
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  uptime:
+                    type: string
+                    example: "2h30m15s"
+
+  /status:
+    get:
+      tags:
+        - Health
+      summary: Server status
+      description: Get detailed server status (requires authentication)
+      operationId: getStatus
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: Server status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  node_count:
+                    type: integer
+                  edge_count:
+                    type: integer
+                  uptime:
+                    type: string
+                  version:
+                    type: string
+
+  /metrics:
+    get:
+      tags:
+        - Health
+      summary: Prometheus metrics
+      description: Prometheus-compatible metrics endpoint
+      operationId: getMetrics
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /auth/token:
+    post:
+      tags:
+        - Authentication
+      summary: Get authentication token
+      description: Authenticate with username/password and receive a JWT token
+      operationId: getToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  example: "admin"
+                password:
+                  type: string
+                  format: password
+                  example: "password123"
+                grant_type:
+                  type: string
+                  example: "password"
+      responses:
+        "200":
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Logout
+      description: Invalidate current session
+      operationId: logout
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Logged out successfully"
+
+  /auth/me:
+    get:
+      tags:
+        - Authentication
+      summary: Get current user info
+      description: Get information about the currently authenticated user
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: User information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/api-token:
+    post:
+      tags:
+        - Authentication
+      summary: Generate API token
+      description: Generate a new API token for programmatic access (admin only)
+      operationId: generateAPIToken
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expiry:
+                  type: string
+                  description: Token expiry duration (e.g., "24h", "7d")
+                  example: "7d"
+      responses:
+        "200":
+          description: API token generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /auth/oauth/redirect:
+    get:
+      tags:
+        - Authentication
+      summary: OAuth redirect
+      description: Initiate OAuth 2.0 authorization flow
+      operationId: oauthRedirect
+      responses:
+        "302":
+          description: Redirect to OAuth provider
+          headers:
+            Location:
+              schema:
+                type: string
+                description: OAuth authorization URL
+
+  /auth/oauth/callback:
+    get:
+      tags:
+        - Authentication
+      summary: OAuth callback
+      description: Handle OAuth 2.0 callback and exchange code for token
+      operationId: oauthCallback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to UI after successful authentication
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /auth/users:
+    get:
+      tags:
+        - Authentication
+      summary: List users
+      description: List all users (admin only)
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags:
+        - Authentication
+      summary: Create user
+      description: Create a new user (admin only)
+      operationId: createUser
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+                roles:
+                  type: array
+                  items:
+                    type: string
+                    enum: [admin, editor, viewer]
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /auth/users/{username}:
+    get:
+      tags:
+        - Authentication
+      summary: Get user
+      description: Get user by username (admin only)
+      operationId: getUser
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags:
+        - Authentication
+      summary: Update user
+      description: Update user roles or status (admin only)
+      operationId: updateUser
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                roles:
+                  type: array
+                  items:
+                    type: string
+                disabled:
+                  type: boolean
+      responses:
+        "200":
+          description: User updated
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags:
+        - Authentication
+      summary: Delete user
+      description: Delete a user (admin only)
+      operationId: deleteUser
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /db/{database}/tx/commit:
+    post:
+      tags:
+        - Neo4j Compatible
+      summary: Execute Cypher query
+      description: Execute a Cypher query in an implicit transaction (Neo4j compatible)
+      operationId: executeCypher
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - name: database
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "nornic"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - statements
+              properties:
+                statements:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - statement
+                    properties:
+                      statement:
+                        type: string
+                        example: "MATCH (n:Person) RETURN n LIMIT 10"
+                      parameters:
+                        type: object
+      responses:
+        "200":
+          description: Query executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CypherResponse"
+
+  /nornicdb/search:
+    post:
+      tags:
+        - Search
+      summary: Hybrid search
+      description: |
+        Perform hybrid search (vector + BM25) across nodes. Supplying any
+        continuation field (`n`, `qid`, `discard`, `mode`, `group_by`, or
+        `ranked_limit`) changes the successful response from the legacy result
+        array to a `SearchContinuationPage` object. Durable qids are bound to
+        the authenticated principal and canonical database and expire after a
+        fixed server-configured TTL.
+
+        Durable continuation is disabled by default. Operators enable it with
+        a positive `memory.search_cursor_max`; zero leaves normal
+        non-continuation search behavior unchanged.
+      operationId: hybridSearch
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                database:
+                  type: string
+                  description: Database name (defaults to default database)
+                  example: "nornic"
+                query:
+                  type: string
+                  description: Search query text
+                  example: "machine learning"
+                labels:
+                  type: array
+                  items:
+                    type: string
+                  description: Filter by node labels
+                  example: ["Article", "Post"]
+                limit:
+                  type: integer
+                  description: Initial ranked retrieval depth; not a lifetime ceiling in continuation mode
+                  default: 10
+                  example: 10
+                filters:
+                  type: object
+                  additionalProperties:
+                    type: array
+                    items:
+                      type: string
+                  description: Property filters; OR within one property and AND across properties
+                qid:
+                  type: string
+                  description: Opaque durable qid returned by an earlier partial page
+                n:
+                  type: integer
+                  minimum: 1
+                  description: Maximum logical results returned by this START or PULL operation; bounded by memory.search_cursor_max_page_size (NORNICDB_SEARCH_CURSOR_MAX_PAGE_SIZE), default 500
+                discard:
+                  type: boolean
+                  description: Release the stream selected by qid without returning results
+                max_results:
+                  type: integer
+                  minimum: 1
+                  description: Optional cumulative stream ceiling, independent of limit and n
+                mode:
+                  type: string
+                  enum: [ranked, ranked_then_id, id]
+                  description: Declared result population; defaults to ranked
+                group_by:
+                  type: string
+                  description: Flat nonempty UTF-8 string property used to group child nodes before pagination
+                ranked_limit:
+                  type: integer
+                  minimum: 1
+                  description: Explicit ranked-prefix boundary for ranked_then_id mode
+                relationships:
+                  type: boolean
+                  default: false
+                  description: Search relationship properties instead of nodes, when NORNICDB_SEARCH_RELATIONSHIPS_ENABLED is on. Each result then has a `relationship` (id, type, startNode, endNode, properties) instead of a `node`, and `labels` filters by relationship type. Refused with 400 when relationship search is off or with a continuation field.
+      responses:
+        "200":
+          description: Search results
+          headers:
+            X-NornicDB-Search-Fallback-Reason:
+              description: Stable sanitized reason the selected search path differed from the requested hybrid path; omitted when no fallback occurred.
+              schema:
+                type: string
+                enum: [query_embedding_failed, query_embedding_unavailable, no_embedder, no_hybrid_results, hybrid_search_failed, query_chunks_dropped]
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    description: Legacy response when no continuation fields are supplied
+                    items:
+                      $ref: "#/components/schemas/SearchResult"
+                  - $ref: "#/components/schemas/SearchContinuationPage"
+        "400":
+          description: Invalid request or malformed/wrong-scope continuation qid (`continuation_invalid`), or n above the configured page limit (`page_size_exceeded`, with max_page_size)
+        "409":
+          description: Durable continuation is disabled (`continuation_disabled`, non-retryable)
+        "410":
+          description: Continuation qid expired, was released, or was invalidated (`continuation_gone`, non-retryable)
+        "503":
+          description: |
+            Search is unavailable for this database. Distinguish the cases via `request_status`:
+
+            - `search_disabled_for_database` — both BM25 and vector are disabled for the database (per-DB master switches). Permanent; `retryable: false`. Clients should not retry.
+            - `search_not_ready` — an eager build is mid-flight at the moment of the request. `retryable: true`. Clients should back off and retry.
+            - `continuation_saturated` — continuation cursor admission is full. Retry after the delay in `Retry-After`.
+
+            Lazy-warmed databases (`*_warming=lazy`) do NOT emit a 503 on the first request — `Service.EnsureWarm` blocks the handler synchronously until the build completes, then returns 200 with the same shape as an eager database.
+
+            Health checks must NOT target this endpoint for `warming=lazy` or any `*_enabled=false` database — every probe would either trigger a build or stream `search_disabled_for_database` 503s. Use `/nornicdb/health` (DB-agnostic) or `/admin/databases/{name}/config` (lookup-only) instead.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  database:
+                    type: string
+                  bm25_enabled:
+                    type: boolean
+                  vector_enabled:
+                    type: boolean
+                  retryable:
+                    type: boolean
+                  http_code:
+                    type: integer
+                  request_status:
+                    type: string
+                    enum:
+                      - search_disabled_for_database
+                      - search_not_ready
+                      - continuation_saturated
+
+  /nornicdb/similar:
+    post:
+      tags:
+        - Search
+      summary: Vector similarity search
+      description: Find nodes similar to a given node using vector embeddings
+      operationId: similarSearch
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - node_id
+              properties:
+                database:
+                  type: string
+                  description: Database name (defaults to default database)
+                  example: "nornic"
+                node_id:
+                  type: string
+                  description: ID of the node to find similar nodes for
+                  example: "n1"
+                limit:
+                  type: integer
+                  description: Maximum number of results
+                  default: 10
+                  example: 10
+      responses:
+        "200":
+          description: Similar nodes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /nornicdb/graph/{database}/neighborhood:
+    post:
+      tags:
+        - Graph
+      summary: Build a neighborhood subgraph
+      description: Build a normalized graph payload around the supplied node IDs for Graph Explorer handoff.
+      operationId: graphNeighborhood
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - name: database
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "nornic"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphNeighborhoodRequest"
+      responses:
+        "200":
+          description: Neighborhood graph payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphPayload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /nornicdb/graph/{database}/expand:
+    post:
+      tags:
+        - Graph
+      summary: Expand an existing graph selection
+      description: Expand the supplied node set into a larger normalized graph payload.
+      operationId: graphExpand
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - name: database
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "nornic"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphNeighborhoodRequest"
+      responses:
+        "200":
+          description: Expanded graph payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphPayload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /nornicdb/graph/{database}/path:
+    post:
+      tags:
+        - Graph
+      summary: Build a graph payload for a path
+      description: Resolve a path between two node IDs and return it as a normalized graph payload. Returns 400 when the traversal limit is exhausted before the target is found.
+      operationId: graphPath
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - name: database
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "nornic"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphPathRequest"
+      responses:
+        "200":
+          description: Path graph payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphPayload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /nornicdb/graph/{database}/temporal:
+    post:
+      tags:
+        - Graph
+      summary: Reconstruct a temporal graph snapshot
+      description: Reconstruct an induced graph snapshot for the supplied node IDs at the requested timestamp.
+      operationId: graphTemporal
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - name: database
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "nornic"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphTemporalRequest"
+      responses:
+        "200":
+          description: Temporal graph payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphPayload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /nornicdb/graph/{database}/diff:
+    post:
+      tags:
+        - Graph
+      summary: Diff graph state across time
+      description: Compare a target graph state identified by `as_of` against a baseline identified by `compare_to`, or against `current` when `compare_to` is omitted, and return deterministic added/removed/changed markers.
+      operationId: graphDiff
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - name: database
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "nornic"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphDiffRequest"
+      responses:
+        "200":
+          description: Diff graph payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphPayload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /nornicdb/decay:
+    get:
+      tags:
+        - Search
+      summary: Memory decay information
+      description: Get memory decay statistics for nodes
+      operationId: getDecay
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: Decay statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_nodes:
+                    type: integer
+                  decayed_nodes:
+                    type: integer
+                  decay_rate:
+                    type: number
+
+  /nornicdb/embed/trigger:
+    post:
+      tags:
+        - Embeddings
+      summary: Trigger embedding generation
+      description: Trigger the embedding worker to process nodes without embeddings
+      operationId: triggerEmbeddings
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: Embedding generation triggered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Embedding generation triggered"
+
+  /nornicdb/embed/stats:
+    get:
+      tags:
+        - Embeddings
+      summary: Embedding statistics
+      description: Get embedding worker statistics. Embedding is complete when `pending_nodes` and `stats.in_flight` are both zero; `pending_nodes` includes claimed work for backward-compatible polling.
+      operationId: getEmbedStats
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: Embedding statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  total_embeddings:
+                    type: integer
+                  pending_nodes:
+                    type: integer
+                  stats:
+                    type: object
+                    properties:
+                      running:
+                        type: boolean
+                      in_flight:
+                        type: integer
+                      processed:
+                        type: integer
+                      failed:
+                        type: integer
+                      parked:
+                        type: integer
+
+  /nornicdb/embed/clear:
+    post:
+      tags:
+        - Embeddings
+      summary: Clear all embeddings
+      description: Clear all embeddings from nodes (admin only)
+      operationId: clearEmbeddings
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: Embeddings cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "All embeddings cleared"
+
+  /nornicdb/embed/failures:
+    get:
+      tags:
+        - Embeddings
+      summary: List terminal embedding failures
+      description: Lists nodes parked after non-retryable provider errors without returning node properties or vectors
+      operationId: listEmbeddingFailures
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: Durable terminal embedding failures
+
+  /nornicdb/embed/retry-failures:
+    post:
+      tags:
+        - Embeddings
+      summary: Retry terminal embedding failures
+      description: Clears terminal failure state and requeues selected nodes; an empty list retries all parked nodes
+      operationId: retryEmbeddingFailures
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                node_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "202":
+          description: Failures restored to the pending queue
+
+  /nornicdb/search/rebuild:
+    post:
+      tags:
+        - Search
+      summary: Rebuild search indexes
+      description: Rebuild search indexes from all nodes in the specified database
+      operationId: rebuildSearchIndexes
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                database:
+                  type: string
+                  description: Database name (defaults to default database)
+                  example: "nornic"
+      responses:
+        "200":
+          description: Indexes rebuilt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Search indexes rebuilt"
+
+  /admin/stats:
+    get:
+      tags:
+        - Admin
+      summary: System statistics
+      description: Get detailed system statistics (admin only)
+      operationId: getAdminStats
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: System statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  node_count:
+                    type: integer
+                  edge_count:
+                    type: integer
+                  database_count:
+                    type: integer
+                  uptime:
+                    type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/config:
+    get:
+      tags:
+        - Admin
+      summary: Get configuration
+      description: Get current server configuration (admin only)
+      operationId: getAdminConfig
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: Configuration
+          content:
+            application/json:
+              schema:
+                type: object
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/backup:
+    post:
+      tags:
+        - Admin
+      summary: Create backup
+      description: Create a database backup (admin only)
+      operationId: createBackup
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: Backup created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backup_path:
+                    type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/gpu/status:
+    get:
+      tags:
+        - GPU
+      summary: GPU status
+      description: Get GPU acceleration status (admin only)
+      operationId: getGPUStatus
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: GPU status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  available:
+                    type: boolean
+                  device_name:
+                    type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/gpu/enable:
+    post:
+      tags:
+        - GPU
+      summary: Enable GPU acceleration
+      description: Enable GPU acceleration (admin only)
+      operationId: enableGPU
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: GPU enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/gpu/disable:
+    post:
+      tags:
+        - GPU
+      summary: Disable GPU acceleration
+      description: Disable GPU acceleration (admin only)
+      operationId: disableGPU
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: GPU disabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/gpu/test:
+    post:
+      tags:
+        - GPU
+      summary: Test GPU
+      description: Test GPU acceleration (admin only)
+      operationId: testGPU
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: GPU test results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  performance:
+                    type: number
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /gdpr/export:
+    post:
+      tags:
+        - GDPR
+      summary: GDPR data export
+      description: Export all user data (GDPR Art.15 - Right of access). Requires user_id and format in request body.
+      operationId: gdprExport
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - format
+              properties:
+                user_id:
+                  type: string
+                  description: User ID to export data for
+                  example: "user-123"
+                format:
+                  type: string
+                  enum: [json, csv]
+                  description: Export format (json or csv)
+                  example: "json"
+      responses:
+        "200":
+          description: User data export
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_data:
+                    type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /gdpr/delete:
+    post:
+      tags:
+        - GDPR
+      summary: GDPR data deletion
+      description: Delete all user data (GDPR Art.17 - Right to erasure)
+      operationId: gdprDelete
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: User data deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /graphql:
+    post:
+      tags:
+        - GraphQL
+      summary: GraphQL endpoint
+      description: Execute GraphQL queries and mutations
+      operationId: graphqlQuery
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                query:
+                  type: string
+                  example: "query { nodes { id labels properties } }"
+                variables:
+                  type: object
+      responses:
+        "200":
+          description: GraphQL response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                  errors:
+                    type: array
+                    items:
+                      type: object
+
+  /graphql/playground:
+    get:
+      tags:
+        - GraphQL
+      summary: GraphQL Playground
+      description: Interactive GraphQL IDE
+      operationId: graphqlPlayground
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200":
+          description: GraphQL Playground HTML
+          content:
+            text/html:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token authentication
+    basicAuth:
+      type: http
+      scheme: basic
+      description: Basic authentication (Neo4j compatible)
+
+  schemas:
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+        token_type:
+          type: string
+          example: "Bearer"
+        expires_in:
+          type: integer
+          description: Token expiry in seconds
+
+    UserInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        auth_method:
+          type: string
+          enum: [oauth, password]
+        oauth_provider:
+          type: string
+          description: OAuth provider URL (if auth_method is oauth)
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        disabled:
+          type: boolean
+
+    SearchResult:
+      type: object
+      properties:
+        node:
+          type: object
+          properties:
+            id:
+              type: string
+            labels:
+              type: array
+              items:
+                type: string
+            properties:
+              type: object
+        score:
+          type: number
+          description: Combined RRF score
+        rrf_score:
+          type: number
+          description: Reciprocal Rank Fusion score
+        vector_rank:
+          type: integer
+          description: Rank in vector search results
+        bm25_rank:
+          type: integer
+          description: Rank in BM25 search results
+        phase:
+          type: string
+          enum: [ranked, catalog]
+          description: Population phase for continuation results
+        group_key:
+          type: string
+          description: Logical group value when group_by is set
+        passages:
+          type: array
+          description: Matching child nodes retained under one grouped logical result
+          items:
+            $ref: "#/components/schemas/SearchPassage"
+
+    SearchPassage:
+      type: object
+      description: A child result nested under a grouped logical result
+      properties:
+        node:
+          type: object
+          properties:
+            id:
+              type: string
+            labels:
+              type: array
+              items:
+                type: string
+            properties:
+              type: object
+        score:
+          type: number
+        rrf_score:
+          type: number
+        vector_rank:
+          type: integer
+        bm25_rank:
+          type: integer
+        phase:
+          type: string
+          enum: [ranked, catalog]
+
+    SearchContinuationPage:
+      type: object
+      required:
+        [
+          results,
+          has_more,
+          position,
+          returned,
+          discovered,
+          mode,
+          ranked_count,
+          ranked_pool_exhausted,
+          collection_exhausted,
+          completion,
+        ]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        qid:
+          type: string
+          description: Opaque token for the next position; empty when exhausted or released
+        has_more:
+          type: boolean
+        position:
+          type: integer
+          format: uint64
+        returned:
+          type: integer
+        max_page_size:
+          type: integer
+          description: Effective maximum n, advertised on START and PULL pages; defaults to 500
+        discovered:
+          type: integer
+        total:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Known for complete modes; may be null for progressive ranked mode
+        expires_at:
+          type: string
+          format: date-time
+        released:
+          type: boolean
+        search_method:
+          type: string
+        fallback_triggered:
+          type: boolean
+        fallback_reason:
+          type: string
+          description: Stable sanitized reason the selected search path differed from the requested hybrid path.
+          enum: [query_embedding_failed, query_embedding_unavailable, no_embedder, no_hybrid_results, hybrid_search_failed, query_chunks_dropped]
+        mode:
+          type: string
+          enum: [ranked, ranked_then_id, id]
+        ranked_count:
+          type: integer
+        eligible_count:
+          type: integer
+          nullable: true
+        ranked_pool_exhausted:
+          type: boolean
+          description: True only when the ranked branch is known to be fully exhausted without truncating a candidate prefix. False for fixed ranked_limit prefixes and configured candidate-budget boundaries.
+        collection_exhausted:
+          type: boolean
+          description: True when the complete eligible population has been emitted for id and ranked_then_id modes, or when ranked mode naturally exhausts an exact producer without a candidate-budget boundary. False when the stream ended at the caller's max_results ceiling or a configured candidate budget.
+        completion:
+          type: string
+          description: Terminal reason for the stream. eligible_population_exhausted means the stream emitted the complete eligible population, including natural ranked exhaustion from an exact producer. candidate_pool_exhausted means a configured candidate boundary, such as rerank top-K, stopped ranked expansion without proving full ranked exhaustion. max_results_reached means the caller's explicit lifetime result ceiling stopped the stream before full collection exhaustion.
+          enum:
+            [
+              more_results,
+              candidate_pool_exhausted,
+              eligible_population_exhausted,
+              max_results_reached,
+            ]
+
+    CypherResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              columns:
+                type: array
+                items:
+                  type: string
+              data:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    row:
+                      type: array
+                    meta:
+                      type: array
+
+    GraphNeighborhoodRequest:
+      type: object
+      required:
+        - node_ids
+      properties:
+        node_ids:
+          type: array
+          items:
+            type: string
+          description: Seed or selected node IDs to include in the graph response.
+        existing_node_ids:
+          type: array
+          items:
+            type: string
+          description: >
+            Existing graph node IDs already present in the client graph state. This field is
+            currently advisory only and may be ignored by the server; responses include all
+            collected nodes regardless of this value. Reserved for future server-side diff/delta
+            behavior.
+        existing_edge_ids:
+          type: array
+          items:
+            type: string
+          description: >
+            Existing graph edge IDs already present in the client graph state. This field is
+            currently advisory only and may be ignored by the server; responses include all
+            collected edges regardless of this value. Reserved for future server-side diff/delta
+            behavior.
+        depth:
+          type: integer
+          description: Traversal depth for neighborhood and expand requests.
+          example: 1
+        limit:
+          type: integer
+          description: Soft node-count cap for graph expansion responses.
+          example: 500
+        labels:
+          type: array
+          items:
+            type: string
+          description: Optional node-label filter.
+        relationship_types:
+          type: array
+          items:
+            type: string
+          description: Optional relationship-type filter.
+
+    GraphPathRequest:
+      type: object
+      required:
+        - source_node_id
+        - target_node_id
+      properties:
+        source_node_id:
+          type: string
+          description: Source node ID for path requests.
+        target_node_id:
+          type: string
+          description: Target node ID for path requests.
+        limit:
+          type: integer
+          description: Soft traversal cap for path search responses.
+          example: 500
+        labels:
+          type: array
+          items:
+            type: string
+          description: Optional node-label filter.
+        relationship_types:
+          type: array
+          items:
+            type: string
+          description: Optional relationship-type filter.
+
+    GraphTemporalRequest:
+      type: object
+      required:
+        - node_ids
+        - as_of
+      properties:
+        node_ids:
+          type: array
+          items:
+            type: string
+          description: Seed or selected node IDs to include in the graph response.
+        labels:
+          type: array
+          items:
+            type: string
+          description: Optional node-label filter.
+        relationship_types:
+          type: array
+          items:
+            type: string
+          description: Optional relationship-type filter.
+        as_of:
+          type: string
+          format: date-time
+          description: Snapshot timestamp for temporal reconstruction.
+
+    GraphDiffRequest:
+      type: object
+      required:
+        - node_ids
+        - as_of
+      properties:
+        node_ids:
+          type: array
+          items:
+            type: string
+          description: Seed or selected node IDs to include in the graph response.
+        labels:
+          type: array
+          items:
+            type: string
+          description: Optional node-label filter.
+        relationship_types:
+          type: array
+          items:
+            type: string
+          description: Optional relationship-type filter.
+        as_of:
+          type: string
+          format: date-time
+          description: Target graph state timestamp for the diff response.
+        compare_to:
+          type: string
+          format: date-time
+          description: Optional baseline timestamp for temporal diff requests. When omitted, diff baselines against the current graph state.
+
+    GraphNode:
+      type: object
+      properties:
+        id:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        properties:
+          type: object
+          additionalProperties: true
+        score:
+          type: number
+        status:
+          type: string
+          enum: [added, removed, changed]
+
+    GraphEdge:
+      type: object
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        target:
+          type: string
+        type:
+          type: string
+        properties:
+          type: object
+          additionalProperties: true
+        semantic:
+          type: boolean
+        status:
+          type: string
+          enum: [added, removed, changed]
+
+    GraphMeta:
+      type: object
+      properties:
+        database:
+          type: string
+        generated_from:
+          type: string
+          enum: [query, node, diff]
+        depth:
+          type: integer
+        as_of:
+          type: string
+          description: Target graph state timestamp for temporal payloads and diff responses.
+        compare_to:
+          type: string
+          description: Baseline graph state label or timestamp for diff responses.
+        node_count:
+          type: integer
+        edge_count:
+          type: integer
+        truncated:
+          type: boolean
+
+    GraphPayload:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphEdge"
+        meta:
+          $ref: "#/components/schemas/GraphMeta"
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string
+
+    Forbidden:
+      description: Forbidden (insufficient permissions)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string

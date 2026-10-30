@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Simple menu bar icon - just the central nexus and key connection -->
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff"/>
+      <stop offset="100%" style="stop-color:#e0e0e0"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Three connecting nodes forming triangle -->
+  <circle cx="32" cy="20" r="4" fill="url(#g)" opacity="0.9"/>
+  <circle cx="20" cy="44" r="4" fill="url(#g)" opacity="0.9"/>
+  <circle cx="44" cy="44" r="4" fill="url(#g)" opacity="0.9"/>
+  
+  <!-- Connection lines -->
+  <line x1="32" y1="24" x2="32" y2="28" stroke="url(#g)" stroke-width="2" opacity="0.7"/>
+  <line x1="30" y1="30" x2="22" y2="42" stroke="url(#g)" stroke-width="2" opacity="0.7"/>
+  <line x1="34" y1="30" x2="42" y2="42" stroke="url(#g)" stroke-width="2" opacity="0.7"/>
+  
+  <!-- Central nexus -->
+  <circle cx="32" cy="32" r="8" fill="url(#g)"/>
+  <circle cx="32" cy="32" r="5" fill="none" stroke="url(#g)" stroke-width="2"/>
+</svg>

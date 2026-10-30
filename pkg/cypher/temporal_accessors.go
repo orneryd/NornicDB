@@ -1,0 +1,542 @@
+package cypher
+
+import (
+	"bytes"
+	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// formatCypherValueString is the text toString() gives a number or temporal
+// value. Times are written with seconds even when they are zero, as Neo4j's
+// toString() writes them (#818).
+func formatCypherValueString(value interface{}) string {
+	switch typed := value.(type) {
+	case float64:
+		return FormatFloat(typed, 64)
+	case float32:
+		return FormatFloat(float64(typed), 32)
+	case CypherDate:
+		return typed.String()
+	case *CypherDate:
+		return typed.String()
+	case CypherLocalTime:
+		return formatTemporalClock(typed.Time, false, "", true)
+	case *CypherLocalTime:
+		return formatTemporalClock(typed.Time, false, "", true)
+	case CypherTime:
+		return formatTemporalClock(typed.Time, true, "", true)
+	case *CypherTime:
+		return formatTemporalClock(typed.Time, true, "", true)
+	case CypherLocalDateTime:
+		return formatTemporalDateTime(typed.Time, false, "", true)
+	case *CypherLocalDateTime:
+		return formatTemporalDateTime(typed.Time, false, "", true)
+	case CypherDateTime:
+		return formatTemporalDateTime(typed.Time, true, typed.ZoneID, true)
+	case *CypherDateTime:
+		return formatTemporalDateTime(typed.Time, true, typed.ZoneID, true)
+	case CypherPoint:
+		return typed.cypherText()
+	case *CypherPoint:
+		return typed.cypherText()
+	case time.Time:
+		return formatZonedDateTimeString(typed, "")
+	case *time.Time:
+		return formatZonedDateTimeString(*typed, "")
+	case CypherDuration:
+		return typed.String()
+	case *CypherDuration:
+		return typed.String()
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
+// FormatFloat writes a float as Neo4j does (Java's Double.toString): plain
+// decimals with at least one fractional digit from 10^-3 up to 10^7
+// ("0.001", "9999999.0"), scientific notation with an upper-case E outside
+// that range ("1.0E7", "1.23456789E-4"), and "Infinity", "-Infinity" and
+// "NaN". bits is the value's precision (32 or 64), so a float32 keeps its
+// shortest text. It is the one text of a float: toString(), point text and
+// the HTTP API's numbers use it.
+func FormatFloat(value float64, bits int) string {
+	if math.IsInf(value, 1) {
+		return "Infinity"
+	}
+	if math.IsInf(value, -1) {
+		return "-Infinity"
+	}
+	if math.IsNaN(value) {
+		return "NaN"
+	}
+	magnitude := math.Abs(value)
+	if magnitude == 0 || magnitude >= 1e-3 && magnitude < 1e7 {
+		var buffer [32]byte
+		text := strconv.AppendFloat(buffer[:0], value, 'f', -1, bits)
+		if bytes.IndexByte(text, '.') < 0 {
+			text = append(text, '.', '0')
+		}
+		return string(text)
+	}
+	// Go writes 1.23456789e+08 or 1e-07: keep the mantissa (with a
+	// fractional digit), then E, the exponent's sign when negative and its
+	// digits without leading zeros.
+	var buffer [32]byte
+	scientific := strconv.AppendFloat(buffer[:0], value, 'e', -1, bits)
+	marker := bytes.IndexByte(scientific, 'e')
+	var out [40]byte
+	text := append(out[:0], scientific[:marker]...)
+	if bytes.IndexByte(text, '.') < 0 {
+		text = append(text, '.', '0')
+	}
+	text = append(text, 'E')
+	exponent := scientific[marker+1:]
+	if exponent[0] == '-' {
+		text = append(text, '-')
+	}
+	exponent = bytes.TrimLeft(exponent[1:], "0")
+	return string(append(text, exponent...))
+}
+
+func formatZonedDateTimeString(value time.Time, zoneID string) string {
+	if zoneID == "" && strings.Contains(value.Location().String(), "/") {
+		zoneID = value.Location().String()
+	}
+	return formatTemporalDateTime(value, true, zoneID, true)
+}
+
+// compareTemporalByContract applies the explicit temporal contract without
+// Go location-pointer identity or the incidental representation of durations.
+
+func compareTemporalByContract(left, right interface{}, contract cypherComparisonContract) (bool, bool) {
+	leftParts, leftOK := temporalIdentityParts(left, contract)
+	rightParts, rightOK := temporalIdentityParts(right, contract)
+	if !leftOK && !rightOK {
+		return false, false
+	}
+	if !leftOK || !rightOK {
+		return false, true
+	}
+	return leftParts == rightParts, true
+}
+
+func compareTemporalOrdering(left, right interface{}) (int, bool) {
+	leftKind, leftTime, leftOK := temporalOrderParts(left)
+	rightKind, rightTime, rightOK := temporalOrderParts(right)
+	if !leftOK || !rightOK || leftKind != rightKind {
+		return 0, false
+	}
+	switch leftKind {
+	case "date":
+		return compareCivilParts(leftTime, rightTime, false), true
+	case "localtime":
+		return compareInt64(clockNanos(leftTime), clockNanos(rightTime)), true
+	case "time":
+		_, leftOffset := leftTime.Zone()
+		_, rightOffset := rightTime.Zone()
+		leftUTC := clockNanos(leftTime) - int64(leftOffset)*1_000_000_000
+		rightUTC := clockNanos(rightTime) - int64(rightOffset)*1_000_000_000
+		if comparison := compareInt64(leftUTC, rightUTC); comparison != 0 {
+			return comparison, true
+		}
+		return compareInt64(int64(leftOffset), int64(rightOffset)), true
+	case "localdatetime":
+		return compareCivilParts(leftTime, rightTime, true), true
+	case "datetime":
+		if comparison := compareInt64(leftTime.Unix(), rightTime.Unix()); comparison != 0 {
+			return comparison, true
+		}
+		if comparison := compareInt64(int64(leftTime.Nanosecond()), int64(rightTime.Nanosecond())); comparison != 0 {
+			return comparison, true
+		}
+		_, leftOffset := leftTime.Zone()
+		_, rightOffset := rightTime.Zone()
+		return compareInt64(int64(leftOffset), int64(rightOffset)), true
+	default:
+		return 0, false
+	}
+}
+
+func temporalOrderParts(value interface{}) (string, time.Time, bool) {
+	switch typed := value.(type) {
+	case CypherDate:
+		return "date", typed.Time, true
+	case *CypherDate:
+		if typed != nil {
+			return "date", typed.Time, true
+		}
+	case CypherLocalTime:
+		return "localtime", typed.Time, true
+	case *CypherLocalTime:
+		if typed != nil {
+			return "localtime", typed.Time, true
+		}
+	case CypherTime:
+		return "time", typed.Time, true
+	case *CypherTime:
+		if typed != nil {
+			return "time", typed.Time, true
+		}
+	case CypherLocalDateTime:
+		return "localdatetime", typed.Time, true
+	case *CypherLocalDateTime:
+		if typed != nil {
+			return "localdatetime", typed.Time, true
+		}
+	case CypherDateTime:
+		return "datetime", typed.Time, true
+	case *CypherDateTime:
+		if typed != nil {
+			return "datetime", typed.Time, true
+		}
+	case time.Time:
+		return "datetime", typed, true
+	case *time.Time:
+		if typed != nil {
+			return "datetime", *typed, true
+		}
+	}
+	return "", time.Time{}, false
+}
+
+func clockNanos(value time.Time) int64 {
+	return int64(value.Hour())*3_600_000_000_000 + int64(value.Minute())*60_000_000_000 + int64(value.Second())*1_000_000_000 + int64(value.Nanosecond())
+}
+
+func compareCivilParts(left, right time.Time, includeClock bool) int {
+	leftParts := [...]int{left.Year(), int(left.Month()), left.Day(), left.Hour(), left.Minute(), left.Second(), left.Nanosecond()}
+	rightParts := [...]int{right.Year(), int(right.Month()), right.Day(), right.Hour(), right.Minute(), right.Second(), right.Nanosecond()}
+	limit := 3
+	if includeClock {
+		limit = len(leftParts)
+	}
+	for index := 0; index < limit; index++ {
+		if leftParts[index] < rightParts[index] {
+			return -1
+		}
+		if leftParts[index] > rightParts[index] {
+			return 1
+		}
+	}
+	return 0
+}
+
+func compareInt64(left, right int64) int {
+	if left < right {
+		return -1
+	}
+	if left > right {
+		return 1
+	}
+	return 0
+}
+
+// temporalValueKey is the canonical, comparable temporal identity. Keep it
+// typed through equality, hashing and lookup: boxing parts or formatting a key
+// adds allocations to every temporal item in a collection.
+type temporalValueKey struct {
+	kind   byte
+	parts  [7]int64
+	zone   string
+	offset int
+}
+
+// Equality ignores a named DATETIME's overlap offset. Equivalence retains it:
+// both civil timestamps are equal, but DISTINCT/grouping/set maps keep both.
+// Both contracts use the same normalization owner below.
+
+func temporalIdentityParts(value interface{}, contract cypherComparisonContract) (temporalValueKey, bool) {
+	if contract != cypherValueEqualityContract && contract != cypherEquivalenceContract {
+		panic("temporal comparison requires an explicit contract")
+	}
+	switch typed := value.(type) {
+	case CypherDate:
+		return dateEqualityParts(typed.Time, contract)
+	case *CypherDate:
+		if typed != nil {
+			return dateEqualityParts(typed.Time, contract)
+		}
+	case CypherLocalTime:
+		return clockEqualityParts('l', typed.Time, contract)
+	case *CypherLocalTime:
+		if typed != nil {
+			return clockEqualityParts('l', typed.Time, contract)
+		}
+	case CypherTime:
+		return clockEqualityParts('t', typed.Time, contract)
+	case *CypherTime:
+		if typed != nil {
+			return clockEqualityParts('t', typed.Time, contract)
+		}
+	case CypherLocalDateTime:
+		return localDateTimeEqualityParts(typed.Time, contract)
+	case *CypherLocalDateTime:
+		if typed != nil {
+			return localDateTimeEqualityParts(typed.Time, contract)
+		}
+	case CypherDateTime:
+		return zonedDateTimeIdentityParts(typed.Time, typed.ZoneID, contract)
+	case *CypherDateTime:
+		if typed != nil {
+			return zonedDateTimeIdentityParts(typed.Time, typed.ZoneID, contract)
+		}
+	case time.Time:
+		return zonedDateTimeIdentityParts(typed, "", contract)
+	case *time.Time:
+		if typed != nil {
+			return zonedDateTimeIdentityParts(*typed, "", contract)
+		}
+	case CypherDuration:
+		return durationEqualityParts(&typed, contract)
+	case *CypherDuration:
+		if typed != nil {
+			return durationEqualityParts(typed, contract)
+		}
+	}
+	return temporalValueKey{}, false
+}
+
+func dateEqualityParts(value time.Time, contract cypherComparisonContract) (temporalValueKey, bool) {
+	year, month, day := value.Date()
+	return temporalValueKey{kind: 'd', parts: [7]int64{int64(year), int64(month), int64(day)}}, true
+}
+
+func clockEqualityParts(kind byte, value time.Time, contract cypherComparisonContract) (temporalValueKey, bool) {
+	hour, minute, second := value.Clock()
+	key := temporalValueKey{kind: kind, parts: [7]int64{int64(hour), int64(minute), int64(second), int64(value.Nanosecond())}}
+	// TIME is an offset time, even when projected from a named-zone datetime.
+	if kind == 't' {
+		_, key.offset = value.Zone()
+	}
+	return key, true
+}
+
+func localDateTimeEqualityParts(value time.Time, contract cypherComparisonContract) (temporalValueKey, bool) {
+	year, month, day := value.Date()
+	hour, minute, second := value.Clock()
+	return temporalValueKey{kind: 'L', parts: [7]int64{int64(year), int64(month), int64(day), int64(hour), int64(minute), int64(second), int64(value.Nanosecond())}}, true
+}
+
+func zonedDateTimeIdentityParts(value time.Time, zoneID string, contract cypherComparisonContract) (temporalValueKey, bool) {
+	key, _ := localDateTimeEqualityParts(value, contract)
+	key.kind = 'D'
+	// Explicit region IDs include UTC and CET, which have no slash. A bare
+	// Go time carries named-zone identity when its location is an IANA path;
+	// fixed-zone labels and time.UTC carry only the offset.
+	if zoneID == "" && strings.Contains(value.Location().String(), "/") {
+		zoneID = value.Location().String()
+	}
+	if zoneID != "" && zoneID != "Z" && zoneID[0] != '+' && zoneID[0] != '-' {
+		key.zone = zoneID
+	}
+	if key.zone == "" || contract == cypherEquivalenceContract {
+		_, key.offset = value.Zone()
+	}
+	return key, true
+}
+
+func durationEqualityParts(value *CypherDuration, contract cypherComparisonContract) (temporalValueKey, bool) {
+	seconds := value.Hours*3_600 + value.Minutes*60 + value.Seconds + value.Nanos/1_000_000_000
+	nanos := value.Nanos % 1_000_000_000
+	if nanos < 0 {
+		seconds--
+		nanos += 1_000_000_000
+	}
+	// Months, days and seconds remain independent groups: a day is not 24h.
+	return temporalValueKey{kind: 'u', parts: [7]int64{value.Years*12 + value.Months, value.Days, seconds, nanos}}, true
+}
+
+// evaluateTemporalProperty reads a Cypher temporal field from its typed value.
+// The second result identifies temporal values so callers do not reinterpret
+// unsupported fields as map properties; the third reports a supported field.
+func evaluateTemporalProperty(value interface{}, property string) (interface{}, bool, bool) {
+	var temporal time.Time
+	var zoneID string
+	hasDate, hasClock, hasZone, hasInstant := false, false, false, false
+
+	switch typed := value.(type) {
+	case CypherDate:
+		temporal, hasDate = typed.Time, true
+	case *CypherDate:
+		if typed == nil {
+			return nil, true, true
+		}
+		temporal, hasDate = typed.Time, true
+	case CypherLocalTime:
+		temporal, hasClock = typed.Time, true
+	case *CypherLocalTime:
+		if typed == nil {
+			return nil, true, true
+		}
+		temporal, hasClock = typed.Time, true
+	case CypherTime:
+		temporal, hasClock, hasZone = typed.Time, true, true
+	case *CypherTime:
+		if typed == nil {
+			return nil, true, true
+		}
+		temporal, hasClock, hasZone = typed.Time, true, true
+	case CypherLocalDateTime:
+		temporal, hasDate, hasClock = typed.Time, true, true
+	case *CypherLocalDateTime:
+		if typed == nil {
+			return nil, true, true
+		}
+		temporal, hasDate, hasClock = typed.Time, true, true
+	case CypherDateTime:
+		temporal, zoneID = typed.Time, typed.ZoneID
+		hasDate, hasClock, hasZone, hasInstant = true, true, true, true
+	case *CypherDateTime:
+		if typed == nil {
+			return nil, true, true
+		}
+		temporal, zoneID = typed.Time, typed.ZoneID
+		hasDate, hasClock, hasZone, hasInstant = true, true, true, true
+	case time.Time:
+		temporal = typed
+		hasDate, hasClock, hasZone, hasInstant = true, true, true, true
+	case *time.Time:
+		if typed == nil {
+			return nil, true, true
+		}
+		temporal = *typed
+		hasDate, hasClock, hasZone, hasInstant = true, true, true, true
+	case CypherDuration:
+		return evaluateDurationProperty(&typed, property)
+	case *CypherDuration:
+		if typed == nil {
+			return nil, true, true
+		}
+		return evaluateDurationProperty(typed, property)
+	default:
+		return nil, false, false
+	}
+
+	field := lowerASCII(property)
+	if hasDate {
+		isoYear, isoWeek := temporal.ISOWeek()
+		quarter := (int(temporal.Month())-1)/3 + 1
+		quarterStart := time.Date(temporal.Year(), time.Month((quarter-1)*3+1), 1, 0, 0, 0, 0, temporal.Location())
+		switch field {
+		case "year":
+			return int64(temporal.Year()), true, true
+		case "quarter":
+			return int64(quarter), true, true
+		case "month":
+			return int64(temporal.Month()), true, true
+		case "week":
+			return int64(isoWeek), true, true
+		case "weekyear":
+			return int64(isoYear), true, true
+		case "day":
+			return int64(temporal.Day()), true, true
+		case "ordinalday":
+			return int64(temporal.YearDay()), true, true
+		case "weekday", "dayofweek":
+			weekday := temporal.Weekday()
+			if weekday == time.Sunday {
+				return int64(7), true, true
+			}
+			return int64(weekday), true, true
+		case "dayofquarter":
+			return int64(temporal.YearDay() - quarterStart.YearDay() + 1), true, true
+		}
+	}
+	if hasClock {
+		switch field {
+		case "hour":
+			return int64(temporal.Hour()), true, true
+		case "minute":
+			return int64(temporal.Minute()), true, true
+		case "second":
+			return int64(temporal.Second()), true, true
+		case "millisecond":
+			return int64(temporal.Nanosecond() / 1_000_000), true, true
+		case "microsecond":
+			return int64(temporal.Nanosecond() / 1_000), true, true
+		case "nanosecond":
+			return int64(temporal.Nanosecond()), true, true
+		}
+	}
+	if hasZone {
+		_, offsetSeconds := temporal.Zone()
+		switch field {
+		case "timezone":
+			if zoneID != "" {
+				return zoneID, true, true
+			}
+			location := temporal.Location().String()
+			if location == "UTC" || location == "Local" || location == "" {
+				return formatTemporalOffset(offsetSeconds), true, true
+			}
+			return location, true, true
+		case "offset":
+			return formatTemporalOffset(offsetSeconds), true, true
+		case "offsetminutes":
+			return int64(offsetSeconds / 60), true, true
+		case "offsetseconds":
+			return int64(offsetSeconds), true, true
+		}
+	}
+	if hasInstant {
+		switch field {
+		case "epochseconds":
+			return temporal.UnixMilli() / 1_000, true, true
+		case "epochmillis":
+			return temporal.UnixMilli(), true, true
+		}
+	}
+	return nil, true, false
+}
+
+func evaluateDurationProperty(duration *CypherDuration, property string) (interface{}, bool, bool) {
+	months := duration.Years*12 + duration.Months
+	seconds := duration.Hours*3_600 + duration.Minutes*60 + duration.Seconds
+	switch lowerASCII(property) {
+	case "years":
+		return months / 12, true, true
+	case "quarters":
+		return months / 3, true, true
+	case "months":
+		return months, true, true
+	case "weeks":
+		return duration.Days / 7, true, true
+	case "days":
+		return duration.Days, true, true
+	case "hours":
+		return seconds / 3_600, true, true
+	case "minutes":
+		return seconds / 60, true, true
+	case "seconds":
+		return seconds, true, true
+	case "milliseconds":
+		return seconds*1_000 + duration.Nanos/1_000_000, true, true
+	case "microseconds":
+		return seconds*1_000_000 + duration.Nanos/1_000, true, true
+	case "nanoseconds":
+		return seconds*1_000_000_000 + duration.Nanos, true, true
+	case "quartersofyear":
+		return (months / 3) % 4, true, true
+	case "monthsofquarter":
+		return months % 3, true, true
+	case "monthsofyear":
+		return months % 12, true, true
+	case "daysofweek":
+		return duration.Days % 7, true, true
+	case "minutesofhour":
+		return (seconds / 60) % 60, true, true
+	case "secondsofminute":
+		return seconds % 60, true, true
+	case "millisecondsofsecond":
+		return duration.Nanos / 1_000_000, true, true
+	case "microsecondsofsecond":
+		return duration.Nanos / 1_000, true, true
+	case "nanosecondsofsecond":
+		return duration.Nanos, true, true
+	default:
+		return nil, true, false
+	}
+}

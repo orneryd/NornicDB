@@ -1,0 +1,12 @@
+- id: security.invalid_header
+  description: Plain-text HTTP response for a rejected header. Name and Cause are diagnostic values and must not be translated.
+  other: "Invalid header {{.Name}}: {{.Cause}}"
+- id: security.invalid_authorization_token
+  description: Plain-text HTTP response for a rejected Authorization token. Cause is diagnostic text.
+  other: "Invalid authorization token: {{.Cause}}"
+- id: security.invalid_token_parameter
+  description: Plain-text HTTP response for a rejected token query parameter. Cause is diagnostic text.
+  other: "Invalid token parameter: {{.Cause}}"
+- id: security.invalid_url_parameter
+  description: Plain-text HTTP response for a rejected URL query parameter. Name and Cause are diagnostic values.
+  other: "Invalid {{.Name}} parameter: {{.Cause}}"

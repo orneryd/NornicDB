@@ -1,0 +1,154 @@
+package cypher
+
+import (
+	"context"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// TestCheckOperatorBranches pins Neo4j's operand rules for the operator
+// combinations the statement tests don't reach (#657).
+func TestCheckOperatorBranches(t *testing.T) {
+	known := knownOperand
+	for _, tc := range []struct {
+		op          byte
+		left, right staticOperand
+		want        string
+		fails       bool
+	}{
+		{op: '+', left: known("Date"), right: known("List<T>"), want: "List<T>"},
+		// Neo4j adds a duration to a duration or a temporal value, and a list
+		// to either side.
+		// Neo4j adds a duration to a duration or a temporal value, and a list
+		// to either side.
+		{op: '+', left: known("Duration"), right: staticOperand{}, want: "Duration, Date, Time, LocalTime, LocalDateTime, DateTime or List<T>"},
+		{op: '-', left: staticOperand{}, right: known("Integer"), want: "Float or Integer"},
+		{op: '*', left: staticOperand{}, right: known("Float"), want: "Float or Duration"},
+		{op: '/', left: known("Integer"), right: staticOperand{}, want: "Float or Integer"},
+		{op: '/', left: known("Duration"), right: known("String"), fails: true},
+		{op: '/', left: known("Duration"), right: known("Integer"), want: "Duration"},
+		{op: '*', left: known("String"), right: known("Integer"), fails: true},
+		{op: '%', left: known("Boolean"), right: known("Integer"), fails: true},
+		{op: '^', left: known("Boolean"), right: known("Integer"), fails: true},
+	} {
+		got, err := checkOperator(tc.op, tc.left, tc.right, false)
+		if tc.fails {
+			require.Error(t, err, "%c %+v %+v", tc.op, tc.left, tc.right)
+			continue
+		}
+		require.NoError(t, err, "%c %+v %+v", tc.op, tc.left, tc.right)
+		require.Equal(t, tc.want, got.typeName(), "%c %+v %+v", tc.op, tc.left, tc.right)
+	}
+}
+
+// TestStaticOperatorCheckerBranches covers how the checker walks an
+// expression: the operands of boolean, comparison and arithmetic operators,
+// unary minus, parameters and the items of lists, maps and function calls. A
+// type error anywhere inside is reported.
+func TestStaticOperatorCheckerBranches(t *testing.T) {
+	checker := staticOperatorChecker{params: map[string]interface{}{"i": int64(1), "s": "a"}}
+	for _, tc := range []struct {
+		expr  string
+		want  string
+		fails bool
+	}{
+		{expr: "true * 2 OR x", fails: true},
+		{expr: "x OR true * 2", fails: true},
+		{expr: "NOT true * 2", fails: true},
+		{expr: "NOT x", want: "Boolean"},
+		{expr: "true * 2 IN [1]", fails: true},
+		{expr: "1 IN [true * 2]", fails: true},
+		{expr: "true * 2 = 1", fails: true},
+		{expr: "1 = true * 2", fails: true},
+		{expr: "(true * 2) + 1", fails: true},
+		{expr: "1 + (true * 2)", fails: true},
+		{expr: "-(true * 2)", fails: true},
+		{expr: "-'a'", fails: true},
+		{expr: "-$i", want: "Integer"},
+		{expr: "$missing", want: ""},
+		{expr: "$s", want: "String"},
+		{expr: "[true * 2]", fails: true},
+		{expr: "{a: true * 2}", fails: true},
+		{expr: "abs(true * 2)", fails: true},
+		{expr: "[x]", want: "List<T>"},
+		{expr: "CASE WHEN true THEN 1 END", want: "Integer"},
+		{expr: "(a)-[:R]->(b)", want: ""},
+	} {
+		got, err := checker.check(tc.expr)
+		if tc.fails {
+			require.Error(t, err, tc.expr)
+			continue
+		}
+		require.NoError(t, err, tc.expr)
+		require.Equal(t, tc.want, got.typeName(), tc.expr)
+	}
+	noParams := staticOperatorChecker{}
+	got, err := noParams.check("$i")
+	require.NoError(t, err)
+	require.False(t, got.known())
+}
+
+// TestStaticParameterOperandBranches pins the static type of each parameter
+// value kind.
+func TestStaticParameterOperandBranches(t *testing.T) {
+	require.False(t, staticParameterOperand(nil).known())
+	require.Equal(t, "Float", staticParameterOperand(1.5).typeName())
+	require.Equal(t, "Boolean", staticParameterOperand(true).typeName())
+	require.Equal(t, "List<T>", staticParameterOperand([]interface{}{int64(1)}).typeName())
+	require.Equal(t, "Map", staticParameterOperand(map[string]interface{}{"a": 1}).typeName())
+	require.False(t, staticParameterOperand(struct{}{}).known())
+}
+
+func TestParameterMayMismatchOperatorIgnoresComments(t *testing.T) {
+	params := map[string]interface{}{"p": "text"}
+	for _, query := range []string{
+		"RETURN 1 // $p * 2",
+		"RETURN 1 /* $p * 2 */ AS value",
+	} {
+		require.False(t, parameterMayMismatchOperator(query, params), query)
+	}
+	require.True(t, parameterMayMismatchOperator("RETURN 1 /* $p * 2 */ + $p * 2", params))
+	require.True(t, parameterMayMismatchOperator("RETURN $p /* gap */ * 2", params))
+	require.False(t, parameterMayMismatchOperator("RETURN $p /* gap */ AS value", params))
+	require.False(t, parameterMayMismatchOperator("RETURN /* gap */ $p AS value", params))
+	require.True(t, parameterMayMismatchOperator("RETURN 2 * /* gap */ $p AS value", params))
+}
+
+// TestStaticOperatorClauseBranches runs statements whose operator type errors
+// sit in each clause form the validation visits: RETURN DISTINCT, ORDER BY, a
+// CREATE pattern, SET and a MATCH pattern, next to quoted text with braces.
+func TestStaticOperatorClauseBranches(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "staticops"))
+	ctx := context.Background()
+	for _, query := range []string{
+		"RETURN DISTINCT true * 2 AS x",
+		"RETURN 1 AS x ORDER BY x + true",
+		"WITH 1 AS x WHERE x > 0 AND true * 2 > 1 RETURN x",
+		"CREATE (n:SO {v: true * 2})",
+		"MATCH (n) SET n.v = true * 2",
+		"MATCH (n:SO {s: '{', v: true * 2}) RETURN n",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		require.Contains(t, err.Error(), "Type mismatch", query)
+	}
+	for _, query := range []string{
+		"UNWIND [1, 1] AS i RETURN DISTINCT i + 1 AS x",
+		"WITH 1 AS x WHERE x + 1 > 0 RETURN x ORDER BY x + 1 SKIP 0 LIMIT 1",
+		"MATCH (n:SO {s: '{x}'}) WHERE n.v + 1 > 0 RETURN n",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+	}
+	_, err := exec.Execute(ctx, "RETURN $s + 1 AS x", map[string]interface{}{"s": true})
+	require.Error(t, err)
+	_, err = exec.Execute(ctx, "RETURN $p /* gap */ * 2 AS x", map[string]interface{}{"p": true})
+	require.ErrorContains(t, err, "Type mismatch")
+	result, err := exec.Execute(ctx, "RETURN $p /* gap */ AS x", map[string]interface{}{"p": "text"})
+	require.NoError(t, err)
+	require.Equal(t, "text", result.Rows[0][0])
+	_, err = exec.Execute(ctx, "RETURN 2 * /* gap */ $p AS x", map[string]interface{}{"p": true})
+	require.ErrorContains(t, err, "Type mismatch")
+}

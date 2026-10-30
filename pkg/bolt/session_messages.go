@@ -1,0 +1,1892 @@
+package bolt
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
+	"golang.org/x/text/language"
+)
+
+// sendLocalizedRunFailure sends a localized RUN failure response.
+func (s *Session) sendLocalizedRunFailure(code string, message localization.Message) error {
+	return s.sendRunFailure(code, s.localize(message))
+}
+
+func (s *Session) sendLocalizedFailure(code string, message localization.Message) error {
+	return s.sendFailure(code, s.localize(message))
+}
+
+func (s *Session) localize(message localization.Message) string {
+	if s.server == nil || s.server.config == nil || s.server.config.Localizer == nil {
+		if message.Fallback != "" {
+			return message.Fallback
+		}
+		return string(message.ID)
+	}
+	ctx := context.Background()
+	if s.language != language.Und {
+		match := s.server.config.Localizer.Resolve("bolt", s.language)
+		ctx = localization.WithPreferences(ctx, match.Tag)
+	}
+	text, _, err := s.server.config.Localizer.Render(ctx, localization.MessageRequest(message))
+	if err != nil {
+		return message.Fallback
+	}
+	return text
+}
+
+// handleRun handles the RUN message (execute Cypher).
+func (s *Session) handleRun(data []byte) error {
+	// Check authentication
+	if s.server != nil && s.server.config.RequireAuth && !s.authenticated {
+		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Unauthorized", localization.NotAuthenticated())
+	}
+	s.refreshAuthResult()
+
+	// Parse PackStream to extract query, params, and metadata
+	query, params, metadata, err := s.parseRunMessage(data)
+	if err != nil {
+		if errors.Is(err, errDateTimeSignature) {
+			return err
+		}
+		return s.sendLocalizedRunFailure("Neo.ClientError.Request.Invalid", localization.BoltRunMessageParseFailed(err))
+	}
+	s.language = language.Und
+	if requestedLocale, ok := metadata["locale"].(string); ok {
+		if tag, localeErr := localization.NormalizeLanguage(requestedLocale); localeErr == nil && tag != language.Und {
+			s.language = tag
+		}
+	}
+
+	// Store metadata for potential use (bookmarks, tx_timeout, etc.)
+	s.lastRunMetadata = metadata
+
+	// Validate bookmarks if present (for causal consistency)
+	if bookmarks, ok := metadata["bookmarks"].([]any); ok && len(bookmarks) > 0 {
+		if err := s.validateBookmarks(bookmarks); err != nil {
+			return s.sendLocalizedRunFailure("Neo.ClientError.Transaction.BookmarkValidationFailed",
+				localization.BoltBookmarkValidationFailed(err))
+		}
+	}
+
+	// Build the per-RUN context. Lifetime hierarchy (outermost → innermost):
+	//
+	//   connCtx                  cancels when the connection handler exits
+	//     └── traceparent        carries W3C tracing headers (TRC-14)
+	//           └── runCtx       cancels on connection close, RESET, RUN
+	//                            timeout, or successful return
+	//
+	// Rooting at connCtx — not spanCtx (which is rooted at
+	// context.Background) — prevents cancellation from being discarded where a
+	// long-running Cypher pinned a CPU core for ~34 minutes after the
+	// client disconnected. Now: handleConnection's defer connCancel()
+	// propagates here, the Cypher executor sees ctx.Err() at the next
+	// traversal/match boundary, and the RUN goroutine returns.
+	parentCtx := s.connCtx
+	if parentCtx == nil {
+		// Defensive fallback for tests that construct a Session by hand
+		// without going through handleConnection. Production always sets
+		// connCtx in handleConnection.
+		parentCtx = s.spanCtx
+		if parentCtx == nil {
+			parentCtx = context.Background()
+		}
+	}
+	// Pick the effective timeout: client tx_timeout wins over
+	// server-side BoltStatementTimeout (Neo4j semantics — the driver's
+	// per-call cap is authoritative; the server cap is the fallback
+	// for clients that didn't set one). The deadline's cause names its
+	// owner, so a statement it ends reports that owner's timeout (#1339).
+	var runTimeout time.Duration
+	runTimeoutCause := nornicerrors.ErrServerStatementTimeout
+	if txTimeout, ok := metadata["tx_timeout"].(int64); ok && txTimeout > 0 {
+		runTimeout = time.Duration(txTimeout) * time.Millisecond
+		runTimeoutCause = nornicerrors.ErrClientTransactionTimeout
+	} else if s.server != nil && s.server.config.BoltStatementTimeout > 0 {
+		runTimeout = s.server.config.BoltStatementTimeout
+	}
+
+	// Resolve registered procedure modes in addition to preserving the existing
+	// Cypher classification. Procedure arguments can hide a mutation from the
+	// outer query text, so keyword matching alone is not an authorization boundary.
+	requirements := cypher.QueryPermissionRequirements(parentCtx, query, cypher.RawSource)
+	isWrite := requirements.Write
+
+	// Log query if enabled
+	if s.server != nil && s.server.config.LogQueries {
+		remoteAddr := "unknown"
+		if s.conn != nil {
+			remoteAddr = s.conn.RemoteAddr().String()
+		}
+		user := "unknown"
+		if s.authResult != nil {
+			user = s.authResult.Username
+		}
+		// Project parameters against the original query before literal redaction
+		// and truncation discard credential context. Execution retains params.
+		logParams := cypher.QueryDiagnosticParameters(parentCtx, query, params)
+		s.server.logEvent(context.Background(), slog.LevelDebug,
+			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(cypher.RedactLiterals(query), 200), logParams))
+	}
+
+	// Resolve effective database name (Neo4j-compatible precedence):
+	// 1) RUN metadata db/database
+	// 2) active transaction metadata db/database (BEGIN)
+	// 3) session database (HELLO)
+	// 4) server default
+	dbName := ""
+	if runDB, ok := databaseFromMetadata(metadata); ok {
+		dbName = runDB
+	} else if s.inTransaction {
+		if txDB, ok := databaseFromMetadata(s.txMetadata); ok {
+			dbName = txDB
+		}
+	}
+	if dbName == "" {
+		dbName = s.database
+	}
+	if dbName == "" {
+		if s.server != nil && s.server.dbManager != nil {
+			dbName = s.server.dbManager.DefaultDatabaseName()
+		} else {
+			dbName = "nornic" // single-DB mode default
+		}
+	}
+	if s.server != nil && s.server.dbManager != nil && dbName != "" && !constituentAwareExists(s.server.dbManager, dbName) {
+		return s.sendRunFailure("Neo.ClientError.Database.DatabaseNotFound",
+			s.localize(localization.DatabaseNotFound(dbName)))
+	}
+	if err := s.bindDatabaseConnection(dbName); err != nil {
+		return s.sendRunFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
+	}
+	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
+	mode := s.accessMode()
+	if mode != nil {
+		if _, allowed := s.graphAccess(mode, dbName); !allowed {
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
+		}
+	}
+
+	// Keep explicit transactions pinned to the executor selected at BEGIN.
+	executor := s.executor
+	if s.inTransaction {
+		if s.txDatabase != "" && !strings.EqualFold(dbName, s.txDatabase) {
+			return s.sendRunFailure("Neo.ClientError.Transaction.InvalidBookmark",
+				fmt.Sprintf("Explicit transaction is bound to database '%s', got '%s'", s.txDatabase, dbName))
+		}
+	} else if s.server != nil && s.server.dbManager != nil {
+		dbExecutor, err := s.getExecutorForDatabase(dbName)
+		if err != nil {
+			return s.sendLocalizedRunFailure("Neo.ClientError.Database.DatabaseNotFound", localization.BoltDatabaseNotFoundWithCause(dbName, err))
+		}
+		executor = dbExecutor
+	}
+
+	// Claim explicit-transaction operation ownership only after every
+	// response-producing pre-execution check. The claim remains atomic with
+	// timeout arbitration, so expiry between dispatch and this point fails
+	// closed without making an early-return path responsible for cleanup.
+	if s.inTransaction {
+		parentCtx, err = s.claimTransactionOperation()
+		if errors.Is(err, errTransactionTimedOut) {
+			return s.sendTransactionTimeoutFailure()
+		}
+		if err != nil {
+			if s.transactionCleanupFailed {
+				return err
+			}
+			return s.sendRunFailure(
+				"Neo.ClientError.Transaction.TransactionNotFound", "No active transaction for RUN")
+		}
+		defer func() { _ = s.txLifecycle.finishRun() }()
+	}
+	parentCtx = extractTraceparent(parentCtx, metadata)
+	if !s.inTransaction {
+		// An auto-commit RUN's tx_metadata is its transaction's metadata.
+		parentCtx = cypher.WithTransactionMetadata(parentCtx, boltTxMetadata(metadata))
+	}
+	var ctx context.Context
+	var runCancel context.CancelFunc
+	if runTimeout > 0 {
+		ctx, runCancel = context.WithTimeoutCause(parentCtx, runTimeout, runTimeoutCause)
+	} else {
+		ctx, runCancel = context.WithCancel(parentCtx)
+	}
+	defer runCancel()
+	s.setActiveRun(runCancel)
+	defer s.clearActiveRun()
+	ctx = s.withSessionIdentity(ctx)
+	ctx = s.beginContinuationDelivery(ctx)
+	delivery := s.lastDelivery
+	published := false
+	defer func() {
+		if !published {
+			delivery.Fail()
+		}
+	}()
+	ctx = cypher.WithClientStatement(ctx)
+	if mode != nil || s.authResult != nil {
+		// The principal's one permission resolver (principalAccess), which the
+		// executor authorizes the statement, the databases it selects and the
+		// procedures it calls with: a name is checked like the session's
+		// database (graphAccess: a composite constituent needs its composite
+		// and its database), and read / write are the privileges of the
+		// database its data is in.
+		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, s.principalAccess(mode).Allows)
+	}
+
+	runStart := time.Now()
+	var result *QueryResult
+	if !s.inTransaction && !isWrite && s.messageQueue != nil {
+		// An auto-commit read produces its rows as PULL asks for them
+		// once it has more than lazyResultThreshold (#939); RUN and those
+		// PULLs are then already answered.
+		var served bool
+		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart)
+		if served {
+			return nil
+		}
+	} else {
+		result, err = executor.Execute(ctx, query, params)
+		// Bolt owns this deadline, so it marks the timeout for any executor,
+		// not only one that marks it itself.
+		err = nornicerrors.MarkStatementTimeout(err, context.Cause(ctx))
+	}
+	// Complete any RUN-owned timeout cleanup before sending a response. The
+	// defer remains the panic/early-return safety net; finishRun is idempotent.
+	var finishErr error
+	if s.inTransaction {
+		finishErr = s.txLifecycle.finishRun()
+	}
+	if finishErr != nil {
+		return s.sendTransactionTimeoutAfterJoin()
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			switch s.activeRunReason() {
+			case MsgReset, MsgGoodbye:
+				return nil
+			}
+		}
+		s.logRunTiming("ERROR", dbName, query, time.Since(runStart), 0, err)
+		if s.server != nil && s.server.config.LogQueries {
+			s.server.logEvent(context.Background(), slog.LevelWarn, localization.BoltQueryErrorEvent())
+		}
+		if s.inTransaction {
+			// An explicit transaction checks constraints when the statement
+			// runs (#700), so a MERGE race can fail here rather than at
+			// COMMIT. The failed statement is one of the transaction's writes,
+			// and the same rule as for COMMIT decides whether its UNIQUE
+			// violation is a retryable race.
+			s.recordExplicitTransactionWrite(query, params, isWrite)
+			if s.canRetryMergeCommitConflict(err) {
+				err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+			}
+		}
+		return s.sendRunQueryFailure(err, query)
+	}
+	rows := 0
+	if result != nil && result.Rows != nil {
+		rows = len(result.Rows)
+	}
+	s.logRunTiming("OK", dbName, query, time.Since(runStart), rows, nil)
+
+	// Per-database RBAC: filter SHOW DATABASES results by CanSeeDatabase so principals only see DBs they may access
+	if isShowDatabasesQuery(query) && result.Rows != nil && mode != nil {
+		filtered := make([][]interface{}, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			if len(row) > 0 {
+				if name, ok := row[0].(string); ok && mode.CanSeeDatabase(name) {
+					filtered = append(filtered, row)
+				}
+			}
+		}
+		result.Rows = filtered
+	}
+	var resultMemoryLease *memory.Lease
+	if s.server != nil && s.server.memoryPolicy != nil && result != nil && !isWrite {
+		// RUN can return before PULL. Keep a separate reservation with the
+		// read result; the decode/execution reservation ends with this call.
+		// A completed autocommit write may already be durable, so memory
+		// pressure must never make it appear rolled back after execution.
+		resultBytes := int64(len(result.Rows)) * 24
+		for _, row := range result.Rows {
+			resultBytes += util.EstimateValueBytes(row)
+		}
+		if resultBytes > 0 {
+			resultMemoryLease, err = s.server.memoryPolicy.Reserve(resultBytes)
+		}
+		if err != nil {
+			if s.inTransaction {
+				if cleanupErr := s.rollbackExplicitTransaction(transactionTerminalRollback); cleanupErr != nil {
+					return cleanupErr
+				}
+			}
+			message := localization.ApplicationMemoryPressure()
+			if errors.Is(err, memory.ErrStaleSample) {
+				message = localization.ApplicationMemoryUnavailable()
+			}
+			return s.sendLocalizedRunFailure("Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
+		}
+	}
+
+	// Track write operation for deferred flush
+	if isWrite {
+		s.pendingFlush = true
+	}
+	s.lastQueryIsWrite = isWrite
+	resultDatabase := dbName
+	if result != nil {
+		if selected, ok := result.Metadata["db"].(string); ok && selected != "" {
+			resultDatabase = selected
+		}
+	}
+	s.lastQueryDatabase = resultDatabase
+	if s.inTransaction {
+		s.recordExplicitTransactionWrite(query, params, isWrite)
+	}
+
+	// Store result for PULL
+	s.lastResult = result
+	s.lastResultMemoryLease = resultMemoryLease
+	s.resultIndex = 0
+	published = true
+
+	// Return SUCCESS with field names (Neo4j compatible metadata)
+	// Note: Neo4j only sends qid for EXPLICIT transactions, not implicit/autocommit
+	// For implicit transactions, only send fields and t_first
+	if s.inTransaction {
+		statementID := s.queryId
+		s.queryId++
+		if s.resultStreams == nil {
+			s.resultStreams = make(map[int64]*resultStream)
+		}
+		s.resultStreams[statementID] = &resultStream{
+			result:   result,
+			delivery: delivery,
+			isWrite:  isWrite,
+			database: resultDatabase,
+		}
+		if resultMemoryLease != nil {
+			if s.resultMemoryLeases == nil {
+				s.resultMemoryLeases = make(map[int64]*memory.Lease)
+			}
+			s.resultMemoryLeases[statementID] = resultMemoryLease
+		}
+		s.latestStatementID = statementID
+		successMetadata := map[string]any{
+			"fields":  result.Columns,
+			"t_first": int64(0),
+			"qid":     statementID,
+		}
+		addDurableQIDMetadata(successMetadata, result)
+		if err := s.sendSuccessNoFlush(successMetadata); err != nil {
+			return err
+		}
+		return s.flushRunResponse()
+	}
+	successMetadata := map[string]any{
+		"fields":  result.Columns,
+		"t_first": int64(0),
+	}
+	addDurableQIDMetadata(successMetadata, result)
+	if err := s.sendSuccessNoFlush(successMetadata); err != nil {
+		return err
+	}
+	return s.flushRunResponse()
+}
+
+// flushRunResponse flushes pending RUN output. Pipelined clients (the Neo4j
+// driver sends PULL immediately after RUN) already have their next message
+// queued by the time the query finishes; deferring the flush then lets PULL's
+// own tail flush carry RUN's SUCCESS and the record batch in a single socket
+// write. Blocking request/response clients see an empty queue and get the
+// flush immediately, so semantics are unchanged (#48: per-message flushes
+// were ~25% of autocommit TCK CPU).
+func (s *Session) flushRunResponse() error {
+	if s.messageQueue != nil && len(s.messageQueue) > 0 {
+		return nil
+	}
+	return s.flushIfPending()
+}
+
+func addDurableQIDMetadata(metadata map[string]any, result *QueryResult) {
+	if result == nil || result.Metadata == nil {
+		return
+	}
+	if qid, ok := result.Metadata["durable_qid"].(string); ok && qid != "" {
+		metadata["durable_qid"] = qid
+	}
+}
+
+func (s *Session) logRunTiming(status, dbName, query string, duration time.Duration, rows int, runErr error) {
+	includeQuery := s.server != nil && s.server.config.LogQueries
+	if runErr == nil && !includeQuery {
+		return
+	}
+	if s.server == nil {
+		return
+	}
+
+	// D-10a: "[BOLT]" bracket dropped (component attribute carries it).
+	// Errors emit at WARN; successful query timing (only fires when
+	// LogQueries=true) emits at DEBUG so it doesn't pollute production
+	// stdout at INFO level.
+	if runErr != nil {
+		s.server.logEvent(context.Background(), slog.LevelWarn,
+			localization.BoltRunErrorEvent(dbName, status, rows, duration, runErr.Error()))
+		return
+	}
+
+	s.server.logEvent(context.Background(), slog.LevelDebug,
+		localization.BoltRunEvent(dbName, status, rows, duration))
+}
+
+// mapBoltQueryError is the Bolt status of a statement error: result-stream
+// failures, which only Bolt has, then nornicerrors.Neo4jStatus, the status
+// every protocol reports.
+func mapBoltQueryError(err error) (code, message string) {
+	if err == nil {
+		return nornicerrors.Neo4jStatus(err)
+	}
+	if errors.Is(err, resultstream.ErrCapacity) || errors.Is(err, resultstream.ErrClosed) {
+		return "Neo.TransientError.General.DatabaseUnavailable", err.Error()
+	}
+	if errors.Is(err, resultstream.ErrDisabled) {
+		return "Neo.ClientError.Statement.UnsupportedOperation", err.Error()
+	}
+	if errors.Is(err, resultstream.ErrExpiredQID) || errors.Is(err, resultstream.ErrGoneQID) || errors.Is(err, resultstream.ErrInvalidated) {
+		return "Neo.ClientError.Statement.EntityNotFound", err.Error()
+	}
+	return nornicerrors.Neo4jStatus(err)
+}
+
+func mapBoltQueryErrorForQuery(err error, query string) (code, message string) {
+	code, message = mapBoltQueryError(err)
+	if err != nil && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
+		return nornicerrors.TransientOutdated, message
+	}
+	return code, message
+}
+
+type boltDetailedError interface {
+	BoltErrorDetail() string
+}
+
+func boltErrorDetail(err error) string {
+	var detailed boltDetailedError
+	if errors.As(err, &detailed) {
+		return detailed.BoltErrorDetail()
+	}
+	return ""
+}
+
+// mapBoltCommitError is the Bolt status of a failed COMMIT
+// (nornicerrors.Neo4jCommitStatus: a constraint violation is
+// ConstraintValidationFailed, an unclassified failure TransactionCommitFailed)
+// while allowing MERGE transaction conflicts to surface as Neo4j transient
+// errors for clients that choose retry-managed transaction APIs.
+//
+// A commit-time UNIQUE constraint violation from a concurrent MERGE race is
+// resolvable by a fresh attempt: the loser, on retry, observes the peer's
+// now-committed node via the constraint cache and the MERGE matches. The
+// raw storage error does not wrap ErrTransactionConflict, so the mapper
+// uses the explicit transaction's observed MERGE shape plus the commit error
+// body. Non-MERGE transactions keep the ordinary commit-failed code even
+// when the body is a UNIQUE violation.
+func mapBoltCommitError(err error, canRetryMergeConflict bool) (code, message string) {
+	if canRetryMergeConflict {
+		err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+	}
+	code, message = nornicerrors.Neo4jCommitStatus(err)
+	if err != nil && canRetryMergeConflict && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
+		return nornicerrors.TransientOutdated, message
+	}
+	return code, message
+}
+
+func isRetryableBoltStatus(code string) bool {
+	return strings.HasPrefix(code, "Neo.TransientError.")
+}
+
+func (s *Session) recordExplicitTransactionWrite(query string, params map[string]any, isWrite bool) {
+	if !isWrite {
+		return
+	}
+	info := boltTxWriteAnalyzer.Analyze(context.Background(), query)
+	if info != nil && info.HasMerge {
+		s.txHasMerge = true
+		s.txMergeStatements = append(s.txMergeStatements, cypher.CommitStatement{Query: query, Params: params})
+	}
+	if info == nil {
+		s.txHasNonMergeWrite = true
+		return
+	}
+	s.txWriteInfos = append(s.txWriteInfos, info)
+}
+
+// canRetryMergeCommitConflict reports whether a UNIQUE violation err of the
+// explicit transaction, at COMMIT or at the statement that broke the
+// constraint, is a retry-safe MERGE race: every write was MERGE-shaped and no
+// SET in them wrote a violated property (cypher.MergeUniqueConflictIsRetrySafe).
+func (s *Session) canRetryMergeCommitConflict(err error) bool {
+	if !s.txHasMerge || s.txHasNonMergeWrite {
+		return false
+	}
+	for _, info := range s.txWriteInfos {
+		if !cypher.IsRetrySafeMergeCommitQuery(info) {
+			return false
+		}
+	}
+	return cypher.MergeUniqueConflictIsRetrySafe(s.txMergeStatements, err)
+}
+
+// truncateQuery truncates a query for logging.
+func truncateQuery(q string, maxLen int) string {
+	if len(q) <= maxLen {
+		return q
+	}
+	return q[:maxLen] + "..."
+}
+
+// isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).
+// Used to filter SHOW DATABASES results by CanSeeDatabase when per-database RBAC is enabled.
+func isShowDatabasesQuery(query string) bool {
+	norm := strings.TrimSpace(query)
+	norm = strings.Join(strings.Fields(norm), " ")
+	return strings.EqualFold(norm, "SHOW DATABASES")
+}
+
+// parseRunMessage parses a RUN message to extract query, parameters, and metadata.
+// Bolt v4+ RUN message format: [query: String, parameters: Map, extra: Map]
+// Returns: query, parameters, metadata, error
+func (s *Session) parseRunMessage(data []byte) (string, map[string]any, map[string]any, error) {
+	if len(data) == 0 {
+		return "", nil, nil, fmt.Errorf("empty RUN message")
+	}
+
+	offset := 0
+
+	// Parse query string
+	query, n, err := decodePackStreamString(data, offset)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("failed to parse query: %w", err)
+	}
+	offset += n
+
+	// Parse parameters map
+	params := make(map[string]any)
+	if offset < len(data) {
+		p, consumed, err := decodePackStreamMap(data, offset, s.useUTCDateTimeStructs())
+		if err != nil {
+			// A negotiated temporal violation must reach RUN's failure owner,
+			// including when it occurred inside a nested value.
+			if errors.Is(err, errDateTimeSignature) {
+				return "", nil, nil, err
+			}
+			// Preserve existing handling of other malformed parameter maps.
+			params = make(map[string]any)
+		} else {
+			params = p
+			offset += consumed
+		}
+	}
+
+	// Bolt v4+ has an extra metadata map after params (for bookmarks, tx_timeout, etc.)
+	// Parse metadata if present
+	metadata := make(map[string]any)
+	if offset < len(data) {
+		m, _, err := decodePackStreamMap(data, offset, s.useUTCDateTimeStructs())
+		if errors.Is(err, errDateTimeSignature) {
+			return "", nil, nil, err
+		}
+		if err == nil {
+			metadata = m
+		}
+		// If parsing fails, continue with empty metadata (non-fatal)
+	}
+
+	return query, params, metadata, nil
+}
+
+type streamingOptions struct {
+	limit       int
+	statementID int64
+}
+
+const maxStreamingLimit = int64(1<<31 - 1)
+
+func parseStreamingOptions(data []byte, utcDateTime ...bool) (streamingOptions, error) {
+	options := streamingOptions{limit: -1, statementID: -1}
+	if len(data) == 0 {
+		return options, nil
+	}
+
+	size, offset, err := packStreamMapHeader(data)
+	if err != nil {
+		return options, err
+	}
+	for range size {
+		key, consumed, err := streamingOptionKey(data, offset)
+		if err != nil {
+			return options, fmt.Errorf("failed to decode streaming option key: %w", err)
+		}
+		offset += consumed
+		value, consumed, err := decodePackStreamValue(data, offset, utcDateTime...)
+		if err != nil {
+			return options, fmt.Errorf("failed to decode streaming option %q: %w", string(key), err)
+		}
+		offset += consumed
+
+		switch {
+		case len(key) == 1 && key[0] == 'n':
+			limit, ok := value.(int64)
+			if !ok {
+				return options, fmt.Errorf("n must be an integer")
+			}
+			if limit > maxStreamingLimit {
+				return options, fmt.Errorf("n must not exceed %d", maxStreamingLimit)
+			}
+			options.limit = int(limit)
+		case len(key) == 3 && key[0] == 'q' && key[1] == 'i' && key[2] == 'd':
+			if value == nil {
+				options.statementID = -1
+				continue
+			}
+			statementID, ok := value.(int64)
+			if !ok {
+				return options, fmt.Errorf("qid must be an integer")
+			}
+			options.statementID = statementID
+		}
+	}
+	if options.limit != -1 && options.limit < 1 {
+		return options, fmt.Errorf("n must be -1 or at least 1")
+	}
+	return options, nil
+}
+
+func streamingOptionKey(data []byte, offset int) ([]byte, int, error) {
+	if offset >= len(data) {
+		return nil, 0, fmt.Errorf("offset out of bounds")
+	}
+
+	start := offset
+	marker := data[offset]
+	offset++
+	var length int
+	switch {
+	case marker >= 0x80 && marker <= 0x8F:
+		length = int(marker - 0x80)
+	case marker == 0xD0:
+		if offset >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete STRING8")
+		}
+		length = int(data[offset])
+		offset++
+	case marker == 0xD1:
+		if offset+1 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete STRING16")
+		}
+		length = int(data[offset])<<8 | int(data[offset+1])
+		offset += 2
+	case marker == 0xD2:
+		if offset+3 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete STRING32")
+		}
+		length = int(data[offset])<<24 | int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
+		offset += 4
+	default:
+		return nil, 0, fmt.Errorf("not a string marker: 0x%02X", marker)
+	}
+	if length < 0 || offset+length > len(data) {
+		return nil, 0, fmt.Errorf("string data out of bounds")
+	}
+	return data[offset : offset+length], offset + length - start, nil
+}
+
+// packStreamMapHeader reads the header of the PackStream map at data[0]:
+// TINY_MAP, MAP_8, MAP_16 or MAP_32. It returns the entry count and the
+// header's length; a size larger than the rest of data is an error. It is
+// the one map header reader (message fields, streaming options, values).
+func packStreamMapHeader(data []byte) (size, offset int, err error) {
+	if len(data) == 0 {
+		return 0, 0, fmt.Errorf("missing map")
+	}
+
+	switch marker := data[0]; {
+	case marker >= 0xA0 && marker <= 0xAF:
+		return int(marker - 0xA0), 1, nil
+	case marker == 0xD8:
+		if len(data) < 2 {
+			return 0, 0, fmt.Errorf("incomplete MAP8")
+		}
+		return int(data[1]), 2, nil
+	case marker == 0xD9:
+		if len(data) < 3 {
+			return 0, 0, fmt.Errorf("incomplete MAP16")
+		}
+		return int(data[1])<<8 | int(data[2]), 3, nil
+	case marker == 0xDA:
+		if len(data) < 5 {
+			return 0, 0, fmt.Errorf("incomplete MAP32")
+		}
+		size64 := uint64(data[1])<<24 | uint64(data[2])<<16 | uint64(data[3])<<8 | uint64(data[4])
+		if size64 > uint64(len(data)) {
+			return 0, 0, fmt.Errorf("map size exceeds message size")
+		}
+		return int(size64), 5, nil
+	default:
+		return 0, 0, fmt.Errorf("not a map marker: 0x%02X", marker)
+	}
+}
+
+func (s *Session) selectResultStream(statementID int64) (resultStream, int64, bool) {
+	if s.inTransaction && s.resultStreams != nil {
+		if statementID == -1 {
+			statementID = s.latestStatementID
+		}
+		stream, ok := s.resultStreams[statementID]
+		if !ok {
+			return resultStream{}, statementID, false
+		}
+		return *stream, statementID, true
+	}
+	if s.lastResult == nil {
+		return resultStream{}, -1, false
+	}
+	return resultStream{
+		result:   s.lastResult,
+		delivery: s.lastDelivery,
+		index:    s.resultIndex,
+		isWrite:  s.lastQueryIsWrite,
+		database: s.lastQueryDatabase,
+		lazy:     s.lastLazy,
+	}, -1, true
+}
+
+func (s *Session) updateResultStream(statementID int64, stream resultStream, hasMore bool) {
+	if s.inTransaction && s.resultStreams != nil {
+		if hasMore {
+			*s.resultStreams[statementID] = stream
+		} else {
+			delete(s.resultStreams, statementID)
+		}
+		if statementID != s.latestStatementID {
+			return
+		}
+	}
+	if hasMore {
+		s.lastResult = stream.result
+		s.resultIndex = stream.index
+		s.lastLazy = stream.lazy
+	} else {
+		s.lastResult = nil
+		s.lastResultMemoryLease = nil
+		s.resultIndex = 0
+		s.lastLazy = nil
+		s.lastDelivery = nil
+	}
+}
+
+// finishResultStream performs terminal ownership release outside the hot
+// partial-PULL state update. The lease is idempotent across RESET/disconnect.
+func (s *Session) finishResultStream(statementID int64, stream resultStream) {
+	if statementID >= 0 && s.inTransaction {
+		s.resultMemoryLeases[statementID].Release()
+		delete(s.resultMemoryLeases, statementID)
+	} else {
+		s.lastResultMemoryLease.Release()
+	}
+	s.updateResultStream(statementID, stream, false)
+}
+
+func (s *Session) sendStreamingFailure(message string) error {
+	s.failedUntilReset = true
+	return s.sendFailure("Neo.ClientError.Request.InvalidFormat", message)
+}
+
+// handlePull handles the PULL message.
+func (s *Session) handlePull(data []byte) error {
+	options, err := parseStreamingOptions(data, s.useUTCDateTimeStructs())
+	if err != nil {
+		if errors.Is(err, errDateTimeSignature) {
+			return err
+		}
+		return s.sendStreamingFailure(err.Error())
+	}
+	stream, statementID, ok := s.selectResultStream(options.statementID)
+	if !ok {
+		if s.inTransaction {
+			return s.sendStreamingFailure(fmt.Sprintf("No such statement: %d", statementID))
+		}
+		// Neo4j doesn't send has_more when false - just empty metadata
+		if err := s.sendSuccessNoFlush(map[string]any{}); err != nil {
+			return err
+		}
+		return s.flushIfPending()
+	}
+
+	// A lazy result produces the rows this PULL takes (#939). An error the
+	// statement meets fails this PULL after the rows before it.
+	var lazyFailure *lazyStatementError
+	if err := s.fillLazyResult(&stream, options.limit); err != nil {
+		lazyFailure = err.(*lazyStatementError)
+	}
+
+	// Stream records - use batched writing for large result sets
+	remaining := len(stream.result.Rows) - stream.index
+	if options.limit > 0 && remaining > options.limit {
+		remaining = options.limit
+	}
+
+	// For large batches (>50 records), use batched writing to reduce syscalls
+	if remaining > 50 {
+		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.delivery); err != nil {
+			return err
+		}
+		stream.index += remaining
+	} else {
+		// Small batches: send individually (avoids buffer allocation overhead)
+		pullN := options.limit
+		for stream.index < len(stream.result.Rows) {
+			if pullN == 0 {
+				break
+			}
+
+			row := stream.result.Rows[stream.index]
+			if err := s.writeRecordNoFlush(row, stream.database, stream.delivery); err != nil {
+				return err
+			}
+
+			stream.index++
+			if pullN > 0 {
+				pullN--
+			}
+		}
+	}
+
+	if lazyFailure != nil {
+		if stream.delivery != nil {
+			stream.delivery.Fail()
+		}
+		s.finishResultStream(statementID, stream)
+		return s.sendLazyFailure(lazyFailure)
+	}
+
+	// Check if more records available
+	hasMore := stream.index < len(stream.result.Rows) || stream.lazy != nil
+	// Retain the batch until delivery completes. Deferred flush and FAILURE
+	// cleanup must still be able to find the final PULL's pending cursors.
+
+	// Clear result if done
+	var metadata map[string]any
+	if !hasMore {
+		resultStats := stream.result.Stats
+
+		// Neo4j-style deferred commit: flush pending writes after streaming completes.
+		if err := s.flushPendingExecutorWrites(); err != nil {
+			return s.sendFlushLifecycleFailure(err)
+		}
+
+		// Return metadata for completed query (Neo4j compatibility)
+		// Neo4j sends: type, bookmark, t_last, stats, db (but NOT has_more when false)
+		queryType := stream.resolvedQueryType()
+
+		bookmark := s.resultSummaryBookmark(stream.result, stream.resolvedWrite())
+
+		// Build stats matching Neo4j format (only if there are updates)
+		metadata = map[string]any{
+			"bookmark": bookmark,
+			"type":     queryType,
+			"t_last":   int64(0), // Streaming time
+		}
+		if stream.database != "" {
+			metadata["db"] = stream.database
+		} else if s.database != "" {
+			metadata["db"] = s.database
+		} else {
+			metadata["db"] = "nornic"
+		}
+
+		// Neo4j Bolt protocol: emit "stats" map when any counter is non-zero.
+		// The Go driver reads this via summary.Counters().
+		if stats := boltStatsMetadata(resultStats); stats != nil {
+			metadata["stats"] = stats
+		}
+
+		// EXPLAIN/PROFILE plan delivery (#744): Neo4j puts the plan tree in
+		// this SUCCESS metadata ("plan" for EXPLAIN, "profile" with runtime
+		// counters for PROFILE) and the driver reads both via summary.Plan()
+		// and summary.Profile().
+		if stream.result != nil && stream.result.Metadata != nil {
+			if rawPlan, ok := stream.result.Metadata["plan"]; ok {
+				if plan, ok := rawPlan.(*cypher.ExecutionPlan); ok && plan != nil {
+					if plan.Mode == cypher.ModeProfile {
+						metadata["profile"] = cypher.Neo4jPlanMap(plan, true)
+					} else {
+						metadata["plan"] = cypher.Neo4jPlanMap(plan, false)
+					}
+				}
+			}
+		}
+
+		// Neo4j does not send has_more when the stream is complete.
+	} else {
+		metadata = map[string]any{"has_more": true}
+	}
+	if err := s.sendSuccessNoFlush(metadata); err != nil {
+		return err
+	}
+	if err := s.flushIfPending(); err != nil {
+		if stream.delivery != nil {
+			stream.delivery.Fail()
+		}
+		return err
+	}
+	if stream.delivery != nil && stream.delivery.Pending() {
+		stream.delivery.DeliveredWritten()
+		if !hasMore && stream.delivery.Pending() {
+			stream.delivery.Fail()
+		}
+	}
+	if hasMore {
+		s.updateResultStream(statementID, stream, true)
+	} else {
+		s.finishResultStream(statementID, stream)
+	}
+	return nil
+}
+
+// boltTxMetadata is the tx_metadata map of a BEGIN or RUN message, or nil.
+func boltTxMetadata(metadata map[string]any) map[string]any {
+	txMetadata, _ := metadata["tx_metadata"].(map[string]any)
+	return txMetadata
+}
+
+func databaseFromMetadata(metadata map[string]any) (string, bool) {
+	if len(metadata) == 0 {
+		return "", false
+	}
+	if raw, ok := metadata["db"]; ok {
+		if db, ok := raw.(string); ok {
+			if db != "" {
+				return db, true
+			}
+		}
+	}
+	if raw, ok := metadata["database"]; ok {
+		if db, ok := raw.(string); ok {
+			if db != "" {
+				return db, true
+			}
+		}
+	}
+	return "", false
+}
+
+// handleDiscard handles the DISCARD message.
+func (s *Session) handleDiscard(data []byte) error {
+	options, err := parseStreamingOptions(data, s.useUTCDateTimeStructs())
+	if err != nil {
+		if errors.Is(err, errDateTimeSignature) {
+			return err
+		}
+		return s.sendStreamingFailure(err.Error())
+	}
+	stream, statementID, ok := s.selectResultStream(options.statementID)
+	if !ok {
+		if s.inTransaction {
+			return s.sendStreamingFailure(fmt.Sprintf("No such statement: %d", statementID))
+		}
+		if err := s.sendSuccessNoFlush(map[string]any{}); err != nil {
+			return err
+		}
+		return s.flushIfPending()
+	}
+
+	if stream.lazy != nil && options.limit <= 0 {
+		// Discarding the rest of a lazy result stops its statement.
+		stream.lazy.close()
+		s.clearActiveRun()
+		stream.lazy = nil
+		stream.index = len(stream.result.Rows)
+	}
+	discarded := 0
+	for {
+		remaining := len(stream.result.Rows) - stream.index
+		discardCount := remaining
+		if options.limit > 0 && discardCount > options.limit-discarded {
+			discardCount = options.limit - discarded
+		}
+		if options.limit > 0 && (stream.lazy != nil || discardCount < remaining) {
+			s.discardResultDelivery(stream, stream.result.Rows[stream.index:stream.index+discardCount])
+		}
+		stream.index += discardCount
+		discarded += discardCount
+		if stream.lazy == nil || discarded == options.limit {
+			break
+		}
+		if err := s.fillLazyResult(&stream, options.limit-discarded); err != nil {
+			s.finishResultStream(statementID, stream)
+			return s.sendLazyFailure(err.(*lazyStatementError))
+		}
+	}
+	hasMore := stream.index < len(stream.result.Rows) || stream.lazy != nil
+	if !hasMore && stream.delivery != nil {
+		stream.delivery.Fail()
+	}
+	if hasMore {
+		s.updateResultStream(statementID, stream, true)
+	} else {
+		s.finishResultStream(statementID, stream)
+	}
+	if hasMore {
+		if err := s.sendSuccessNoFlush(map[string]any{"has_more": true}); err != nil {
+			return err
+		}
+		return s.flushIfPending()
+	}
+
+	resultStats := stream.result.Stats
+
+	// Neo4j-style deferred commit: flush pending writes after discard.
+	if err := s.flushPendingExecutorWrites(); err != nil {
+		return s.sendFlushLifecycleFailure(err)
+	}
+
+	// Build completion metadata with stats (same contract as PULL completion).
+	queryType := stream.resolvedQueryType()
+	bookmark := s.resultSummaryBookmark(stream.result, stream.resolvedWrite())
+	metadata := map[string]any{
+		"bookmark": bookmark,
+		"type":     queryType,
+		"t_last":   int64(0),
+	}
+	if stream.database != "" {
+		metadata["db"] = stream.database
+	} else if s.database != "" {
+		metadata["db"] = s.database
+	} else {
+		metadata["db"] = "nornic"
+	}
+	if stats := boltStatsMetadata(resultStats); stats != nil {
+		metadata["stats"] = stats
+	}
+
+	if err := s.sendSuccessNoFlush(metadata); err != nil {
+		return err
+	}
+	return s.flushIfPending()
+}
+
+// handleRoute handles the ROUTE message (for cluster routing).
+func (s *Session) handleRoute(data []byte) error {
+	address := "localhost:7687"
+	if s.conn != nil {
+		if tcp, ok := s.conn.LocalAddr().(*net.TCPAddr); ok {
+			host := tcp.IP.String()
+			if host == "" || host == "0.0.0.0" || host == "::" {
+				host = "localhost"
+			}
+			address = fmt.Sprintf("%s:%d", host, tcp.Port)
+		}
+	}
+
+	if err := s.sendSuccessNoFlush(map[string]any{
+		"rt": map[string]any{
+			"ttl": 300,
+			"servers": []map[string]any{
+				{"role": "ROUTE", "addresses": []string{address}},
+				{"role": "READ", "addresses": []string{address}},
+				{"role": "WRITE", "addresses": []string{address}},
+			},
+		},
+	}); err != nil {
+		return err
+	}
+	return s.flushIfPending()
+}
+
+// handleReset handles the RESET message.
+// Resets the session state and rolls back any active transaction.
+func (s *Session) handleReset(data []byte) error {
+	// RESET restores a reusable session only after transaction cleanup proves
+	// that backend ownership was released. A failed rollback leaves storage
+	// state unknown, so fail the connection closed instead of admitting more
+	// work on a potentially open transaction.
+	if err := s.rollbackExplicitTransaction(transactionTerminalReset); err != nil {
+		return fmt.Errorf("RESET transaction cleanup failed: %w", err)
+	}
+	s.failedUntilReset = false
+	s.lastResult = nil
+	s.resultIndex = 0
+	if err := s.sendSuccessNoFlush(nil); err != nil {
+		return err
+	}
+	return s.flushIfPending()
+}
+
+// handleBegin handles the BEGIN message.
+// If the executor implements TransactionalExecutor, starts a real transaction.
+// Otherwise, just tracks the transaction state for protocol compliance.
+
+// handleCommit handles the COMMIT message.
+// If the executor implements TransactionalExecutor, commits the real transaction.
+func (s *Session) handleCommit(data []byte) error {
+	if !s.inTransaction {
+		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionNotFound",
+			s.localize(localization.BoltNoTransactionToCommit()))
+	}
+	txExec, claimErr := s.txLifecycle.claimCommit()
+	if errors.Is(claimErr, errTransactionTimedOut) {
+		return s.sendTransactionTimeoutAfterJoin()
+	}
+	if claimErr != nil {
+		s.clearExplicitTransactionState()
+		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionNotFound",
+			s.localize(localization.BoltNoTransactionToCommit()))
+	}
+	commitCallStarted := false
+	commitCallReturned := false
+	var commitCallErr error
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if commitCallStarted {
+				if !commitCallReturned {
+					commitCallErr = fmt.Errorf("transaction commit panicked: %v", recovered)
+				}
+				s.txLifecycle.finishCommit(commitCallErr)
+				if commitCallErr != nil {
+					s.markTransactionCleanupFailed()
+				} else {
+					s.clearExplicitTransactionState()
+				}
+			} else {
+				if cleanupErr := s.txLifecycle.abortCommitPanic(); cleanupErr != nil {
+					s.markTransactionCleanupFailed()
+				} else {
+					s.clearExplicitTransactionState()
+				}
+			}
+			panic(recovered)
+		}
+	}()
+	committedDatabase := s.txDatabase
+	hadWrites := true
+	if reporter, ok := s.executor.(pendingTransactionWriteReporter); ok {
+		hadWrites = reporter.HasPendingTransactionWrites()
+	}
+
+	// The lifecycle claim above stops the timeout timer before entering the
+	// executor, so a COMMIT that starts before the deadline remains the sole
+	// terminal owner even if storage work crosses the deadline.
+	if txExec != nil {
+		ctx := s.txLifecycle.commitContext()
+		commitCallStarted = true
+		commitCallErr = txExec.CommitTransaction(ctx)
+		commitCallReturned = true
+		if err := commitCallErr; err != nil {
+			canRetryMergeConflict := s.canRetryMergeCommitConflict(err)
+			observedErr := err
+			if canRetryMergeConflict {
+				observedErr = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+			}
+			s.txLifecycle.finishCommit(observedErr)
+			code, message := mapBoltCommitError(err, canRetryMergeConflict)
+			// A retryable failure, or one after which nothing was written
+			// (nornicerrors.IsCommitRolledBack: a constraint violation found
+			// before the write), has a known outcome: the session keeps its
+			// connection, as Neo4j's does. Any other failure leaves the
+			// outcome unknown and closes it.
+			retryable := isRetryableBoltStatus(code)
+			knownOutcome := retryable || nornicerrors.IsCommitRolledBack(err)
+			if knownOutcome {
+				s.clearExplicitTransactionState()
+			} else {
+				s.markTransactionCleanupFailed()
+			}
+			// The failure keeps its conformance detail (a commit-time
+			// DeleteConnectedNode, as the DELETE-time error has).
+			if sendErr := s.sendTransactionControlFailureWithDetail(code, message, boltErrorDetail(err)); sendErr != nil {
+				return sendErr
+			}
+			if flushErr := s.flushIfPending(); flushErr != nil {
+				return flushErr
+			}
+			if knownOutcome {
+				return nil
+			}
+			return fmt.Errorf("COMMIT outcome is unknown: %w", err)
+		}
+	}
+	s.txLifecycle.finishCommit(nil)
+	if hadWrites {
+		s.invalidateCommittedWriteCaches(committedDatabase)
+	}
+
+	s.clearExplicitTransactionState()
+
+	// Generate and store new bookmark for causal consistency
+	// This increments the server's transaction sequence and creates a bookmark
+	bookmark := s.generateBookmark()
+
+	// Return bookmark for client tracking
+	if err := s.sendSuccessNoFlush(map[string]any{
+		"bookmark": bookmark,
+	}); err != nil {
+		return err
+	}
+	return s.flushIfPending()
+}
+
+// generateBookmark generates a unique bookmark for causal consistency tracking.
+// Format: "nornicdb:bookmark:<sequence>"
+// The sequence number represents the transaction order for causal consistency.
+func (s *Session) generateBookmark() string {
+	if s.server == nil {
+		panic("cannot generate bookmark: session has no server reference")
+	}
+
+	// Get next transaction sequence number from server
+	s.server.txSequenceMu.Lock()
+	s.server.txSequence++
+	seqNum := s.server.txSequence
+	s.server.txSequenceMu.Unlock()
+
+	// Store sequence in session
+	s.lastTxSequence = seqNum
+
+	return formatBookmark(uint64(seqNum))
+}
+
+func (s *Session) currentBookmark() string {
+	if s.server == nil {
+		return formatBookmark(0)
+	}
+	s.server.txSequenceMu.RLock()
+	seqNum := s.server.txSequence
+	s.server.txSequenceMu.RUnlock()
+	if seqNum < 0 {
+		seqNum = 0
+	}
+	return formatBookmark(uint64(seqNum))
+}
+
+func (s *Session) bookmarkFromResultReceipt(result *QueryResult) (string, bool) {
+	if result == nil || result.Metadata == nil {
+		return "", false
+	}
+
+	receiptAny, ok := result.Metadata["receipt"]
+	if !ok || receiptAny == nil {
+		return "", false
+	}
+
+	var seq uint64
+	switch r := receiptAny.(type) {
+	case *storage.Receipt:
+		if r != nil {
+			seq = r.WALSeqEnd
+		}
+	case storage.Receipt:
+		seq = r.WALSeqEnd
+	case map[string]interface{}:
+		if val, ok := r["wal_seq_end"].(uint64); ok {
+			seq = val
+		} else if val, ok := r["wal_seq_end"].(float64); ok {
+			seq = uint64(val)
+		} else if val, ok := r["wal_seq_end"].(int64); ok {
+			seq = uint64(val)
+		}
+	}
+
+	if seq == 0 {
+		return "", false
+	}
+
+	s.updateBookmarkSequence(seq)
+	return formatBookmark(seq), true
+}
+
+// resultSummaryBookmark resolves the bookmark semantics shared by PULL and
+// DISCARD. Read results retain the current sequence; writes prefer the durable
+// receipt and allocate a new sequence only when no receipt exists.
+func (s *Session) resultSummaryBookmark(result *QueryResult, isWrite bool) string {
+	if !isWrite {
+		return s.currentBookmark()
+	}
+	if bookmark, ok := s.bookmarkFromResultReceipt(result); ok {
+		return bookmark
+	}
+	return s.generateBookmark()
+}
+
+func (s *Session) updateBookmarkSequence(seq uint64) {
+	if s.server == nil {
+		return
+	}
+
+	s.server.txSequenceMu.Lock()
+	if int64(seq) > s.server.txSequence {
+		s.server.txSequence = int64(seq)
+	}
+	s.server.txSequenceMu.Unlock()
+}
+
+func formatBookmark(seq uint64) string {
+	return fmt.Sprintf("nornicdb:bookmark:%d", seq)
+}
+
+// validateBookmarks validates bookmarks for causal consistency.
+// Ensures that all transactions up to the bookmark's sequence number have been committed.
+// This provides causal consistency: reads will see all writes that committed before the bookmark.
+func (s *Session) validateBookmarks(bookmarks []any) error {
+	if len(bookmarks) == 0 {
+		return nil // No bookmarks to validate
+	}
+
+	if s.server == nil {
+		return fmt.Errorf("cannot validate bookmarks: session has no server reference")
+	}
+
+	// Get current transaction sequence from server
+	s.server.txSequenceMu.RLock()
+	currentSequence := s.server.txSequence
+	s.server.txSequenceMu.RUnlock()
+
+	// Validate each bookmark
+	for _, bookmarkAny := range bookmarks {
+		bookmark, ok := bookmarkAny.(string)
+		if !ok {
+			return fmt.Errorf("invalid bookmark type: expected string, got %T", bookmarkAny)
+		}
+
+		// Backward compatibility: older server versions returned this placeholder in SUCCESS.
+		// Treat it as "no bookmark" rather than failing the session.
+		if bookmark == "nornicdb:tx:auto" {
+			continue
+		}
+
+		// Only accept NornicDB bookmark format: "nornicdb:bookmark:<sequence>"
+		if !strings.HasPrefix(bookmark, "nornicdb:bookmark:") {
+			return fmt.Errorf("invalid bookmark format: expected 'nornicdb:bookmark:<sequence>', got %q", bookmark)
+		}
+
+		// Parse sequence number from bookmark
+		seqStr := strings.TrimPrefix(bookmark, "nornicdb:bookmark:")
+		if seqStr == "" {
+			return fmt.Errorf("invalid bookmark format: missing sequence number in %q", bookmark)
+		}
+
+		bookmarkSeq, err := strconv.ParseInt(seqStr, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid bookmark format: cannot parse sequence number from %q: %w", bookmark, err)
+		}
+
+		// Validate sequence number is non-negative
+		if bookmarkSeq < 0 {
+			return fmt.Errorf("invalid bookmark: sequence number must be non-negative, got %d", bookmarkSeq)
+		}
+
+		// Causal consistency check: bookmark sequence must be <= current sequence
+		// This ensures all transactions up to the bookmark have been committed
+		if bookmarkSeq > currentSequence {
+			return fmt.Errorf("bookmark sequence %d is from the future (current: %d)", bookmarkSeq, currentSequence)
+		}
+
+		// Bookmark is valid - all transactions up to this sequence have been committed
+	}
+
+	return nil
+}
+
+// handleRollback handles the ROLLBACK message.
+// If the executor implements TransactionalExecutor, rolls back the real transaction.
+func (s *Session) handleRollback(data []byte) error {
+	if !s.inTransaction {
+		// Not an error to rollback when not in transaction (Neo4j behavior)
+		if err := s.sendSuccessNoFlush(nil); err != nil {
+			return err
+		}
+		return s.flushIfPending()
+	}
+
+	if err := s.rollbackExplicitTransaction(transactionTerminalRollback); err != nil {
+		if err := s.sendTransactionControlFailure(
+			"Neo.ClientError.Transaction.TransactionRollbackFailed", err.Error()); err != nil {
+			return err
+		}
+		if flushErr := s.flushIfPending(); flushErr != nil {
+			return flushErr
+		}
+		return fmt.Errorf("ROLLBACK transaction cleanup failed: %w", err)
+	}
+	if err := s.sendSuccessNoFlush(nil); err != nil {
+		return err
+	}
+	return s.flushIfPending()
+}
+
+// sendRecord sends a RECORD response.
+// Uses buffer pooling to reduce allocations for high-frequency record sending.
+func (s *Session) recordEntityDatabaseResolver(dbName string) boltEntityDatabaseResolver {
+	if s.server == nil || s.server.dbManager == nil {
+		return nil
+	}
+	engine, err := s.server.dbManager.GetStorage(dbName)
+	if err != nil {
+		return nil
+	}
+	composite, ok := engine.(*storage.CompositeEngine)
+	if !ok {
+		return nil
+	}
+	return func(nodeID storage.NodeID, edgeID storage.EdgeID) string {
+		if nodeID != "" {
+			return composite.ConstituentDatabaseForNode(nodeID)
+		}
+		return composite.ConstituentDatabaseForEdge(edgeID)
+	}
+}
+
+func (s *Session) sendRecord(fields []any) error {
+	buf := s.recordBuf
+	if cap(buf) < 16*1024 {
+		buf = make([]byte, 0, 16*1024)
+	}
+	buf = buf[:0]
+
+	// Format: <struct marker 0xB1> <signature 0x71> <list of fields>
+	buf = append(buf, recordHeader...)
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database, s.recordEntityDatabaseResolver(s.database))
+
+	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
+	err := s.sendChunk(buf)
+	s.recordBuf = buf[:0]
+	return err
+}
+
+// writeRecordNoFlush writes a RECORD message but does not flush.
+// It is used by PULL streaming to batch many records into a single flush
+// (the final SUCCESS message flushes everything). dbName is the database the
+// active result stream ran on (its entities carry its element ids, #745).
+func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*resultstream.Delivery) error {
+	buf := s.recordBuf
+	if cap(buf) < 16*1024 {
+		buf = make([]byte, 0, 16*1024)
+	}
+	buf = buf[:0]
+
+	buf = append(buf, recordHeader...)
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName))
+
+	err := s.writeMessageNoFlush(buf)
+	if err == nil && len(delivery) > 0 && delivery[0] != nil {
+		delivery[0].ObserveWritten(buf)
+	}
+	s.recordBuf = buf[:0]
+	return err
+}
+
+// sendRecordsBatched sends multiple RECORD responses using buffered I/O.
+// This dramatically reduces syscall overhead for large result sets.
+// For 500 records: ~500 syscalls → 1 syscall = ~8x faster
+// Uses buffer pooling to reduce allocations per record. dbName is the
+// database the active result stream ran on (#745 element ids).
+func (s *Session) sendRecordsBatched(rows [][]any, dbName string, delivery ...*resultstream.Delivery) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	resolver := s.recordEntityDatabaseResolver(dbName)
+
+	buf := s.recordBuf
+	if cap(buf) < 16*1024 {
+		buf = make([]byte, 0, 16*1024)
+	}
+
+	// Write all records to buffer (each record is a separate chunk)
+	for _, row := range rows {
+		// Reset buffer length but keep capacity
+		buf = buf[:0]
+
+		// Build record: struct marker + signature + list of fields
+		buf = append(buf, recordHeader...)
+		buf = encodeRecordListInto(buf, row, s.useUTCDateTimeStructs(), s.boltV5(), dbName, resolver)
+
+		// bufio.Writer does not retain the provided slice after Write returns,
+		// so it's safe to reuse the pooled buffer on the next iteration.
+		if err := s.writeMessageNoFlush(buf); err != nil {
+			s.recordBuf = buf[:0]
+			return err
+		}
+		if len(delivery) > 0 && delivery[0] != nil {
+			delivery[0].ObserveWritten(buf)
+		}
+	}
+
+	// Don't flush here - let the final SUCCESS message flush everything
+	s.recordBuf = buf[:0]
+	return nil
+}
+
+// sendSuccess sends a SUCCESS response with PackStream encoding.
+// Pre-allocated success header
+var successHeader = []byte{0xB1, MsgSuccess}
+var recordHeader = []byte{0xB1, MsgRecord}
+var failureHeader = []byte{0xB1, MsgFailure}
+var ignoredMessage = []byte{0xB0, MsgIgnored}
+
+func (s *Session) sendSuccess(metadata map[string]any) error {
+	buf := s.recordBuf
+	if cap(buf) < 16*1024 {
+		buf = make([]byte, 0, 16*1024)
+	}
+	buf = buf[:0]
+
+	buf = append(buf, successHeader...)
+	buf = encodePackStreamMapIntoWithUTC(buf, metadata, s.useUTCDateTimeStructs())
+
+	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
+	err := s.sendChunk(buf)
+	s.recordBuf = buf[:0]
+	return err
+}
+
+func (s *Session) sendSuccessNoFlush(metadata map[string]any) error {
+	buf := s.recordBuf
+	if cap(buf) < 16*1024 {
+		buf = make([]byte, 0, 16*1024)
+	}
+	buf = buf[:0]
+
+	buf = append(buf, successHeader...)
+	buf = encodePackStreamMapIntoWithUTC(buf, metadata, s.useUTCDateTimeStructs())
+
+	if err := s.writeMessageNoFlush(buf); err != nil {
+		return err
+	}
+	s.recordBuf = buf[:0]
+	s.flushPending = true
+	return nil
+}
+
+// sendFailure sends a FAILURE response.
+// Uses buffer pooling to reduce allocations.
+func (s *Session) sendFailure(code, message string) error {
+	return s.sendFailureWithDetail(code, message, "")
+}
+
+func (s *Session) sendFailureWithDetail(code, message, detail string) error {
+	return s.sendFailureWithMetadata(code, message, detail, nil)
+}
+
+func (s *Session) sendFailureWithMetadata(code, message, detail string, fields map[string]any) error {
+	if s.failedUntilReset {
+		// No PULL can deliver pending records in the failed state. Retire
+		// their batches without poisoning the connection tracker after RESET.
+		s.abandonContinuationResults()
+	}
+	buf := s.recordBuf
+	if cap(buf) < 16*1024 {
+		buf = make([]byte, 0, 16*1024)
+	}
+	buf = buf[:0]
+
+	buf = append(buf, failureHeader...)
+	metadata := map[string]any{
+		"code":    code,
+		"message": message,
+	}
+	if detail != "" {
+		metadata["gql_status"] = detail
+	}
+	for key, value := range fields {
+		metadata[key] = value
+	}
+	buf = encodePackStreamMapIntoWithUTC(buf, metadata, s.useUTCDateTimeStructs())
+
+	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
+	err := s.sendChunk(buf)
+	s.recordBuf = buf[:0]
+	return err
+}
+
+func (s *Session) sendRunFailure(code, message string) error {
+	return s.sendRunFailureWithDetail(code, message, "")
+}
+
+func (s *Session) sendRunFailureWithDetail(code, message, detail string) error {
+	// Bolt spec: a FAILURE poisons the connection until RESET — every queued
+	// or subsequent message (except RESET/GOODBYE) gets IGNORED. This applies
+	// to auto-commit RUNs too: a pipelined PULL must be answered with
+	// IGNORED, not an empty SUCCESS, or drivers desynchronize their stream
+	// (observed as hangs and "Expected structure, found marker 00" under
+	// concurrent auto-commit MERGE conflicts, #769).
+	s.failedUntilReset = true
+	return s.sendFailureWithDetail(code, message, detail)
+}
+
+func (s *Session) sendTransactionControlFailure(code, message string) error {
+	return s.sendTransactionControlFailureWithDetail(code, message, "")
+}
+
+// sendTransactionControlFailureWithDetail is sendTransactionControlFailure
+// with the error's conformance detail (gql_status), "" for none.
+func (s *Session) sendTransactionControlFailureWithDetail(code, message, detail string) error {
+	s.failedUntilReset = true
+	return s.sendFailureWithDetail(code, message, detail)
+}
+
+func (s *Session) sendTransactionTimeoutFailure() error {
+	s.failedUntilReset = true
+	return s.sendFailure(transactionTimedOutCode, transactionTimedOutMsg)
+}
+
+func (s *Session) sendIgnored() error {
+	return s.sendChunk(ignoredMessage)
+}
+
+// sendChunk sends a chunk to the client using buffered I/O.
+// The buffer is flushed after each complete message response.
+func (s *Session) sendChunk(data []byte) error {
+	if err := s.writeMessageNoFlush(data); err != nil {
+		return err
+	}
+	return s.flushDelivery()
+}
+
+func (s *Session) flushIfPending() error {
+	if !s.flushPending {
+		return nil
+	}
+	s.flushPending = false
+	return s.flushDelivery()
+}
+
+func (s *Session) flushDelivery() error {
+	err := s.writer.Flush()
+	if err != nil {
+		s.continuationDelivery.Fail()
+	}
+	return err
+}
+
+// writeMessageNoFlush writes a complete Bolt message using chunk framing, but does
+// not flush the underlying buffered writer.
+//
+// Bolt messages are chunked with 2-byte big-endian sizes and a 0-sized terminator.
+// A single message may span multiple chunks (max chunk size is 65535 bytes).
+func (s *Session) writeMessageNoFlush(data []byte) (retErr error) {
+	defer func() {
+		if retErr != nil {
+			s.continuationDelivery.Fail()
+		}
+	}()
+	const maxChunkSize = 0xFFFF
+
+	// Preserve existing behavior: even for empty messages, write an explicit
+	// 0-sized chunk header followed by the terminator chunk.
+	if len(data) == 0 {
+		if err := s.writer.WriteByte(0x00); err != nil {
+			return err
+		}
+		if err := s.writer.WriteByte(0x00); err != nil {
+			return err
+		}
+		if err := s.writer.WriteByte(0x00); err != nil {
+			return err
+		}
+		if err := s.writer.WriteByte(0x00); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	remaining := data
+
+	for len(remaining) > 0 {
+		chunkSize := len(remaining)
+		if chunkSize > maxChunkSize {
+			chunkSize = maxChunkSize
+		}
+
+		if err := s.writer.WriteByte(byte(chunkSize >> 8)); err != nil {
+			return err
+		}
+		if err := s.writer.WriteByte(byte(chunkSize)); err != nil {
+			return err
+		}
+		if _, err := s.writer.Write(remaining[:chunkSize]); err != nil {
+			return err
+		}
+
+		remaining = remaining[chunkSize:]
+	}
+
+	// Terminator chunk (size 0)
+	if err := s.writer.WriteByte(0x00); err != nil {
+		return err
+	}
+	return s.writer.WriteByte(0x00)
+}
+
+// principalAccess is the session principal's permission resolver
+// (cypher.PrincipalAccess), the one HTTP builds too: graph access from mode,
+// read and write from the server's database privileges, and the other
+// permissions from the principal's entitlements. Without an authenticated
+// principal every permission the graph access allows is open.
+func (s *Session) principalAccess(mode auth.DatabaseAccessMode) cypher.PrincipalAccess {
+	access := cypher.PrincipalAccess{
+		GraphAccess: func(graph string) (string, bool) { return s.graphAccess(mode, graph) },
+	}
+	if s.authResult == nil {
+		return access
+	}
+	roles := s.authResult.Roles
+	if s.server != nil && s.server.resolvedAccessResolver != nil {
+		resolve := s.server.resolvedAccessResolver
+		access.DatabaseAccess = func(database string) auth.ResolvedAccess { return resolve(roles, database) }
+	}
+	access.Entitlement = s.authResult.HasPermission
+	return access
+}
+
+// graphAccess reports whether mode allows graph, a RUN's or BEGIN's
+// database, and the database its data is in (cypher.GraphAccessTarget: a
+// composite constituent needs its composite and its database, as the
+// executor checks a USE of the same name). A nil mode allows every
+// database.
+func (s *Session) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDatabase string, allowed bool) {
+	var manager cypher.DatabaseManagerInterface
+	if s.server != nil {
+		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
+			manager = &boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(mgr)}
+		}
+	}
+	var canAccess func(string) bool
+	if mode != nil {
+		canAccess = mode.CanAccessDatabase
+	}
+	dataDatabase, _, allowed = cypher.GraphAccessTarget(manager, graph, canAccess)
+	return dataDatabase, allowed
+}
+
+// refreshAuthResult reads the session's roles and permissions again, from
+// the authenticator, before a statement or transaction runs: a role removed
+// from the user or deleted since HELLO no longer applies (CurrentAuthResult).
+func (s *Session) refreshAuthResult() {
+	if s.authResult == nil || s.server == nil {
+		return
+	}
+	if current, ok := s.server.config.Authenticator.(interface {
+		CurrentAuthResult(*BoltAuthResult) *BoltAuthResult
+	}); ok {
+		s.authResult = current.CurrentAuthResult(s.authResult)
+	}
+}
+
+// accessMode is the databases the session's principal may use: the server's
+// resolver for its roles, or the server's fixed mode; nil allows every
+// database. When authentication is required and neither is set (a
+// standalone Bolt server), no database (secure default).
+func (s *Session) accessMode() auth.DatabaseAccessMode {
+	if s.server == nil {
+		return nil
+	}
+	if s.server.databaseAccessModeResolver != nil {
+		var roles []string
+		if s.authResult != nil {
+			roles = s.authResult.Roles
+		}
+		return s.server.databaseAccessModeResolver(roles)
+	}
+	if s.server.databaseAccessMode != nil {
+		return s.server.databaseAccessMode
+	}
+	if s.server.config.RequireAuth {
+		return auth.DenyAllDatabaseAccessMode
+	}
+	return nil
+}
+
+// withSessionIdentity adds what the executor knows about the session to a
+// statement's or transaction's context: the forwarded auth header, the
+// client connection, the user directory, and the authenticated user with
+// their principal and boosted procedure grants. A statement's permissions
+// are the principal's one resolver, which handleRun adds for the
+// statement's database (principalAccess).
+func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
+	ctx = cypher.WithAuthToken(ctx, s.forwardedAuthHeader)
+	ctx = cypher.WithRequestIdentity(ctx, s.requestIdentity())
+	if s.authResult != nil {
+		principal := s.authResult.PrincipalID
+		if principal == "" {
+			principal = auth.UsernamePrincipalID(s.authResult.Username)
+		}
+		ctx = cypher.WithAuthenticatedPrincipal(ctx, principal)
+		ctx = cypher.WithProcedureGrantChecker(ctx, s.server.procedureGrants(s.authResult.Roles))
+	}
+	if s.authenticationDisabled() {
+		// No authentication: immutable privileges can be administered, as
+		// in Neo4j with authentication disabled.
+		ctx = cypher.WithAuthenticationDisabled(ctx)
+	}
+	return ctx
+}
+
+// authenticationDisabled is auth.AuthenticationDisabled for the session: no
+// authenticator configured, or one whose user store has security disabled.
+func (s *Session) authenticationDisabled() bool {
+	if s.server == nil || s.server.config.Authenticator == nil {
+		return true
+	}
+	if authenticator, ok := s.server.config.Authenticator.(interface{ AuthenticationDisabled() bool }); ok {
+		return authenticator.AuthenticationDisabled()
+	}
+	return false
+}
+
+// requestIdentity is the session's identity for SHOW USERS, SHOW CURRENT
+// USER and SHOW TRANSACTIONS: its connection, its signed-in user and the
+// user store. It is built once and rebuilt only when the signed-in user
+// changes (LOGON / LOGOFF), so a statement doesn't rebuild it.
+func (s *Session) requestIdentity() *cypher.RequestIdentity {
+	if s.identity != nil && s.identityAuth == s.authResult {
+		return s.identity
+	}
+	identity := &cypher.RequestIdentity{Connection: cypher.ClientConnection{ID: s.connectionID, Protocol: "bolt"}}
+	if s.server != nil {
+		identity.Connections = s.server.ConnectionListings
+		s.publishConnectionListing()
+	}
+	if s.conn != nil && s.conn.RemoteAddr() != nil {
+		identity.Connection.Address = s.conn.RemoteAddr().String()
+	}
+	if s.server != nil && s.server.config != nil {
+		if lister, ok := s.server.config.Authenticator.(interface{ UserListings() []cypher.UserListing }); ok {
+			identity.Users = lister.UserListings
+		}
+	}
+	if s.authResult != nil && s.authResult.Username != "" {
+		identity.User = &cypher.AuthenticatedUser{Name: s.authResult.Username, Roles: s.authResult.Roles}
+	}
+	s.identity, s.identityAuth = identity, s.authResult
+	return identity
+}

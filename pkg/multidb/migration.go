@@ -1,0 +1,299 @@
+// Package multidb provides automatic migration of existing unprefixed data.
+//
+// When upgrading from a pre-multi-database version of NornicDB, existing data
+// without namespace prefixes is automatically migrated to the default database
+// namespace. This ensures backwards compatibility and zero-downtime upgrades.
+//
+// Migration Process:
+//  1. Detects unprefixed data (nodes/edges without "namespace:" prefix)
+//  2. Migrates all unprefixed data to default database namespace
+//  3. Updates all indexes automatically (via CreateNode/CreateEdge)
+//  4. Marks migration as complete in metadata (prevents re-running)
+//
+// The migration runs automatically in NewDatabaseManager() and is completely
+// transparent to users. No manual steps are required.
+//
+// Example:
+//
+//	// Before upgrade: data stored as "node-123"
+//	// After upgrade: automatically becomes "nornic:node-123"
+//	// User access remains the same - no changes needed!
+package multidb
+
+import (
+	"fmt"
+	"log"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+const (
+	migrationStatusKey = "migration:legacy_data"
+)
+
+// migrateLegacyData migrates existing unprefixed data to the default database namespace.
+//
+// This function handles the upgrade path from pre-multi-database versions:
+//   - Detects nodes/edges without namespace prefixes
+//   - Migrates them to the default database namespace
+//   - Updates all indexes (label, outgoing, incoming, edge type)
+//   - Marks migration as complete in metadata
+//
+// This is a one-time operation that runs automatically on first startup
+// after upgrading to multi-database support. The migration is idempotent
+// and will not run again once marked as complete.
+//
+// Migration preserves all node/edge properties, relationships, and metadata.
+// The process is transparent to users - existing data remains fully accessible
+// through the default database.
+//
+// Returns an error if migration fails. On success, migration status is
+// persisted in the system database to prevent re-running.
+func (m *DatabaseManager) migrateLegacyData() error {
+	// Check if migration already completed
+	if m.isMigrationComplete() {
+		return nil
+	}
+
+	// Use the engine directly (it implements Engine interface)
+	// Migration works with any Engine implementation
+	engine := m.inner
+
+	// Detect unprefixed data
+	hasUnprefixedData, err := m.detectUnprefixedData(engine)
+	if err != nil {
+		return fmt.Errorf("failed to detect unprefixed data: %w", err)
+	}
+
+	if !hasUnprefixedData {
+		// No unprefixed data - mark migration as complete
+		_ = m.markMigrationComplete()
+		return nil
+	}
+
+	log.Printf("⚠️  Legacy (unprefixed) data detected; attempting one-time migration into default database %q", m.config.DefaultDatabase)
+
+	// Perform migration
+	if err := m.performMigration(engine); err != nil {
+		// IMPORTANT: Migration is written to avoid deleting legacy records unless the
+		// full copy step succeeds. If we fail here, the user's existing data should
+		// still be intact (though some prefixed copies may have been created).
+		log.Printf("❌ Legacy migration failed; leaving existing database intact. Manual migration required.")
+		log.Printf("ℹ️  Recommended approach: export legacy data and re-import into %q using namespaced IDs, or restore from backup and retry after fixing the underlying error.", m.config.DefaultDatabase)
+		return fmt.Errorf("legacy migration failed; existing data left intact: %w", err)
+	}
+
+	// Mark migration as complete
+	_ = m.markMigrationComplete()
+
+	return nil
+}
+
+// isMigrationComplete checks if legacy data migration has been completed.
+//
+// Returns true if migration has already been run and marked as complete
+// in the system database metadata. This prevents the migration from
+// running multiple times.
+func (m *DatabaseManager) isMigrationComplete() bool {
+	// Check metadata for migration status
+	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
+	node, err := systemEngine.GetNode(storage.NodeID(migrationStatusKey))
+	if err == storage.ErrNotFound {
+		return false
+	}
+	if err != nil {
+		return false
+	}
+
+	// Check if migration is marked as complete
+	if status, ok := node.Properties["status"].(string); ok {
+		return status == "complete"
+	}
+
+	return false
+}
+
+// markMigrationComplete marks the migration as complete in metadata.
+//
+// Stores migration status in the system database to prevent the migration
+// from running again on subsequent startups. The status includes the
+// target database name for reference.
+func (m *DatabaseManager) markMigrationComplete() error {
+	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
+
+	node := &storage.Node{
+		ID:     storage.NodeID(migrationStatusKey),
+		Labels: []string{"_System", "_Migration"},
+		Properties: map[string]any{
+			"status":      "complete",
+			"migrated_to": m.config.DefaultDatabase,
+		},
+	}
+
+	// Try update first, then create
+	err := systemEngine.UpdateNode(node)
+	if err == storage.ErrNotFound {
+		_, err := systemEngine.CreateNode(node)
+		return err
+	}
+	return err
+}
+
+// detectUnprefixedData checks if there's any data without namespace prefixes.
+//
+// Scans all nodes and edges in the storage engine to detect data that
+// doesn't have a namespace prefix (i.e., data created before multi-database
+// support was added). A node/edge is considered unprefixed if its ID doesn't
+// contain a colon (":"), which is used as the namespace separator.
+//
+// Returns true if any unprefixed data is found, false otherwise.
+// Returns an error if scanning fails.
+func (m *DatabaseManager) detectUnprefixedData(engine storage.Engine) (bool, error) {
+	// Get all nodes
+	allNodes, err := engine.AllNodes()
+	if err != nil {
+		return false, err
+	}
+
+	// Check if any node doesn't have a namespace prefix
+	// A node has a namespace prefix if its ID contains ":"
+	for _, node := range allNodes {
+		nodeIDStr := string(node.ID)
+		// Check if this looks like unprefixed data
+		// Prefixed data will have format like "nornic:node-123" or "system:node-123"
+		// Unprefixed data will be just "node-123"
+		if !strings.Contains(nodeIDStr, ":") {
+			return true, nil
+		}
+	}
+
+	// Also check edges
+	allEdges, err := engine.AllEdges()
+	if err != nil {
+		return false, err
+	}
+
+	for _, edge := range allEdges {
+		edgeIDStr := string(edge.ID)
+		if !strings.Contains(edgeIDStr, ":") {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// performMigration migrates all unprefixed data to the default database namespace.
+//
+// This function performs the actual migration:
+//  1. Collects all unprefixed nodes and edges
+//  2. Creates new versions with prefixed IDs (e.g., "nornic:node-123")
+//  3. Updates all indexes automatically (via CreateNode/CreateEdge)
+//  4. Deletes old unprefixed versions
+//
+// The migration preserves all properties, relationships, and metadata.
+// Edge relationships are maintained by prefixing both start and end node IDs.
+//
+// Returns an error if migration fails. On success, all unprefixed data
+// will be accessible through the default database namespace.
+func (m *DatabaseManager) performMigration(engine storage.Engine) error {
+	defaultDB := m.config.DefaultDatabase
+
+	// Get all nodes and edges
+	allNodes, err := engine.AllNodes()
+	if err != nil {
+		return fmt.Errorf("failed to get all nodes: %w", err)
+	}
+
+	allEdges, err := engine.AllEdges()
+	if err != nil {
+		return fmt.Errorf("failed to get all edges: %w", err)
+	}
+
+	// Collect unprefixed nodes and edges
+	var unprefixedNodes []*storage.Node
+	var unprefixedEdges []*storage.Edge
+
+	for _, node := range allNodes {
+		nodeIDStr := string(node.ID)
+		if !strings.Contains(nodeIDStr, ":") {
+			unprefixedNodes = append(unprefixedNodes, node)
+		}
+	}
+
+	for _, edge := range allEdges {
+		edgeIDStr := string(edge.ID)
+		if !strings.Contains(edgeIDStr, ":") {
+			unprefixedEdges = append(unprefixedEdges, edge)
+		}
+	}
+
+	if len(unprefixedNodes) == 0 && len(unprefixedEdges) == 0 {
+		// Nothing to migrate
+		return nil
+	}
+
+	// Phase 1: Create prefixed copies.
+	//
+	// IMPORTANT: Do not delete legacy (unprefixed) records during this phase.
+	// If we fail mid-migration, we must not lose any existing data.
+	createdNodes := make([]storage.NodeID, 0, len(unprefixedNodes))
+	for _, node := range unprefixedNodes {
+		// Copy properties without injecting metadata keys.
+		// Namespace isolation is provided by prefixed IDs, not user properties.
+		properties := make(map[string]any)
+		for k, v := range node.Properties {
+			properties[k] = v
+		}
+
+		// Rewrite identity on a complete copy: partial field lists silently lost
+		// embeddings and visibility metadata during upgrades.
+		newNode := *node
+		newNode.ID = storage.NodeID(defaultDB + ":" + string(node.ID))
+		newNode.Properties = properties
+
+		// Create new node (this will create all indexes)
+		if _, err := engine.CreateNode(&newNode); err != nil {
+			// If node already exists (shouldn't happen), skip
+			if err == storage.ErrAlreadyExists {
+				continue
+			}
+			return fmt.Errorf("failed to create migrated node %s: %w", newNode.ID, err)
+		}
+		createdNodes = append(createdNodes, newNode.ID)
+	}
+
+	createdEdges := make([]storage.EdgeID, 0, len(unprefixedEdges))
+	for _, edge := range unprefixedEdges {
+		newEdge := *edge
+		newEdge.ID = storage.EdgeID(defaultDB + ":" + string(edge.ID))
+		newEdge.StartNode = storage.NodeID(defaultDB + ":" + string(edge.StartNode))
+		newEdge.EndNode = storage.NodeID(defaultDB + ":" + string(edge.EndNode))
+
+		// Create new edge (this will create all indexes)
+		if err := engine.CreateEdge(&newEdge); err != nil {
+			// If edge already exists (shouldn't happen), skip
+			if err == storage.ErrAlreadyExists {
+				continue
+			}
+			return fmt.Errorf("failed to create migrated edge %s: %w", newEdge.ID, err)
+		}
+		createdEdges = append(createdEdges, newEdge.ID)
+	}
+
+	// Phase 2: Best-effort cleanup of legacy (unprefixed) records.
+	//
+	// Failures here are not fatal: users will still have working namespaced data,
+	// and the legacy records remain as a fallback/backup.
+	for _, node := range unprefixedNodes {
+		_ = engine.DeleteNode(node.ID)
+	}
+	for _, edge := range unprefixedEdges {
+		_ = engine.DeleteEdge(edge.ID)
+	}
+
+	log.Printf("✅ Legacy migration complete: created %d nodes and %d edges in %q", len(createdNodes), len(createdEdges), defaultDB)
+
+	return nil
+}

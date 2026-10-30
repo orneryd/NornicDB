@@ -1,0 +1,280 @@
+- id: localization.os_language_undetected
+  description: Bootstrap warning emitted when the operating system language cannot be detected.
+  other: "Unable to determine the operating system language; using English (United States)"
+- id: localization.language_pack_missing
+  description: Warning emitted once when a requested language pack is unavailable.
+  other: "Language pack {{.RequestedLanguage}} is unavailable; using {{.ResolvedLanguage}} (source: {{.Source}})"
+- id: localization.catalog_entry_missing
+  description: Warning emitted when a translation is missing from an installed language pack.
+  other: "Message {{.MessageID}} is unavailable in {{.Language}}; using English (United States)"
+- id: server.invalid_request_body
+  description: HTTP response for a malformed or unreadable request body.
+  other: invalid request body
+- id: server.invalid_json_body
+  description: Neo4j HTTP response for a malformed JSON request body.
+  other: invalid JSON body
+- id: server.method_post_required
+  description: HTTP response for an endpoint that only accepts POST requests.
+  other: POST required
+- id: server.method_get_required
+  description: HTTP response for an endpoint that only accepts GET requests.
+  other: GET required
+- id: server.method_get_or_post_required
+  description: HTTP response for an endpoint that accepts GET or POST requests.
+  other: GET or POST required
+- id: server.method_get_or_put_required
+  description: HTTP response for an endpoint that accepts GET or PUT requests.
+  other: GET or PUT required
+- id: server.method_get_put_or_delete_required
+  description: HTTP response for an endpoint that accepts GET, PUT, or DELETE requests.
+  other: GET, PUT, or DELETE required
+- id: server.method_post_or_delete_required
+  description: HTTP response for an endpoint that accepts POST or DELETE requests.
+  other: POST or DELETE required
+- id: server.method_not_allowed
+  description: HTTP response when an endpoint does not accept the request method.
+  other: method not allowed
+- id: request.body_read_failed
+  description: HTTP response when the server cannot read the request body.
+  other: failed to read request body
+- id: mcp.parse_error
+  description: JSON-RPC error message for an invalid MCP request document.
+  other: Parse error
+- id: mcp.method_not_found
+  description: JSON-RPC error message for an unsupported MCP method.
+  other: Method not found
+- id: mcp.tool_execution_failed
+  description: JSON-RPC error message for an MCP tool execution failure.
+  other: Tool execution failed
+- id: qdrant.collection_name_required
+  description: Qdrant gRPC validation error when the collection_name field is empty.
+  other: collection_name is required
+- id: qdrant.field_required
+  description: Qdrant gRPC validation error when a request field is empty. Field is a machine field identifier and must not be translated.
+  other: "{{.Field}} is required"
+- id: qdrant.fields_required
+  description: Qdrant gRPC validation error when plural request fields or values are empty. Fields is a machine identifier or phrase and must not be translated.
+  other: "{{.Fields}} are required"
+- id: qdrant.database_access_denied
+  description: Qdrant gRPC authorization error when the principal cannot access a database. Name is the database identifier.
+  other: 'access to database "{{.Name}}" is not allowed'
+- id: qdrant.database_write_denied
+  description: Qdrant gRPC authorization error when the principal cannot write to a database. Name is the database identifier.
+  other: 'write on database "{{.Name}}" is not allowed'
+- id: qdrant.permission_denied
+  description: Qdrant gRPC authorization error when the principal lacks permission for an RPC method.
+  other: permission denied
+- id: qdrant.authentication_required
+  description: Qdrant gRPC authentication error when credentials are missing. Cause is diagnostic text and must not be translated.
+  other: "authentication required: {{.Cause}}"
+- id: qdrant.invalid_or_expired_token
+  description: Qdrant gRPC authentication error when a bearer token cannot be accepted.
+  other: invalid or expired token
+- id: qdrant.collection_not_found
+  description: Qdrant gRPC lookup error when a collection does not exist. Name is the collection identifier.
+  other: 'collection "{{.Name}}" not found'
+- id: qdrant.snapshot_not_found
+  description: Qdrant gRPC lookup error when a snapshot does not exist. Name is the snapshot identifier.
+  other: 'snapshot "{{.Name}}" not found'
+- id: qdrant.vector_dimension_mismatch
+  description: Qdrant gRPC validation error for a vector with the wrong dimension. Got and Expected are integer dimensions.
+  other: "vector dimension mismatch: got {{.Got}}, expected {{.Expected}}"
+- id: qdrant.vector_mutations_disabled
+  description: Qdrant gRPC response when managed embeddings prevent direct vector mutation. The environment variable is a machine identifier.
+  other: vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC
+- id: qdrant.limit_too_large
+  description: Qdrant gRPC validation error when Limit exceeds Maximum. Both values are integers.
+  other: "limit too large: {{.Limit}} > {{.Maximum}}"
+- id: qdrant.text_query_embeddings_required
+  description: Qdrant gRPC response when a text query is used without embedding support. EmbedQuery is a machine identifier.
+  other: text query requires embeddings; enable NornicDB embeddings and configure EmbedQuery
+- id: qdrant.get_points_failed
+  description: Qdrant gRPC storage failure while retrieving points. Cause is diagnostic text and must not be translated.
+  other: "failed to get points: {{.Cause}}"
+- id: qdrant.embed_query_failed
+  description: Qdrant gRPC failure while embedding query text. Cause is diagnostic text and must not be translated.
+  other: "failed to embed query: {{.Cause}}"
+- id: qdrant.collection_not_found_with_cause
+  description: Qdrant gRPC collection lookup failure. Cause is diagnostic text and must not be translated.
+  other: "collection not found: {{.Cause}}"
+- id: qdrant.snapshot_directory_create_failed
+  description: Qdrant gRPC snapshot-directory creation failure. Cause is diagnostic text and must not be translated.
+  other: "failed to create snapshot directory: {{.Cause}}"
+- id: qdrant.snapshot_save_failed
+  description: Qdrant gRPC snapshot persistence failure. Cause is diagnostic text and must not be translated.
+  other: "failed to save snapshot: {{.Cause}}"
+- id: qdrant.snapshot_list_failed
+  description: Qdrant gRPC snapshot listing failure. Cause is diagnostic text and must not be translated.
+  other: "failed to list snapshots: {{.Cause}}"
+- id: qdrant.snapshot_delete_failed
+  description: Qdrant gRPC snapshot deletion failure. Cause is diagnostic text and must not be translated.
+  other: "failed to delete snapshot: {{.Cause}}"
+- id: heimdall.method_not_allowed
+  description: Plain-text Heimdall HTTP response when an endpoint does not accept the request method.
+  other: Method not allowed
+- id: heimdall.invalid_request_body
+  description: Plain-text Heimdall HTTP response for a malformed request body.
+  other: Invalid request body
+- id: heimdall.streaming_not_supported
+  description: Plain-text Heimdall HTTP response when the response writer cannot stream SSE data.
+  other: Streaming not supported
+- id: heimdall.bifrost_not_enabled
+  description: Plain-text Heimdall HTTP response when the Bifrost event service is unavailable.
+  other: Bifrost not enabled
+- id: heimdall.query_parameter_required
+  description: Plain-text Heimdall autocomplete validation response when the query parameter is empty.
+  other: query parameter required
+- id: heimdall.autocomplete_failed
+  description: Plain-text Heimdall autocomplete failure. Cause is diagnostic text and must not be translated.
+  other: "Autocomplete error: {{.Cause}}"
+- id: heimdall.generation_failed
+  description: Plain-text Heimdall response generation failure. Cause is diagnostic text and must not be translated.
+  other: "Generation error: {{.Cause}}"
+- id: retention.manager_disabled
+  description: HTTP response when the retention subsystem is unavailable.
+  other: retention manager is disabled
+- id: retention.policy_id_required
+  description: HTTP validation response when a retention policy ID is missing.
+  other: policy id required
+- id: retention.hold_id_required
+  description: HTTP validation response when a legal-hold ID is missing.
+  other: hold id required
+- id: retention.erasure_id_required
+  description: HTTP validation response when an erasure-request ID is missing.
+  other: erasure id required
+- id: server.method_delete_required
+  description: HTTP response for an endpoint that only accepts DELETE requests.
+  other: DELETE required
+- id: gdpr.own_data_export_only
+  description: HTTP authorization response when a non-admin user attempts to export another user's data.
+  other: can only export own data
+- id: gdpr.confirmation_required
+  description: HTTP validation response when a destructive GDPR request is not confirmed.
+  other: confirmation required
+- id: gdpr.own_data_delete_only
+  description: HTTP authorization response when a non-admin user attempts to delete another user's data.
+  other: can only delete own data
+- id: gdpr.legal_hold_prevents_deletion
+  description: HTTP conflict response when a legal hold protects user data from deletion.
+  other: user data is under legal hold and cannot be deleted
+- id: localization.items_processed
+  description: Test and shared progress message reporting a processed item count.
+  one: "{{.Count}} item processed"
+  other: "{{.Count}} items processed"
+- id: security.not_authenticated
+  description: Bolt failure returned when authentication has not completed.
+  other: Not authenticated
+- id: security.schema_permission_required
+  description: Authorization failure for schema operations.
+  other: Schema operations require schema permission
+- id: security.admin_permission_required
+  description: Authorization failure for administrator operations.
+  other: Admin operations require admin permission
+- id: security.write_permission_required
+  description: Authorization failure for write operations.
+  other: Write operations require write permission
+- id: security.read_permission_required
+  description: Authorization failure for read operations.
+  other: Read operations require read permission
+- id: database.not_found
+  description: Database lookup failure. Name is the requested database identifier.
+  other: "Database '{{.Name}}' does not exist"
+- id: server.database_not_found
+  description: Legacy HTTP and Neo4j response when the requested database does not exist. Name is the database identifier.
+  other: "Database '{{.Name}}' not found"
+- id: security.database_access_denied
+  description: Authorization response when the principal cannot access a database. Name is the database identifier.
+  other: "Access to database '{{.Name}}' is not allowed."
+- id: security.database_write_denied
+  description: Authorization response when the principal cannot write to a database. Name is the database identifier.
+  other: "Write on database '{{.Name}}' is not allowed."
+- id: server.authentication_not_configured
+  description: HTTP response when authentication services are unavailable or disabled.
+  other: authentication not configured
+- id: server.oauth_not_configured
+  description: HTTP response when an OAuth endpoint is used without OAuth configuration.
+  other: OAuth not configured
+- id: server.not_authenticated
+  description: HTTP response when a request has no authenticated principal.
+  other: not authenticated
+- id: server.user_not_found
+  description: HTTP response when the requested user does not exist or cannot be disclosed.
+  other: user not found
+- id: server.transaction_not_found
+  description: Neo4j HTTP response when the requested transaction does not exist or is not owned by the caller.
+  other: transaction not found
+- id: server.request_field_required
+  description: HTTP validation response when a request field is empty. Field is a machine field identifier and must not be translated.
+  other: "{{.Field}} is required"
+- id: server.not_found
+  description: Generic Neo4j HTTP response when a route or resource cannot be found.
+  other: not found
+- id: server.invalid_gpu_manager_type
+  description: HTTP response when the configured GPU manager has an incompatible implementation type.
+  other: invalid GPU manager type
+- id: server.gpu_manager_not_initialized
+  description: HTTP response when a GPU operation is requested before the GPU manager is initialized.
+  other: GPU manager not initialized
+- id: server.temporal_graph_reconstruction_unsupported
+  description: HTTP response when the configured storage engine cannot reconstruct a temporal graph.
+  other: temporal graph reconstruction is not supported by the configured storage engine
+- id: server.temporal_graph_diff_unsupported
+  description: HTTP response when the configured storage engine cannot compute a temporal graph diff.
+  other: temporal graph diff is not supported by the configured storage engine
+- id: security.no_authentication_provided
+  description: Neo4j HTTP authentication response when no credentials are supplied.
+  other: No authentication provided
+- id: security.insufficient_permissions
+  description: Neo4j HTTP authorization response when the authenticated principal lacks permission.
+  other: insufficient permissions
+- id: server.internal_error
+  description: Generic HTTP response after an unexpected server failure. It must not disclose internal details.
+  other: internal server error
+- id: bolt.authentication_required
+  description: Bolt HELLO failure when authentication is required but credentials are absent.
+  other: Authentication required
+- id: bolt.invalid_credentials
+  description: Bolt HELLO failure when basic credentials are rejected.
+  other: Invalid credentials
+- id: bolt.invalid_or_expired_token
+  description: Bolt HELLO failure when a bearer token is rejected.
+  other: Invalid or expired token
+- id: bolt.authentication_not_configured
+  description: Bolt HELLO failure when authentication is required but no authenticator is configured.
+  other: Authentication required but not configured
+- id: bolt.unsupported_auth_scheme
+  description: Bolt HELLO failure for an unsupported authentication scheme. Scheme is the protocol identifier and must not be translated.
+  other: "Unsupported auth scheme: {{.Scheme}}"
+- id: bolt.database_not_found_with_cause
+  description: Bolt database lookup failure. Name is the database identifier and Cause is diagnostic text; neither is translated.
+  other: "Database '{{.Name}}' not found: {{.Cause}}"
+- id: bolt.no_transaction_to_commit
+  description: Bolt COMMIT failure when the session has no active transaction.
+  other: No transaction to commit
+- id: bolt.run_message_parse_failed
+  description: Bolt RUN failure for malformed PackStream input. Cause is diagnostic text and must not be translated.
+  other: "Failed to parse RUN message: {{.Cause}}"
+- id: bolt.bookmark_validation_failed
+  description: Bolt RUN failure for an invalid causal-consistency bookmark. Cause is diagnostic text and must not be translated.
+  other: "Bookmark validation failed: {{.Cause}}"
+- id: search.searcher_required
+  description: gRPC service configuration error when no search implementation is supplied.
+  other: searcher is required
+- id: request.required
+  description: Protocol validation error when a request payload is missing.
+  other: request is required
+- id: search.query_required
+  description: Search validation error when the query is empty.
+  other: query is required
+- id: search.query_chunk_failed
+  description: Search query chunking failure. Cause is diagnostic text from the underlying component.
+  other: "failed to chunk query: {{.Cause}}"
+- id: search.failed
+  description: Search execution failure. Cause is diagnostic text from the underlying component.
+  other: "search: {{.Cause}}"
+- id: grpc.localization_initialization_failed
+  description: gRPC service bootstrap failure while initializing localization. Cause is diagnostic text.
+  other: "initialize localization: {{.Cause}}"
+- id: localization.external_diagnostic
+  description: Compatibility boundary for diagnostic text outside localization ownership. Cause must remain untranslated.
+  other: "{{.Cause}}"

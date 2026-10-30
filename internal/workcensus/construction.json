@@ -1,0 +1,577 @@
+{
+  "roots": null,
+  "members": [
+    {
+      "owner_id": "cmd/nornicdb-snowball/package.go:github.com/orneryd/nornicdb/cmd/nornicdb-snowball.detectSnowballRuntimeImport",
+      "arg_references": [
+        "cmd/nornicdb-snowball/package.go:github.com/orneryd/nornicdb/cmd/nornicdb-snowball.detectSnowballRuntimeImport/variable#1",
+        "cmd/nornicdb-snowball/package.go:github.com/orneryd/nornicdb/cmd/nornicdb-snowball.detectSnowballRuntimeImport/parameter#1",
+        "",
+        ""
+      ],
+      "arg_types": [
+        "*go/token.FileSet",
+        "string",
+        "untyped nil",
+        "go/parser.Mode"
+      ],
+      "file": "cmd/nornicdb-snowball/package.go",
+      "owner_symbol": "github.com/orneryd/nornicdb/cmd/nornicdb-snowball.detectSnowballRuntimeImport",
+      "operand_type": "(f *go/ast.File, err error)",
+      "end_line": 410,
+      "end_column": 76,
+      "node": "call",
+      "end_offset": 14033,
+      "column": 15,
+      "owner_digest": "3d21e91d0ab91d1a857e6d97b235bb30601bc85232323400014fb5d8acf61a94",
+      "declaration": "function",
+      "state": "compiled",
+      "typed": true,
+      "signature": "(f *go/ast.File, err error)",
+      "underlying_type": "(f *go/ast.File, err error)",
+      "callees": [
+        "go/parser.ParseFile"
+      ],
+      "owner": "github.com/orneryd/nornicdb/cmd/nornicdb-snowball.detectSnowballRuntimeImport",
+      "kind": "analysis construction",
+      "id": "cmd/nornicdb-snowball/package.go:github.com/orneryd/nornicdb/cmd/nornicdb-snowball.detectSnowballRuntimeImport/analysis construction#1",
+      "digest": "80a9cb3fd560c44db8622f4a44bda659a5b2fd072d1f1793dc2ac3b5b7079374",
+      "class": "distinct source operation",
+      "reason": "Reads the bundler input import section to select its generated runtime import; this is source packaging, not a source-work census or class/manifest validator.",
+      "line": 410,
+      "code": "parser.ParseFile(fset, sourcePath, nil, parser.ParseComments)",
+      "offset": 13972,
+      "callee_end": 13988,
+      "open": 13989,
+      "function_body": 13929,
+      "receiver": "parser",
+      "receiver_type": "invalid type",
+      "call_signature": "func(fset *go/token.FileSet, filename string, src any, mode go/parser.Mode) (f *go/ast.File, err error)",
+      "string_input": true,
+      "args": [
+        "fset",
+        "sourcePath",
+        "nil",
+        "parser.ParseComments"
+      ],
+      "scalar_args": [
+        false,
+        false,
+        false,
+        true
+      ],
+      "review_owner": "#1667"
+    },
+    {
+      "owner_id": "internal/workcensus/documents.go:github.com/orneryd/nornicdb/internal/workcensus.extractDocuments",
+      "arg_references": [
+        "internal/workcensus/documents.go:github.com/orneryd/nornicdb/internal/workcensus.extractDocuments/variable#10",
+        "internal/workcensus/documents.go:github.com/orneryd/nornicdb/internal/workcensus.extractDocuments/variable#3",
+        "internal/workcensus/documents.go:github.com/orneryd/nornicdb/internal/workcensus.extractDocuments/variable#8",
+        ""
+      ],
+      "arg_types": [
+        "*go/token.FileSet",
+        "string",
+        "[]byte",
+        "go/parser.Mode"
+      ],
+      "file": "internal/workcensus/documents.go",
+      "owner_symbol": "github.com/orneryd/nornicdb/internal/workcensus.extractDocuments",
+      "operand_type": "(f *go/ast.File, err error)",
+      "end_line": 153,
+      "end_column": 69,
+      "node": "call",
+      "end_offset": 4488,
+      "column": 14,
+      "owner_digest": "21ea2471958d48266b367c0958f2742f1ca6e85c999a32749621d201ccfa7407",
+      "declaration": "function",
+      "state": "compiled",
+      "typed": true,
+      "signature": "(f *go/ast.File, err error)",
+      "underlying_type": "(f *go/ast.File, err error)",
+      "callees": [
+        "go/parser.ParseFile"
+      ],
+      "owner": "github.com/orneryd/nornicdb/internal/workcensus.extractDocuments",
+      "kind": "analysis construction",
+      "id": "internal/workcensus/documents.go:github.com/orneryd/nornicdb/internal/workcensus.extractDocuments/analysis construction#1",
+      "digest": "866db765132284186cf04a91ac9b30805e89c71299063805b63f3199c4107ec9",
+      "class": "shared engine",
+      "reason": "Canonical Go syntax parser for maintained SourceRoots/documents that are outside the typed build; it records unavailable type/SSA facts and never fabricates reachability.",
+      "line": 153,
+      "code": "parser.ParseFile(fset, path, raw, parser.ParseComments)",
+      "offset": 4433,
+      "callee_end": 4449,
+      "open": 4450,
+      "function_body": 3500,
+      "receiver": "parser",
+      "receiver_type": "invalid type",
+      "call_signature": "func(fset *go/token.FileSet, filename string, src any, mode go/parser.Mode) (f *go/ast.File, err error)",
+      "string_input": true,
+      "args": [
+        "fset",
+        "path",
+        "raw",
+        "parser.ParseComments"
+      ],
+      "scalar_args": [
+        false,
+        false,
+        false,
+        true
+      ],
+      "review_owner": "#1667"
+    },
+    {
+      "owner_id": "internal/workcensus/extract.go:github.com/orneryd/nornicdb/internal/workcensus.Extract",
+      "arg_references": [
+        "internal/workcensus/extract.go:github.com/orneryd/nornicdb/internal/workcensus.Extract/variable#9.FileSet",
+        "internal/workcensus/extract.go:github.com/orneryd/nornicdb/internal/workcensus.Extract/variable#36",
+        "internal/workcensus/extract.go:github.com/orneryd/nornicdb/internal/workcensus.Extract/variable#37",
+        ""
+      ],
+      "arg_types": [
+        "*go/token.FileSet",
+        "string",
+        "[]byte",
+        "go/parser.Mode"
+      ],
+      "file": "internal/workcensus/extract.go",
+      "owner_symbol": "github.com/orneryd/nornicdb/internal/workcensus.Extract",
+      "operand_type": "(f *go/ast.File, err error)",
+      "end_line": 170,
+      "end_column": 83,
+      "node": "call",
+      "end_offset": 6069,
+      "column": 14,
+      "owner_digest": "45d77a50263850e9d4282bcb711198efdec37bc65539f7b4bbcedecd3e9a7747",
+      "declaration": "function",
+      "state": "compiled",
+      "typed": true,
+      "signature": "(f *go/ast.File, err error)",
+      "underlying_type": "(f *go/ast.File, err error)",
+      "callees": [
+        "go/parser.ParseFile"
+      ],
+      "owner": "github.com/orneryd/nornicdb/internal/workcensus.Extract",
+      "kind": "analysis construction",
+      "id": "internal/workcensus/extract.go:github.com/orneryd/nornicdb/internal/workcensus.Extract/analysis construction#1",
+      "digest": "90e198539a6cff18ce30fc6f5127ebe256881e177b135b7aae62971ecedefd9c",
+      "class": "shared engine",
+      "reason": "Canonical inactive-file syntax parser for explicit IncludeInactive; compiled syntax comes from LoadProgram and inactive syntax is reported separately.",
+      "line": 170,
+      "code": "parser.ParseFile(loaded.FileSet, filename, raw, parser.ParseComments)",
+      "offset": 6000,
+      "callee_end": 6016,
+      "open": 6017,
+      "function_body": 1638,
+      "receiver": "parser",
+      "receiver_type": "invalid type",
+      "call_signature": "func(fset *go/token.FileSet, filename string, src any, mode go/parser.Mode) (f *go/ast.File, err error)",
+      "string_input": true,
+      "args": [
+        "loaded.FileSet",
+        "filename",
+        "raw",
+        "parser.ParseComments"
+      ],
+      "scalar_args": [
+        false,
+        false,
+        false,
+        true
+      ],
+      "review_owner": "#1667"
+    },
+    {
+      "owner_id": "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.LoadProgram",
+      "arg_references": [
+        "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.LoadProgram/variable#3",
+        ""
+      ],
+      "arg_types": [
+        "[]*golang.org/x/tools/go/packages.Package",
+        "golang.org/x/tools/go/ssa.BuilderMode"
+      ],
+      "file": "internal/workcensus/program.go",
+      "owner_symbol": "github.com/orneryd/nornicdb/internal/workcensus.LoadProgram",
+      "operand_type": "(*golang.org/x/tools/go/ssa.Program, []*golang.org/x/tools/go/ssa.Package)",
+      "end_line": 49,
+      "end_column": 60,
+      "node": "call",
+      "end_offset": 1499,
+      "column": 13,
+      "owner_digest": "3be69533d32ea1d673aa6cf040cfc405c01e4d48978759d209d479f62098f14b",
+      "declaration": "function",
+      "state": "compiled",
+      "typed": true,
+      "signature": "(*golang.org/x/tools/go/ssa.Program, []*golang.org/x/tools/go/ssa.Package)",
+      "underlying_type": "(*golang.org/x/tools/go/ssa.Program, []*golang.org/x/tools/go/ssa.Package)",
+      "callees": [
+        "golang.org/x/tools/go/ssa/ssautil.Packages"
+      ],
+      "owner": "github.com/orneryd/nornicdb/internal/workcensus.LoadProgram",
+      "kind": "analysis construction",
+      "id": "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.LoadProgram/analysis construction#1",
+      "digest": "d0a6bb56e5fa6788191eb3cc61075653d2ddef64dbcaa3a7a497ee7ad9fb2918",
+      "class": "shared engine",
+      "reason": "Canonical shared SSA program construction with instantiated generics; domain clients reuse its loaded Program.",
+      "line": 49,
+      "code": "ssautil.Packages(pkgs, ssa.InstantiateGenerics)",
+      "offset": 1452,
+      "callee_end": 1468,
+      "open": 1469,
+      "function_body": 1085,
+      "slice_type": "[]*golang.org/x/tools/go/packages.Package",
+      "element_type": "*golang.org/x/tools/go/packages.Package",
+      "receiver": "ssautil",
+      "receiver_type": "invalid type",
+      "call_signature": "func(initial []*golang.org/x/tools/go/packages.Package, mode golang.org/x/tools/go/ssa.BuilderMode) (*golang.org/x/tools/go/ssa.Program, []*golang.org/x/tools/go/ssa.Package)",
+      "args": [
+        "pkgs",
+        "ssa.InstantiateGenerics"
+      ],
+      "scalar_args": [
+        false,
+        true
+      ],
+      "review_owner": "#1667"
+    },
+    {
+      "owner_id": "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.LoadProgram",
+      "arg_references": [
+        "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.LoadProgram/variable#5",
+        ""
+      ],
+      "arg_types": [
+        "map[*golang.org/x/tools/go/ssa.Function]bool",
+        "*golang.org/x/tools/go/callgraph.Graph"
+      ],
+      "file": "internal/workcensus/program.go",
+      "owner_symbol": "github.com/orneryd/nornicdb/internal/workcensus.LoadProgram",
+      "operand_type": "*golang.org/x/tools/go/callgraph.Graph",
+      "end_line": 52,
+      "end_column": 130,
+      "node": "call",
+      "end_offset": 1678,
+      "column": 91,
+      "owner_digest": "3be69533d32ea1d673aa6cf040cfc405c01e4d48978759d209d479f62098f14b",
+      "declaration": "function",
+      "state": "compiled",
+      "typed": true,
+      "signature": "*golang.org/x/tools/go/callgraph.Graph",
+      "underlying_type": "*golang.org/x/tools/go/callgraph.Graph",
+      "callees": [
+        "golang.org/x/tools/go/callgraph/vta.CallGraph"
+      ],
+      "owner": "github.com/orneryd/nornicdb/internal/workcensus.LoadProgram",
+      "kind": "analysis construction",
+      "id": "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.LoadProgram/analysis construction#2",
+      "digest": "27fff4bbb76a6f4bd443cd5f03cbc0e0a69af0d0d26500611f5f7c5f2565d284",
+      "class": "shared engine",
+      "reason": "Canonical shared VTA refinement of the conservative graph; source-only extraction explicitly skips this owner.",
+      "line": 52,
+      "code": "vta.CallGraph(all, cha.CallGraph(prog))",
+      "offset": 1639,
+      "callee_end": 1652,
+      "open": 1653,
+      "function_body": 1085,
+      "receiver": "vta",
+      "receiver_type": "invalid type",
+      "call_signature": "func(funcs map[*golang.org/x/tools/go/ssa.Function]bool, initial *golang.org/x/tools/go/callgraph.Graph) *golang.org/x/tools/go/callgraph.Graph",
+      "args": [
+        "all",
+        "cha.CallGraph(prog)"
+      ],
+      "scalar_args": [
+        false,
+        false
+      ],
+      "review_owner": "#1667"
+    },
+    {
+      "owner_id": "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.LoadProgram",
+      "arg_references": [
+        "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.LoadProgram/variable#4"
+      ],
+      "arg_types": [
+        "*golang.org/x/tools/go/ssa.Program"
+      ],
+      "file": "internal/workcensus/program.go",
+      "owner_symbol": "github.com/orneryd/nornicdb/internal/workcensus.LoadProgram",
+      "operand_type": "*golang.org/x/tools/go/callgraph.Graph",
+      "end_line": 52,
+      "end_column": 129,
+      "node": "call",
+      "end_offset": 1677,
+      "column": 110,
+      "owner_digest": "3be69533d32ea1d673aa6cf040cfc405c01e4d48978759d209d479f62098f14b",
+      "declaration": "function",
+      "state": "compiled",
+      "typed": true,
+      "signature": "*golang.org/x/tools/go/callgraph.Graph",
+      "underlying_type": "*golang.org/x/tools/go/callgraph.Graph",
+      "callees": [
+        "golang.org/x/tools/go/callgraph/cha.CallGraph"
+      ],
+      "owner": "github.com/orneryd/nornicdb/internal/workcensus.LoadProgram",
+      "kind": "analysis construction",
+      "id": "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.LoadProgram/analysis construction#3",
+      "digest": "a934f5131a05fe9212c62920ff11bce946e67db8e684539947bb6a8c113108ba",
+      "class": "shared engine",
+      "reason": "Canonical CHA seed supplied to VTA in the single shared program builder.",
+      "line": 52,
+      "code": "cha.CallGraph(prog)",
+      "offset": 1658,
+      "callee_end": 1671,
+      "open": 1672,
+      "function_body": 1085,
+      "receiver": "cha",
+      "receiver_type": "invalid type",
+      "call_signature": "func(prog *golang.org/x/tools/go/ssa.Program) *golang.org/x/tools/go/callgraph.Graph",
+      "args": [
+        "prog"
+      ],
+      "scalar_args": [
+        false
+      ],
+      "review_owner": "#1667"
+    },
+    {
+      "owner_id": "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.loadPackages",
+      "arg_references": [
+        "",
+        "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.loadPackages/parameter#1.Patterns"
+      ],
+      "arg_types": [
+        "*golang.org/x/tools/go/packages.Config",
+        "[]string"
+      ],
+      "file": "internal/workcensus/program.go",
+      "owner_symbol": "github.com/orneryd/nornicdb/internal/workcensus.loadPackages",
+      "operand_type": "([]*golang.org/x/tools/go/packages.Package, error)",
+      "end_line": 69,
+      "end_column": 198,
+      "node": "call",
+      "end_offset": 2366,
+      "column": 15,
+      "owner_digest": "9bd3a491e9d24c2c0947c854515f6155bfbfc03e1f17668a4decc4d9dbe8c3f5",
+      "declaration": "function",
+      "state": "compiled",
+      "typed": true,
+      "signature": "([]*golang.org/x/tools/go/packages.Package, error)",
+      "underlying_type": "([]*golang.org/x/tools/go/packages.Package, error)",
+      "callees": [
+        "golang.org/x/tools/go/packages.Load"
+      ],
+      "owner": "github.com/orneryd/nornicdb/internal/workcensus.loadPackages",
+      "kind": "analysis construction",
+      "id": "internal/workcensus/program.go:github.com/orneryd/nornicdb/internal/workcensus.loadPackages/analysis construction#1",
+      "digest": "5a8bbe69becd4b052b80bf27bba03e73db529a67016dd5061a1b301f94405622",
+      "class": "shared engine",
+      "reason": "Canonical shared typed package/syntax loader; both Extract modes and LoadProgram call this single owner.",
+      "line": 69,
+      "code": "packages.Load(&packages.Config{Fset: fset, Mode: packages.LoadSyntax | c.LoadMode, Dir: root, BuildFlags: c.BuildFlags, Tests: c.Tests, Env: c.Env, Overlay: c.Overlay}, c.Patterns...)",
+      "offset": 2183,
+      "callee_end": 2196,
+      "open": 2197,
+      "function_body": 2140,
+      "receiver": "packages",
+      "receiver_type": "invalid type",
+      "call_signature": "func(cfg *golang.org/x/tools/go/packages.Config, patterns ...string) ([]*golang.org/x/tools/go/packages.Package, error)",
+      "args": [
+        "&packages.Config{Fset: fset, Mode: packages.LoadSyntax | c.LoadMode, Dir: root, BuildFlags: c.BuildFlags, Tests: c.Tests, Env: c.Env, Overlay: c.Overlay}",
+        "c.Patterns"
+      ],
+      "scalar_args": [
+        false,
+        false
+      ],
+      "review_owner": "#1667"
+    },
+    {
+      "owner_id": "pkg/localization/internal/proceduremetadata/main.go:github.com/orneryd/nornicdb/pkg/localization/internal/proceduremetadata.rewriteRegistry",
+      "arg_references": [
+        "pkg/localization/internal/proceduremetadata/main.go:github.com/orneryd/nornicdb/pkg/localization/internal/proceduremetadata.rewriteRegistry/variable#1",
+        "pkg/localization/internal/proceduremetadata/main.go:github.com/orneryd/nornicdb/pkg/localization/internal/proceduremetadata.rewriteRegistry/parameter#1",
+        "",
+        ""
+      ],
+      "arg_types": [
+        "*go/token.FileSet",
+        "string",
+        "untyped nil",
+        "go/parser.Mode"
+      ],
+      "file": "pkg/localization/internal/proceduremetadata/main.go",
+      "owner_symbol": "github.com/orneryd/nornicdb/pkg/localization/internal/proceduremetadata.rewriteRegistry",
+      "operand_type": "(f *go/ast.File, err error)",
+      "end_line": 79,
+      "end_column": 70,
+      "node": "call",
+      "end_offset": 2665,
+      "column": 15,
+      "owner_digest": "642c2d5ed784858486c693a9baa97f20f437b3e720f72fc6f825c068595dbfb6",
+      "declaration": "function",
+      "state": "compiled",
+      "typed": true,
+      "signature": "(f *go/ast.File, err error)",
+      "underlying_type": "(f *go/ast.File, err error)",
+      "callees": [
+        "go/parser.ParseFile"
+      ],
+      "owner": "github.com/orneryd/nornicdb/pkg/localization/internal/proceduremetadata.rewriteRegistry",
+      "kind": "analysis construction",
+      "id": "pkg/localization/internal/proceduremetadata/main.go:github.com/orneryd/nornicdb/pkg/localization/internal/proceduremetadata.rewriteRegistry/analysis construction#1",
+      "digest": "c88b935f5f19db610c537e941ac0765ed69546fd0d7c8c923e9af52ffb09a934",
+      "class": "distinct source operation",
+      "reason": "Parses a procedure registry that this command rewrites and emits; preservation of its complete AST/comments is a source transformation responsibility, not an approval census.",
+      "line": 79,
+      "code": "parser.ParseFile(fset, path, nil, parser.ParseComments)",
+      "offset": 2610,
+      "callee_end": 2626,
+      "open": 2627,
+      "function_body": 2567,
+      "receiver": "parser",
+      "receiver_type": "invalid type",
+      "call_signature": "func(fset *go/token.FileSet, filename string, src any, mode go/parser.Mode) (f *go/ast.File, err error)",
+      "string_input": true,
+      "args": [
+        "fset",
+        "path",
+        "nil",
+        "parser.ParseComments"
+      ],
+      "scalar_args": [
+        false,
+        false,
+        false,
+        true
+      ],
+      "review_owner": "#1667"
+    },
+    {
+      "owner_id": "scripts/localization_catalog/main.go:github.com/orneryd/nornicdb/scripts/localization_catalog.loadGoAPI",
+      "arg_references": [
+        "scripts/localization_catalog/main.go:github.com/orneryd/nornicdb/scripts/localization_catalog.loadGoAPI/variable#1",
+        "scripts/localization_catalog/main.go:github.com/orneryd/nornicdb/scripts/localization_catalog.loadGoAPI/parameter#1",
+        "",
+        ""
+      ],
+      "arg_types": [
+        "*go/token.FileSet",
+        "string",
+        "func(info os.FileInfo) bool",
+        "go/parser.Mode"
+      ],
+      "file": "scripts/localization_catalog/main.go",
+      "owner_symbol": "github.com/orneryd/nornicdb/scripts/localization_catalog.loadGoAPI",
+      "operand_type": "(pkgs map[string]*go/ast.Package, first error)",
+      "end_line": 104,
+      "end_column": 7,
+      "node": "call",
+      "end_offset": 2750,
+      "column": 19,
+      "owner_digest": "070e4e16bd2d31460d7f2c6d97d57aa109c12e025f9d53aad4b5705ff07014f0",
+      "declaration": "function",
+      "state": "compiled",
+      "typed": true,
+      "signature": "(pkgs map[string]*go/ast.Package, first error)",
+      "underlying_type": "(pkgs map[string]*go/ast.Package, first error)",
+      "callees": [
+        "go/parser.ParseDir"
+      ],
+      "owner": "github.com/orneryd/nornicdb/scripts/localization_catalog.loadGoAPI",
+      "kind": "analysis construction",
+      "id": "scripts/localization_catalog/main.go:github.com/orneryd/nornicdb/scripts/localization_catalog.loadGoAPI/analysis construction#1",
+      "digest": "b5e7398638e603d45f4ad42aa65c9971ba6f4de1b5f45553000aa3c283e816b2",
+      "class": "distinct source operation",
+      "reason": "Reads localization Go API declarations as input to catalog generation; it emits a localization catalog rather than work classifications, roots or reachability facts.",
+      "line": 102,
+      "code": "parser.ParseDir(fset, dir, func(info os.FileInfo) bool {\n\treturn !strings.HasSuffix(info.Name(), \"_test.go\") && info.Name() != \"catalog_manifest_gen.go\"\n}, 0)",
+      "offset": 2590,
+      "callee_end": 2605,
+      "open": 2606,
+      "function_body": 2543,
+      "receiver": "parser",
+      "receiver_type": "invalid type",
+      "call_signature": "func(fset *go/token.FileSet, path string, filter func(io/fs.FileInfo) bool, mode go/parser.Mode) (pkgs map[string]*go/ast.Package, first error)",
+      "string_input": true,
+      "args": [
+        "fset",
+        "dir",
+        "func(info os.FileInfo) bool {\n\treturn !strings.HasSuffix(info.Name(), \"_test.go\") && info.Name() != \"catalog_manifest_gen.go\"\n}",
+        "0"
+      ],
+      "scalar_args": [
+        false,
+        false,
+        false,
+        true
+      ],
+      "review_owner": "#1667"
+    },
+    {
+      "owner_id": "scripts/localization_inventory/main.go:(*github.com/orneryd/nornicdb/scripts/localization_inventory.scanner).scanFile",
+      "arg_references": [
+        "scripts/localization_inventory/main.go:(*github.com/orneryd/nornicdb/scripts/localization_inventory.scanner).scanFile/receiver#1.fset",
+        "scripts/localization_inventory/main.go:(*github.com/orneryd/nornicdb/scripts/localization_inventory.scanner).scanFile/parameter#1",
+        "scripts/localization_inventory/main.go:(*github.com/orneryd/nornicdb/scripts/localization_inventory.scanner).scanFile/variable#1",
+        ""
+      ],
+      "arg_types": [
+        "*go/token.FileSet",
+        "string",
+        "[]byte",
+        "go/parser.Mode"
+      ],
+      "file": "scripts/localization_inventory/main.go",
+      "owner_symbol": "(*github.com/orneryd/nornicdb/scripts/localization_inventory.scanner).scanFile",
+      "operand_type": "(f *go/ast.File, err error)",
+      "end_line": 205,
+      "end_column": 82,
+      "node": "call",
+      "end_offset": 5511,
+      "column": 15,
+      "owner_digest": "e836381a078435b01b269200d15cf263f95d1cfe05cd97583188d556a7e0d902",
+      "declaration": "method",
+      "state": "compiled",
+      "typed": true,
+      "signature": "(f *go/ast.File, err error)",
+      "underlying_type": "(f *go/ast.File, err error)",
+      "callees": [
+        "go/parser.ParseFile"
+      ],
+      "owner": "(*github.com/orneryd/nornicdb/scripts/localization_inventory.scanner).scanFile",
+      "kind": "analysis construction",
+      "id": "scripts/localization_inventory/main.go:(*github.com/orneryd/nornicdb/scripts/localization_inventory.scanner).scanFile/analysis construction#1",
+      "digest": "d4c55f4c958f61c2abf505241c9995d99fb016cda9650dbb1d72892765451f70",
+      "class": "distinct source operation",
+      "reason": "Collects localization call/argument syntax to emit translation inventory data; localization interpretation is distinct from storage statement work and generic reachability/classification.",
+      "line": 205,
+      "code": "parser.ParseFile(s.fset, path, source, parser.SkipObjectResolution)",
+      "offset": 5444,
+      "callee_end": 5460,
+      "open": 5461,
+      "function_body": 5243,
+      "receiver": "parser",
+      "receiver_type": "invalid type",
+      "call_signature": "func(fset *go/token.FileSet, filename string, src any, mode go/parser.Mode) (f *go/ast.File, err error)",
+      "string_input": true,
+      "args": [
+        "s.fset",
+        "path",
+        "source",
+        "parser.SkipObjectResolution"
+      ],
+      "scalar_args": [
+        false,
+        false,
+        false,
+        true
+      ],
+      "review_owner": "#1667"
+    }
+  ]
+}

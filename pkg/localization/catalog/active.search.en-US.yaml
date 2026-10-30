@@ -1,0 +1,65 @@
+- id: search.auto_embed_not_enabled
+  description: Neo4j HTTP response when automatic embedding is unavailable.
+  other: Auto-embed not enabled
+- id: search.service_unavailable
+  description: HTTP response when the database search service cannot be initialized.
+  other: search service unavailable
+- id: search.query_chunking_failed
+  description: HTTP response when a search query cannot be divided into chunks.
+  other: failed to chunk query
+- id: search.query_chunks_exceeded
+  description: A search query with more chunks than are searched, with the overflow setting at error.
+  other: "search query has {{.Chunks}} chunks; at most {{.Max}} are searched (NORNICDB_SEARCH_QUERY_MAX_CHUNKS)"
+- id: search.query_chunk_dimensions
+  description: "A query chunk whose embedding has another dimension than the first chunk's."
+  other: "the embedding of query chunk {{.Chunk}} has {{.Got}} dimensions; the first chunk's has {{.Want}}"
+- id: search.node_has_no_embedding
+  description: HTTP validation response when a vector-similarity target has no embedding.
+  other: Node has no embedding
+- id: search.node_not_found
+  description: HTTP vector-similarity lookup error. ID is a node identifier.
+  other: "Node '{{.ID}}' not found"
+- id: search.group_by_ranked_mode
+  other: "group_by requires continuation mode ranked_then_id or id; ranked mode pages hits as they are found and does not group them"
+- id: search.page_size_exceeded
+  description: Oversized continuation page. page_size_exceeded and max_page_size are stable API identifiers; MaxPageSize is the configured maximum n.
+  other: "page_size_exceeded: search continuation n exceeds max_page_size={{.MaxPageSize}}"
+- id: search.query_embedding_required
+  description: Core vector-query validation error when no query embedding is supplied.
+  other: query embedding required
+- id: search.index_building
+  description: Temporary search response while indexes are being built.
+  other: search index being built, please try again when they are complete
+- id: search.vector_embedding_required
+  description: Core vector-search validation error when no embedding is supplied.
+  other: vector search requires embedding
+- id: search.clustering_not_enabled
+  description: Core search error when clustering is triggered before it is enabled. EnableClustering is an API identifier.
+  other: clustering not enabled - call EnableClustering() first
+- id: search.clustering_failed
+  description: Core search clustering failure. Cause is diagnostic text and is not translated.
+  other: "clustering failed: {{.Cause}}"
+- id: search.cluster_index_not_clustered
+  description: Core search error when a cluster index has not been clustered.
+  other: cluster index not clustered
+- id: search.vector_index_unavailable
+  description: Core search error when the vector index is unavailable.
+  other: vector index unavailable
+- id: search.no_clusters
+  description: Core search error when clustering produced no clusters.
+  other: no clusters
+- id: search.vector_pipeline_failed
+  description: Core search vector pipeline initialization failure. Cause is diagnostic text and is not translated.
+  other: "failed to get vector pipeline: {{.Cause}}"
+- id: search.candidate_generation_failed
+  description: Core vector pipeline candidate-generation failure. Cause is diagnostic text and is not translated.
+  other: "candidate generation failed: {{.Cause}}"
+- id: search.exact_scoring_failed
+  description: Core vector pipeline exact-scoring failure. Cause is diagnostic text and is not translated.
+  other: "exact scoring failed: {{.Cause}}"
+- id: search.gpu_embedding_index_unavailable
+  description: Core vector search error when the GPU embedding index is unavailable.
+  other: gpu embedding index unavailable
+- id: search.dimensions_must_be_positive
+  description: Vector file-store validation error. Dimensions is the supplied numeric dimension count.
+  other: "dimensions must be > 0, got {{.Dimensions}}"

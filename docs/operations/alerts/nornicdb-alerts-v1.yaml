@@ -1,0 +1,163 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nornicdb-alerts
+  labels:
+    app.kubernetes.io/name: nornicdb
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: nornicdb.availability
+      rules:
+        - alert: NornicDBDown
+          expr: up{job=~".*nornicdb.*"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "NornicDB instance {{ $labels.instance }} is down"
+            description: "NornicDB has been unreachable for more than 2 minutes."
+
+        - alert: NornicDBHighErrorRate
+          expr: |
+            sum(rate(nornicdb_http_requests_total{status=~"5.."}[5m])) by (instance)
+            / sum(rate(nornicdb_http_requests_total[5m])) by (instance) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} error rate above 5%"
+            description: "HTTP 5xx error rate is {{ $value | humanizePercentage }}."
+
+    - name: nornicdb.latency
+      rules:
+        - alert: NornicDBHighQueryLatency
+          expr: |
+            histogram_quantile(0.99, sum(rate(nornicdb_cypher_query_duration_seconds_bucket[5m])) by (le, instance)) > 5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} p99 query latency above 5s"
+            description: "Cypher query p99 latency is {{ $value }}s."
+
+        - alert: NornicDBHighHTTPLatency
+          expr: |
+            histogram_quantile(0.99, sum(rate(nornicdb_http_request_duration_seconds_bucket[5m])) by (le, instance)) > 10
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} p99 HTTP latency above 10s"
+            description: "HTTP request p99 latency is {{ $value }}s."
+
+    - name: nornicdb.storage
+      rules:
+        - alert: NornicDBStorageCompactionSlow
+          expr: |
+            histogram_quantile(0.99, sum(rate(nornicdb_storage_compaction_duration_seconds_bucket[5m])) by (le, instance)) > 60
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} compaction taking over 60s"
+            description: "Storage compaction p99 duration is {{ $value }}s."
+
+        - alert: NornicDBWALLagHigh
+          expr: nornicdb_storage_wal_lag_bytes > 104857600
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} WAL lag above 100MB"
+            description: "WAL lag is {{ $value | humanize1024 }}B."
+
+    - name: nornicdb.replication
+      rules:
+        - alert: NornicDBReplicationLagHigh
+          expr: nornicdb_replication_lag_entries > 1000
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} replication lag above 1000 entries"
+            description: "Replication lag is {{ $value }} entries."
+
+        - alert: NornicDBReplicationLastContactStale
+          expr: nornicdb_replication_last_contact_seconds > 30
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} lost replication contact"
+            description: "Last replication contact was {{ $value }}s ago."
+
+        - alert: NornicDBFrequentLeaderChanges
+          expr: rate(nornicdb_replication_leader_changes_total[10m]) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB frequent leader changes"
+            description: "Leader changes at {{ $value }}/s over 10 minutes."
+
+    - name: nornicdb.mvcc
+      rules:
+        - alert: NornicDBMVCCPressureHigh
+          expr: nornicdb_mvcc_pressure_band >= 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} MVCC pressure band >= 3"
+            description: "MVCC pressure band is {{ $value }}, indicating reader starvation risk."
+
+        - alert: NornicDBMVCCOldReader
+          expr: nornicdb_mvcc_oldest_reader_age_seconds > 300
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} has reader older than 5 minutes"
+            description: "Oldest MVCC reader age is {{ $value }}s."
+
+    - name: nornicdb.bolt
+      rules:
+        - alert: NornicDBBoltConnectionsSaturated
+          expr: nornicdb_bolt_connections_active > 90
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} Bolt connections near limit"
+            description: "Active Bolt connections: {{ $value }}."
+
+        - alert: NornicDBPackstreamDecodeErrors
+          expr: rate(nornicdb_bolt_packstream_decode_errors_total[5m]) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} packstream decode errors"
+            description: "Packstream decode errors at {{ $value }}/s."
+
+    - name: nornicdb.otel
+      rules:
+        - alert: NornicDBSpansDropped
+          expr: rate(nornicdb_otel_bsp_dropped_spans_total[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NornicDB {{ $labels.instance }} dropping spans"
+            description: "BSP dropped spans at {{ $value }}/s — collector may be slow."
+
+    - name: nornicdb.recording_rules
+      rules:
+        # K8S-11: cache hit ratio recording rule
+        - record: nornicdb_cache_hit_ratio
+          expr: |
+            sum(rate(nornicdb_cache_hits_total[5m])) by (cache, instance)
+            / (sum(rate(nornicdb_cache_hits_total[5m])) by (cache, instance)
+               + sum(rate(nornicdb_cache_misses_total[5m])) by (cache, instance))

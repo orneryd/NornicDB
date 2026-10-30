@@ -1,0 +1,227 @@
+[
+  {
+    "source": "RETURN ';';RETURN 2;",
+    "statements": [
+      "RETURN ';'",
+      "RETURN 2",
+      ""
+    ]
+  },
+  {
+    "source": "RETURN 'a\\';b';RETURN 2",
+    "statements": [
+      "RETURN 'a\\';b'",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN \"a\\\";b\";RETURN 2",
+    "statements": [
+      "RETURN \"a\\\";b\"",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN `a``;b`;RETURN 2",
+    "statements": [
+      "RETURN `a``;b`",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1 // ;\r\n;RETURN 2",
+    "statements": [
+      "RETURN 1 // ;\r\n",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1 /* ; */;RETURN 2",
+    "statements": [
+      "RETURN 1 /* ; */",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1--2;RETURN 3",
+    "statements": [
+      "RETURN 1--2",
+      "RETURN 3"
+    ]
+  },
+  {
+    "source": "RETURN 'a'';b';RETURN 2",
+    "statements": [
+      "RETURN 'a'';b'",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 'unterminated;RETURN 2",
+    "statements": [
+      "RETURN 'unterminated;RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1 /* unfinished;RETURN 2",
+    "statements": [
+      "RETURN 1 /* unfinished;RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 'a\uff1bb'\uff1bRETURN 2\uff1b",
+    "statements": [
+      "RETURN 'a\uff1bb'",
+      "RETURN 2",
+      ""
+    ]
+  },
+  {
+    "source": "/\u200b/ comment;\u2028RETURN 1\uff1bRETURN 2",
+    "statements": [
+      "/\u200b/ comment;\u2028RETURN 1",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "\u200bRETURN 1\u200c;\ufeffRETURN 2",
+    "statements": [
+      "RETURN 1",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN \\u0027a;b\\u0027;RETURN 2",
+    "statements": [
+      "RETURN \\u0027a;b\\u0027",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN \\u0022a;b\\u0022;RETURN 2",
+    "statements": [
+      "RETURN \\u0022a;b\\u0022",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1 AS \\u0060a;b\\u0060;RETURN 2",
+    "statements": [
+      "RETURN 1 AS \\u0060a;b\\u0060",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1\\u003bRETURN 2",
+    "statements": [
+      "RETURN 1",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1\\u003BRETURN 2",
+    "statements": [
+      "RETURN 1",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN '\ud83d\ude00';RETURN \\u0027a;b\\u0027;RETURN 2",
+    "statements": [
+      "RETURN '\ud83d\ude00'",
+      "RETURN \\u0027a;b\\u0027",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN \\u0027\\ud83d\\ude00;a\\u0027;RETURN 2",
+    "statements": [
+      "RETURN \\u0027\\ud83d\\ude00;a\\u0027",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN \\u0027\\ud800;a\\u0027;RETURN 2",
+    "statements": [
+      "RETURN \\u0027\\ud800;a\\u0027",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN ';';RETURN 2",
+    "statements": [
+      "RETURN ';'",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN '\\u003b';RETURN 2",
+    "statements": [
+      "RETURN '\\u003b'",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN \\\\u003b;RETURN 2",
+    "statements": [
+      "RETURN \\\\u003b",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN \\u005cu003b;RETURN 2",
+    "statements": [
+      "RETURN \\u005cu003b",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN '\\\\u003b';RETURN 2",
+    "statements": [
+      "RETURN '\\\\u003b'",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1 // hidden;\\u000aRETURN 2;RETURN 3",
+    "statements": [
+      "RETURN 1 // hidden;\\u000aRETURN 2",
+      "RETURN 3"
+    ]
+  },
+  {
+    "source": "RETURN 1 \\u002f\\u002a hidden; \\u002a\\u002f;RETURN 2",
+    "statements": [
+      "RETURN 1 \\u002f\\u002a hidden; \\u002a\\u002f",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1\\uff1bRETURN 2",
+    "statements": [
+      "RETURN 1",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "\\u200bRETURN 1;RETURN 2",
+    "statements": [
+      "RETURN 1",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1;\\ufeffRETURN 2",
+    "statements": [
+      "RETURN 1",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN '\\u005cu003b';RETURN 2",
+    "statements": [
+      "RETURN '\\u005cu003b'",
+      "RETURN 2"
+    ]
+  }
+]

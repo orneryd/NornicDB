@@ -1,0 +1,147 @@
+- id: cypheradmin.database_manager_unavailable
+  description: Cypher admin command failure. Command is untranslated Cypher syntax.
+  other: "database manager not available - {{.Command}} requires multi-database support"
+- id: cypheradmin.invalid_syntax
+  description: Cypher admin syntax failure. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax"
+- id: cypheradmin.database_name_expected
+  description: Missing database name. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: database name expected"
+- id: cypheradmin.database_name_empty
+  description: Empty database name. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: database name cannot be empty"
+- id: cypheradmin.invalid_database_name
+  description: Invalid database name. Database is an untranslated identifier.
+  other: "invalid database name: '{{.Database}}' (cannot contain whitespace)"
+- id: cypheradmin.database_already_exists
+  description: Database creation conflict. Database is an untranslated identifier.
+  other: "database '{{.Database}}' already exists"
+- id: cypheradmin.create_database_failed
+  description: Database creation wrapper. Database and Cause are untranslated diagnostic values.
+  other: "failed to create database '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.invalid_identifier
+  description: Invalid quoted Cypher identifier. Identifier includes its untranslated Go quoting.
+  other: "invalid identifier {{.Identifier}}: nested backticks are not supported"
+- id: cypheradmin.database_does_not_exist
+  description: Missing database during deletion. Database is an untranslated identifier.
+  other: "database '{{.Database}}' does not exist"
+- id: cypheradmin.drop_database_failed
+  description: Database deletion wrapper. Database and Cause are untranslated diagnostic values.
+  other: "failed to drop database '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.alias_name_expected
+  description: Missing alias name. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: alias name expected"
+- id: cypheradmin.term_expected
+  description: Missing command term. Command and Term are untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: {{.Term}} expected"
+- id: cypheradmin.clause_expected
+  description: Missing command clause. Command and Clause are untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: {{.Clause}} clause expected"
+- id: cypheradmin.alias_name_empty
+  description: Empty alias name. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: alias name cannot be empty"
+- id: cypheradmin.invalid_alias_name
+  description: Invalid alias name. Alias is an untranslated identifier.
+  other: "invalid alias name: '{{.Alias}}' (cannot contain whitespace)"
+- id: cypheradmin.create_alias_failed
+  description: Alias creation wrapper. Alias, Database, and Cause are untranslated diagnostic values.
+  other: "failed to create alias '{{.Alias}}' for database '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.alias_does_not_exist
+  description: Missing alias during deletion. Alias is an untranslated identifier.
+  other: "alias '{{.Alias}}' does not exist"
+- id: cypheradmin.drop_alias_failed
+  description: Alias deletion wrapper. Alias and Cause are untranslated diagnostic values.
+  other: "failed to drop alias '{{.Alias}}': {{.Cause}}"
+- id: cypheradmin.keyword_expected
+  description: Missing keyword. Command and Keyword are untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: {{.Keyword}} keyword expected"
+- id: cypheradmin.database_not_found
+  description: Database lookup wrapper. Database and Cause are untranslated diagnostic values.
+  other: "database '{{.Database}}' not found: {{.Cause}}"
+- id: cypheradmin.invalid_limits_type
+  description: Unexpected database manager limits response type.
+  other: invalid limits type returned from database manager
+- id: cypheradmin.limit_assignment_expected
+  description: Missing ALTER DATABASE limit assignment. ALTER DATABASE is Cypher syntax.
+  other: "invalid ALTER DATABASE syntax: limit assignment expected"
+- id: cypheradmin.invalid_limit_assignment
+  description: Malformed limit assignment. Assignment and limit_name = value are untranslated machine values.
+  other: "invalid limit assignment syntax: expected 'limit_name = value', got '{{.Assignment}}'"
+- id: cypheradmin.invalid_limit_value
+  description: Invalid numeric limit. Limit and Cause are untranslated diagnostic values.
+  other: "invalid {{.Limit}} value: {{.Cause}}"
+- id: cypheradmin.invalid_duration_limit_value
+  description: Invalid duration limit. Limit, duration examples, and Cause are untranslated machine values.
+  other: "invalid {{.Limit}} value (expected duration like '60s' or '5m'): {{.Cause}}"
+- id: cypheradmin.unknown_limit_name
+  description: Unknown limit key. Limit and Supported are untranslated machine identifiers.
+  other: "unknown limit name: '{{.Limit}}' (supported: {{.Supported}})"
+- id: cypheradmin.set_database_limits_failed
+  description: Database limit update wrapper. Database and Cause are untranslated diagnostic values.
+  other: "failed to set limits for database '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.transaction_ids_type
+  other: "Expected a string or a list of strings, but got: {{.Value}}"
+- id: cypheradmin.transaction_id_type
+  other: "Expected a string, but got: {{.Value}}"
+- id: cypheradmin.variable_not_defined
+  other: "Variable `{{.Variable}}` not defined"
+- id: cypheradmin.show_transactions_invalid_input
+  other: "Invalid input '{{.Input}}': expected a string, an expression, 'SHOW', 'TERMINATE', 'WHERE' or 'YIELD'"
+- id: cypheradmin.terminate_transactions_invalid_input
+  other: "Invalid input '{{.Input}}': expected a string or an expression"
+- id: cypheradmin.show_clause_invalid
+  other: "invalid SHOW command: expected WHERE, or YIELD [ORDER BY] [SKIP] [LIMIT] [WHERE] [RETURN]"
+- id: cypheradmin.unsupported_administration_command
+  other: "Unsupported administration command: {{.Command}}"
+- id: cypheradmin.transaction_terminated
+  other: "The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result."
+- id: cypheradmin.terminate_transactions_id_required
+  other: "TERMINATE TRANSACTIONS requires a transaction id or a list of transaction ids"
+- id: cypheradmin.transaction_id_unparseable
+  other: "Could not parse id (expected format: <databasename>-transaction-<id>)"
+- id: cypheradmin.transaction_id_database_name_length
+  other: "The provided database name must have a length between 3 and 63 characters."
+- id: cypheradmin.database_option_unknown
+  description: A database option name Neo4j doesn't define. Option is untranslated.
+  other: "Could not create database with specified options: unknown option '{{.Option}}'"
+- id: cypheradmin.database_option_unsupported
+  description: A Neo4j database option NornicDB doesn't implement. Option is untranslated.
+  other: "the database option '{{.Option}}' is not supported by NornicDB"
+- id: cypheradmin.database_option_value
+  description: A database option value outside the option's values. Option, Value and Allowed are untranslated.
+  other: "invalid value '{{.Value}}' for database option '{{.Option}}': expected one of {{.Allowed}}"
+- id: cypheradmin.database_options_unavailable
+  description: The database manager has no database options. Command is untranslated Cypher syntax.
+  other: "database options are not available - {{.Command}} requires a database manager with options"
+- id: cypheradmin.immutable_privilege_grant_forbidden
+  description: A GRANT IMMUTABLE while authentication is enabled. ASSIGN IMMUTABLE PRIVILEGE is untranslated Neo4j privilege syntax.
+  other: "Permission cannot be granted for ASSIGN IMMUTABLE PRIVILEGE."
+- id: cypheradmin.immutable_privilege_revoke_forbidden
+  description: A REVOKE of an immutable privilege while authentication is enabled.
+  other: "Immutable privileges cannot be revoked."
+- id: cypheradmin.privilege_role_not_found
+  description: A GRANT to a role that does not exist. Action (execute, execute_boosted) and Role are untranslated.
+  other: "Failed to grant {{.Action}} privilege to role '{{.Role}}': Role does not exist."
+
+- id: cypheradmin.system_graph_access_unsupported
+  description: A graph or schema statement on the system database.
+  other: "Graph access is not supported on the system database"
+- id: cypheradmin.system_procedure_unsupported
+  description: A call of a procedure that does not run on the system database. Query is the untranslated statement.
+  other: "Not a recognised system command or procedure. This Cypher command can only be executed in a user database: {{.Query}}"
+- id: cypheradmin.transaction_statement_type
+  description: Incompatible statement types in an explicit transaction. Previous and Requested are Neo4j's untranslated statement type names.
+  other: "Tried to execute {{.Requested}} after executing {{.Previous}}"
+
+- id: cypheradmin.show_clause_unexpected
+  description: A clause after a SHOW command's YIELD on the system database. Clause is the clause's untranslated first keyword; the expected keywords are untranslated Cypher syntax.
+  other: "Invalid input '{{.Clause}}': expected ',', 'AS', 'ORDER BY', 'LIMIT', 'OFFSET', 'RETURN', 'SHOW', 'SKIP', 'TERMINATE', 'WHERE' or <EOF>"
+- id: cypheradmin.show_expression_invalid
+  description: A COUNT, EXISTS or COLLECT subquery in a SHOW command on the system database. Expression is the untranslated keyword.
+  other: "The {{.Expression}} expression is not valid on SHOW commands."
+- id: cypheradmin.show_pattern_comprehension_invalid
+  description: A pattern comprehension in a SHOW command on the system database.
+  other: "Pattern comprehensions are not valid on SHOW commands."
+- id: cypheradmin.show_pattern_expression_invalid
+  description: A pattern expression in a SHOW command on the system database.
+  other: "Pattern expressions are not valid on SHOW commands."

@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" width="200" height="240">
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#d4a017"/>
+      <stop offset="100%" style="stop-color:#b8860b"/>
+    </linearGradient>
+    <!-- Bifrost gradient for subtle accent -->
+    <linearGradient id="bifrostGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#ef4444" stop-opacity="0.3"/>
+      <stop offset="25%" style="stop-color:#f97316" stop-opacity="0.3"/>
+      <stop offset="50%" style="stop-color:#22c55e" stop-opacity="0.3"/>
+      <stop offset="75%" style="stop-color:#3b82f6" stop-opacity="0.3"/>
+      <stop offset="100%" style="stop-color:#8b5cf6" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Subtle Bifrost arc in background -->
+  <path d="M 20 150 Q 100 100 180 150" 
+        fill="none" stroke="url(#bifrostGrad)" stroke-width="8" opacity="0.4"/>
+  
+  <!-- Helmet/Head silhouette - stylized Viking watchman helm -->
+  <path d="M 60 130 
+           Q 55 100 60 75 
+           Q 65 50 100 40 
+           Q 135 50 140 75 
+           Q 145 100 140 130
+           Q 130 145 100 150
+           Q 70 145 60 130"
+        fill="#1e3a5f"/>
+  
+  <!-- Helmet crest/ridge -->
+  <path d="M 100 35 Q 100 25 100 20 L 100 50"
+        fill="none" stroke="#1e3a5f" stroke-width="8" stroke-linecap="round"/>
+  
+  <!-- Helmet wings/horns - stylized -->
+  <path d="M 55 70 Q 35 55 25 40"
+        fill="none" stroke="#1e3a5f" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 145 70 Q 165 55 175 40"
+        fill="none" stroke="#1e3a5f" stroke-width="6" stroke-linecap="round"/>
+  
+  <!-- All-Seeing Eye - Heimdall's legendary sight -->
+  <ellipse cx="100" cy="90" rx="25" ry="15" fill="none" stroke="url(#goldGrad)" stroke-width="3"/>
+  <circle cx="100" cy="90" r="10" fill="url(#goldGrad)"/>
+  <circle cx="100" cy="90" r="5" fill="#1e3a5f"/>
+  <!-- Eye shine -->
+  <circle cx="97" cy="87" r="2" fill="white" opacity="0.6"/>
+  
+  <!-- Radiating sight lines - representing far-seeing vision -->
+  <line x1="130" y1="90" x2="155" y2="85" stroke="url(#goldGrad)" stroke-width="2" opacity="0.5"/>
+  <line x1="130" y1="95" x2="155" y2="100" stroke="url(#goldGrad)" stroke-width="2" opacity="0.4"/>
+  <line x1="70" y1="90" x2="45" y2="85" stroke="url(#goldGrad)" stroke-width="2" opacity="0.5"/>
+  <line x1="70" y1="95" x2="45" y2="100" stroke="url(#goldGrad)" stroke-width="2" opacity="0.4"/>
+  
+  <!-- Gjallarhorn - curved horn on the side -->
+  <path d="M 155 110 Q 170 100 180 85 Q 185 75 182 65"
+        fill="none" stroke="#1e3a5f" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="182" cy="65" r="4" fill="url(#goldGrad)"/>
+  
+  <!-- Beard suggestion - stylized lines -->
+  <path d="M 75 130 Q 80 145 85 155 Q 90 165 100 170"
+        fill="none" stroke="#1e3a5f" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+  <path d="M 100 150 Q 100 160 100 170"
+        fill="none" stroke="#1e3a5f" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+  <path d="M 125 130 Q 120 145 115 155 Q 110 165 100 170"
+        fill="none" stroke="#1e3a5f" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+  
+  <!-- Highlight on helmet -->
+  <path d="M 70 75 Q 85 55 100 50"
+        fill="none" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.15"/>
+  
+  <!-- Text -->
+  <text x="100" y="200" font-family="'Helvetica Neue', Arial, sans-serif" font-size="28" 
+        font-weight="700" fill="#1e3a5f" text-anchor="middle" letter-spacing="3">HEIMDALL</text>
+  <text x="100" y="222" font-family="'Helvetica Neue', Arial, sans-serif" font-size="9" 
+        font-weight="400" fill="#1e3a5f" text-anchor="middle" letter-spacing="1.5" 
+        opacity="0.6">THE WATCHMAN OF NORNICDB</text>
+</svg>

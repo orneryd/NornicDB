@@ -1,0 +1,373 @@
+site_name: NornicDB Documentation
+site_description: Production-ready graph database with GPU acceleration and Neo4j compatibility
+site_url: https://orneryd.github.io/NornicDB/
+repo_url: https://github.com/orneryd/nornicdb
+repo_name: orneryd/nornicdb
+edit_uri: edit/main/docs/
+# use_directory_urls=true (default) gives clean canonical URLs like
+# /knowledge-layer-policies/ rather than .html. site_url + use_directory_urls
+# is what Material uses to emit a <link rel="canonical"> on every page.
+use_directory_urls: true
+
+theme:
+  name: material
+  logo: assets/logos/nornicdb-logo.svg
+  favicon: assets/logos/nornic.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - scheme: slate
+      primary: black
+      accent: green
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    - scheme: default
+      primary: black
+      accent: green
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+  features:
+    # Navigation behavior. instant + tracking + prune is the combination that
+    # keeps the URL in sync with the visible content when a user clicks a
+    # search result, and trims the rendered nav to the active section so the
+    # sidebar always reflects where you are.
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.path
+    - navigation.indexes
+    - navigation.prune
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - search.share
+    - toc.follow
+    - toc.integrate
+    - content.tabs.link
+    - content.code.copy
+    - content.code.select
+    - content.action.edit
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;'
+  - minify:
+      minify_html: true
+      minify_css: true
+      minify_js: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      permalink_title: Permalink to this section
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:pymdownx.emoji.to_svg
+      emoji_index: !!python/name:pymdownx.emoji.twemoji
+  - pymdownx.highlight:
+      use_pygments: true
+      anchor_linenums: true
+      line_spans: __span
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra_css:
+  - assets/stylesheets/nornic-docs.css
+
+# ----------------------------------------------------------------------------
+# Top-level navigation
+#
+# Eight groups, every published page registered. With navigation.indexes,
+# each top-level section's README.md becomes that section's index page so
+# clicking the section header in the sidebar lands somewhere meaningful.
+#
+# The rule for adding a new doc: every published markdown file MUST appear
+# under exactly one nav entry. Without nav membership, Material renders the
+# page on direct hit but with an empty sidebar — which is the bug the user
+# reported.
+# ----------------------------------------------------------------------------
+nav:
+  - Home: README.md
+
+  - Getting Started:
+      - getting-started/README.md
+      - Quick Start: getting-started/quick-start.md
+      - Installation: getting-started/installation.md
+      - Docker Deployment: getting-started/docker-deployment.md
+      - Image Quick Reference: getting-started/image-quick-reference.md
+      - First Queries: getting-started/first-queries.md
+      - Windows + CUDA: getting-started/windows-cuda.md
+
+  - Concepts & Guides:
+      - user-guides/README.md
+      - Cypher:
+          - Cypher Queries: user-guides/cypher-queries.md
+          - RAG Procedures: user-guides/cypher-rag-procedures.md
+          - Graph Traversal: user-guides/graph-traversal.md
+          - Transactions: user-guides/transactions.md
+          - Managing Constraints: user-guides/managing-constraints.md
+          - Property Data Types: user-guides/property-data-types.md
+          - Complete Examples: user-guides/complete-examples.md
+      - Search & RAG:
+          - Vector Search: user-guides/vector-search.md
+          - Hybrid Search: user-guides/hybrid-search.md
+          - Search Continuation: user-guides/search-continuation.md
+          - Vector Embeddings: features/vector-embeddings.md
+          - Cross-Encoder Reranking: features/cross-encoder-reranking.md
+      - Knowledge Layer:
+          - Knowledge-Layer Policies: user-guides/knowledge-layer-policies.md
+          - Knowledge Policy Tuning and Testing: user-guides/knowledge-policy-tuning-testing.md
+          - Decay Profiles: user-guides/decay-profiles.md
+          - Promotion Policies: user-guides/promotion-policies.md
+          - Visibility Suppression and Deindex: user-guides/visibility-suppression-deindex.md
+          - Memory Decay (Feature Overview): features/memory-decay.md
+          - Ebbinghaus-Roynard Bootstrap: user-guides/ebbinghaus-roynard-bootstrap.md
+          - Retention Policies: user-guides/retention-policies.md
+          - Knowledge Policy Metrics: observability/knowledge-policy-metrics.md
+      - Temporal & Ledger:
+          - Historical Reads & MVCC Retention: user-guides/historical-reads-mvcc-retention.md
+          - MVCC Lifecycle Admin API: user-guides/mvcc-lifecycle-admin-api.md
+          - Canonical Graph Ledger: user-guides/canonical-graph-ledger.md
+      - Topology & Multi-DB:
+          - Infinigraph Topology: user-guides/infinigraph-topology.md
+          - Multi-Database: user-guides/multi-database.md
+          - Clustering: user-guides/clustering.md
+      - Data Movement:
+          - Data Import/Export: user-guides/data-import-export.md
+      - Heimdall (AI Assistant):
+          - Heimdall AI Assistant: user-guides/heimdall-ai-assistant.md
+          - Enabling MCP Tools (Agentic Loop): user-guides/heimdall-mcp-tools.md
+          - Heimdall Agentic Loop: user-guides/heimdall-agentic-loop.md
+          - Event Triggers & Remediation: user-guides/heimdall-event-triggers-remediation.md
+          - Heimdall Plugins: user-guides/heimdall-plugins.md
+          - Heimdall Context & Tokens: user-guides/heimdall-context.md
+      - Plugins & Extensions:
+          - features/README.md
+          - Plugin System (User Guide): user-guides/plugin-system.md
+          - Plugin System (Feature Reference): features/plugin-system.md
+          - APOC Functions: features/apoc-functions.md
+          - Stored Procedure Parity: features/stored-procedure-parity.md
+          - Auto-TLP: features/auto-tlp.md
+          - Auto-TLP Heimdall: features/auto-tlp-heimdall.md
+          - Autocomplete Plugin: features/autocomplete-plugin.md
+          - Link Prediction: features/link-prediction.md
+          - MCP Integration: features/mcp-integration.md
+          - GPU Acceleration: features/gpu-acceleration.md
+          - Feature Flags: features/feature-flags.md
+
+  - Skills (Agent-Ready):
+      - skills/README.md
+      - Hot-Path Cypher Queries: skills/cypher-queries.skill.md
+      - Bolt Client: skills/bolt-client.skill.md
+      - gRPC (Qdrant + NornicSearch): skills/grpc.skill.md
+      - Qdrant Migration: skills/qdrant-migration.skill.md
+      - Neo4j Migration: skills/neo4j-migration.skill.md
+      - Knowledge Policies: skills/knowledge-policies.skill.md
+      - Decay Tuning: skills/decay-tuning.skill.md
+      - Promotion Policies: skills/promotion-policies.skill.md
+      - Managed Embeddings: skills/managed-embeddings.skill.md
+      - Vector & Full-Text Search: skills/vector-search.skill.md
+      - RAG Procedures: skills/rag-procedures.skill.md
+
+  - Migrating:
+      - neo4j-migration/README.md
+      - From Neo4j:
+          - Compatibility Overview: neo4j-migration/README.md
+          - Cypher Compatibility: neo4j-migration/cypher-compatibility.md
+          - Feature Parity: neo4j-migration/feature-parity.md
+          - Neo4j → NornicDB Skill: skills/neo4j-migration.skill.md
+          - NornicDB vs Neo4j Trade-offs: nornicdb-vs-neo4j-tradeoffs.md
+          - Bolt JavaScript Compatibility: bolt-javascript-compat.md
+      - From Qdrant:
+          - Qdrant gRPC Endpoint: user-guides/qdrant-grpc.md
+          - Qdrant → NornicDB Skill: skills/qdrant-migration.skill.md
+      - Migration Notice: migration-notice.md
+
+  - API Reference:
+      - api-reference/README.md
+      - Bolt Protocol: api-reference/bolt-protocol.md
+      - Cypher Functions: api-reference/cypher-functions/README.md
+      - OpenAPI: api-reference/openapi.md
+      - GraphQL: user-guides/graphql.md
+      - Nornic Search gRPC: user-guides/nornic-search-grpc.md
+      - Property Key Dictionary: property-key-dictionary.md
+      - Architecture:
+          - architecture/README.md
+          - System Design: architecture/system-design.md
+          - MVCC Lifecycle and Background Work: architecture/mvcc-lifecycle-background-work.md
+          - Cypher Parser Modes: architecture/cypher-parser-modes.md
+          - Embedding & Search Architecture: architecture/embedding-search-architecture.md
+          - Embedding & Search Examples: architecture/embedding-search-examples.md
+          - Embedding & Search Flow Diagrams: architecture/embedding-search-flow-diagrams.md
+          - Secure Search Continuation: architecture/secure-search-continuation.md
+          - Knowledge-Policy Scoring Pipeline: architecture/knowledge-policy-scoring-pipeline.md
+          - Knowledge-Policy Visibility Layer and Deindex: architecture/knowledge-policy-visibility-layer.md
+          - Embedding & Search Overview: architecture/embedding-search.md
+          - Embedding & Search Index: architecture/embedding-search-index.md
+          - Indexing Memory for Large Datasets: architecture/indexing-memory-large-datasets.md
+          - Graph-RAG vs NornicDB: architecture/graph-rag-nornicdb-comparison.md
+          - Replication: architecture/replication.md
+          - Plugin System (Architecture): architecture/plugin-system.md
+          - Qdrant Collection → Database Diagrams: architecture/qdrant-collection-to-database-diagrams.md
+          - NEON SIMD Implementation: architecture/neon-simd-implementation.md
+          - Norns Mythology: architecture/norns-mythology.md
+          - Clustering Roadmap: architecture/clustering-roadmap.md
+          - Cognitive SLM Architecture: architecture/cognitive-slm-architecture.md
+          - Composite DB Analysis: architecture/composite-db-analysis.md
+          - Multi-DB Implementation Spec: architecture/multi-db-implementation-spec.md
+          - Multi-DB Future Features: architecture/multi-db-architecture.md
+          - Observability: architecture/observability.md
+
+  - Operating:
+      - operations/README.md
+      - Configuration & Deployment:
+          - Configuration: operations/configuration.md
+          - Environment Variables: operations/environment-variables.md
+          - Deployment: operations/deployment.md
+          - Docker: operations/docker.md
+          - Reverse Proxy & TLS: operations/reverse-proxy.md
+          - Scaling: operations/scaling.md
+          - Low-Memory Mode: operations/low-memory-mode.md
+          - Transaction Memory Limits: operations/transaction-memory-limits.md
+          - Troubleshooting: operations/troubleshooting.md
+          - CLI Commands: operations/cli-commands.md
+      - Storage & Durability:
+          - Backup & Restore: operations/backup-restore.md
+          - WAL Compaction: operations/wal-compaction.md
+          - Durability: operations/durability.md
+          - Storage Serialization: operations/storage-serialization.md
+          - MVCC Lifecycle and Compaction: operations/mvcc-lifecycle-compaction.md
+      - Observability:
+          - Monitoring: operations/monitoring.md
+          - Metrics Reference: operations/metrics-reference.md
+      - Performance:
+          - performance/README.md
+          - Hot-Path Cypher Cookbook: performance/hot-path-query-cookbook.md
+          - Benchmarks vs Neo4j: performance/benchmarks-vs-neo4j.md
+          - HTTP API vs Neo4j: performance/http-api-vs-neo4j.md
+          - HTTP Optimization Options: performance/http-optimization-options.md
+          - HTTP/2 Implementation: performance/http2-implementation.md
+          - Hybrid Query Benchmarks: performance/hybrid-query-benchmarks.md
+          - Retrieval Recall Benchmark: performance/retrieval-recall-benchmark.md
+          - Single-Request Benchmark: performance/single-request-benchmark.md
+          - Max Concurrent Streams Comparison: performance/maxconcurrentstreams-comparison.md
+          - Search Performance: performance/searching.md
+          - Test Results: performance/test-results.md
+          - 1.1.0 Northwind — Comparison: performance/1.1.0-northwind-results/comparison.md
+          - 1.1.0 Northwind — NornicDB: performance/1.1.0-northwind-results/nornicdb.md
+          - 1.1.0 Northwind — Neo4j: performance/1.1.0-northwind-results/neo4j.md
+          - pprof Quick Guide: performance/pprof-quick-guide.md
+      - Security:
+          - security/README.md
+          - HTTP Security: security/http-security.md
+          - Per-Database RBAC: security/per-database-rbac.md
+          - Cluster Security: operations/cluster-security.md
+          - Entitlements: security/entitlements.md
+          - Query Cache Security: security/query-cache-security.md
+          - LLM AST Security: security/llm-ast-security.md
+      - Encryption:
+          - CMEK Setup: encryption/cmek-setup.md
+          - HSM Integration: encryption/hsm-integration.md
+          - Encryption Compliance Evidence: encryption/compliance-evidence.md
+      - Compliance:
+          - compliance/README.md
+          - Audit Logging: compliance/audit-logging.md
+          - GDPR: compliance/gdpr-compliance.md
+          - HIPAA: compliance/hipaa-compliance.md
+          - SOC2: compliance/soc2-compliance.md
+          - RBAC: compliance/rbac.md
+          - Encryption: compliance/encryption.md
+          - Background Workers, MVCC & Audit: compliance/background-workers-mvcc-audit-guide.md
+      - Packaging:
+          - packaging/README.md
+          - Linux: packaging/linux.md
+          - macOS: packaging/macos.md
+          - Windows: packaging/windows.md
+          - Raspberry Pi: packaging/raspberry-pi.md
+          - Docker: packaging/docker.md
+
+  - Building:
+      - development/README.md
+      - Development:
+          - Setup: development/setup.md
+          - Code Style: development/code-style.md
+          - Testing: development/testing.md
+          - K-Means Testing: development/kmeans-testing.md
+          - Multi-DB E2E Test: development/multi-db-e2e-test.md
+      - Advanced Topics:
+          - advanced/README.md
+          - Search Evaluation: advanced/search-evaluation.md
+          - K-Means Clustering: advanced/k-means-clustering/README.md
+          - K-Means Algorithm: advanced/k-means-clustering/kmeans-algorithm.md
+          - K-Means Metal Optimizations: advanced/k-means-clustering/metal-optimizations.md
+          - Embeddings: advanced/embeddings/README.md
+          - Local GGUF Embeddings: advanced/embeddings/local-gguf.md
+      - AI Agents:
+          - ai-agents/README.md
+          - Chat Modes: ai-agents/chat-modes.md
+          - Agent Preamble: ai-agents/agent-preamble.md
+      - Plans & RFCs:
+          - BM25 Snowball Stemmer Plugin RFC: plans/bm25-snowball-stemmer-plugin-rfc.md
+          - Neo4j-Compatible Streaming Driver Plan: plans/neo4j-compatible-streaming-driver-and-server-plan.md
+          - Native Package Distribution Plan: plans/native-package-distribution-plan.md
+          - OKF Admin Import/Export Plan: plans/okf-admin-import-export-plan.md
+          - UI Enhancements: plans/ui-enhancements.md
+          - Archived Plans:
+              - Archive Index: plans/archive/README.md
+              - GPU HNSW Construction: plans/archive/gpu-hnsw-construction-plan.md
+              - Production Message Localization: plans/archive/localization-consolidation-plan.md
+              - Operator-Declared GraphQL Schema: plans/archive/operator-declared-graphql-schema-plan.md
+      - Research:
+          - Persistence Semantics — Paper: research/papers/persistence-semantics-nornicdb/paper.md
+          - Persistence Semantics — Eval Plan: research/papers/persistence-semantics-nornicdb/eval-plan.md
+          - Persistence Semantics — Related Work: research/papers/persistence-semantics-nornicdb/related-work.md
+      - Support:
+          - GPU Embeddings UI Reply: support/reply-user-config-gpu-embeddings-ui.md
+      - Issues Index: issues-index.md
+      - Latest Untagged: latest-untagged.md
+      - Release Notes Since v1.0.11: release-notes-since-v1.0.11.md
+      - Contributing: contributing.md
+
+  - Changelog: changelog.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/orneryd/nornicdb
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/orneryd/nornicdb
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+
+copyright: Copyright &copy; 2025 NornicDB Contributors. MIT License.

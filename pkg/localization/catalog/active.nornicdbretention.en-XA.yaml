@@ -1,0 +1,3 @@
+- id: nornicdb.retention_sweep_budget_exhausted
+  description: Expanded pseudo-locale retention sweep budget control-flow error.
+  other: "[!! sweep budget exhausted ({{.Budget}} records) !!]"

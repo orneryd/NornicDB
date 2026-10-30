@@ -1,0 +1,774 @@
+package cypher
+
+import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
+)
+
+type unwindRelationshipMergeBatchPlan struct {
+	matches       []matchClauseSpec
+	merge         relationshipMergeSpec
+	setRelVar     string
+	setRowVar     string
+	vectorSetters []relationshipVectorSetterSpec
+	returns       []rowFieldReturnSpec
+}
+
+type relationshipMergeSpec struct {
+	startVar     string
+	endVar       string
+	relVar       string
+	relType      string
+	rowFieldRefs map[string]string
+	literals     map[string]interface{}
+	keyProps     []relationshipMergeKeyProp
+}
+
+type relationshipMergeKeyProp struct {
+	propName   string
+	rowField   string
+	literal    interface{}
+	literalSet bool
+}
+
+type relationshipVectorSetterSpec struct {
+	relVar   string
+	propName string
+	rowField string
+}
+
+type rowFieldReturnSpec struct {
+	rowField string
+	alias    string
+}
+
+type nodeBatchMatchKey struct {
+	label string
+	prop  string
+}
+
+func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
+	ctx context.Context, unwindVar string, items []interface{}, restQuery string,
+) (*ExecuteResult, bool, error) {
+	plan, ok := parseUnwindRelationshipMergeBatchPlan(ctx, restQuery, unwindVar)
+	if !ok {
+		return nil, false, nil
+	}
+	rows := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		row, ok := toStringAnyMap(item)
+		if !ok || !relationshipBatchRowHasRequiredFields(row, plan) {
+			return nil, false, nil
+		}
+		properties, storable := normalizeRelationshipBatchRowProperties(row, plan.vectorSetters)
+		if !storable || !relationshipBatchPropertiesPreserveMatch(properties, plan.merge, row) || relationshipBatchEdgeKeyFromRow("", "", plan.merge, row) == "" {
+			return nil, false, nil
+		}
+		rows = append(rows, row)
+	}
+	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, plan.matches)
+	if err != nil {
+		return nil, true, err
+	}
+	if !unique {
+		return nil, false, nil
+	}
+	ctx = context.WithValue(ctx, pipelinePrefetchedNodeCandidatesKey{}, prefetched)
+	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, restQuery)
+	if handled && err == nil {
+		e.markUnwindRelationshipMergeBatchUsed()
+	}
+	return result, handled, err
+}
+
+func parseUnwindRelationshipMergeBatchPlan(ctx context.Context, restQuery, unwindVar string) (unwindRelationshipMergeBatchPlan, bool) {
+	plan := unwindRelationshipMergeBatchPlan{}
+	trimmed := strings.TrimSpace(restQuery)
+	if trimmed == "" || !startsWithKeywordFold(trimmed, "MATCH") {
+		return plan, false
+	}
+
+	returnIdx := findKeywordIndexInContext(trimmed, "RETURN")
+	if returnIdx < 0 {
+		return plan, false
+	}
+	returns, ok := parseRelationshipBatchReturn(ctx, strings.TrimSpace(trimmed[returnIdx+len("RETURN"):]), unwindVar)
+	if !ok {
+		return plan, false
+	}
+
+	body := strings.TrimSpace(trimmed[:returnIdx])
+	withIdx := findKeywordIndexInContext(body, "WITH")
+	if withIdx < 0 {
+		return plan, false
+	}
+	vectorSetters, ok := parseRelationshipBatchVectorSetters(strings.TrimSpace(body[withIdx:]), unwindVar)
+	if !ok {
+		return plan, false
+	}
+	mutationPart := strings.TrimSpace(body[:withIdx])
+
+	setIdx := findKeywordIndexInContext(mutationPart, "SET")
+	if setIdx < 0 {
+		return plan, false
+	}
+	setRelVar, setRowVar, ok := parseRelationshipBatchSetClause(strings.TrimSpace(mutationPart[setIdx+len("SET"):]), unwindVar)
+	if !ok {
+		return plan, false
+	}
+
+	preSet := strings.TrimSpace(mutationPart[:setIdx])
+	mergeIdx := findKeywordIndexInContext(preSet, "MERGE")
+	if mergeIdx < 0 {
+		return plan, false
+	}
+	merge, ok := parseRelationshipBatchMergeClause(strings.TrimSpace(preSet[mergeIdx:]), unwindVar)
+	if !ok {
+		return plan, false
+	}
+
+	matchClauses := make([]string, 0, 4)
+	for _, clause := range SplitByMatch(strings.TrimSpace(preSet[:mergeIdx])) {
+		clause = strings.TrimSpace(clause)
+		if clause != "" {
+			matchClauses = append(matchClauses, "MATCH "+clause)
+		}
+	}
+	if len(matchClauses) == 0 {
+		return plan, false
+	}
+	matches := make([]matchClauseSpec, 0, len(matchClauses))
+	vars := make(map[string]struct{}, len(matchClauses))
+	for _, clause := range matchClauses {
+		match, ok := parseSimpleMatchClause(clause, unwindVar)
+		if !ok {
+			return plan, false
+		}
+		if _, exists := vars[match.variable]; exists {
+			return plan, false
+		}
+		vars[match.variable] = struct{}{}
+		matches = append(matches, match)
+	}
+	if _, ok := vars[merge.startVar]; !ok {
+		return plan, false
+	}
+	if _, ok := vars[merge.endVar]; !ok {
+		return plan, false
+	}
+	if setRelVar != merge.relVar || setRowVar != unwindVar {
+		return plan, false
+	}
+	for _, setter := range vectorSetters {
+		if setter.relVar != merge.relVar {
+			return plan, false
+		}
+	}
+
+	plan.matches = matches
+	plan.merge = merge
+	plan.setRelVar = setRelVar
+	plan.setRowVar = setRowVar
+	plan.vectorSetters = vectorSetters
+	plan.returns = returns
+	return plan, true
+}
+
+func parseRelationshipBatchMergeClause(clause, unwindVar string) (relationshipMergeSpec, bool) {
+	spec := relationshipMergeSpec{}
+	body := strings.TrimSpace(clause)
+	if !startsWithKeywordFold(body, "MERGE") {
+		return spec, false
+	}
+	body = pipelineClauseBody(body, "MERGE")
+	arrowIdx := strings.Index(body, "]->")
+	if arrowIdx < 0 {
+		return spec, false
+	}
+	lBracketIdx := strings.LastIndex(body[:arrowIdx], "-[")
+	if lBracketIdx < 0 {
+		return spec, false
+	}
+	startPart := strings.TrimSpace(body[:lBracketIdx])
+	if !strings.HasPrefix(startPart, "(") || !strings.HasSuffix(startPart, ")") {
+		return spec, false
+	}
+	startVar := strings.TrimSpace(startPart[1 : len(startPart)-1])
+	if !isSimpleIdentifier(startVar) {
+		return spec, false
+	}
+
+	endPart := strings.TrimSpace(body[arrowIdx+3:])
+	if !strings.HasPrefix(endPart, "(") || !strings.HasSuffix(endPart, ")") {
+		return spec, false
+	}
+	endVar := strings.TrimSpace(endPart[1 : len(endPart)-1])
+	if !isSimpleIdentifier(endVar) {
+		return spec, false
+	}
+
+	rel := strings.TrimSpace(body[lBracketIdx+2 : arrowIdx])
+	braceIdx := strings.Index(rel, "{")
+	closeBrace := strings.LastIndex(rel, "}")
+	if braceIdx <= 0 || closeBrace <= braceIdx || strings.TrimSpace(rel[closeBrace+1:]) != "" {
+		return spec, false
+	}
+	head := strings.TrimSpace(rel[:braceIdx])
+	propsBody := strings.TrimSpace(rel[braceIdx+1 : closeBrace])
+	headParts := strings.SplitN(head, ":", 2)
+	if len(headParts) != 2 {
+		return spec, false
+	}
+	relVar := strings.TrimSpace(headParts[0])
+	relType := strings.TrimSpace(headParts[1])
+	if !isSimpleIdentifier(relVar) || !isSimpleIdentifier(relType) {
+		return spec, false
+	}
+	rowRefs, literals, ok := parsePropsBodyForUnwindFastPath(propsBody, unwindVar)
+	if !ok || len(rowRefs)+len(literals) == 0 {
+		return spec, false
+	}
+	spec.startVar = startVar
+	spec.endVar = endVar
+	spec.relVar = relVar
+	spec.relType = relType
+	spec.rowFieldRefs = rowRefs
+	spec.literals = literals
+	spec.keyProps = relationshipMergeKeyProps(rowRefs, literals)
+	return spec, true
+}
+
+func relationshipMergeKeyProps(rowRefs map[string]string, literals map[string]interface{}) []relationshipMergeKeyProp {
+	props := make([]relationshipMergeKeyProp, 0, len(rowRefs)+len(literals))
+	for propName, rowField := range rowRefs {
+		props = append(props, relationshipMergeKeyProp{propName: propName, rowField: rowField})
+	}
+	for propName, literal := range literals {
+		props = append(props, relationshipMergeKeyProp{propName: propName, literal: literal, literalSet: true})
+	}
+	sort.Slice(props, func(i, j int) bool { return props[i].propName < props[j].propName })
+	return props
+}
+
+func parseRelationshipBatchSetClause(clause, unwindVar string) (relVar, rowVar string, ok bool) {
+	parts := strings.SplitN(strings.TrimSpace(clause), "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	left := strings.TrimSpace(parts[0])
+	right := strings.TrimSpace(parts[1])
+	if !isSimpleIdentifier(left) || right != unwindVar {
+		return "", "", false
+	}
+	return left, right, true
+}
+
+func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationshipVectorSetterSpec, bool) {
+	trimmed := strings.TrimSpace(clause)
+	if !startsWithKeywordFold(trimmed, "WITH") {
+		return nil, false
+	}
+	afterWith := strings.TrimSpace(trimmed[len("WITH"):])
+	callIdx := findKeywordIndexInContext(afterWith, "CALL")
+	if callIdx < 0 {
+		return nil, false
+	}
+	withItems := splitTopLevelComma(strings.TrimSpace(afterWith[:callIdx]))
+	if len(withItems) < 2 {
+		return nil, false
+	}
+	relVar := strings.TrimSpace(withItems[0])
+	rowVar := strings.TrimSpace(withItems[1])
+	if !isSimpleIdentifier(relVar) || rowVar != unwindVar {
+		return nil, false
+	}
+	for _, extra := range withItems[2:] {
+		if strings.TrimSpace(extra) != "" {
+			return nil, false
+		}
+	}
+
+	callPart := strings.TrimSpace(afterWith[callIdx+len("CALL"):])
+	setters := make([]relationshipVectorSetterSpec, 0, 1)
+	for callPart != "" {
+		if !strings.HasPrefix(lowerASCII(callPart), "db.create.setrelationshipvectorproperty") {
+			return nil, false
+		}
+		openParen := strings.Index(callPart, "(")
+		if openParen < 0 {
+			return nil, false
+		}
+		closeParen := findMatchingParenAt(callPart, openParen)
+		if closeParen <= openParen {
+			return nil, false
+		}
+		args := splitTopLevelComma(callPart[openParen+1 : closeParen])
+		if len(args) != 3 || strings.TrimSpace(args[0]) != relVar {
+			return nil, false
+		}
+		propName := strings.Trim(strings.TrimSpace(args[1]), "'\"")
+		rowField, ok := parseRelationshipBatchRowFieldExpr(strings.TrimSpace(args[2]), unwindVar)
+		if !isSimpleIdentifier(propName) || !ok {
+			return nil, false
+		}
+		setters = append(setters, relationshipVectorSetterSpec{relVar: relVar, propName: propName, rowField: rowField})
+		callPart = strings.TrimSpace(callPart[closeParen+1:])
+		if callPart == "" {
+			break
+		}
+		if !startsWithKeywordFold(callPart, "CALL") {
+			return nil, false
+		}
+		callPart = strings.TrimSpace(callPart[len("CALL"):])
+	}
+	if len(setters) == 0 {
+		return nil, false
+	}
+	return setters, true
+}
+
+func parseRelationshipBatchReturn(ctx context.Context, returnPart, unwindVar string) ([]rowFieldReturnSpec, bool) {
+	plan := returnProjectionPlanFor(ctx, "RETURN "+returnPart)
+	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" {
+		return nil, false
+	}
+	returns := make([]rowFieldReturnSpec, 0, len(plan.projections))
+	for index, projection := range plan.projections {
+		rowField, ok := parseRelationshipBatchRowFieldExpr(projection.expr, unwindVar)
+		if !ok || plan.columns[index] == "" {
+			return nil, false
+		}
+		returns = append(returns, rowFieldReturnSpec{rowField: rowField, alias: plan.columns[index]})
+	}
+	return returns, true
+}
+
+func parseRelationshipBatchRowFieldExpr(expr, unwindVar string) (string, bool) {
+	dotIdx := strings.Index(expr, ".")
+	if dotIdx <= 0 {
+		return "", false
+	}
+	base := strings.TrimSpace(expr[:dotIdx])
+	field := strings.TrimSpace(expr[dotIdx+1:])
+	if base != unwindVar || !isSimpleIdentifier(field) {
+		return "", false
+	}
+	return field, true
+}
+
+func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwindRelationshipMergeBatchPlan) bool {
+	for _, match := range plan.matches {
+		if match.rowField == "" {
+			continue
+		}
+		if _, ok := row[match.rowField]; !ok {
+			return false
+		}
+	}
+	for _, field := range plan.merge.rowFieldRefs {
+		if _, ok := row[field]; !ok {
+			return false
+		}
+	}
+	for _, setter := range plan.vectorSetters {
+		if _, ok := row[setter.rowField]; !ok {
+			return false
+		}
+	}
+	for _, ret := range plan.returns {
+		if _, ok := row[ret.rowField]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
+	index := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(matches))
+	schema := store.GetSchema()
+	unique := true
+	matchGroups := make(map[nodeBatchMatchKey][]matchClauseSpec, len(matches))
+	for _, match := range matches {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		key := nodeBatchMatchKey{label: match.label, prop: match.propName}
+		matchGroups[key] = append(matchGroups[key], match)
+	}
+	for key, group := range matchGroups {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		idx := make(map[string]*storage.Node, len(rows))
+		distinct := make(map[string]interface{}, len(rows))
+		for _, match := range group {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			for _, row := range rows {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
+				if value, ok := e.evaluateRelationshipBatchLookupExpr(match, row); ok {
+					distinct[propEqKeyBatch(value)] = value
+				}
+			}
+		}
+		if schema != nil && schema.HasPropertyIndex(key.label, key.prop) {
+			unresolved := make(map[string]interface{})
+			for valueKey, value := range distinct {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
+				ids, lookupErr := propertyIndexLookup(ctx, store, schema, key.label, key.prop, value)
+				if lookupErr != nil {
+					return nil, false, lookupErr
+				}
+				matched := 0
+				for _, id := range ids {
+					if err := ctx.Err(); err != nil {
+						return nil, false, err
+					}
+					node, err := e.getQueryNode(store, id)
+					if err == nil && nodeBatchMatchesValue(node, key, value) {
+						matched++
+						idx[valueKey] = node
+					}
+				}
+				if matched != 1 {
+					delete(idx, valueKey)
+					unresolved[valueKey] = value
+				}
+			}
+			if len(unresolved) > 0 {
+				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, unresolved)
+				if err != nil {
+					return nil, false, err
+				}
+				if !scanUnique {
+					unique = false
+				}
+				for valueKey, node := range scanned {
+					if err := ctx.Err(); err != nil {
+						return nil, false, err
+					}
+					idx[valueKey] = node
+				}
+			}
+			index[key] = idx
+			continue
+		}
+
+		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, distinct)
+		if err != nil {
+			return nil, false, err
+		}
+		if !scanUnique {
+			unique = false
+		}
+		index[key] = scanned
+	}
+	return index, unique, nil
+}
+
+func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
+	idx := make(map[string]*storage.Node, len(distinct))
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, store, key.label)
+	if err != nil {
+		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
+	}
+	unique := true
+	for _, node := range nodes {
+		if node == nil || node.Properties == nil {
+			continue
+		}
+		value, ok := node.Properties[key.prop]
+		if !ok {
+			continue
+		}
+		valueKey := propEqKeyBatch(value)
+		wantedValue, wanted := distinct[valueKey]
+		if !wanted || !nodeBatchMatchesValue(node, key, wantedValue) {
+			continue
+		}
+		if _, exists := idx[valueKey]; exists {
+			unique = false
+			continue
+		}
+		idx[valueKey] = node
+	}
+	return idx, unique, nil
+}
+
+func nodeBatchMatchesValue(node *storage.Node, key nodeBatchMatchKey, value interface{}) bool {
+	if node == nil || node.Properties == nil || !mergeNodeHasLabels(node, []string{key.label}) {
+		return false
+	}
+	nodeValue, ok := node.Properties[key.prop]
+	if !ok {
+		return false
+	}
+	return propEqKeyBatch(nodeValue) == propEqKeyBatch(value)
+}
+
+func (e *StorageExecutor) lookupRelationshipBatchMatchedNode(index map[nodeBatchMatchKey]map[string]*storage.Node, match matchClauseSpec, row map[string]interface{}) *storage.Node {
+	value, ok := e.evaluateRelationshipBatchLookupExpr(match, row)
+	if !ok {
+		return nil
+	}
+	return index[nodeBatchMatchKey{label: match.label, prop: match.propName}][propEqKeyBatch(value)]
+}
+
+func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(match matchClauseSpec, row map[string]interface{}) (interface{}, bool) {
+	return e.evaluateBatchLookupExpr(match, row, row)
+}
+
+// normalizeRelationshipBatchRowProperties builds the property map written by
+// SET rel = row (plus the vector setters) with the same semantics as every
+// other SET route: null values are left out (setPropertyMap). It returns
+// false when the row holds a value a property cannot store, so the caller
+// falls back to the row-wise executor, which reports the error.
+func normalizeRelationshipBatchRowProperties(row map[string]interface{}, vectorSetters []relationshipVectorSetterSpec) (map[string]interface{}, bool) {
+	props := make(map[string]interface{}, util.SafePreallocSum(len(row), len(vectorSetters)))
+	for key, value := range row {
+		stored, _, err := storablePropertyValue(value)
+		if err != nil {
+			return nil, false
+		}
+		if stored != nil {
+			props[key] = stored
+		}
+	}
+	for _, setter := range vectorSetters {
+		if setter.propName == setter.rowField {
+			continue
+		}
+		// The row's values were checked above: a setter writes a copy of its
+		// field's stored value.
+		if stored, ok := props[setter.rowField]; ok {
+			props[setter.propName] = copyStoredPropertyValue(stored)
+		}
+	}
+	return props, true
+}
+
+func relationshipBatchMatchProperties(
+	merge relationshipMergeSpec,
+	row map[string]interface{},
+) map[string]interface{} {
+	props := make(map[string]interface{}, len(merge.keyProps))
+	for _, prop := range merge.keyProps {
+		if prop.literalSet {
+			props[prop.propName] = normalizePropValue(prop.literal)
+			continue
+		}
+		props[prop.propName] = normalizePropValue(row[prop.rowField])
+	}
+	return props
+}
+
+func relationshipBatchPropertiesPreserveMatch(
+	props map[string]interface{},
+	merge relationshipMergeSpec,
+	row map[string]interface{},
+) bool {
+	for _, prop := range merge.keyProps {
+		want := prop.literal
+		if !prop.literalSet {
+			want = row[prop.rowField]
+		}
+		got, ok := props[prop.propName]
+		if !ok || !relationshipMergeValuesEqual(got, want) {
+			return false
+		}
+	}
+	return true
+}
+
+func buildRelationshipBatchReturnRow(row map[string]interface{}, returns []rowFieldReturnSpec) []interface{} {
+	out := make([]interface{}, len(returns))
+	for i, ret := range returns {
+		out[i] = row[ret.rowField]
+	}
+	return out
+}
+
+func lookupRelationshipBatchExistingEdge(
+	store storage.Engine,
+	startID storage.NodeID,
+	endID storage.NodeID,
+	merge relationshipMergeSpec,
+	row map[string]interface{},
+	edgeKey string,
+	existingByKey map[string]*storage.Edge,
+	scannedPairs map[string]struct{},
+) (*storage.Edge, error) {
+	if edge := existingByKey[edgeKey]; edge != nil {
+		return edge, nil
+	}
+	pairKey := string(startID) + "\x00" + string(endID)
+	if _, scanned := scannedPairs[pairKey]; scanned {
+		return nil, nil
+	}
+	edges, err := store.GetEdgesBetween(startID, endID)
+	if err != nil {
+		return nil, localizedError(localization.CypherMergeGetEdgesBetweenFailed(string(startID), string(endID), err), err)
+	}
+	for _, edge := range edges {
+		if edge == nil || edge.Type != merge.relType || edge.Properties == nil {
+			continue
+		}
+		key, ok := relationshipBatchEdgeKeyFromProperties(startID, endID, merge, edge.Properties)
+		if ok {
+			existingByKey[key] = edge
+		}
+	}
+	scannedPairs[pairKey] = struct{}{}
+	return existingByKey[edgeKey], nil
+}
+
+func relationshipBatchEdgeKeyFromRow(startID storage.NodeID, endID storage.NodeID, merge relationshipMergeSpec, row map[string]interface{}) string {
+	if key, ok := relationshipBatchScalarEdgeKey(startID, endID, merge.relType, merge.keyProps, func(prop relationshipMergeKeyProp) (interface{}, bool) {
+		if prop.literalSet {
+			return prop.literal, true
+		}
+		value, ok := row[prop.rowField]
+		return value, ok
+	}); ok {
+		return key
+	}
+	return relationshipBatchEdgeKey(startID, endID, merge.relType, buildPropsFromSpec(row, merge.rowFieldRefs, merge.literals))
+}
+
+func relationshipBatchEdgeKey(startID storage.NodeID, endID storage.NodeID, relType string, mergeProps map[string]interface{}) string {
+	normalized := make(map[string]interface{}, len(mergeProps))
+	for key, value := range mergeProps {
+		normalized[key] = normalizeRelationshipMergeIdentityValue(value)
+	}
+	return string(startID) + "\x00" + string(endID) + "\x00" + relType + "\x00" + unwindMergeKey("", normalized)
+}
+
+func relationshipBatchEdgeKeyFromProperties(startID storage.NodeID, endID storage.NodeID, merge relationshipMergeSpec, edgeProps map[string]interface{}) (string, bool) {
+	if key, ok := relationshipBatchScalarEdgeKey(startID, endID, merge.relType, merge.keyProps, func(prop relationshipMergeKeyProp) (interface{}, bool) {
+		value, ok := edgeProps[prop.propName]
+		return value, ok
+	}); ok {
+		return key, true
+	}
+
+	keyProps := make(map[string]interface{}, len(merge.keyProps))
+	for _, prop := range merge.keyProps {
+		value, ok := edgeProps[prop.propName]
+		if !ok {
+			return "", false
+		}
+		keyProps[prop.propName] = value
+	}
+	return relationshipBatchEdgeKey(startID, endID, merge.relType, keyProps), true
+}
+
+func relationshipBatchScalarEdgeKey(
+	startID storage.NodeID,
+	endID storage.NodeID,
+	relType string,
+	keyProps []relationshipMergeKeyProp,
+	valueFor func(relationshipMergeKeyProp) (interface{}, bool),
+) (string, bool) {
+	if len(keyProps) == 0 {
+		return "", false
+	}
+	var b strings.Builder
+	b.Grow(len(startID) + len(endID) + len(relType) + len(keyProps)*32)
+	b.WriteString(string(startID))
+	b.WriteByte('\x00')
+	b.WriteString(string(endID))
+	b.WriteByte('\x00')
+	b.WriteString(relType)
+	b.WriteByte('\x00')
+	for _, prop := range keyProps {
+		value, ok := valueFor(prop)
+		if !ok {
+			return "", false
+		}
+		value = normalizeRelationshipMergeIdentityValue(value)
+		b.WriteString(strconv.Itoa(len(prop.propName)))
+		b.WriteByte(':')
+		b.WriteString(prop.propName)
+		b.WriteByte('=')
+		if !appendRelationshipBatchScalarKeyValue(&b, value) {
+			return "", false
+		}
+		b.WriteByte(';')
+	}
+	return b.String(), true
+}
+
+func appendRelationshipBatchScalarKeyValue(b *strings.Builder, value interface{}) bool {
+	switch v := value.(type) {
+	case nil:
+		b.WriteString("nil")
+	case string:
+		b.WriteString("string:")
+		b.WriteString(strconv.Itoa(len(v)))
+		b.WriteByte(':')
+		b.WriteString(v)
+	case bool:
+		b.WriteString("bool:")
+		b.WriteString(strconv.FormatBool(v))
+	case int:
+		b.WriteString("int:")
+		b.WriteString(strconv.FormatInt(int64(v), 10))
+	case int8:
+		b.WriteString("int8:")
+		b.WriteString(strconv.FormatInt(int64(v), 10))
+	case int16:
+		b.WriteString("int16:")
+		b.WriteString(strconv.FormatInt(int64(v), 10))
+	case int32:
+		b.WriteString("int32:")
+		b.WriteString(strconv.FormatInt(int64(v), 10))
+	case int64:
+		b.WriteString("int64:")
+		b.WriteString(strconv.FormatInt(v, 10))
+	case uint:
+		b.WriteString("uint:")
+		b.WriteString(strconv.FormatUint(uint64(v), 10))
+	case uint8:
+		b.WriteString("uint8:")
+		b.WriteString(strconv.FormatUint(uint64(v), 10))
+	case uint16:
+		b.WriteString("uint16:")
+		b.WriteString(strconv.FormatUint(uint64(v), 10))
+	case uint32:
+		b.WriteString("uint32:")
+		b.WriteString(strconv.FormatUint(uint64(v), 10))
+	case uint64:
+		b.WriteString("uint64:")
+		b.WriteString(strconv.FormatUint(v, 10))
+	case float32:
+		b.WriteString("float32:")
+		b.WriteString(strconv.FormatFloat(float64(v), 'g', -1, 32))
+	case float64:
+		if math.IsNaN(v) {
+			b.WriteString("float64:NaN")
+			return true
+		}
+		b.WriteString("float64:")
+		b.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
+	default:
+		return false
+	}
+	return true
+}
+
+func findMatchingParenAt(s string, openIdx int) int {
+	return cyphertext.FindMatchingDelimiter(s, openIdx, '(', ')', cyphertext.OpeningDelimiter)
+}

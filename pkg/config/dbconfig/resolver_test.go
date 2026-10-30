@@ -1,0 +1,537 @@
+package dbconfig
+
+import (
+	"testing"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestResolve_GlobalOnly(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.EmbeddingDimensions = 1536
+	global.Memory.SearchMinSimilarity = 0.6
+	r := Resolve(global, nil)
+	require.NotNil(t, r)
+	assert.Equal(t, 1536, r.EmbeddingDimensions)
+	assert.Equal(t, 0.6, r.SearchMinSimilarity)
+	assert.Equal(t, "none", r.BM25Stemmer)
+	assert.NotEmpty(t, r.Effective["db.nornic.embedding.dimensions"])
+}
+
+func TestResolveEmbeddingLabelFilterOverrides(t *testing.T) {
+	global := config.LoadDefaults()
+	global.EmbeddingWorker.EligibleLabels = []string{"Document", "Chunk"}
+	global.EmbeddingWorker.ExcludedLabels = []string{"Job"}
+	left := Resolve(global, map[string]string{
+		"db.nornic.embedding.labels.include": "Image",
+		"db.nornic.embedding.labels.exclude": "AuditLog",
+	})
+	right := Resolve(global, nil)
+	require.Equal(t, "Image", left.Effective["db.nornic.embedding.labels.include"])
+	require.Equal(t, "AuditLog", left.Effective["db.nornic.embedding.labels.exclude"])
+	require.Equal(t, "Document,Chunk", right.Effective["db.nornic.embedding.labels.include"])
+	require.Equal(t, "Job", right.Effective["db.nornic.embedding.labels.exclude"])
+	require.True(t, IsAllowedKey("NORNICDB_EMBEDDING_LABELS_INCLUDE"))
+	require.True(t, IsAllowedKey("NORNICDB_EMBEDDING_LABELS_EXCLUDE"))
+}
+
+func TestResolve_Overrides(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.EmbeddingDimensions = 1024
+	global.Memory.SearchMinSimilarity = 0.5
+	overrides := map[string]string{
+		"NORNICDB_EMBEDDING_DIMENSIONS":  "768",
+		"NORNICDB_SEARCH_MIN_SIMILARITY": "0.8",
+		"NORNICDB_SEARCH_BM25_STEMMER":   "snowball.ukrainian",
+	}
+	r := Resolve(global, overrides)
+	require.NotNil(t, r)
+	assert.Equal(t, 768, r.EmbeddingDimensions)
+	assert.Equal(t, 0.8, r.SearchMinSimilarity)
+	assert.Equal(t, "snowball.ukrainian", r.BM25Stemmer)
+	assert.Equal(t, "768", r.Effective["db.nornic.embedding.dimensions"])
+	assert.Equal(t, "0.8", r.Effective["db.nornic.search.min.similarity"])
+	assert.Equal(t, "snowball.ukrainian", r.Effective["db.nornic.search.bm25.stemmer"])
+}
+
+func TestResolve_DocumentedStemmerSelectionExamples(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.SearchBM25Stemmer = "snowball.french"
+
+	frenchDefault := Resolve(global, nil)
+	require.NotNil(t, frenchDefault)
+	assert.Equal(t, "snowball.french", frenchDefault.BM25Stemmer)
+	assert.Equal(t, "snowball.french", frenchDefault.Effective["db.nornic.search.bm25.stemmer"])
+
+	spanishDB := Resolve(global, map[string]string{
+		"db.nornic.search.bm25.stemmer": "snowball.spanish",
+	})
+	require.NotNil(t, spanishDB)
+	assert.Equal(t, "snowball.spanish", spanishDB.BM25Stemmer)
+	assert.Equal(t, "snowball.spanish", spanishDB.Effective["db.nornic.search.bm25.stemmer"])
+
+	exactTokenDB := Resolve(global, map[string]string{
+		"db.nornic.search.bm25.stemmer": "none",
+	})
+	require.NotNil(t, exactTokenDB)
+	assert.Equal(t, "none", exactTokenDB.BM25Stemmer)
+	assert.Equal(t, "none", exactTokenDB.Effective["db.nornic.search.bm25.stemmer"])
+}
+
+func TestResolve_RemovedBM25EngineSetting(t *testing.T) {
+	for _, key := range []string{"db.nornic.search.bm25.engine", "NORNICDB_SEARCH_BM25_ENGINE"} {
+		t.Run(key, func(t *testing.T) {
+			overrides := map[string]string{key: "v1", "NORNICDB_SEARCH_BM25_ENABLED": "false"}
+			before := map[string]string{key: "v1", "NORNICDB_SEARCH_BM25_ENABLED": "false"}
+			resolved := Resolve(config.LoadDefaults(), overrides)
+			require.Equal(t, before, overrides)
+			require.NotContains(t, resolved.Effective, key)
+			require.False(t, resolved.BM25Enabled)
+			require.False(t, IsAllowedKey(key))
+			_, err := NormalizeSettingValue(key, "v1")
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestResolve_OrcaProviderOverrideUsesMatchingDefaults(t *testing.T) {
+	global := config.LoadDefaults()
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider": " ORCA ",
+	})
+
+	require.Equal(t, 1536, r.EmbeddingDimensions)
+	require.Equal(t, "orca", r.Effective["db.nornic.embedding.provider"])
+	require.Equal(t, "1536", r.Effective["db.nornic.embedding.dimensions"])
+	require.Equal(t, "https://api.orcarouter.ai", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "openai/text-embedding-3-small", r.Effective["db.nornic.embedding.model"])
+}
+
+func TestResolve_VoyageProviderOverrideUsesMatchingDefaults(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.EmbeddingMode = "contextualized"
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider": "voyage",
+	})
+
+	require.Equal(t, 1024, r.EmbeddingDimensions)
+	require.Equal(t, "voyage", r.Effective["db.nornic.embedding.provider"])
+	require.Equal(t, "https://api.voyageai.com", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "voyage-context-4", r.Effective["db.nornic.embedding.model"])
+}
+
+func TestResolve_VoyageProviderOverridePreservesExplicitGenericSettings(t *testing.T) {
+	global := config.LoadDefaults()
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider":   "voyage",
+		"db.nornic.embedding.api.url":    "http://localhost:11434",
+		"db.nornic.embedding.model":      "bge-m3",
+		"db.nornic.embedding.dimensions": "1024",
+	})
+
+	require.Equal(t, 1024, r.EmbeddingDimensions)
+	require.Equal(t, "http://localhost:11434", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "bge-m3", r.Effective["db.nornic.embedding.model"])
+}
+
+func TestResolve_OrcaProviderOverridePreservesExplicitGenericSettings(t *testing.T) {
+	global := config.LoadDefaults()
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider":   "orca",
+		"db.nornic.embedding.api.url":    "http://localhost:11434",
+		"db.nornic.embedding.model":      "bge-m3",
+		"db.nornic.embedding.dimensions": "1024",
+	})
+
+	require.Equal(t, 1024, r.EmbeddingDimensions)
+	require.Equal(t, "http://localhost:11434", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "bge-m3", r.Effective["db.nornic.embedding.model"])
+}
+
+func TestResolve_OrcaProviderOverridePreservesExplicitGlobalGenericSettings(t *testing.T) {
+	global := config.LoadDefaults()
+	global.EmbeddingExplicit.APIURL = true
+	global.EmbeddingExplicit.Model = true
+	global.EmbeddingExplicit.Dimensions = true
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider": "orca",
+	})
+
+	require.Equal(t, 1024, r.EmbeddingDimensions)
+	require.Equal(t, "http://localhost:11434", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "bge-m3", r.Effective["db.nornic.embedding.model"])
+}
+
+func TestResolve_QueryCacheTTLIsDatabaseScoped(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.QueryCacheTTL = 5 * time.Minute
+
+	fast := Resolve(global, map[string]string{
+		"db.nornic.query_cache.max_entries": "25",
+		"db.nornic.query_cache.ttl":         "2000",
+	})
+	slow := Resolve(global, map[string]string{
+		"db.nornic.query_cache.max_entries": "2500",
+		"db.nornic.query_cache.ttl":         "1800000",
+	})
+
+	require.Equal(t, 25, fast.QueryCacheMaxEntries)
+	require.Equal(t, 2*time.Second, fast.QueryCacheTTL)
+	require.Equal(t, 2500, slow.QueryCacheMaxEntries)
+	require.Equal(t, 30*time.Minute, slow.QueryCacheTTL)
+	require.Equal(t, "2000", fast.Effective["db.nornic.query_cache.ttl"])
+	require.Equal(t, "1800000", slow.Effective["db.nornic.query_cache.ttl"])
+}
+
+func TestResolve_DefaultDimensionsAndIgnoredOverrides(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.EmbeddingDimensions = 0
+	global.Memory.SearchMinSimilarity = 0.55
+
+	r := Resolve(global, map[string]string{
+		"NOT_ALLOWED":                    "ignored",
+		"NORNICDB_EMBEDDING_DIMENSIONS":  "-5",
+		"NORNICDB_SEARCH_MIN_SIMILARITY": "bad",
+	})
+	require.NotNil(t, r)
+	assert.Equal(t, 1024, r.EmbeddingDimensions)
+	assert.Equal(t, 0.55, r.SearchMinSimilarity)
+	_, ok := r.Effective["NOT_ALLOWED"]
+	assert.False(t, ok)
+}
+
+func TestApplyOverride(t *testing.T) {
+	r := &ResolvedDbConfig{
+		EmbeddingDimensions: 1024,
+		SearchMinSimilarity: 0.5,
+		Effective:           map[string]string{},
+	}
+
+	applyOverride(r, "NORNICDB_EMBEDDING_DIMENSIONS", " 2048 ")
+	assert.Equal(t, 2048, r.EmbeddingDimensions)
+
+	applyOverride(r, "NORNICDB_EMBEDDING_DIMENSIONS", "0")
+	assert.Equal(t, 1024, r.EmbeddingDimensions)
+
+	applyOverride(r, "NORNICDB_SEARCH_MIN_SIMILARITY", "0.75")
+	assert.Equal(t, 0.75, r.SearchMinSimilarity)
+
+	applyOverride(r, "NORNICDB_SEARCH_MIN_SIMILARITY", "0")
+	assert.Equal(t, 0.0, r.SearchMinSimilarity)
+
+	applyOverride(r, "NORNICDB_SEARCH_BM25_STEMMER", " Snowball.Ukrainian ")
+	assert.Equal(t, "snowball.ukrainian", r.BM25Stemmer)
+
+	applyOverride(r, "NORNICDB_EMBEDDING_ENABLED", "1")
+
+	applyOverride(r, "UNKNOWN_KEY", "value")
+	assert.Equal(t, 1024, r.EmbeddingDimensions)
+}
+
+func TestIsAllowedKey(t *testing.T) {
+	assert.True(t, IsAllowedKey("NORNICDB_EMBEDDING_MODEL"))
+	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_MIN_SIMILARITY"))
+	assert.True(t, IsAllowedKey("NORNICDB_EMBEDDING_API_KEY"))
+	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_BM25_ENABLED"))
+	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_BM25_WARMING"))
+	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_BM25_STEMMER"))
+	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_VECTOR_ENABLED"))
+	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_VECTOR_WARMING"))
+	assert.False(t, IsAllowedKey("UNKNOWN_KEY"))
+}
+
+// TestResolveSearchFlags_Defaults — when no overrides are present, the
+// resolved config mirrors the global default (true / startup).
+func TestResolveSearchFlags_Defaults(t *testing.T) {
+	global := config.LoadDefaults()
+	r := Resolve(global, nil)
+	require.NotNil(t, r)
+	assert.True(t, r.BM25Enabled)
+	assert.True(t, r.VectorEnabled)
+	assert.Equal(t, "startup", r.BM25Warming)
+	assert.Equal(t, "startup", r.VectorWarming)
+	// Effective map mirrors all four keys.
+	assert.Equal(t, "true", r.Effective["db.nornic.search.bm25.enabled"])
+	assert.Equal(t, "startup", r.Effective["db.nornic.search.bm25.warming"])
+	assert.Equal(t, "true", r.Effective["db.nornic.search.vector.enabled"])
+	assert.Equal(t, "startup", r.Effective["db.nornic.search.vector.warming"])
+}
+
+// TestResolveSearchFlags_OverrideMatrix — the load-bearing guarantee.
+// Per-DB overrides win over the global default in BOTH directions: an override
+// of true turns on a globally-disabled index; an override of false turns off
+// a globally-enabled one. Same for warming.
+func TestResolveSearchFlags_OverrideMatrix(t *testing.T) {
+	type row struct {
+		name        string
+		globalBM25  bool
+		globalVec   bool
+		globalBM25W string
+		globalVecW  string
+		overrides   map[string]string
+		wantBM25    bool
+		wantVec     bool
+		wantBM25W   string
+		wantVecW    string
+	}
+	cases := []row{
+		{
+			name:       "both global true, no override → both enabled startup",
+			globalBM25: true, globalVec: true, globalBM25W: "startup", globalVecW: "startup",
+			overrides: nil,
+			wantBM25:  true, wantVec: true, wantBM25W: "startup", wantVecW: "startup",
+		},
+		{
+			name:       "both global false, no override → both disabled",
+			globalBM25: false, globalVec: false, globalBM25W: "startup", globalVecW: "startup",
+			overrides: nil,
+			wantBM25:  false, wantVec: false,
+		},
+		{
+			name:       "global vector false, per-DB override true → vector ON",
+			globalBM25: true, globalVec: false, globalBM25W: "startup", globalVecW: "startup",
+			overrides: map[string]string{"NORNICDB_SEARCH_VECTOR_ENABLED": "true"},
+			wantBM25:  true, wantVec: true,
+		},
+		{
+			name:       "global vector false, per-DB override lazy → vector ON, warming lazy",
+			globalBM25: true, globalVec: false, globalBM25W: "startup", globalVecW: "startup",
+			overrides: map[string]string{
+				"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
+				"NORNICDB_SEARCH_VECTOR_WARMING": "lazy",
+			},
+			wantBM25: true, wantVec: true, wantBM25W: "startup", wantVecW: "lazy",
+		},
+		{
+			name:       "global true, per-DB override false → disabled",
+			globalBM25: true, globalVec: true, globalBM25W: "startup", globalVecW: "startup",
+			overrides: map[string]string{"NORNICDB_SEARCH_VECTOR_ENABLED": "false"},
+			wantBM25:  true, wantVec: false,
+		},
+		{
+			name:       "global startup, per-DB lazy → lazy",
+			globalBM25: true, globalVec: true, globalBM25W: "startup", globalVecW: "startup",
+			overrides: map[string]string{"NORNICDB_SEARCH_VECTOR_WARMING": "lazy"},
+			wantBM25:  true, wantVec: true, wantBM25W: "startup", wantVecW: "lazy",
+		},
+		{
+			name:       "global lazy, per-DB startup → startup",
+			globalBM25: true, globalVec: true, globalBM25W: "lazy", globalVecW: "lazy",
+			overrides: map[string]string{
+				"NORNICDB_SEARCH_BM25_WARMING":   "startup",
+				"NORNICDB_SEARCH_VECTOR_WARMING": "startup",
+			},
+			wantBM25: true, wantVec: true, wantBM25W: "startup", wantVecW: "startup",
+		},
+		{
+			name:       "independent per-key flips: vector true, BM25 false from globals true,true",
+			globalBM25: true, globalVec: true, globalBM25W: "startup", globalVecW: "startup",
+			overrides: map[string]string{
+				"NORNICDB_SEARCH_BM25_ENABLED":   "false",
+				"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
+			},
+			wantBM25: false, wantVec: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			global := config.LoadDefaults()
+			global.Memory.SearchBM25Enabled = c.globalBM25
+			global.Memory.SearchVectorEnabled = c.globalVec
+			global.Memory.SearchBM25Warming = c.globalBM25W
+			global.Memory.SearchVectorWarming = c.globalVecW
+			r := Resolve(global, c.overrides)
+			require.NotNil(t, r)
+			assert.Equal(t, c.wantBM25, r.BM25Enabled, "BM25Enabled")
+			assert.Equal(t, c.wantVec, r.VectorEnabled, "VectorEnabled")
+			if c.wantBM25W != "" {
+				assert.Equal(t, c.wantBM25W, r.BM25Warming, "BM25Warming")
+			}
+			if c.wantVecW != "" {
+				assert.Equal(t, c.wantVecW, r.VectorWarming, "VectorWarming")
+			}
+		})
+	}
+}
+
+// TestResolveSearchFlags_BoolFallback — bogus boolean strings don't silently
+// flip the value; the global default wins.
+func TestResolveSearchFlags_BoolFallback(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.SearchVectorEnabled = true
+	r := Resolve(global, map[string]string{
+		"NORNICDB_SEARCH_VECTOR_ENABLED": "yes", // not a recognised bool literal
+	})
+	require.NotNil(t, r)
+	assert.True(t, r.VectorEnabled, "bogus override should not flip the global default")
+}
+
+// TestEnumValidation — IsValidEnumValue accepts startup/lazy and rejects others.
+func TestEnumValidation(t *testing.T) {
+	ok, _ := IsValidEnumValue("NORNICDB_SEARCH_VECTOR_WARMING", "startup")
+	assert.True(t, ok)
+	ok, _ = IsValidEnumValue("NORNICDB_SEARCH_VECTOR_WARMING", "LAZY")
+	assert.True(t, ok, "case-insensitive match")
+	ok, allowed := IsValidEnumValue("NORNICDB_SEARCH_VECTOR_WARMING", "asap")
+	assert.False(t, ok)
+	assert.Equal(t, "startup,lazy", allowed)
+	// Non-enum keys: no value-level validation.
+	ok, _ = IsValidEnumValue("NORNICDB_SEARCH_BM25_ENABLED", "anything")
+	assert.True(t, ok)
+}
+
+// TestResolve_PrecedenceLadder walks every level of the precedence
+// ladder for the four search flags and asserts each level overrides
+// the levels below it. Order, lowest → highest:
+//
+//  1. defaults     (config.LoadDefaults; bm25=true, vector=true, both startup)
+//  2. global       (cfg.Memory.Search* — populated from YAML/env)
+//  3. per-DB       (the `overrides` map — admin API store / YAML databases:)
+//  4. CLI          (cfg.CLIOverrides — cmd.Flags().Changed at boot)
+//
+// Each subtest holds the levels above the one under test as no-op
+// (matching the level below) so the ONE level we're exercising is
+// what's actually demonstrated to win.
+func TestResolve_PrecedenceLadder(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		// No overlay anywhere: the resolved values mirror LoadDefaults.
+		global := config.LoadDefaults()
+		r := Resolve(global, nil)
+		assert.True(t, r.BM25Enabled, "default BM25 must be enabled")
+		assert.True(t, r.VectorEnabled, "default vector must be enabled")
+		assert.Equal(t, "startup", r.BM25Warming, "default warming")
+		assert.Equal(t, "startup", r.VectorWarming, "default warming")
+	})
+
+	t.Run("global overrides defaults", func(t *testing.T) {
+		// Stand-in for YAML/env loading: cfg.Memory.Search* differs
+		// from defaults; no per-DB or CLI overrides.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = false
+		global.Memory.SearchVectorEnabled = false
+		global.Memory.SearchBM25Warming = "lazy"
+		global.Memory.SearchVectorWarming = "lazy"
+		r := Resolve(global, nil)
+		assert.False(t, r.BM25Enabled, "global must override default")
+		assert.False(t, r.VectorEnabled, "global must override default")
+		assert.Equal(t, "lazy", r.BM25Warming)
+		assert.Equal(t, "lazy", r.VectorWarming)
+	})
+
+	t.Run("per-DB overrides global", func(t *testing.T) {
+		// Global says enabled; per-DB store says disabled. Per-DB wins.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = true
+		global.Memory.SearchVectorEnabled = true
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "false",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+			"NORNICDB_SEARCH_BM25_WARMING":   "lazy",
+			"NORNICDB_SEARCH_VECTOR_WARMING": "lazy",
+		}
+		r := Resolve(global, overrides)
+		assert.False(t, r.BM25Enabled, "per-DB must override global")
+		assert.False(t, r.VectorEnabled, "per-DB must override global")
+		assert.Equal(t, "lazy", r.BM25Warming)
+		assert.Equal(t, "lazy", r.VectorWarming)
+	})
+
+	t.Run("per-DB overrides global the other direction", func(t *testing.T) {
+		// Belt-and-suspenders: ensure per-DB can also turn ON something
+		// global says is off, not just off-something-on.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = false
+		global.Memory.SearchVectorEnabled = false
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "true",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
+		}
+		r := Resolve(global, overrides)
+		assert.True(t, r.BM25Enabled, "per-DB true must override global false")
+		assert.True(t, r.VectorEnabled, "per-DB true must override global false")
+	})
+
+	t.Run("per-DB trumps process override and global", func(t *testing.T) {
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = true
+		global.Memory.SearchVectorEnabled = true
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "false",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+		}
+		// A persisted database setting is authoritative for that database.
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "true",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
+		}
+		r := Resolve(global, overrides)
+		assert.True(t, r.BM25Enabled)
+		assert.True(t, r.VectorEnabled)
+		assert.Equal(t, "true", r.Effective["db.nornic.search.bm25.enabled"])
+		assert.Equal(t, "true", r.Effective["db.nornic.search.vector.enabled"])
+	})
+
+	t.Run("per-DB trumps process override the other direction", func(t *testing.T) {
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = false
+		global.Memory.SearchVectorEnabled = false
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "true",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
+		}
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "false",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+		}
+		r := Resolve(global, overrides)
+		assert.False(t, r.BM25Enabled, "per-DB false must override process true")
+		assert.False(t, r.VectorEnabled, "per-DB false must override process true")
+	})
+
+	t.Run("CLI applies even without per-DB override", func(t *testing.T) {
+		// CLI must work whether or not the dbconfig store has any
+		// row for this DB. Single-source environments (no admin API
+		// usage, no YAML databases: block) are common.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = true
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED": "false",
+		}
+		r := Resolve(global, nil)
+		assert.False(t, r.BM25Enabled, "CLI must apply even with no per-DB overrides")
+	})
+
+	t.Run("CLI scoped per-key — partial overrides don't bleed", func(t *testing.T) {
+		// Operator only flips BM25 via CLI. Vector flag must follow
+		// the next-highest level (per-DB here), not get coerced by
+		// CLI's BM25 entry.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = true
+		global.Memory.SearchVectorEnabled = true
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED": "false",
+		}
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+		}
+		r := Resolve(global, overrides)
+		assert.False(t, r.BM25Enabled, "CLI overrides BM25 only")
+		assert.False(t, r.VectorEnabled, "per-DB overrides vector — CLI didn't touch it")
+	})
+
+	t.Run("per-DB warming beats process override", func(t *testing.T) {
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Warming = "startup"
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_WARMING": "lazy",
+		}
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_WARMING": "startup",
+		}
+		r := Resolve(global, overrides)
+		assert.Equal(t, "startup", r.BM25Warming, "per-DB warming wins")
+	})
+}

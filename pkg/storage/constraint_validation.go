@@ -1,0 +1,779 @@
+// Package storage - Constraint validation when constraints are created.
+package storage
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+)
+
+func newLocalizedConstraintViolation(constraintType ConstraintType, label string, properties []string, message localization.Message, cause error) *ConstraintViolationError {
+	return &ConstraintViolationError{
+		Type:       constraintType,
+		Label:      label,
+		Properties: properties,
+		Message:    message.Fallback,
+		Cause:      localizedError(message, cause),
+	}
+}
+
+// ValidateConstraintOnCreation validates that all existing data satisfies the constraint.
+// This is called when CREATE CONSTRAINT is executed, matching Neo4j behavior.
+func (b *BadgerEngine) ValidateConstraintOnCreation(c Constraint) error {
+	return ValidateConstraintOnCreationForEngine(b, c)
+}
+
+// ValidateConstraintOnCreationForEngine validates constraints using the Engine interface.
+// This allows callers (like Cypher) to validate through wrapper engines (namespaced, WAL, etc.).
+func ValidateConstraintOnCreationForEngine(engine Engine, c Constraint) error {
+	return ValidateConstraintOnCreationForEngineWithContext(context.Background(), engine, c)
+}
+
+// ValidateConstraintOnCreationForEngineWithContext carries the caller through validation and label materialization.
+func ValidateConstraintOnCreationForEngineWithContext(ctx context.Context, engine Engine, c Constraint) error {
+	if c.EffectiveEntityType() == ConstraintEntityRelationship {
+		return validateRelationshipConstraintOnCreationForEngine(engine, c)
+	}
+	switch c.Type {
+	case ConstraintUnique:
+		return validateUniqueConstraintOnCreationWithEngineWithContext(ctx, engine, c)
+	case ConstraintNodeKey:
+		return validateNodeKeyConstraintOnCreationWithEngineWithContext(ctx, engine, c)
+	case ConstraintExists:
+		return validateExistenceConstraintOnCreationWithEngineWithContext(ctx, engine, c)
+	case ConstraintTemporal:
+		return validateTemporalConstraintOnCreationWithEngineWithContext(ctx, engine, c)
+	case ConstraintDomain:
+		return validateDomainConstraintOnCreationForEngineWithContext(ctx, engine, c)
+	default:
+		return localizedError(localization.StorageValidationUnknownConstraintType(string(c.Type)), nil)
+	}
+}
+
+// RefreshUniqueConstraintValuesForEngine rebuilds single-property UNIQUE value
+// caches from the engine after a schema mutation has been admitted.
+func RefreshUniqueConstraintValuesForEngine(engine Engine, schema *SchemaManager) error {
+	return RefreshUniqueConstraintValuesForEngineWithContext(context.Background(), engine, schema)
+}
+
+// RefreshUniqueConstraintValuesForEngineWithContext carries the caller through validation and label materialization.
+func RefreshUniqueConstraintValuesForEngineWithContext(ctx context.Context, engine Engine, schema *SchemaManager) error {
+	if engine == nil || schema == nil {
+		return nil
+	}
+
+	schema.mu.RLock()
+	uniqueConstraints := make([]*UniqueConstraint, 0, len(schema.uniqueConstraints))
+	for _, uc := range schema.uniqueConstraints {
+		if err := ctx.Err(); err != nil {
+			schema.mu.RUnlock()
+			return err
+		}
+		uniqueConstraints = append(uniqueConstraints, uc)
+	}
+	schema.mu.RUnlock()
+	return refreshUniqueConstraintValuesWithContext(ctx, engine, schema, uniqueConstraints)
+}
+
+// RefreshUniqueConstraintValuesForConstraintsForEngine rebuilds the value
+// caches of just the given single-property UNIQUE constraints (other
+// constraint types are ignored) and marks them complete, so writes validate
+// through the cache instead of the label-scan fallback. Used after a
+// constraint contract with IS UNIQUE entries is admitted: refreshing only the
+// contract's own constraints keeps a schema of many contracts from rescanning
+// every constrained label on each DDL.
+func RefreshUniqueConstraintValuesForConstraintsForEngine(engine Engine, schema *SchemaManager, constraints []Constraint) error {
+	return RefreshUniqueConstraintValuesForConstraintsForEngineWithContext(context.Background(), engine, schema, constraints)
+}
+
+// RefreshUniqueConstraintValuesForConstraintsForEngineWithContext carries the caller through validation and label materialization.
+func RefreshUniqueConstraintValuesForConstraintsForEngineWithContext(ctx context.Context, engine Engine, schema *SchemaManager, constraints []Constraint) error {
+	if engine == nil || schema == nil {
+		return nil
+	}
+
+	schema.mu.RLock()
+	uniqueConstraints := make([]*UniqueConstraint, 0, len(constraints))
+	for _, c := range constraints {
+		if err := ctx.Err(); err != nil {
+			schema.mu.RUnlock()
+			return err
+		}
+		if c.Type != ConstraintUnique || c.EntityType == ConstraintEntityRelationship || len(c.Properties) != 1 {
+			continue
+		}
+		if uc, ok := schema.uniqueConstraints[fmt.Sprintf("%s:%s", c.Label, c.Properties[0])]; ok {
+			uniqueConstraints = append(uniqueConstraints, uc)
+		}
+	}
+	schema.mu.RUnlock()
+	return refreshUniqueConstraintValuesWithContext(ctx, engine, schema, uniqueConstraints)
+}
+
+func refreshUniqueConstraintValues(engine Engine, schema *SchemaManager, uniqueConstraints []*UniqueConstraint) error {
+	return refreshUniqueConstraintValuesWithContext(context.Background(), engine, schema, uniqueConstraints)
+}
+
+// refreshUniqueConstraintValuesWithContext carries the caller through validation and label materialization.
+func refreshUniqueConstraintValuesWithContext(ctx context.Context, engine Engine, schema *SchemaManager, uniqueConstraints []*UniqueConstraint) error {
+	if len(uniqueConstraints) == 0 {
+		return nil
+	}
+
+	for _, uc := range uniqueConstraints {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		uc.mu.Lock()
+		uc.values = make(map[interface{}]NodeID)
+		uc.valuesCacheComplete = false
+		uc.mu.Unlock()
+	}
+
+	// Only the labels that carry a UNIQUE constraint are read, each through
+	// the label-scoped stream with just the constrained properties decoded:
+	// a refresh in one database never scans the whole server (AllNodes).
+	propertiesByLabel := make(map[string][]string)
+	labels := make([]string, 0)
+	for _, uc := range uniqueConstraints {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, ok := propertiesByLabel[uc.Label]; !ok {
+			labels = append(labels, uc.Label)
+		}
+		if !slices.Contains(propertiesByLabel[uc.Label], uc.Property) {
+			propertiesByLabel[uc.Label] = append(propertiesByLabel[uc.Label], uc.Property)
+		}
+	}
+	if err := sortIndexCandidatesWithContext(ctx, labels, func(a, b string) bool { return a < b }); err != nil {
+		return err
+	}
+	for _, label := range labels {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		properties := propertiesByLabel[label]
+		var violation error
+		err := StreamStoredLabelNodesWithContext(ctx, engine, label, properties, func(node *Node) error {
+			if node == nil {
+				return nil
+			}
+			// Pinned by docs/plans/consumer-pinned-error-contract-plan.md §2.3 and
+			// TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine. Removing
+			// EnsureNodeIDDatabasePrefixForEngine re-introduces a known false-UNIQUE failure
+			// mode for namespaced engines (the cache holds unprefixed IDs while transaction
+			// commit validation passes prefixed IDs).
+			storageNodeID := EnsureNodeIDDatabasePrefixForEngine(engine, node.ID)
+			for _, propName := range properties {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				propValue, ok := node.Properties[propName]
+				if !ok {
+					continue
+				}
+				if err := schema.CheckUniqueConstraint(label, propName, propValue, storageNodeID); err != nil {
+					violation = localizedError(localization.StorageValidationRefreshUniqueFailed(err), err)
+					return violation
+				}
+				schema.RegisterUniqueValue(label, propName, propValue, storageNodeID)
+			}
+			return nil
+		})
+		if violation != nil {
+			return violation
+		}
+		if err != nil {
+			return localizedError(localization.StorageValidationRefreshUniqueScanFailed(err), err)
+		}
+	}
+
+	for _, uc := range uniqueConstraints {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		uc.mu.Lock()
+		uc.valuesCacheComplete = true
+		uc.mu.Unlock()
+	}
+	return ctx.Err()
+}
+
+// isValueInAllowedList checks if a value matches any in the allowed values list.
+func isValueInAllowedList(value interface{}, allowedValues []interface{}) bool {
+	for _, allowed := range allowedValues {
+		if compareValues(value, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateDomainConstraintOnCreationForEngine validates that all existing nodes satisfy the domain constraint.
+func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) error {
+	return validateDomainConstraintOnCreationForEngineWithContext(context.Background(), engine, c)
+}
+
+// validateDomainConstraintOnCreationForEngineWithContext carries the caller through validation and label materialization.
+func validateDomainConstraintOnCreationForEngineWithContext(ctx context.Context, engine Engine, c Constraint) error {
+	if len(c.Properties) != 1 {
+		return localizedError(localization.StorageValidationDomainPropertyCount(len(c.Properties)), nil)
+	}
+	if len(c.AllowedValues) == 0 {
+		return localizedError(localization.StorageValidationDomainAllowedValuesRequired(), nil)
+	}
+
+	property := c.Properties[0]
+
+	nodes, err := GetStoredNodesByLabelWithContext(ctx, engine, c.Label)
+	if err != nil {
+		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+	}
+
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		value := node.Properties[property]
+		if value == nil {
+			continue // NULL is valid for domain constraints
+		}
+		if !isValueInAllowedList(value, c.AllowedValues) {
+			message := localization.StorageValidationDomainNodeInvalid(string(node.ID), property, value, c.AllowedValues)
+			return newLocalizedConstraintViolation(ConstraintDomain, c.Label, []string{property}, message, nil)
+		}
+	}
+
+	return ctx.Err()
+}
+
+// validateUniqueConstraintOnCreation checks all existing nodes for duplicates.
+func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
+	return validateUniqueConstraintOnCreationWithEngineWithContext(context.Background(), engine, c)
+}
+
+// validateUniqueConstraintOnCreationWithEngineWithContext carries the caller through validation and label materialization.
+func validateUniqueConstraintOnCreationWithEngineWithContext(ctx context.Context, engine Engine, c Constraint) error {
+	if len(c.Properties) > 1 {
+		return validateNodeKeyConstraintOnCreationWithEngineWithContext(ctx, engine, c)
+	}
+	if len(c.Properties) != 1 {
+		return localizedError(localization.StorageValidationUniquePropertyCount(len(c.Properties)), nil)
+	}
+
+	property := c.Properties[0]
+	seen := make(constraintCreationValues)
+
+	// Scan all nodes with this label
+	nodes, err := GetStoredNodesByLabelWithContext(ctx, engine, c.Label)
+	if err != nil {
+		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+	}
+
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		value := node.Properties[property]
+		if value == nil {
+			continue // NULL values don't violate uniqueness
+		}
+
+		if existingNodeID, found := seen.add(string(node.ID), []interface{}{value}); found {
+			message := localization.StorageValidationNodeUniqueDuplicate(string(existingNodeID), string(node.ID), property, value)
+			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{property}, message, nil)
+		}
+
+	}
+
+	return ctx.Err()
+}
+
+// validateNodeKeyConstraintOnCreation checks all existing nodes for duplicate composite keys.
+func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
+	return validateNodeKeyConstraintOnCreationWithEngineWithContext(context.Background(), engine, c)
+}
+
+// validateNodeKeyConstraintOnCreationWithEngineWithContext carries the caller through validation and label materialization.
+func validateNodeKeyConstraintOnCreationWithEngineWithContext(ctx context.Context, engine Engine, c Constraint) error {
+	if len(c.Properties) < 1 {
+		return localizedError(localization.StorageValidationNodeKeyPropertyRequired(), nil)
+	}
+
+	seen := make(constraintCreationValues)
+
+	nodes, err := GetStoredNodesByLabelWithContext(ctx, engine, c.Label)
+	if err != nil {
+		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+	}
+
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Extract all property values
+		values := make([]interface{}, len(c.Properties))
+		hasAllValues := true
+
+		for i, prop := range c.Properties {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			val := node.Properties[prop]
+			if val == nil {
+				if c.Type == ConstraintUnique {
+					hasAllValues = false
+					break
+				}
+				message := localization.StorageValidationNodeKeyNullCreation(string(node.ID), prop)
+				return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
+			}
+			values[i] = val
+		}
+
+		if !hasAllValues {
+			continue
+		}
+
+		if existingID, found := seen.add(string(node.ID), values); found {
+			message := localization.StorageValidationNodeKeyDuplicateCreation(existingID, string(node.ID), c.Properties, values)
+			if c.Type == ConstraintUnique {
+				message = localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, existingID)
+			}
+			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
+		}
+
+	}
+
+	return ctx.Err()
+}
+
+// validateExistenceConstraintOnCreation checks all existing nodes have the required property.
+func validateExistenceConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
+	return validateExistenceConstraintOnCreationWithEngineWithContext(context.Background(), engine, c)
+}
+
+// validateExistenceConstraintOnCreationWithEngineWithContext carries the caller through validation and label materialization.
+func validateExistenceConstraintOnCreationWithEngineWithContext(ctx context.Context, engine Engine, c Constraint) error {
+	if len(c.Properties) != 1 {
+		return localizedError(localization.StorageValidationExistsPropertyCount(len(c.Properties)), nil)
+	}
+
+	property := c.Properties[0]
+
+	nodes, err := GetStoredNodesByLabelWithContext(ctx, engine, c.Label)
+	if err != nil {
+		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+	}
+
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		value := node.Properties[property]
+		if value == nil {
+			message := localization.StorageValidationNodeExistsMissingCreation(string(node.ID), property)
+			return newLocalizedConstraintViolation(ConstraintExists, c.Label, []string{property}, message, nil)
+		}
+	}
+
+	return ctx.Err()
+}
+
+// validateTemporalConstraintOnCreationWithEngine enforces no-overlap for temporal intervals.
+// Every property before the trailing (valid_from, valid_to) pair forms the
+// grouping key (see temporalKeySpec).
+func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
+	return validateTemporalConstraintOnCreationWithEngineWithContext(context.Background(), engine, c)
+}
+
+// validateTemporalConstraintOnCreationWithEngineWithContext carries the caller through validation and label materialization.
+func validateTemporalConstraintOnCreationWithEngineWithContext(ctx context.Context, engine Engine, c Constraint) error {
+	spec, ok := splitTemporalKeySpec(c.Properties)
+	if !ok {
+		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
+	}
+
+	nodes, err := GetStoredNodesByLabelWithContext(ctx, engine, c.Label)
+	if err != nil {
+		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+	}
+
+	groups := temporalCreationGroups{spec: spec}
+	byKey := make(map[int][]temporalInterval)
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		keyVal, missing := spec.keyValue(node.Properties)
+		if missing != "" {
+			message := localization.StorageValidationTemporalNodeKeyNullCreation(string(node.ID), missing)
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+		}
+		key := groups.groupFor(keyVal)
+
+		interval, ok := spec.interval(node.Properties)
+		if !ok {
+			message := localization.StorageValidationTemporalNodeInvalidCreation(string(node.ID), spec.startProp)
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+		}
+		interval.nodeID = node.ID
+		byKey[key] = append(byKey[key], interval)
+	}
+
+	for _, intervals := range byKey {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := sortIndexCandidatesWithContext(ctx, intervals, func(a, b temporalInterval) bool { return a.start.Before(b.start) }); err != nil {
+			return err
+		}
+		for i := 1; i < len(intervals); i++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			prev := intervals[i-1]
+			curr := intervals[i]
+			if intervalsOverlap(prev, curr) {
+				message := localization.StorageValidationTemporalNodesOverlapCreation(string(prev.nodeID), string(curr.nodeID))
+				return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+			}
+		}
+	}
+
+	return ctx.Err()
+}
+
+// RelationshipConstraint represents a constraint on relationship properties.
+type RelationshipConstraint struct {
+	Name       string
+	Type       ConstraintType
+	RelType    string // Relationship type (e.g., "KNOWS", "FOLLOWS")
+	Properties []string
+}
+
+// ValidateRelationshipConstraint validates relationship property constraints.
+func (b *BadgerEngine) ValidateRelationshipConstraint(rc RelationshipConstraint) error {
+	switch rc.Type {
+	case ConstraintUnique:
+		return b.validateUniqueRelationshipConstraint(rc)
+	case ConstraintExists:
+		return b.validateExistenceRelationshipConstraint(rc)
+	default:
+		return localizedError(localization.StorageValidationRelationshipConstraintTypeUnsupported(string(rc.Type)), nil)
+	}
+}
+
+// validateUniqueRelationshipConstraint checks relationship property uniqueness
+// over the edges of rc.RelType only (streamed from the edge type index).
+func (b *BadgerEngine) validateUniqueRelationshipConstraint(rc RelationshipConstraint) error {
+	if len(rc.Properties) != 1 {
+		return localizedError(localization.StorageValidationRelationshipUniquePropertyCount(), nil)
+	}
+	return runRelEdgeCheck(b, rc.RelType, newRelUniquenessCheck(Constraint{
+		Type:       ConstraintUnique,
+		Label:      rc.RelType,
+		Properties: rc.Properties,
+	}))
+}
+
+// validateExistenceRelationshipConstraint checks required relationship
+// properties over the edges of rc.RelType only.
+func (b *BadgerEngine) validateExistenceRelationshipConstraint(rc RelationshipConstraint) error {
+	if len(rc.Properties) != 1 {
+		return localizedError(localization.StorageValidationRelationshipExistsPropertyCount(), nil)
+	}
+	property := rc.Properties[0]
+	return runRelEdgeCheck(b, rc.RelType, relEdgeCheck{visit: ofType(rc.RelType, func(edge *Edge) error {
+		if edge.Properties[property] == nil {
+			message := localization.StorageValidationRelationshipExistsMissing(string(edge.ID), property)
+			return newLocalizedConstraintViolation(ConstraintExists, rc.RelType, []string{property}, message, nil)
+		}
+		return nil
+	})})
+}
+
+// PropertyTypeConstraint represents a type constraint on properties.
+type PropertyTypeConstraint struct {
+	Name         string               `json:"name"`
+	EntityType   ConstraintEntityType `json:"entity_type,omitempty"` // defaults to NODE when empty
+	Label        string               `json:"label"`                 // label for nodes, relationship type for relationships
+	Property     string               `json:"property"`
+	ExpectedType PropertyType         `json:"expected_type"`
+}
+
+// EffectiveEntityType returns the entity type, defaulting to NODE for backward compatibility.
+func (c PropertyTypeConstraint) EffectiveEntityType() ConstraintEntityType {
+	if c.EntityType == "" {
+		return ConstraintEntityNode
+	}
+	return c.EntityType
+}
+
+// PropertyType represents the expected type of a property.
+type PropertyType string
+
+const (
+	PropertyTypeString   PropertyType = "STRING"
+	PropertyTypeInteger  PropertyType = "INTEGER"
+	PropertyTypeFloat    PropertyType = "FLOAT"
+	PropertyTypeBoolean  PropertyType = "BOOLEAN"
+	PropertyTypeDate     PropertyType = "DATE"
+	PropertyTypeDateTime PropertyType = "DATETIME" // Legacy alias for zoned datetime
+	// Neo4j temporal property type constraints.
+	PropertyTypeZonedDateTime PropertyType = "ZONED DATETIME"
+	PropertyTypeLocalDateTime PropertyType = "LOCAL DATETIME"
+	PropertyTypeLocalTime     PropertyType = "LOCAL TIME"
+	PropertyTypeZonedTime     PropertyType = "ZONED TIME"
+	PropertyTypeDuration      PropertyType = "DURATION"
+	PropertyTypePoint         PropertyType = "POINT"
+)
+
+// PropertyTypeUnionSeparator separates the member types of a union property
+// type ("STRING | INTEGER", Neo4j's normalized spelling): a value satisfies
+// the union when it satisfies any member.
+const PropertyTypeUnionSeparator = " | "
+
+// typedPropertyKinds is the TypedPropertyValue kind each typed scalar
+// property type requires.
+var typedPropertyKinds = map[PropertyType]string{
+	PropertyTypeLocalTime: "local-time",
+	PropertyTypeZonedTime: "time",
+	PropertyTypeDuration:  "duration",
+	PropertyTypePoint:     "point",
+}
+
+// ValidatePropertyType checks if a value matches the expected type: one
+// property type, LIST<T NOT NULL>, or a union of them (any member).
+// Handles JSON/MessagePack serialization quirks where integers become float64.
+func ValidatePropertyType(value interface{}, expectedType PropertyType) error {
+	if value == nil {
+		return nil // NULL is valid for any type
+	}
+	if members := strings.Split(string(expectedType), PropertyTypeUnionSeparator); len(members) > 1 {
+		for _, member := range members {
+			if validateSinglePropertyType(value, PropertyType(member)) == nil {
+				return nil
+			}
+		}
+		return localizedError(localization.StorageValidationExpectedType(string(expectedType), fmt.Sprintf("%T", value)), nil)
+	}
+	return validateSinglePropertyType(value, expectedType)
+}
+
+// validateSinglePropertyType checks a non-null value against one property
+// type (not a union).
+func validateSinglePropertyType(value interface{}, expectedType PropertyType) error {
+	if kind, typed := typedPropertyKinds[expectedType]; typed {
+		if propertyValueKind(value) == kind {
+			return nil
+		}
+		return localizedError(localization.StorageValidationExpectedType(string(expectedType), fmt.Sprintf("%T", value)), nil)
+	}
+	switch expectedType {
+	case PropertyTypeString:
+		if _, ok := value.(string); !ok {
+			return localizedError(localization.StorageValidationExpectedType("STRING", fmt.Sprintf("%T", value)), nil)
+		}
+	case PropertyTypeInteger:
+		switch v := value.(type) {
+		case int, int32, int64:
+			return nil
+		case float64:
+			// JSON/MessagePack deserializes integers as float64
+			// Accept if it's a whole number
+			if v == float64(int64(v)) {
+				return nil
+			}
+			return localizedError(localization.StorageValidationExpectedType("INTEGER", fmt.Sprintf("%T", value)), nil)
+		case float32:
+			// Also check float32 for whole numbers
+			if v == float32(int32(v)) {
+				return nil
+			}
+			return localizedError(localization.StorageValidationExpectedType("INTEGER", fmt.Sprintf("%T", value)), nil)
+		default:
+			return localizedError(localization.StorageValidationExpectedType("INTEGER", fmt.Sprintf("%T", value)), nil)
+		}
+	case PropertyTypeFloat:
+		switch value.(type) {
+		case float32, float64:
+			return nil
+		default:
+			return localizedError(localization.StorageValidationExpectedType("FLOAT", fmt.Sprintf("%T", value)), nil)
+		}
+	case PropertyTypeBoolean:
+		if _, ok := value.(bool); !ok {
+			return localizedError(localization.StorageValidationExpectedType("BOOLEAN", fmt.Sprintf("%T", value)), nil)
+		}
+	case PropertyTypeDate:
+		if propertyValueKind(value) == "date" {
+			return nil
+		}
+		switch v := value.(type) {
+		case time.Time:
+			return nil
+		case string:
+			if _, err := time.Parse("2006-01-02", strings.TrimSpace(v)); err == nil {
+				return nil
+			}
+			return localizedError(localization.StorageValidationExpectedType("DATE", fmt.Sprintf("%T", value)), nil)
+		default:
+			return localizedError(localization.StorageValidationExpectedType("DATE", fmt.Sprintf("%T", value)), nil)
+		}
+	case PropertyTypeDateTime, PropertyTypeZonedDateTime:
+		if propertyValueKind(value) == "zoned-date-time" {
+			return nil
+		}
+		switch v := value.(type) {
+		case time.Time:
+			return nil
+		case string:
+			if isZonedDateTimeString(v) {
+				return nil
+			}
+			return localizedError(localization.StorageValidationExpectedType("ZONED DATETIME", fmt.Sprintf("%T", value)), nil)
+		default:
+			return localizedError(localization.StorageValidationExpectedType("ZONED DATETIME", fmt.Sprintf("%T", value)), nil)
+		}
+	case PropertyTypeLocalDateTime:
+		if propertyValueKind(value) == "local-date-time" {
+			return nil
+		}
+		switch v := value.(type) {
+		case string:
+			if isLocalDateTimeString(v) {
+				return nil
+			}
+			return localizedError(localization.StorageValidationExpectedType("LOCAL DATETIME", fmt.Sprintf("%T", value)), nil)
+		default:
+			return localizedError(localization.StorageValidationExpectedType("LOCAL DATETIME", fmt.Sprintf("%T", value)), nil)
+		}
+	default:
+		if element, ok := ListElementPropertyType(expectedType); ok {
+			return validateListPropertyType(value, expectedType, element)
+		}
+		return localizedError(localization.StorageValidationUnknownPropertyType(string(expectedType)), nil)
+	}
+
+	return nil
+}
+
+// ListPropertyType returns the canonical LIST<T NOT NULL> property type for a
+// scalar element type.
+func ListPropertyType(element PropertyType) PropertyType {
+	return PropertyType("LIST<" + string(element) + " NOT NULL>")
+}
+
+// ListElementPropertyType reports the element type of a LIST<T NOT NULL>
+// property type.
+func ListElementPropertyType(pt PropertyType) (PropertyType, bool) {
+	s := string(pt)
+	if !strings.HasPrefix(s, "LIST<") || !strings.HasSuffix(s, " NOT NULL>") {
+		return "", false
+	}
+	element := PropertyType(strings.TrimSuffix(strings.TrimPrefix(s, "LIST<"), " NOT NULL>"))
+	if element == "" {
+		return "", false
+	}
+	return element, true
+}
+
+func validateListPropertyType(value interface{}, listType, element PropertyType) error {
+	rv := reflect.ValueOf(value)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return localizedError(localization.StorageValidationExpectedType(string(listType), fmt.Sprintf("%T", value)), nil)
+	}
+	for i := 0; i < rv.Len(); i++ {
+		item := rv.Index(i).Interface()
+		if item == nil {
+			return localizedError(localization.StorageValidationExpectedType(string(listType), "list containing null"), nil)
+		}
+		if err := ValidatePropertyType(item, element); err != nil {
+			return localizedError(localization.StorageValidationExpectedType(string(listType), fmt.Sprintf("list containing %T", item)), nil)
+		}
+	}
+	return nil
+}
+
+func propertyValueKind(value interface{}) string {
+	typed, ok := value.(TypedPropertyValue)
+	if !ok {
+		return ""
+	}
+	return typed.PropertyValueKind()
+}
+
+func isZonedDateTimeString(raw string) bool {
+	s := strings.TrimSpace(strings.Trim(raw, "'\""))
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+	} {
+		if _, err := time.Parse(layout, s); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocalDateTimeString(raw string) bool {
+	s := strings.TrimSpace(strings.Trim(raw, "'\""))
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	} {
+		if _, err := time.Parse(layout, s); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidatePropertyTypeConstraintOnCreation validates existing data against type constraint.
+func (b *BadgerEngine) ValidatePropertyTypeConstraintOnCreation(ptc PropertyTypeConstraint) error {
+	return ValidatePropertyTypeConstraintOnCreationForEngine(b, ptc)
+}
+
+// ValidatePropertyTypeConstraintOnCreationForEngine validates type constraints using Engine.
+func ValidatePropertyTypeConstraintOnCreationForEngine(engine Engine, ptc PropertyTypeConstraint) error {
+	return ValidatePropertyTypeConstraintOnCreationForEngineWithContext(context.Background(), engine, ptc)
+}
+
+// ValidatePropertyTypeConstraintOnCreationForEngineWithContext carries the caller through validation and label materialization.
+func ValidatePropertyTypeConstraintOnCreationForEngineWithContext(ctx context.Context, engine Engine, ptc PropertyTypeConstraint) error {
+	if ptc.EffectiveEntityType() == ConstraintEntityRelationship {
+		return validateRelPropertyTypeOnCreationForEngine(engine, ptc)
+	}
+
+	nodes, err := GetStoredNodesByLabelWithContext(ctx, engine, ptc.Label)
+	if err != nil {
+		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+	}
+
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		value := node.Properties[ptc.Property]
+		if err := ValidatePropertyType(value, ptc.ExpectedType); err != nil {
+			return localizedError(localization.StorageValidationNodePropertyInvalid(string(node.ID), ptc.Property, err), err)
+		}
+	}
+
+	return ctx.Err()
+}
+
+// validateRelPropertyTypeOnCreationForEngine validates property type
+// constraints on relationships, streaming only the edges of ptc.Label.
+func validateRelPropertyTypeOnCreationForEngine(engine Engine, ptc PropertyTypeConstraint) error {
+	return runRelEdgeCheck(engine, ptc.Label, newRelPropertyTypeCheck(ptc))
+}

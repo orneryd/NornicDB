@@ -1,0 +1,18 @@
+log_level: INFO
+
+# Overrides for running Qdrant natively (from ~/src/qdrant) during local benchmarks.
+# This file is merged on top of Qdrant's default config (`config/config.yaml`).
+
+telemetry_disabled: true
+
+storage:
+  # Keep benchmark data isolated from any existing Qdrant storage.
+  storage_path: /Users/c815719/src/NornicDB/testing/benchmarks/nornic_vs_qdrant/qdrant_storage
+  snapshots_path: /Users/c815719/src/NornicDB/testing/benchmarks/nornic_vs_qdrant/qdrant_snapshots
+
+service:
+  # Bind to localhost to avoid exposing an insecure instance on your network.
+  host: 127.0.0.1
+  http_port: 6333
+  grpc_port: 6334
+

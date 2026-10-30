@@ -1,0 +1,96 @@
+// Top-K Selection Compute Shader for NornicDB
+// SPDX-License-Identifier: Apache-2.0
+//
+// Finds the K highest scoring indices using parallel bitonic sort.
+// Based on llama.cpp's topk_argsort.comp shader.
+//
+// Strategy:
+//   - Single workgroup bitonic sort (works for n <= 256, k <= 256)
+//   - All data fits in shared memory for fast sorting
+//
+// Limitations:
+//   - Requires n <= 256 (workgroup size)
+//   - Requires k <= 256 (workgroup size)
+//   - For larger datasets, use topk_full.comp which handles any n/k
+//
+// For similarity search, K is typically small (10-100), so this
+// single-workgroup approach is sufficient for small datasets.
+
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Input scores and output indices/values
+layout(set = 0, binding = 0) readonly buffer Scores {
+    float scores[];
+};
+
+layout(set = 0, binding = 1) buffer TopIndices {
+    uint top_indices[];
+};
+
+layout(set = 0, binding = 2) buffer TopScores {
+    float top_scores[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint n;     // Total number of scores
+    uint k;     // Number of top elements to find
+} params;
+
+// Shared memory for local sorting
+shared float shared_scores[256];
+shared uint shared_indices[256];
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint lid = gl_LocalInvocationID.x;
+    uint wid = gl_WorkGroupID.x;
+    uint workgroup_size = gl_WorkGroupSize.x;
+    
+    // Each workgroup processes a chunk and finds local top-k
+    uint chunk_start = wid * workgroup_size;
+    uint chunk_end = min(chunk_start + workgroup_size, params.n);
+    
+    // Load scores into shared memory
+    if (chunk_start + lid < params.n) {
+        shared_scores[lid] = scores[chunk_start + lid];
+        shared_indices[lid] = chunk_start + lid;
+    } else {
+        shared_scores[lid] = -1e30;  // Sentinel for out-of-bounds
+        shared_indices[lid] = 0xFFFFFFFF;
+    }
+    
+    barrier();
+    
+    // Bitonic sort within workgroup (descending order)
+    for (uint k_step = 2; k_step <= workgroup_size; k_step *= 2) {
+        for (uint j = k_step / 2; j > 0; j /= 2) {
+            uint ixj = lid ^ j;
+            
+            if (ixj > lid) {
+                bool ascending = ((lid & k_step) == 0);
+                
+                if ((shared_scores[lid] < shared_scores[ixj]) == ascending) {
+                    // Swap
+                    float temp_score = shared_scores[lid];
+                    uint temp_idx = shared_indices[lid];
+                    shared_scores[lid] = shared_scores[ixj];
+                    shared_indices[lid] = shared_indices[ixj];
+                    shared_scores[ixj] = temp_score;
+                    shared_indices[ixj] = temp_idx;
+                }
+            }
+            
+            barrier();
+        }
+    }
+    
+    // Write results from first workgroup only
+    // This shader is designed for single-workgroup operation (k <= 256, n <= 256)
+    // For larger datasets or k values, use topk_full.comp which handles any n/k
+    if (wid == 0 && lid < params.k && lid < params.n) {
+        top_indices[lid] = shared_indices[lid];
+        top_scores[lid] = shared_scores[lid];
+    }
+}

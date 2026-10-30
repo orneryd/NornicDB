@@ -1,0 +1,237 @@
+package search
+
+import (
+	"context"
+
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Plan 04-05-05: per-stage observation tests for the search subsystem.
+//
+// The chokepoint design (pkg/search/observability.go) gives us:
+//   - Per-Search-call requests_total + candidates_rows observation in
+//     the deferred classifier.
+//   - Per-rrfHybridSearch index/fuse stage observations.
+//
+// Tests drive Search() with vector-only / bm25-only / hybrid paths and
+// assert the corresponding observations land.
+
+// newTestSearchService builds a Service backed by an in-memory engine
+// with a SearchMetrics bag attached. tenantLabelsEnabled=false matches
+// the M1 default (per CONTEXT MET-21 omission).
+func newTestSearchService(t *testing.T) (*Service, *prometheus.Registry, *observability.SearchMetrics) {
+	t.Helper()
+	engine := newTestMemoryEngine(t)
+	svc := NewService(engine, 4, nil)
+	reg := prometheus.NewRegistry()
+	bag := observability.NewSearchMetrics(reg, false, &nilSearchProbe{})
+	svc.AttachMetrics(bag)
+	return svc, reg, bag
+}
+
+// nilSearchProbe satisfies observability.SearchProbe with zero-byte
+// indexes for tests that don't exercise the index_size_bytes path.
+type nilSearchProbe struct{}
+
+func (nilSearchProbe) IndexSizeBytes(kind string) uint64 { return 0 }
+
+// TestSearch_RequestsTotalIncrement asserts the Search() chokepoint
+// increments requests_total per call.
+func TestSearch_RequestsTotalIncrement(t *testing.T) {
+	svc, reg, _ := newTestSearchService(t)
+	svc.ready.Store(true)
+
+	ctx := context.Background()
+	// BM25-only path: empty embedding flows through fullTextSearchOnly.
+	_, err := svc.Search(ctx, "anything", nil, nil)
+	// Even if the search returns no results / an inner error, the
+	// requests_total counter must have been bumped at the deferred
+	// chokepoint.
+	_ = err
+
+	got := totalCounterByMode(t, reg, "nornicdb_search_requests_total", "bm25")
+	assert.GreaterOrEqual(t, got, 1.0,
+		"Search() must bump requests_total{mode=bm25} for empty-embedding path")
+}
+
+// TestSearch_VectorOnlyMode asserts the empty-query branch routes mode=vector.
+func TestSearch_VectorOnlyMode(t *testing.T) {
+	svc, reg, _ := newTestSearchService(t)
+	svc.ready.Store(true)
+
+	ctx := context.Background()
+	embedding := []float32{0.1, 0.2, 0.3, 0.4} // matches dims=4
+	_, _ = svc.Search(ctx, "", embedding, nil)
+
+	got := totalCounterByMode(t, reg, "nornicdb_search_requests_total", "vector")
+	assert.GreaterOrEqual(t, got, 1.0,
+		"empty-query path must bump requests_total{mode=vector}")
+}
+
+// TestSearch_NilMetricsTolerated asserts a Service without AttachMetrics
+// still functions — the observation chokepoints no-op when metrics is nil.
+func TestSearch_NilMetricsTolerated(t *testing.T) {
+	engine := newTestMemoryEngine(t)
+	svc := NewService(engine, 4, nil)
+	svc.ready.Store(true)
+	// NO AttachMetrics call.
+
+	ctx := context.Background()
+	// Should not panic.
+	_, _ = svc.Search(ctx, "test", nil, nil)
+}
+
+// TestSearch_AttachMetricsRebindings checks replacement and detachment.
+func TestSearch_AttachMetricsRebindings(t *testing.T) {
+	cases := []struct {
+		name   string
+		detach bool
+	}{
+		{name: "replacement"},
+		{name: "detach", detach: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTestMemoryEngine(t)
+			svc := NewService(engine, 4, nil)
+
+			staleReg := prometheus.NewRegistry()
+			svc.AttachMetrics(observability.NewSearchMetrics(staleReg, false, &nilSearchProbe{}))
+			var activeReg *prometheus.Registry
+			if tc.detach {
+				svc.AttachMetrics(nil)
+			} else {
+				activeReg = prometheus.NewRegistry()
+				svc.AttachMetrics(observability.NewSearchMetrics(activeReg, false, &nilSearchProbe{}))
+			}
+
+			svc.ready.Store(true)
+			ctx := context.Background()
+			// Should not panic.
+			_, _ = svc.Search(ctx, "test", nil, nil)
+
+			assert.Equal(t, 0.0, totalCounterByMode(t, staleReg, "nornicdb_search_requests_total", "bm25"), "previous bag must not see new observations")
+			if activeReg != nil {
+				got2 := totalCounterByMode(t, activeReg, "nornicdb_search_requests_total", "bm25")
+				assert.GreaterOrEqual(t, got2, 1.0,
+					"active bag must see the observation")
+			}
+		})
+	}
+}
+
+func TestSearch_SharedContinuationRegistryPreservesProcessObserver(t *testing.T) {
+	registry, err := resultstream.NewRegistry(resultstream.Config{})
+	require.NoError(t, err)
+	t.Cleanup(registry.Close)
+
+	primary := NewService(newTestMemoryEngine(t), 4, nil)
+	t.Cleanup(func() { require.NoError(t, primary.Close()) })
+	primary.SetContinuationRegistry(registry)
+	bag := observability.NewSearchMetrics(prometheus.NewRegistry(), false, &nilSearchProbe{})
+	primary.AttachMetrics(bag)
+
+	stream, err := resultstream.NewProgressive([][]any{{"one"}, {"two"}}, true, 2, nil)
+	require.NoError(t, err)
+	scope := resultstream.Scope{Owner: "owner", Database: "primary"}
+	page, err := registry.Start(context.Background(), scope, stream, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1.0, gaugeValue(t, bag.CursorsActive))
+
+	secondary := NewService(newTestMemoryEngine(t), 4, nil)
+	t.Cleanup(func() { require.NoError(t, secondary.Close()) })
+	secondary.SetContinuationRegistry(registry)
+	secondaryStream, err := resultstream.NewProgressive([][]any{{"three"}, {"four"}}, true, 2, nil)
+	require.NoError(t, err)
+	secondaryScope := resultstream.Scope{Owner: "owner", Database: "secondary"}
+	secondaryPage, err := registry.Start(context.Background(), secondaryScope, secondaryStream, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2.0, gaugeValue(t, bag.CursorsActive))
+	require.Equal(t, 2.0, counterValue(t, bag.CursorEvents.WithLabelValues("start")))
+
+	require.NoError(t, registry.Discard(scope, page.QID))
+	require.NoError(t, registry.Discard(secondaryScope, secondaryPage.QID))
+
+	require.Equal(t, 0.0, gaugeValue(t, bag.CursorsActive))
+	require.Equal(t, 2.0, counterValue(t, bag.CursorEvents.WithLabelValues("discard")))
+}
+
+func gaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
+	t.Helper()
+	metric := &dto.Metric{}
+	require.NoError(t, gauge.Write(metric))
+	return metric.GetGauge().GetValue()
+}
+
+func counterValue(t *testing.T, counter prometheus.Counter) float64 {
+	t.Helper()
+	metric := &dto.Metric{}
+	require.NoError(t, counter.Write(metric))
+	return metric.GetCounter().GetValue()
+}
+
+// TestClassifySearchResult unit-tests the closed enum classifier.
+func TestClassifySearchResult(t *testing.T) {
+	cases := []struct {
+		name string
+		resp *SearchResponse
+		err  error
+		want string
+	}{
+		{"error wins", nil, assertSomeError, "error"},
+		{"nil resp = no_results", nil, nil, "no_results"},
+		{"empty results = no_results", &SearchResponse{Results: nil}, nil, "no_results"},
+		{"populated = success", &SearchResponse{Results: []SearchResult{{NodeID: "n1"}}}, nil, "success"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, classifySearchResult(tc.resp, tc.err))
+		})
+	}
+}
+
+// totalCounterByMode extracts the sum of requests_total{mode=<mode>}
+// across all label-tuple variants. Returns 0 when no series matches.
+func totalCounterByMode(t *testing.T, reg *prometheus.Registry, name, mode string) float64 {
+	t.Helper()
+	mfs, err := reg.Gather()
+	require.NoError(t, err)
+	var total float64
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+		for _, m := range mf.Metric {
+			if matchesLabel(m.GetLabel(), "mode", mode) {
+				total += m.GetCounter().GetValue()
+			}
+		}
+	}
+	return total
+}
+
+func matchesLabel(labels []*dto.LabelPair, key, val string) bool {
+	for _, lbl := range labels {
+		if lbl.GetName() == key && lbl.GetValue() == val {
+			return true
+		}
+	}
+	return false
+}
+
+// assertSomeError is a sentinel to drive the "error wins" classifier path
+// without depending on a real error type.
+var assertSomeError = errSentinel("classifier-test")
+
+type errSentinel string
+
+func (e errSentinel) Error() string { return string(e) }

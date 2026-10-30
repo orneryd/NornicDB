@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" width="200" height="240">
+  <defs>
+    <!-- Gradient for depth on threads -->
+    <linearGradient id="threadGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a5f"/>
+      <stop offset="100%" style="stop-color:#0f1f33"/>
+    </linearGradient>
+    <linearGradient id="threadGrad2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a5f"/>
+      <stop offset="100%" style="stop-color:#0f1f33"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#d4a017"/>
+      <stop offset="100%" style="stop-color:#b8860b"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle (optional, light) -->
+  <circle cx="100" cy="90" r="85" fill="none" stroke="#1e3a5f" stroke-width="2" opacity="0.1"/>
+  
+  <!-- Three Norns as interwoven threads/paths -->
+  <!-- Urðr (Past) - Left thread -->
+  <path d="M 40 140 
+           Q 30 100 50 70 
+           Q 70 40 100 35 
+           Q 130 30 145 55
+           Q 155 75 140 90"
+        fill="none" 
+        stroke="#1e3a5f" 
+        stroke-width="12" 
+        stroke-linecap="round"
+        opacity="0.9"/>
+  
+  <!-- Verðandi (Present) - Center/Top thread -->
+  <path d="M 100 25 
+           Q 100 50 85 75
+           Q 70 100 85 120
+           Q 100 140 100 165"
+        fill="none" 
+        stroke="#1e3a5f" 
+        stroke-width="12" 
+        stroke-linecap="round"/>
+  
+  <!-- Skuld (Future) - Right thread -->
+  <path d="M 160 140 
+           Q 170 100 150 70 
+           Q 130 40 100 35 
+           Q 70 30 55 55
+           Q 45 75 60 90"
+        fill="none" 
+        stroke="#1e3a5f" 
+        stroke-width="12" 
+        stroke-linecap="round"
+        opacity="0.9"/>
+  
+  <!-- Inner white highlights for depth -->
+  <path d="M 42 138 
+           Q 32 100 52 72 
+           Q 72 44 100 39"
+        fill="none" 
+        stroke="white" 
+        stroke-width="3" 
+        stroke-linecap="round"
+        opacity="0.15"/>
+  
+  <path d="M 158 138 
+           Q 168 100 148 72 
+           Q 128 44 100 39"
+        fill="none" 
+        stroke="white" 
+        stroke-width="3" 
+        stroke-linecap="round"
+        opacity="0.15"/>
+  
+  <!-- Central nexus point - where destinies meet (gold) -->
+  <circle cx="100" cy="85" r="12" fill="url(#goldGrad)"/>
+  <circle cx="100" cy="85" r="8" fill="#1e3a5f"/>
+  <circle cx="100" cy="85" r="5" fill="url(#goldGrad)"/>
+  
+  <!-- Three small destiny nodes -->
+  <circle cx="55" cy="65" r="5" fill="url(#goldGrad)" opacity="0.8"/>
+  <circle cx="145" cy="65" r="5" fill="url(#goldGrad)" opacity="0.8"/>
+  <circle cx="100" cy="140" r="5" fill="url(#goldGrad)" opacity="0.8"/>
+  
+  <!-- Connecting thread hints -->
+  <line x1="60" y1="67" x2="93" y2="82" stroke="#d4a017" stroke-width="1.5" opacity="0.4"/>
+  <line x1="140" y1="67" x2="107" y2="82" stroke="#d4a017" stroke-width="1.5" opacity="0.4"/>
+  <line x1="100" y1="135" x2="100" y2="92" stroke="#d4a017" stroke-width="1.5" opacity="0.4"/>
+  
+  <!-- Text: NORNICDB -->
+  <text x="100" y="200" 
+        font-family="'Helvetica Neue', Arial, sans-serif" 
+        font-size="28" 
+        font-weight="700" 
+        fill="#1e3a5f" 
+        text-anchor="middle"
+        letter-spacing="3">NORNICDB</text>
+  
+  <!-- Subtle tagline -->
+  <text x="100" y="222" 
+        font-family="'Helvetica Neue', Arial, sans-serif" 
+        font-size="9" 
+        font-weight="400" 
+        fill="#1e3a5f" 
+        text-anchor="middle"
+        letter-spacing="1.5"
+        opacity="0.6">WEAVING DATA'S DESTINY</text>
+</svg>

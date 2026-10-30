@@ -1,0 +1,448 @@
+// Package mcp provides tool definitions for the NornicDB MCP server.
+package mcp
+
+import (
+	"encoding/json"
+	"strings"
+)
+
+// databaseParamSchema returns the optional "database" argument schema shared by all MCP tools.
+// Callers can override to target a different database at call time; when omitted, the server
+// routes to the configured default database.
+//
+// Note: JSON Schema "default" is advisory for LLMs/tooling; the server still applies defaults
+// at execution time so behavior is consistent across clients.
+func databaseParamSchema(defaultDatabase string) map[string]interface{} {
+	schema := map[string]interface{}{
+		"type":        "string",
+		"description": "Database name to use. If omitted, uses the server's configured default database.",
+	}
+	if strings.TrimSpace(defaultDatabase) != "" {
+		schema["default"] = strings.TrimSpace(defaultDatabase)
+	}
+	return schema
+}
+
+// GetToolDefinitions returns all 6 MCP tool definitions with JSON schemas.
+// These tools are designed for LLM-native usage with:
+// - Verb-noun naming (clear intent)
+// - Minimal required parameters
+// - Smart defaults
+// - Rich, actionable responses
+//
+// Note: File indexing (index/unindex) is handled by the application layer.
+// NornicDB is the storage/embedding layer - it receives already-processed content.
+func GetToolDefinitions() []Tool {
+	return GetToolDefinitionsWithDefaultDatabase("")
+}
+
+// GetToolDefinitionsWithDefaultDatabase returns all MCP tool definitions using the provided
+// default database name in the shared `database` parameter schema.
+func GetToolDefinitionsWithDefaultDatabase(defaultDatabase string) []Tool {
+	return []Tool{
+		getStoreTool(defaultDatabase),
+		getRecallTool(defaultDatabase),
+		getDiscoverTool(defaultDatabase),
+		getLinkTool(defaultDatabase),
+		getTasksTool(defaultDatabase),
+	}
+}
+
+// getStoreTool returns the store tool definition
+func getStoreTool(defaultDatabase string) Tool {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"content": map[string]interface{}{
+				"type":        "string",
+				"description": "The main content to store.",
+			},
+			"labels": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Node labels for categorization (e.g. [\"Concept\", \"AI\"]). Takes precedence over 'type'. Each must be a valid identifier.",
+			},
+			"type": map[string]interface{}{
+				"type":        "string",
+				"description": "Single node label (shorthand for labels with one entry). Ignored when 'labels' is provided. Defaults to NORNICDB_DEFAULT_NODE_LABEL (default: Memory).",
+			},
+			"title": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional title. Auto-generated from content if omitted.",
+			},
+			"tags": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Tags for organization and filtering (stored as a property).",
+			},
+			"metadata": map[string]interface{}{
+				"type":                 "object",
+				"description":          "Additional key-value properties on the node.",
+				"additionalProperties": true,
+			},
+			"database": databaseParamSchema(defaultDatabase),
+		},
+		"required": []string{"content"},
+	}
+
+	schemaJSON, _ := json.Marshal(schema)
+	return Tool{
+		Name: "store",
+		Description: `Store a piece of knowledge, decision, or any information as a labeled node in the graph.
+Returns node ID for future reference. Automatically generates embeddings for semantic search.
+
+Examples:
+- store(content="PostgreSQL is our primary database", labels=["Decision", "Infrastructure"])
+- store(content="ML is a subset of AI", type="Concept", tags=["AI"])`,
+		InputSchema: schemaJSON,
+	}
+}
+
+// getRecallTool returns the recall tool definition
+func getRecallTool(defaultDatabase string) Tool {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id": map[string]interface{}{
+				"type":        "string",
+				"description": "Node ID to retrieve directly. If provided, ignores other filters.",
+			},
+			"type": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Filter by node types.",
+			},
+			"tags": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Filter by tags (nodes must have ALL specified tags).",
+			},
+			"since": map[string]interface{}{
+				"type":        "string",
+				"format":      "date-time",
+				"description": "Filter by creation time (RFC3339 format).",
+			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum number of results.",
+				"default":     10,
+				"minimum":     1,
+				"maximum":     100,
+			},
+			"database": databaseParamSchema(defaultDatabase),
+		},
+		"required": []string{},
+	}
+
+	schemaJSON, _ := json.Marshal(schema)
+	return Tool{
+		Name: "recall",
+		Description: `Retrieve specific knowledge by ID, or search by criteria (type, tags, date range).
+Use when you know WHAT you're looking for. For semantic "find similar" use discover instead.
+
+Examples:
+- recall(id="node-abc123")
+- recall(type=["decision"], tags=["database"])
+- recall(since="2024-11-01T00:00:00Z", limit=20)`,
+		InputSchema: schemaJSON,
+	}
+}
+
+// getDiscoverTool returns the discover tool definition
+func getDiscoverTool(defaultDatabase string) Tool {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{
+				"type":        "string",
+				"description": "Natural language search query. Searches by MEANING, not exact keywords.",
+			},
+			"type": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Filter results by node types.",
+			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum number of results.",
+				"default":     10,
+				"minimum":     1,
+				"maximum":     100,
+			},
+			"min_similarity": map[string]interface{}{
+				"type":        "number",
+				"description": "Minimum normalized relevance threshold from 0 to 1. Set to 0 to return all.",
+				"default":     0.0,
+				"minimum":     0.0,
+				"maximum":     1.0,
+			},
+			"depth": map[string]interface{}{
+				"type":        "integer",
+				"description": "Graph traversal depth for related context (1-3). Higher = more context but slower.",
+				"default":     1,
+				"minimum":     1,
+				"maximum":     3,
+			},
+			"database": databaseParamSchema(defaultDatabase),
+		},
+		"required": []string{"query"},
+	}
+
+	schemaJSON, _ := json.Marshal(schema)
+	return Tool{
+		Name: "discover",
+		Description: `Find knowledge by MEANING, not exact keywords. Uses vector embeddings to find semantically
+similar content. Automatically falls back to keyword search if embeddings disabled.
+Use when you're asking "what do we know about X?" or "find similar to Y".
+
+Examples:
+- discover(query="database connection pooling")
+- discover(query="authentication bugs", type=["code", "decision"], depth=2)
+- discover(query="user preferences", min_similarity=0.01)`,
+		InputSchema: schemaJSON,
+	}
+}
+
+// getLinkTool returns the link tool definition
+func getLinkTool(defaultDatabase string) Tool {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"from": map[string]interface{}{
+				"type":        "string",
+				"description": "Source node identifier: use the exact id returned by store, or elementId(n) / id(n) from a Cypher query. Never use display names or content.",
+			},
+			"to": map[string]interface{}{
+				"type":        "string",
+				"description": "Target node identifier: use the exact id returned by store, or elementId(n) / id(n) from a Cypher query. Never use display names or content.",
+			},
+			"relation": map[string]interface{}{
+				"type":        "string",
+				"description": "Relationship type: any valid identifier (e.g. relates_to, depends_on, contains). Used as graph relationship type.",
+			},
+			"strength": map[string]interface{}{
+				"type":        "number",
+				"description": "Relationship strength (0.0-1.0).",
+				"default":     1.0,
+				"minimum":     0.0,
+				"maximum":     1.0,
+			},
+			"metadata": map[string]interface{}{
+				"type":                 "object",
+				"description":          "Additional edge properties stored alongside the relationship (e.g. reason, source, weight).",
+				"additionalProperties": true,
+			},
+			"database": databaseParamSchema(defaultDatabase),
+		},
+		"required": []string{"from", "to", "relation"},
+	}
+
+	schemaJSON, _ := json.Marshal(schema)
+	return Tool{
+		Name: "link",
+		Description: `Create a relationship between two nodes. Use this to connect related knowledge,
+show dependencies, or build knowledge graphs. Relationships have types and properties.
+
+from and to MUST be exact node identifiers (e.g. the id returned by store, or elementId(n) from
+a Cypher query like MATCH (n:Label) RETURN n, elementId(n)). Do NOT use human-readable names,
+titles, or content—only the exact id string. Query nodes first to get their ids, then call link.
+
+Examples:
+- link(from="<node-id-1>", to="<node-id-2>", relation="relates_to")
+- link(from="<id-a>", to="<id-b>", relation="depends_on", strength=0.8, metadata={"reason": "API dependency"})`,
+		InputSchema: schemaJSON,
+	}
+}
+
+// getTasksTool returns the tasks tool definition. It covers both task
+// management (create, update, complete, delete) and task listing/filtering in
+// one surface; management arguments switch it out of listing mode.
+func getTasksTool(defaultDatabase string) Tool {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id": map[string]interface{}{
+				"type":        "string",
+				"description": "Task ID for update/complete/delete. Omit for creating new tasks or listing.",
+			},
+			"title": map[string]interface{}{
+				"type":        "string",
+				"description": "Task title (required for create).",
+			},
+			"description": map[string]interface{}{
+				"type":        "string",
+				"description": "Detailed task description.",
+			},
+			"status": map[string]interface{}{
+				"description": "Create/update: task status, or omit for auto-toggle (pending→active→completed). List: filter by status.",
+				"oneOf": []interface{}{
+					map[string]interface{}{
+						"type": "string",
+						"enum": []string{"pending", "active", "completed", "blocked"},
+					},
+					map[string]interface{}{
+						"type":  "array",
+						"items": map[string]interface{}{"type": "string", "enum": []string{"pending", "active", "completed", "blocked"}},
+					},
+				},
+			},
+			"priority": map[string]interface{}{
+				"description": "Create: task priority level. List: filter by priority.",
+				"default":     "medium",
+				"oneOf": []interface{}{
+					map[string]interface{}{
+						"type": "string",
+						"enum": []string{"low", "medium", "high", "critical"},
+					},
+					map[string]interface{}{
+						"type":  "array",
+						"items": map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high", "critical"}},
+					},
+				},
+			},
+			"depends_on": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Create: IDs of tasks that must complete before this one.",
+			},
+			"assign": map[string]interface{}{
+				"type":        "string",
+				"description": "Create/update: assign to agent or person.",
+			},
+			"complete": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Update: set to true to mark task as completed. Shorthand for status='completed'.",
+			},
+			"delete": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Update: set to true to delete the task.",
+			},
+			"assigned_to": map[string]interface{}{
+				"type":        "string",
+				"description": "List: filter by assignee.",
+			},
+			"unblocked_only": map[string]interface{}{
+				"type":        "boolean",
+				"description": "List: only return tasks with no blocking dependencies.",
+				"default":     false,
+			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "List: maximum number of results.",
+				"default":     20,
+				"minimum":     1,
+				"maximum":     100,
+			},
+			"database": databaseParamSchema(defaultDatabase),
+		},
+		"required": []string{},
+	}
+
+	schemaJSON, _ := json.Marshal(schema)
+	return Tool{
+		Name: "tasks",
+		Description: `Create, manage and list tasks. Tasks are special nodes with status tracking
+(pending/active/completed/blocked) and are automatically embedded for semantic search.
+
+Management arguments (id, title, status, priority, depends_on, assign, complete, delete)
+switch the tool into create/update/delete mode and return the affected task. Without them,
+the tool lists tasks sorted by priority and dependency order, with optional filters and stats.
+
+Status auto-toggle: If you provide an ID without status, it advances the status:
+- pending → active
+- active → completed
+
+Examples:
+- tasks(title="Implement auth", priority="high")
+- tasks(id="task-123", complete=true)
+- tasks(id="task-123", status="blocked")
+- tasks(id="task-456")  # Toggle status
+- tasks(id="task-789", delete=true)
+- tasks(status=["pending"], unblocked_only=true)
+- tasks(priority=["high", "critical"])
+- tasks(assigned_to="agent-worker-1", limit=10)
+- tasks()  # All tasks with stats`,
+		InputSchema: schemaJSON,
+	}
+}
+
+// ToolName constants for type-safe tool references
+const (
+	ToolStore    = "store"
+	ToolRecall   = "recall"
+	ToolDiscover = "discover"
+	ToolLink     = "link"
+	ToolTasks    = "tasks"
+)
+
+// AllTools returns all tool names
+func AllTools() []string {
+	return []string{
+		ToolStore,
+		ToolRecall,
+		ToolDiscover,
+		ToolLink,
+		ToolTasks,
+	}
+}
+
+// IsValidTool checks if a tool name is valid
+func IsValidTool(name string) bool {
+	for _, t := range AllTools() {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
+
+// InferOperation determines the CRUD operation from tool and arguments
+func InferOperation(tool string, args map[string]interface{}) string {
+	switch tool {
+	case ToolStore:
+		return "create"
+	case ToolRecall:
+		return "read"
+	case ToolDiscover:
+		return "read"
+	case ToolLink:
+		return "create"
+	case ToolTasks:
+		if _, hasID := args["id"]; hasID {
+			if del, ok := args["delete"].(bool); ok && del {
+				return "delete"
+			}
+			return "update"
+		}
+		if taskArgsMutate(args) {
+			return "create"
+		}
+		return "read"
+	default:
+		return "unknown"
+	}
+}
+
+// ExtractResourceType determines the resource type from arguments
+func ExtractResourceType(tool string, args map[string]interface{}) string {
+	switch tool {
+	case ToolStore:
+		if t, ok := args["type"].(string); ok {
+			return t
+		}
+		return "memory"
+	case ToolRecall, ToolDiscover:
+		if types, ok := args["type"].([]interface{}); ok && len(types) > 0 {
+			if t, ok := types[0].(string); ok {
+				return t
+			}
+		}
+		return "*"
+	case ToolLink:
+		return "edge"
+	case ToolTasks:
+		return "task"
+	default:
+		return "*"
+	}
+}

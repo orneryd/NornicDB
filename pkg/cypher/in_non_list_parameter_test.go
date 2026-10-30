@@ -1,0 +1,113 @@
+package cypher
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// x IN $p with a non-list, non-null parameter is a type error, in WHERE as in
+// RETURN, instead of silently matching nothing (#537).
+func TestInNonListParameterIsTypeError(t *testing.T) {
+	for _, mode := range []string{"auto-commit", "explicit transaction"} {
+		t.Run(mode, func(t *testing.T) {
+			exec, _ := newTestExecutor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE (:T {id: 5})", nil)
+			require.NoError(t, err)
+			// In an explicit transaction each statement runs in its own: a
+			// failing statement fails its transaction (#683).
+			run := func(query string, params map[string]interface{}) (*ExecuteResult, error) {
+				if mode == "explicit transaction" {
+					_, beginErr := exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, beginErr)
+					defer func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) }()
+				}
+				return exec.Execute(ctx, query, params)
+			}
+			for _, tc := range []struct {
+				q string
+				p interface{}
+			}{
+				{"MATCH (n:T) WHERE n.id IN $p RETURN count(n) AS c", int64(5)},
+				{"MATCH (n:T) WHERE n.id IN /* gap */ $p RETURN count(n) AS c", int64(5)},
+				{"MATCH (n:T) WHERE n.id IN $p /* gap */ RETURN count(n) AS c", int64(5)},
+				{"CREATE (:Unexpected {id: 9}) WITH 5 IN /* gap */ $p AS x RETURN x", int64(5)},
+				{"MATCH (n:T) WHERE n.id IN $p RETURN count(n) AS c", "abc"},
+				{"MATCH (n:T) WHERE NOT n.id IN $p RETURN count(n) AS c", int64(5)},
+				{"MATCH (n:T) WHERE n.id IN $p RETURN n.id AS id", map[string]interface{}{"a": 1}},
+				{"RETURN 5 IN $p AS x", int64(5)},
+			} {
+				_, err := run(tc.q, map[string]interface{}{"p": tc.p})
+				assert.Error(t, err, "%s with $p=%v", tc.q, tc.p)
+			}
+			// Lists and null keep working.
+			res, err := run("MATCH (n:T) WHERE n.id IN $p RETURN count(n) AS c", map[string]interface{}{"p": []interface{}{int64(5)}})
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), res.Rows[0][0])
+			res, err = run("MATCH (n:T) WHERE n.id IN $p RETURN count(n) AS c", map[string]interface{}{"p": nil})
+			require.NoError(t, err)
+			assert.Equal(t, int64(0), res.Rows[0][0])
+			res, err = run("MATCH (n:Unexpected) RETURN count(n) AS c", nil)
+			require.NoError(t, err)
+			assert.Equal(t, int64(0), res.Rows[0][0])
+		})
+	}
+}
+
+func TestValidateListOperandParameters(t *testing.T) {
+	params := map[string]interface{}{"p": int64(5), "l": []interface{}{int64(1)}, "m": map[string]interface{}{"list": []interface{}{1}}, "n": nil}
+	for _, q := range []string{
+		"MATCH (n) WHERE n.id IN $p RETURN n",
+		"MATCH (n) WHERE (n.id IN $p) RETURN n",
+		"MATCH (n) WHERE n.id in $p AND n.x = 1 RETURN n",
+		"MATCH (n) WHERE n.id IN /* operand gap */ $p RETURN n",
+		"MATCH (n) WHERE n.id IN $p /* trailing gap */ RETURN n",
+		"RETURN [x IN $p | x] AS l",
+		"RETURN /* 1 IN $p */ 5 IN $p AS valid",
+	} {
+		err := validateListOperands(q, params)
+		if assert.Error(t, err, q) {
+			assert.Contains(t, err.Error(), "Type mismatch for parameter 'p': expected List<T> but was Integer", q)
+		}
+	}
+	for _, q := range []string{
+		// FOREACH over a value that isn't a list runs once (Neo4j 5.26).
+		"FOREACH (x IN $p | CREATE (:N))",
+		"FOREACH (x IN 5 | CREATE (:N))",
+		"FOREACH (x /* gap */ IN 5 | CREATE (:N))",
+		"MATCH (n) WHERE n.id IN $l RETURN n",
+		"MATCH (n) WHERE n.id IN $n RETURN n",
+		"MATCH (n) WHERE n.id IN $m.list RETURN n",
+		"MATCH (n) WHERE n.id IN $p + [1] RETURN n",
+		"MATCH (n) WHERE n.id IN $missing RETURN n",
+		"MATCH (n) WHERE n.name = 'x IN $p' RETURN n",
+		"MATCH (n) WHERE n.id = $p RETURN n",
+		"MATCH (n:INx) WHERE n.MIN > $p RETURN n",
+		"RETURN 1 AS value // 5 IN $p",
+		"RETURN 1 AS value /* 5 IN $p */",
+	} {
+		assert.NoError(t, validateListOperands(q, params), q)
+	}
+}
+
+func BenchmarkValidateListOperands(b *testing.B) {
+	for _, tc := range []struct {
+		name  string
+		query string
+	}{
+		{"plain-in", "RETURN 1 IN [1] AS result"},
+		{"foreach-comment-gap", "FOREACH (x /* gap */ IN 5 | CREATE (:N))"},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for iteration := 0; iteration < b.N; iteration++ {
+				if err := validateListOperands(tc.query, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

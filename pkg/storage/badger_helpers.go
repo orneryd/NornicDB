@@ -1,0 +1,1372 @@
+// Package storage provides storage engine implementations for NornicDB.
+package storage
+
+import (
+	"encoding/binary"
+	"fmt"
+	"time"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
+)
+
+// Key encoding helpers
+// ============================================================================
+
+// nodeKey creates a key for storing a node.
+func nodeKey(id NodeID) []byte {
+	return append([]byte{prefixNode}, []byte(id)...)
+}
+
+// edgeKey creates a key for storing an edge.
+func edgeKey(id EdgeID) []byte {
+	return append([]byte{prefixEdge}, []byte(id)...)
+}
+
+// mvccSequenceKey returns the legacy engine-global MVCC sequence key.
+// New commits write per-namespace keys via mvccNamespaceSequenceKey; the
+// legacy key is read once on open as a migration seed.
+func mvccSequenceKey() []byte {
+	return []byte{prefixMVCCMeta, 0x01}
+}
+
+// mvccNamespaceSequenceKey returns the on-disk key for one namespace's
+// committed MVCC sequence. The namespace is appended as a length-bounded
+// trailing segment so distinct namespaces hash to distinct keys.
+func mvccNamespaceSequenceKey(namespace string) []byte {
+	out := []byte{prefixMVCCMeta, prefixMVCCMetaNamespaceSeq}
+	out = append(out, namespace...)
+	return out
+}
+
+func mvccSchemaVersionKey() []byte {
+	return []byte{prefixMVCCMeta, prefixMVCCMetaSchemaVersion}
+}
+
+func encodeMVCCSortVersion(version MVCCVersion) []byte {
+	key := make([]byte, 16)
+	timestamp := uint64(version.CommitTimestamp.UTC().UnixNano()) ^ (1 << 63)
+	binary.BigEndian.PutUint64(key[:8], timestamp)
+	binary.BigEndian.PutUint64(key[8:], version.CommitSequence)
+	return key
+}
+
+func decodeMVCCSortVersion(encoded []byte) (MVCCVersion, error) {
+	if len(encoded) != 16 {
+		return MVCCVersion{}, fmt.Errorf("invalid mvcc version length: %d", len(encoded))
+	}
+	timestamp := int64(binary.BigEndian.Uint64(encoded[:8]) ^ (1 << 63))
+	return MVCCVersion{
+		CommitTimestamp: time.Unix(0, timestamp).UTC(),
+		CommitSequence:  binary.BigEndian.Uint64(encoded[8:]),
+	}, nil
+}
+
+// MVCC version / head keys now use 8-byte numeric IDs from the id
+// dictionary. Writers allocate numIDs before addressing these keys;
+// readers look up numIDs via the engine-level string wrappers.
+func mvccNodeVersionPrefix(numID uint64) []byte {
+	key := make([]byte, 0, 1+8)
+	key = append(key, prefixMVCCNode)
+	key = append(key, encodeNumID(numID)...)
+	return key
+}
+
+func mvccNodeVersionKey(numID uint64, version MVCCVersion) []byte {
+	key := mvccNodeVersionPrefix(numID)
+	key = append(key, encodeMVCCSortVersion(version)...)
+	return key
+}
+
+func mvccEdgeVersionPrefix(numID uint64) []byte {
+	key := make([]byte, 0, 1+8)
+	key = append(key, prefixMVCCEdge)
+	key = append(key, encodeNumID(numID)...)
+	return key
+}
+
+func mvccEdgeVersionKey(numID uint64, version MVCCVersion) []byte {
+	key := mvccEdgeVersionPrefix(numID)
+	key = append(key, encodeMVCCSortVersion(version)...)
+	return key
+}
+
+func mvccNodeHeadKey(numID uint64) []byte {
+	out := make([]byte, 1+8)
+	out[0] = prefixMVCCNodeHead
+	copy(out[1:], encodeNumID(numID))
+	return out
+}
+
+func mvccEdgeHeadKey(numID uint64) []byte {
+	out := make([]byte, 1+8)
+	out[0] = prefixMVCCEdgeHead
+	copy(out[1:], encodeNumID(numID))
+	return out
+}
+
+func maxMVCCVersion() MVCCVersion {
+	return MVCCVersion{
+		CommitTimestamp: time.Unix(0, int64(^uint64(0)>>1)).UTC(),
+		CommitSequence:  ^uint64(0),
+	}
+}
+
+func extractMVCCVersionFromKey(key []byte) (MVCCVersion, error) {
+	if len(key) < 17 {
+		return MVCCVersion{}, fmt.Errorf("invalid mvcc key length: %d", len(key))
+	}
+	return decodeMVCCSortVersion(key[len(key)-16:])
+}
+
+// MVCC version keys are now fixed-width: [prefix(1)][numID(8)][version(16)].
+// The old variable-length form used string IDs with a 0x00 separator.
+func extractNodeNumIDAndMVCCVersionFromVersionKey(key []byte) (uint64, MVCCVersion, error) {
+	if len(key) != 1+8+16 || key[0] != prefixMVCCNode {
+		return 0, MVCCVersion{}, fmt.Errorf("invalid mvcc node version key: len=%d", len(key))
+	}
+	numID := binary.BigEndian.Uint64(key[1:9])
+	version, err := decodeMVCCSortVersion(key[9:])
+	if err != nil {
+		return 0, MVCCVersion{}, err
+	}
+	return numID, version, nil
+}
+
+func extractEdgeNumIDAndMVCCVersionFromVersionKey(key []byte) (uint64, MVCCVersion, error) {
+	if len(key) != 1+8+16 || key[0] != prefixMVCCEdge {
+		return 0, MVCCVersion{}, fmt.Errorf("invalid mvcc edge version key: len=%d", len(key))
+	}
+	numID := binary.BigEndian.Uint64(key[1:9])
+	version, err := decodeMVCCSortVersion(key[9:])
+	if err != nil {
+		return 0, MVCCVersion{}, err
+	}
+	return numID, version, nil
+}
+
+// extractEdgeVersionFromVersionKey reads the commit version from an MVCC edge
+// version key in either on-disk layout: the fixed-width V3 form
+// [prefix][numID 8B][version 16B] or the legacy variable-length form
+// [prefix][edgeID...][0x00][version 16B] written before the fixed-width key
+// rewrite. Legacy keys survive into V3 stores (the V2→V3 migration repairs
+// adjacency but does not rewrite them), so every scan over this prefix must
+// accept both.
+func extractEdgeVersionFromVersionKey(key []byte) (MVCCVersion, error) {
+	if len(key) == 1+8+16 && key[0] == prefixMVCCEdge {
+		return decodeMVCCSortVersion(key[9:])
+	}
+	if len(key) >= 18 && key[0] == prefixMVCCEdge && key[len(key)-17] == 0x00 {
+		return decodeMVCCSortVersion(key[len(key)-16:])
+	}
+	return MVCCVersion{}, fmt.Errorf("invalid mvcc edge version key: len=%d", len(key))
+}
+
+// nodeVersionKeyIdentity resolves a node ID and commit version from an MVCC
+// node version key in either layout: legacy keys carry the string ID
+// directly, fixed-width keys the numeric ID through the id dictionary.
+// ok=false means the numeric ID is not in the dictionary and the caller
+// should skip the entry, matching the previous unknown-num skip.
+func (b *BadgerEngine) nodeVersionKeyIdentity(key []byte) (NodeID, MVCCVersion, bool, error) {
+	if len(key) == 1+8+16 && key[0] == prefixMVCCNode {
+		numID := binary.BigEndian.Uint64(key[1:9])
+		id, ok := b.idDict.lookupNodeIDByNum(numID)
+		if !ok {
+			return "", MVCCVersion{}, false, nil
+		}
+		version, err := decodeMVCCSortVersion(key[9:])
+		if err != nil {
+			return "", MVCCVersion{}, false, err
+		}
+		return id, version, true, nil
+	}
+	if len(key) >= 18 && key[0] == prefixMVCCNode && key[len(key)-17] == 0x00 {
+		version, err := decodeMVCCSortVersion(key[len(key)-16:])
+		if err != nil {
+			return "", MVCCVersion{}, false, err
+		}
+		return NodeID(key[1 : len(key)-17]), version, true, nil
+	}
+	return "", MVCCVersion{}, false, fmt.Errorf("invalid mvcc node version key: len=%d", len(key))
+}
+
+// edgeVersionKeyIdentity is nodeVersionKeyIdentity's edge counterpart.
+func (b *BadgerEngine) edgeVersionKeyIdentity(key []byte) (EdgeID, MVCCVersion, bool, error) {
+	if len(key) == 1+8+16 && key[0] == prefixMVCCEdge {
+		numID := binary.BigEndian.Uint64(key[1:9])
+		id, ok := b.idDict.lookupEdgeIDByNum(numID)
+		if !ok {
+			return "", MVCCVersion{}, false, nil
+		}
+		version, err := decodeMVCCSortVersion(key[9:])
+		if err != nil {
+			return "", MVCCVersion{}, false, err
+		}
+		return id, version, true, nil
+	}
+	if len(key) >= 18 && key[0] == prefixMVCCEdge && key[len(key)-17] == 0x00 {
+		version, err := decodeMVCCSortVersion(key[len(key)-16:])
+		if err != nil {
+			return "", MVCCVersion{}, false, err
+		}
+		return EdgeID(key[1 : len(key)-17]), version, true, nil
+	}
+	return "", MVCCVersion{}, false, fmt.Errorf("invalid mvcc edge version key: len=%d", len(key))
+}
+
+func extractMVCCLogicalKeyAndVersion(key []byte) ([]byte, MVCCVersion, error) {
+	switch {
+	case len(key) == 1+8+16:
+		version, _ := decodeMVCCSortVersion(key[9:])
+		logical := append([]byte(nil), key[:9]...)
+		return logical, version, nil
+	case len(key) == 1+8+8+16 && (key[0] == prefixMVCCOutgoingAdj || key[0] == prefixMVCCIncomingAdj):
+		version, _ := decodeMVCCSortVersion(key[17:])
+		logical := append([]byte(nil), key[:17]...)
+		return logical, version, nil
+	default:
+		return nil, MVCCVersion{}, fmt.Errorf("invalid mvcc key length: %d", len(key))
+	}
+}
+
+// labelIndexKey creates a key for the label index.
+// Format: prefix + label + 0x00 + nodeNumID (8B big-endian). Labels are
+// case-sensitive, as in Neo4j: :Person and :person are two labels (#862).
+func labelIndexKey(label string, nodeNumID uint64) []byte {
+	key := []byte{prefixLabelIndex}
+	key = append(key, []byte(label)...)
+	key = append(key, 0x00) // Separator
+	key = append(key, encodeNumID(nodeNumID)...)
+	return key
+}
+
+// labelIndexPrefix returns the prefix for scanning all nodes with a label.
+// The label is exact-case (#862).
+func labelIndexPrefix(label string) []byte {
+	key := []byte{prefixLabelIndex}
+	key = append(key, []byte(label)...)
+	key = append(key, 0x00)
+	return key
+}
+
+// outgoingIndexKey creates a key for the outgoing edge index.
+// Layout: [prefix][nodeNumID 8B][edgeNumID 8B]. Uses numeric IDs from the
+// id dictionary so keys stay tight regardless of UUID length.
+func outgoingIndexKey(nodeNumID, edgeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8+8)
+	key = append(key, prefixOutgoingIndex)
+	key = append(key, encodeNumID(nodeNumID)...)
+	key = append(key, encodeNumID(edgeNumID)...)
+	return key
+}
+
+// outgoingIndexPrefix returns the prefix for scanning outgoing edges.
+func outgoingIndexPrefix(nodeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8)
+	key = append(key, prefixOutgoingIndex)
+	key = append(key, encodeNumID(nodeNumID)...)
+	return key
+}
+
+// incomingIndexKey creates a key for the incoming edge index.
+func incomingIndexKey(nodeNumID, edgeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8+8)
+	key = append(key, prefixIncomingIndex)
+	key = append(key, encodeNumID(nodeNumID)...)
+	key = append(key, encodeNumID(edgeNumID)...)
+	return key
+}
+
+// incomingIndexPrefix returns the prefix for scanning incoming edges.
+func incomingIndexPrefix(nodeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8)
+	key = append(key, prefixIncomingIndex)
+	key = append(key, encodeNumID(nodeNumID)...)
+	return key
+}
+
+func mvccOutgoingAdjacencyPrefix(nodeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8)
+	key = append(key, prefixMVCCOutgoingAdj)
+	key = append(key, encodeNumID(nodeNumID)...)
+	return key
+}
+
+func mvccOutgoingAdjacencyEdgePrefix(nodeNumID, edgeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8+8)
+	key = append(key, prefixMVCCOutgoingAdj)
+	key = append(key, encodeNumID(nodeNumID)...)
+	key = append(key, encodeNumID(edgeNumID)...)
+	return key
+}
+
+func mvccOutgoingAdjacencyKey(nodeNumID, edgeNumID uint64, version MVCCVersion) []byte {
+	key := mvccOutgoingAdjacencyEdgePrefix(nodeNumID, edgeNumID)
+	key = append(key, encodeMVCCSortVersion(version)...)
+	return key
+}
+
+func mvccIncomingAdjacencyPrefix(nodeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8)
+	key = append(key, prefixMVCCIncomingAdj)
+	key = append(key, encodeNumID(nodeNumID)...)
+	return key
+}
+
+func mvccIncomingAdjacencyEdgePrefix(nodeNumID, edgeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8+8)
+	key = append(key, prefixMVCCIncomingAdj)
+	key = append(key, encodeNumID(nodeNumID)...)
+	key = append(key, encodeNumID(edgeNumID)...)
+	return key
+}
+
+func mvccIncomingAdjacencyKey(nodeNumID, edgeNumID uint64, version MVCCVersion) []byte {
+	key := mvccIncomingAdjacencyEdgePrefix(nodeNumID, edgeNumID)
+	key = append(key, encodeMVCCSortVersion(version)...)
+	return key
+}
+
+// edgeTypeIndexKey creates a key for the edge type index.
+// Layout: [prefix][type, exact case]\x00[edgeNumID 8B]. Type stays as
+// string because it has good shared-prefix compression in the LSM.
+func edgeTypeIndexKey(edgeType string, edgeNumID uint64) []byte {
+	key := []byte{prefixEdgeTypeIndex}
+	key = append(key, []byte(edgeType)...)
+	key = append(key, 0x00) // Separator
+	key = append(key, encodeNumID(edgeNumID)...)
+	return key
+}
+
+// edgeTypeIndexPrefix returns the prefix for scanning all edges of a type.
+// Relationship types are exact-case, as in Neo4j (#862).
+func edgeTypeIndexPrefix(edgeType string) []byte {
+	key := []byte{prefixEdgeTypeIndex}
+	key = append(key, []byte(edgeType)...)
+	key = append(key, 0x00)
+	return key
+}
+
+// edgeBetweenIndexKey stores an exact relationship lookup entry.
+//
+// Keys are composed of 8-byte numeric IDs from the id dictionary instead
+// of full string IDs. For typical 40-byte UUID strings this cuts each
+// key from ~140 bytes to ~30 bytes — tens of MiB on a 100k-edge graph.
+//
+// Layout: [prefixEdgeBetweenIndex][startNodeNumID 8B][endNodeNumID 8B]
+//
+//	[type 0x00-terminated][edgeNumID 8B]
+//
+// The key order lets GetEdgesBetween scan by (start, end) and lets
+// GetEdgeBetween narrow further by type without scanning every outgoing
+// edge from the start node.
+func edgeBetweenIndexKey(startNumID, endNumID uint64, edgeType string, edgeNumID uint64) []byte {
+	key := []byte{prefixEdgeBetweenIndex}
+	key = append(key, encodeNumID(startNumID)...)
+	key = append(key, encodeNumID(endNumID)...)
+	key = append(key, []byte(edgeType)...)
+	key = append(key, 0x00)
+	key = append(key, encodeNumID(edgeNumID)...)
+	return key
+}
+
+// edgeBetweenHeadKey stores the fastest typed lookup for one edge between nodes.
+//
+// The set index remains the source for GetEdgesBetween and for multiple edges
+// of the same type. The head is a compatibility-friendly accelerator: if it is
+// absent or stale, reads can fall back to the set or legacy outgoing scan and
+// repopulate it. Uses numeric IDs for the same reason edgeBetweenIndexKey does.
+func edgeBetweenHeadKey(startNumID, endNumID uint64, edgeType string) []byte {
+	key := []byte{prefixEdgeBetweenHead}
+	key = append(key, encodeNumID(startNumID)...)
+	key = append(key, encodeNumID(endNumID)...)
+	key = append(key, []byte(edgeType)...)
+	return key
+}
+
+// writeEdgeBetweenIndexesInTxn maintains both relationship lookup indexes.
+// Allocates numeric IDs for the edge and its endpoints (if not already
+// allocated) via the engine's id dictionary.
+//
+// The set-index entry stores the string edge ID in the VALUE. This lets
+// scanners recover the string ID without a reverse-dict lookup while the
+// KEY stays compact (8+8+type+8 bytes).
+func (b *BadgerEngine) writeEdgeBetweenIndexesInTxn(txn *badger.Txn, edge *Edge) error {
+	startNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.StartNode))
+	if err != nil {
+		return err
+	}
+	endNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.EndNode))
+	if err != nil {
+		return err
+	}
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edge.ID))
+	if err != nil {
+		return err
+	}
+	if err := txn.Set(edgeBetweenIndexKey(startNum, endNum, edge.Type, edgeNum), []byte(edge.ID)); err != nil {
+		return err
+	}
+	return txn.Set(edgeBetweenHeadKey(startNum, endNum, edge.Type), []byte(edge.ID))
+}
+
+// deleteEdgeBetweenIndexesInTxn removes an edge from the set index and clears
+// the head only when it points at the same edge. Uses the existing dict
+// entries for the endpoints (must have been allocated at write time).
+func (b *BadgerEngine) deleteEdgeBetweenIndexesInTxn(txn *badger.Txn, edge *Edge) error {
+	startNum, ok1 := b.idDict.lookupNodeNumID(edge.StartNode)
+	endNum, ok2 := b.idDict.lookupNodeNumID(edge.EndNode)
+	edgeNum, ok3 := b.idDict.lookupEdgeNumID(edge.ID)
+	if !ok1 || !ok2 || !ok3 {
+		// Missing numID means the edge was never indexed under the
+		// numeric scheme (e.g. pre-migration data that didn't populate
+		// the dict). Nothing to delete on the compact keyspace.
+		return b.deleteEdgeBetweenHeadIfMatchesInTxn(txn, edge)
+	}
+	if err := txn.Delete(edgeBetweenIndexKey(startNum, endNum, edge.Type, edgeNum)); err != nil {
+		return err
+	}
+	return b.deleteEdgeBetweenHeadIfMatchesInTxn(txn, edge)
+}
+
+// deleteEdgeBetweenHeadIfMatchesInTxn avoids removing a head already advanced
+// to another same-type edge.
+func (b *BadgerEngine) deleteEdgeBetweenHeadIfMatchesInTxn(txn *badger.Txn, edge *Edge) error {
+	startNum, ok1 := b.idDict.lookupNodeNumID(edge.StartNode)
+	endNum, ok2 := b.idDict.lookupNodeNumID(edge.EndNode)
+	if !ok1 || !ok2 {
+		return nil
+	}
+	key := edgeBetweenHeadKey(startNum, endNum, edge.Type)
+	item, err := txn.Get(key)
+	if err == badger.ErrKeyNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	var matches bool
+	if err := item.Value(func(val []byte) error {
+		matches = EdgeID(val) == edge.ID
+		return nil
+	}); err != nil {
+		return err
+	}
+	if !matches {
+		return nil
+	}
+	return txn.Delete(key)
+}
+
+// adjacencyValueFromRecord is the value of a relationship's outgoing and
+// incoming adjacency entries: a copy of the compact header its stored record
+// starts with (encodeEdgeCompactHeader: endpoints, type, timestamps,
+// confidence, flags), so a traversal can list the relationship from the
+// entry without reading the record. Every write of the record rewrites the
+// entries with it. A record not in the compact V2 format yields an empty
+// value, which readers answer from the record, as for entries written before
+// the values existed.
+func adjacencyValueFromRecord(record []byte) []byte {
+	var edge Edge
+	if _, _, headerEnd, err := decodeEdgeCompactHeaderInto(record, edgeFormatCompactV2, &edge); err == nil {
+		return append([]byte(nil), record[:headerEnd]...)
+	}
+	return []byte{}
+}
+
+// setAdjacencyValuesInTxn writes record's header (adjacencyValueFromRecord)
+// into edge's outgoing and incoming adjacency entries.
+func (b *BadgerEngine) setAdjacencyValuesInTxn(txn kvWriter, edge *Edge, record []byte) error {
+	value := adjacencyValueFromRecord(record)
+	if outKey := b.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
+		if err := txn.Set(outKey, value); err != nil {
+			return err
+		}
+	}
+	if inKey := b.incomingIndexKeyStringLookup(edge.EndNode, edge.ID); inKey != nil {
+		return txn.Set(inKey, value)
+	}
+	return nil
+}
+
+// outgoingIndexKeyString resolves the node/edge string IDs via the dict
+// (allocating num IDs if missing) and returns the compact-keyed key.
+// Callers on write paths pass a txn so the allocation persists.
+func (b *BadgerEngine) outgoingIndexKeyString(txn kvWriter, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edgeID))
+	if err != nil {
+		return nil, err
+	}
+	return outgoingIndexKey(nodeNum, edgeNum), nil
+}
+
+// incomingIndexKeyString is the incoming-side analogue.
+func (b *BadgerEngine) incomingIndexKeyString(txn kvWriter, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edgeID))
+	if err != nil {
+		return nil, err
+	}
+	return incomingIndexKey(nodeNum, edgeNum), nil
+}
+
+// edgeTypeIndexKeyString is the edge-type analogue.
+func (b *BadgerEngine) edgeTypeIndexKeyString(txn kvWriter, edgeType string, edgeID EdgeID) ([]byte, error) {
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edgeID))
+	if err != nil {
+		return nil, err
+	}
+	return edgeTypeIndexKey(edgeType, edgeNum), nil
+}
+
+// outgoingIndexKeyStringLookup is a non-allocating variant used by
+// delete/scan paths where the num IDs are expected to already exist.
+// Returns nil (not an error) when the dict lookup misses — caller treats
+// that as "no index entry existed".
+func (b *BadgerEngine) outgoingIndexKeyStringLookup(nodeID NodeID, edgeID EdgeID) []byte {
+	nodeNum, ok1 := b.idDict.lookupNodeNumID(nodeID)
+	edgeNum, ok2 := b.idDict.lookupEdgeNumID(edgeID)
+	if !ok1 || !ok2 {
+		return nil
+	}
+	return outgoingIndexKey(nodeNum, edgeNum)
+}
+
+func (b *BadgerEngine) incomingIndexKeyStringLookup(nodeID NodeID, edgeID EdgeID) []byte {
+	nodeNum, ok1 := b.idDict.lookupNodeNumID(nodeID)
+	edgeNum, ok2 := b.idDict.lookupEdgeNumID(edgeID)
+	if !ok1 || !ok2 {
+		return nil
+	}
+	return incomingIndexKey(nodeNum, edgeNum)
+}
+
+func (b *BadgerEngine) edgeTypeIndexKeyStringLookup(edgeType string, edgeID EdgeID) []byte {
+	edgeNum, ok := b.idDict.lookupEdgeNumID(edgeID)
+	if !ok {
+		return nil
+	}
+	return edgeTypeIndexKey(edgeType, edgeNum)
+}
+
+// outgoingIndexPrefixString resolves the node string ID and returns the
+// scan prefix. Returns nil if the node has no numID (no outgoing edges
+// ever indexed — empty scan is correct).
+func (b *BadgerEngine) outgoingIndexPrefixString(nodeID NodeID) []byte {
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil
+	}
+	return outgoingIndexPrefix(nodeNum)
+}
+
+func (b *BadgerEngine) incomingIndexPrefixString(nodeID NodeID) []byte {
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil
+	}
+	return incomingIndexPrefix(nodeNum)
+}
+
+// labelIndexKeyString resolves the node string ID via the dict,
+// allocating a numID if missing, and returns the compact label key.
+func (b *BadgerEngine) labelIndexKeyString(txn kvWriter, label string, nodeID NodeID) ([]byte, error) {
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	return labelIndexKey(label, nodeNum), nil
+}
+
+// labelIndexKeyStringLookup is a non-allocating form for delete/probe
+// paths. Returns nil if the node has no numID yet.
+func (b *BadgerEngine) labelIndexKeyStringLookup(label string, nodeID NodeID) []byte {
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil
+	}
+	return labelIndexKey(label, nodeNum)
+}
+
+// labelIndexKeyStringLookupInTxn resolves IDs through the caller's snapshot
+// (labelIndexNodeNumInTxn). Returns nil if the node has no numID in that
+// snapshot.
+func (b *BadgerEngine) labelIndexKeyStringLookupInTxn(txn *badger.Txn, label string, nodeID NodeID) ([]byte, error) {
+	nodeNum, ok, err := b.labelIndexNodeNumInTxn(txn, nodeID)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return labelIndexKey(label, nodeNum), nil
+}
+
+// mvccNodeHeadKeyString / mvccEdgeHeadKeyString wrap the numeric-keyed
+// MVCC head key with dict-backed string ID resolution. Writers allocate
+// the numID; readers use lookup-only.
+func (b *BadgerEngine) mvccNodeHeadKeyString(txn kvWriter, id NodeID) ([]byte, error) {
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(id))
+	if err != nil {
+		return nil, err
+	}
+	return mvccNodeHeadKey(num), nil
+}
+
+func (b *BadgerEngine) mvccEdgeHeadKeyString(txn kvWriter, id EdgeID) ([]byte, error) {
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(id))
+	if err != nil {
+		return nil, err
+	}
+	return mvccEdgeHeadKey(num), nil
+}
+
+func (b *BadgerEngine) mvccNodeHeadKeyStringLookup(id NodeID) []byte {
+	num, ok := b.idDict.lookupNodeNumID(id)
+	if !ok {
+		return nil
+	}
+	return mvccNodeHeadKey(num)
+}
+
+func (b *BadgerEngine) mvccEdgeHeadKeyStringLookup(id EdgeID) []byte {
+	num, ok := b.idDict.lookupEdgeNumID(id)
+	if !ok {
+		return nil
+	}
+	return mvccEdgeHeadKey(num)
+}
+
+// mvccNodeVersionKeyString / mvccEdgeVersionKeyString wrap the
+// numeric-keyed MVCC version keys.
+func (b *BadgerEngine) mvccNodeVersionKeyString(txn kvWriter, id NodeID, version MVCCVersion) ([]byte, error) {
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(id))
+	if err != nil {
+		return nil, err
+	}
+	return mvccNodeVersionKey(num, version), nil
+}
+
+func (b *BadgerEngine) mvccEdgeVersionKeyString(txn kvWriter, id EdgeID, version MVCCVersion) ([]byte, error) {
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(id))
+	if err != nil {
+		return nil, err
+	}
+	return mvccEdgeVersionKey(num, version), nil
+}
+
+func (b *BadgerEngine) mvccNodeVersionKeyStringLookup(id NodeID, version MVCCVersion) []byte {
+	num, ok := b.idDict.lookupNodeNumID(id)
+	if !ok {
+		return nil
+	}
+	return mvccNodeVersionKey(num, version)
+}
+
+func (b *BadgerEngine) mvccEdgeVersionKeyStringLookup(id EdgeID, version MVCCVersion) []byte {
+	num, ok := b.idDict.lookupEdgeNumID(id)
+	if !ok {
+		return nil
+	}
+	return mvccEdgeVersionKey(num, version)
+}
+
+// mvccNodeVersionPrefixString / mvccEdgeVersionPrefixString return the
+// scan prefix for an entity's version history. Nil when the entity has
+// no numID (no history recorded).
+func (b *BadgerEngine) mvccNodeVersionPrefixString(id NodeID) []byte {
+	num, ok := b.idDict.lookupNodeNumID(id)
+	if !ok {
+		return nil
+	}
+	return mvccNodeVersionPrefix(num)
+}
+
+func (b *BadgerEngine) mvccEdgeVersionPrefixString(id EdgeID) []byte {
+	num, ok := b.idDict.lookupEdgeNumID(id)
+	if !ok {
+		return nil
+	}
+	return mvccEdgeVersionPrefix(num)
+}
+
+type mvccAdjacencyKeyDirection bool
+
+const (
+	mvccAdjacencyOutgoing mvccAdjacencyKeyDirection = false
+	mvccAdjacencyIncoming mvccAdjacencyKeyDirection = true
+)
+
+// mvccAdjacencyKeyString resolves the same dictionary identities for both
+// directions and selects the existing on-disk key encoding for each direction.
+func (b *BadgerEngine) mvccAdjacencyKeyString(direction mvccAdjacencyKeyDirection, txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion) ([]byte, error) {
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, edgeID)
+	if err != nil {
+		return nil, err
+	}
+	if direction == mvccAdjacencyIncoming {
+		return mvccIncomingAdjacencyKey(nodeNum, edgeNum, version), nil
+	}
+	return mvccOutgoingAdjacencyKey(nodeNum, edgeNum, version), nil
+}
+
+func (b *BadgerEngine) mvccOutgoingAdjacencyPrefixString(nodeID NodeID) []byte {
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil
+	}
+	return mvccOutgoingAdjacencyPrefix(nodeNum)
+}
+
+func (b *BadgerEngine) mvccIncomingAdjacencyPrefixString(nodeID NodeID) []byte {
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil
+	}
+	return mvccIncomingAdjacencyPrefix(nodeNum)
+}
+
+// edgeBetweenIndexKeyFromStringIDs is a test-support convenience that
+// resolves string IDs through the dictionary and returns the numeric-keyed
+// compact index key. Returns nil if any string ID is unknown.
+func (b *BadgerEngine) edgeBetweenIndexKeyFromStringIDs(startID, endID NodeID, edgeType string, edgeID EdgeID) []byte {
+	startNum, sOK := b.idDict.lookupNodeNumID(startID)
+	endNum, eOK := b.idDict.lookupNodeNumID(endID)
+	edgeNum, edOK := b.idDict.lookupEdgeNumID(edgeID)
+	if !sOK || !eOK || !edOK {
+		return nil
+	}
+	return edgeBetweenIndexKey(startNum, endNum, edgeType, edgeNum)
+}
+
+// edgeBetweenHeadKeyFromStringIDs is the head analogue of
+// edgeBetweenIndexKeyFromStringIDs.
+func (b *BadgerEngine) edgeBetweenHeadKeyFromStringIDs(startID, endID NodeID, edgeType string) []byte {
+	startNum, sOK := b.idDict.lookupNodeNumID(startID)
+	endNum, eOK := b.idDict.lookupNodeNumID(endID)
+	if !sOK || !eOK {
+		return nil
+	}
+	return edgeBetweenHeadKey(startNum, endNum, edgeType)
+}
+
+// edgeBetweenIndexPrefix returns the prefix for all edges between two nodes,
+// keyed on 8-byte numeric IDs from the id dictionary.
+func edgeBetweenIndexPrefix(startNumID, endNumID uint64) []byte {
+	key := make([]byte, 0, 1+8+8)
+	key = append(key, prefixEdgeBetweenIndex)
+	key = append(key, encodeNumID(startNumID)...)
+	key = append(key, encodeNumID(endNumID)...)
+	return key
+}
+
+// typedEdgeBetweenIndexPrefix returns the prefix for edges of one type between two nodes.
+func typedEdgeBetweenIndexPrefix(startNumID, endNumID uint64, edgeType string) []byte {
+	key := edgeBetweenIndexPrefix(startNumID, endNumID)
+	key = append(key, []byte(edgeType)...)
+	key = append(key, 0x00)
+	return key
+}
+
+// pendingEmbedKey creates a key for the pending embeddings index.
+// Format: prefix + nodeID
+func pendingEmbedKey(nodeID NodeID) []byte {
+	return append([]byte{prefixPendingEmbed}, []byte(nodeID)...)
+}
+
+const (
+	// Keep embedding payloads below the 64KiB Badger entry limit used by this engine profile.
+	maxEmbeddingValueBytes = 60 << 10
+	embeddingShardMarker   = "EMBSHARDv1"
+)
+
+// embeddingKey creates a key for storing a chunk embedding separately.
+// Format: prefix + nodeID + 0x00 + chunkIndex (as bytes)
+func embeddingKey(nodeID NodeID, chunkIndex int) []byte {
+	key := []byte{prefixEmbedding}
+	key = append(key, []byte(nodeID)...)
+	key = append(key, 0x00) // Separator
+	// Encode chunk index as 4 bytes (big-endian)
+	key = append(key, byte(chunkIndex>>24), byte(chunkIndex>>16), byte(chunkIndex>>8), byte(chunkIndex))
+	return key
+}
+
+// embeddingChunkPartKey creates a key for a sharded embedding payload part.
+// Format: embeddingKey(nodeID, chunkIndex) + 0x00 + partIndex (2 bytes big-endian)
+func embeddingChunkPartKey(nodeID NodeID, chunkIndex, partIndex int) []byte {
+	base := embeddingKey(nodeID, chunkIndex)
+	key := append([]byte(nil), base...)
+	key = append(key, 0x00)
+	key = append(key, byte(partIndex>>8), byte(partIndex))
+	return key
+}
+
+func embeddingChunkPartPrefix(nodeID NodeID, chunkIndex int) []byte {
+	base := embeddingKey(nodeID, chunkIndex)
+	prefix := append([]byte(nil), base...)
+	prefix = append(prefix, 0x00)
+	return prefix
+}
+
+func makeEmbeddingShardMarker(partCount int) []byte {
+	marker := append([]byte(nil), embeddingShardMarker...)
+	scratch := make([]byte, binary.MaxVarintLen64)
+	n := binary.PutUvarint(scratch, uint64(partCount))
+	marker = append(marker, scratch[:n]...)
+	return marker
+}
+
+func parseEmbeddingShardMarker(data []byte) (int, bool) {
+	if len(data) < len(embeddingShardMarker) || string(data[:len(embeddingShardMarker)]) != embeddingShardMarker {
+		return 0, false
+	}
+	count, n := binary.Uvarint(data[len(embeddingShardMarker):])
+	if n <= 0 || count == 0 {
+		return 0, false
+	}
+	return int(count), true
+}
+
+type embeddingWriteKV struct {
+	key []byte
+	val []byte
+}
+
+func buildEmbeddingChunkWriteKVs(nodeID NodeID, chunkIndex int, emb []float32) ([]embeddingWriteKV, error) {
+	embData, err := encodeEmbedding(emb)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode embedding chunk %d: %w", chunkIndex, err)
+	}
+	baseKey := embeddingKey(nodeID, chunkIndex)
+	if len(embData) <= maxEmbeddingValueBytes {
+		return []embeddingWriteKV{{key: baseKey, val: embData}}, nil
+	}
+	parts := (len(embData) + maxEmbeddingValueBytes - 1) / maxEmbeddingValueBytes
+	kvs := make([]embeddingWriteKV, 0, util.SafePreallocSum(parts, 1))
+	kvs = append(kvs, embeddingWriteKV{key: baseKey, val: makeEmbeddingShardMarker(parts)})
+	for part := 0; part < parts; part++ {
+		start := part * maxEmbeddingValueBytes
+		end := start + maxEmbeddingValueBytes
+		if end > len(embData) {
+			end = len(embData)
+		}
+		kvs = append(kvs, embeddingWriteKV{
+			key: embeddingChunkPartKey(nodeID, chunkIndex, part),
+			val: append([]byte(nil), embData[start:end]...),
+		})
+	}
+	return kvs, nil
+}
+
+// schemaKey stores the persisted schema definition for a database namespace.
+// Format: prefixSchema + namespace + 0x00
+func schemaKey(namespace string) []byte {
+	key := []byte{prefixSchema}
+	key = append(key, []byte(namespace)...)
+	key = append(key, 0x00)
+	return key
+}
+
+// embeddingPrefix returns the prefix for scanning all embeddings for a node.
+// Format: prefix + nodeID + 0x00
+func embeddingPrefix(nodeID NodeID) []byte {
+	key := []byte{prefixEmbedding}
+	key = append(key, []byte(nodeID)...)
+	key = append(key, 0x00)
+	return key
+}
+
+// visitEmbeddingKeys owns enumeration for every embedding replacement and
+// cleanup. Each callback receives a key it may retain until its write commits.
+type embeddingKeyScanOptions struct {
+	after []byte
+}
+
+func visitEmbeddingKeys(txn *badger.Txn, nodeID NodeID, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
+	return visitEmbeddingKeysExcept(txn, nodeID, embeddingRangeRetention{}, visit, options...)
+}
+
+// visitEmbeddingKeysExcept observes the full range but copies only keys whose
+// old values are not already replaced by the caller's final write set.
+func visitEmbeddingKeysExcept(txn *badger.Txn, nodeID NodeID, retained embeddingRangeRetention, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
+	var scan embeddingKeyScanOptions
+	if len(options) > 0 {
+		scan = options[0]
+	}
+	if indexed, err := visitEmbeddingManifestKeys(txn, nodeID, retained, visit, scan.after); indexed || err != nil {
+		return err
+	}
+	return visitEmbeddingPrefixKeys(txn, embeddingPrefix(nodeID), scan.after, visit, retained)
+}
+
+// extractEdgeNumIDFromOutgoingKey pulls the trailing 8-byte edge numID from
+// an outgoing/incoming index key. Returns (0, false) if the key is malformed.
+//
+// Layout: [prefix(1)][nodeNumID(8)][edgeNumID(8)].
+func extractEdgeNumIDFromOutgoingKey(key []byte) (uint64, bool) {
+	if len(key) != 1+8+8 {
+		return 0, false
+	}
+	return binary.BigEndian.Uint64(key[1+8:]), true
+}
+
+// extractEdgeNumIDFromEdgeTypeKey pulls the trailing 8-byte edge numID
+// from an edge-type index key.
+//
+// Layout: [prefix(1)][type...][0x00][edgeNumID(8)].
+func extractEdgeNumIDFromEdgeTypeKey(key []byte) (uint64, bool) {
+	if len(key) < 1+1+8 {
+		return 0, false
+	}
+	suffix := key[len(key)-8:]
+	return binary.BigEndian.Uint64(suffix), true
+}
+
+// extractNodeNumIDFromLabelIndex extracts the 8-byte node numID from a
+// label index key. Layout: [prefix(1)][label(labelLen)][0x00][numID(8)].
+func extractNodeNumIDFromLabelIndex(key []byte, labelLen int) (uint64, bool) {
+	offset := 1 + labelLen + 1
+	if offset+8 != len(key) {
+		return 0, false
+	}
+	return binary.BigEndian.Uint64(key[offset:]), true
+}
+
+func extractEdgeNumIDAndMVCCVersionFromAdjacencyKey(key []byte) (uint64, MVCCVersion, error) {
+	if len(key) != 1+8+8+16 {
+		return 0, MVCCVersion{}, fmt.Errorf("invalid mvcc adjacency key length: %d", len(key))
+	}
+	version, _ := decodeMVCCSortVersion(key[17:])
+	return binary.BigEndian.Uint64(key[9:17]), version, nil
+}
+
+// ============================================================================
+// Serialization helpers
+// ============================================================================
+
+// encodeNodeV1 produces the legacy (non-tokenized) node body. Used
+// only by the V1→V2 migration tool to read in-place V1 bodies; the
+// engine's hot path emits V2 exclusively via (b *BadgerEngine).encodeNodeInTxn.
+//
+// If the node exceeds maxNodeSize, embeddings are stored separately and a flag is set.
+// Returns: (nodeData, embeddingsStoredSeparately, error)
+func encodeNodeV1(n *Node) ([]byte, bool, error) {
+	if err := validatePropertiesForStorage(n.Properties); err != nil {
+		return nil, false, fmt.Errorf("invalid node properties: %w", err)
+	}
+	return encodeNodeV1Body(n)
+}
+
+func encodeNodeV1Body(n *Node) ([]byte, bool, error) {
+	// First, try encoding with embeddings
+	data, err := encodeValue(n)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// If size is acceptable, return as-is
+	if len(data) <= maxNodeSize {
+		return data, false, nil
+	}
+
+	// Node is too large - store embeddings separately
+	nodeCopy := *n
+	chunkCount := len(nodeCopy.ChunkEmbeddings)
+	nodeCopy.ChunkEmbeddings = nil
+
+	nodeCopy.EmbeddingsStoredSeparately = true
+	if nodeCopy.EmbedMeta == nil {
+		nodeCopy.EmbedMeta = make(map[string]any)
+	}
+	if _, hasChunkCount := nodeCopy.EmbedMeta["chunk_count"]; !hasChunkCount {
+		nodeCopy.EmbedMeta["chunk_count"] = chunkCount
+	}
+
+	data, err = encodeValue(&nodeCopy)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return data, true, nil
+}
+
+// encodeNodeInTxn produces a V2 tokenized node body. Properties are
+// extracted, tokenized via the per-namespace property-key dictionary,
+// and prepended ahead of the standard Node msgpack body (with
+// Properties cleared so the inline copy does not duplicate them).
+//
+// Layout:
+//
+//	[nodeFormatTokenizedV1 = 0x10]
+//	[varint(propsLen)]
+//	[tokenizedPropsBytes]   -- msgpack(map[uint64]any)
+//	[standard Node msgpack body, Properties=nil]
+//
+// Returns: (nodeData, embeddingsStoredSeparately, error). The
+// embeddings-separate logic mirrors V1 — if the encoded body exceeds
+// maxNodeSize, ChunkEmbeddings are dropped from the inline body and
+// persisted under their own keys by the caller.
+func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Node) ([]byte, bool, error) {
+	if err := validatePropertiesForStorage(n.Properties); err != nil {
+		return nil, false, fmt.Errorf("invalid node properties: %w", err)
+	}
+
+	propsBytes, err := b.encodeTokenizedProperties(txn, namespace, n.Properties)
+	if err != nil {
+		return nil, false, err
+	}
+
+	bodyCopy := *n
+	bodyCopy.Properties = nil
+
+	assemble := func(bodyBytes []byte) []byte {
+		out := make([]byte, 0, 1+binary.MaxVarintLen64+len(propsBytes)+len(bodyBytes))
+		out = append(out, nodeFormatTokenizedV1)
+		out = binary.AppendUvarint(out, uint64(len(propsBytes)))
+		out = append(out, propsBytes...)
+		out = append(out, bodyBytes...)
+		return out
+	}
+
+	bodyBytes, err := encodeValue(&bodyCopy)
+	if err != nil {
+		return nil, false, err
+	}
+	data := assemble(bodyBytes)
+
+	if len(data) <= maxNodeSize {
+		return data, false, nil
+	}
+
+	chunkCount := len(bodyCopy.ChunkEmbeddings)
+	bodyCopy.ChunkEmbeddings = nil
+	bodyCopy.EmbeddingsStoredSeparately = true
+	if bodyCopy.EmbedMeta == nil {
+		bodyCopy.EmbedMeta = make(map[string]any)
+	}
+	if _, hasChunkCount := bodyCopy.EmbedMeta["chunk_count"]; !hasChunkCount {
+		bodyCopy.EmbedMeta["chunk_count"] = chunkCount
+	}
+
+	bodyBytes, err = encodeValue(&bodyCopy)
+	if err != nil {
+		return nil, false, err
+	}
+	return assemble(bodyBytes), true, nil
+}
+
+// encodeEmbedding serializes a single embedding chunk.
+func encodeEmbedding(emb []float32) ([]byte, error) {
+	return encodeValue(emb)
+}
+
+// decodeEmbedding deserializes a single embedding chunk.
+func decodeEmbedding(data []byte) ([]float32, error) {
+	var emb []float32
+	if err := decodeValue(data, &emb); err != nil {
+		return nil, err
+	}
+	return emb, nil
+}
+
+// decodeNodeV1 deserializes a legacy V1 node body. Used only by V1→V2
+// migration code; the engine's hot path goes through (b *BadgerEngine).decodeNode.
+func decodeNodeV1(data []byte) (*Node, error) {
+	var node Node
+	if err := decodeValue(data, &node); err != nil {
+		return nil, err
+	}
+	return &node, nil
+}
+
+// namespaceForNodeID extracts the per-namespace bucket from a node ID
+// using the standard "<db>:<id>" prefix convention. Used by decode
+// call sites that already have a NodeID in hand.
+func namespaceForNodeID(id NodeID) string {
+	ns, _, _ := ParseDatabasePrefix(string(id))
+	return ns
+}
+
+// namespaceForEdgeID extracts the per-namespace bucket from an edge ID
+// using the standard "<db>:<id>" prefix convention.
+func namespaceForEdgeID(id EdgeID) string {
+	ns, _, _ := ParseDatabasePrefix(string(id))
+	return ns
+}
+
+// encodeNode is the engine-attached entry point matching the V1 free
+// function's signature. Resolves the namespace from the node's ID and
+// emits a V2 tokenized body. Call sites that have a *badger.Txn in
+// scope should use it.
+func (b *BadgerEngine) encodeNode(txn *badger.Txn, node *Node) ([]byte, bool, error) {
+	namespace := namespaceForNodeID(node.ID)
+	if namespace == "" {
+		return nil, false, fmt.Errorf("encodeNode: node ID %q lacks namespace prefix", node.ID)
+	}
+	return b.encodeNodeInTxn(txn, namespace, node)
+}
+
+// decodeEdgeBodyByID is the engine-attached convenience wrapper that
+// derives the namespace from the edge ID. Replaces the old
+// decodeEdgeBodyWithID(data, id) signature at call sites.
+func (b *BadgerEngine) decodeEdgeBodyByID(data []byte, id EdgeID) (*Edge, error) {
+	return b.decodeEdgeBodyWithID(namespaceForEdgeID(id), data, id)
+}
+
+// decodeNode is the V2 hot-path decoder. Rejects any body that does
+// not start with the V2 format byte — V2 stores have been fully
+// rewritten by the V1→V2 migration, so a non-V2 body indicates
+// corruption or a forgotten upgrade.
+func (b *BadgerEngine) decodeNode(namespace string, data []byte) (*Node, error) {
+	return b.decodeNodeProjected(namespace, data, nil)
+}
+
+// decodeNodeProjected decodes a V2 node body with only the included
+// properties (all of them when include is nil). A scan that tests properties
+// before keeping a node uses projectedNodeDecoder instead (#857).
+func (b *BadgerEngine) decodeNodeProjected(namespace string, data []byte, include map[string]struct{}) (*Node, error) {
+	envelope, err := SplitNodeEnvelope(data)
+	if err != nil {
+		return nil, err
+	}
+	props, err := b.decodeTokenizedPropertiesProjected(namespace, envelope.properties, include)
+	if err != nil {
+		return nil, err
+	}
+	node := &Node{}
+	if err := decodeValue(envelope.metadata, node); err != nil {
+		return nil, err
+	}
+	node.Properties = props
+	return node, nil
+}
+
+// decodeNodeWithEmbeddings deserializes a Node and loads separately stored embeddings from transaction.
+// Works in both View and Update transactions (only reads embeddings).
+func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, nodeID NodeID) (*Node, error) {
+	return b.decodeNodeEmbeddingState(txn, data, nodeID, true)
+}
+
+// decodeNodeEmbeddingState is decodeNodeWithEmbeddings; with vectors false
+// it settles the embedding metadata without reading a stored chunk vector
+// (loadNodeEmbeddingState).
+func (b *BadgerEngine) decodeNodeEmbeddingState(txn *badger.Txn, data []byte, nodeID NodeID, vectors bool) (*Node, error) {
+	namespace, _, _ := ParseDatabasePrefix(string(nodeID))
+	node, err := b.decodeNode(namespace, data)
+	if err != nil {
+		return nil, err
+	}
+	return b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, nodeID, vectors)
+}
+
+// loadNodeEmbeddingState settles fresh sidecar metadata against the caller's
+// pinned body. With vectors true it hydrates complete chunk payloads; false
+// preserves query metadata without fetching those payloads. Stale sidecars
+// remain ignored under the same source-body validation policy.
+func (b *BadgerEngine) loadNodeEmbeddingState(read embeddingRecordReader, node *Node, nodeID NodeID, vectors bool) (*Node, error) {
+	if sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(read, node, nodeID); err != nil {
+		return nil, err
+	} else if fresh {
+		node.EmbedMeta = sidecarMeta
+		node.EmbeddingsStoredSeparately = false
+		chunkCount := chunkCountFromMeta(sidecarMeta)
+		if !vectors {
+			if chunkCount > 0 {
+				node.ChunkEmbeddings = nil
+			}
+			return node, nil
+		}
+		if err := loadEmbeddingChunksFrom(read, node, nodeID, chunkCount); err != nil {
+			return nil, err
+		}
+		return node, nil
+	}
+
+	// Legacy body-flag path: embeddings stored separately during encode.
+	if node.EmbeddingsStoredSeparately {
+		if chunkCount := chunkCountFromMeta(node.EmbedMeta); chunkCount > 0 {
+			if vectors {
+				if err := loadEmbeddingChunksFrom(read, node, nodeID, chunkCount); err != nil {
+					return nil, err
+				}
+			}
+			node.EmbeddingsStoredSeparately = false
+		}
+	}
+
+	return node, nil
+}
+
+// chunkCountFromMeta extracts chunk_count from embedding metadata, tolerating
+// the integer types msgpack/JSON may decode into.
+func chunkCountFromMeta(meta map[string]any) int {
+	if meta == nil {
+		return 0
+	}
+	switch v := meta["chunk_count"].(type) {
+	case int:
+		return v
+	case int8:
+		return int(v)
+	case int16:
+		return int(v)
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case uint:
+		return int(v)
+	case uint8:
+		return int(v)
+	case uint16:
+		return int(v)
+	case uint32:
+		return int(v)
+	case uint64:
+		return int(v)
+	case float64:
+		// JSON numbers might be decoded as float64
+		return int(v)
+	case string:
+		var parsed int
+		if _, err := fmt.Sscanf(v, "%d", &parsed); err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+// loadEmbeddingChunks hydrates chunkCount chunk vectors for nodeID into
+// node.ChunkEmbeddings from the embedding key space. Missing chunks are
+// tolerated (readers see a partial set only while a replacement is in
+// flight).
+func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID NodeID, chunkCount int) error {
+	return loadEmbeddingChunksFrom(embeddingRecordReader{txn: txn}, node, nodeID, chunkCount)
+}
+
+// embeddingRecordReader uses the ordinary transaction directly for normal reads.
+// Recovery supplies a real commit overlay; prepared capture supplies its owned
+// staged maps while holding tx.mu. Neither constructs a synthetic WAL generation.
+// Appending into dst preserves the
+// existing sharded-vector allocation behavior without reader closures.
+type embeddingRecordReader struct {
+	txn           *badger.Txn
+	commit        *bufferedCommit
+	stagedWrites  map[string][]byte
+	stagedDeletes map[string]bool
+}
+
+type embeddingRecord struct {
+	item *badger.Item
+	data []byte
+}
+
+func (r embeddingRecordReader) record(key []byte) (embeddingRecord, error) {
+	writes, deletes := r.stagedWrites, r.stagedDeletes
+	if r.commit != nil {
+		writes, deletes = r.commit.writes, r.commit.deletes
+	}
+	if deletes[string(key)] {
+		return embeddingRecord{}, badger.ErrKeyNotFound
+	}
+	if data, ok := writes[string(key)]; ok {
+		return embeddingRecord{data: data}, nil
+	}
+	item, err := r.txn.Get(key)
+	return embeddingRecord{item: item}, err
+}
+func (r embeddingRecord) value(visit func([]byte) error) error {
+	if r.item != nil {
+		return r.item.Value(visit)
+	}
+	return visit(r.data)
+}
+func (r embeddingRecordReader) value(key []byte, visit func([]byte) error) error {
+	record, err := r.record(key)
+	if err != nil {
+		return err
+	}
+	return record.value(visit)
+}
+func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
+	record, err := r.record(key)
+	if err != nil {
+		return nil, err
+	}
+	err = record.value(func(value []byte) error { dst = append(dst, value...); return nil })
+	return dst, err
+}
+
+// loadEmbeddingChunksFrom also reads an unflushed recovery write set without
+// applying its deletes or primary bodies before MVCC history is materialized.
+func loadEmbeddingChunksFrom(read embeddingRecordReader, node *Node, nodeID NodeID, chunkCount int) error {
+	if chunkCount <= 0 {
+		return nil
+	}
+	node.ChunkEmbeddings = make([][]float32, 0, util.SafePreallocCap(chunkCount))
+
+	// Load each chunk embedding
+	for i := 0; i < chunkCount; i++ {
+		embKey := embeddingKey(nodeID, i)
+		embData, err := read.read(embKey, nil)
+		if err != nil {
+			if err == badger.ErrKeyNotFound {
+				continue
+			}
+			return fmt.Errorf("failed to get embedding chunk %d: %w", i, err)
+		}
+
+		emb, err := decodeEmbedding(embData)
+		if err != nil {
+			partCount, sharded := parseEmbeddingShardMarker(embData)
+			if !sharded {
+				return fmt.Errorf("failed to decode embedding chunk %d: %w", i, err)
+			}
+			assembled := make([]byte, 0, util.SafePreallocProduct(partCount, maxEmbeddingValueBytes))
+			for part := 0; part < partCount; part++ {
+				var getErr error
+				assembled, getErr = read.read(embeddingChunkPartKey(nodeID, i, part), assembled)
+				if getErr != nil {
+					return fmt.Errorf("failed to get embedding chunk %d part %d: %w", i, part, getErr)
+				}
+			}
+			emb, err = decodeEmbedding(assembled)
+			if err != nil {
+				return fmt.Errorf("failed to decode sharded embedding chunk %d: %w", i, err)
+			}
+		}
+
+		node.ChunkEmbeddings = append(node.ChunkEmbeddings, emb)
+	}
+	return nil
+}
+
+// encodeEdge serializes an Edge using the active storage serializer.
+func encodeEdge(e *Edge) ([]byte, error) {
+	if err := validatePropertiesForStorage(e.Properties); err != nil {
+		return nil, fmt.Errorf("invalid edge properties: %w", err)
+	}
+	return encodeValue(e)
+}
+
+// decodeEdge deserializes an Edge from a legacy non-compact body.
+// Does NOT handle the compact-V1 format. On the BadgerEngine read path,
+// prefer engine.decodeEdgeBody which dispatches based on the format byte.
+func decodeEdge(data []byte) (*Edge, error) {
+	var edge Edge
+	if err := decodeValue(data, &edge); err != nil {
+		return nil, err
+	}
+	return &edge, nil
+}
+
+// ============================================================================

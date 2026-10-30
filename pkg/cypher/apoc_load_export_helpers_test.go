@@ -1,0 +1,519 @@
+package cypher
+
+import (
+	"context"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type roundTripFunc func(req *http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func allowPublicAPOCTestHost(exec *StorageExecutor) {
+	exec.apocRemoteHostResolver = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+	}
+}
+
+func TestApocLoadExportHelpers_ExportFormatting(t *testing.T) {
+	e := &StorageExecutor{}
+	nodes := []*storage.Node{{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}}
+	edges := []*storage.Edge{{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n2", Properties: map[string]interface{}{"since": int64(2020)}}}
+
+	nf := e.nodesToExportFormat(nodes)
+	ef := e.edgesToExportFormat(edges)
+	assert.Len(t, nf, 1)
+	assert.Len(t, ef, 1)
+	assert.Equal(t, "n1", nf[0]["id"])
+	assert.Equal(t, "KNOWS", ef[0]["type"])
+	assert.EqualValues(t, int64(2020), ef[0]["properties"].(map[string]interface{})["since"])
+}
+
+func TestApocLoadExportHelpers_CountProperties(t *testing.T) {
+	e := &StorageExecutor{}
+	nodes := []*storage.Node{{Properties: map[string]interface{}{"a": 1, "b": 2}}, {Properties: map[string]interface{}{}}}
+	edges := []*storage.Edge{{Properties: map[string]interface{}{"c": 3}}}
+	assert.Equal(t, 3, e.countProperties(nodes, edges))
+	assert.Equal(t, 0, e.countProperties(nil, nil))
+}
+
+func TestApocLoadExportHelpers_CallApocLoadJsonArray_FromFile(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	e := NewStorageExecutor(eng)
+	e.SetAllowLocalAPOCFileAccess(true)
+
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "arr.json")
+	require.NoError(t, os.WriteFile(jsonPath, []byte(`[1,{"a":2},3]`), 0o644))
+
+	res, err := e.callApocLoadJsonArray(context.Background(), []interface{}{jsonPath})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, []string{"value"}, res.Columns)
+	assert.Len(t, res.Rows, 3)
+}
+
+func TestApocLoadExportHelpers_CallApocLoadJsonArray_Branches(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	e := NewStorageExecutor(eng)
+	e.SetAllowLocalAPOCFileAccess(true)
+	e.SetAllowRemoteAPOCURLAccess(true)
+	e.SetAPOCRemoteURLAllowlist([]string{"example.com"})
+	allowPublicAPOCTestHost(e)
+	ctx := context.Background()
+
+	_, err := e.callApocLoadJsonArray(ctx, nil)
+	require.Error(t, err)
+
+	dir := t.TempDir()
+	objPath := filepath.Join(dir, "obj.json")
+	require.NoError(t, os.WriteFile(objPath, []byte(`{"k":"v"}`), 0o644))
+
+	// Non-array payload falls into default single-row branch.
+	res, err := e.callApocLoadJsonArray(ctx, []interface{}{objPath})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	obj, ok := res.Rows[0][0].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "v", obj["k"])
+
+	// URL source branch.
+	e.apocRemoteHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(strings.NewReader(`[{"x":1},{"x":2}]`)),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		}),
+	}
+	res, err = e.callApocLoadJsonArray(ctx, []interface{}{"https://example.com/array.json"})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 2)
+
+	// Load failure branch.
+	_, err = e.callApocLoadJsonArray(ctx, []interface{}{filepath.Join(dir, "missing.json")})
+	require.Error(t, err)
+}
+
+func TestApocLoadExportHelpers_CallApocImportJson_FromFile(t *testing.T) {
+	eng := newTestMemoryEngine(t)
+	defer eng.Close()
+	e := NewStorageExecutor(eng)
+	e.SetAllowLocalAPOCFileAccess(true)
+
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "graph.json")
+	graphJSON := `{
+		"nodes": [
+			{"id":"n1","labels":["Person"],"properties":{"name":"alice"}},
+			{"id":"n2","labels":["Person"],"properties":{"name":"bob"}}
+		],
+		"relationships": [
+			{"id":"e1","type":"KNOWS","startNode":"n1","endNode":"n2","properties":{"since":2020}}
+		]
+	}`
+	require.NoError(t, os.WriteFile(jsonPath, []byte(graphJSON), 0o644))
+
+	res, err := e.callApocImportJson(context.Background(), []interface{}{jsonPath})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, []string{"source", "nodes", "relationships"}, res.Columns)
+	require.Len(t, res.Rows, 1)
+	assert.Equal(t, jsonPath, res.Rows[0][0])
+	assert.EqualValues(t, 2, res.Rows[0][1])
+	assert.EqualValues(t, 1, res.Rows[0][2])
+}
+
+func TestApocLoadExportHelpers_LoadJsonFromURL_AndQueryExports(t *testing.T) {
+	eng := newTestMemoryEngine(t)
+	defer eng.Close()
+	e := NewStorageExecutor(eng)
+	e.SetAllowLocalAPOCFileAccess(true)
+	e.SetAllowRemoteAPOCURLAccess(true)
+	e.SetAPOCRemoteURLAllowlist([]string{"example.com"})
+	allowPublicAPOCTestHost(e)
+	e.apocRemoteHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/ok":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader(`{"x":1,"y":"z"}`)),
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			case "/bad":
+				return &http.Response{
+					StatusCode: http.StatusBadGateway,
+					Status:     "502 Bad Gateway",
+					Body:       io.NopCloser(strings.NewReader("boom")),
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			default:
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader("not-json")),
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			}
+		}),
+	}
+	data, err := e.loadJsonFromURL("https://example.com/ok")
+	require.NoError(t, err)
+	require.NotNil(t, data)
+	_, err = e.loadJsonFromURL("https://example.com/bad")
+	require.Error(t, err)
+	_, err = e.loadJsonFromURL("https://example.com/malformed")
+	require.Error(t, err)
+
+	// File loader branches: missing file and malformed JSON.
+	_, err = e.loadJsonFromFile(filepath.Join(t.TempDir(), "missing.json"))
+	require.Error(t, err)
+	badPath := filepath.Join(t.TempDir(), "bad.json")
+	require.NoError(t, os.WriteFile(badPath, []byte(`{"x":`), 0o644))
+	_, err = e.loadJsonFromFile(badPath)
+	require.Error(t, err)
+
+	tmpDir := t.TempDir()
+	jsonOut := filepath.Join(tmpDir, "q.json")
+	csvOut := filepath.Join(tmpDir, "q.csv")
+
+	jsonRes, err := e.callApocExportJsonQuery(context.Background(), []interface{}{"RETURN 1 AS name", jsonOut, map[string]interface{}{}})
+	require.NoError(t, err)
+	require.Len(t, jsonRes.Rows, 1)
+	assert.Equal(t, jsonOut, jsonRes.Rows[0][0])
+	assert.EqualValues(t, 1, jsonRes.Rows[0][1])
+	_, err = os.Stat(jsonOut)
+	require.NoError(t, err)
+
+	csvRes, err := e.callApocExportCsvQuery(context.Background(), []interface{}{"RETURN 1 AS name", csvOut, map[string]interface{}{}})
+	require.NoError(t, err)
+	require.Len(t, csvRes.Rows, 1)
+	assert.Equal(t, csvOut, csvRes.Rows[0][0])
+	assert.EqualValues(t, 1, csvRes.Rows[0][1])
+	_, err = os.Stat(csvOut)
+	require.NoError(t, err)
+
+	_, err = e.callApocExportJsonQuery(context.Background(), []interface{}{"", jsonOut, map[string]interface{}{}})
+	require.Error(t, err)
+	_, err = e.callApocExportCsvQuery(context.Background(), []interface{}{"", csvOut, map[string]interface{}{}})
+	require.Error(t, err)
+
+	// Query execution failure branch.
+	_, err = e.callApocExportJsonQuery(context.Background(), []interface{}{"THIS IS NOT CYPHER", jsonOut, map[string]interface{}{}})
+	require.Error(t, err)
+
+	// File write failure branch (json.query does not auto-create dirs).
+	badExportPath := filepath.Join(tmpDir, "missing", "nested", "q.json")
+	_, err = e.callApocExportJsonQuery(context.Background(), []interface{}{"RETURN 1 AS x", badExportPath, map[string]interface{}{}})
+	require.Error(t, err)
+}
+
+func TestApocLoadExportHelpers_CallApocLoadCsv_OptionsAndSources(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
+	exec.SetAllowRemoteAPOCURLAccess(true)
+	exec.SetAPOCRemoteURLAllowlist([]string{"example.com"})
+	allowPublicAPOCTestHost(exec)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	withHeader := filepath.Join(dir, "with_header.csv")
+	noHeader := filepath.Join(dir, "no_header.csv")
+	empty := filepath.Join(dir, "empty.csv")
+
+	require.NoError(t, os.WriteFile(withHeader, []byte("name,age\nalice,30\nbob,31\n"), 0o644))
+	require.NoError(t, os.WriteFile(noHeader, []byte("x;1\ny;2\n"), 0o644))
+	require.NoError(t, os.WriteFile(empty, []byte(""), 0o644))
+
+	res, err := exec.callApocLoadCsv(ctx, []interface{}{withHeader})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 2)
+	require.Equal(t, "alice", res.Rows[0][2].(map[string]interface{})["name"])
+	require.Equal(t, "31", res.Rows[1][2].(map[string]interface{})["age"])
+
+	res, err = exec.callApocLoadCsv(ctx, []interface{}{noHeader, map[string]interface{}{"header": false, "sep": ";"}})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 2)
+	require.Equal(t, "x", res.Rows[0][1].([]interface{})[0])
+	require.Empty(t, res.Rows[0][2].(map[string]interface{}))
+
+	res, err = exec.callApocLoadCsv(ctx, []interface{}{empty})
+	require.NoError(t, err)
+	require.Empty(t, res.Rows)
+
+	exec.apocRemoteHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(strings.NewReader("c1,c2\nv1,v2\n")),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		}),
+	}
+	res, err = exec.callApocLoadCsv(ctx, []interface{}{"https://example.com/data.csv"})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "v1", res.Rows[0][2].(map[string]interface{})["c1"])
+}
+
+func TestApocLoadExportHelpers_CallApocLoadJson_Branches(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
+	ctx := context.Background()
+
+	_, err := exec.callApocLoadJson(ctx, nil)
+	require.Error(t, err)
+
+	dir := t.TempDir()
+	arrayPath := filepath.Join(dir, "arr.json")
+	objectPath := filepath.Join(dir, "obj.json")
+	scalarPath := filepath.Join(dir, "scalar.json")
+
+	require.NoError(t, os.WriteFile(arrayPath, []byte(`[1,2,3]`), 0o644))
+	require.NoError(t, os.WriteFile(objectPath, []byte(`{"a":1}`), 0o644))
+	require.NoError(t, os.WriteFile(scalarPath, []byte(`42`), 0o644))
+
+	res, err := exec.callApocLoadJson(ctx, []interface{}{arrayPath})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 3)
+
+	res, err = exec.callApocLoadJson(ctx, []interface{}{objectPath})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	_, ok := res.Rows[0][0].(map[string]interface{})
+	require.True(t, ok)
+
+	res, err = exec.callApocLoadJson(ctx, []interface{}{scalarPath})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.EqualValues(t, 42.0, res.Rows[0][0])
+}
+
+func TestApocLoadExportHelpers_RemoteURLLoadsDeniedByDefault(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	ctx := context.Background()
+
+	const remoteURL = "https://example.com/data"
+	_, err := exec.callApocLoadJson(ctx, []interface{}{remoteURL})
+	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
+
+	_, err = exec.callApocLoadCsv(ctx, []interface{}{remoteURL})
+	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
+
+	_, err = exec.callApocLoadJsonArray(ctx, []interface{}{remoteURL})
+	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
+
+	_, err = exec.callApocImportJson(ctx, []interface{}{remoteURL})
+	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
+}
+
+func TestApocLoadExportHelpers_RemoteURLLoadsRequireAllowlistedHost(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	exec.SetAllowRemoteAPOCURLAccess(true)
+	ctx := context.Background()
+
+	_, err := exec.loadJsonFromURL("https://example.com/ok")
+	require.ErrorIs(t, err, errAPOCRemoteURLHostNotAllowed)
+
+	exec.SetAPOCRemoteURLAllowlist([]string{"api.example.com"})
+	_, err = exec.callApocLoadCsv(ctx, []interface{}{"https://example.com/data.csv"})
+	require.ErrorIs(t, err, errAPOCRemoteURLHostNotAllowed)
+}
+
+func TestApocLoadExportHelpers_LocalFileLoadsDeniedByDefault(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "payload.json")
+	csvPath := filepath.Join(dir, "payload.csv")
+	require.NoError(t, os.WriteFile(jsonPath, []byte(`{"x":1}`), 0o644))
+	require.NoError(t, os.WriteFile(csvPath, []byte("a,b\n1,2\n"), 0o644))
+
+	_, err := exec.callApocLoadJson(ctx, []interface{}{jsonPath})
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	_, err = exec.callApocLoadCsv(ctx, []interface{}{csvPath})
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	_, err = exec.callApocLoadJsonArray(ctx, []interface{}{jsonPath})
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	_, err = exec.callApocImportJson(ctx, []interface{}{jsonPath})
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	_, err = exec.callApocExportJsonAll(ctx, []interface{}{jsonPath, map[string]interface{}{}})
+	require.ErrorIs(t, err, errAPOCLocalExportFileAccessDisabled)
+
+	_, err = exec.callApocExportCsvQuery(ctx, []interface{}{"RETURN 1 AS x", csvPath, map[string]interface{}{}})
+	require.ErrorIs(t, err, errAPOCLocalExportFileAccessDisabled)
+}
+
+func TestApocLoadExportHelpers_ResolveAPOCLocalFilePath_MirrorsNeo4jRules(t *testing.T) {
+	e := &StorageExecutor{}
+
+	_, err := e.resolveAPOCLocalImportFilePath("file:///tmp/payload.json")
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	e.SetAllowLocalAPOCFileAccess(true)
+	importRoot := t.TempDir()
+	e.SetAPOCLocalFileAccessRoot(importRoot)
+
+	resolved, err := e.resolveAPOCLocalImportFilePath("file:///../safe/payload.json")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(importRoot, "safe", "payload.json"), resolved)
+
+	resolved, err = e.resolveAPOCLocalImportFilePath("/tmp/../safe/payload.json")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(importRoot, "safe", "payload.json"), resolved)
+
+	_, err = e.resolveAPOCLocalImportFilePath("file://localhost/safe/payload.json")
+	require.ErrorIs(t, err, errAPOCFileAuthorityNotAllowed)
+
+	_, err = e.resolveAPOCLocalImportFilePath("file:///safe/payload.json?x=1")
+	require.ErrorIs(t, err, errAPOCFileQueryNotAllowed)
+
+	_, err = e.resolveAPOCLocalImportFilePath("file:///safe/payload.json#frag")
+	require.ErrorIs(t, err, errAPOCFileFragmentNotAllowed)
+}
+
+func TestApocLoadExportHelpers_ImportExportFileAccessCanBeSplit(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "payload.json")
+	csvPath := filepath.Join(dir, "payload.csv")
+	require.NoError(t, os.WriteFile(jsonPath, []byte(`{"x":1}`), 0o644))
+
+	exec.SetAllowLocalAPOCImportFileAccess(true)
+	_, err := exec.callApocLoadJson(ctx, []interface{}{jsonPath})
+	require.NoError(t, err)
+	_, err = exec.callApocExportCsvQuery(ctx, []interface{}{"RETURN 1 AS x", csvPath, map[string]interface{}{}})
+	require.ErrorIs(t, err, errAPOCLocalExportFileAccessDisabled)
+
+	exec.SetAllowLocalAPOCImportFileAccess(false)
+	exec.SetAllowLocalAPOCExportFileAccess(true)
+	_, err = exec.callApocLoadJson(ctx, []interface{}{jsonPath})
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+	_, err = exec.callApocExportCsvQuery(ctx, []interface{}{"RETURN 1 AS x", csvPath, map[string]interface{}{}})
+	require.NoError(t, err)
+}
+
+func TestApocLoadExportHelpers_FileURLReadsUseConfiguredImportRoot(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
+	importRoot := t.TempDir()
+	exec.SetAPOCLocalFileAccessRoot(importRoot)
+	ctx := context.Background()
+
+	safeDir := filepath.Join(importRoot, "safe")
+	require.NoError(t, os.MkdirAll(safeDir, 0o755))
+	jsonPath := filepath.Join(safeDir, "payload.json")
+	require.NoError(t, os.WriteFile(jsonPath, []byte(`{"name":"neo"}`), 0o644))
+
+	res, err := exec.callApocLoadJson(ctx, []interface{}{"file:///../safe/payload.json"})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	valueMap, ok := res.Rows[0][0].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "neo", valueMap["name"])
+}
+
+func TestApocLoadExportHelpers_FileURLExportsUseConfiguredImportRoot(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
+	importRoot := t.TempDir()
+	exec.SetAPOCLocalFileAccessRoot(importRoot)
+	ctx := context.Background()
+
+	outDir := filepath.Join(importRoot, "safe")
+	require.NoError(t, os.MkdirAll(outDir, 0o755))
+
+	_, err := exec.callApocExportCsvQuery(ctx, []interface{}{"RETURN 42 AS marker", "file:///../safe/out.csv", map[string]interface{}{}})
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(filepath.Join(outDir, "out.csv"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "42")
+}
+
+func TestApocLoadExportHelpers_CallApocExportJsonAll_NoFile(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	ctx := context.Background()
+
+	_, err := eng.CreateNode(&storage.Node{
+		ID:         "n1",
+		Labels:     []string{"Person"},
+		Properties: map[string]interface{}{"name": "alice"},
+	})
+	require.NoError(t, err)
+
+	res, err := exec.callApocExportJsonAll(ctx, []interface{}{"", map[string]interface{}{}})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	assert.Equal(t, "", res.Rows[0][0])
+	assert.EqualValues(t, 1, res.Rows[0][1])
+	assert.Contains(t, res.Rows[0][4].(string), "\"nodes\"")
+}
+func TestApocLoadExportHelpers_CallApocExportJsonAll_WriteError(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
+	ctx := context.Background()
+
+	_, err := eng.CreateNode(&storage.Node{
+		ID:         "n1",
+		Labels:     []string{"Person"},
+		Properties: map[string]interface{}{"name": "alice"},
+	})
+	require.NoError(t, err)
+
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(parent, []byte("file"), 0o600))
+	_, err = exec.callApocExportJsonAll(ctx, []interface{}{filepath.Join(parent, "subdir", "out.json"), map[string]interface{}{}})
+	require.Error(t, err)
+}

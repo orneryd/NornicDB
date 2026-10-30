@@ -1,0 +1,126 @@
+- id: cyphergraphprocedures.stream_nodes_failed
+  description: Expanded pseudo-locale projection node-stream failure.
+  other: "[!! failed to stream nodes: {{.Cause}} !!]"
+- id: cyphergraphprocedures.stream_edges_failed
+  description: Expanded pseudo-locale projection edge-stream failure.
+  other: "[!! failed to stream edges: {{.Cause}} !!]"
+- id: cyphergraphprocedures.build_graph_failed
+  description: Expanded pseudo-locale link-prediction graph build failure.
+  other: "[!! failed to build graph: {{.Cause}} !!]"
+- id: cyphergraphprocedures.source_node_required
+  description: Expanded pseudo-locale missing sourceNode parameter.
+  other: "[!! sourceNode parameter required !!]"
+- id: cyphergraphprocedures.config_value_out_of_range
+  description: Expanded pseudo-locale config value outside its range.
+  other: "[!! Value for `{{.Key}}` was `{{.Value}}`, but must be within the range {{.Range}}. !!]"
+- id: cyphergraphprocedures.graph_already_exists
+  description: Expanded pseudo-locale graph already exists.
+  other: '[!! A graph with name ''{{.Graph}}'' already exists. !!]'
+- id: cyphergraphprocedures.node_labels_not_found
+  description: Expanded pseudo-locale node labels not found.
+  other: '[!! Invalid node projection, one or more labels not found: ''{{.Labels}}'' !!]'
+- id: cyphergraphprocedures.relationship_types_not_found
+  description: Expanded pseudo-locale relationship types not found.
+  other: '[!! Invalid relationship projection, one or more relationship types not found: ''{{.Types}}'' !!]'
+- id: cyphergraphprocedures.node_properties_not_found
+  description: Expanded pseudo-locale node properties not found.
+  other: '[!! Node properties not found: ''{{.Properties}}'' !!]'
+- id: cyphergraphprocedures.relationship_properties_not_found
+  description: Expanded pseudo-locale relationship properties not found.
+  other: '[!! Relationship properties not found: ''{{.Properties}}'' (if you meant to count parallel relationships, use `property:''*''`). !!]'
+- id: cyphergraphprocedures.unsupported_orientation
+  description: Expanded pseudo-locale unsupported orientation.
+  other: '[!! Orientation `{{.Orientation}}` is not supported. Must be one of: [NATURAL, REVERSE, UNDIRECTED]. !!]'
+- id: cyphergraphprocedures.unsupported_aggregation
+  description: Expanded pseudo-locale unsupported aggregation.
+  other: '[!! Aggregation `{{.Aggregation}}` is not supported. Must be one of: [DEFAULT, NONE, SINGLE, SUM, MIN, MAX, COUNT]. !!]'
+- id: cyphergraphprocedures.invalid_projection
+  description: Expanded pseudo-locale invalid projection.
+  other: '[!! Cannot construct a {{.Kind}} projection out of a {{.Type}} !!]'
+- id: cyphergraphprocedures.config_unexpected_key
+  description: Expanded pseudo-locale config unexpected key.
+  other: '[!! Unexpected configuration key: {{.Key}} !!]'
+- id: cyphergraphprocedures.config_value_missing
+  description: Expanded pseudo-locale config value missing.
+  other: '[!! No value specified for the mandatory configuration parameter `{{.Key}}` !!]'
+- id: cyphergraphprocedures.config_value_type
+  description: Expanded pseudo-locale config value type.
+  other: '[!! The value of `{{.Key}}` must be of type `{{.Expected}}` but was `{{.Actual}}`. !!]'
+- id: cyphergraphprocedures.config_value_negative
+  description: Expanded pseudo-locale config value negative.
+  other: '[!! The value of `{{.Key}}` may not be negative. !!]'
+- id: cyphergraphprocedures.iteration_weight_type
+  description: Expanded pseudo-locale iteration weight type.
+  other: '[!! Iteration weights must be numbers, but found `{{.Value}}` of type `{{.Type}}` !!]'
+- id: cyphergraphprocedures.iteration_weights_empty
+  description: Expanded pseudo-locale iteration weights empty.
+  other: '[!! The value of `iterationWeights` must not be empty if `nodeSelfInfluence` is zero. !!]'
+- id: cyphergraphprocedures.feature_properties_required
+  description: Expanded pseudo-locale feature properties required.
+  other: '[!! When `propertyRatio` is non-zero, `featureProperties` may not be empty. !!]'
+- id: cyphergraphprocedures.feature_properties_missing
+  description: Expanded pseudo-locale feature properties missing.
+  other: '[!! The feature properties {{.Properties}} are not present for all requested labels. Requested labels: {{.Labels}}. Properties available on all requested labels: {{.Available}} !!]'
+- id: cyphergraphprocedures.feature_property_invalid
+  description: Expanded pseudo-locale feature property invalid.
+  other: '[!! Node with ID `{{.Node}}` has invalid feature property value {{.Value}} for property `{{.Property}}` !!]'
+- id: cyphergraphprocedures.weight_property_not_found
+  description: Expanded pseudo-locale weight property not found.
+  other: '[!! Relationship weight property `{{.Property}}` not found in relationship types {{.Types}}. Properties existing on all relationship types: {{.Available}} !!]'
+- id: cyphergraphprocedures.relationship_property_missing
+  description: Expanded pseudo-locale relationship property missing.
+  other: '[!! Missing relationship property `{{.Property}}` on relationship between nodes with ids `{{.Source}}` and `{{.Target}}`. !!]'
+- id: cyphergraphprocedures.node_labels_not_in_graph
+  description: Expanded pseudo-locale node labels not in graph.
+  other: '[!! Could not find the specified `nodeLabels` of {{.Labels}}. Available labels are {{.Available}}. !!]'
+- id: cyphergraphprocedures.relationship_types_not_in_graph
+  description: Expanded pseudo-locale relationship types not in graph.
+  other: '[!! Could not find the specified `relationshipTypes` of {{.Types}}. Available relationship types are {{.Available}}. !!]'
+- id: cyphergraphprocedures.source_node_not_found
+  description: Expanded pseudo-locale source node not found.
+  other: '[!! sourceNode `{{.Node}}` does not exist in the graph !!]'
+- id: cyphergraphprocedures.graph_not_found
+  description: Expanded pseudo-locale graph not found.
+  other: '[!! Graph with name `{{.Graph}}` does not exist on database `{{.Database}}`. It might exist on another database. !!]'
+- id: cyphergraphprocedures.node_property_not_in_graph
+  description: Expanded pseudo-locale node property not in graph.
+  other: '[!! No node projection with property ''{{.Property}}'' exists. !!]'
+- id: cyphergraphprocedures.star_property_requires_count
+  description: Expanded pseudo-locale star property requires count.
+  other: '[!! A ''*'' property key can only be used in combination with count aggregation. !!]'
+- id: cyphergraphprocedures.job_id_type
+  description: Expanded pseudo-locale job id type.
+  other: '[!! Expected JobId or String. Got {{.Type}}. !!]'
+- id: cyphergraphprocedures.unsupported_gds_value
+  description: Expanded pseudo-locale unsupported gds value.
+  other: '[!! Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`. !!]'
+- id: cyphergraphprocedures.relationship_end_not_projected
+  description: Expanded pseudo-locale relationship end not projected.
+  other: '[!! Failed to load a relationship because its {{.Side}}-node with id {{.Node}} is not part of the node query or projection. To ignore the relationship, set the configuration parameter `validateRelationships` to false. !!]'
+- id: cyphergraphprocedures.unsupported_array_type
+  description: Expanded pseudo-locale unsupported array type.
+  other: '[!! Loading of values of type {{.Type}} is currently not supported !!]'
+- id: cyphergraphprocedures.unsafe_conversion
+  description: Expanded pseudo-locale unsafe conversion.
+  other: '[!! Cannot safely convert {{.Value}} into {{.Target}}. !!]'
+- id: cyphergraphprocedures.array_lengths_differ
+  description: Expanded pseudo-locale array lengths differ.
+  other: '[!! The property `{{.Property}}` contains arrays of differing lengths `{{.Found}}` and `{{.First}}`. !!]'
+- id: cyphergraphprocedures.unsafe_long_conversion
+  description: Expanded pseudo-locale unsafe long conversion.
+  other: '[!! Cannot safely convert {{.Value}} into an long value !!]'
+- id: cyphergraphprocedures.unsafe_long_array_conversion
+  description: Expanded pseudo-locale unsafe long array conversion.
+  other: '[!! Cannot safely convert {{.Value}} into a Long Array. Cannot safely convert {{.Fraction}} into an long value !!]'
+- id: cyphergraphprocedures.property_read_type
+  description: GDS incompatible typed property read. Requested and Stored are untranslated type names.
+  other: '[!! Tried to retrieve a value of type {{.Requested}} value from properties of type {{.Stored}} !!]'
+- id: cyphergraphprocedures.relationship_value_type
+  description: GDS nonnumeric relationship property. Type and Value are untranslated.
+  other: '[!! Unsupported type [{{.Type}}] of value {{.Value}}. Please use a numeric property. !!]'
+- id: cyphergraphprocedures.default_property_type
+  description: GDS incompatible default property value. Expected and Actual are untranslated.
+  other: '[!! Expected type of default value to be `{{.Expected}}`. But got `{{.Actual}}`. !!]'
+- id: cyphergraphprocedures.unsafe_double_conversion
+  description: Expanded pseudo-locale Long to Double import bound.
+  other: '[!! Cannot safely convert {{.Value}} into an double value !!]'

@@ -1,0 +1,222 @@
+- id: server.application_memory_pressure
+  description: HTTP admission response when the configured application soft memory limit is reached.
+  other: Application memory soft limit reached; retry after memory is released.
+- id: server.application_memory_unavailable
+  description: HTTP admission response while an enabled memory sampler has no fresh reading.
+  other: Memory usage readings are unavailable; retry when monitoring recovers.
+- id: server.role_entitlements_unavailable
+  description: Neo4j HTTP response when role entitlements cannot be configured.
+  other: Role entitlements are not configured (auth disabled or system DB unavailable).
+- id: server.role_entitlements_body_invalid
+  description: Neo4j HTTP validation response for role entitlement updates.
+  other: body must contain role and entitlements or mappings array
+- id: server.roles_unavailable_detailed
+  description: Neo4j HTTP response when role configuration is unavailable because auth or system DB is unavailable.
+  other: Roles are not configured (auth disabled or system DB unavailable).
+- id: server.role_already_exists
+  description: Neo4j HTTP conflict response when a role already exists.
+  other: role already exists
+- id: server.roles_unavailable
+  description: Neo4j HTTP response when roles are not configured.
+  other: Roles are not configured.
+- id: server.new_role_already_exists
+  description: Neo4j HTTP conflict response when a renamed role already exists.
+  other: new role name already exists
+- id: server.method_patch_or_delete_required
+  description: HTTP response for an endpoint that accepts PATCH or DELETE.
+  other: PATCH or DELETE required
+- id: server.database_allowlist_unavailable
+  description: Neo4j HTTP response when database access allowlist configuration is unavailable.
+  other: Database access allowlist is not configured (auth disabled or system DB unavailable).
+- id: server.database_privileges_unavailable
+  description: Neo4j HTTP response when database access privilege configuration is unavailable.
+  other: Database access privileges are not configured (auth disabled or system DB unavailable).
+- id: server.database_name_required
+  description: Neo4j HTTP validation response when a database name is absent.
+  other: database name required
+- id: server.unknown_endpoint
+  description: Neo4j HTTP response for an unknown database endpoint.
+  other: unknown endpoint
+- id: server.unknown_transaction_endpoint
+  description: Neo4j HTTP response for an unknown transaction endpoint.
+  other: unknown transaction endpoint
+- id: server.gpu_unavailable
+  description: HTTP GPU operation failure. Cause is diagnostic text.
+  other: "GPU unavailable: {{.Cause}}"
+- id: server.heimdall_disabled
+  description: HTTP response when Heimdall is disabled by configuration.
+  other: Heimdall is disabled by configuration
+- id: server.heimdall_initializing
+  description: HTTP response while Heimdall is still initializing.
+  other: Heimdall is initializing, please try again shortly
+- id: server.gpu_acceleration_enabled
+  description: HTTP confirmation after enabling GPU acceleration.
+  other: GPU acceleration enabled
+- id: server.gpu_acceleration_disabled
+  description: HTTP confirmation after disabling GPU acceleration while retaining CPU fallback.
+  other: GPU acceleration disabled (CPU fallback active)
+- id: server.embedding_regeneration_started
+  description: HTTP confirmation after starting asynchronous embedding regeneration. The route is a machine identifier and must not be translated.
+  other: Regeneration started - clearing embeddings and regenerating in background. Check /nornicdb/embed/stats for progress.
+- id: server.embedding_worker_already_running
+  description: HTTP status when an embedding trigger finds the worker active.
+  other: Embedding worker already running - will continue processing
+- id: server.embedding_worker_triggered
+  description: HTTP confirmation after triggering background embedding work.
+  other: Embedding worker triggered - processing nodes in background
+- id: server.retention_policy_deleted
+  description: HTTP confirmation after deleting a retention policy.
+  other: deleted
+- id: server.retention_hold_released
+  description: HTTP confirmation after releasing a retention hold.
+  other: released
+- id: server.retention_sweep_triggered
+  description: HTTP confirmation after triggering a retention sweep.
+  other: sweep triggered
+- id: server.backup_complete
+  description: HTTP confirmation after completing a database backup.
+  other: backup complete
+- id: server.log.mcp_disabled
+  description: Server startup log when MCP is disabled by configuration.
+  other: mcp server disabled via configuration
+- id: server.log.search_reconcile_storage_unavailable
+  description: Server startup warning when search reconciliation cannot access a database storage engine.
+  other: "startup search reconcile: storage unavailable"
+- id: server.log.search_reconcile_failed
+  description: Server startup warning when search index reconciliation fails for a database.
+  other: startup search reconcile failed
+- id: server.log.remote_credentials_key_fallback
+  description: Server startup warning when another configured secret is reused for remote credential encryption.
+  other: remote credential encryption key fallback in use
+- id: server.log.ui_headless
+  description: Server startup log when the browser UI is disabled in headless mode.
+  other: "headless mode: UI disabled"
+- id: server.log.authentication_disabled
+  description: Server startup warning when authentication is disabled.
+  other: authentication disabled
+- id: server.log.ui_initialization_failed
+  description: Server startup warning when browser UI assets cannot be initialized. Error remains structured diagnostic text.
+  other: UI initialization failed
+- id: server.log.ui_enabled
+  description: Server startup log when browser UI routes are registered.
+  other: UI browser enabled
+- id: server.log.rate_limit_enabled
+  description: Server startup log when per-IP request rate limiting is enabled.
+  other: rate limiting enabled
+- id: server.log.graphql_enabled
+  description: Server startup log after GraphQL routes are registered.
+  other: graphql API enabled
+- id: server.log.heimdall_disabled
+  description: Server startup log when the Heimdall AI assistant is disabled.
+  other: Heimdall agentic harness disabled; configured plugins remain available
+- id: server.log.search_rerank_disabled
+  description: Server startup log when stage-2 search reranking is disabled.
+  other: search rerank disabled
+- id: server.log.search_rerank_api_url_missing
+  description: Server startup warning when external search reranking is enabled without an API URL.
+  other: search rerank enabled but API URL not set; stage-2 reranking disabled
+- id: server.log.search_reranker_ready
+  description: Server startup log when a local or external stage-2 search reranker is ready.
+  other: search reranker ready (stage-2 reranking enabled)
+- id: server.log.search_reranker_loading
+  description: Server startup log while a local stage-2 search reranker loads asynchronously.
+  other: loading search reranker model
+- id: server.log.slow_query_logging_enabled
+  description: Server startup log when in-process slow-query logging is enabled.
+  other: slow query logging enabled
+- id: server.log.slow_query_logging_configured
+  description: Server startup log when file-backed slow-query logging is configured.
+  other: slow query logging configured
+- id: server.log.slow_query_log_open_failed
+  description: Server startup warning when the slow-query log file cannot be opened.
+  other: failed to open slow query log file
+- id: server.log.http2_enabled
+  description: Server startup log when HTTP/2 transport is enabled.
+  other: HTTP/2 enabled
+- id: server.log.heimdall_initializing
+  description: Heimdall asynchronous initialization startup log.
+  other: heimdall AI assistant initializing asynchronously
+- id: server.log.heimdall_provider_resolved
+  description: Resolved Heimdall provider log.
+  other: heimdall provider resolved
+- id: server.log.heimdall_initialization_failed
+  description: Heimdall initialization failure warning.
+  other: heimdall initialization failed
+- id: server.log.apoc_plugins_loading
+  description: APOC plugin loading debug log.
+  other: loading APOC plugins
+- id: server.log.apoc_plugins_load_failed
+  description: APOC plugin loading failure warning.
+  other: failed to load APOC plugins
+- id: server.log.heimdall_plugins_loading
+  description: Heimdall plugin loading debug log.
+  other: loading Heimdall plugins
+- id: server.log.heimdall_plugins_load_failed
+  description: Heimdall plugin loading failure warning.
+  other: failed to load Heimdall plugins
+- id: server.log.heimdall_plugins_directory_empty
+  description: Empty Heimdall plugin directory debug log.
+  other: heimdall plugins dir is empty
+- id: server.log.heimdall_plugins_directory_duplicate
+  description: Duplicate plugin directory debug log.
+  other: heimdall plugins dir same as plugins dir; skipping
+- id: server.log.heimdall_ready
+  description: Heimdall ready startup log.
+  other: heimdall AI assistant ready
+- id: server.log.heimdall_plugins_missing
+  description: Missing Heimdall plugins warning.
+  other: no heimdall plugins loaded — watcher logs will be absent
+- id: server.log.heimdall_action_registered
+  description: Heimdall action registration debug log.
+  other: heimdall action registered
+- id: server.log.search_reranker_model_unavailable
+  description: Local search reranker model unavailable warning.
+  other: search reranker model unavailable; stage-2 reranking disabled, RRF order only
+- id: server.log.search_reranker_health_check_failed
+  description: Search reranker health-check failure warning.
+  other: search reranker failed health check
+- id: server.log.embedding_model_loading
+  description: Embedding model loading startup log.
+  other: loading embedding model
+- id: server.log.embedding_retry_loop_stopped
+  description: Embedding retry-loop shutdown log.
+  other: "embedding init retry loop stopped: server shutting down"
+- id: server.log.embedding_cache_enabled
+  description: Embedding cache enabled log.
+  other: embedding cache enabled
+- id: server.log.embeddings_ready
+  description: Embedding provider ready log.
+  other: embeddings ready
+- id: server.log.embedding_initialization_attempt_failed
+  description: Embedding initialization attempt failure warning.
+  other: embedding init attempt failed
+- id: server.log.embedding_initialization_retrying
+  description: Embedding initialization exponential-backoff retry log.
+  other: retrying embedding init (exponential backoff)
+- id: server.log.embedding_initialization_retry_interrupted
+  description: Embedding initialization retry interrupted by shutdown log.
+  other: embedding init retry interrupted by server shutdown
+- id: server.log.embedding_retry_interval_capped
+  description: Embedding initialization periodic retry log.
+  other: embedding init retry interval capped; continuing periodic retries
+- id: server.log.rbac_roles_load_failed
+  description: RBAC roles load failure warning.
+  other: failed to load RBAC roles
+- id: server.log.rbac_allowlist_load_failed
+  description: RBAC allowlist load failure warning.
+  other: failed to load RBAC allowlist
+- id: server.log.rbac_allowlist_seed_failed
+  description: RBAC allowlist seed failure warning.
+  other: failed to seed RBAC allowlist
+- id: server.log.rbac_privileges_load_failed
+  description: RBAC privileges load failure warning.
+  other: failed to load RBAC privileges
+- id: server.log.rbac_role_entitlements_load_failed
+  description: RBAC role entitlements load failure warning.
+  other: failed to load RBAC role entitlements
+- id: server.log.database_config_store_load_failed
+  description: Per-database configuration store load failure warning.
+  other: failed to load per-DB config store
+- id: server.log.http_serve_failed
+  description: Unexpected HTTP serving failure log.
+  other: http server error

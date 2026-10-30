@@ -1,0 +1,139 @@
+name: CI
+
+# Actions minutes are budgeted: nothing runs automatically on pushes or pull
+# requests. Run checks locally with `make verify`; manual GitHub runs require
+# approval through the admin-approved-actions environment before jobs start.
+# See CONTRIBUTING.md, "Development workflow".
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to check out"
+        required: true
+        type: string
+    secrets:
+      COVERALLS_REPO_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch, tag, or commit SHA to run CI against (default: the branch selected above)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# A newer request for the same pull request or ref replaces a running one.
+concurrency:
+  group: ci-${{ inputs.ref || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || inputs.branch || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Validate localization catalogs
+        run: |
+          go test ./pkg/localization ./scripts/localization_catalog ./scripts/localization_inventory
+          go generate ./pkg/localization
+          git diff --exit-code -- pkg/localization/catalog_manifest_gen.go
+          go run ./scripts/localization_catalog -check
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI assets
+        run: |
+          cd ui
+          npm ci
+          npm run build
+
+      - name: Prepare llama CPU libs
+        run: bash scripts/hydrate-llama-cpu-libs.sh
+
+      - name: Build
+        run: make build
+
+      - name: Build local GGUF provider with yzma
+        run: CGO_ENABLED=0 go build -tags 'noui,localllm,yzma' -o /tmp/nornicdb-yzma ./cmd/nornicdb
+
+  coverage:
+    name: Test and Coverage
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || inputs.branch || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI assets
+        run: |
+          cd ui
+          npm ci
+          npm run build
+
+      - name: Prepare llama CPU libs
+        run: bash scripts/hydrate-llama-cpu-libs.sh
+
+      - name: Test and Generate coverage report
+        # The groups live in scripts/ci/test-groups.sh so `make verify` runs
+        # exactly the same suite locally. It stops at the first failing group
+        # and writes coverage.out for goveralls.
+        run: bash scripts/ci/test-groups.sh coverage.raw.out coverage.out
+
+      - name: Install goveralls
+        run: go install github.com/mattn/goveralls@latest
+
+      - name: Upload coverage to Coveralls
+        if: ${{ env.COVERALLS_REPO_TOKEN != '' }}
+        run: |
+          "$(go env GOPATH)/bin/goveralls" \
+            -coverprofile=coverage.out \
+            -service=github \
+            -repotoken="$COVERALLS_REPO_TOKEN"

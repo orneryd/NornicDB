@@ -1,0 +1,162 @@
+- id: cyphercomposite.constituent_alias_expected
+  description: Falta ALIAS en la definición del componente.
+  other: "sintaxis de componente no válida: se esperaba ALIAS"
+- id: cyphercomposite.constituent_alias_name_empty
+  description: Nombre de alias del componente vacío.
+  other: "sintaxis de componente no válida: el nombre del alias no puede estar vacío"
+- id: cyphercomposite.constituent_alias_name_invalid
+  description: Nombre de alias no válido. Cause no se traduce.
+  other: "sintaxis de componente no válida: nombre del alias: {{.Cause}}"
+- id: cyphercomposite.constituent_for_database_expected
+  description: Falta FOR DATABASE en la definición del componente.
+  other: "sintaxis de componente no válida: se esperaba FOR DATABASE"
+- id: cyphercomposite.constituent_database_name_empty
+  description: Nombre de base de datos del componente vacío.
+  other: "sintaxis de componente no válida: el nombre de la base de datos no puede estar vacío"
+- id: cyphercomposite.constituent_database_name_invalid
+  description: Nombre de base de datos no válido. Cause no se traduce.
+  other: "sintaxis de componente no válida: nombre de la base de datos: {{.Cause}}"
+- id: cyphercomposite.constituent_remote_uri_expected
+  description: Falta el URI remoto después de AT.
+  other: "sintaxis de componente no válida: se esperaba un URI remoto después de AT"
+- id: cyphercomposite.constituent_remote_uri_invalid
+  description: URI remoto no válido. Cause no se traduce.
+  other: "sintaxis de componente no válida: URI remoto: {{.Cause}}"
+- id: cyphercomposite.constituent_remote_uri_empty
+  description: URI remoto vacío.
+  other: "sintaxis de componente no válida: el URI remoto no puede estar vacío"
+- id: cyphercomposite.constituent_user_empty
+  description: Usuario remoto vacío.
+  other: "sintaxis de componente no válida: el usuario no puede estar vacío"
+- id: cyphercomposite.constituent_user_invalid
+  description: Usuario remoto no válido. Cause no se traduce.
+  other: "sintaxis de componente no válida: usuario: {{.Cause}}"
+- id: cyphercomposite.constituent_password_empty
+  description: Contraseña remota vacía.
+  other: "sintaxis de componente no válida: la contraseña no puede estar vacía"
+- id: cyphercomposite.constituent_password_invalid
+  description: Contraseña remota no válida. Cause no se traduce.
+  other: "sintaxis de componente no válida: contraseña: {{.Cause}}"
+- id: cyphercomposite.constituent_oidc_credential_forwarding_expected
+  description: Cláusula OIDC CREDENTIAL FORWARDING incompleta.
+  other: "sintaxis de componente no válida: se esperaba OIDC CREDENTIAL FORWARDING"
+- id: cyphercomposite.constituent_secret_ref_expected
+  description: Falta REF después de SECRET.
+  other: "sintaxis de componente no válida: se esperaba SECRET REF"
+- id: cyphercomposite.constituent_secret_ref_empty
+  description: Referencia secreta vacía.
+  other: "sintaxis de componente no válida: la referencia secreta no puede estar vacía"
+- id: cyphercomposite.constituent_secret_ref_invalid
+  description: Referencia secreta no válida. Cause no se traduce.
+  other: "sintaxis de componente no válida: referencia secreta: {{.Cause}}"
+- id: cyphercomposite.constituent_type_empty
+  description: Tipo de componente vacío.
+  other: "sintaxis de componente no válida: el tipo no puede estar vacío"
+- id: cyphercomposite.constituent_type_invalid
+  description: Tipo de componente no válido. Cause no se traduce.
+  other: "sintaxis de componente no válida: tipo: {{.Cause}}"
+- id: cyphercomposite.constituent_type_unsupported
+  description: Tipo de componente no admitido.
+  other: "sintaxis de componente no válida: el tipo debe ser local o remote"
+- id: cyphercomposite.constituent_type_contradicts_at
+  description: El tipo local contradice una cláusula AT remota.
+  other: "sintaxis de componente no válida: TYPE local contradice AT (ya se especificó un URI remoto)"
+- id: cyphercomposite.constituent_access_mode_empty
+  description: Modo de acceso vacío.
+  other: "sintaxis de componente no válida: el modo de acceso no puede estar vacío"
+- id: cyphercomposite.constituent_access_mode_invalid
+  description: Modo de acceso no válido. Cause no se traduce.
+  other: "sintaxis de componente no válida: modo de acceso: {{.Cause}}"
+- id: cyphercomposite.constituent_access_mode_unsupported
+  description: Modo de acceso no admitido.
+  other: "sintaxis de componente no válida: el modo de acceso debe ser read, write o read_write"
+- id: cyphercomposite.constituent_unexpected_token
+  description: Token inesperado. Token no se traduce.
+  other: "sintaxis de componente no válida: token inesperado '{{.Token}}'"
+- id: cyphercomposite.constituent_auth_modes_conflict
+  description: Modos de autenticación remota incompatibles.
+  other: "sintaxis de componente no válida: no se puede combinar OIDC CREDENTIAL FORWARDING con USER/PASSWORD"
+- id: cyphercomposite.constituent_user_password_required
+  description: Autenticación de usuario y contraseña incompleta.
+  other: "sintaxis de componente no válida: se deben proporcionar USER y PASSWORD"
+- id: cyphercomposite.constituent_remote_required
+  description: Se proporcionó autenticación para un componente local.
+  other: "sintaxis de componente no válida: USER/PASSWORD y OIDC CREDENTIAL FORWARDING requieren un componente remoto (AT '<url>' o TYPE remote)"
+- id: cyphercomposite.database_manager_unavailable
+  description: El comando requiere compatibilidad con varias bases de datos.
+  other: "el administrador de bases de datos no está disponible; {{.Command}} requiere compatibilidad con varias bases de datos"
+- id: cyphercomposite.create_invalid_syntax
+  description: Sintaxis CREATE COMPOSITE DATABASE no válida.
+  other: "sintaxis de CREATE COMPOSITE DATABASE no válida"
+- id: cyphercomposite.create_database_name_expected
+  description: Falta el nombre durante la creación.
+  other: "sintaxis de CREATE COMPOSITE DATABASE no válida: se esperaba el nombre de la base de datos"
+- id: cyphercomposite.create_database_name_empty
+  description: Nombre vacío durante la creación.
+  other: "sintaxis de CREATE COMPOSITE DATABASE no válida: el nombre de la base de datos no puede estar vacío"
+- id: cyphercomposite.create_tokenize_failed
+  description: Error de análisis durante la creación. Cause no se traduce.
+  other: "sintaxis de CREATE COMPOSITE DATABASE no válida: {{.Cause}}"
+- id: cyphercomposite.create_constituent_required
+  description: La creación requiere un componente.
+  other: "sintaxis de CREATE COMPOSITE DATABASE no válida: se requiere al menos un componente"
+- id: cyphercomposite.create_database_failed
+  description: Error al crear una base de datos compuesta. Los valores no se traducen.
+  other: "no se pudo crear la base de datos compuesta '{{.Database}}': {{.Cause}}"
+- id: cyphercomposite.drop_invalid_syntax
+  description: Sintaxis DROP COMPOSITE DATABASE no válida.
+  other: "sintaxis de DROP COMPOSITE DATABASE no válida"
+- id: cyphercomposite.drop_database_name_expected
+  description: Falta el nombre durante la eliminación.
+  other: "sintaxis de DROP COMPOSITE DATABASE no válida: se esperaba el nombre de la base de datos"
+- id: cyphercomposite.drop_database_name_empty
+  description: Nombre vacío durante la eliminación.
+  other: "sintaxis de DROP COMPOSITE DATABASE no válida: el nombre de la base de datos no puede estar vacío"
+- id: cyphercomposite.drop_database_failed
+  description: Error al eliminar una base de datos compuesta. Los valores no se traducen.
+  other: "no se pudo eliminar la base de datos compuesta '{{.Database}}': {{.Cause}}"
+- id: cyphercomposite.show_constituents_invalid_syntax
+  description: Sintaxis SHOW CONSTITUENTS no válida.
+  other: "sintaxis de SHOW CONSTITUENTS no válida"
+- id: cyphercomposite.show_constituents_name_expected
+  description: Falta el nombre para SHOW CONSTITUENTS.
+  other: "sintaxis de SHOW CONSTITUENTS no válida: se esperaba el nombre después de FOR COMPOSITE DATABASE"
+- id: cyphercomposite.get_constituents_failed
+  description: Error al obtener componentes. Cause no se traduce.
+  other: "no se pudieron obtener los componentes: {{.Cause}}"
+- id: cyphercomposite.alter_invalid_syntax
+  description: Sintaxis ALTER COMPOSITE DATABASE no válida.
+  other: "sintaxis de ALTER COMPOSITE DATABASE no válida"
+- id: cyphercomposite.alter_database_keyword_expected
+  description: Falta DATABASE después de ALTER COMPOSITE.
+  other: "sintaxis de ALTER COMPOSITE DATABASE no válida: se esperaba DATABASE después de COMPOSITE"
+- id: cyphercomposite.alter_database_name_expected
+  description: Falta el nombre durante la modificación.
+  other: "sintaxis de ALTER COMPOSITE DATABASE no válida: se esperaba el nombre de la base de datos"
+- id: cyphercomposite.alter_database_name_empty
+  description: Nombre vacío durante la modificación.
+  other: "sintaxis de ALTER COMPOSITE DATABASE no válida: el nombre de la base de datos no puede estar vacío"
+- id: cyphercomposite.alter_tokenize_failed
+  description: Error de análisis durante la modificación. Cause no se traduce.
+  other: "sintaxis de ALTER COMPOSITE DATABASE no válida: {{.Cause}}"
+- id: cyphercomposite.alter_add_alias_expected
+  description: Falta la acción ADD ALIAS.
+  other: "sintaxis de ALTER COMPOSITE DATABASE no válida: se esperaba ADD ALIAS"
+- id: cyphercomposite.add_alias_unexpected_token
+  description: Token inesperado en ADD ALIAS. Token no se traduce.
+  other: "sintaxis de ADD ALIAS no válida: token inesperado '{{.Token}}'"
+- id: cyphercomposite.add_constituent_failed
+  description: Error al añadir un componente. Los valores no se traducen.
+  other: "no se pudo añadir el componente a la base de datos compuesta '{{.Database}}': {{.Cause}}"
+- id: cyphercomposite.alter_drop_alias_expected
+  description: Falta la acción DROP ALIAS.
+  other: "sintaxis de ALTER COMPOSITE DATABASE no válida: se esperaba DROP ALIAS"
+- id: cyphercomposite.drop_alias_name_empty
+  description: Nombre de alias vacío durante la eliminación.
+  other: "sintaxis de DROP ALIAS no válida: el nombre del alias no puede estar vacío"
+- id: cyphercomposite.remove_constituent_failed
+  description: Error al eliminar un componente. Los valores no se traducen.
+  other: "no se pudo eliminar el componente de la base de datos compuesta '{{.Database}}': {{.Cause}}"
+- id: cyphercomposite.alter_action_expected
+  description: Falta una acción admitida de ALTER COMPOSITE DATABASE.
+  other: "sintaxis de ALTER COMPOSITE DATABASE no válida: se esperaba ADD ALIAS o DROP ALIAS"

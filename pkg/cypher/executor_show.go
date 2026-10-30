@@ -1,0 +1,1888 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"log/slog"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+// ===== SHOW Commands (Neo4j compatibility) =====
+
+func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) (*ExecuteResult, error) {
+	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
+	upper := upperASCII(query)
+	prefix := "SHOW SETTINGS"
+	if !strings.HasPrefix(upper, prefix) {
+		prefix = "SHOW SETTING"
+	}
+	if !strings.HasPrefix(upper, prefix) {
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW SETTINGS"), nil)
+	}
+	tail := strings.TrimSpace(query[len(prefix):])
+
+	selected := make(map[string]struct{})
+	if tail != "" {
+		for _, rawName := range strings.Split(tail, ",") {
+			name := strings.Trim(strings.TrimSpace(rawName), "`'\"")
+			if name == "" {
+				return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW SETTINGS"), nil)
+			}
+			selected[name] = struct{}{}
+		}
+	}
+
+	definitions := dbconfig.Settings()
+	snapshot := SettingsSnapshot{}
+	if e.settingsResolver != nil {
+		snapshot = e.settingsResolver()
+	}
+	sort.Slice(definitions, func(i, j int) bool { return definitions[i].Name < definitions[j].Name })
+	rows := make([][]interface{}, 0, len(definitions))
+	seen := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		if _, duplicate := seen[definition.Name]; duplicate {
+			continue
+		}
+		seen[definition.Name] = struct{}{}
+		if len(selected) > 0 {
+			if _, ok := selected[definition.Name]; !ok {
+				continue
+			}
+		}
+		value := definition.DefaultValue
+		startupValue := definition.DefaultValue
+		configuredValue, explicitlySet := snapshot.Configured[definition.Name]
+		if explicitlySet {
+			value = configuredValue
+		}
+		if activeValue, ok := snapshot.Active[definition.Name]; ok {
+			value = activeValue
+			startupValue = activeValue
+		}
+		value = observability.DisplayValue(definition.Name, value)
+		startupValue = observability.DisplayValue(definition.Name, startupValue)
+		rows = append(rows, []interface{}{
+			definition.Name,
+			value,
+			definition.Dynamic,
+			observability.DisplayValue(definition.Name, definition.DefaultValue),
+			definition.Description,
+			startupValue,
+			explicitlySet,
+			append([]string(nil), definition.ValidValues...),
+			definition.Deprecated,
+		})
+	}
+
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: []string{"name", "value", "isDynamic", "defaultValue", "description", "startupValue", "isExplicitlySet", "validValues", "isDeprecated"},
+		Rows:    rows,
+	}, showSettingsDefaultColumns), nil
+}
+
+// executeShowIndexes handles SHOW INDEXES command
+func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if isCompositeRoot(e.storage) {
+		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW INDEXES"), nil)
+	}
+	schema := e.storage.GetSchema()
+	rows := [][]interface{}{}
+	upper := upperASCII(strings.TrimSpace(cypher))
+	indexTypeFilter := ""
+	switch {
+	case strings.HasPrefix(upper, "SHOW FULLTEXT INDEX"):
+		indexTypeFilter = "FULLTEXT"
+	case strings.HasPrefix(upper, "SHOW RANGE INDEX"):
+		indexTypeFilter = "RANGE"
+	case strings.HasPrefix(upper, "SHOW VECTOR INDEX"):
+		indexTypeFilter = "VECTOR"
+	case strings.HasPrefix(upper, "SHOW LOOKUP INDEX"):
+		indexTypeFilter = "LOOKUP"
+	}
+	if schema != nil {
+		constraintStatements := map[string]interface{}{}
+		for _, constraint := range schema.GetAllConstraints() {
+			constraintStatements[constraint.Name] = showConstraintCreateStatement(constraint)
+		}
+		indexes := schema.GetIndexes()
+		rows = make([][]interface{}, 0, len(indexes))
+		for i, idx := range indexes {
+			idxMap, ok := idx.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			name, _ := idxMap["name"].(string)
+			idxType, _ := idxMap["type"].(string)
+			if idxType == "PROPERTY" || idxType == "COMPOSITE" {
+				idxType = "RANGE"
+			}
+			if indexTypeFilter != "" && !strings.EqualFold(idxType, indexTypeFilter) {
+				continue
+			}
+
+			entityType := "NODE"
+			if et, ok := idxMap["entityType"].(string); ok && et != "" {
+				entityType = et
+			}
+			provider := showIndexProvider(idxType)
+			if idxType == "LOOKUP" {
+				// A lookup index covers every label or type; Neo4j lists
+				// its labelsOrTypes and properties as null.
+				rows = append(rows, []interface{}{
+					int64(i + 1), name, "ONLINE", 100.0, idxType, entityType,
+					nil, nil, provider, nil, nil, nil, nil,
+					showIndexOptions(provider, nil), "",
+					showIndexCreateStatement("LOOKUP", name, entityType, nil, nil, nil),
+				})
+				continue
+			}
+			var labelsOrTypes []string
+			if l, ok := idxMap["label"].(string); ok && l != "" {
+				labelsOrTypes = []string{l}
+			} else if labels := showStringList(idxMap["labels"]); len(labels) > 0 {
+				labelsOrTypes = labels
+			} else if types := showStringList(idxMap["relationshipTypes"]); len(types) > 0 {
+				labelsOrTypes = types
+				entityType = string(storage.ConstraintEntityRelationship)
+			}
+			if labelsOrTypes == nil {
+				labelsOrTypes = []string{}
+			}
+			properties := showStringList(idxMap["properties"])
+			if p, ok := idxMap["property"].(string); ok && p != "" && len(properties) == 0 {
+				properties = []string{p}
+			}
+			if properties == nil {
+				properties = []string{}
+			}
+
+			config := map[string]interface{}{}
+			if idxType == "VECTOR" {
+				if dimensions, ok := idxMap["dimensions"].(int); ok && dimensions > 0 {
+					config["vector.dimensions"] = int64(dimensions)
+				}
+				if similarity, ok := idxMap["similarityFunc"].(string); ok && similarity != "" {
+					config["vector.similarity_function"] = upperASCII(similarity)
+				}
+			}
+
+			// An index a constraint owns is recreated by the constraint.
+			var owningConstraint interface{}
+			var createStatement interface{}
+			if oc, ok := idxMap["owningConstraint"].(string); ok && oc != "" {
+				owningConstraint = oc
+				createStatement = constraintStatements[oc]
+			} else {
+				createStatement = showIndexCreateStatement(idxType, name, entityType, labelsOrTypes, properties, config)
+			}
+
+			// NornicDB doesn't track index reads: lastRead, readCount and
+			// trackedSince are null, as Neo4j reports untracked reads.
+			rows = append(rows, []interface{}{
+				int64(i + 1),     // id
+				name,             // name
+				"ONLINE",         // state
+				100.0,            // populationPercent
+				idxType,          // type
+				entityType,       // entityType
+				labelsOrTypes,    // labelsOrTypes
+				properties,       // properties
+				provider,         // indexProvider
+				owningConstraint, // owningConstraint
+				nil,              // lastRead
+				nil,              // readCount
+				nil,              // trackedSince
+				showIndexOptions(provider, config),
+				"", // failureMessage
+				createStatement,
+			})
+		}
+	}
+
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: append(append([]string(nil), showIndexesDefaultColumns...), "trackedSince", "options", "failureMessage", "createStatement"),
+		Rows:    rows,
+	}, showIndexesDefaultColumns), nil
+}
+
+// executeShowConstraints handles SHOW [kind] CONSTRAINTS: every constraint
+// of the kind (showConstraintKindOf; all of them when there is none). A
+// Cypher 25 statement lists them as Neo4j 2026.09 does: uniqueness types
+// named NODE_PROPERTY_UNIQUENESS / RELATIONSHIP_PROPERTY_UNIQUENESS, the
+// enforcedLabel (a default column) and classification columns, and options
+// without an indexProvider; a Cypher 5 statement as Neo4j 5.26 does.
+func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if isCompositeRoot(e.storage) {
+		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW CONSTRAINTS"), nil)
+	}
+	if isShowConstraintContractsCommand(cypher) {
+		return e.executeShowConstraintContracts(ctx)
+	}
+	cypher25 := cypherVersionFromContext(ctx) == "25"
+	kind, _, err := showConstraintKindOf(cypher, cypher25)
+	if err != nil {
+		return nil, err
+	}
+	schema := e.storage.GetSchema()
+	rows := [][]interface{}{}
+	// row is one listing row in the version's column order (columns below);
+	// id is the constraint's place among all constraints, whatever the kind.
+	row := func(id int, name string, constraintType storage.ConstraintType, entityType storage.ConstraintEntityType, label string, properties []string,
+		ownedIndex, propertyType, createStatement interface{}, extensions ...interface{}) []interface{} {
+		typeName := showConstraintType(constraintType, entityType)
+		options := showConstraintOptions(constraintType)
+		if cypher25 {
+			typeName = showConstraintTypeCypher25(typeName)
+			if indexOptions, ok := options.(map[string]interface{}); ok {
+				options = map[string]interface{}{"indexConfig": indexOptions["indexConfig"]}
+			}
+		}
+		values := []interface{}{int64(id), name, typeName, string(entityType), []string{label}, properties}
+		if cypher25 {
+			values = append(values, nil, "undesignated")
+		}
+		values = append(values, ownedIndex, propertyType, options, createStatement)
+		return append(values, extensions...)
+	}
+
+	if schema != nil {
+		// Constraints and property type constraints, in name order: a
+		// constraint's id is its place there, the same in every listing
+		// and whatever the kind (the schema's maps have no order).
+		type listed struct {
+			name       string
+			constraint *storage.Constraint
+			typed      *storage.PropertyTypeConstraint
+		}
+		constraints := schema.GetAllConstraints()
+		typed := schema.GetAllPropertyTypeConstraints()
+		all := make([]listed, 0, len(constraints)+len(typed))
+		for index := range constraints {
+			all = append(all, listed{name: constraints[index].Name, constraint: &constraints[index]})
+		}
+		for index := range typed {
+			all = append(all, listed{name: typed[index].Name, typed: &typed[index]})
+		}
+		sort.SliceStable(all, func(i, j int) bool { return all[i].name < all[j].name })
+		for index, entry := range all {
+			if constraint := entry.typed; constraint != nil {
+				if kind.lists(storage.ConstraintPropertyType, constraint.EffectiveEntityType()) {
+					rows = append(rows, row(index+1, constraint.Name, storage.ConstraintPropertyType, constraint.EffectiveEntityType(), constraint.Label,
+						[]string{constraint.Property}, nil, string(constraint.ExpectedType),
+						showPropertyTypeCreateStatement(constraint.Name, constraint.EffectiveEntityType(), constraint.Label, constraint.Property, string(constraint.ExpectedType)),
+						nil, nil, nil, nil, nil))
+				}
+				continue
+			}
+			constraint := entry.constraint
+			if !kind.lists(constraint.Type, constraint.EffectiveEntityType()) {
+				continue
+			}
+			var ownedIndex interface{}
+			if constraint.OwnedIndex != "" {
+				ownedIndex = constraint.OwnedIndex
+			}
+			// Direction and maxCount for cardinality constraints.
+			var direction, maxCount interface{}
+			if constraint.Type == storage.ConstraintCardinality {
+				direction = constraint.Direction
+				maxCount = int64(constraint.MaxCount)
+			}
+			// Source/target labels and policy mode for policy constraints.
+			var sourceLabel, targetLabel, policyMode interface{}
+			if constraint.Type == storage.ConstraintPolicy {
+				sourceLabel = constraint.SourceLabel
+				targetLabel = constraint.TargetLabel
+				policyMode = constraint.PolicyMode
+			}
+			rows = append(rows, row(index+1, constraint.Name, constraint.Type, constraint.EffectiveEntityType(), constraint.Label, constraint.Properties,
+				ownedIndex, nil, showConstraintCreateStatement(*constraint), direction, maxCount, sourceLabel, targetLabel, policyMode))
+		}
+	}
+
+	// Neo4j's full set, then NornicDB's cardinality / policy constraint
+	// columns, which only YIELD * or YIELD <column> show.
+	defaults := showConstraintsDefaultColumns
+	columns := append([]string(nil), showConstraintsDefaultColumns[:6]...)
+	if cypher25 {
+		defaults = showConstraintsCypher25DefaultColumns
+		columns = append(columns, "enforcedLabel", "classification")
+	}
+	columns = append(columns, "ownedIndex", "propertyType", "options", "createStatement", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode")
+	return withShowDefaultColumns(&ExecuteResult{Columns: columns, Rows: rows}, defaults), nil
+}
+
+// showConstraintTypeCypher25 is a constraint type as Neo4j 2026.09 names it
+// in a Cypher 25 statement: uniqueness constraints are property uniqueness
+// constraints; the other names are 5.26's.
+func showConstraintTypeCypher25(typeName string) string {
+	switch typeName {
+	case "UNIQUENESS":
+		return "NODE_PROPERTY_UNIQUENESS"
+	case "RELATIONSHIP_UNIQUENESS":
+		return "RELATIONSHIP_PROPERTY_UNIQUENESS"
+	}
+	return typeName
+}
+
+// showStringList reads a string list from a schema listing value.
+func showStringList(value interface{}) []string {
+	switch v := value.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// showTailKeywords start the part of a SHOW command after the command itself.
+var showTailKeywords = []string{"YIELD", "WHERE", "RETURN", "ORDER BY", "SKIP", "LIMIT"}
+
+// showCommandHead returns the SHOW command without its YIELD / WHERE /
+// RETURN / ORDER BY / SKIP / LIMIT tail, which applyShowTail handles.
+func showCommandHead(cypher string) string {
+	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
+	end := len(query)
+	for _, keyword := range showTailKeywords {
+		if index := findKeywordIndexInContext(query, keyword); index >= 0 && index < end {
+			end = index
+		}
+	}
+	return strings.TrimSpace(query[:end])
+}
+
+// executeShowWithTail runs a SHOW command: run lists every row of the command
+// (given the command without its tail), and applyShowTail applies the tail.
+// Every SHOW command goes through it, so YIELD, WHERE, RETURN, aggregation,
+// ORDER BY and SKIP / LIMIT behave the same for all of them.
+func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	result, err := run(ctx, showCommandHead(cypher))
+	if err != nil {
+		return nil, err
+	}
+	sortShowRowsByName(result)
+	return e.applyShowTail(ctx, cypher, result, showDefaultColumns(result))
+}
+
+// sortShowRowsByName orders a SHOW listing by its name column, as Neo4j lists
+// every SHOW command (indexes and constraints by name, not creation order).
+// A listing without a string name column keeps its order.
+func sortShowRowsByName(result *ExecuteResult) {
+	column := -1
+	for i, name := range result.Columns {
+		if name == "name" {
+			column = i
+			break
+		}
+	}
+	if column < 0 {
+		return
+	}
+	name := func(row []interface{}) (string, bool) {
+		if column >= len(row) {
+			return "", false
+		}
+		value, ok := row[column].(string)
+		return value, ok
+	}
+	sorted := true
+	for i, row := range result.Rows {
+		current, ok := name(row)
+		if !ok {
+			return
+		}
+		if i > 0 {
+			if previous, _ := name(result.Rows[i-1]); previous > current {
+				sorted = false
+			}
+		}
+	}
+	if !sorted {
+		sort.SliceStable(result.Rows, func(i, j int) bool {
+			left, _ := name(result.Rows[i])
+			right, _ := name(result.Rows[j])
+			return left < right
+		})
+	}
+}
+
+// Neo4j's SHOW commands list a default set of columns, and YIELD * or YIELD
+// <column> the full set (#690). The listings build the full set in Neo4j's
+// order (NornicDB-only columns after it); these are the default sets.
+var (
+	showFunctionsDefaultColumns   = []string{"name", "category", "description"}
+	showSettingsDefaultColumns    = []string{"name", "value", "isDynamic", "defaultValue", "description"}
+	showProceduresDefaultColumns  = []string{"name", "description", "mode", "worksOnSystem"}
+	showDatabasesDefaultColumns   = []string{"name", "type", "aliases", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"}
+	showIndexesDefaultColumns     = []string{"id", "name", "state", "populationPercent", "type", "entityType", "labelsOrTypes", "properties", "indexProvider", "owningConstraint", "lastRead", "readCount"}
+	showConstraintsDefaultColumns = []string{"id", "name", "type", "entityType", "labelsOrTypes", "properties", "ownedIndex", "propertyType"}
+	// showConstraintsCypher25DefaultColumns are a Cypher 25 statement's
+	// default columns (Neo4j 2026.09), with enforcedLabel.
+	showConstraintsCypher25DefaultColumns = []string{"id", "name", "type", "entityType", "labelsOrTypes", "properties", "enforcedLabel", "ownedIndex", "propertyType"}
+)
+
+// showDefaultColumns returns the default columns of a SHOW listing, which the
+// listing records under the "showDefaultColumns" metadata key; nil when every
+// column is a default one.
+func showDefaultColumns(result *ExecuteResult) []string {
+	if result == nil || result.Metadata == nil {
+		return nil
+	}
+	defaults, _ := result.Metadata["showDefaultColumns"].([]string)
+	return defaults
+}
+
+// withShowDefaultColumns records the default columns of a SHOW listing.
+func withShowDefaultColumns(result *ExecuteResult, defaults []string) *ExecuteResult {
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]interface{}, 1)
+	}
+	result.Metadata["showDefaultColumns"] = defaults
+	return result
+}
+
+// projectShowColumns keeps columns of result, in that order.
+func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult {
+	index := make(map[string]int, len(result.Columns))
+	for i, column := range result.Columns {
+		index[column] = i
+	}
+	rows := make([][]interface{}, len(result.Rows))
+	cells := make([]interface{}, len(result.Rows)*len(columns))
+	for r, row := range result.Rows {
+		projected := cells[r*len(columns) : (r+1)*len(columns) : (r+1)*len(columns)]
+		for c, column := range columns {
+			if i, ok := index[column]; ok && i < len(row) {
+				projected[c] = row[i]
+			}
+		}
+		rows[r] = projected
+	}
+	return &ExecuteResult{Columns: append([]string(nil), columns...), Rows: rows}
+}
+
+// applyShowTail applies a SHOW command's tail to its rows with Neo4j's SHOW
+// grammar:
+//
+//	SHOW … WHERE <predicate>
+//	SHOW … YIELD <items> [ORDER BY …] [SKIP n] [LIMIT n] [WHERE …] [RETURN …]
+//
+// Without YIELD, the result has the command's default columns (defaults;
+// nil: all of them), as has SHOW … WHERE; YIELD * and YIELD <column> reach
+// every column.
+//
+// YIELD selects and renames columns; its ORDER BY / SKIP / LIMIT page the
+// rows before its WHERE filters them; RETURN (with aggregation, DISTINCT,
+// ORDER BY and SKIP / LIMIT expressions) runs over all remaining rows. As in
+// Cypher 25 (Neo4j 2026.09), any other clause may follow YIELD's items and
+// segments instead (WITH, UNWIND, MATCH, CALL, FILTER, a write, …): the
+// query continues over the yielded columns, and YIELD * isn't allowed. The
+// paging, filter and the rest run as one pipeline (runPipelineClauses), the
+// same row operators as every other clause. Any other form (RETURN after a
+// WHERE without YIELD, a WHERE before YIELD's ORDER BY, a non-literal YIELD
+// SKIP / LIMIT) is a SyntaxError, as in Neo4j.
+func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
+	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
+	head := showCommandHead(query)
+	if len(head) == len(query) {
+		if defaults != nil {
+			return projectShowColumns(result, defaults), nil
+		}
+		return result, nil
+	}
+	tail := strings.TrimSpace(query[len(head):])
+	invalid := func() error {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause",
+			localization.CypherAdminShowClauseInvalid())
+	}
+	if !startsWithKeywordFold(tail, "YIELD") {
+		if !startsWithKeywordFold(tail, "WHERE") {
+			return nil, invalid()
+		}
+		where := strings.TrimSpace(tail[len("WHERE"):])
+		for _, keyword := range []string{"RETURN", "ORDER BY", "SKIP", "LIMIT", "WITH", "YIELD"} {
+			if topLevelKeywordIndex(where, keyword) >= 0 {
+				return nil, invalid()
+			}
+		}
+		tail = "YIELD * WHERE " + where
+		if defaults != nil {
+			result = projectShowColumns(result, defaults)
+		}
+	}
+	body := strings.TrimSpace(tail[len("YIELD"):])
+	// A clause after YIELD's items and segments continues the query over the
+	// yielded columns (Cypher 25 composition).
+	continuation := ""
+	if start := showContinuationStart(body); start >= 0 {
+		continuation = strings.TrimSpace(body[start:])
+		body = strings.TrimSpace(body[:start])
+	}
+
+	// Segment boundaries, in the only order Neo4j accepts.
+	segments := []string{"ORDER BY", "SKIP", "LIMIT", "WHERE", "RETURN"}
+	positions := make([]int, len(segments))
+	itemsEnd := len(body)
+	for i, keyword := range segments {
+		positions[i] = topLevelKeywordIndex(body, keyword)
+		if positions[i] >= 0 && positions[i] < itemsEnd {
+			itemsEnd = positions[i]
+		}
+	}
+	returnIndex := positions[4]
+	head4 := body
+	if returnIndex >= 0 {
+		head4 = body[:returnIndex]
+	}
+	for _, keyword := range []string{"WITH", "MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"} {
+		if topLevelKeywordIndex(head4, keyword) >= 0 {
+			return nil, invalid()
+		}
+	}
+	last := -1
+	for i := 0; i < 4; i++ {
+		position := topLevelKeywordIndex(head4, segments[i])
+		if position < 0 {
+			continue
+		}
+		if position < last {
+			return nil, invalid()
+		}
+		last = position
+	}
+	segmentText := func(i int) string {
+		start := topLevelKeywordIndex(head4, segments[i])
+		if start < 0 {
+			return ""
+		}
+		end := len(head4)
+		for j := 0; j < 4; j++ {
+			if position := topLevelKeywordIndex(head4, segments[j]); position > start && position < end {
+				end = position
+			}
+		}
+		return strings.TrimSpace(head4[start+len(segments[i]) : end])
+	}
+	for _, i := range []int{1, 2} {
+		if value := segmentText(i); value != "" && !strings.HasPrefix(value, "$") {
+			if integer, literal := parseLiteralValueFromComputedRow(value); !literal {
+				return nil, invalid()
+			} else if _, isInteger := integer.(int64); !isInteger {
+				return nil, invalid()
+			}
+		}
+	}
+
+	items := strings.TrimSpace(body[:itemsEnd])
+	yield := parseYieldClause(ctx, "CALL show() YIELD "+items)
+	if yield == nil || items == "" || continuation != "" && yield.yieldAll {
+		return nil, invalid()
+	}
+	// The yielded columns keep their original names too: YIELD's ORDER BY and
+	// WHERE may use either (YIELD name AS indexName WHERE name = 'x'), as in
+	// Neo4j. Without RETURN, the YIELD items are the result.
+	outputs := append([]string(nil), result.Columns...)
+	projected := &ExecuteResult{Columns: append([]string(nil), result.Columns...), Rows: result.Rows}
+	if !yield.yieldAll {
+		if err := validateYieldColumnsExist(result.Columns, yield); err != nil {
+			return nil, err
+		}
+		outputs = outputs[:0]
+		index := make(map[string]int, len(result.Columns))
+		for i, column := range result.Columns {
+			index[column] = i
+		}
+		sources := make([]int, 0, len(yield.items))
+		for _, item := range yield.items {
+			name := item.column()
+			outputs = append(outputs, name)
+			if name != item.name {
+				projected.Columns = append(projected.Columns, name)
+				sources = append(sources, index[item.name])
+			}
+		}
+		if len(sources) > 0 {
+			projected.Rows = make([][]interface{}, len(result.Rows))
+			for r, row := range result.Rows {
+				extended := append(append(make([]interface{}, 0, len(row)+len(sources)), row...), make([]interface{}, len(sources))...)
+				for s, source := range sources {
+					if source < len(row) {
+						extended[len(row)+s] = row[source]
+					}
+				}
+				projected.Rows[r] = extended
+			}
+		}
+	}
+
+	var clauses strings.Builder
+	paging := ""
+	for i, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if value := segmentText(i); value != "" {
+			paging += " " + keyword + " " + value
+		}
+	}
+	if paging != "" {
+		clauses.WriteString("WITH *" + paging + " ")
+	}
+	if where := segmentText(3); where != "" {
+		types := map[string]string{"name": "String"}
+		for _, item := range yield.items {
+			if types[item.name] != "" {
+				types[item.column()] = types[item.name]
+			}
+		}
+		clause := pipelineClause{kind: pipelineClauseWith, text: "WITH * WHERE " + where}
+		if err := e.validateStaticOperatorTypes(ctx, clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx)); err != nil {
+			return nil, nornicerrors.MarkCompileTime(err)
+		}
+		clauses.WriteString("WITH * WHERE " + where + " ")
+	}
+	quoted := make([]string, len(outputs))
+	for i, column := range outputs {
+		quoted[i] = column
+		if name, ok := cyphertext.ScanIdentifier(column, 0); !ok || name.Value != column || name.End != len(column) {
+			quoted[i] = cyphertext.PrintIdentifier(column, nil, cyphertext.AcceptedSource) + " AS " + cyphertext.PrintIdentifier(column, nil, cyphertext.AcceptedSource)
+		}
+	}
+	// The RETURN, or the clauses that continue the query, see only the
+	// yielded columns, as in Neo4j.
+	after := continuation
+	if after == "" && returnIndex >= 0 {
+		after = showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", "))
+	}
+	if after != "" {
+		if err := e.validateSemanticScopes(ctx, showYieldedScopeStatement(outputs)+" "+after); err != nil {
+			return nil, err
+		}
+	}
+	switch {
+	case continuation != "":
+		clauses.WriteString("WITH " + strings.Join(quoted, ", ") + " " + continuation)
+	case returnIndex >= 0:
+		clauses.WriteString(showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", ")))
+	default:
+		clauses.WriteString("RETURN " + strings.Join(quoted, ", "))
+	}
+	return e.executeCallTail(ctx, projected, clauses.String())
+}
+
+// showYieldedScopeStatement binds a SHOW command's yielded columns, for
+// validating what follows its YIELD as a query over them; parameters stand
+// for the values, so no type is assumed.
+func showYieldedScopeStatement(columns []string) string {
+	items := make([]string, len(columns))
+	for i, column := range columns {
+		items[i] = "$" + generatedVariablePrefix + "show" + strconv.Itoa(i) + " AS " + labelExpressionNameText(column)
+	}
+	return "WITH " + strings.Join(items, ", ")
+}
+
+// showContinuationStart is the index of the first clause after a SHOW
+// command's YIELD items and segments that continues the query (anything but
+// ORDER BY, SKIP, LIMIT, WHERE and RETURN), or -1.
+func showContinuationStart(body string) int {
+	for _, word := range projectionWords(body) {
+		if word.depth != 0 {
+			continue
+		}
+		switch word.upper {
+		case "WITH":
+			if precededByWord(body, word.start, "STARTS", "ENDS") {
+				continue
+			}
+			return word.start
+		case "MATCH", "OPTIONAL", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "DETACH", "REMOVE", "FOREACH",
+			"FILTER", "LET", "FINISH", "LOAD", "INSERT", "FOR":
+			return word.start
+		}
+	}
+	return -1
+}
+
+// showReturnStarAsYielded replaces the * of a SHOW command's RETURN (RETURN
+// *, RETURN DISTINCT *, RETURN *, x) with the YIELD's columns in YIELD
+// order. The SHOW's rows also carry the columns it didn't yield, for its
+// WHERE and ORDER BY, but RETURN * means the yielded ones, in the order
+// they were yielded, as in Neo4j.
+func showReturnStarAsYielded(returnClause, yielded string) string {
+	rest := strings.TrimSpace(returnClause[len("RETURN"):])
+	prefix := "RETURN "
+	if body, distinct := cutDistinct(rest); distinct {
+		rest = body
+		prefix = "RETURN DISTINCT "
+	}
+	if !strings.HasPrefix(rest, "*") {
+		return returnClause
+	}
+	return prefix + yielded + rest[1:]
+}
+
+func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*ExecuteResult, error) {
+	schema := e.storage.GetSchema()
+	rows := [][]interface{}{}
+	if schema != nil {
+		contracts := schema.GetAllConstraintContracts()
+		for _, contract := range contracts {
+			compiledCount := int64(0)
+			runtimeCount := int64(0)
+			for _, entry := range contract.Entries {
+				if strings.HasPrefix(entry.Kind, "primitive-") {
+					compiledCount++
+				} else {
+					runtimeCount++
+				}
+			}
+			rows = append(rows, []interface{}{
+				contract.Name,
+				contract.TargetEntityType,
+				contract.TargetLabelOrType,
+				int64(len(contract.Entries)),
+				compiledCount,
+				runtimeCount,
+				contract.Definition,
+			})
+		}
+	}
+	return &ExecuteResult{
+		Columns: []string{"name", "targetEntityType", "targetLabelOrType", "entryCount", "compiledEntryCount", "runtimeEntryCount", "definition"},
+		Rows:    rows,
+	}, nil
+}
+
+// executeShowProcedures handles SHOW PROCEDURES command
+func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	ensureBuiltInProceduresRegistered()
+	registered := ListRegisteredProcedures()
+	procedures := make([][]interface{}, 0, len(registered))
+	for i := range registered {
+		p := &registered[i]
+		description := p.Description
+		if p.DescriptionMessage.ID != "" && e.localizationRenderer != nil {
+			if rendered, _, err := e.localizationRenderer.Render(ctx, localization.RenderRequest{Purpose: localization.MessageText, Message: &p.DescriptionMessage}); err == nil {
+				description = rendered
+			}
+		}
+		arguments := make([]interface{}, 0, len(p.Params))
+		for _, param := range p.Params {
+			argument := map[string]interface{}{"name": param.Name, "type": param.Type, "description": param.Description, "isDeprecated": param.IsDeprecated}
+			if param.Default != "" {
+				argument["default"] = param.Default
+			}
+			arguments = append(arguments, argument)
+		}
+		returns := make([]interface{}, 0, len(p.Returns))
+		for _, column := range p.Returns {
+			returns = append(returns, map[string]interface{}{"name": column.Name, "type": column.Type, "description": column.Description, "isDeprecated": column.IsDeprecated})
+		}
+		var deprecatedBy interface{}
+		if p.DeprecatedBy != "" {
+			deprecatedBy = p.DeprecatedBy
+		}
+		procedures = append(procedures, []interface{}{p.Name, description, string(p.Mode), p.WorksOnSystem, p.Signature, arguments, returns, p.Admin, nil, nil, p.IsDeprecated, deprecatedBy, map[string]interface{}{"deprecated": p.IsDeprecated}})
+	}
+
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: []string{"name", "description", "mode", "worksOnSystem", "signature", "argumentDescription", "returnDescription", "admin", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy", "option"},
+		Rows:    procedures,
+	}, showProceduresDefaultColumns), nil
+}
+
+// executeShowFunctions handles SHOW FUNCTIONS command
+
+var (
+	showFunctionRowsOnce  sync.Once
+	showFunctionRowsCache [][]interface{}
+)
+
+// showFunctionRows returns SHOW FUNCTIONS' full rows, built once from the
+// listed entries of cypherFunctionCatalog. Callers copy the rows they hand
+// out.
+func showFunctionRows() [][]interface{} {
+	showFunctionRowsOnce.Do(func() {
+		rows := make([][]interface{}, 0, len(cypherFunctionCatalog))
+		for _, function := range cypherFunctionCatalog {
+			if !function.listed {
+				continue
+			}
+			arguments, returns := functionSignatureDescriptions(function.signature)
+			if function.arguments != nil {
+				arguments = make([]interface{}, 0, len(function.arguments))
+				for _, parameter := range function.arguments {
+					argument := map[string]interface{}{"name": parameter.Name, "type": parameter.Type, "description": parameter.Description, "isDeprecated": parameter.IsDeprecated}
+					if parameter.Default != "" {
+						argument["default"] = parameter.Default
+					}
+					arguments = append(arguments, argument)
+				}
+			}
+			for index, description := range function.argumentDescriptions {
+				if index < len(arguments) {
+					arguments[index].(map[string]interface{})["description"] = description
+				}
+			}
+			var deprecatedBy interface{}
+			if function.deprecatedBy != "" {
+				deprecatedBy = function.deprecatedBy
+			}
+			rows = append(rows, []interface{}{function.name, function.category, function.description, function.signature, !function.userDefined, arguments, returns, function.aggregating, nil, nil, function.isDeprecated, deprecatedBy})
+		}
+		// Listed by name (sortShowRowsByName then finds them in order).
+		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
+		showFunctionRowsCache = rows
+	})
+	return showFunctionRowsCache
+}
+
+func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// The listing is static: its rows (with the argument and return
+	// descriptions parsed from each signature) are built once, and each call
+	// gets its own copy of them.
+	cached := showFunctionRows()
+	rows := make([][]interface{}, len(cached))
+	var cells []interface{}
+	for i, row := range cached {
+		if len(cells) < len(row) {
+			cells = make([]interface{}, len(row)*(len(cached)-i))
+		}
+		rows[i] = cells[:len(row):len(row)]
+		copy(rows[i], row)
+		cells = cells[len(row):]
+	}
+	if plugin := pluginFunctionRows(); len(plugin) > 0 {
+		rows = append(rows, plugin...)
+		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
+	}
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"},
+		Rows:    rows,
+	}, showFunctionsDefaultColumns), nil
+}
+
+// pluginFunctionRows are SHOW FUNCTIONS' rows for the loaded plugins'
+// functions (#1168), as Neo4j lists a plugin's: not built in, with the
+// plugin's description and category and a signature from the function's
+// Go type. A name the catalog lists, exactly as written, keeps the catalog's
+// row; plugin names are case-sensitive, so a plugin's apoc.coll.SUM is a
+// function of its own beside the catalog's apoc.coll.sum.
+func pluginFunctionRows() [][]interface{} {
+	if PluginFunctionList == nil {
+		return nil
+	}
+	listed := make(map[string]struct{}, len(cypherFunctionCatalog))
+	for _, function := range cypherFunctionCatalog {
+		listed[function.name] = struct{}{}
+	}
+	functions := PluginFunctionList()
+	rows := make([][]interface{}, 0, len(functions))
+	for _, function := range functions {
+		if _, inCatalog := listed[function.Name]; inCatalog {
+			continue
+		}
+		arguments, returns := functionSignatureDescriptions(function.Signature)
+		rows = append(rows, []interface{}{function.Name, function.Category, function.Description, function.Signature, false, arguments, returns, false, nil, nil, false, nil})
+	}
+	return rows
+}
+
+// functionSignatureDescriptions derives SHOW FUNCTIONS' argumentDescription
+// (a list of {name, type, description, isDeprecated} maps) and
+// returnDescription from a signature "f(a :: T, b :: U = d) :: R". An argument
+// without a declared type is ANY.
+func functionSignatureDescriptions(signature string) ([]interface{}, string) {
+	open := strings.IndexByte(signature, '(')
+	if open < 0 {
+		return []interface{}{}, ""
+	}
+	closing := findMatchingParen(signature, open)
+	if closing < 0 {
+		return []interface{}{}, ""
+	}
+	returns := ""
+	if rest := strings.TrimSpace(signature[closing+1:]); strings.HasPrefix(rest, "::") {
+		returns = strings.TrimSpace(rest[2:])
+	}
+	arguments := []interface{}{}
+	for _, part := range splitTopLevelComma(signature[open+1 : closing]) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, typeName, defaultLiteral := part, "ANY", ""
+		if separator := strings.Index(part, "::"); separator >= 0 {
+			name = strings.TrimSpace(part[:separator])
+			typeName = strings.TrimSpace(part[separator+2:])
+			if defaultValue := strings.Index(typeName, "="); defaultValue >= 0 {
+				defaultLiteral = strings.TrimSpace(typeName[defaultValue+1:])
+				typeName = strings.TrimSpace(typeName[:defaultValue])
+			}
+		}
+		if defaultValue := strings.Index(name, "="); defaultValue >= 0 {
+			defaultLiteral = strings.TrimSpace(name[defaultValue+1:])
+			name = strings.TrimSpace(name[:defaultValue])
+		}
+		argument := map[string]interface{}{"name": strings.TrimSuffix(name, "?"), "type": typeName, "description": "", "isDeprecated": false}
+		if defaultLiteral != "" {
+			if literal, ok := parseLiteralValueFromComputedRow(defaultLiteral); ok {
+				if text, isString := literal.(string); isString {
+					defaultLiteral = text
+				} else if literal == nil {
+					defaultLiteral = "null"
+				}
+			}
+			argument["default"] = fmt.Sprintf("DefaultParameterValue{value=%s, type=%s}", defaultLiteral, typeName)
+		}
+		arguments = append(arguments, argument)
+	}
+	return arguments, returns
+}
+
+// executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
+func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	nodeCount, _ := e.storage.NodeCount()
+	edgeCount, _ := e.storage.EdgeCount()
+
+	// Try to get database name from context or use default
+	dbName := "nornic" // Default fallback
+
+	// Priority 1: Check context for :USE database command
+	if useDB := GetUseDatabaseFromContext(ctx); useDB != "" {
+		dbName = useDB
+	} else if e.dbManager != nil {
+		// Priority 2: Try to infer database name from storage (if it's a NamespacedEngine)
+		if namespacedEngine, ok := e.storage.(interface{ Namespace() string }); ok {
+			if namespace := namespacedEngine.Namespace(); namespace != "" {
+				dbName = namespace
+			}
+		}
+		// Priority 3: Use default database from dbManager
+		// Note: DatabaseManagerInterface doesn't expose DefaultDatabaseName,
+		// so we can't call it directly. The NamespacedEngine namespace should
+		// already be set correctly by the server layer.
+	}
+
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: showDatabasesColumns,
+		Rows:    [][]interface{}{showDatabaseRow(e.dbManager, dbName, "standard", "online", true, showDatabaseCreatedAt(e.dbManager, dbName))},
+		Stats: &QueryStats{
+			NodesCreated:         int(nodeCount),
+			RelationshipsCreated: int(edgeCount),
+		},
+	}, showDatabasesDefaultColumns), nil
+}
+
+// executeShowDatabases handles SHOW DATABASES command (plural - lists all databases).
+//
+// Returns a list of all databases with their metadata including name, type, status,
+// and whether they are the default database. This command requires DatabaseManager
+// to be set via SetDatabaseManager().
+//
+// Example:
+//
+//	executor := cypher.NewStorageExecutor(storage)
+//	executor.SetDatabaseManager(dbManager)
+//	result, err := executor.Execute(ctx, "SHOW DATABASES", nil)
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//	for _, row := range result.Rows {
+//		// emit "Database: %s (type: %s, status: %s)" for row[0], row[1], row[7]
+//	}
+//
+// Returns Neo4j-compatible format with columns:
+//   - name: Database name
+//   - type: Database type (standard, system)
+//   - access: Access mode (read-write)
+//   - address: Server address
+//   - role: Server role (primary)
+//   - writer: Whether writes are allowed
+//   - requestedStatus: Requested status
+//   - currentStatus: Current status (online, offline)
+//   - statusMessage: Status message
+//   - default: Whether this is the default database
+//   - home: Whether this is the home database
+//   - constituents: Constituent databases (empty for single databases)
+func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if e.dbManager == nil {
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("SHOW DATABASES"), nil)
+	}
+
+	databases := e.dbManager.ListDatabases()
+	rows := make([][]interface{}, 0, len(databases))
+
+	for _, db := range databases {
+		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
+	}
+
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: showDatabasesColumns,
+		Rows:    rows,
+	}, showDatabasesDefaultColumns), nil
+}
+
+// showDatabasesColumns is SHOW DATABASES' full column set, in Neo4j's order.
+var showDatabasesColumns = []string{"name", "type", "aliases", "access", "databaseID", "serverID", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "currentPrimariesCount", "currentSecondariesCount", "requestedPrimariesCount", "requestedSecondariesCount", "creationTime", "lastStartTime", "lastStopTime", "store", "lastCommittedTxn", "replicationLag", "constituents", "options"}
+
+// showDatabaseRow is one SHOW DATABASES row in showDatabasesColumns order.
+// A NornicDB server holds one copy of each database, so it is the single
+// primary (currentPrimariesCount 1, currentSecondariesCount 0, replication
+// lag 0). creationTime is when the database was created, and lastStartTime
+// when this process started serving it: its creation or the process start,
+// whichever is later. Identity-capable managers supply persisted native UUIDs.
+// Managers without identity metadata return null IDs. There is no Neo4j
+// store format, so store is null, as are
+// lastStopTime and lastCommittedTxn (Neo4j reports null for both on a
+// running standalone server).
+func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool, createdAt time.Time) []interface{} {
+	aliases := []string{}
+	if manager != nil {
+		for alias := range manager.ListAliases(name) {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+	}
+	var databaseID, serverID interface{}
+	if provider, ok := manager.(DatabaseIdentityProvider); ok {
+		id, databaseCreatedAt := provider.DatabaseIdentity(name)
+		if id != "" {
+			databaseID = id
+		}
+		if !databaseCreatedAt.IsZero() {
+			createdAt = databaseCreatedAt
+		}
+		id, _ = provider.ServerIdentity()
+		if id != "" {
+			serverID = id
+		}
+	}
+	var creationTime, lastStartTime interface{}
+	if !createdAt.IsZero() {
+		creationTime = createdAt.UTC()
+		started := processStartTime
+		if createdAt.After(started) {
+			started = createdAt
+		}
+		lastStartTime = started.UTC()
+	}
+	return []interface{}{
+		name, databaseType, aliases, "read-write",
+		databaseID, serverID,
+		"localhost:7687", "primary", true,
+		status, status, "",
+		isDefault, isDefault,
+		int64(1), int64(0), // currentPrimariesCount, currentSecondariesCount
+		nil, nil, // requestedPrimariesCount, requestedSecondariesCount
+		creationTime, lastStartTime, nil, // lastStopTime
+		nil, nil, // store, lastCommittedTxn
+		int64(0), // replicationLag
+		[]string{},
+		databaseOptionsValue(manager, name),
+	}
+}
+
+// processStartTime is when this process started, the start of every
+// database it serves from startup.
+var processStartTime = time.Now()
+
+// showDatabaseCreatedAt is when database name was created, or the zero time
+// when the manager doesn't list it.
+func showDatabaseCreatedAt(manager DatabaseManagerInterface, name string) time.Time {
+	if manager == nil {
+		return time.Time{}
+	}
+	for _, db := range manager.ListDatabases() {
+		if db.Name() == name {
+			return db.CreatedAt()
+		}
+	}
+	return time.Time{}
+}
+
+// databaseCreateMode selects regular creation or replacement in one catalog
+// command owner. Replacement deliberately keeps its existing DROP-then-CREATE
+// semantics and does not admit the regular command's OPTIONS clause.
+type databaseCreateMode uint8
+
+const (
+	createNewDatabase databaseCreateMode = iota
+	replaceExistingDatabase
+)
+
+// executeDatabaseCreate admits the complete target before changing the catalog.
+// Both modes preserve their error identities, credential redaction and outcomes.
+func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher string, mode databaseCreateMode) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	if mode == createNewDatabase {
+		e.logEvent(slog.LevelDebug, localization.CypherCreateDatabaseInvokedEvent(len(cypher)))
+	}
+	if e.dbManager == nil {
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
+	}
+	header, first, second := "CREATE DATABASE", "CREATE", "DATABASE"
+	if mode == replaceExistingDatabase {
+		header = "OR REPLACE DATABASE"
+		first, second = "OR", "REPLACE"
+	}
+	at := findMultiWordKeywordIndex(cypher, first, second)
+	if at < 0 {
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
+	}
+	startPos := keywordEndAt(cypher, at, header)
+	if startPos == at {
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
+	}
+	// Trim only the name's leading whitespace; its accepted-source byte extent
+	// remains intact for OPTIONS and quoted-identifier decoding.
+	startPos = len(cypher) - len(strings.TrimLeftFunc(cypher[startPos:], cyphertext.IsWhitespace))
+	if startPos >= len(cypher) && mode == createNewDatabase {
+		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("CREATE DATABASE"), nil)
+	}
+	var options map[string]string
+	var err error
+	ifNotExists := false
+	rawDBName := strings.TrimSpace(cypher[startPos:])
+	if mode == createNewDatabase {
+		// Initial options must be validated before catalog publication, including
+		// the IF NOT EXISTS no-op path, just as the original owner required.
+		cypher, options, err = e.splitDatabaseOptions(ctx, cypher, startPos)
+		if err != nil {
+			return nil, err
+		}
+		rawDBName = strings.TrimSpace(cypher[startPos:])
+		if clause := findMultiWordKeywordIndex(rawDBName, "IF", "NOT"); clause >= 0 {
+			clauseEnd := keywordEndAt(rawDBName, clause, "IF NOT EXISTS")
+			if clauseEnd > clause {
+				if strings.TrimSpace(rawDBName[clauseEnd:]) != "" {
+					return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
+				}
+				ifNotExists = true
+				rawDBName = strings.TrimSpace(rawDBName[:clause])
+			}
+		}
+	}
+	dbName, err := unquoteBacktickIdentifier(rawDBName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
+	}
+	if dbName == "" || mode == replaceExistingDatabase && strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
+		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("CREATE DATABASE"), nil)
+	}
+	if strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
+		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
+	}
+	if e.dbManager.Exists(dbName) {
+		if mode == replaceExistingDatabase {
+			if err := e.dbManager.DropDatabase(ctx, dbName); err != nil {
+				return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
+			}
+		} else if ifNotExists {
+			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{dbName}}}, nil
+		} else {
+			return nil, localizedError(localization.CypherAdminDatabaseAlreadyExists(dbName), nil)
+		}
+	}
+	if err := e.dbManager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: dbName, Options: options}); err != nil {
+		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
+		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
+	}
+	e.logEvent(slog.LevelInfo, localization.CypherCreateDatabaseSucceededEvent())
+	return &ExecuteResult{Administration: &AdministrationOutcome{CreatedDatabase: dbName}, Columns: []string{"name"}, Rows: [][]interface{}{{dbName}}}, nil
+}
+
+// executeCreateAlias handles CREATE ALIAS command (Neo4j-compatible).
+//
+// Creates an alias for a database. Aliases allow referencing databases with
+// alternative names, useful for database renaming, environment mapping, etc.
+//
+// Syntax:
+//   - CREATE ALIAS alias_name FOR DATABASE database_name
+//
+// Example:
+//
+//	executor := cypher.NewStorageExecutor(storage)
+//	executor.SetDatabaseManager(dbManager)
+//
+//	// Create alias
+//	result, err := executor.Execute(ctx, "CREATE ALIAS main FOR DATABASE tenant_primary_2024", nil)
+//
+// Returns:
+//   - Success: Result with alias name in single row
+//   - Error: If alias already exists or database doesn't exist
+func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	if e.dbManager == nil {
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE ALIAS"), nil)
+	}
+
+	// Find "CREATE ALIAS" keyword position
+	createAliasIdx := findMultiWordKeywordIndex(cypher, "CREATE", "ALIAS")
+	if createAliasIdx == -1 {
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE ALIAS"), nil)
+	}
+
+	// Skip "CREATE" and whitespace to find "ALIAS"
+	startPos := createAliasIdx + len("CREATE")
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
+		startPos++
+	}
+	// Skip "ALIAS" and whitespace
+	if startPos+len("ALIAS") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("ALIAS")], "ALIAS") {
+		startPos += len("ALIAS")
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
+			startPos++
+		}
+	}
+
+	if startPos >= len(cypher) {
+		return nil, localizedError(localization.CypherAdminAliasNameExpected("CREATE ALIAS"), nil)
+	}
+
+	// Find "FOR DATABASE" to separate alias name from database name
+	forIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
+	if forIdx == -1 {
+		return nil, localizedError(localization.CypherAdminTermExpected("CREATE ALIAS", "FOR DATABASE"), nil)
+	}
+
+	rawAliasName := strings.TrimSpace(cypher[startPos : startPos+forIdx])
+	aliasName, err := unquoteBacktickIdentifier(rawAliasName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawAliasName), err)
+	}
+
+	if aliasName == "" {
+		return nil, localizedError(localization.CypherAdminAliasNameEmpty("CREATE ALIAS"), nil)
+	}
+
+	// Preserve decoded identity; database-alias admission rejects whitespace.
+	if strings.IndexFunc(aliasName, cyphertext.IsWhitespace) >= 0 {
+		return nil, localizedError(localization.CypherAdminInvalidAliasName(aliasName), nil)
+	}
+
+	// Skip "FOR" and whitespace
+	dbStartPos := startPos + forIdx + len("FOR")
+	for dbStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbStartPos) {
+		dbStartPos++
+	}
+	// Skip "DATABASE" and whitespace
+	if dbStartPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[dbStartPos:dbStartPos+len("DATABASE")], "DATABASE") {
+		dbStartPos += len("DATABASE")
+		for dbStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbStartPos) {
+			dbStartPos++
+		}
+	}
+
+	if dbStartPos >= len(cypher) {
+		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("CREATE ALIAS"), nil)
+	}
+
+	rawDBName := strings.TrimSpace(cypher[dbStartPos:])
+	dbName, err := unquoteBacktickIdentifier(rawDBName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
+	}
+
+	if dbName == "" {
+		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("CREATE ALIAS"), nil)
+	}
+
+	// Database-name admission rejects whitespace without changing its identity.
+	if strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
+		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
+	}
+
+	// Create alias
+	err = e.dbManager.CreateAlias(ctx, aliasName, dbName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminCreateAliasFailed(aliasName, dbName, err), err)
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"alias"},
+		Rows:    [][]interface{}{{aliasName}},
+	}, nil
+}
+
+// executeDropAlias handles DROP ALIAS command (Neo4j-compatible).
+//
+// Removes an alias for a database.
+//
+// Syntax:
+//   - DROP ALIAS alias_name
+//   - DROP ALIAS alias_name IF EXISTS
+//
+// Example:
+//
+//	executor := cypher.NewStorageExecutor(storage)
+//	executor.SetDatabaseManager(dbManager)
+//
+//	// Drop alias
+//	result, err := executor.Execute(ctx, "DROP ALIAS main", nil)
+//
+// Returns:
+//   - Success: Result with alias name in single row (empty if IF EXISTS and not found)
+//   - Error: If alias doesn't exist (unless IF EXISTS is used)
+func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	if e.dbManager == nil {
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("DROP ALIAS"), nil)
+	}
+
+	// Admit the entire name and optional suffix before resolving or mutating it.
+	tokens, spans, tokenErr := tokenizeSource(cypher)
+	if tokenErr != nil {
+		return nil, &classifiedCypherError{cause: tokenErr, code: "Neo.ClientError.Statement.SyntaxError", detail: "InvalidAliasSyntax"}
+	}
+	invalid := func() error {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidAliasSyntax", localization.CypherAdminInvalidSyntax("DROP ALIAS"))
+	}
+	if len(tokens) < 2 || !equalFoldASCII(tokens[0], "DROP") || !equalFoldASCII(tokens[1], "ALIAS") {
+		return nil, invalid()
+	}
+	if len(tokens) == 2 {
+		return nil, localizedError(localization.CypherAdminAliasNameExpected("DROP ALIAS"), nil)
+	}
+	end := len(tokens)
+	if end >= 5 && equalFoldASCII(tokens[end-2], "FOR") && equalFoldASCII(tokens[end-1], "DATABASE") {
+		end -= 2
+	}
+	ifExists := end >= 5 && equalFoldASCII(tokens[end-2], "IF") && equalFoldASCII(tokens[end-1], "EXISTS")
+	if ifExists {
+		end -= 2
+	}
+	if end <= 2 || len(tokens[2]) == 0 || cyphertext.IsStringQuote(tokens[2][0]) {
+		return nil, invalid()
+	}
+	rawAliasName := cypher[spans[2].start:spans[end-1].end]
+	aliasName, validName := compositeAdminName(rawAliasName)
+	if !validName {
+		decoded, err := unquoteBacktickIdentifier(rawAliasName)
+		if err != nil {
+			return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawAliasName), err)
+		}
+		if decoded == "" {
+			return nil, localizedError(localization.CypherAdminAliasNameEmpty("DROP ALIAS"), nil)
+		}
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidAliasSyntax", localization.CypherAdminInvalidAliasName(decoded))
+	}
+	if strings.IndexFunc(aliasName, cyphertext.IsWhitespace) >= 0 {
+		return nil, localizedError(localization.CypherAdminInvalidAliasName(aliasName), nil)
+	}
+	var err error
+
+	_, err = e.dbManager.ResolveDatabase(aliasName)
+	if err != nil {
+		if ifExists {
+			// IF EXISTS - return success with no error
+			return &ExecuteResult{
+				Columns: []string{"alias"},
+				Rows:    [][]interface{}{},
+			}, nil
+		}
+		return nil, localizedError(localization.CypherAdminAliasDoesNotExist(aliasName), nil)
+	}
+
+	// Drop alias
+	err = e.dbManager.DropAlias(ctx, aliasName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminDropAliasFailed(aliasName, err), err)
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"alias"},
+		Rows:    [][]interface{}{{aliasName}},
+	}, nil
+}
+
+// executeShowAliases handles SHOW ALIASES command (Neo4j-compatible).
+//
+// Lists all database aliases, optionally filtered by database.
+//
+// Syntax:
+//   - SHOW ALIASES
+//   - SHOW ALIASES FOR DATABASE database_name
+//
+// Example:
+//
+//	executor := cypher.NewStorageExecutor(storage)
+//	executor.SetDatabaseManager(dbManager)
+//
+//	// List all aliases
+//	result, err := executor.Execute(ctx, "SHOW ALIASES", nil)
+//
+//	// List aliases for specific database
+//	result, err = executor.Execute(ctx, "SHOW ALIASES FOR DATABASE tenant_a", nil)
+//
+// Returns:
+//   - Success: Result with alias and database columns
+func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if e.dbManager == nil {
+		return nil, localizedError(localization.CypherResidualShowAliasesManagerUnavailable(), nil)
+	}
+
+	// executeShowWithTail has separated WHERE / YIELD from the command head.
+	// Consume that head completely; looking anywhere for FOR DATABASE silently
+	// accepted arbitrary suffixes when ANTLR delegated this extension to us.
+	startPos, validHead := compositeAdminPrefix(cypher, "SHOW", "ALIASES")
+	invalid := func() (*ExecuteResult, error) {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause", localization.CypherResidualShowAliasesSyntaxInvalid())
+	}
+	if !validHead {
+		return invalid()
+	}
+
+	// Check for "FOR DATABASE" clause
+	var databaseName string
+	if startPos < len(cypher) {
+		tail := cypher[startPos:]
+		allEnd, all := compositeAdminPrefix(tail, "FOR", "DATABASES")
+		nameStart, one := compositeAdminPrefix(tail, "FOR", "DATABASE")
+		switch {
+		case all && allEnd == len(tail):
+			// Neo4j's explicit all-databases form.
+		case one:
+			var validName bool
+			databaseName, validName = compositeAdminName(tail[nameStart:])
+			if !validName {
+				return invalid()
+			}
+		default:
+			return invalid()
+		}
+	}
+
+	// List aliases
+	aliases := e.dbManager.ListAliases(databaseName)
+
+	// Format results
+	rows := make([][]interface{}, 0, len(aliases))
+	for alias, dbName := range aliases {
+		rows = append(rows, []interface{}{alias, dbName})
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"alias", "database"},
+		Rows:    rows,
+	}, nil
+}
+
+// executeAlterDatabase handles ALTER DATABASE SET LIMIT command.
+//
+// Sets resource limits for a database. Supports setting individual limits
+// or multiple limits in a single command.
+//
+// Syntax:
+//   - ALTER DATABASE database_name SET LIMIT limit_name = value
+//   - ALTER DATABASE database_name SET LIMIT limit_name1 = value1, limit_name2 = value2
+//
+// Supported limit names:
+//   - max_nodes: Maximum number of nodes (int64)
+//   - max_edges: Maximum number of edges (int64)
+//   - max_bytes: Maximum storage size in bytes (int64)
+//   - max_query_time: Maximum query execution time (duration string, e.g., "60s", "5m")
+//   - max_results: Maximum number of query results (int64)
+//   - max_concurrent_queries: Maximum concurrent queries (int)
+//   - max_connections: Maximum connections (int)
+//   - max_queries_per_second: Maximum queries per second (int)
+//   - max_writes_per_second: Maximum writes per second (int)
+//
+// Example:
+//
+//	executor := cypher.NewStorageExecutor(storage)
+//	executor.SetDatabaseManager(dbManager)
+//
+//	// Set max nodes limit
+//	result, err := executor.Execute(ctx, "ALTER DATABASE tenant_a SET LIMIT max_nodes = 1000000", nil)
+//
+//	// Set multiple limits
+//	result, err = executor.Execute(ctx, "ALTER DATABASE tenant_a SET LIMIT max_nodes = 1000000, max_edges = 5000000", nil)
+//
+// Returns:
+//   - Success: Result with database name
+//   - Error: If database doesn't exist or syntax is invalid
+func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	if e.dbManager == nil {
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("ALTER DATABASE"), nil)
+	}
+
+	// Find "ALTER DATABASE" keyword position
+	alterDbIdx := findMultiWordKeywordIndex(cypher, "ALTER", "DATABASE")
+	if alterDbIdx == -1 {
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("ALTER DATABASE"), nil)
+	}
+
+	// Skip "ALTER" and whitespace to find "DATABASE"
+	startPos := alterDbIdx + len("ALTER")
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
+		startPos++
+	}
+	// Skip "DATABASE" and whitespace
+	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
+		startPos += len("DATABASE")
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
+			startPos++
+		}
+	} else {
+		return nil, localizedError(localization.CypherAdminKeywordExpected("ALTER DATABASE", "DATABASE"), nil)
+	}
+	if result, handled, err := e.alterDatabaseOption(ctx, cypher, startPos); handled {
+		return result, err
+	}
+
+	// Find "SET LIMIT" keyword
+	setLimitIdx := findMultiWordKeywordIndex(cypher[startPos:], "SET", "LIMIT")
+	if setLimitIdx == -1 {
+		return nil, localizedError(localization.CypherAdminClauseExpected("ALTER DATABASE", "SET LIMIT"), nil)
+	}
+
+	// Extract database name (between "DATABASE" and "SET LIMIT")
+	dbNameEnd := startPos + setLimitIdx
+	databaseName := strings.TrimSpace(cypher[startPos:dbNameEnd])
+	if databaseName == "" {
+		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("ALTER DATABASE"), nil)
+	}
+
+	// Skip "SET LIMIT" and whitespace
+	limitStartPos := startPos + setLimitIdx + len("SET")
+	for limitStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, limitStartPos) {
+		limitStartPos++
+	}
+	if limitStartPos+len("LIMIT") <= len(cypher) && strings.EqualFold(cypher[limitStartPos:limitStartPos+len("LIMIT")], "LIMIT") {
+		limitStartPos += len("LIMIT")
+		for limitStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, limitStartPos) {
+			limitStartPos++
+		}
+	} else {
+		return nil, localizedError(localization.CypherAdminKeywordExpected("ALTER DATABASE", "LIMIT"), nil)
+	}
+
+	// Get existing limits or create new ones
+	existingLimitsInterface, err := e.dbManager.GetDatabaseLimits(databaseName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminDatabaseNotFound(databaseName, err), err)
+	}
+
+	// Type assert to *multidb.Limits
+	var existingLimits *multidb.Limits
+	if existingLimitsInterface != nil {
+		var ok bool
+		existingLimits, ok = existingLimitsInterface.(*multidb.Limits)
+		if !ok {
+			return nil, localizedError(localization.CypherAdminInvalidLimitsType(), nil)
+		}
+	}
+
+	// Create new limits if none exist, otherwise deep copy
+	var limits *multidb.Limits
+	if existingLimits == nil {
+		limits = &multidb.Limits{}
+	} else {
+		// Deep copy to avoid modifying the original
+		limits = &multidb.Limits{
+			Storage: multidb.StorageLimits{
+				MaxNodes: existingLimits.Storage.MaxNodes,
+				MaxEdges: existingLimits.Storage.MaxEdges,
+				MaxBytes: existingLimits.Storage.MaxBytes,
+			},
+			Query: multidb.QueryLimits{
+				MaxQueryTime:         existingLimits.Query.MaxQueryTime,
+				MaxResults:           existingLimits.Query.MaxResults,
+				MaxConcurrentQueries: existingLimits.Query.MaxConcurrentQueries,
+			},
+			Connection: multidb.ConnectionLimits{
+				MaxConnections: existingLimits.Connection.MaxConnections,
+			},
+			Rate: multidb.RateLimits{
+				MaxQueriesPerSecond: existingLimits.Rate.MaxQueriesPerSecond,
+				MaxWritesPerSecond:  existingLimits.Rate.MaxWritesPerSecond,
+			},
+		}
+	}
+
+	// Parse limit assignments: "limit_name = value, limit_name2 = value2"
+	limitClause := strings.TrimSpace(cypher[limitStartPos:])
+	if limitClause == "" {
+		return nil, localizedError(localization.CypherAdminLimitAssignmentExpected(), nil)
+	}
+
+	// Split by comma to handle multiple limits
+	assignments := strings.Split(limitClause, ",")
+	for _, assignment := range assignments {
+		assignment = strings.TrimSpace(assignment)
+		if assignment == "" {
+			continue
+		}
+
+		// Parse "limit_name = value"
+		parts := strings.SplitN(assignment, "=", 2)
+		if len(parts) != 2 {
+			return nil, localizedError(localization.CypherAdminInvalidLimitAssignment(assignment), nil)
+		}
+
+		limitName := strings.TrimSpace(lowerASCII(parts[0]))
+		limitValue := strings.TrimSpace(parts[1])
+
+		// Parse and set the limit based on name
+		switch limitName {
+		case "max_nodes":
+			val, err := strconv.ParseInt(limitValue, 10, 64)
+			if err != nil {
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
+			}
+			limits.Storage.MaxNodes = val
+
+		case "max_edges":
+			val, err := strconv.ParseInt(limitValue, 10, 64)
+			if err != nil {
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
+			}
+			limits.Storage.MaxEdges = val
+
+		case "max_bytes":
+			val, err := strconv.ParseInt(limitValue, 10, 64)
+			if err != nil {
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
+			}
+			limits.Storage.MaxBytes = val
+
+		case "max_query_time":
+			duration, err := time.ParseDuration(limitValue)
+			if err != nil {
+				return nil, localizedError(localization.CypherAdminInvalidDurationLimitValue(limitName, err), err)
+			}
+			limits.Query.MaxQueryTime = duration
+
+		case "max_results":
+			val, err := strconv.ParseInt(limitValue, 10, 64)
+			if err != nil {
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
+			}
+			limits.Query.MaxResults = val
+
+		case "max_concurrent_queries":
+			val, err := strconv.Atoi(limitValue)
+			if err != nil {
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
+			}
+			limits.Query.MaxConcurrentQueries = val
+
+		case "max_connections":
+			val, err := strconv.Atoi(limitValue)
+			if err != nil {
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
+			}
+			limits.Connection.MaxConnections = val
+
+		case "max_queries_per_second":
+			val, err := strconv.Atoi(limitValue)
+			if err != nil {
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
+			}
+			limits.Rate.MaxQueriesPerSecond = val
+
+		case "max_writes_per_second":
+			val, err := strconv.Atoi(limitValue)
+			if err != nil {
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
+			}
+			limits.Rate.MaxWritesPerSecond = val
+
+		default:
+			return nil, localizedError(localization.CypherAdminUnknownLimitName(limitName), nil)
+		}
+	}
+
+	// Update limits in database manager (pass as interface{} to match interface)
+	err = e.dbManager.SetDatabaseLimits(ctx, databaseName, limits)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminSetDatabaseLimitsFailed(databaseName, err), err)
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"database"},
+		Rows:    [][]interface{}{{databaseName}},
+	}, nil
+}
+
+// executeShowLimits handles SHOW LIMITS command.
+//
+// Lists resource limits for a database in Neo4j-compatible format.
+//
+// Syntax:
+//   - SHOW LIMITS FOR DATABASE database_name
+//
+// Example:
+//
+//	executor := cypher.NewStorageExecutor(storage)
+//	executor.SetDatabaseManager(dbManager)
+//
+//	// Show limits for database
+//	result, err := executor.Execute(ctx, "SHOW LIMITS FOR DATABASE tenant_a", nil)
+//
+// Returns:
+//   - Success: Result with limit information in Neo4j-compatible format
+//   - Error: If database doesn't exist
+func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	if e.dbManager == nil {
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("SHOW LIMITS"), nil)
+	}
+
+	// Find "SHOW LIMITS" keyword position
+	showLimitsIdx := findMultiWordKeywordIndex(cypher, "SHOW", "LIMITS")
+	if showLimitsIdx == -1 {
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW LIMITS"), nil)
+	}
+
+	// Skip "SHOW" and whitespace to find "LIMITS"
+	startPos := showLimitsIdx + len("SHOW")
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
+		startPos++
+	}
+	// Skip "LIMITS" and whitespace
+	if startPos+len("LIMITS") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("LIMITS")], "LIMITS") {
+		startPos += len("LIMITS")
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
+			startPos++
+		}
+	} else {
+		return nil, localizedError(localization.CypherAdminKeywordExpected("SHOW LIMITS", "LIMITS"), nil)
+	}
+
+	// Check for "FOR DATABASE" clause
+	forDbIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
+	if forDbIdx == -1 {
+		return nil, localizedError(localization.CypherAdminClauseExpected("SHOW LIMITS", "FOR DATABASE"), nil)
+	}
+
+	// Skip "FOR" and whitespace
+	dbNameStart := startPos + forDbIdx + len("FOR")
+	for dbNameStart < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbNameStart) {
+		dbNameStart++
+	}
+	// Skip "DATABASE" and whitespace
+	if dbNameStart+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[dbNameStart:dbNameStart+len("DATABASE")], "DATABASE") {
+		dbNameStart += len("DATABASE")
+		for dbNameStart < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbNameStart) {
+			dbNameStart++
+		}
+	} else {
+		return nil, localizedError(localization.CypherAdminKeywordExpected("SHOW LIMITS", "DATABASE"), nil)
+	}
+
+	// Extract database name (rest of query)
+	databaseName := strings.TrimSpace(cypher[dbNameStart:])
+	if databaseName == "" {
+		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("SHOW LIMITS"), nil)
+	}
+
+	// Get limits from database manager
+	limitsInterface, err := e.dbManager.GetDatabaseLimits(databaseName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminDatabaseNotFound(databaseName, err), err)
+	}
+
+	// Type assert to *multidb.Limits
+	var limits *multidb.Limits
+	if limitsInterface != nil {
+		var ok bool
+		limits, ok = limitsInterface.(*multidb.Limits)
+		if !ok {
+			return nil, localizedError(localization.CypherAdminInvalidLimitsType(), nil)
+		}
+	}
+
+	// If no limits set, return empty/unlimited values
+	if limits == nil {
+		limits = &multidb.Limits{}
+	}
+
+	// Format limits in Neo4j-compatible format
+	// Neo4j returns: name, type, value, description
+	rows := make([][]interface{}, 0)
+
+	// Storage limits
+	if limits.Storage.MaxNodes > 0 {
+		rows = append(rows, []interface{}{databaseName, "max_nodes", limits.Storage.MaxNodes, "Maximum number of nodes"})
+	}
+	if limits.Storage.MaxEdges > 0 {
+		rows = append(rows, []interface{}{databaseName, "max_edges", limits.Storage.MaxEdges, "Maximum number of edges"})
+	}
+	if limits.Storage.MaxBytes > 0 {
+		rows = append(rows, []interface{}{databaseName, "max_bytes", limits.Storage.MaxBytes, "Maximum storage size in bytes"})
+	}
+
+	// Query limits
+	if limits.Query.MaxQueryTime > 0 {
+		rows = append(rows, []interface{}{databaseName, "max_query_time", limits.Query.MaxQueryTime.String(), "Maximum query execution time"})
+	}
+	if limits.Query.MaxResults > 0 {
+		rows = append(rows, []interface{}{databaseName, "max_results", limits.Query.MaxResults, "Maximum number of query results"})
+	}
+	if limits.Query.MaxConcurrentQueries > 0 {
+		rows = append(rows, []interface{}{databaseName, "max_concurrent_queries", limits.Query.MaxConcurrentQueries, "Maximum concurrent queries"})
+	}
+
+	// Connection limits
+	if limits.Connection.MaxConnections > 0 {
+		rows = append(rows, []interface{}{databaseName, "max_connections", limits.Connection.MaxConnections, "Maximum concurrent connections"})
+	}
+
+	// Rate limits
+	if limits.Rate.MaxQueriesPerSecond > 0 {
+		rows = append(rows, []interface{}{databaseName, "max_queries_per_second", limits.Rate.MaxQueriesPerSecond, "Maximum queries per second"})
+	}
+	if limits.Rate.MaxWritesPerSecond > 0 {
+		rows = append(rows, []interface{}{databaseName, "max_writes_per_second", limits.Rate.MaxWritesPerSecond, "Maximum writes per second"})
+	}
+
+	// If no limits are set, return a single row indicating unlimited
+	if len(rows) == 0 {
+		rows = append(rows, []interface{}{databaseName, "unlimited", nil, "No limits configured (unlimited)"})
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"database", "limit", "value", "description"},
+		Rows:    rows,
+	}, nil
+}
+
+// truncateQuery truncates a query string to maxLen characters for error messages
+func truncateQuery(query string, maxLen int) string {
+	query = strings.TrimSpace(query)
+	if len(query) <= maxLen {
+		return query
+	}
+	return query[:maxLen] + "..."
+}

@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+title: NornicDB
+authors:
+  - family-names: "Sweet"
+    given-names: "TJ"
+    alias: OrneryD
+repository-code: https://github.com/orneryd/NornicDB
+license: MIT
