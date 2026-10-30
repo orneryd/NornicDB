@@ -163,8 +163,9 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/pkg/security"
 	"io"
 	"log"
 	"log/slog"
@@ -173,14 +174,12 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/net/http2"
 
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -190,8 +189,10 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/graphql"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/localllm"
 	"github.com/orneryd/nornicdb/pkg/mcp"
@@ -201,10 +202,13 @@ import (
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/qdrantgrpc"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/orneryd/nornicdb/pkg/voyage"
+	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/net/http2"
 )
 
 // Errors for HTTP operations.
@@ -642,11 +646,14 @@ func DefaultConfig() *Config {
 //	defer cancel()
 //	server.Stop(ctx)
 type Server struct {
-	config    *Config
-	db        *nornicdb.DB
-	dbManager *multidb.DatabaseManager // Manages multiple databases
-	auth      *auth.Authenticator
-	audit     *audit.Logger
+	shutdown        serverShutdown
+	pendingListener net.Listener // owned until transferred to http.Server.Serve
+	listenNative    func(string, string) (net.Listener, error)
+	config          *Config
+	db              *nornicdb.DB
+	dbManager       *multidb.DatabaseManager // Manages multiple databases
+	auth            *auth.Authenticator
+	audit           *audit.Logger
 
 	// nextHTTPConnectionID numbers HTTP requests for SHOW TRANSACTIONS
 	// (connectionId http-N).
@@ -678,12 +685,10 @@ type Server struct {
 
 	httpServer *http.Server
 	listener   net.Listener
-	// requestsCtx is the parent context handed to every inbound HTTP request
-	// via http.Server.BaseContext. Cancelled at the start of Stop() so any
-	// long-running handler (Cypher traversals, etc.) can unwind promptly
-	// instead of holding shutdown open until ReadTimeout/WriteTimeout fires.
-	requestsCtx       context.Context
-	cancelRequestsCtx context.CancelFunc
+	// lifecycleMu serializes Start with Stop so shutdown cannot consume the
+	// request cancellation function before Start publishes it.
+	lifecycleMu  sync.Mutex
+	startClaimed bool // one Start attempt per server
 
 	// httpMetrics is the Plan-04-02 HTTP catalog bag (D-02 typed handle DI).
 	// Populated by SetHTTPMetrics(...) AFTER observability.New runs in
@@ -718,7 +723,6 @@ type Server struct {
 	basicAuthCache *auth.BasicAuthCache
 
 	mu      sync.RWMutex
-	closed  atomic.Bool
 	started atomic.Pointer[time.Time]
 
 	// embedderRetryInitialBackoff, embedderRetryMaxBackoff and newEmbedder
@@ -728,12 +732,11 @@ type Server struct {
 	embedderRetryMaxBackoff     time.Duration
 	newEmbedder                 func(context.Context, *embed.Config) (embed.Embedder, error)
 
-	// embedderInitCancel and embedderInitDone own the background embedder
-	// initialisation startEmbedderInit runs: Stop cancels it and waits for
-	// embedderInitDone, so it never outlives the server, and DB.Close waits
-	// for it too. Both are nil when embeddings are disabled.
-	embedderInitCancel context.CancelFunc
-	embedderInitDone   chan struct{}
+	// embedderInit is the completion of the background embedder
+	// initialisation startEmbedderInit runs as server work: stopping cancels
+	// it and quiescence waits for it. It stays unstarted when embeddings are
+	// disabled.
+	embedderInit lifecycle.OnceCompletion
 
 	// Metrics
 	requestCount   atomic.Int64
@@ -1048,13 +1051,40 @@ func (rl *IPRateLimiter) Stop() {
 //		EnableCORS: false,
 //	}
 //	server, err = server.New(db, auth, config)
-func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*Server, error) {
+func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (result *Server, newErr error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
 	if db == nil {
 		return nil, fmt.Errorf("database required")
 	}
+	// Enroll the whole constructor before it can touch borrowed DB state or
+	// launch a model user. Transfer this retention to the eventual shutdown.
+	dbRelease, accepted := db.RetainBackground()
+	if !accepted {
+		return nil, nornicdb.ErrClosed
+	}
+	s := &Server{db: db, config: config}
+	s.shutdown.dbRelease = dbRelease
+	_, releaseConstruction, _ := s.shutdown.work.Acquire(context.Background())
+	// Stopping signals every plugin before any accepted work is joined: a
+	// plugin's Stop may be what lets that work finish.
+	s.shutdown.work.OnStop(s.signalHeimdallPlugins)
+	// A DB closed without Stop stops this server too.
+	s.shutdown.stopOnDBClose = context.AfterFunc(db.LifetimeContext(), func() { s.beginShutdown(context.Background()) })
+	defer func() {
+		if newErr == nil && db.LifetimeContext().Err() != nil {
+			newErr = nornicdb.ErrClosed
+			result = nil
+		}
+		if newErr != nil {
+			s.beginShutdown(context.Background())
+		}
+		releaseConstruction()
+		if newErr != nil {
+			newErr = compose.Outcomes(newErr, s.WaitStopped(context.Background()))
+		}
+	}()
 	if oauth := auth.GetOAuthConfig(); oauth != nil && oauth.Issuer != "" {
 		if err := security.ValidateURL(oauth.Issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
 			return nil, fmt.Errorf("invalid OAuth issuer: %w", err)
@@ -1145,23 +1175,19 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	}
 	db.SetDatabaseStorageResolver(dbManager.GetStorage)
 
-	s := &Server{
-		config:               config,
-		db:                   db,
-		dbManager:            dbManager,
-		auth:                 authenticator,
-		log:                  config.Logger.With("component", "server"),
-		localizer:            config.Localizer,
-		mcpServer:            mcpServer,
-		graphqlHandler:       graphql.NewHandler(db, dbManager),
-		basicAuthCache:       auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
-		trustedProxyPrefixes: trustedProxyPrefixes,
-		executors:            make(map[string]*cypher.StorageExecutor),
-		perDBYAMLOverrides:   config.PerDBYAMLOverrides,
-		processConfig:        globalConfig,
-		dbConfigActive:       make(map[string]map[string]string),
-		dbConfigPending:      make(map[string]map[string]struct{}),
-	}
+	s.dbManager = dbManager
+	s.auth = authenticator
+	s.log = config.Logger.With("component", "server")
+	s.localizer = config.Localizer
+	s.mcpServer = mcpServer
+	s.graphqlHandler = graphql.NewHandler(db, dbManager)
+	s.basicAuthCache = auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL)
+	s.trustedProxyPrefixes = trustedProxyPrefixes
+	s.executors = make(map[string]*cypher.StorageExecutor)
+	s.perDBYAMLOverrides = config.PerDBYAMLOverrides
+	s.processConfig = globalConfig
+	s.dbConfigActive = make(map[string]map[string]string)
+	s.dbConfigPending = make(map[string]map[string]struct{})
 	s.executorCache = cypher.NewDatabaseExecutorCache(&s.executorsMu, &s.executors,
 		(*cypher.StorageExecutor).StatementCacheSelectionValid,
 		func(name string) (*cypher.StorageExecutor, error) {
@@ -1178,9 +1204,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	s.db.SetEmbedQueueShouldYield(func() bool {
 		return s.activeTxReqs.Load() > 0
 	})
-	s.txSessions = txsession.NewManager(30*time.Second, s.newExecutorForDatabase)
-	s.requestsCtx, s.cancelRequestsCtx = context.WithCancel(context.Background())
-	s.txSessions.SetLifetimeContext(s.requestsCtx)
+	s.txSessions = txsession.NewManager(30*time.Second, s.newExecutorForDatabase, s.shutdown.work.Context())
+	s.shutdown.work.OnStop(func() error { return s.txSessions.CloseContext(s.shutdown.stopBudget()) })
 	s.txSessions.SetTerminalErrorObserver(func(session *txsession.Session, err error) {
 		s.logMVCCSnapshotExpiration(session, err)
 	})
@@ -1341,7 +1366,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	})
 	if featuresConfig.HeimdallEnabled {
 		s.logEvent(context.Background(), slog.LevelInfo, localization.ServerHeimdallInitializingEvent())
-		go func() {
+		s.runBackground(context.Background(), func(initCtx context.Context) {
 			// Configure token budget from environment variables
 			heimdall.SetTokenBudget(featuresConfig)
 			heimdallCfg := heimdall.ConfigFromFeatureFlags(featuresConfig)
@@ -1356,6 +1381,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				localization.ServerHeimdallProviderResolvedEvent(safeProviderName, "NORNICDB_HEIMDALL_PROVIDER"))
 			manager, err := heimdall.NewManager(heimdallCfg)
 			if err != nil {
+				s.shutdown.work.RecordError("", fmt.Errorf("Heimdall construction: %w", err))
 				s.logEvent(context.Background(), slog.LevelWarn,
 					localization.ServerHeimdallInitializationFailedEvent(
 						observability.RedactError(
@@ -1366,8 +1392,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				s.initHeimdallPluginsWithoutInference(featuresConfig, mcpServer)
 				return
 			}
-			if baseExec := db.GetCypherExecutor(); baseExec != nil {
-				baseExec.SetInferenceManager(manager)
+			if !db.SetInferenceManager(manager) {
+				return
 			}
 
 			// Create database router wrapper for Heimdall (multi-db aware)
@@ -1396,6 +1422,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			)
 
 			subsystemCtx := heimdall.SubsystemContext{
+				Context:  initCtx,
 				Config:   heimdallCfg,
 				Bifrost:  handler.Bifrost(),
 				Database: dbRouter,
@@ -1419,7 +1446,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			for _, actionName := range actions {
 				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallActionRegisteredEvent(actionName))
 			}
-		}()
+		})
 	} else {
 		s.initHeimdallPluginsWithoutInference(featuresConfig, mcpServer)
 		s.logEvent(context.Background(), slog.LevelInfo,
@@ -1455,7 +1482,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					"search_rerank", "local", modelPath,
 					"server starts immediately; reranking available after model loads"))
 
-			go func() {
+			s.runBackground(context.Background(), func(initCtx context.Context) {
 				opts := localllm.DefaultRerankerOptions(modelPath)
 				opts.GPULayers = -1
 				// Apply rerank context features from config
@@ -1476,27 +1503,40 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 				rerankerModel, err := localllm.LoadRerankerModel(opts)
 				if err != nil {
+					s.shutdown.work.RecordError("", fmt.Errorf("local reranker construction: %w", err))
 					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSearchRerankerModelUnavailableEvent(err))
 					return
 				}
+				release, accepted := db.OwnProvider("local reranker model", rerankerModel)
+				if !accepted {
+					s.shutdown.work.RecordError("", release())
+					return
+				}
 
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				ctx, endUse, useErr := db.BeginProviderUse(initCtx)
+				if useErr != nil {
+					s.shutdown.work.RecordError("", release())
+					return
+				}
+				ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				_, healthErr := rerankerModel.Score(ctx, "health", "check")
 				cancel()
+				endUse()
 				if healthErr != nil {
-					rerankerModel.Close()
+					s.shutdown.work.RecordError("", fmt.Errorf("local reranker health: %w", healthErr))
+					s.shutdown.work.RecordError("", release())
 					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSearchRerankerHealthCheckFailedEvent(healthErr))
 					return
 				}
 
 				cfg := search.DefaultLocalRerankerConfig()
 				cfg.Enabled = true
-				r := search.NewLocalReranker(rerankerModel, cfg)
+				r := search.NewLocalReranker(rerankerModel, cfg, db.BeginProviderUse)
 				db.SetSearchReranker(r)
 				setGlobalRerankerResolver(func(string) search.Reranker { return r })
 				s.logEvent(context.Background(), slog.LevelInfo,
 					localization.ServerSearchRerankerReadyLocalEvent("search_rerank", modelName))
-			}()
+			})
 		} else {
 			// External provider: use HTTP rerank API (Cohere, HuggingFace TEI, Ollama adapter, etc.).
 			apiURL := strings.TrimSpace(featuresConfig.SearchRerankAPIURL)
@@ -1661,17 +1701,21 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// DB.Open() warms namespaces present in storage; this loop ensures known DB metadata
 	// also gets initialized, and keeps doing so without requiring first-search triggers.
 	s.ensureSearchBuildStartedForKnownDatabases()
-	go func() {
+	s.runBackground(context.Background(), func(context.Context) {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
-			if s.closed.Load() {
+			if s.shutdown.work.Closing() {
 				return
 			}
 			s.ensureSearchBuildStartedForKnownDatabases()
-			<-ticker.C
+			select {
+			case <-ticker.C:
+			case <-s.shutdown.work.Context().Done():
+				return
+			}
 		}
-	}()
+	})
 
 	// Wire MCP to use per-database executors when invoked from the agentic loop (so link/store/recall use the request's database)
 	if mcpServer != nil && dbManager != nil {
@@ -1883,16 +1927,22 @@ func (s *Server) SetObsRegistry(reg *prometheus.Registry) {
 // SetAuditLogger sets the audit logger for compliance logging.
 func (s *Server) SetAuditLogger(logger *audit.Logger) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.audit = logger
+	s.mu.Unlock()
 	if s.db != nil {
-		s.db.SetRetentionAuditCallback(func(action, recordID, category string) {
-			if s.audit == nil {
-				return
+		s.db.SetRetentionAuditOutcomeCallback(func(action, recordID, category string) error {
+			if logger == nil {
+				return nil
 			}
-			_ = s.audit.LogDataAccess("system", "retention-manager", "node", recordID, action, true, category)
+			return logger.LogDataAccess("system", "retention-manager", "node", recordID, action, true, category)
 		})
 	}
+}
+func (s *Server) auditLogger() *audit.Logger {
+	s.mu.RLock()
+	logger := s.audit
+	s.mu.RUnlock()
+	return logger
 }
 
 func (s *Server) setHeimdallHandler(handler *heimdall.Handler) {
@@ -1935,18 +1985,55 @@ func (s *Server) getHeimdallHandler() *heimdall.Handler {
 //
 //	If TLSCertFile and TLSKeyFile are configured, the server automatically
 //	starts with HTTPS. Otherwise, it uses HTTP.
-func (s *Server) Start() error {
-	if s.closed.Load() {
+func (s *Server) Start() (startErr error) {
+	startCtx, release, accepted := s.shutdown.work.Acquire(context.Background())
+	if !accepted {
 		return ErrServerClosed
 	}
+	startAttempted := false
+	defer func() {
+		if startAttempted && startErr != nil && !errors.Is(startErr, ErrServerClosed) {
+			s.shutdown.work.RecordError("", fmt.Errorf("HTTP server start: %w", startErr))
+			s.beginShutdown(context.Background())
+		}
+		release()
+	}()
+
+	s.lifecycleMu.Lock()
+	if s.shutdown.work.Closing() {
+		s.lifecycleMu.Unlock()
+		return ErrServerClosed
+	}
+	if s.startClaimed || s.httpServer != nil {
+		s.lifecycleMu.Unlock()
+		return fmt.Errorf("HTTP server is already started")
+	}
+	startAttempted = true
+	s.startClaimed = true
+	s.lifecycleMu.Unlock()
 
 	addr := fmt.Sprintf("%s:%d", s.config.Address, s.config.Port)
-	listener, err := net.Listen("tcp", addr)
+	listen := s.listenNative
+	if listen == nil {
+		listen = net.Listen
+	}
+	listener, err := listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
+	listener = util.ObserveListenerClose(listener, func(err error) {
+		s.shutdown.work.RecordError("", fmt.Errorf("HTTP listener close: %w", err))
+	})
 
+	s.lifecycleMu.Lock()
+	if s.shutdown.work.Closing() {
+		s.lifecycleMu.Unlock()
+		s.shutdown.work.RecordError("", listener.Close())
+		return ErrServerClosed
+	}
 	s.listener = listener
+	s.pendingListener = listener
+	s.lifecycleMu.Unlock()
 	started := time.Now()
 	s.started.Store(&started)
 
@@ -1955,20 +2042,11 @@ func (s *Server) Start() error {
 	// setup before it; body-bearing upgrade proposals remain ordinary HTTP/1.
 	mux := s.buildRouter()
 
-	// Plan 04-02 D-03: instrumentedMux is the SOLE HTTP observation
-	// chokepoint per AGENTS.md §7 DRY. It wraps mux.ServeHTTP, reading
-	// `r.Pattern` post-dispatch (Go 1.22+ stdlib field) so path_template
-	// values come from the closed route table — never from r.URL.Path
-	// (cardinality bomb). Nil-safe: when s.httpMetrics is nil (test
-	// fixtures, pre-Phase-4 callers), the wrapper is a pass-through.
-	// Panic-safe: handler panics still emit a 5xx observation before
-	// re-propagating (T-04-08).
-	// buildRouter already places the single instrumentedMux inside metadata
-	// admission. Wrapping it again here would extract trace metadata before
-	// admission rejects an oversized request.
-	instrumented := mux
-	s.httpServer = &http.Server{
-		Handler:      instrumented,
+	// Keep the request context local for BaseContext. The cancel function is
+	// published under lifecycleMu, which Stop uses before consuming it.
+	requestsCtx, cancelRequestsCtx := context.WithCancel(s.shutdown.work.Context())
+	server := &http.Server{
+		Handler:      mux,
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
 		IdleTimeout:  s.config.IdleTimeout,
@@ -1977,7 +2055,20 @@ func (s *Server) Start() error {
 		// handlers see ctx.Err() != nil on their next cancellation probe and
 		// unwind, so http.Server.Shutdown returns instead of waiting on a
 		// long-running BFS.
-		BaseContext: func(net.Listener) context.Context { return s.requestsCtx },
+		BaseContext: func(net.Listener) context.Context {
+			return fabric.WithTransactionLifetime(requestsCtx, s.shutdown.work.Context())
+		},
+	}
+
+	// Publish, then enroll the transport's stop signal. A refused enrollment
+	// means the stop already began: this attempt stops its own transport, so
+	// net/http's Serve after Shutdown returns at once.
+	s.lifecycleMu.Lock()
+	s.httpServer = server
+	s.lifecycleMu.Unlock()
+	if stopHTTP := s.stopHTTPServer(server, cancelRequestsCtx); !s.shutdown.work.OnStop(stopHTTP) {
+		s.shutdown.work.RecordError("", stopHTTP())
+		return ErrServerClosed
 	}
 
 	// Configure HTTP/2 (always enabled, backwards compatible with HTTP/1.1)
@@ -1988,7 +2079,7 @@ func (s *Server) Start() error {
 	if s.config.TLSCertFile != "" && s.config.TLSKeyFile != "" {
 		// HTTPS mode: HTTP/2 is automatically enabled via ALPN
 		// Configure HTTP/2 settings for TLS connections
-		if err := http2.ConfigureServer(s.httpServer, http2Config); err != nil {
+		if err := http2.ConfigureServer(server, http2Config); err != nil {
 			return fmt.Errorf("failed to configure HTTP/2 for TLS: %w", err)
 		}
 		s.logEvent(context.Background(), slog.LevelInfo,
@@ -1997,93 +2088,66 @@ func (s *Server) Start() error {
 		// HTTP mode: Use h2c (HTTP/2 cleartext) for backwards compatibility
 		// h2c allows HTTP/2 over plain TCP, falling back to HTTP/1.1 for older clients
 		// Select the transport before any adapter can buffer an initial body.
-		s.httpServer.Handler = newCleartextHTTPHandler(instrumented, http2Config)
+		server.Handler = newCleartextHTTPHandler(mux, http2Config)
 		s.logEvent(context.Background(), slog.LevelInfo,
 			localization.ServerHTTP2EnabledEvent("h2c_cleartext", "http/1.1"))
 	}
 
-	// Start serving
-	go func() {
-		var err error
-		if s.config.TLSCertFile != "" && s.config.TLSKeyFile != "" {
-			err = s.httpServer.ServeTLS(listener, s.config.TLSCertFile, s.config.TLSKeyFile)
-		} else {
-			err = s.httpServer.Serve(listener)
+	// The listener stays owned by pendingListener until Serve has taken it.
+	// ServeTLS can fail loading its certificate before it registers the
+	// listener, without closing it; load the pair here so a certificate error
+	// leaves the listener with its owner, which closes it on Stop.
+	serveListener := listener
+	if s.config.TLSCertFile != "" && s.config.TLSKeyFile != "" {
+		certificate, err := tls.LoadX509KeyPair(s.config.TLSCertFile, s.config.TLSKeyFile)
+		if err != nil {
+			return fmt.Errorf("HTTP TLS certificate: %w", err)
 		}
+		config := server.TLSConfig.Clone()
+		if config == nil {
+			config = &tls.Config{}
+		}
+		if !slices.Contains(config.NextProtos, "http/1.1") {
+			config.NextProtos = append(config.NextProtos, "http/1.1")
+		}
+		config.Certificates = append(config.Certificates, certificate)
+		serveListener = tls.NewListener(listener, config)
+	}
+	s.lifecycleMu.Lock()
+	s.pendingListener = nil // Serve registers the listener first, then owns its closure
+	s.lifecycleMu.Unlock()
+	s.runBackground(startCtx, func(context.Context) {
+		err := server.Serve(serveListener)
 		if err != nil && err != http.ErrServerClosed {
-			// Log error but don't crash
+			s.shutdown.work.RecordError("", fmt.Errorf("HTTP serve: %w", err))
 			s.logEvent(context.Background(), slog.LevelError, localization.ServerHTTPServeFailedEvent(err))
 		}
-	}()
+	})
 
 	// Optional gRPC endpoints (feature-flagged).
 	if err := s.startQdrantGRPC(); err != nil {
-		_ = s.httpServer.Shutdown(context.Background())
 		return err
 	}
 
 	return nil
 }
 
-// Stop gracefully shuts down the server.
-func (s *Server) Stop(ctx context.Context) (err error) {
-	if !s.closed.CompareAndSwap(false, true) {
-		return nil // Already closed
-	}
-	defer func() {
-		if s.slowQueryFile != nil {
-			err = compose.Outcomes(err, s.slowQueryFile.Close())
-		}
-	}()
-
-	defer func() {
-		if shutdownErr := s.stopHeimdallPlugins(); shutdownErr != nil {
-			err = compose.Outcomes(err, shutdownErr)
-		}
-	}()
-	s.statementCacheIndex.Close()
-	s.executorCache.Clear()
-	// Cancel the background embedder initialisation now and wait for it
-	// before returning, so it can't install an embedder (or log) after Stop.
-	if s.embedderInitCancel != nil {
-		s.embedderInitCancel()
-		defer func() {
-			select {
-			case <-s.embedderInitDone:
-			case <-ctx.Done():
-				if err == nil {
-					err = ctx.Err()
-				}
-			}
-		}()
-	}
-
-	s.stopQdrantGRPC()
-
-	// Stop rate limiter cleanup goroutine
-	if s.rateLimiter != nil {
-		s.rateLimiter.Stop()
-	}
-
-	// Cancel the BaseContext handed to all in-flight requests so handlers that
-	// honour ctx (Cypher BFS / shortestPath traversals, etc.) abandon work
-	// and let http.Server.Shutdown drain promptly. Without this, an unbounded
-	// shortestPath traversal could hold shutdown open for the duration of the
-	// configured WriteTimeout.
-	if s.cancelRequestsCtx != nil {
-		s.cancelRequestsCtx()
-	}
-	if s.httpServer == nil {
-		return nil
-	}
-
-	return util.ShutdownHTTPServer(ctx, s.httpServer)
+// Stop closes admission and waits within ctx for the one shutdown owner.
+// Work accepted before shutdown keeps its resources until actual completion;
+// WaitStopped exposes the eventual cleanup outcome after a deadline.
+func (s *Server) Stop(ctx context.Context) error {
+	s.beginShutdown(ctx)
+	return s.shutdown.work.WaitStopped(ctx)
 }
 
 // Addr returns the server's listen address.
 func (s *Server) Addr() string {
-	if s.listener != nil {
-		return s.listener.Addr().String()
+	s.lifecycleMu.Lock()
+	listener := s.listener
+	s.lifecycleMu.Unlock()
+
+	if listener != nil {
+		return listener.Addr().String()
 	}
 	return ""
 }
@@ -2145,19 +2209,15 @@ func (s *Server) startEmbedderInit(embedConfig *embed.Config, embeddingCacheSize
 	// Install the failure redaction owner before the asynchronous worker or
 	// failure endpoint can observe this provider configuration.
 	db.SetDefaultEmbedConfig(embedConfig)
-	ctx, cancel := context.WithCancel(db.LifetimeContext())
-	done := make(chan struct{})
-	s.embedderInitCancel = cancel
-	s.embedderInitDone = done
-	started := db.RunBackgroundTask(func() {
-		defer close(done)
-		defer cancel()
-		s.initEmbedderWithRetry(ctx, embedConfig, embeddingCacheSize, mcpServer, db)
+	started := s.runBackground(context.Background(), func(ctx context.Context) {
+		s.embedderInit.Do(func() error {
+			s.initEmbedderWithRetry(ctx, embedConfig, embeddingCacheSize, mcpServer, db)
+			return nil
+		})
 	})
 	if !started {
-		// db is already closing: there is nothing to initialise.
-		cancel()
-		close(done)
+		// The server is already stopping: there is nothing to initialise.
+		s.embedderInit.Do(func() error { return nil })
 	}
 }
 

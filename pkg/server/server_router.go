@@ -300,7 +300,7 @@ func (s *Server) wrapWithMiddleware(next http.Handler) http.Handler {
 
 	// Include tracing propagation at this same ingress boundary. Start mounts
 	// this assembled handler without adding any application wrapper outside it.
-	return s.metadataAdmissionMiddleware(instrumentedMux(handler, s.httpMetrics))
+	return s.workMiddleware(s.metadataAdmissionMiddleware(instrumentedMux(handler, s.httpMetrics)))
 }
 
 // registerProductRoutes owns the authenticated product endpoint table. Entry
