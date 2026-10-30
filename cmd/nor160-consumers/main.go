@@ -791,6 +791,19 @@ func NewNOR160ControlStoredFn(c *NOR160ControlCache) *NOR160ControlStoredFn {
 func (s *NOR160ControlStoredFn) GetStored(id NodeID, hidden func(*Node) bool) *Node {
 	return s.get(id, hidden)
 }
+
+// Narrowed exits: an exported getter whose result is a struct wrapping one
+// entity directly is still a read exit; a copy it drops is a member (K1, must
+// report).
+type NOR160ControlWrap struct{ Node *Node }
+
+func (c *NOR160ControlCache) GetWrappedSelected(id NodeID, hidden func(*Node) bool) NOR160ControlWrap {
+	n := copyNode(c.nodes[id])
+	if hidden(n) {
+		return NOR160ControlWrap{}
+	}
+	return NOR160ControlWrap{Node: n}
+}
 `
 
 const cypherControlFile = `package cypher
@@ -882,6 +895,7 @@ var controls = []control{
 	{"K1e", "(*" + storagePkg + ".NOR160ControlCache).nor160Stage", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).nor160GetVia", false},
 	{"K1", storagePkg + ".nor160ControlStoredGet$1", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetWrappedSelected", false},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherDrops", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherCopyReceived", true},
 	{"K1", "(*" + module + "/pkg/cypher.NOR160ControlCypherCache).Get", false},
@@ -3497,11 +3511,60 @@ func flags(m map[*ssa.Function][]bool, fn *ssa.Function, n int) []bool {
 	return m[fn]
 }
 
+// entityValue: an entity (or pointer to one), a slice, array, map or channel
+// of entity values, an iterator yielding them, or a struct holding one of
+// those directly in a field. A struct that holds entities only transitively (a
+// service, a database handle) is not one.
+func entityValue(t types.Type, depth int) bool {
+	if depth > 3 {
+		return false
+	}
+	t = types.Unalias(t)
+	if p := pointee(t); p != nil {
+		t = p
+	}
+	switch u := t.(type) {
+	case *types.Named:
+		if entityType(u) {
+			return true
+		}
+		if st, ok := u.Underlying().(*types.Struct); ok && depth == 0 {
+			for i := 0; i < st.NumFields(); i++ {
+				if entityValue(st.Field(i).Type(), depth+1) {
+					return true
+				}
+			}
+			return false
+		}
+		return entityValue(u.Underlying(), depth)
+	case *types.Slice:
+		return entityValue(u.Elem(), depth+1)
+	case *types.Array:
+		return entityValue(u.Elem(), depth+1)
+	case *types.Map:
+		return entityValue(u.Elem(), depth+1)
+	case *types.Chan:
+		return entityValue(u.Elem(), depth+1)
+	case *types.Signature:
+		// An iterator: func(yield func(..entity..) bool).
+		for i := 0; i < u.Params().Len(); i++ {
+			if y, ok := u.Params().At(i).Type().Underlying().(*types.Signature); ok {
+				for k := 0; k < y.Params().Len(); k++ {
+					if entityValue(y.Params().At(k).Type(), depth+1) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 // exitResult and exitCallback: a public read exit hands entity values out
 // through its results or its entity callbacks.
 func exitResult(fn *ssa.Function, i int) bool {
 	rs := fn.Signature.Results()
-	return exported(fn) && i < rs.Len() && family(rs.At(i).Type())
+	return exported(fn) && i < rs.Len() && entityValue(rs.At(i).Type(), 0)
 }
 
 func exitCallback(fn *ssa.Function, k int) bool {
@@ -3513,7 +3576,7 @@ func exitCallback(fn *ssa.Function, k int) bool {
 		return false
 	}
 	for i := 0; i < sig.Params().Len(); i++ {
-		if family(sig.Params().At(i).Type()) {
+		if entityValue(sig.Params().At(i).Type(), 0) {
 			return true
 		}
 	}
