@@ -28,6 +28,9 @@ Port required behavior to canonical release owners; rebase updates, never merge.
 - [x] Publish qualified commit eb0c124c for review; informative hook completed411functions/zero refactor/20reuse.
 - [x] Reconcile all20rows; retire both copied recorder factories into RecordSpans and reuse the canonical audit collector; focused race/count3 passes.
 - [x] Qualify the final recorder/audit fixture convergence: focused race/count3 and full make test on0afde9e9 pass.
+- [x] Publish qualified recorder/audit commit6cea89f7 for review; unchanged hook analyzed11functions with zero refactor/one reuse.
+- [x] Collapse that HTTP request-driver reuse across all four original span cases; preserve names/inputs/assertions/explicit cleanup; focused race/count10 passes.
+- [x] Run final full make test with the shared HTTP request driver: tree87768354 passes.
 - [x] Prepare the skill-format PR/Linear evidence, explicit PR-branch push target and exact gate-result comment. Publication and review status are recorded on PR #1655 and NOR-61 after push.
 
 Evidence: `/Users/timothysweet/.local/share/nornicdb-pr-readiness/pr1655-current-release`.

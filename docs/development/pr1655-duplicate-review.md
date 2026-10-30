@@ -151,3 +151,16 @@ PR; the earlier5bc pass alone does not qualify these later edits.
 | 18 | `pkg/auth/user_record_read_bench_test.go` `BenchmarkUserRecordPopulatedRead()` ↔ `pkg/auth/user_record_populated_read_alloc_test.go` `TestUserRecordPopulatedReadAllocBudget()` | **Canonical populated record fixture** — populatedUserReadFixture owns exact original node; called outside benchmark/AllocsPerRun measured regions. Preserve complete expected User, detached decode controls, escaping sink,200runs and original<=7budget. |
 | 19 | `pkg/auth/auth.go` `.UpdateRoles()` ↔ `pkg/auth/user_mutation.go` `.UpdateRolesAndStatus()` | **Same canonical atomic/single owners** — Reciprocal row12; role value transformation is only in canonical UpdateRoles/mutateStoredUser, while combined request owns admitted context and deferred aggregate publication. No second role mutation body. |
 | 20 | `pkg/storage/badger_constraint_validation.go` `.validateNodeConstraintsInTxn()` ↔ `pkg/storage/badger_transaction.go` `.validateNodeConstraints()` | **Canonical policy with actual authority inputs** — Native facade nilguards and passes publishing txn/namespace/exclude; transaction facade pins namespace then passes current pending transaction. Both invoke nodeConstraintValidation for schema/DOMAIN/type/null/key policy. Original specific read/check/error bodies retained; no duplicate policy traversal. |
+
+## Follow-up11-function advisory — HTTP span driver
+
+The next unchanged hook reported zero refactor targets and one reuse row:
+TestInstrumentedMux_Span_UnmatchedRoute versus TestInstrumentedMux_Span_UsesRoutePattern.
+Their repeated metrics/recording/request dispatch now belongs to one
+recordMuxRequestSpans. All four HTTP span cases use it with their original mux,
+route handlers, request paths and traceparent header. Named tests and all original
+span-count, valid-context, route/database, parent-trace and5xx-status assertions
+remain. Explicit per-test cleanup is preserved; all original recorder consumers
+route to the one RecordSpans factory. The helper performs real request execution,
+not a forwarding alias. Focused race/count10 passes; final approved make-test
+qualification is recorded on the PR. No checker change or finding suppression.
