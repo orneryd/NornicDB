@@ -128,7 +128,7 @@ func (s *Session) failClosedTransactionCleanup(_ error) {
 		s.connCancel()
 	}
 	if s.conn != nil {
-		_ = s.conn.Close()
+		s.closeConnection()
 	}
 }
 

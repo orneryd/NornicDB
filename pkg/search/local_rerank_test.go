@@ -21,23 +21,23 @@ func TestLocalReranker_Enabled(t *testing.T) {
 	scorer := mockScorer{}
 	cfg := DefaultLocalRerankerConfig()
 	cfg.Enabled = false
-	r := NewLocalReranker(scorer, cfg)
+	r := NewLocalReranker(scorer, cfg, testRerankAdmission())
 	if r.Enabled() {
 		t.Error("expected disabled when config.Enabled=false")
 	}
 	cfg.Enabled = true
-	r = NewLocalReranker(scorer, cfg)
+	r = NewLocalReranker(scorer, cfg, testRerankAdmission())
 	if !r.Enabled() {
 		t.Error("expected enabled when config.Enabled=true and scorer non-nil")
 	}
-	r = NewLocalReranker(nil, cfg)
+	r = NewLocalReranker(nil, cfg, testRerankAdmission())
 	if r.Enabled() {
 		t.Error("expected disabled when scorer is nil")
 	}
 }
 
 func TestLocalReranker_Name(t *testing.T) {
-	r := NewLocalReranker(mockScorer{}, nil)
+	r := NewLocalReranker(mockScorer{}, nil, testRerankAdmission())
 	if got := r.Name(); got != "local_gguf" {
 		t.Errorf("Name() = %q, want local_gguf", got)
 	}
@@ -49,12 +49,12 @@ func TestLocalReranker_IsAvailable(t *testing.T) {
 
 	okReranker := NewLocalReranker(mockScorer{
 		"health|check": 0.9,
-	}, cfg)
+	}, cfg, testRerankAdmission())
 	if !okReranker.IsAvailable(context.Background()) {
 		t.Fatal("expected IsAvailable true when health check scoring succeeds")
 	}
 
-	badReranker := NewLocalReranker(failingScorer{}, cfg)
+	badReranker := NewLocalReranker(failingScorer{}, cfg, testRerankAdmission())
 	if badReranker.IsAvailable(context.Background()) {
 		t.Fatal("expected IsAvailable false when health check scoring fails")
 	}
@@ -79,7 +79,7 @@ func TestLocalReranker_RerankDisabledPassThrough(t *testing.T) {
 
 	cfg := DefaultLocalRerankerConfig()
 	cfg.Enabled = false
-	disabled := NewLocalReranker(mockScorer{}, cfg)
+	disabled := NewLocalReranker(mockScorer{}, cfg, testRerankAdmission())
 	results, err = disabled.Rerank(context.Background(), "query", candidates)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestLocalReranker_RerankDisabledPassThrough(t *testing.T) {
 }
 
 func TestLocalReranker_Rerank_EmptyCandidates(t *testing.T) {
-	r := NewLocalReranker(mockScorer{}, DefaultLocalRerankerConfig())
+	r := NewLocalReranker(mockScorer{}, DefaultLocalRerankerConfig(), testRerankAdmission())
 	got, err := r.Rerank(context.Background(), "q", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestLocalReranker_Rerank_ReordersByScore(t *testing.T) {
 	}
 	cfg := DefaultLocalRerankerConfig()
 	cfg.Enabled = true
-	r := NewLocalReranker(scorer, cfg)
+	r := NewLocalReranker(scorer, cfg, testRerankAdmission())
 
 	candidates := []RerankCandidate{
 		{ID: "a", Content: "docA", Score: 0.1},
@@ -144,7 +144,7 @@ func TestLocalReranker_Rerank_ScorerErrorIsReported(t *testing.T) {
 	scorer := &failingScorer{}
 	cfg := DefaultLocalRerankerConfig()
 	cfg.Enabled = true
-	r := NewLocalReranker(scorer, cfg)
+	r := NewLocalReranker(scorer, cfg, testRerankAdmission())
 	candidates := []RerankCandidate{
 		{ID: "a", Content: "docA", Score: 0.5},
 	}
@@ -183,7 +183,7 @@ func TestLocalReranker_RerankNilContextCapsAndTruncates(t *testing.T) {
 		MaxCandidates: 1,
 		MaxDocChars:   3,
 	}
-	r := NewLocalReranker(scorer, cfg)
+	r := NewLocalReranker(scorer, cfg, testRerankAdmission())
 
 	var nilCtx context.Context
 	results, err := r.Rerank(nilCtx, " query ", []RerankCandidate{
@@ -212,7 +212,7 @@ func TestLocalReranker_RerankAllFilteredStaysVisibleForValidation(t *testing.T) 
 		MaxDocChars:   0,
 		MinScore:      0.5,
 	}
-	r := NewLocalReranker(&captureScorer{score: 0.1}, cfg)
+	r := NewLocalReranker(&captureScorer{score: 0.1}, cfg, testRerankAdmission())
 	candidates := []RerankCandidate{
 		{ID: "a", Content: "alpha", Score: 0.9},
 		{ID: "b", Content: "beta", Score: 0.8},
