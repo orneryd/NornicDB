@@ -57,8 +57,7 @@ func TestReviewR8HTTPCommitEntries(t *testing.T) {
 				controller.mu.Lock()
 				var release sync.Once
 				defer release.Do(controller.mu.Unlock)
-				server.txSessions = txsession.NewManager(time.Minute, server.newExecutorForDatabase)
-				server.txSessions.SetLifetimeContext(server.requestsCtx)
+				server.txSessions = txsession.NewManager(time.Minute, server.newExecutorForDatabase, server.shutdown.work.Context())
 				// buildRouter includes the production middleware.
 				httpServer := httptest.NewServer(server.buildRouter())
 				defer func() { release.Do(controller.mu.Unlock); httpServer.Close() }()
