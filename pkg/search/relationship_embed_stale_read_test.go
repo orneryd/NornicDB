@@ -55,7 +55,7 @@ func TestRelationshipEmbedsTheIndexedVersionOverAStaleRead(t *testing.T) {
 	engine.mu.Unlock()
 	edited := storage.CopyEdge(original)
 	edited.Properties["search_text"] = "zephyrine bridge explanation"
-	require.NoError(t, engine.Engine.UpdateEdge(edited))
+	require.NoError(t, engine.Engine.UpdateEdge(storage.EdgeUpdateRequest{After: edited}))
 	svc.IndexRelationship(edited)
 
 	require.Eventually(t, func() bool {

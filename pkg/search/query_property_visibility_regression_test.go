@@ -133,7 +133,7 @@ func TestNormalGroupedContinuationCannotExposeSuppressedGroupKey(t *testing.T) {
 	b, err := engine.GetNode("b")
 	require.NoError(t, err)
 	b.Properties["title"] = "second hidden"
-	require.NoError(t, engine.UpdateNode(b))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: b}))
 	req := SearchContinuationRequest{Owner: "alice", Database: "tenant", Mode: SearchContinuationID, GroupBy: "title", N: 1}
 	first, err := svc.SearchTextContinuation(ctx, "", nil, req, nil, nil, nil, ChunkedSearchErrorPolicy{})
 	require.NoError(t, err)

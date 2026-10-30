@@ -179,7 +179,7 @@ func (s *Store) SetOverrides(ctx context.Context, dbName string, overrides map[s
 		return err
 	} else {
 		node.CreatedAt = existing.CreatedAt
-		err = s.storage.UpdateNode(node)
+		err = s.storage.UpdateNode(storage.NodeUpdateRequest{Before: existing, After: node})
 		if err != nil {
 			return err
 		}

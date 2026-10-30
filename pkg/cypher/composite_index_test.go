@@ -17,18 +17,18 @@ type updateErrorEngine struct {
 	edgeErr error
 }
 
-func (e *updateErrorEngine) UpdateNode(node *storage.Node) error {
+func (e *updateErrorEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	if e.nodeErr != nil {
 		return e.nodeErr
 	}
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(updateRequest)
 }
 
-func (e *updateErrorEngine) UpdateEdge(edge *storage.Edge) error {
+func (e *updateErrorEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
 	if e.edgeErr != nil {
 		return e.edgeErr
 	}
-	return e.Engine.UpdateEdge(edge)
+	return e.Engine.UpdateEdge(updateRequest)
 }
 
 // TestCompositeIndex tests composite (multi-property) index creation

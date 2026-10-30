@@ -31,7 +31,7 @@ func TestTransactionEdgeConstraintsSkipSupersededRelationships(t *testing.T) {
 			return tx.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{"token": "t"}})
 		}))
 		require.NoError(t, inTx(t, engine, func(tx *BadgerTransaction) error {
-			require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{"token": "moved"}}))
+			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{"token": "moved"}}}))
 			return tx.CreateEdge(&Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:c", Type: "OWNS", Properties: map[string]any{"token": "t"}})
 		}))
 		require.Error(t, engine.CreateEdge(&Edge{ID: "test:e4", StartNode: "test:a", EndNode: "test:d", Type: "OWNS", Properties: map[string]any{"token": "t"}}))
@@ -48,7 +48,7 @@ func TestTransactionEdgeConstraintsSkipSupersededRelationships(t *testing.T) {
 			return tx.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(2, 7)})
 		}))
 		require.NoError(t, inTx(t, engine, func(tx *BadgerTransaction) error {
-			require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(10, 12)}))
+			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(10, 12)}}))
 			return tx.CreateEdge(&Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(3, 8)})
 		}))
 		require.Error(t, engine.CreateEdge(&Edge{ID: "test:e4", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(4, 5)}))
@@ -63,7 +63,7 @@ func TestTransactionEdgeConstraintsSkipSupersededRelationships(t *testing.T) {
 		}))
 		// A rewritten relationship still counts, once.
 		require.Error(t, inTx(t, engine, func(tx *BadgerTransaction) error {
-			require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "OWNS", Properties: map[string]any{"v": int64(1)}}))
+			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "OWNS", Properties: map[string]any{"v": int64(1)}}}))
 			return tx.CreateEdge(&Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:d", Type: "OWNS", Properties: map[string]any{}})
 		}))
 	})

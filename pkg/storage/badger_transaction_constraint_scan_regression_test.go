@@ -107,7 +107,7 @@ func TestBadgerTransactionPolicyLabelChangeErrorsDoNotCommit(t *testing.T) {
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-					require.NoError(t, tx.UpdateGraphNode(&Node{ID: anchor, Labels: []string{"Forbidden"}}, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: anchor, Labels: []string{"Forbidden"}}, Policy: ClientNodeEdits}))
 					if !corruptEndpoint {
 						// Relabeling also reads adjacency for counters, so inject corruption after staging.
 						require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
@@ -150,10 +150,10 @@ func TestBadgerTransactionPolicyEndpointErrorsDoNotCommit(t *testing.T) {
 			tx, err := engine.BeginTransaction()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
-			require.NoError(t, tx.UpdateEdge(&Edge{
+			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 				ID: "test:original", StartNode: "test:source", EndNode: "test:target", Type: "REL",
 				Properties: map[string]interface{}{"state": "changed"},
-			}))
+			}}))
 			require.ErrorContains(t, tx.Commit(), decodeErr.Error())
 			edge, err := engine.GetEdge("test:original")
 			require.NoError(t, err)
@@ -188,7 +188,7 @@ func TestBadgerTransactionDeferredPolicyLabelChanges(t *testing.T) {
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-					require.NoError(t, tx.UpdateGraphNode(&Node{ID: anchor, Labels: labels}, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: anchor, Labels: labels}, Policy: ClientNodeEdits}))
 					err = tx.Commit()
 					if allowed {
 						require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestBadgerTransactionDeferredPolicyLabelChangeUsesFinalEdges(t *testing.T) 
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-					require.NoError(t, tx.UpdateGraphNode(&Node{ID: anchor, Labels: []string{"Forbidden"}}, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: anchor, Labels: []string{"Forbidden"}}, Policy: ClientNodeEdits}))
 					if moveEndpoint {
 						if outgoing {
 							edge.StartNode = "test:spare"
@@ -260,7 +260,7 @@ func TestBadgerTransactionDeferredPolicyLabelChangeUsesFinalEdges(t *testing.T) 
 					} else {
 						edge.Type = "UNCONSTRAINED"
 					}
-					require.NoError(t, tx.UpdateEdge(edge))
+					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
 					require.NoError(t, tx.Commit(), "policy must use final edge type and endpoints, not the replaced committed edge")
 					node, err := engine.GetNode(anchor)
 					require.NoError(t, err)

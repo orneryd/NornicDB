@@ -582,7 +582,7 @@ result, err := execute(ctx, "MATCH (n) RETURN n")
 type Engine interface {
     CreateNode(node *Node) error
     GetNode(id NodeID) (*Node, error)
-    UpdateNode(node *Node) error
+    UpdateNode(request NodeUpdateRequest) error
     DeleteNode(id NodeID) error
     // ... more methods
 }

@@ -145,8 +145,8 @@ func TestTransactionStoredReaderKeepsSnapshot(t *testing.T) {
 	wrapper := &transactionStorageWrapper{tx: tx, underlying: ns, namespace: "a", separator: ":"}
 	require.NoError(t, tx.CreateEdge(&storage.Edge{ID: "a:pending", StartNode: "a:y", EndNode: "a:y", Type: "REL"}))
 	// A peer changes committed bodies and membership after this snapshot.
-	require.NoError(t, ns.UpdateNode(&storage.Node{ID: "x", Labels: []string{"N"}, Properties: map[string]any{"k": "after"}}))
-	require.NoError(t, ns.UpdateEdge(&storage.Edge{ID: "hidden", StartNode: "x", EndNode: "y", Type: "REL", Properties: map[string]any{"k": "after"}}))
+	require.NoError(t, ns.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "x", Labels: []string{"N"}, Properties: map[string]any{"k": "after"}}}))
+	require.NoError(t, ns.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "hidden", StartNode: "x", EndNode: "y", Type: "REL", Properties: map[string]any{"k": "after"}}}))
 	_, err = ns.CreateNode(&storage.Node{ID: "late", Labels: []string{"N"}})
 	require.NoError(t, err)
 	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "late", StartNode: "y", EndNode: "y", Type: "REL"}))

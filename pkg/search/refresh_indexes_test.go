@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 
@@ -62,7 +63,7 @@ func (e *refreshIndexesPartialEdgeRead) GetEdge(id storage.EdgeID) (*storage.Edg
 
 func newRefreshIndexesStore(t *testing.T) storage.Engine {
 	t.Helper()
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = base.Close() })
 	return storage.NewNamespacedEngine(base, "test")
 }

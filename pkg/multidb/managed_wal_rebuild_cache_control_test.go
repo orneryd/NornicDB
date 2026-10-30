@@ -156,7 +156,7 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 							require.NoError(t, tx.SetImplicit(true))
 							catalog, err := tx.GetNode(storage.NodeID("system:" + metadataNodeID))
 							require.NoError(t, err)
-							require.NoError(t, tx.UpdateGraphNode(catalog, storage.ClientNodeEdits))
+							require.NoError(t, tx.UpdateGraphNode(storage.NodeUpdateRequest{After: catalog, Policy: storage.ClientNodeEdits}))
 							require.NoError(t, tx.Commit())
 						}
 						require.NoError(t, base.FlushWriteBehind())

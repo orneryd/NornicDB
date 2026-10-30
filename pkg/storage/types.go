@@ -390,13 +390,13 @@ type Engine interface {
 	// Node operations
 	CreateNode(node *Node) (NodeID, error) // Returns the actual stored ID (may be prefixed for namespaced engines)
 	GetNode(id NodeID) (*Node, error)
-	UpdateNode(node *Node) error
+	UpdateNode(updateRequest NodeUpdateRequest) error
 	DeleteNode(id NodeID) error
 
 	// Edge operations
 	CreateEdge(edge *Edge) error
 	GetEdge(id EdgeID) (*Edge, error)
-	UpdateEdge(edge *Edge) error
+	UpdateEdge(updateRequest EdgeUpdateRequest) error
 	DeleteEdge(id EdgeID) error
 
 	// Query operations

@@ -121,7 +121,7 @@ func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
 		}
 		want := int64(round*100 + 50)
 		for v := int64(1); v <= 50; v++ {
-			require.NoError(t, engine.UpdateNode(&Node{ID: "race:n0", Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(round*100) + v}}))
+			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "race:n0", Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(round*100) + v}}}))
 		}
 		stop.Store(true)
 		wg.Wait()

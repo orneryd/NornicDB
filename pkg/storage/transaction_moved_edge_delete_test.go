@@ -50,7 +50,7 @@ func TestTransactionDeleteFormerEndpointKeepsMovedEdge(t *testing.T) {
 				} else {
 					moved.StartNode = "test:c"
 				}
-				require.NoError(t, tx.UpdateEdge(moved))
+				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: moved}))
 				require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
 				pending, err := tx.GetEdge(edge.ID)
 				require.NoError(t, err, "deleting the former endpoint must retain the pending rewrite")

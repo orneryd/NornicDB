@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"path/filepath"
 	"strings"
@@ -21,12 +22,12 @@ func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
 		require.Equal(t, 1000, defaults.SearchResultCacheEntries)
 		require.Equal(t, 5*time.Minute, defaults.SearchResultCacheTTL)
 
-		defaultService := NewService(newTestMemoryEngine(t), 3, nil)
+		defaultService := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 		require.NotNil(t, defaultService.resultCache)
 		require.Equal(t, 1000, defaultService.resultCache.maxSize)
 		require.Equal(t, 5*time.Minute, defaultService.resultCache.ttl)
 
-		disabled := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
+		disabled := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
 			DatabaseID:               "alpha",
 			SearchResultCacheEntries: 0,
 			SearchResultCacheTTL:     time.Minute,
@@ -34,7 +35,7 @@ func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
 		require.NotNil(t, disabled.resultCache)
 		require.Equal(t, 0, disabled.resultCache.maxSize)
 
-		configured := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
+		configured := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
 			DatabaseID:               "beta",
 			SearchResultCacheEntries: 12,
 			SearchResultCacheTTL:     2 * time.Minute,
@@ -49,7 +50,7 @@ func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
 	require.Zero(t, maxEntries)
 	require.Zero(t, ttl)
 
-	service := NewService(newTestMemoryEngine(t), 3, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 	service.resultCache.Put("first", &SearchResponse{Query: "first"})
 	service.resultCache.Put("second", &SearchResponse{Query: "second"})
 
@@ -71,7 +72,7 @@ func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
 }
 
 func TestServiceOptionsIndexCapacityPolicy(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
 		DatabaseID:             "capacity",
 		BM25MemoryMaxBytes:     1 << 20,
 		VectorMemoryMaxBytes:   2 << 20,
@@ -89,7 +90,7 @@ func TestServiceOptionsIndexCapacityPolicy(t *testing.T) {
 }
 
 func TestServiceOptionsBM25StemmerSelection(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
 		BM25Stemmer: &stemmer.Registration{
 			APIVersion: stemmer.APIVersion,
 			ID:         "test.fold",
@@ -120,7 +121,7 @@ func TestVectorStorageModeControlsFileStore(t *testing.T) {
 		{mode: "disk", wantFileStore: true},
 	} {
 		t.Run(test.mode, func(t *testing.T) {
-			service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{VectorStorageMode: test.mode})
+			service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{VectorStorageMode: test.mode})
 			service.SetPersistenceEnabled(true)
 			service.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 
@@ -159,7 +160,7 @@ func TestIndexCapacityBudgetsRejectBeforeMutation(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			service := NewService(newTestMemoryEngine(t), 3, &test.options)
+			service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &test.options)
 			err := service.IndexNode(test.node)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, ErrIndexMemoryBudgetExceeded))
@@ -170,7 +171,7 @@ func TestIndexCapacityBudgetsRejectBeforeMutation(t *testing.T) {
 }
 
 func TestBuildIndexesEnforcesCapacityBudgets(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:document", Properties: map[string]any{"text": "larger than four bytes"}})
 	require.NoError(t, err)
 	service := NewService(engine, 3, &ServiceOptions{BM25MemoryMaxBytes: 4})
@@ -180,18 +181,18 @@ func TestBuildIndexesEnforcesCapacityBudgets(t *testing.T) {
 }
 
 func TestDiskVectorStorageRequiresPersistencePath(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{VectorStorageMode: "disk"})
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{VectorStorageMode: "disk"})
 
 	err := service.BuildIndexes(context.Background())
 	require.ErrorContains(t, err, "vector disk storage requires")
 
-	disabled := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{VectorStorageMode: "disk"})
+	disabled := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{VectorStorageMode: "disk"})
 	disabled.SetIndexFlags(true, false)
 	require.NoError(t, disabled.BuildIndexes(context.Background()))
 }
 
 func TestIndexCapacityBudgetsCoverRelationshipVectors(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{VectorMemoryMaxBytes: 8})
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{VectorMemoryMaxBytes: 8})
 
 	err := service.IndexEdge(&storage.Edge{
 		ID:         "relationship",
@@ -203,7 +204,7 @@ func TestIndexCapacityBudgetsCoverRelationshipVectors(t *testing.T) {
 }
 
 func TestIndexCapacityAccountingIsReleasedOnRemoval(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
 		BM25StorageMode:        "memory",
 		VectorStorageMode:      "memory",
 		VectorMemoryMaxBytes:   1 << 20,

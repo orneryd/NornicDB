@@ -40,7 +40,7 @@ func TestBadgerEngine_GetEdgeKernel_DirectAndVisibleAgree(t *testing.T) {
 
 	// Historical resolution still goes through the MVCC record path after the
 	// current head has moved on.
-	require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "KNOWS", Properties: map[string]any{"weight": 2}}))
+	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "KNOWS", Properties: map[string]any{"weight": 2}}}))
 	old, err := engine.GetEdgeVisibleAt(edgeID, head.Version)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, old.Properties["weight"])

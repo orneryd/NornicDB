@@ -109,11 +109,11 @@ func TestManualSuppressionOrdersAfterBufferedCommits(t *testing.T) {
 						_, err := tx.CreateNode(&Node{ID: "test:fresh", Properties: map[string]any{"v": "acknowledged"}})
 						return err
 					case kind == "node":
-						return tx.UpdateGraphNode(listenerOrderNode("acknowledged"), ClientNodeEdits)
+						return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("acknowledged"), Policy: ClientNodeEdits})
 					case buffered == "create":
 						return tx.CreateEdge(listenerOrderEdge("acknowledged"))
 					default:
-						return tx.UpdateEdge(listenerOrderEdge("acknowledged"))
+						return tx.UpdateEdge(EdgeUpdateRequest{After: listenerOrderEdge("acknowledged")})
 					}
 				}, nil))
 				id := "test:n"
@@ -169,7 +169,7 @@ func TestEmbeddingSidecarOrdersAfterBufferedCommits(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.FlushWriteBehind())
 	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
-		return tx.UpdateGraphNode(listenerOrderNode("acknowledged"), ClientNodeEdits)
+		return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("acknowledged"), Policy: ClientNodeEdits})
 	}, nil))
 	embedded := listenerOrderNode("acknowledged")
 	embedded.ChunkEmbeddings = [][]float32{{1, 2, 3}}
@@ -201,7 +201,7 @@ func TestRelationshipDeleteCountsTheNewestEndpointLabels(t *testing.T) {
 			require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 			require.NoError(t, engine.FlushWriteBehind())
 			require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
-				return tx.UpdateGraphNode(&Node{ID: "test:a", Labels: []string{"New"}}, ClientNodeEdits)
+				return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"New"}}, Policy: ClientNodeEdits})
 			}, nil))
 			if route == "direct" {
 				require.NoError(t, engine.DeleteEdge("test:r"))

@@ -158,26 +158,27 @@ type PeerConnection interface {
 
 ### Storage Interface
 
-Replication layer's view of storage:
+The replication coordinator depends on the command, WAL and snapshot contract
+in `pkg/replication/replicator.go`:
 
 ```go
 type Storage interface {
-    // Commands
     ApplyCommand(cmd *Command) error
-    
-    // WAL position tracking
     GetWALPosition() (uint64, error)
-    SetWALPosition(pos uint64) error
-    
-    // Node/Edge operations (used by WAL applier)
-    CreateNode(node *Node) error
-    UpdateNode(node *Node) error
-    DeleteNode(id NodeID) error
-    CreateEdge(edge *Edge) error
-    DeleteEdge(from, to NodeID, relType string) error
-    SetProperty(nodeID NodeID, key string, value interface{}) error
+    GetWALEntries(fromPosition uint64, maxEntries int) ([]*WALEntry, error)
+    WriteSnapshot(w SnapshotWriter) error
+    RestoreSnapshot(r SnapshotReader) error
 }
 ```
+
+Graph mutations pass through the accepted entity-commit owner rather than raw
+property-update commands. Go adapters use
+`storage.NodeUpdateRequest{Before: before, After: after, Policy: policy}` and
+`storage.EdgeUpdateRequest{Before: before, After: after}`. `Before` preserves the
+actual read image; a deliberately blind authoritative replay supplies no caller
+observation. The requests are runtime inputs, not changes to persisted entity
+or WAL formats. See [replicated entity commits](../development/replicated-entity-commits.md)
+for preparation, publication and replay ownership.
 
 ## Network Protocol
 

@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"runtime"
 	"strings"
@@ -90,7 +91,7 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 	ctx := context.Background()
 	for _, removal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "update_not_lost", true: "removal_not_resurrected"}[removal], func(t *testing.T) {
-			engine := &edgeStreamGateEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
+			engine := &edgeStreamGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
 			release := sync.OnceFunc(func() { close(engine.release) })
 			t.Cleanup(func() { release(); _ = engine.MemoryEngine.Close() })
 			for _, id := range []storage.NodeID{"nornic:s", "nornic:e"} {
@@ -122,7 +123,7 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 				go func() { live <- svc.RemoveEdge(edge.ID) }()
 			} else {
 				updated := &storage.Edge{ID: edge.ID, StartNode: edge.StartNode, EndNode: edge.EndNode, Type: edge.Type, Properties: map[string]any{"v": []float32{0, 1, 0}}}
-				require.NoError(t, engine.UpdateEdge(updated))
+				require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: updated}))
 				go func() { live <- svc.IndexEdge(updated) }()
 			}
 			time.Sleep(200 * time.Millisecond)

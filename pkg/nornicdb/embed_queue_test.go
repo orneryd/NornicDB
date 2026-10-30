@@ -1503,51 +1503,67 @@ func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 	})
 }
 
-// TestEmbedQueueCommittedEmbeddingNotRefound verifies that an embedding that
-// is already persisted is not found again by FindNodeNeedingEmbedding - this
-// was the root cause of the "n1 keeps getting found" bug. With synchronous
-// commits, the persisted embedding itself prevents re-processing.
-func TestEmbedQueueCommittedEmbeddingNotRefound(t *testing.T) {
-	t.Run("persisted_embedding_not_refound", func(t *testing.T) {
-		// Create underlying engine
-		baseUnderlying := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-		baseUnderlying.SetEmbeddingsEnabled(true)
+// newEmbedWorkerPersistenceFixture builds the shared embedding-persistence
+// fixture: an embeddings-enabled memory engine behind the test namespace, a
+// node without an embedding, and the single-worker configuration both
+// persistence tests start their real workers from.
+type embedWorkerPersistenceFixture struct {
+	engine   storage.Engine
+	embedder *mockEmbedder
+	config   *EmbedWorkerConfig
+	nodeID   storage.NodeID
+}
 
-		engine := storage.NewNamespacedEngine(baseUnderlying, "test")
-
-		embedder := newMockEmbedder()
-
-		// Create a node
-		_, err := engine.CreateNode(&storage.Node{
-			ID:     storage.NodeID("embed-committed"),
-			Labels: []string{"Memory"},
-			Properties: map[string]any{
-				"content": "Test content for committed embedding",
-			},
-		})
-		require.NoError(t, err)
-
-		config := &EmbedWorkerConfig{
+func newEmbedWorkerPersistenceFixture(t *testing.T, nodeID storage.NodeID, content string) *embedWorkerPersistenceFixture {
+	t.Helper()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	baseEngine.SetEmbeddingsEnabled(true)
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
+	_, err := engine.CreateNode(&storage.Node{
+		ID:     nodeID,
+		Labels: []string{"Memory"},
+		Properties: map[string]any{
+			"content": content,
+		},
+	})
+	require.NoError(t, err)
+	return &embedWorkerPersistenceFixture{
+		engine:   engine,
+		embedder: newMockEmbedder(),
+		nodeID:   nodeID,
+		config: &EmbedWorkerConfig{
 			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
 			ChunkSize:    512,
 			ChunkOverlap: 50,
-		}
+		},
+	}
+}
 
-		worker := NewEmbedWorker(embedder, engine, config)
-
-		// Wait for processing
-		worker.Trigger()
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			stats := worker.Stats()
-			if stats.Processed > 0 {
-				break
-			}
-			time.Sleep(50 * time.Millisecond)
+// waitProcessed starts worker and waits up to 3s for its first processed node.
+func (f *embedWorkerPersistenceFixture) waitProcessed(t *testing.T, worker *EmbedWorker) {
+	t.Helper()
+	worker.Trigger()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if worker.Stats().Processed > 0 {
+			return
 		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestEmbedQueueCommittedEmbeddingNotRefound verifies that an embedding that
+// is already persisted is not found again by FindNodeNeedingEmbedding - this
+// was the root cause of the "n1 keeps getting found" bug. With synchronous
+// commits, the persisted embedding itself prevents re-processing.
+func TestEmbedQueueCommittedEmbeddingNotRefound(t *testing.T) {
+	t.Run("persisted_embedding_not_refound", func(t *testing.T) {
+		fixture := newEmbedWorkerPersistenceFixture(t, "embed-committed", "Test content for committed embedding")
+		worker := NewEmbedWorker(fixture.embedder, fixture.engine, fixture.config)
+		fixture.waitProcessed(t, worker)
 
 		// Verify it was processed
 		stats := worker.Stats()
@@ -1555,7 +1571,7 @@ func TestEmbedQueueCommittedEmbeddingNotRefound(t *testing.T) {
 
 		// Trigger again - should NOT find the node again because the
 		// embedding is already persisted.
-		initialEmbedCount := embedder.GetEmbedCount()
+		initialEmbedCount := fixture.embedder.GetEmbedCount()
 
 		for i := 0; i < 3; i++ {
 			worker.Trigger()
@@ -1565,7 +1581,7 @@ func TestEmbedQueueCommittedEmbeddingNotRefound(t *testing.T) {
 		worker.Close()
 
 		// Embedder should NOT have been called again
-		finalEmbedCount := embedder.GetEmbedCount()
+		finalEmbedCount := fixture.embedder.GetEmbedCount()
 		assert.Equal(t, initialEmbedCount, finalEmbedCount,
 			"Embedder should not be called again - embedding is persisted")
 	})
@@ -1575,52 +1591,18 @@ func TestEmbedQueueCommittedEmbeddingNotRefound(t *testing.T) {
 // and readable back from storage - this catches the bug where n1 keeps getting skipped
 func TestEmbeddingPersistenceVerification(t *testing.T) {
 	t.Run("embedding_readable_after_update", func(t *testing.T) {
-		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-		baseEngine.SetEmbeddingsEnabled(true)
-
-		engine := storage.NewNamespacedEngine(baseEngine, "test")
-		embedder := newMockEmbedder()
-
-		// Create a node
-		_, err := engine.CreateNode(&storage.Node{
-			ID:     storage.NodeID("verify-persist"),
-			Labels: []string{"Memory"},
-			Properties: map[string]any{
-				"content": "Test content for persistence verification",
-			},
-		})
-		require.NoError(t, err)
-
-		config := &EmbedWorkerConfig{
-			NumWorkers:   1,
-			ScanInterval: time.Hour,
-			BatchDelay:   10 * time.Millisecond,
-			MaxRetries:   1,
-			ChunkSize:    512,
-			ChunkOverlap: 50,
-		}
-
-		worker := NewEmbedWorker(embedder, engine, config)
-
-		// Wait for processing
-		worker.Trigger()
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			stats := worker.Stats()
-			if stats.Processed > 0 {
-				break
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
+		fixture := newEmbedWorkerPersistenceFixture(t, "verify-persist", "Test content for persistence verification")
+		worker := NewEmbedWorker(fixture.embedder, fixture.engine, fixture.config)
+		fixture.waitProcessed(t, worker)
 		worker.Close()
 
 		// Verify embedding is readable from storage
-		node, err := engine.GetNode("verify-persist")
+		node, err := fixture.engine.GetNode(fixture.nodeID)
 		require.NoError(t, err)
 		require.NotEmpty(t, node.ChunkEmbeddings, "Chunk embeddings should be persisted and readable")
 
 		// Verify findNodeWithoutEmbedding doesn't find it anymore
-		worker2 := NewEmbedWorker(embedder, engine, config)
+		worker2 := NewEmbedWorker(fixture.embedder, fixture.engine, fixture.config)
 		defer worker2.Close()
 
 		found := worker2.findNodeWithoutEmbedding()
@@ -1652,7 +1634,7 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 			node.ChunkEmbeddings[0][i] = float32(i) * 0.001
 		}
 
-		err = engine.UpdateNode(node)
+		err = engine.UpdateNode(storage.NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 
 		// Read back and verify
@@ -1850,11 +1832,11 @@ func (e *queueBranchEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) error
 	return nil
 }
 
-func (e *queueBranchEngine) UpdateNode(node *storage.Node) error {
+func (e *queueBranchEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	if e.updateNodeErr != nil {
 		return e.updateNodeErr
 	}
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(updateRequest)
 }
 
 // engineOnlyWrapper intentionally exposes only storage.Engine so optional

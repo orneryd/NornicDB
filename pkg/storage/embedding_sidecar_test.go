@@ -100,7 +100,7 @@ func TestEmbeddingSidecar_BusinessWriteIsAuthoritative(t *testing.T) {
 	updated.Properties = map[string]any{"title": "v2"}
 	updated.ChunkEmbeddings = nil
 	updated.EmbedMeta = nil
-	require.NoError(t, b.UpdateNode(&updated))
+	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &updated}))
 
 	got, err = b.GetNode(node.ID)
 	require.NoError(t, err)

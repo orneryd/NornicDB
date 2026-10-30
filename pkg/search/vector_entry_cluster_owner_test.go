@@ -64,7 +64,7 @@ func TestVectorEntryClusterMarkerTokens(t *testing.T) {
 				}
 				checkTerms()
 				marker.Properties["text"] = "updatedtoken"
-				require.NoError(t, engine.UpdateNode(marker))
+				require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: marker}))
 				require.NoError(t, svc.IndexNode(marker))
 				checkTerms()
 				require.NoError(t, engine.DeleteNode(marker.ID))

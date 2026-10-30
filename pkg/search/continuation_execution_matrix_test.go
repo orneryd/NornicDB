@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -18,7 +19,7 @@ func TestContinuationExecutionGeneratedDepthMatrix(t *testing.T) {
 	const cap = 8
 	for _, population := range []int{cap - 1, cap, cap + 1} {
 		t.Run(fmt.Sprintf("population_%d", population), func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "matrix")
+			engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "matrix")
 			service := NewService(engine, DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			for i := 0; i < population; i++ {

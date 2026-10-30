@@ -88,7 +88,7 @@ func TestReviewSortNodesUsesVisibleProperties(t *testing.T) {
 		n, err := be.GetNode(id)
 		require.NoError(t, err)
 		n.Properties["body"] = value
-		require.NoError(t, be.UpdateNode(n))
+		require.NoError(t, be.UpdateNode(storage.NodeUpdateRequest{After: n}))
 	}
 	result, err := e.Execute(context.Background(), "MATCH (a:Doc {title:'a'}),(b:Doc {title:'b'}) RETURN [a.body,b.body] AS hidden,[n IN apoc.coll.sortNodes([a,b], 'body') | n.title] AS titles", nil)
 	require.NoError(t, err)

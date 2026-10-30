@@ -1,12 +1,12 @@
 package cypher
 
 import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"context"
 	"errors"
 	"testing"
 
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -31,34 +31,7 @@ func (m systemOnlyManager) GetStorageForUse(name string, _ string) (interface{},
 	return m.engine, nil
 }
 
-// failingScanEngine fails node scans, or node creation, when switched on.
-type failingScanEngine struct {
-	storage.Engine
-	failScan, failCreate, failGet bool
-}
-
 var errSystemStorage = errors.New("system storage unavailable")
-
-func (e *failingScanEngine) AllNodes() ([]*storage.Node, error) {
-	if e.failScan {
-		return nil, errSystemStorage
-	}
-	return e.Engine.AllNodes()
-}
-
-func (e *failingScanEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	if e.failScan {
-		return nil, errSystemStorage
-	}
-	return e.Engine.GetNodesByLabel(label)
-}
-
-func (e *failingScanEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if e.failCreate {
-		return "", errSystemStorage
-	}
-	return e.Engine.CreateNode(node)
-}
 
 // The privilege commands' edges: other EXECUTE privileges and a missing ON;
 // the system database from the database manager, or unavailable; storage
@@ -114,35 +87,20 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	require.ErrorIs(t, err, errSystemStorage)
 
 	// Storage errors reading roles or grants, and writing a grant.
-	failing := &failingScanEngine{Engine: system}
-	exec.SetDatabaseManager(systemOnlyManager{engine: storage.Engine(failing)})
-	failing.failCreate = true
+	faults := storagefault.NewMutationFailureEngine(system, "", errSystemStorage, 0, auth.WithStoreTransaction)
+	exec.SetDatabaseManager(systemOnlyManager{engine: storage.Engine(faults)})
+	faults.Select(storagefault.MutationCreate, "", 0)
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.y ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
-	failing.failCreate, failing.failGet = false, true
+	faults.Select(storagefault.MutationGet, "", 0)
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.y ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
-	failing.failScan = true
+	faults.Select(storagefault.MutationScan, "", 0)
 	_, err = exec.executeShowPrivileges(ctx, "SHOW PRIVILEGES")
 	require.ErrorIs(t, err, errSystemStorage)
 	// A REVOKE checks for immutable grants first: a read that fails is its
 	// error, not "no grant".
-	failing.failScan, failing.failGet = false, true
+	faults.Select(storagefault.MutationGet, "", 0)
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "REVOKE EXECUTE PROCEDURE db.y ON DBMS FROM a")
 	require.ErrorIs(t, err, errSystemStorage)
-}
-
-func (e *failingScanEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
-	if e.failGet {
-		return nil, errSystemStorage
-	}
-	return e.Engine.GetNode(id)
-}
-
-func (e *failingScanEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
-	return auth.WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
-		staged := *e
-		staged.Engine = view
-		return mutate(&staged)
-	})
 }

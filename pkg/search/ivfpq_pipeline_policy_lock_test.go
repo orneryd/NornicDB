@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 
 	"path/filepath"
 	"testing"
@@ -17,7 +19,7 @@ import (
 // free while waiting. Both operations must then finish.
 func TestCompressedPipelineCreationRacesPolicyChange(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
-	svc := NewService(newTestMemoryEngine(t), 16, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 16, nil)
 	dir := t.TempDir()
 	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 16)
 	require.NoError(t, err)

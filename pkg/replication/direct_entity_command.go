@@ -13,6 +13,12 @@ func decodeEntityCommandOperations(kind CommandType, data []byte) ([]storage.Ope
 			return nil, true, err
 		}
 		return []storage.Operation{op}, true, nil
+	case CmdUpdateNodeRequest, CmdUpdateEdgeRequest:
+		ops, err := decodeEntityRequestOperations(kind, data)
+		if err != nil {
+			return nil, true, err
+		}
+		return ops, true, nil
 	case CmdBulkCreateNodes, CmdBulkCreateEdges:
 		var encoded [][]byte
 		if err := storage.DecodeCommandPayload(data, &encoded); err != nil {
@@ -108,6 +114,10 @@ func encodeEntityCommandPayload(kind CommandType, value any) ([]byte, error) {
 			return nil, localizedError(localization.ReplicationEngineEdgeRequired(), nil)
 		}
 		data, err = storage.EncodeEdgePayload(edge)
+	case CmdUpdateNodeRequest:
+		return encodeEntityRequestCommandPayload(kind, value.(storage.NodeUpdateRequest))
+	case CmdUpdateEdgeRequest:
+		return encodeEntityRequestCommandPayload(kind, value.(storage.EdgeUpdateRequest))
 	case CmdDeleteNode:
 		return []byte(string(value.(storage.NodeID))), nil
 	case CmdDeleteEdge:
@@ -143,9 +153,9 @@ func encodeBulkEntityPayload[T any](values []T, encode func(T) ([]byte, error), 
 }
 func entityCommandEncodeError(kind CommandType, err error) error {
 	switch kind {
-	case CmdCreateNode, CmdUpdateNode:
+	case CmdCreateNode, CmdUpdateNode, CmdUpdateNodeRequest:
 		return localizedError(localization.ReplicationEngineEncodeNodeFailed(err), err)
-	case CmdCreateEdge, CmdUpdateEdge:
+	case CmdCreateEdge, CmdUpdateEdge, CmdUpdateEdgeRequest:
 		return localizedError(localization.ReplicationEngineEncodeEdgeFailed(err), err)
 	case CmdDeleteEdge:
 		return localizedError(localization.ReplicationEngineEncodeDeleteEdgeFailed(err), err)

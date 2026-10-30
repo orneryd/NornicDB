@@ -110,7 +110,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 							if entity == "node" {
 								switch kind {
 								case "update":
-									return b.UpdateNode(node(value))
+									return b.UpdateNode(NodeUpdateRequest{After: node(value)})
 								case "delete":
 									return b.DeleteNode("db:n")
 								default:
@@ -120,7 +120,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 							}
 							switch kind {
 							case "update":
-								return b.UpdateEdge(edge(value))
+								return b.UpdateEdge(EdgeUpdateRequest{After: edge(value)})
 							case "delete":
 								return b.DeleteEdge("db:e")
 							default:
@@ -135,7 +135,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 						if entity == "node" {
 							switch kind {
 							case "update":
-								e = tx.UpdateGraphNode(node(value), ClientNodeEdits)
+								e = tx.UpdateGraphNode(NodeUpdateRequest{After: node(value), Policy: ClientNodeEdits})
 							case "delete":
 								e = tx.DeleteGraphNode("db:n", CascadeEdges)
 							default:
@@ -144,7 +144,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 						} else {
 							switch kind {
 							case "update":
-								e = tx.UpdateEdge(edge(value))
+								e = tx.UpdateEdge(EdgeUpdateRequest{After: edge(value)})
 							case "delete":
 								e = tx.DeleteEdge("db:e")
 							default:

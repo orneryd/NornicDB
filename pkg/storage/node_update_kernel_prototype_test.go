@@ -45,7 +45,7 @@ func TestPrototypeNodeUpdateChunkPersistence(t *testing.T) {
 					require.NoError(t, err)
 					defer tx.Rollback()
 					require.NoError(t, tx.SetNamespace("test"))
-					update := func(node *Node) error { return tx.UpdateGraphNode(node, images) }
+					update := func(node *Node) error { return tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: images}) }
 					first := CopyNode(originalStored)
 					first.ChunkEmbeddings = [][]float32{vector(1), vector(2)}
 					first.EmbedMeta = map[string]any{"embedding_model": "first", "chunk_count": 2}
@@ -125,14 +125,14 @@ func TestPrototypeCommittedImageReplacesCommittedAndPendingSidecar(t *testing.T)
 			require.NoError(t, err)
 			current.Properties["unfed"] = "changed"
 			current.UpdatedAt = current.UpdatedAt.Add(time.Second)
-			require.NoError(t, tx.UpdateGraphNode(current, ClientNodeEdits))
+			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 			require.Contains(t, tx.pendingWrites, string(embeddingMetaKey(node.ID)), "ordinary retained-sidecar update must have staged the old metadata refresh")
 			accepted := CopyNode(current)
 			accepted.EmbedMeta = map[string]any{"embedding_model": "authoritative", "chunk_count": int8(1), "has_embedding": true}
 			metadata := accepted.RuntimeMetadata()
 			metadata.VisibilitySuppressed = true
 			accepted.SetRuntimeMetadata(metadata)
-			require.NoError(t, tx.UpdateGraphNode(accepted, StoredNodeImages))
+			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: accepted, Policy: StoredNodeImages}))
 			if rollback {
 				require.NoError(t, tx.Rollback())
 			} else {

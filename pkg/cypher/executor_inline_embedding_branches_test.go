@@ -41,11 +41,11 @@ type updateNodeErrEngine struct {
 	err error
 }
 
-func (e *updateNodeErrEngine) UpdateNode(node *storage.Node) error {
+func (e *updateNodeErrEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	if e.err != nil {
 		return e.err
 	}
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(updateRequest)
 }
 
 type getNodeErrEngine struct {

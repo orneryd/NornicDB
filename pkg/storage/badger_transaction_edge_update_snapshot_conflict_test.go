@@ -64,10 +64,10 @@ func TestBug_UpdateEdgePeerCommittedAfterBeginIsConflictNotNotFound(t *testing.T
 
 	// tx1 found the edge via a latest-committed lookup (the MERGE
 	// relationship-resolution path) and now tries to update it.
-	err = tx1.UpdateEdge(&Edge{
+	err = tx1.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 		Properties: map[string]interface{}{"x": "tx1"},
-	})
+	}})
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict,
 		"snapshot-invisible but live edge must be a retryable conflict, got: %v", err)
@@ -81,24 +81,17 @@ func TestBug_UpdateEdgePeerCommittedAfterBeginIsConflictNotNotFound(t *testing.T
 // absent (tombstoned) at latest-committed state, so ErrNotFound remains the
 // correct answer — the reclassification must be tombstone-aware.
 func TestUpdateEdgePeerDeletedEdgeStillNotFound(t *testing.T) {
-	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-	createEdgeEndpoints(t, engine)
-
-	tx1 := beginPinnedTransaction(t, engine)
-	t.Cleanup(func() { _ = tx1.Rollback() })
-
-	require.NoError(t, engine.CreateEdge(&Edge{
-		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
-	}))
-	require.NoError(t, engine.DeleteEdge("test:e1"))
+	err := snapshotEdgeWriteCase{
+		peer: func(t *testing.T, engine *BadgerEngine) {
+			require.NoError(t, engine.CreateEdge(&Edge{
+				ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
+			}))
+			require.NoError(t, engine.DeleteEdge("test:e1"))
+		},
+		edgeID: "test:e1",
+	}.run(t)
 
 	// Latest-committed state is a tombstone: not a conflict, just gone.
-	err = tx1.UpdateEdge(&Edge{
-		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
-		Properties: map[string]interface{}{"x": "tx1"},
-	})
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NotErrorIs(t, err, ErrConflict)
 }
@@ -106,17 +99,12 @@ func TestUpdateEdgePeerDeletedEdgeStillNotFound(t *testing.T) {
 // TestUpdateEdgeMissingEdgeStillNotFound pins the trivial case: an edge that
 // never existed anywhere keeps returning ErrNotFound.
 func TestUpdateEdgeMissingEdgeStillNotFound(t *testing.T) {
-	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-	createEdgeEndpoints(t, engine)
+	err := snapshotEdgeWriteCase{
+		// The peer performs no writes at all.
+		peer:   func(*testing.T, *BadgerEngine) {},
+		edgeID: "test:never-existed",
+	}.run(t)
 
-	tx1 := beginPinnedTransaction(t, engine)
-	t.Cleanup(func() { _ = tx1.Rollback() })
-
-	err = tx1.UpdateEdge(&Edge{
-		ID: "test:never-existed", StartNode: "test:a", EndNode: "test:b", Type: "REL",
-	})
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -194,10 +182,10 @@ func BenchmarkTransaction_UpdateEdge(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := tx.UpdateEdge(&Edge{
+		if err := tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 			ID: "test:bench-edge", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 			Properties: map[string]interface{}{"x": i},
-		}); err != nil {
+		}}); err != nil {
 			b.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {

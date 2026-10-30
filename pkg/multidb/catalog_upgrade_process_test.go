@@ -59,7 +59,7 @@ func TestCatalogV4ProcessInterruptionAndReopen(t *testing.T) {
 	legacy, err := json.Marshal(manager.databases)
 	require.NoError(t, err)
 	node.Properties["data"] = string(legacy)
-	require.NoError(t, system.UpdateNode(node))
+	require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	require.NoError(t, manager.Close())
 	markClosedASCIICatalogFixtureV3(t, dir)
 	before := closedCatalogFixtureDigest(t, dir)

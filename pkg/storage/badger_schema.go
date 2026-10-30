@@ -206,7 +206,7 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 						if err := sm.CheckUniqueConstraint(label, propName, propValue, node.ID); err != nil {
 							return fmt.Errorf("schema: rebuild unique values: namespace=%q: %w", namespace, err)
 						}
-						sm.RegisterUniqueValue(label, propName, propValue, node.ID)
+						sm.ApplyUniqueValue(label, propName, propValue, node.ID, ValidatedUniqueClaim)
 					}
 				}
 			}
@@ -266,6 +266,7 @@ const (
 	schemaNamespaceEnsure namespaceSchemaTransition = iota
 	schemaNamespaceRetire
 	schemaNamespaceReplace
+	schemaNamespaceAttachPending
 )
 
 // transitionNamespaceSchema is the schema registry's mutation owner. Lookup
@@ -286,6 +287,16 @@ func (b *BadgerEngine) transitionNamespaceSchema(namespace string, action namesp
 		return nil
 	case schemaNamespaceReplace:
 		b.schemas = replacement
+		fallthrough
+	case schemaNamespaceAttachPending:
+		// Reload/Restore replaces manager instances; startup creates the
+		// buffer after loading persisted managers. Both events bind their
+		// existing indexes to the same pending source before serving reads.
+		if b.writeBehind != nil {
+			for name, schema := range b.schemas {
+				schema.attachPendingWrites(b.writeBehind, name)
+			}
+		}
 		return nil
 	}
 	sm := b.schemas[namespace]

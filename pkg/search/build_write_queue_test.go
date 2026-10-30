@@ -9,6 +9,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"log/slog"
 	"path/filepath"
@@ -33,7 +34,7 @@ type nodeSnapshotGateEngine struct {
 
 func newNodeSnapshotGateEngine(t *testing.T) *nodeSnapshotGateEngine {
 	t.Helper()
-	e := &nodeSnapshotGateEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
+	e := &nodeSnapshotGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
 	return e
 }
@@ -217,7 +218,7 @@ func TestBuildLiveWritesOvertakeTheSnapshot(t *testing.T) {
 				}
 
 				updated := buildWriteNode("nornic:upd", "newterm", []float32{0, 0, 1})
-				require.NoError(t, engine.UpdateNode(updated))
+				require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: updated}))
 				requireReturnsDuringBuild(t, "an update", func() error { return svc.IndexNode(updated) })
 				require.NoError(t, engine.DeleteNode("nornic:del"))
 				requireReturnsDuringBuild(t, "a delete", func() error { return svc.RemoveNode("nornic:del") })
@@ -226,7 +227,7 @@ func TestBuildLiveWritesOvertakeTheSnapshot(t *testing.T) {
 				require.NoError(t, err)
 				requireReturnsDuringBuild(t, "a create", func() error { return svc.IndexNode(created) })
 				edgeUpdate := &storage.Edge{ID: edge.ID, StartNode: edge.StartNode, EndNode: edge.EndNode, Type: edge.Type, Properties: map[string]any{"v": []float32{0, 1, 0}}}
-				require.NoError(t, engine.UpdateEdge(edgeUpdate))
+				require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: edgeUpdate}))
 				requireReturnsDuringBuild(t, "an edge write", func() error { return svc.IndexEdge(edgeUpdate) })
 
 				engine.open()
@@ -256,7 +257,7 @@ func TestBuildLiveWritesDuringWarmupSurviveTheBM25Reload(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
 		t.Run(backend, func(t *testing.T) {
 			dir := t.TempDir()
-			engine := newTestMemoryEngine(t)
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			t.Cleanup(func() { _ = engine.Close() })
 			_, err := engine.CreateNode(buildWriteNode("nornic:a", "oldterm", []float32{1, 0, 0}))
 			require.NoError(t, err)
@@ -280,7 +281,7 @@ func TestBuildLiveWritesDuringWarmupSurviveTheBM25Reload(t *testing.T) {
 				t.Fatal("the build did not reach its warmup")
 			}
 			updated := buildWriteNode("nornic:a", "newterm", []float32{0, 1, 0})
-			require.NoError(t, engine.UpdateNode(updated))
+			require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: updated}))
 			requireReturnsDuringBuild(t, "an update during the warmup", func() error { return svc.IndexNode(updated) })
 			created := buildWriteNode("nornic:b", "bterm", []float32{0, 0, 1})
 			_, err = engine.CreateNode(created)

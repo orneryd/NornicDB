@@ -252,7 +252,8 @@ func (w *transactionStorageWrapper) CreateMintedNode(node *storage.Node) (storag
 	return w.createNodes([]*storage.Node{node}, true)
 }
 
-func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
+func (w *transactionStorageWrapper) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+	node := updateRequest.After
 	if node == nil {
 		return storage.ErrInvalidData
 	}
@@ -260,7 +261,7 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 		return err
 	}
 	if w.namespace == "" {
-		err := w.tx.UpdateGraphNode(node, storage.ClientNodeEdits)
+		err := w.tx.UpdateGraphNode(updateRequest)
 		if err == nil {
 			w.markMutatedNodeID(node.ID)
 		}
@@ -268,7 +269,8 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 	}
 	namespaced := storage.CopyNode(node)
 	namespaced.ID = w.prefixNodeID(node.ID)
-	err := w.tx.UpdateGraphNode(namespaced, storage.ClientNodeEdits)
+	updateRequest.After = namespaced
+	err := w.tx.UpdateGraphNode(updateRequest)
 	if err == nil {
 		w.markMutatedNodeID(node.ID)
 	}
@@ -378,7 +380,8 @@ func (w *transactionStorageWrapper) GetEdge(id storage.EdgeID) (*storage.Edge, e
 	return w.toUserEdge(edge), nil
 }
 
-func (w *transactionStorageWrapper) UpdateEdge(edge *storage.Edge) error {
+func (w *transactionStorageWrapper) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+	edge := updateRequest.After
 	if edge == nil {
 		return storage.ErrInvalidData
 	}
@@ -386,13 +389,14 @@ func (w *transactionStorageWrapper) UpdateEdge(edge *storage.Edge) error {
 		return err
 	}
 	if w.namespace == "" {
-		return w.tx.UpdateEdge(edge)
+		return w.tx.UpdateEdge(updateRequest)
 	}
 	namespaced := storage.CopyEdge(edge)
 	namespaced.ID = w.prefixEdgeID(edge.ID)
 	namespaced.StartNode = w.prefixNodeID(edge.StartNode)
 	namespaced.EndNode = w.prefixNodeID(edge.EndNode)
-	return w.tx.UpdateEdge(namespaced)
+	updateRequest.After = namespaced
+	return w.tx.UpdateEdge(updateRequest)
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabel(label string) ([]*storage.Node, error) {

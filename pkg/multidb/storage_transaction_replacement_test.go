@@ -92,12 +92,12 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 												node, err := storage.GetStoredNode(engine, "n")
 												require.NoError(t, err)
 												node.Properties = props
-												require.NoError(t, engine.UpdateNode(node))
+												require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 											} else {
 												edge, err := storage.GetStoredEdge(engine, "e")
 												require.NoError(t, err)
 												edge.Properties = props
-												require.NoError(t, engine.UpdateEdge(edge))
+												require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 											}
 										} else {
 											tx, err := base.BeginTransaction()
@@ -116,7 +116,7 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 												}
 												node.Properties = props
 												node.UpdatedAt = time.Now()
-												require.NoError(t, tx.UpdateGraphNode(node, storage.ClientNodeEdits))
+												require.NoError(t, tx.UpdateGraphNode(storage.NodeUpdateRequest{After: node, Policy: storage.ClientNodeEdits}))
 											} else {
 												id := storage.EdgeID(db + ":e")
 												edge, err := tx.GetStoredEdge(id)
@@ -128,7 +128,7 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 												}
 												edge.Properties = props
 												edge.UpdatedAt = time.Now()
-												require.NoError(t, tx.UpdateEdge(edge))
+												require.NoError(t, tx.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 											}
 											require.NoError(t, tracker.CommitTransaction(context.Background(), tx))
 										}

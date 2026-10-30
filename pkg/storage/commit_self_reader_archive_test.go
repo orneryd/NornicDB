@@ -23,7 +23,7 @@ func TestCommitArchivesSupersededVersionOnlyForOtherReaders(t *testing.T) {
 		node, err := tx.GetNode("test:a")
 		require.NoError(t, err)
 		node.Properties["v"] = v
-		require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 	}
 

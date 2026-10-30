@@ -50,7 +50,7 @@ func TestIndependentContinuationPreservesLifecycleConflict(t *testing.T) {
 				node, err := tx.GetNode("test:retained")
 				require.NoError(t, err)
 				node.Properties["v"] = int64(2)
-				require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 				if tc.apply != nil {
 					require.NoError(t, tc.apply(b))
 				}

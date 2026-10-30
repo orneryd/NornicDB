@@ -51,7 +51,7 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.SetNamespace("test"))
-			require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(9)}}, ClientNodeEdits))
+			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(9)}}, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
 			require.NoError(t, b.FlushWriteBehind())
 			value = 2

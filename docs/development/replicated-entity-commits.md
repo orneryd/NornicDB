@@ -83,19 +83,61 @@ available for recovery.
 ## Native image interpretation
 
 `BeginEntityTransaction(engine, mode)` binds the originating durability policy.
-Node updates use `tx.UpdateGraphNode(node, policy)`, replacing the transaction's
-`UpdateNode` entry point. `ClientNodeEdits` retains normal managed-embedding
+Node updates use `tx.UpdateGraphNode(storage.NodeUpdateRequest{Before: before, After: after, Policy: policy})`.
+`Engine.UpdateNode` accepts the same request; relationship updates accept
+`storage.EdgeUpdateRequest{Before: before, After: after}`. `ClientNodeEdits` retains normal managed-embedding
 reconciliation; `StoredNodeImages` applies a complete authoritative stored image.
 The decoded accepted semantic coordinator selects the latter. Each operation
 supplies its policy, allowing a client edit and an authoritative image to share
 one transaction while preserving their different sidecar semantics. Both use
-one staging implementation. `Engine.UpdateNode` is unchanged.
+one staging implementation. The old pointer-only update signatures are retired;
+Go integrations must migrate their callers and engine implementations.
+
+`Before` is the immutable image actually read by the writer. Keep it unchanged
+until the transaction ends, and construct an independent `After` image (copy only
+fields being modified). A peer deletion after that observation is a retryable
+conflict, rather than an absent-target error or an upsert. A nil `Before`
+deliberately selects a blind image write, used by restoration and replay owners.
+Read-only operations retain no observation map. Namespace adapters bind `After`
+while preserving the caller's observation; replicated observed writes carry both
+images to the leader, which validates and normalizes them before publication.
+
+An update carrying an unchanged UNIQUE key does not acquire that key again.
+If another writer wins, the losing non-key update returns `storage.ErrConflict`
+(`Neo.TransientError.Transaction.Outdated`), while a genuine newly claimed
+key retains `ConstraintValidationFailed`. Commit checks compare retained mutation
+preimages against the current merged stored state, bypassing unversioned caches.
+Buffered snapshots retain their begin-time target presence across generation
+retirement; commit, rollback and engine close release those pins and memory leases.
+
+Infrastructure failures while reading or decoding commit validation state return
+`*storage.CommitFailureError`. Its `Cause` remains in the error chain; the shared
+HTTP/Bolt mapper reports `Neo.DatabaseError.Transaction.TransactionCommitFailed`
+instead of a constraint violation, retryable conflict or syntax error. For example:
+
+```go
+err := tx.Commit()
+var readFailure *storage.CommitFailureError
+if errors.As(err, &readFailure) {
+    // Inspect readFailure.Cause or use errors.Is for the original storage error.
+    return err
+}
+```
+
+These checks and snapshot pins change no Badger keys, persisted payloads, WAL
+encoding or storage version.
 
 ```go
 tx, err := storage.BeginEntityTransaction(engine, storage.CommitModeExplicit)
 if err != nil { return err }
 defer tx.Rollback()
-if err := tx.UpdateGraphNode(node, storage.ClientNodeEdits); err != nil { return err }
+before, err := tx.GetNode(id)
+if err != nil { return err }
+after := *before
+after.Properties = map[string]any{"name": "updated"}
+if err := tx.UpdateGraphNode(storage.NodeUpdateRequest{
+    Before: before, After: &after, Policy: storage.ClientNodeEdits,
+}); err != nil { return err }
 return tx.Commit()
 ```
 
@@ -156,3 +198,6 @@ and WAL callers use the immutable prepared source directly, avoiding the public
 `Operations()` diagnostic copy. That diagnostic view now detaches before-images
 and cascading-deletion IDs as well as after-images; changing a returned image
 cannot mutate the accepted commit. The semantic transaction wire is unchanged.
+
+The [paired UNIQUE commit measurements](../performance/pr1655-unique-claims.md)
+record the workload, correctness boundary and allocation effects of these checks.

@@ -108,7 +108,7 @@ func TestBadgerTransactionRelationshipEndpointVisible(t *testing.T) {
 	changed, err := engine.GetNode("ns:changed")
 	require.NoError(t, err)
 	changed.Properties = map[string]any{"v": int64(2)}
-	require.NoError(t, engine.UpdateNode(changed))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: changed}))
 	require.NoError(t, engine.DeleteNode("ns:peer-deleted"))
 
 	_, err = tx.CreateNode(&Node{ID: "ns:new", Labels: []string{"Doc"}})

@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestSearchStreamDeliveryDatabaseDiscardDuringPreparation(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "one")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {

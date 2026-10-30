@@ -140,7 +140,7 @@ func refreshUniqueConstraintValues(engine Engine, schema *SchemaManager, uniqueC
 					violation = localizedError(localization.StorageValidationRefreshUniqueFailed(err), err)
 					return violation
 				}
-				schema.RegisterUniqueValue(label, propName, propValue, storageNodeID)
+				schema.ApplyUniqueValue(label, propName, propValue, storageNodeID, ValidatedUniqueClaim)
 			}
 			return nil
 		})

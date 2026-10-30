@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 
 	"testing"
@@ -87,7 +88,7 @@ func TestAdaptiveVectorSearchWidensOnlyWhenUniqueNodesUnderfill(t *testing.T) {
 		{ID: nodeChunkVectorKey("doc-2", 0), Score: 0.8},
 		{ID: nodeChunkVectorKey("doc-3", 0), Score: 0.7},
 	}}
-	service := NewService(newTestMemoryEngine(t), 2, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
 	opts := adaptiveOverfetchTestOptions(2)
 
@@ -105,7 +106,7 @@ func TestAdaptiveVectorSearchDoesNotRetryWhenInitialResultsFillTarget(t *testing
 		{ID: "doc-1", Score: 1.0},
 		{ID: "doc-2", Score: 0.9},
 	}}
-	service := NewService(newTestMemoryEngine(t), 2, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
 	opts := adaptiveOverfetchTestOptions(2)
 
@@ -119,7 +120,7 @@ func TestAdaptiveVectorSearchDoesNotRetryWhenInitialResultsFillTarget(t *testing
 
 func TestAdaptiveVectorSearchWidensShortNonExhaustiveApproximateResults(t *testing.T) {
 	generator := &shortNonExhaustiveCandidateGenerator{}
-	service := NewService(newTestMemoryEngine(t), 2, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
 	opts := adaptiveOverfetchTestOptions(3)
 
@@ -138,7 +139,7 @@ func TestAdaptiveVectorSearchScoresFullApproximateBudgetBeforeNodeCollapse(t *te
 		{ID: nodeChunkVectorKey("doc-3", 0), Score: 0.8},
 		{ID: nodeChunkVectorKey("best-node", 7), Score: 0.99},
 	}}}
-	service := NewService(newTestMemoryEngine(t), 2, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
 	opts := adaptiveOverfetchTestOptions(2)
 	opts.MaxOverfetchRatio = 2
@@ -165,7 +166,7 @@ func TestHNSWRecallBudgetIsWideButBoundedForLargeResultSets(t *testing.T) {
 // stops at the cap with the page the cap allowed).
 func TestAdaptiveVectorSearchStopsAtItsBudget(t *testing.T) {
 	t.Run("context ends", func(t *testing.T) {
-		service := NewService(newTestMemoryEngine(t), 2, nil)
+		service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		// A population far wider than the budget keeps the widening running
 		// until its context ends, so cancellation, not exhaustion, stops it.
 		generator := &shortApproximateCandidateGenerator{candidates: []Candidate{{ID: "doc-1", Score: 1}}, population: 1 << 40}
@@ -189,7 +190,7 @@ func TestAdaptiveVectorSearchStopsAtItsBudget(t *testing.T) {
 			{ID: nodeChunkVectorKey("doc-1", 2), Score: 0.8},
 			{ID: "doc-2", Score: 0.7},
 		}}
-		service := NewService(newTestMemoryEngine(t), 2, nil)
+		service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
 		opts := adaptiveOverfetchTestOptions(3)
 		opts.MaxCandidateLimit = 4
@@ -240,7 +241,7 @@ func TestCompressedVectorRescoreFloor(t *testing.T) {
 				codebooks:    []ivfpqCodebook{{SubDim: 1, Codeword: [][]float32{{0}, {1}}}},
 				lists:        []ivfpqList{{IDs: tc.ids, CodeSize: 1, Codes: codes}},
 			}
-			service := NewService(newTestMemoryEngine(t), 1, nil)
+			service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 1, nil)
 			pipeline := NewVectorSearchPipeline(NewIVFPQCandidateGen(index, 1), &IdentityExactScorer{})
 			opts := adaptiveOverfetchTestOptions(1)
 			opts.MaxCandidateLimit = tc.maxCandidateLimit
@@ -314,7 +315,7 @@ func TestAdaptiveBM25SearchWidensAfterFiltering(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			index := &recordingBM25Index{results: tc.results}
-			service := NewService(newTestMemoryEngine(t), 2, nil)
+			service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 			opts := adaptiveOverfetchTestOptions(2)
 
 			results, stats, err := service.adaptiveBM25Search(context.Background(), index, "query", opts, tc.postProcess)
@@ -331,7 +332,7 @@ func TestAdaptiveBM25SearchWidensAfterFiltering(t *testing.T) {
 }
 
 func TestFullTextSearchOnlyUsesAdaptiveWidening(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	service := NewService(engine, 2, nil)
 	for _, node := range []*storage.Node{
 		{ID: "nornic:skip", Labels: []string{"Other"}},
@@ -361,7 +362,7 @@ func TestFullTextSearchOnlyUsesAdaptiveWidening(t *testing.T) {
 }
 
 func TestVectorQueryNodesIndexedUsesAdaptiveWidening(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 2, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	for _, node := range []*storage.Node{
 		{ID: "skip", Labels: []string{"Other"}, ChunkEmbeddings: [][]float32{{1, 0}}},
 		{ID: "doc-1", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0.9, 0.1}}},
@@ -394,7 +395,7 @@ func TestVectorQueryNodesIndexedUsesAdaptiveWidening(t *testing.T) {
 }
 
 func TestVectorQueryNodesIndexedWidensBeyondChunkRatioUntilDistinctNodesFill(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 2, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	for _, node := range []*storage.Node{
 		{ID: "doc-1", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}},
 		{ID: "doc-2", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0.9, 0.1}}},

@@ -3,6 +3,7 @@ package auth
 import (
 	stdjson "encoding/json"
 	"time"
+	"unsafe"
 
 	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -48,19 +49,20 @@ func bindUserJSON[T []Role | map[string]string](b userRecordBinding, key string,
 			*field = empty
 			return
 		}
-		raw = []byte(encoded)
-		// Read bindings belong to a fresh User. Metadata can decode directly
-		// into that initially nil field; atomic roles need a separate target.
-		target := field
-		if atomic {
-			target = new(T)
-		}
-		if err := jsontext.Unmarshal(raw, target); err == nil {
-			*field = *target
+		// This synchronous borrow stays read-only: jsontext validation and
+		// projection never modify input, and its pinned decoder copies input to
+		// its owned buffer before binding. Returned strings/maps/slices own their
+		// storage; none expose a mutable alias to this stored string.
+		raw = unsafe.Slice(unsafe.StringData(encoded), len(encoded))
+		// Read bindings belong to a fresh User. Decode into its initially nil
+		// field; a failed atomic roles decode is discarded before publication.
+		if err := jsontext.Unmarshal(raw, field); err == nil {
 			return
 		}
 	}
 	if atomic {
+		var empty T
+		*field = empty
 		return
 	}
 	// A failed direct decode must never publish its partially filled map.

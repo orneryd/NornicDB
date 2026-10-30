@@ -89,7 +89,7 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.SetNamespace("test"))
-			require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
 			node, err = b.GetQueryNode("test:cached")
 			require.NoError(t, err)

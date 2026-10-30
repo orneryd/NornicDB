@@ -343,7 +343,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 			if queryNodes {
 				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
 		}
 		cachedNode := func(nodeID NodeID) (*Node, bool) {
 			b.nodeCacheMu.RLock()

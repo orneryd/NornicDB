@@ -289,8 +289,8 @@ github.com/onsi/ginkgo v1.16.4/go.mod h1:dX+/inL/fNMqNlz0e9LfyB9TswhZpCVdJM/Z6Vv
 github.com/onsi/gomega v1.7.1/go.mod h1:XdKZgCCFLUoM/7CFJVPcG8C1xQ1AJ0vpAezJrB7JYyY=
 github.com/onsi/gomega v1.10.1/go.mod h1:iN09h71vgCQne3DLsj+A5owkum+a2tYe+TOCB1ybHNo=
 github.com/onsi/gomega v1.16.0/go.mod h1:HnhC7FXeEQY45zxNK3PPoIUhzk/80Xly9PcubAlGdZY=
-github.com/orneryd/go-json v0.11.3-0.20261027022034-ec39cafc98b3 h1:5Du/E/3gyn4hj64ODE8go/rL9gLXJDwXdIG7GBQijIg=
-github.com/orneryd/go-json v0.11.3-0.20261027022034-ec39cafc98b3/go.mod h1:RthGEXzQqswFJ7+diFa5fDOZTLzPQXbFpIcfJWFzlwA=
+github.com/orneryd/go-json v0.11.3-0.20261030214440-fa0195dc9464 h1:DJ8hpj/j6hjGMjWS6ZinPiCFRSy58zUrKcEOYbeP5SE=
+github.com/orneryd/go-json v0.11.3-0.20261030214440-fa0195dc9464/go.mod h1:RthGEXzQqswFJ7+diFa5fDOZTLzPQXbFpIcfJWFzlwA=
 github.com/pierrec/lz4/v4 v4.1.26 h1:GrpZw1gZttORinvzBdXPUXATeqlJjqUG/D87TKMnhjY=
 github.com/pierrec/lz4/v4 v4.1.26/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=

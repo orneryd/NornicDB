@@ -89,7 +89,7 @@ func TestSchemaManager(t *testing.T) {
 		}
 
 		// Register the value
-		sm.RegisterUniqueValue("User", "email", "test@example.com", "node1")
+		sm.ApplyUniqueValue("User", "email", "test@example.com", "node1", ValidatedUniqueClaim)
 
 		// Same value should fail
 		err = sm.CheckUniqueConstraint("User", "email", "test@example.com", "")
@@ -114,9 +114,9 @@ func TestSchemaManager(t *testing.T) {
 		sm := NewSchemaManager()
 		require.NoError(t, sm.AddUniqueConstraint("age_unique", "User", "age"))
 
-		sm.RegisterUniqueValue("User", "age", int(1), "node1")
+		sm.ApplyUniqueValue("User", "age", int(1), "node1", ValidatedUniqueClaim)
 
-		got, found, constrained := sm.LookupUniqueConstraintValue("User", "age", int64(1))
+		got, found, constrained, _ := sm.LookupUniqueConstraintValue("User", "age", int64(1))
 		require.True(t, constrained)
 		require.True(t, found)
 		assert.Equal(t, NodeID("node1"), got)
@@ -124,7 +124,7 @@ func TestSchemaManager(t *testing.T) {
 		err := sm.CheckUniqueConstraint("User", "age", float64(1), "")
 		require.Error(t, err)
 
-		sm.UnregisterUniqueValue("User", "age", int64(1))
+		sm.ApplyUniqueValue("User", "age", int64(1), "node1", RetiredUniqueClaim)
 		err = sm.CheckUniqueConstraint("User", "age", float64(1), "")
 		require.NoError(t, err)
 	})
@@ -134,7 +134,7 @@ func TestSchemaManager(t *testing.T) {
 		require.NoError(t, sm.AddUniqueConstraint("test_tags_unique", "User", "tags"))
 
 		require.NotPanics(t, func() {
-			nodeID, valueFound, constraintExists := sm.LookupUniqueConstraintValue("User", "tags", []string{"a"})
+			nodeID, valueFound, constraintExists, _ := sm.LookupUniqueConstraintValue("User", "tags", []string{"a"})
 			require.Empty(t, nodeID)
 			require.True(t, constraintExists)
 			require.False(t, valueFound)
@@ -144,7 +144,7 @@ func TestSchemaManager(t *testing.T) {
 	t.Run("UnregisterUniqueValue", func(t *testing.T) {
 		sm := NewSchemaManager()
 		sm.AddUniqueConstraint("id_unique", "Node", "id")
-		sm.RegisterUniqueValue("Node", "id", "test-1", "node1")
+		sm.ApplyUniqueValue("Node", "id", "test-1", "node1", ValidatedUniqueClaim)
 
 		// Should fail before unregister
 		err := sm.CheckUniqueConstraint("Node", "id", "test-1", "")
@@ -152,8 +152,12 @@ func TestSchemaManager(t *testing.T) {
 			t.Error("Expected constraint violation")
 		}
 
-		// Unregister
-		sm.UnregisterUniqueValue("Node", "id", "test-1")
+		// A stale retirement cannot release a different owner's claim.
+		sm.ApplyUniqueValue("Node", "id", "test-1", "another-node", RetiredUniqueClaim)
+		require.Error(t, sm.CheckUniqueConstraint("Node", "id", "test-1", ""))
+
+		// Unregister the actual owner.
+		sm.ApplyUniqueValue("Node", "id", "test-1", "node1", RetiredUniqueClaim)
 
 		// Should succeed after unregister
 		err = sm.CheckUniqueConstraint("Node", "id", "test-1", "")

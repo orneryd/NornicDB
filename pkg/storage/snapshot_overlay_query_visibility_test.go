@@ -39,7 +39,7 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 				case "engine-overlay", "engine-retired":
 					require.NoError(t, tx.SetImplicit(true))
 					require.NoError(t, tx.SetNamespace("test"))
-					require.NoError(t, tx.UpdateGraphNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "after"}}, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "after"}}, Policy: ClientNodeEdits}))
 					require.NoError(t, tx.Commit())
 					if buffered {
 						require.Positive(t, b.writeBehind.PendingOps())
@@ -49,7 +49,7 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 						}
 					}
 				case "transaction-pending":
-					require.NoError(t, tx.UpdateGraphNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "after"}}, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "after"}}, Policy: ClientNodeEdits}))
 					read = tx.GetQueryNode
 					readStored = tx.GetStoredNode
 				case "transaction-connected":

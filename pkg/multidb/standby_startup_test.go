@@ -19,9 +19,9 @@ type leaderAwareEngine struct {
 
 func (e *leaderAwareEngine) IsLeader() bool { return e.leader }
 
-func (e *leaderAwareEngine) UpdateNode(node *storage.Node) error {
+func (e *leaderAwareEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	e.updateCalls.Add(1)
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(updateRequest)
 }
 
 func TestNewDatabaseManager_ReadOnlyEngine_SkipsMetadataWrites(t *testing.T) {

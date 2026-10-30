@@ -29,14 +29,87 @@ The optional `storage.ConnectedNodeDeleter` capability now requires `DeleteGraph
 
 Cypher, HTTP and Bolt deletion behavior is preserved by the repository's migrated adapters.
 
-## Transaction node updates
+## Observed node and relationship updates
 
-Replace `tx.UpdateNode(node)` with `tx.UpdateGraphNode(node, storage.ClientNodeEdits)`.
-The transaction's canonical update method takes an image policy for each operation.
-Use `storage.StoredNodeImages` only for a complete authoritative stored image,
+The Go mutation API now takes typed image requests. Replace pointer-only
+`Engine.UpdateNode`, `Engine.UpdateEdge` and transaction calls with:
+
+| Mutation owner | Request |
+|---|---|
+| `engine.UpdateNode` or `tx.UpdateGraphNode` | `storage.NodeUpdateRequest{Before: before, After: after, Policy: policy}` |
+| `engine.UpdateEdge` or `tx.UpdateEdge` | `storage.EdgeUpdateRequest{Before: before, After: after}` |
+
+`Before` is the immutable image the caller actually read. Preserve it before
+editing fields and keep it unchanged until the transaction terminates. Do not
+reread the predecessor after the mutation or retain observations on ordinary
+reads. A nil `Before` deliberately selects a blind image write, such as restoring
+an authoritative backup image; it does not represent an ordinary read-modify-write.
+
+For example, this update uses the standard-library `maps` package to separate
+only the property map that changes. Untouched embedding arrays remain shared:
+
+```go
+before, err := tx.GetNode(nodeID)
+if err != nil {
+    return err
+}
+after := *before
+after.Properties = maps.Clone(before.Properties)
+if after.Properties == nil {
+    after.Properties = make(map[string]interface{})
+}
+after.Properties["name"] = "Alice"
+err = tx.UpdateGraphNode(storage.NodeUpdateRequest{
+    Before: before,
+    After: &after,
+    Policy: storage.ClientNodeEdits,
+})
+```
+
+For relationships, preserve the `GetEdge` result in the same way, separate any
+property map you edit, and pass the original and edited images to
+`tx.UpdateEdge(storage.EdgeUpdateRequest{Before: beforeEdge, After: &afterEdge})`.
+Custom engines, wrappers and Go method expressions must migrate to these request
+signatures; forwarding wrappers for the removed signatures are not provided.
+
+`ClientNodeEdits` retains managed-embedding reconciliation. Use
+`storage.StoredNodeImages` only for a complete authoritative stored image,
 including embedding metadata, already normalized by the commit coordinator.
 A transaction may stage client edits and stored images in sequence; rollback
-and publication remain transaction-wide. `storage.Engine.UpdateNode` is unchanged.
+and publication remain transaction-wide. These runtime requests change no
+Badger keys, stored entity payloads, WAL encoding or storage version. Cypher,
+HTTP and Bolt syntax remains unchanged.
+
+## UNIQUE claim retirement
+
+Claim publication has one method,
+`SchemaManager.ApplyUniqueValue(label, property, value, nodeID, action)`, which
+owns the constraint lookup, value-key projection and claim mutation under the
+constraint's mutex. The former `RegisterUniqueValue` and `UnregisterUniqueValue`
+methods and the `UniqueValueRegistrationPolicy` type are removed; forwarding
+wrappers are not provided. Update direct Go callers:
+
+- `RegisterUniqueValue(label, property, value, nodeID, policy)` maps directly to
+  `ApplyUniqueValue(label, property, value, nodeID, action)` with the same
+  arguments, using `ValidatedUniqueClaim` or `RecoveredUniqueClaim`.
+- `UnregisterUniqueValue(label, property, value, nodeID)` becomes
+  `ApplyUniqueValue(label, property, value, nodeID, RetiredUniqueClaim)`.
+
+`UniqueValueAction` has three values. `ValidatedUniqueClaim` assigns the value
+to the node unconditionally and is required for current validated mutations. The
+canonical WAL recovery owner uses `RecoveredUniqueClaim`: historical images may
+add a missing claim or retain the same owner, but cannot overwrite a different
+loaded current holder. `RetiredUniqueClaim` deletes the value only while the
+supplied node is its holder. Pass the retiring node's ID, not a fresh lookup of
+the current holder: an older buffered delete or rename can then finish replay
+without releasing a value already reused by a different committed node. Atomic
+publication retires all predecessor claims before acquiring final claims. Normal
+buffered writes publish once at logical ACK; physical drain does not republish
+their historical claims. An action outside these constants is a programmer error
+and panics rather than being treated as a publication mode.
+
+These actions change only derived in-memory ownership, not persisted payloads,
+persistent indexes, WAL formats or storage versions.
 
 ## Manual visibility
 
@@ -55,3 +128,10 @@ Namespace wrappers preserve their existing ID qualification rules. WAL wrappers
 forward the visibility change without adding a graph-write log entry. Persisted
 suppression key bytes remain compatible, and the Cypher `kp.suppress` contract,
 commit/rollback behavior and search refresh semantics are preserved.
+
+UNIQUE lookups also have one canonical operation:
+`LookupUniqueConstraintValue(label, property, value)` returns
+`(nodeID, found, constraintExists, cacheComplete)`. The old three-result view,
+`LookupUniqueConstraintValueForPlanning`, and the internal validation adapter
+are retired. Consumers may trust a missing value only when `cacheComplete` is
+true; a positive claim retains its existing meaning.

@@ -254,7 +254,7 @@ func TestBadgerEngine_UpdateEdgeAndDeletePrefixHelpers_Branches(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
 	// UpdateEdge endpoint-change branch that validates new endpoint existence.
-	err = engine.UpdateEdge(&Edge{ID: "test:e1", StartNode: "test:missing", EndNode: "test:b", Type: "REL"})
+	err = engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:missing", EndNode: "test:b", Type: "REL"}})
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// deleteEdgesWithPrefix: malformed index key should be skipped while valid edge deletes.
@@ -375,7 +375,7 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		_, err := engine.CreateNode(&Node{ID: "test:n3", Labels: []string{"Doc"}, Properties: map[string]any{"v": "old"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.UpdateNode(&Node{ID: "test:n3", Labels: []string{"Doc"}, Properties: map[string]any{"v": "new"}}))
+		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:n3", Labels: []string{"Doc"}, Properties: map[string]any{"v": "new"}}}))
 
 		head, err := engine.GetNodeCurrentHead("test:n3")
 		require.NoError(t, err)

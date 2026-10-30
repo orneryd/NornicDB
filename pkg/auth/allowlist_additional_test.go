@@ -1,10 +1,9 @@
 package auth
 
 import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"testing"
 
@@ -13,7 +12,7 @@ import (
 
 func TestAllowlistStore_DeleteRenameAndHelpers(t *testing.T) {
 	ctx := context.Background()
-	eng := newSystemTestEngine(t)
+	eng := newSystemEngine(t)
 
 	store := NewAllowlistStore(eng)
 	roles := NewRoleStore(eng)
@@ -87,7 +86,7 @@ func TestAllowlistDatabaseAccessMode_NormalizationPaths(t *testing.T) {
 
 func TestAllowlistStore_CopyAndSeedSkipPaths(t *testing.T) {
 	ctx := context.Background()
-	eng := newSystemTestEngine(t)
+	eng := newSystemEngine(t)
 
 	store := NewAllowlistStore(eng)
 	for _, role := range []string{"analyst", "global"} {
@@ -138,7 +137,7 @@ func TestAllowlistStore_CopyAndSeedSkipPaths(t *testing.T) {
 
 func TestAllowlistStore_LoadAndHasDataHelpers(t *testing.T) {
 	ctx := context.Background()
-	eng := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 
 	store := NewAllowlistStore(eng)

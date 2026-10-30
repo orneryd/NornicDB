@@ -51,7 +51,7 @@ func TestPopulationCannotReplaceLiveMutation(t *testing.T) {
 				require.NoError(t, base.DeleteNode(node.ID))
 			} else {
 				node = &storage.Node{ID: "point", ChunkEmbeddings: [][]float32{{0, 1, 0, 0}}}
-				require.NoError(t, base.UpdateNode(node))
+				require.NoError(t, base.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			}
 			go func() {
 				if remove {

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"sort"
 	"time"
@@ -178,9 +179,11 @@ func testNodeUpdate(engine storage.Engine, iterations int) []time.Duration {
 		if err != nil {
 			continue
 		}
+		before := *node
+		before.Properties = maps.Clone(node.Properties)
 		node.Properties["value"] = i
 		start := time.Now()
-		if err := engine.UpdateNode(node); err != nil {
+		if err := engine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			continue
 		}
 		durations = append(durations, time.Since(start))

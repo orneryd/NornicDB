@@ -42,7 +42,7 @@ func TestColdBufferedWriteAfterReopen(t *testing.T) {
 			err = tx.SetImplicit(true)
 		}
 		if err == nil {
-			err = tx.UpdateGraphNode(&Node{ID: "cold:a", Properties: map[string]any{"value": int64(2)}}, ClientNodeEdits)
+			err = tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "cold:a", Properties: map[string]any{"value": int64(2)}}, Policy: ClientNodeEdits})
 		}
 		if err == nil {
 			err = tx.Commit()

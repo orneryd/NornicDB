@@ -46,7 +46,7 @@ func TestCredentialUsernameOnlyCatalogPersistence(t *testing.T) {
 				data, err := json.Marshal(mgr.databases)
 				require.NoError(t, err)
 				node.Properties["data"] = string(data)
-				require.NoError(t, system.UpdateNode(node))
+				require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			} else {
 				require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "probe", []ConstituentRef{ref}))
 			}

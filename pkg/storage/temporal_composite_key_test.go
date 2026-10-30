@@ -77,9 +77,9 @@ func TestBug_NodeTemporalCompositeKey_DirectWrites(t *testing.T) {
 	v2, err := engine.GetNode(NodeID(prefixTestID("v2")))
 	require.NoError(t, err)
 	v2.Properties["vt"] = compositeDay(61)
-	require.NoError(t, engine.UpdateNode(v2))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: v2}))
 	v2.Properties["vt"] = compositeDay(95)
-	require.Error(t, engine.UpdateNode(v2))
+	require.Error(t, engine.UpdateNode(NodeUpdateRequest{After: v2}))
 
 	// The current-version pointer works per composite key.
 	open, err := engine.GetNode(NodeID(prefixTestID("v3-open")))

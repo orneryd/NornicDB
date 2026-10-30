@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -56,7 +57,7 @@ func TestXhighExactThresholdPopulationBoundary(t *testing.T) {
 		})
 	}
 	t.Run("public_start_pull", func(t *testing.T) {
-		base := newTestMemoryEngine(t)
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		t.Cleanup(func() { _ = base.Close() })
 		engine := storage.NewNamespacedEngine(base, "threshold")
 		service := NewService(engine, 2, nil)

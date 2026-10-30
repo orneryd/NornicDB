@@ -1,6 +1,7 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -18,7 +19,7 @@ func TestLiveIndexAnalyzesNewDocumentOnce(t *testing.T) {
 			calls.Add(1)
 			return tokens
 		}}
-		service := NewService(newTestMemoryEngine(t), 3, &options)
+		service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &options)
 		t.Cleanup(func() { _ = service.Close() })
 		node := &storage.Node{ID: "test:n1", Labels: []string{"Item"}, Properties: map[string]any{"name": "alpha beta alpha"}}
 		require.NoError(t, service.IndexNode(node))
@@ -72,7 +73,7 @@ func TestPreparedFulltextMatchesPublicWrites(t *testing.T) {
 
 func BenchmarkLiveIndexNewDocuments(b *testing.B) {
 	b.Run("fulltext", func(b *testing.B) {
-		service := NewService(newTestMemoryEngine(b), 3, nil)
+		service := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 		b.Cleanup(func() { _ = service.Close() })
 		nodes := make([]storage.Node, b.N)
 		for i := range nodes {

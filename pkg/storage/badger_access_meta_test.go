@@ -40,7 +40,7 @@ func TestAccessMetaOwnsCatalogAndPreservesConcurrentPolicyState(t *testing.T) {
 	stale, err := readStoredAccessMeta(t, engine, string(node.ID))
 	require.NoError(t, err)
 	node.Labels = []string{"New"}
-	require.NoError(t, engine.UpdateNode(node))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: node}))
 	current, err := engine.GetIndexEntryCatalog(string(node.ID))
 	require.NoError(t, err)
 	require.NotNil(t, current)

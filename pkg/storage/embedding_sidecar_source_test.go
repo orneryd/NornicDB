@@ -47,7 +47,7 @@ func TestEmbeddingSidecar_SourceChangedIsNotWritten(t *testing.T) {
 			changed, err := b.GetNode(node.ID)
 			require.NoError(t, err)
 			change.apply(changed)
-			require.NoError(t, b.UpdateNode(changed))
+			require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: changed}))
 			require.True(t, sidecarPending(t, b, node.ID))
 
 			require.ErrorIs(t, b.UpdateNodeEmbeddingSidecar(embedded), ErrEmbeddingSourceChanged)
@@ -81,7 +81,7 @@ func TestEmbeddingSidecar_ConcurrentChangeIsNotWritten(t *testing.T) {
 		changed, err := b.GetNode(node.ID)
 		require.NoError(t, err)
 		changed.Properties = map[string]any{"title": "v2"}
-		require.NoError(t, b.UpdateNode(changed))
+		require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: changed}))
 	}
 	embeddingSourceCheckedHook.Store(&hook)
 	t.Cleanup(func() { embeddingSourceCheckedHook.Store(nil) })

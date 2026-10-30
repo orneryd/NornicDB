@@ -98,7 +98,9 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 	} else {
 		qualified.CreatedAt = previous.CreatedAt
 		operation.OldNode = previous
-		apply = func() error { return tx.UpdateGraphNode(qualified, storage.ClientNodeEdits) }
+		apply = func() error {
+			return tx.UpdateGraphNode(storage.NodeUpdateRequest{Before: previous, After: qualified, Policy: storage.ClientNodeEdits})
+		}
 	}
 	for i := len(owner.writeBoundaries) - 1; i >= 0; i-- {
 		policy, next := owner.writeBoundaries[i], apply

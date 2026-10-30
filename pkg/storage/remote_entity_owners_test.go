@@ -17,8 +17,12 @@ func TestRemotePublicMutationBindingsAndAdmission(t *testing.T) {
 		update              bool
 		run                 func(*RemoteEngine) error
 	}{
-		{"update node", "MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", "node:one", true, func(e *RemoteEngine) error { return e.UpdateNode(&Node{ID: "node:one", Properties: props}) }},
-		{"update edge", "MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", "edge:one", true, func(e *RemoteEngine) error { return e.UpdateEdge(&Edge{ID: "edge:one", Properties: props}) }},
+		{"update node", "MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", "node:one", true, func(e *RemoteEngine) error {
+			return e.UpdateNode(NodeUpdateRequest{After: &Node{ID: "node:one", Properties: props}})
+		}},
+		{"update edge", "MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", "edge:one", true, func(e *RemoteEngine) error {
+			return e.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "edge:one", Properties: props}})
+		}},
 		{"delete node", "MATCH (n) WHERE n.id = $id DETACH DELETE n", "node:one", false, func(e *RemoteEngine) error { return e.DeleteNode("node:one") }},
 		{"delete edge", "MATCH ()-[r]->() WHERE r.id = $id DELETE r", "edge:one", false, func(e *RemoteEngine) error { return e.DeleteEdge("edge:one") }},
 	} {

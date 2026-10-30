@@ -136,9 +136,9 @@ func TestRemoteEngineHTTPNullParameters(t *testing.T) {
 			"run": run, "tags": []string{"a"}, "list": []interface{}{int64(1)}, "extra": "x", "kept": int64(7),
 		}})
 		require.NoError(t, err)
-		require.NoError(t, engine.UpdateNode(&Node{ID: id, Properties: map[string]interface{}{
+		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Properties: map[string]interface{}{
 			"tags": []string(nil), "list": []interface{}(nil), "extra": map[string]string(nil),
-		}}))
+		}}}))
 		_, rows, err := engine.QueryCypher(ctx, "MATCH (n:RemoteNullParameter {id: $id}) RETURN n.tags IS NULL, n.list IS NULL, n.extra IS NULL, n.kept", map[string]interface{}{"id": string(id)}, RemoteAccessRead)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{true, true, true, int64(7)}}, rows)

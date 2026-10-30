@@ -42,7 +42,7 @@ func testCatalogV4TransformsPendingWALImage(t *testing.T, version int) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("system"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "system:databases:metadata", Properties: map[string]any{"data": "pending"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "system:databases:metadata", Properties: map[string]any{"data": "pending"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	// The first fixture must be torn down the way the process crash left it:
@@ -95,7 +95,7 @@ func testCatalogV4ResumesPendingReplayAfterTransformFailure(t *testing.T, versio
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("system"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "system:databases:metadata", Properties: map[string]any{"data": "pending"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "system:databases:metadata", Properties: map[string]any{"data": "pending"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)

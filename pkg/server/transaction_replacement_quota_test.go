@@ -172,13 +172,13 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 										require.NoError(t, err)
 										require.Len(t, nodes, 1)
 										nodes[0].CreatedAt, nodes[0].UpdatedAt = old, old
-										require.NoError(t, store.UpdateNode(nodes[0]))
+										require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: nodes[0]}))
 									} else {
 										edges, err := storage.CollectStoredEdges(context.Background(), store)
 										require.NoError(t, err)
 										require.Len(t, edges, 1)
 										edges[0].CreatedAt, edges[0].UpdatedAt = old, old
-										require.NoError(t, store.UpdateEdge(edges[0]))
+										require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edges[0]}))
 									}
 									if visibility == "suppressed" {
 										run(prefix + "MATCH " + pattern + " CALL kp.suppress(" + target + ")")
@@ -276,7 +276,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 										require.NoError(t, h.server.dbManager.SetDatabaseLimits(t.Context(), "nornic", &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: before}}))
 										require.ErrorIs(t, updateQuotaPayload(store, entity, strings.Repeat("x", 8192)), multidb.ErrStorageLimitExceeded)
 									} else if entity == "node" {
-										require.ErrorIs(t, store.UpdateNode(&storage.Node{ID: "overflow"}), multidb.ErrStorageLimitExceeded)
+										require.ErrorIs(t, store.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "overflow"}}), multidb.ErrStorageLimitExceeded)
 									} else {
 										edges, err := storage.CollectStoredEdges(context.Background(), store)
 										require.NoError(t, err)
@@ -333,7 +333,7 @@ func updateQuotaPayload(store storage.Engine, entity, payload string) error {
 			nodes[0].Properties = make(map[string]any)
 		}
 		nodes[0].Properties["payload"] = payload
-		return store.UpdateNode(nodes[0])
+		return store.UpdateNode(storage.NodeUpdateRequest{After: nodes[0]})
 	}
 	edges, err := storage.CollectStoredEdges(context.Background(), store)
 	if err != nil {
@@ -346,5 +346,5 @@ func updateQuotaPayload(store storage.Engine, entity, payload string) error {
 		edges[0].Properties = make(map[string]any)
 	}
 	edges[0].Properties["payload"] = payload
-	return store.UpdateEdge(edges[0])
+	return store.UpdateEdge(storage.EdgeUpdateRequest{After: edges[0]})
 }

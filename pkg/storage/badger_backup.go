@@ -379,6 +379,29 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 	if err := b.db.DropPrefix(prefixDropOptions{}, dropPrefixes...); err != nil {
 		return 0, 0, nil, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
+	// A whole-namespace drop keeps admission fenced until its schema owner
+	// is retired after successful cleanup. Do not take that owner's mutex
+	// here: a pre-fence metadata writer may still hold it in its committed
+	// tail. Partial-prefix deletion retains the schema, so retire just its
+	// deleted holders under the existing lifecycle authority.
+	if !wholeNamespace {
+		// Primary bodies are gone. Retire their UNIQUE claims before any later
+		// cleanup can fail and before lifecycle authority admits another writer.
+		// Snapshot manager references so schema registry admission is not held
+		// while the individual constraint owners publish their removals.
+		var affectedSchemas []*SchemaManager
+		b.schemasMu.RLock()
+		for name, schema := range b.schemas {
+			scoped := name + ":"
+			if strings.HasPrefix(scoped, prefix) || strings.HasPrefix(prefix, scoped) {
+				affectedSchemas = append(affectedSchemas, schema)
+			}
+		}
+		b.schemasMu.RUnlock()
+		for _, schema := range affectedSchemas {
+			schema.retireUniqueValuesByNodePrefix(prefix)
+		}
+	}
 	if b.dropPrefixTailHook != nil {
 		if err := b.dropPrefixTailHook(prefix); err != nil {
 			return 0, 0, nil, err

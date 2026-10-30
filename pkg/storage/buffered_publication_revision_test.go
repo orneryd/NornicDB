@@ -41,11 +41,11 @@ func TestBufferedPublicationCallbacksKeepAcknowledgedRevision(t *testing.T) {
 		node, err := tx.GetNode("test:a")
 		require.NoError(t, err)
 		node.Properties["v"] = int64(2)
-		require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 		edge, err := tx.GetEdge("test:e")
 		require.NoError(t, err)
 		edge.Properties["v"] = int64(2)
-		require.NoError(t, tx.UpdateEdge(edge))
+		require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
 	})
 	write(func(tx *Transaction) {
 		require.NoError(t, tx.DeleteEdge("test:e"))

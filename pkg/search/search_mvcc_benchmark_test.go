@@ -79,12 +79,12 @@ func buildMVCCSearchFixture(tb testing.TB, nodeCount, historyDepth, dimensions i
 			tb.Fatal(err)
 		}
 		for version := 1; version < historyDepth; version++ {
-			if err := engine.UpdateNode(&storage.Node{
+			if err := engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{
 				ID:              nodeID,
 				Labels:          []string{"Document"},
 				Properties:      map[string]any{"title": fmt.Sprintf("document-%05d-v%d", nodeIndex, version), "rank": nodeIndex, "version": version},
 				ChunkEmbeddings: [][]float32{vector},
-			}); err != nil {
+			}}); err != nil {
 				tb.Fatal(err)
 			}
 		}

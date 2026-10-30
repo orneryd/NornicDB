@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/grpcresponse"
+	"maps"
 	"math"
 	"reflect"
 	"sort"
@@ -37,11 +38,27 @@ func NewPointsService(config *Config, collections CollectionStore, searchProvide
 	}
 }
 
-func (s *PointsService) allowAccess(ctx context.Context, collectionName string, write bool) error {
+// pointCollectionAccess keeps the batch endpoint's existing empty-request
+// contract distinct from operations that require a collection name.
+type pointCollectionAccess uint8
+
+const (
+	pointCollectionRead pointCollectionAccess = iota
+	pointCollectionWrite
+	pointCollectionBatchRead
+)
+
+// admitCollection owns name validation and authorization in their original
+// order. An empty QueryBatch still performs its authorization check; concrete
+// child queries retain their ordinary required-name validation.
+func (s *PointsService) admitCollection(ctx context.Context, collectionName string, access pointCollectionAccess) error {
+	if collectionName == "" && access != pointCollectionBatchRead {
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
+	}
 	if s.checker == nil {
 		return nil
 	}
-	return s.checker.AllowDatabaseAccess(ctx, collectionName, write)
+	return s.checker.AllowDatabaseAccess(ctx, collectionName, access == pointCollectionWrite)
 }
 
 func (s *PointsService) openCollection(ctx context.Context, name string) (storage.Engine, *CollectionMeta, error) {
@@ -134,10 +151,7 @@ func queryRequestHasText(request any) bool {
 func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if !s.config.AllowVectorMutations {
@@ -232,7 +246,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		}
 	}
 	for _, node := range nodesToUpdate {
-		if err := store.UpdateNode(node); err != nil {
+		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: existing[node.ID], After: node}); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
@@ -252,10 +266,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 func (s *PointsService) Get(ctx context.Context, req *qpb.GetPoints) (*qpb.GetResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetIds()) == 0 {
@@ -299,10 +310,7 @@ func (s *PointsService) Get(ctx context.Context, req *qpb.GetPoints) (*qpb.GetRe
 func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if req.Points == nil {
@@ -343,10 +351,7 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 func (s *PointsService) Count(ctx context.Context, req *qpb.CountPoints) (*qpb.CountResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 
@@ -380,10 +385,7 @@ func (s *PointsService) Count(ctx context.Context, req *qpb.CountPoints) (*qpb.C
 func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb.SearchResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetVector()) == 0 {
@@ -489,10 +491,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 func (s *PointsService) Scroll(ctx context.Context, req *qpb.ScrollPoints) (*qpb.ScrollResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 
@@ -580,10 +579,7 @@ func (s *PointsService) OverwritePayload(ctx context.Context, req *qpb.SetPayloa
 func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPoints, overwrite bool) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if req.Payload == nil {
@@ -606,13 +602,18 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 
 	for _, nodeID := range nodeIDs {
 		node, err := store.GetNode(nodeID)
-		if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
+		}
 
+		before := *node
 		if overwrite {
 			node.Properties = payloadToProperties(req.Payload)
 		} else {
+			before.Properties = maps.Clone(node.Properties)
 			if node.Properties == nil {
 				node.Properties = make(map[string]any)
 			}
@@ -621,7 +622,9 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 			}
 		}
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
@@ -636,10 +639,7 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloadPoints) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if len(req.GetKeys()) == 0 {
@@ -662,14 +662,21 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 
 	for _, nodeID := range nodeIDs {
 		node, err := store.GetNode(nodeID)
-		if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
+		}
+		before := *node
+		before.Properties = maps.Clone(node.Properties)
 		for _, k := range req.Keys {
 			delete(node.Properties, k)
 		}
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
@@ -684,10 +691,7 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadPoints) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if req.Points == nil {
@@ -710,12 +714,18 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 
 	for _, nodeID := range nodeIDs {
 		node, err := store.GetNode(nodeID)
-		if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
+		}
+		before := *node
 		node.Properties = nil
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
@@ -730,10 +740,7 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointVectors) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if !s.config.AllowVectorMutations {
@@ -759,8 +766,11 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 
 		nodeID := pointIDToNodeID(pv.Id)
 		node, err := store.GetNode(nodeID)
-		if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
+		}
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
 		}
 
 		names, vecs, err := extractVectors(ctx, s.config.Localizer, pv.Vectors)
@@ -773,9 +783,13 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 			}
 		}
 
+		before := *node
+		before.NamedEmbeddings = maps.Clone(node.NamedEmbeddings)
 		upsertNodeVectors(node, names, vecs)
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
@@ -791,10 +805,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointVectors) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if !s.config.AllowVectorMutations {
@@ -823,12 +834,19 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 
 	for _, nodeID := range nodeIDs {
 		node, err := store.GetNode(nodeID)
-		if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
+		}
+		before := *node
+		before.NamedEmbeddings = maps.Clone(node.NamedEmbeddings)
 		deleteNodeVectors(node, req.Vectors.Names)
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
@@ -844,29 +862,22 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 func (s *PointsService) SearchBatch(ctx context.Context, req *qpb.SearchBatchPoints) (*qpb.SearchBatchResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetSearchPoints()) == 0 {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("search_points"), grpcresponse.QdrantSourceFallback)
 	}
 
-	results := make([]*qpb.BatchResult, 0, len(req.SearchPoints))
-	for _, sp := range req.SearchPoints {
-		if sp == nil {
-			results = append(results, &qpb.BatchResult{Result: nil})
-			continue
-		}
-		// Ensure child request uses parent collection name (SDKs typically set it).
-		sp.CollectionName = req.CollectionName
+	results, err := batchEachChild(ctx, req.SearchPoints, req.CollectionName, batchNilAsEmpty, func(sp *qpb.SearchPoints) *string { return &sp.CollectionName }, func(ctx context.Context, sp *qpb.SearchPoints) (*qpb.BatchResult, error) {
 		resp, err := s.Search(ctx, sp)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, &qpb.BatchResult{Result: resp.Result})
+		return &qpb.BatchResult{Result: resp.Result}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &qpb.SearchBatchResponse{
@@ -875,13 +886,43 @@ func (s *PointsService) SearchBatch(ctx context.Context, req *qpb.SearchBatchPoi
 	}, nil
 }
 
+// batchEachChild is the batch workflow SearchBatch and RecommendBatch share:
+// a present child is pointed at the parent's collection name (SDKs typically
+// set it, but the parent is authoritative) through the child's collection-name
+// field, which only this owner writes; a nil child contributes an empty result
+// under batchNilAsEmpty. QueryBatch dispatches nil to its original validator.
+// The first child error ends the batch without a
+// partial result. Only the per-child operation differs.
+type batchNilChildPolicy uint8
+
+const (
+	batchNilAsEmpty batchNilChildPolicy = iota
+	batchDispatchNil
+)
+
+func batchEachChild[T any](ctx context.Context, children []*T, collectionName string, nilPolicy batchNilChildPolicy, named func(*T) *string, operation func(context.Context, *T) (*qpb.BatchResult, error)) ([]*qpb.BatchResult, error) {
+	results := make([]*qpb.BatchResult, 0, len(children))
+	for _, child := range children {
+		if child == nil && nilPolicy == batchNilAsEmpty {
+			results = append(results, &qpb.BatchResult{Result: nil})
+			continue
+		}
+		if child != nil {
+			*named(child) = collectionName
+		}
+		result, err := operation(ctx, child)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
 func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints) (*qpb.RecommendResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 
@@ -929,10 +970,7 @@ func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints)
 func (s *PointsService) RecommendBatch(ctx context.Context, req *qpb.RecommendBatchPoints) (*qpb.RecommendBatchResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetRecommendPoints()) == 0 {
@@ -940,18 +978,15 @@ func (s *PointsService) RecommendBatch(ctx context.Context, req *qpb.RecommendBa
 	}
 
 	ctx = s.bindQueryEmbedding(ctx, req)
-	results := make([]*qpb.BatchResult, 0, len(req.RecommendPoints))
-	for _, r := range req.RecommendPoints {
-		if r == nil {
-			results = append(results, &qpb.BatchResult{Result: nil})
-			continue
-		}
-		r.CollectionName = req.CollectionName
+	results, err := batchEachChild(ctx, req.RecommendPoints, req.CollectionName, batchNilAsEmpty, func(r *qpb.RecommendPoints) *string { return &r.CollectionName }, func(ctx context.Context, r *qpb.RecommendPoints) (*qpb.BatchResult, error) {
 		resp, err := s.Recommend(ctx, r)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, &qpb.BatchResult{Result: resp.Result})
+		return &qpb.BatchResult{Result: resp.Result}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &qpb.RecommendBatchResponse{
@@ -963,10 +998,7 @@ func (s *PointsService) RecommendBatch(ctx context.Context, req *qpb.RecommendBa
 func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGroups) (*qpb.SearchGroupsResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetVector()) == 0 {
@@ -1047,43 +1079,31 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGr
 }
 
 func (s *PointsService) CreateFieldIndex(ctx context.Context, req *qpb.CreateFieldIndexCollection) (*qpb.PointsOperationResponse, error) {
-	start := time.Now()
-
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
-		return nil, err
-	}
-	if req.FieldName == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"), grpcresponse.QdrantSourceFallback)
-	}
-
-	if _, _, err := s.openCollection(ctx, req.CollectionName); err != nil {
-		return nil, err
-	}
-	// NornicDB schema indexes are managed internally; treat as a no-op.
-
-	return &qpb.PointsOperationResponse{
-		Result: &qpb.UpdateResult{Status: qpb.UpdateStatus_Completed},
-		Time:   time.Since(start).Seconds(),
-	}, nil
+	return s.fieldIndexOperation(ctx, req.GetCollectionName(), func() string { return req.FieldName })
 }
 
 func (s *PointsService) DeleteFieldIndex(ctx context.Context, req *qpb.DeleteFieldIndexCollection) (*qpb.PointsOperationResponse, error) {
+	return s.fieldIndexOperation(ctx, req.GetCollectionName(), func() string { return req.FieldName })
+}
+
+// fieldIndexOperation is the shared workflow of the field-index endpoints. They
+// differ only in the operation being completed: both admit the collection for
+// write, require a field name, and open the collection, but NornicDB manages
+// schema indexes internally, so neither has anything left to do.
+func (s *PointsService) fieldIndexOperation(ctx context.Context, collectionName string, requestFieldName func() string) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, collectionName, pointCollectionWrite); err != nil {
 		return nil, err
 	}
-	if req.FieldName == "" {
+	// Read request fields after admission, preserving the original nil-request
+	// ordering even when authorization rejects the request.
+	fieldName := requestFieldName()
+	if fieldName == "" {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"), grpcresponse.QdrantSourceFallback)
 	}
 
-	if _, _, err := s.openCollection(ctx, req.CollectionName); err != nil {
+	if _, _, err := s.openCollection(ctx, collectionName); err != nil {
 		return nil, err
 	}
 
@@ -1102,10 +1122,7 @@ func (s *PointsService) DeleteFieldIndex(ctx context.Context, req *qpb.DeleteFie
 func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.QueryResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 
@@ -1164,21 +1181,20 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 
 func (s *PointsService) QueryBatch(ctx context.Context, req *qpb.QueryBatchPoints) (*qpb.QueryBatchResponse, error) {
 	start := time.Now()
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionBatchRead); err != nil {
 		return nil, err
 	}
 
 	ctx = s.bindQueryEmbedding(ctx, req)
-	results := make([]*qpb.BatchResult, 0, len(req.GetQueryPoints()))
-	for _, q := range req.GetQueryPoints() {
-		if q != nil {
-			q.CollectionName = req.GetCollectionName()
-		}
+	results, err := batchEachChild(ctx, req.GetQueryPoints(), req.GetCollectionName(), batchDispatchNil, func(q *qpb.QueryPoints) *string { return &q.CollectionName }, func(ctx context.Context, q *qpb.QueryPoints) (*qpb.BatchResult, error) {
 		resp, err := s.Query(ctx, q)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, &qpb.BatchResult{Result: resp.Result})
+		return &qpb.BatchResult{Result: resp.Result}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &qpb.QueryBatchResponse{

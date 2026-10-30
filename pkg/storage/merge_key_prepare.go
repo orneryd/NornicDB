@@ -171,7 +171,7 @@ func (tx *BadgerTransaction) settleBufferedNode(nodeID NodeID) error {
 func (tx *BadgerTransaction) mergeAdmissionHolder(schema *SchemaManager, namespace string, key mergeAdmissionKey, props map[string]interface{}) (NodeID, bool, bool) {
 	label, properties := key.lock.label, key.properties
 	if len(properties) == 1 {
-		nodeID, found, _, complete := schema.LookupUniqueConstraintValueForPlanning(label, properties[0], props[properties[0]])
+		nodeID, found, _, complete := schema.LookupUniqueConstraintValue(label, properties[0], props[properties[0]])
 		return nodeID, found, complete
 	}
 	idx := schema.filledKeyIndex(label, properties)

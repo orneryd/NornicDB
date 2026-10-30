@@ -363,7 +363,7 @@ func TestChangeDataCaptureDirectWrites(t *testing.T) {
 	start := cdcID(t, exec, "db.cdc.current")
 	_, err := store.CreateNode(&storage.Node{ID: "direct", Labels: []string{"D"}, Properties: map[string]interface{}{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, store.UpdateNode(&storage.Node{ID: "direct", Labels: []string{"D"}, Properties: map[string]interface{}{"v": int64(2)}}))
+	require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "direct", Labels: []string{"D"}, Properties: map[string]interface{}{"v": int64(2)}}}))
 	require.NoError(t, store.DeleteNode("direct"))
 	rows := cdcRows(t, exec, start)
 	require.Len(t, rows, 3)

@@ -44,6 +44,12 @@ func labelChangeDecayFixture(t *testing.T) (*BadgerEngine, time.Time) {
 	return eng, old
 }
 
+func createStaleLabelChangeNode(t *testing.T, eng *BadgerEngine, id NodeID, label string, old time.Time) {
+	t.Helper()
+	_, err := eng.CreateNode(&Node{ID: id, Labels: []string{label}, Properties: map[string]any{"title": "stale"}, CreatedAt: old, UpdatedAt: old})
+	require.NoError(t, err)
+}
+
 // TestLabelChange_TargetedToUntargeted_RescoresAndUnsuppresses pins down the
 // Cypher SET label semantics: a node that was suppressed by a Doc-only
 // decay binding must become visible again after its labels change to
@@ -53,14 +59,7 @@ func TestLabelChange_TargetedToUntargeted_RescoresAndUnsuppresses(t *testing.T) 
 	eng, old := labelChangeDecayFixture(t)
 
 	// Step 1: create as "Doc" and let decay drop it below threshold.
-	_, err := eng.CreateNode(&Node{
-		ID:         "test:n1",
-		Labels:     []string{"Doc"},
-		Properties: map[string]any{"title": "stale"},
-		CreatedAt:  old,
-		UpdatedAt:  old,
-	})
-	require.NoError(t, err)
+	createStaleLabelChangeNode(t, eng, "test:n1", "Doc", old)
 
 	// Force the suppression evaluator. Confirms the test setup is
 	// suppression-eligible before we move labels.
@@ -73,13 +72,13 @@ func TestLabelChange_TargetedToUntargeted_RescoresAndUnsuppresses(t *testing.T) 
 
 	// Step 2: relabel away from Doc. Cypher: MATCH (n) SET n:Untargeted
 	// REMOVE n:Doc — which translates to UpdateNode with new labels.
-	require.NoError(t, eng.UpdateNode(&Node{
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{
 		ID:         "test:n1",
 		Labels:     []string{"Untargeted"},
 		Properties: map[string]any{"title": "stale"},
 		CreatedAt:  old,
 		UpdatedAt:  old,
-	}))
+	}}))
 
 	// Step 3: the rescore must clear suppression. Without rebind,
 	// the persisted VisibilitySuppressed flag would still be true
@@ -101,27 +100,20 @@ func TestLabelChange_UntargetedToTargeted_RescoresAndSuppresses(t *testing.T) {
 	eng, old := labelChangeDecayFixture(t)
 
 	// Untargeted → no decay bound → visible regardless of age.
-	_, err := eng.CreateNode(&Node{
-		ID:         "test:n2",
-		Labels:     []string{"Untargeted"},
-		Properties: map[string]any{"title": "stale"},
-		CreatedAt:  old,
-		UpdatedAt:  old,
-	})
-	require.NoError(t, err)
+	createStaleLabelChangeNode(t, eng, "test:n2", "Untargeted", old)
 	got, err := eng.GetNode("test:n2")
 	require.NoError(t, err, "precondition: untargeted stale node is visible")
 	require.False(t, got.RuntimeMetadata().VisibilitySuppressed)
 
 	// Relabel into Doc — now the binding applies and the age should
 	// suppress it on the next read.
-	require.NoError(t, eng.UpdateNode(&Node{
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{
 		ID:         "test:n2",
 		Labels:     []string{"Doc"},
 		Properties: map[string]any{"title": "stale"},
 		CreatedAt:  old,
 		UpdatedAt:  old,
-	}))
+	}}))
 
 	_, err = eng.GetNode("test:n2")
 	require.ErrorIs(t, err, ErrNotFound,
@@ -142,25 +134,18 @@ func TestLabelChange_TargetedToTargeted_StaysSuppressed(t *testing.T) {
 			TargetLabels: []string{"Article"},
 		}))
 
-	_, err := eng.CreateNode(&Node{
-		ID:         "test:n3",
-		Labels:     []string{"Doc"},
-		Properties: map[string]any{"title": "stale"},
-		CreatedAt:  old,
-		UpdatedAt:  old,
-	})
-	require.NoError(t, err)
+	createStaleLabelChangeNode(t, eng, "test:n3", "Doc", old)
 	became, err := eng.EnqueueDeindexIfSuppressed("test:n3", false)
 	require.NoError(t, err)
 	require.True(t, became)
 
-	require.NoError(t, eng.UpdateNode(&Node{
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{
 		ID:         "test:n3",
 		Labels:     []string{"Article"},
 		Properties: map[string]any{"title": "stale"},
 		CreatedAt:  old,
 		UpdatedAt:  old,
-	}))
+	}}))
 
 	_, err = eng.GetNode("test:n3")
 	require.ErrorIs(t, err, ErrNotFound,
@@ -181,14 +166,7 @@ func TestLabelChange_TargetedToTargeted_StaysSuppressed(t *testing.T) {
 func TestLabelChange_ReadModifyWrite_TargetedToUntargeted_RescoresOnUpdate(t *testing.T) {
 	eng, old := labelChangeDecayFixture(t)
 
-	_, err := eng.CreateNode(&Node{
-		ID:         "test:rmw",
-		Labels:     []string{"Doc"},
-		Properties: map[string]any{"title": "stale"},
-		CreatedAt:  old,
-		UpdatedAt:  old,
-	})
-	require.NoError(t, err)
+	createStaleLabelChangeNode(t, eng, "test:rmw", "Doc", old)
 	became, err := eng.EnqueueDeindexIfSuppressed("test:rmw", false)
 	require.NoError(t, err)
 	require.True(t, became, "precondition: must suppress under Doc binding")
@@ -202,7 +180,7 @@ func TestLabelChange_ReadModifyWrite_TargetedToUntargeted_RescoresOnUpdate(t *te
 	// Modify labels (Cypher: REMOVE :Doc SET :Untargeted) and write back.
 	// VisibilitySuppressed=true tags along in the round-trip.
 	persisted.Labels = []string{"Untargeted"}
-	require.NoError(t, eng.UpdateNode(persisted))
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: persisted}))
 
 	// The new labels have no decay binding, so on the next read the score
 	// must NOT be suppressed. We re-fetch the persisted struct directly
@@ -229,14 +207,7 @@ func TestLabelChange_ReadModifyWrite_TargetedToUntargeted_RescoresOnUpdate(t *te
 func TestLabelChange_ReadModifyWrite_UntargetedToTargeted_RescoresOnUpdate(t *testing.T) {
 	eng, old := labelChangeDecayFixture(t)
 
-	_, err := eng.CreateNode(&Node{
-		ID:         "test:rmw2",
-		Labels:     []string{"Untargeted"},
-		Properties: map[string]any{"title": "stale"},
-		CreatedAt:  old,
-		UpdatedAt:  old,
-	})
-	require.NoError(t, err)
+	createStaleLabelChangeNode(t, eng, "test:rmw2", "Untargeted", old)
 
 	// Read persisted struct directly — flag should be false to start.
 	persisted := readLabelChangeStoredNode(t, eng, "test:rmw2")
@@ -246,14 +217,14 @@ func TestLabelChange_ReadModifyWrite_UntargetedToTargeted_RescoresOnUpdate(t *te
 	// the suppressing binding; the rescore on UpdateNode must flip the
 	// persisted flag immediately.
 	persisted.Labels = []string{"Doc"}
-	require.NoError(t, eng.UpdateNode(persisted))
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: persisted}))
 
 	afterUpdate := readLabelChangeStoredNode(t, eng, "test:rmw2")
 	require.True(t, afterUpdate.RuntimeMetadata().VisibilitySuppressed,
 		"label change INTO a suppressing binding must mark the persisted flag suppressed")
 	require.Equal(t, []string{"Doc"}, afterUpdate.Labels)
 
-	_, err = eng.GetNode("test:rmw2")
+	_, err := eng.GetNode("test:rmw2")
 	require.ErrorIs(t, err, ErrNotFound,
 		"GetNode must return not-found because the node is now suppressed under the Doc binding")
 }
@@ -263,22 +234,15 @@ func TestLabelChange_ReadModifyWrite_UntargetedToTargeted_RescoresOnUpdate(t *te
 func TestLabelChange_NoDecayLabelToNoDecayLabel_StaysVisible(t *testing.T) {
 	eng, old := labelChangeDecayFixture(t)
 
-	_, err := eng.CreateNode(&Node{
-		ID:         "test:n4",
-		Labels:     []string{"Untargeted"},
-		Properties: map[string]any{"title": "stale"},
-		CreatedAt:  old,
-		UpdatedAt:  old,
-	})
-	require.NoError(t, err)
+	createStaleLabelChangeNode(t, eng, "test:n4", "Untargeted", old)
 
-	require.NoError(t, eng.UpdateNode(&Node{
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{
 		ID:         "test:n4",
 		Labels:     []string{"Other"},
 		Properties: map[string]any{"title": "stale"},
 		CreatedAt:  old,
 		UpdatedAt:  old,
-	}))
+	}}))
 
 	got, err := eng.GetNode("test:n4")
 	require.NoError(t, err)

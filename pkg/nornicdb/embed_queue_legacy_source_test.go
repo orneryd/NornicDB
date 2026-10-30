@@ -32,7 +32,7 @@ func TestEmbedWorkerLegacyStructuredSourceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, current.ChunkEmbeddings)
 	current.Properties["id"] = "new"
-	require.NoError(t, store.UpdateNode(current))
+	require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: current}))
 	stored, err := store.GetNode(original.ID)
 	require.NoError(t, err)
 	require.Empty(t, stored.ChunkEmbeddings, "legacy structured providers receive the full map, including metadata fields")

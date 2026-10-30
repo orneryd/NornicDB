@@ -1,6 +1,7 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync/atomic"
 	"testing"
 
@@ -23,7 +24,7 @@ func (e *countingReadEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 // read storage later, was applied) reads nothing. One superseded by a newer
 // reservation still pending reads: discarding the newer one restores it.
 func TestRetiredRefreshReadsNothing(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	engine := &countingReadEngine{Engine: store}

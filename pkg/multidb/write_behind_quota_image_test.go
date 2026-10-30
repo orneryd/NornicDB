@@ -57,14 +57,14 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 									return err
 								}
 								node.Properties["payload"] = payload
-								return tx.UpdateGraphNode(node, storage.ClientNodeEdits)
+								return tx.UpdateGraphNode(storage.NodeUpdateRequest{After: node, Policy: storage.ClientNodeEdits})
 							}
 							edge, err := tx.GetStoredEdge("nornic:r")
 							if err != nil {
 								return err
 							}
 							edge.Properties["payload"] = payload
-							return tx.UpdateEdge(edge)
+							return tx.UpdateEdge(storage.EdgeUpdateRequest{After: edge})
 						}
 					}
 

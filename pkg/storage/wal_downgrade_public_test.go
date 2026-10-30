@@ -115,14 +115,14 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 			// Warm the inherited cold-reopen sequence path using public CRUD.
 			node, err := b.GetNode("upgrade:a")
 			check(err)
-			check(b.UpdateNode(node))
+			check(b.UpdateNode(NodeUpdateRequest{After: node}))
 			parkBuffer()
 		}
 		tx, err := b.BeginTransaction()
 		check(err)
 		check(tx.SetNamespace("upgrade"))
 		check(tx.SetImplicit(true))
-		check(tx.UpdateGraphNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": value}}, ClientNodeEdits))
+		check(tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "upgrade:a", Properties: map[string]any{"alpha": value}}, Policy: ClientNodeEdits}))
 		check(tx.Commit())
 		if !tx.AcknowledgedBuffered() {
 			t.Fatal("fixture did not exercise write-behind")
@@ -207,7 +207,7 @@ func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir s
 	check(err)
 	check(tx.SetNamespace("upgrade"))
 	check(tx.SetImplicit(true))
-	check(tx.UpdateGraphNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2)}}, ClientNodeEdits))
+	check(tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2)}}, Policy: ClientNodeEdits}))
 	check(tx.Commit())
 	if !tx.AcknowledgedBuffered() {
 		t.Fatal("foreign fixture did not use a buffered record")

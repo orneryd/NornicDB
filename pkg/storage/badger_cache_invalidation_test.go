@@ -84,7 +84,7 @@ func TestBadgerEngine_UpdateEdge_UpdatesTypeIndexAndInvalidatesCache(t *testing.
 	require.Equal(t, edge.ID, knows[0].ID)
 
 	edge.Type = "LIKES"
-	err = engine.UpdateEdge(edge)
+	err = engine.UpdateEdge(EdgeUpdateRequest{After: edge})
 	require.NoError(t, err)
 
 	// Old type should be empty (both index updated + cache invalidated).

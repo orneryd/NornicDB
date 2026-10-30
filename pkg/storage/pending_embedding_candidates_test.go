@@ -78,7 +78,7 @@ func TestPendingCandidatesCommittedWriters(t *testing.T) {
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	updated := pendingCandidateNode(0)
 	updated.Properties["content"] = "updated before claim"
-	require.NoError(t, e.UpdateNode(updated))
+	require.NoError(t, e.UpdateNode(NodeUpdateRequest{After: updated}))
 	next := e.FindNodeNeedingEmbedding()
 	require.NotNil(t, next)
 	require.Equal(t, pendingCandidateNode(0).ID, next.ID)
@@ -152,7 +152,7 @@ func TestPendingCandidatesDeletedAndChangedSource(t *testing.T) {
 	e.MarkNodeEmbedded(node.ID) // worker claim; source changes before completion
 	changed := pendingCandidateNode(1)
 	changed.Properties["content"] = "changed source"
-	require.NoError(t, e.UpdateNode(changed))
+	require.NoError(t, e.UpdateNode(NodeUpdateRequest{After: changed}))
 	node.ChunkEmbeddings = [][]float32{{1, 2}}
 	require.ErrorIs(t, e.UpdateNodeEmbeddingSidecar(node), ErrEmbeddingSourceChanged)
 	require.Equal(t, "changed source", e.FindNodeNeedingEmbedding().Properties["content"])

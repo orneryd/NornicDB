@@ -53,7 +53,7 @@ func TestStoredEntityPublicationExactImages(t *testing.T) {
 	assertStoredNodeImage(t, original, hydrated, "initial snapshot includes full separate vectors")
 	replacement := CopyNode(original)
 	replacement.Properties["text"] = "new"
-	require.NoError(t, b.UpdateNode(replacement))
+	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: replacement}))
 	written, err := b.GetNode("test:a")
 	require.NoError(t, err)
 	require.Len(t, events, 1)
@@ -121,7 +121,7 @@ func TestStoredEntityPublicationBufferedAckOnce(t *testing.T) {
 			return err
 		}
 		node.Properties["v"] = "two"
-		return tx.UpdateGraphNode(node, ClientNodeEdits)
+		return tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 	})
 	require.Len(t, events, 2)
 	assertStoredNodeImage(t, first, events[1].Changes[0].BeforeNode, "prior is previous acknowledged overlay")

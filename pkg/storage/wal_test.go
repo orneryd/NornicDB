@@ -319,12 +319,12 @@ func (e *walNamespaceListerEngine) ListNamespaces() []string {
 	return append([]string(nil), e.namespaces...)
 }
 
-func (e *walEmbeddingDispatchEngine) UpdateNode(node *Node) error {
+func (e *walEmbeddingDispatchEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	e.updateNodeCalls++
 	if e.updateNodeErr != nil {
 		return e.updateNodeErr
 	}
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(updateRequest)
 }
 
 func (e *walEmbeddingDispatchEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
@@ -1795,13 +1795,13 @@ func TestWALEngine(t *testing.T) {
 		walEngine.CreateNode(&Node{ID: "n2"})
 
 		// Update node
-		walEngine.UpdateNode(&Node{ID: "n1", Labels: []string{"Updated"}})
+		walEngine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Updated"}}})
 
 		// Create edge
 		walEngine.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
 
 		// Update edge
-		walEngine.UpdateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "FRIENDS"})
+		walEngine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "FRIENDS"}})
 
 		// Delete edge
 		walEngine.DeleteEdge("e1")
@@ -1877,7 +1877,7 @@ func TestWALEngine_WithFeatureFlagDisabled(t *testing.T) {
 
 	// Operations should succeed but not log
 	walEngine.CreateNode(&Node{ID: "n1"})
-	walEngine.UpdateNode(&Node{ID: "n1", Labels: []string{"Updated"}})
+	walEngine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Updated"}}})
 	walEngine.DeleteNode("n1")
 
 	// No entries should be written when disabled

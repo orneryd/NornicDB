@@ -45,10 +45,20 @@ func TestNewAuthenticator(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			_, err := NewAuthenticator(tt.config, memoryStorage)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewAuthenticator() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				// A rejected configuration must return nil, so it cannot use the
+				// canonical constructor (mustNewAuthenticator fails the test on the
+				// very error this case expects).
+				authenticator, err := NewAuthenticator(tt.config, memoryStorage)
+				if err == nil {
+					t.Errorf("NewAuthenticator() error = nil, wantErr true")
+				}
+				if authenticator != nil {
+					t.Errorf("NewAuthenticator() authenticator = %p, want nil on error", authenticator)
+				}
+				return
 			}
+			mustNewAuthenticator(t, tt.config, memoryStorage)
 		})
 	}
 }
@@ -191,7 +201,7 @@ func TestAccountLockout(t *testing.T) {
 	}
 
 	// Unlock user
-	if err := auth.UnlockUser("locktest"); err != nil {
+	if err := auth.ChangeUserState("locktest", UserUnlock); err != nil {
 		t.Fatalf("UnlockUser() error = %v", err)
 	}
 
@@ -211,7 +221,7 @@ func TestDisabledUser(t *testing.T) {
 	}
 
 	// Disable user
-	if err := auth.DisableUser("disabletest"); err != nil {
+	if err := auth.ChangeUserState("disabletest", UserDisable); err != nil {
 		t.Fatalf("DisableUser() error = %v", err)
 	}
 
@@ -222,7 +232,7 @@ func TestDisabledUser(t *testing.T) {
 	}
 
 	// Re-enable
-	if err := auth.EnableUser("disabletest"); err != nil {
+	if err := auth.ChangeUserState("disabletest", UserEnable); err != nil {
 		t.Fatalf("EnableUser() error = %v", err)
 	}
 
@@ -725,11 +735,7 @@ func newTestAuthenticator(t *testing.T) *Authenticator {
 		BcryptCost:        4, // Low cost for faster tests
 	}
 	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	auth, err := NewAuthenticator(config, memoryStorage)
-	if err != nil {
-		t.Fatalf("NewAuthenticator() error = %v", err)
-	}
-	return auth
+	return mustNewAuthenticator(t, config, memoryStorage)
 }
 
 // TestGenerateClusterToken tests cluster token generation
@@ -1079,4 +1085,15 @@ func TestClusterTokenRoles(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mustNewAuthenticator owns construction and its error assertion; each fixture
+// retains its explicit configuration and storage admission/lifetime choices.
+func mustNewAuthenticator(t *testing.T, config AuthConfig, store storage.Engine) *Authenticator {
+	t.Helper()
+	authenticator, err := NewAuthenticator(config, store)
+	if err != nil {
+		t.Fatalf("NewAuthenticator() error = %v", err)
+	}
+	return authenticator
 }

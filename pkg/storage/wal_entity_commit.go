@@ -23,6 +23,18 @@ type walAcceptedEntityCommit struct {
 // Definite rejection happens before journaling; once journal I/O begins, an
 // uncertain error retains accepted ownership for recovery rather than rollback.
 func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEntityCommit, settle func(CommitOutcome)) (*CommitReceipt, error) {
+	return w.submitEntityCommit(ctx, prepared, settle, nil)
+}
+
+// submitEntityCommit takes ownership of an optional existing mutation lease.
+// This joins observed preparation to journal acceptance without recursively
+// acquiring an RWMutex read lock while a restore writer may be queued.
+func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEntityCommit, settle func(CommitOutcome), releaseMutation func()) (*CommitReceipt, error) {
+	defer func() {
+		if releaseMutation != nil {
+			releaseMutation()
+		}
+	}()
 	if prepared == nil {
 		return nil, ErrInvalidData
 	}
@@ -52,9 +64,12 @@ func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if err != nil {
 		return nil, err
 	}
-	w.mutationMu.RLock()
-	var mutationOnce sync.Once
-	releaseMutation := func() { mutationOnce.Do(w.mutationMu.RUnlock) }
+	if releaseMutation == nil {
+		w.mutationMu.RLock()
+		var mutationOnce sync.Once
+		releaseMutation = func() { mutationOnce.Do(w.mutationMu.RUnlock) }
+	}
+	releaseAcceptedMutation := releaseMutation
 	logicalID := prepared.LogicalID()
 	handle := NewAcceptedEntityCommitHandle(prepared)
 	// The existing WAL mutex joins registration to its closed admission cut.
@@ -69,12 +84,12 @@ func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEn
 		releaseAuthority()
 		handle.Retire()
 		w.pendingEntityCommits.Delete(logicalID)
-		releaseMutation()
+		releaseAcceptedMutation()
 		if settle != nil {
 			settle(outcome)
 		}
 	})
-	accepted := &walAcceptedEntityCommit{prepared: handle, receipt: receipt, resolve: resolve, releaseMutation: releaseMutation}
+	accepted := &walAcceptedEntityCommit{prepared: handle, receipt: receipt, resolve: resolve, releaseMutation: releaseAcceptedMutation}
 	existing, loaded := w.pendingEntityCommits.LoadOrStore(logicalID, accepted)
 	w.wal.mu.Unlock()
 	if loaded {
@@ -83,6 +98,9 @@ func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEn
 		prepared.Abort()
 		return existing.(*walAcceptedEntityCommit).receipt, nil
 	}
+	// Registration transfers the lease to the accepted receipt, including
+	// recovery-pending outcomes that outlive this call.
+	releaseMutation = nil
 	if err = w.wal.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, prepared.Namespace()); err != nil {
 		handle.MarkRecoveryPending()
 		prepared.Abort()

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 	t.Run("older live write after a newer one", func(t *testing.T) {
 		for _, remove := range []bool{false, true} {
 			t.Run(fmt.Sprintf("remove=%t", remove), func(t *testing.T) {
-				base := newTestMemoryEngine(t)
+				base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 				t.Cleanup(func() { _ = base.Close() })
 				engine := storage.NewNamespacedEngine(base, "test")
 				svc := NewService(engine, 2, nil)
@@ -62,7 +63,7 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 	})
 
 	t.Run("concurrent reservations and direct writes", func(t *testing.T) {
-		base := newTestMemoryEngine(t)
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		t.Cleanup(func() { _ = base.Close() })
 		engine := storage.NewNamespacedEngine(base, "test")
 		svc := NewService(engine, 2, nil)
@@ -77,7 +78,7 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 					reservation := svc.ReserveNodeMutation(node.ID)
 					if (writer+i)%2 == 0 {
 						_ = engine.DeleteNode(node.ID)
-					} else if err := engine.UpdateNode(node); err != nil {
+					} else if err := engine.UpdateNode(storage.NodeUpdateRequest{After: node}); err != nil {
 						_, _ = engine.CreateNode(node)
 					}
 					_ = svc.RefreshNode(node.ID)
@@ -106,7 +107,7 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 // A refresh rejected at entry never happened: the reservation it superseded
 // stays current, so the older queued or pending write still applies.
 func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	svc := NewService(engine, 2, nil)
@@ -121,7 +122,7 @@ func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 // A refresh indexes what storage holds when it reads, and a refresh reserved
 // before a newer one stays obsolete after the newer one retired.
 func TestRefreshNodeFollowsStorage(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	svc := NewService(engine, 2, nil)
@@ -165,7 +166,7 @@ func (b *edgeReadBarrier) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
 // A relationship refresh that read the edge before a newer delete and its
 // refresh applied must not put its vector back.
 func TestRefreshEdgeReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b"} {

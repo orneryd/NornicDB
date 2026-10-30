@@ -90,23 +90,35 @@ func TestStorageOp_ObservesGet(t *testing.T) {
 // TestStorageOp_ObservesPut drives CreateNode + UpdateNode and confirms
 // samples accumulate on op="put".
 func TestStorageOp_ObservesPut(t *testing.T) {
-	be, reg, _, _ := setupAttachedEngine(t)
-	node := &Node{ID: "nornic:n1", Labels: []string{"L"}}
-	_, err := be.CreateNode(node)
-	require.NoError(t, err)
-	require.NoError(t, be.UpdateNode(node))
-	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, "put"), uint64(2))
+	runStorageOpObservationCase(t, physicalWriteObservationCase{
+		nodeID: "nornic:n1",
+		// CreateNode + UpdateNode both record on op="put".
+		write: func(be *BadgerEngine, node *Node) error {
+			if _, err := be.CreateNode(node); err != nil {
+				return err
+			}
+			return be.UpdateNode(NodeUpdateRequest{After: node})
+		},
+		op:       "put",
+		minCount: uint64(2),
+	})
 }
 
 // TestStorageOp_ObservesDelete drives DeleteNode and confirms a sample
 // on op="delete".
 func TestStorageOp_ObservesDelete(t *testing.T) {
-	be, reg, _, _ := setupAttachedEngine(t)
-	node := &Node{ID: "nornic:n2", Labels: []string{"L"}}
-	_, err := be.CreateNode(node)
-	require.NoError(t, err)
-	require.NoError(t, be.DeleteNode("nornic:n2"))
-	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, "delete"), uint64(1))
+	runStorageOpObservationCase(t, physicalWriteObservationCase{
+		nodeID: "nornic:n2",
+		// CreateNode + DeleteNode record one sample on op="delete".
+		write: func(be *BadgerEngine, node *Node) error {
+			if _, err := be.CreateNode(node); err != nil {
+				return err
+			}
+			return be.DeleteNode(node.ID)
+		},
+		op:       "delete",
+		minCount: uint64(1),
+	})
 }
 
 // TestStorageOp_ObservesScan drives AllNodes / AllEdges and confirms
@@ -190,4 +202,27 @@ func TestStorageHotPath_NoNewAllocs(t *testing.T) {
 
 	// Sanity: time.Now() / time.Since are zero-alloc on most archs.
 	_ = time.Now()
+}
+
+// physicalWriteObservationCase declares one storage operation whose metric
+// observation is asserted. The node seed and error handling stay shared; the
+// operation, its label and its minimum sample count stay explicit per case.
+type physicalWriteObservationCase struct {
+	nodeID string
+	// write performs the engine operation whose metric label is asserted.
+	write func(be *BadgerEngine, node *Node) error
+	// op is the op_duration_seconds label the operations must record under.
+	op string
+	// minCount is the minimum sample count the label must reach.
+	minCount uint64
+}
+
+// runStorageOpObservationCase attaches metrics, applies the case's writes and
+// asserts the labelled sample count.
+func runStorageOpObservationCase(t *testing.T, tc physicalWriteObservationCase) {
+	t.Helper()
+	be, reg, _, _ := setupAttachedEngine(t)
+	node := &Node{ID: NodeID(tc.nodeID), Labels: []string{"L"}}
+	require.NoError(t, tc.write(be, node))
+	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, tc.op), tc.minCount)
 }

@@ -77,7 +77,7 @@ func TestEmbedWorkerRetryStructuredMetadataInputs(t *testing.T) {
 							if change != "add" {
 								node.Properties[key] = "old"
 							}
-							require.NoError(t, queue.UpdateNode(node))
+							require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: node}))
 						}
 						structured := &retryMetadataPropertyEmbedder{mockEmbedder: base, key: key}
 						var provider embed.Embedder = structured
@@ -113,8 +113,9 @@ func TestEmbedWorkerRetryStructuredMetadataInputs(t *testing.T) {
 								node.Properties[key] = "new"
 							}
 							require.True(t, (storage.EmbeddingTextPolicy{IncludeLabels: true}).SameSource(before, node), "text policy omits this provider-visible input")
-							require.NoError(t, queue.UpdateNode(node))
+							require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: node}))
 						}
+
 						// Every rejected save needs a fresh
 						// provider attempt. MAIN-first collection processes those
 						// DLQ attempts one cycle at a time; drain every affected ID.

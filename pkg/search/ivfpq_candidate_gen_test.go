@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 
 	"path/filepath"
 	"testing"
@@ -169,7 +171,7 @@ func TestIVFPQCandidateGenDefersSimilarityThresholdUntilExactScoring(t *testing.
 }
 
 func TestServiceTracksCompressedIndexMutationsWithoutRebuild(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 2, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	service.ivfpqIndex = &IVFPQIndex{profile: IVFPQProfile{Dimensions: 2}}
 
 	service.indexMu.Lock()

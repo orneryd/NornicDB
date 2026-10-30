@@ -185,7 +185,7 @@ func TestRoleEntitlementParsingHelpers(t *testing.T) {
 }
 
 func TestRoleEntitlementsStore_LoadAndUpdatePaths(t *testing.T) {
-	eng := newSystemTestEngine(t)
+	eng := newSystemEngine(t)
 	ctx := context.Background()
 
 	_, err := eng.CreateNode(&storage.Node{
@@ -325,7 +325,7 @@ func TestPrivilegesParsingHelpers(t *testing.T) {
 }
 
 func TestPrivilegesStore_LoadAndUpdatePaths(t *testing.T) {
-	eng := newSystemTestEngine(t)
+	eng := newSystemEngine(t)
 	ctx := context.Background()
 
 	_, err := eng.CreateNode(&storage.Node{

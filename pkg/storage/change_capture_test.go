@@ -72,7 +72,7 @@ func TestChangeCaptureDirectBulkWrites(t *testing.T) {
 	engine.SetChangeCapture("cdc", ChangeCaptureFull)
 	require.NoError(t, engine.BulkCreateNodes([]*Node{{ID: "cdc:a", Labels: []string{"A"}}, {ID: "cdc:b", Labels: []string{"B"}}}))
 	require.NoError(t, engine.BulkCreateEdges([]*Edge{{ID: "cdc:r", Type: "R", StartNode: "cdc:a", EndNode: "cdc:b"}}))
-	require.NoError(t, engine.UpdateEdge(&Edge{ID: "cdc:r", Type: "R", StartNode: "cdc:a", EndNode: "cdc:b", Properties: map[string]any{"w": int64(2)}}))
+	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "cdc:r", Type: "R", StartNode: "cdc:a", EndNode: "cdc:b", Properties: map[string]any{"w": int64(2)}}}))
 	require.NoError(t, engine.DeleteEdge("cdc:r"))
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "cdc:s", Type: "S", StartNode: "cdc:a", EndNode: "cdc:b"}))
 	require.NoError(t, engine.BulkDeleteEdges([]EdgeID{"cdc:s"}))
@@ -141,16 +141,16 @@ func TestChangeCaptureTransactions(t *testing.T) {
 			return tx.CreateEdge(&Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(1)}})
 		})
 		run(func(tx *BadgerTransaction) error {
-			if err := tx.UpdateGraphNode(&Node{ID: id("a"), Labels: []string{"La", "New"}, Properties: map[string]any{"v": int64(2), "k": "x"}}, ClientNodeEdits); err != nil {
+			if err := tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: id("a"), Labels: []string{"La", "New"}, Properties: map[string]any{"v": int64(2), "k": "x"}}, Policy: ClientNodeEdits}); err != nil {
 				return err
 			}
-			return tx.UpdateEdge(&Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}})
+			return tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}}})
 		})
 		run(func(tx *BadgerTransaction) error { // no change, and created then deleted
-			if err := tx.UpdateGraphNode(&Node{ID: id("b"), Labels: []string{"Lb"}, Properties: map[string]any{"v": int64(1), "k": "x"}}, ClientNodeEdits); err != nil {
+			if err := tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: id("b"), Labels: []string{"Lb"}, Properties: map[string]any{"v": int64(1), "k": "x"}}, Policy: ClientNodeEdits}); err != nil {
 				return err
 			}
-			if err := tx.UpdateEdge(&Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}}); err != nil {
+			if err := tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}}}); err != nil {
 				return err
 			}
 			if _, err := tx.CreateNode(&Node{ID: id("tmp")}); err != nil {
@@ -224,7 +224,7 @@ func TestChangeCaptureWithWriteBehindAndFailedWrites(t *testing.T) {
 	engine.SetChangeCapture("cdc", ChangeCaptureFull)
 	async := engine
 
-	require.NoError(t, engine.UpdateNode(&Node{ID: "cdc:a", Labels: []string{"A"}})) // upsert: a create
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "cdc:a", Labels: []string{"A"}}})) // upsert: a create
 	for _, id := range []NodeID{"cdc:b", "cdc:c", "cdc:d"} {
 		_, err := async.CreateNode(&Node{ID: id, Labels: []string{"N"}})
 		require.NoError(t, err)

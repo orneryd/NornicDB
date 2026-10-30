@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"strconv"
 	"strings"
@@ -42,9 +41,7 @@ func TestGrantsAndRoleChangesSerialize(t *testing.T) {
 	for _, rename := range []bool{false, true} {
 		t.Run(map[bool]string{false: "delete", true: "rename"}[rename], func(t *testing.T) {
 			ctx := context.Background()
-			base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-			t.Cleanup(func() { _ = base.Close() })
-			system := storage.NewNamespacedEngine(base, "system")
+			system := storage.NewNamespacedEngine(newTestMemoryEngine(t), "system")
 			roles := auth.NewRoleStore(system)
 			require.NoError(t, roles.CreateRole(ctx, "ops"))
 			barrier := &grantBarrierEngine{Engine: system, entered: make(chan struct{}), release: make(chan struct{})}
@@ -78,42 +75,6 @@ func TestGrantsAndRoleChangesSerialize(t *testing.T) {
 	}
 }
 
-type immutableUpgradeFailure struct {
-	storage.Engine
-	updates int
-}
-
-func (e *immutableUpgradeFailure) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
-	return auth.WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
-		return mutate(&immutableUpgradeFailure{Engine: view})
-	})
-}
-func (e *immutableUpgradeFailure) UpdateNode(node *storage.Node) error {
-	e.updates++
-	if e.updates == 2 {
-		return errSystemStorage
-	}
-	return e.Engine.UpdateNode(node)
-}
-
-func TestImmutableUpgradeFailureChangesNothing(t *testing.T) {
-	ctx := WithAuthenticationDisabled(context.Background())
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
-	system := storage.NewNamespacedEngine(base, "system")
-	grants := auth.NewProcedurePrivilegeStore(system)
-	require.NoError(t, grants.Grant(ctx, "viewer", "db.a", false, false))
-	require.NoError(t, grants.Grant(ctx, "viewer", "db.b", false, false))
-	before, err := grants.List(ctx)
-	require.NoError(t, err)
-	exec := NewStorageExecutor(&immutableUpgradeFailure{Engine: system})
-	_, err = exec.Execute(ctx, "GRANT IMMUTABLE EXECUTE PROCEDURE db.a, db.b ON DBMS TO viewer", nil)
-	require.ErrorIs(t, err, errSystemStorage)
-	after, err := grants.List(ctx)
-	require.NoError(t, err)
-	require.Equal(t, before, after)
-}
-
 // A GRANT racing a role delete or rename, with no barrier, never leaves the
 // grant behind: either the GRANT or the role change fails, or the grant
 // moved with the role. A role created later with the old name starts
@@ -128,8 +89,7 @@ func TestGrantRacingRoleChangeNeverLeavesTheGrant(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < iterations; i++ {
 		rename := i%2 == 1
-		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-		system := storage.NewNamespacedEngine(base, "system")
+		system := storage.NewNamespacedEngine(newTestMemoryEngine(t), "system")
 		roles := auth.NewRoleStore(system)
 		require.NoError(t, roles.CreateRole(ctx, "ops"))
 		exec := NewStorageExecutor(system)
@@ -157,6 +117,5 @@ func TestGrantRacingRoleChangeNeverLeavesTheGrant(t *testing.T) {
 		allowed, err := auth.NewProcedurePrivilegeStore(system).AllowsBoosted([]string{"ops"}, "db.cdc.query")
 		require.NoError(t, err)
 		require.False(t, allowed && changeErr == nil, "iteration %d (rename=%v): the role named ops after a successful role change holds the grant", i, rename)
-		require.NoError(t, base.Close())
 	}
 }

@@ -70,7 +70,7 @@ func TestReviewR73OutcomePublicationCommitOrder(t *testing.T) {
 					return
 				}
 				current.Properties["text"] = "novelquartz"
-				mutated <- store.UpdateNode(current)
+				mutated <- store.UpdateNode(NodeUpdateRequest{After: current})
 			}()
 			// A branch may correctly exclude body writers until publication.
 			// Give an unprotected writer the opportunity to finish, then release

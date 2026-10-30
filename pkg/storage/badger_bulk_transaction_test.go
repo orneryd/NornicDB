@@ -162,14 +162,14 @@ func TestEncodeFailuresAreLocalized(t *testing.T) {
 	edge.Properties = nil
 	require.NoError(t, engine.CreateEdge(edge))
 	edge.Properties = bad
-	require.ErrorContains(t, engine.UpdateEdge(edge), "failed to encode edge")
+	require.ErrorContains(t, engine.UpdateEdge(EdgeUpdateRequest{After: edge}), "failed to encode edge")
 
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	require.ErrorContains(t, tx.UpdateGraphNode(&Node{ID: nodes[0].ID, Labels: []string{"Bulk"}, Properties: bad}, ClientNodeEdits), "failed to encode node")
+	require.ErrorContains(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: nodes[0].ID, Labels: []string{"Bulk"}, Properties: bad}, Policy: ClientNodeEdits}), "failed to encode node")
 	require.ErrorContains(t, tx.CreateEdge(&Edge{ID: "test:enc-e2", StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R", Properties: bad}), "failed to encode edge")
-	require.ErrorContains(t, tx.UpdateEdge(&Edge{ID: edge.ID, StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R", Properties: bad}), "failed to encode edge")
+	require.ErrorContains(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edge.ID, StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R", Properties: bad}}), "failed to encode edge")
 }
 
 func TestTransactionEdgeIDChecks(t *testing.T) {
@@ -189,7 +189,7 @@ func TestTransactionEdgeIDChecks(t *testing.T) {
 	require.NoError(t, tx.SetValidationSetting(SkipCreateCommitHeadReload, true))
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:550e8400-e29b-41d4-a716-446655440000", StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R"}))
 	// Moving an edge to a missing endpoint is not found.
-	err = tx.UpdateEdge(&Edge{ID: "test:550e8400-e29b-41d4-a716-446655440000", StartNode: "test:missing", EndNode: nodes[0].ID, Type: "R"})
+	err = tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:550e8400-e29b-41d4-a716-446655440000", StartNode: "test:missing", EndNode: nodes[0].ID, Type: "R"}})
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, tx.Commit())
 	requireBulkCounts(t, engine, 2, 2)

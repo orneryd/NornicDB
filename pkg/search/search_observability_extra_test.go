@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"testing"
 	"time"
 
@@ -15,7 +17,7 @@ import (
 )
 
 func TestServiceIndexSizeBytes(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 
 	svc := NewService(engine, 4, nil)
@@ -37,7 +39,7 @@ func TestServiceIndexSizeBytes(t *testing.T) {
 }
 
 func TestObserveSearchStageDirect(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 	svc := NewService(engine, 4, nil)
 	reg := prometheus.NewRegistry()

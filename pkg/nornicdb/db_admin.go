@@ -639,7 +639,8 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	// feeds) unchanged, and they're invalidated otherwise so the embed worker
 	// regenerates them (#963). We intentionally do NOT touch NamedEmbeddings
 	// here (those are user-provided, e.g., Qdrant points).
-	before := &storage.Node{EmbedMeta: n.EmbedMeta, Labels: n.Labels, Properties: make(map[string]interface{}, len(n.Properties))}
+	before := *n
+	before.Properties = make(map[string]interface{}, len(n.Properties))
 	for k, v := range n.Properties {
 		before.Properties[k] = v
 	}
@@ -652,12 +653,12 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		n.Properties[k] = v
 	}
 
-	invalidateManagedEmbeddings := !storage.EmbeddingSourceMatches(before, n, embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromConfig(db.config)))
+	invalidateManagedEmbeddings := !storage.EmbeddingSourceMatches(&before, n, embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromConfig(db.config)))
 	if invalidateManagedEmbeddings {
 		embeddingutil.InvalidateManagedEmbeddings(n)
 	}
 
-	if err := storageEngine.UpdateNode(n); err != nil {
+	if err := storageEngine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: n}); err != nil {
 		return nil, err
 	}
 
@@ -1572,7 +1573,7 @@ legacyJSONRestore:
 		_, err := db.storage.CreateNode(node)
 		if err != nil {
 			// Try update if node exists
-			if updateErr := db.storage.UpdateNode(node); updateErr != nil {
+			if updateErr := db.storage.UpdateNode(storage.NodeUpdateRequest{After: node}); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreNodeFailed(string(node.ID), err), err)
 			}
@@ -1583,7 +1584,7 @@ legacyJSONRestore:
 	for _, edge := range backup.Edges {
 		if err := db.storage.CreateEdge(edge); err != nil {
 			// Try update if edge exists
-			if updateErr := db.storage.UpdateEdge(edge); updateErr != nil {
+			if updateErr := db.storage.UpdateEdge(storage.EdgeUpdateRequest{After: edge}); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreEdgeFailed(string(edge.ID), err), err)
 			}
@@ -1815,10 +1816,10 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 
 	// Collect nodes to update (can't update while streaming in some engines)
 	// We must make copies since other goroutines might be iterating over these nodes
-	var toUpdate []*storage.Node
+	var toUpdate []storage.NodeUpdateRequest
 	err := storage.StreamStoredNodes(ctx, storageEngine, storage.StreamNodesOptions{WithEmbeddings: true}, func(n *storage.Node) error {
 		if db.nodeMatchesSubject(n, userID) {
-			toUpdate = append(toUpdate, db.anonymizedNodeCopy(n, anonymousID))
+			toUpdate = append(toUpdate, storage.NodeUpdateRequest{Before: n, After: db.anonymizedNodeCopy(n, anonymousID)})
 		}
 		return nil
 	})
@@ -1827,12 +1828,12 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 	}
 
 	// Now update the collected nodes
-	for _, n := range toUpdate {
-		if err := storageEngine.UpdateNode(n); err != nil {
+	for _, request := range toUpdate {
+		if err := storageEngine.UpdateNode(request); err != nil {
 			return err
 		}
 		if embedQueue != nil {
-			embedQueue.Enqueue(string(n.ID))
+			embedQueue.Enqueue(string(request.After.ID))
 		}
 	}
 

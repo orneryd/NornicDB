@@ -147,7 +147,7 @@ func TestV3MigrationPreservesLegacyEdgeHistory(t *testing.T) {
 			if tc.deleted {
 				require.NoError(t, engine.DeleteEdge(edgeID))
 			} else {
-				require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS", Properties: tc.replacement}))
+				require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS", Properties: tc.replacement}}))
 			}
 			require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
 			require.NoError(t, engine.Close())

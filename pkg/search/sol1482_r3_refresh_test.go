@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -55,7 +56,7 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 					for _, pending := range []bool{false, true} {
 						t.Run(fmt.Sprintf("warm=%t/edge=%t/missing=%t/remove=%t/pending=%t", warm, edge, missing, remove, pending), func(t *testing.T) {
 							ctx := context.Background()
-							base := newTestMemoryEngine(t)
+							base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 							t.Cleanup(func() { _ = base.Close() })
 							store := storage.NewNamespacedEngine(base, "test")
 							for _, id := range []storage.NodeID{"a", "b"} {
@@ -111,7 +112,7 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 									if missing {
 										require.NoError(t, store.CreateEdge(rel))
 									} else {
-										require.NoError(t, store.UpdateEdge(rel))
+										require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: rel}))
 									}
 								} else {
 									node.Properties["content"] = "newword"
@@ -120,7 +121,7 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 										_, err := store.CreateNode(node)
 										require.NoError(t, err)
 									} else {
-										require.NoError(t, store.UpdateNode(node))
+										require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
 									}
 								}
 							}
@@ -192,7 +193,7 @@ func (b *solR3RelationshipSnapshot) AllEdges() ([]*storage.Edge, error) {
 func TestSol1482R3RelationshipStartupCannotOverwriteRefresh(t *testing.T) {
 	for _, remove := range []bool{false, true} {
 		t.Run(fmt.Sprintf("remove=%t", remove), func(t *testing.T) {
-			base := newTestMemoryEngine(t)
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			t.Cleanup(func() { _ = base.Close() })
 			store := storage.NewNamespacedEngine(base, "test")
 			for _, id := range []storage.NodeID{"a", "b"} {
@@ -217,7 +218,7 @@ func TestSol1482R3RelationshipStartupCannotOverwriteRefresh(t *testing.T) {
 				require.NoError(t, store.DeleteEdge("r"))
 			} else {
 				edge.Properties["reason"] = "newword"
-				require.NoError(t, store.UpdateEdge(edge))
+				require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 			}
 			require.NoError(t, svc.RefreshEdge("r"))
 			b.open()

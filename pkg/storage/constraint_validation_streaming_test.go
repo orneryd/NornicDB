@@ -436,7 +436,7 @@ func TestStreamEdgesByType_TransactionMergesPendingWrites(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.CreateEdge(relEdge("a:new", "a:y", "a:x", "REL", nil)))
-	require.NoError(t, tx.UpdateEdge(relEdge("a:keep", "a:x", "a:y", "REL", map[string]any{"k": "new"})))
+	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: relEdge("a:keep", "a:x", "a:y", "REL", map[string]any{"k": "new"})}))
 	require.NoError(t, tx.DeleteEdge("a:drop"))
 
 	seen := map[EdgeID]*Edge{}

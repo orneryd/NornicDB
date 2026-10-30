@@ -35,9 +35,9 @@ func (a *Authenticator) UpdateRolesAndStatus(ctx context.Context, username strin
 		if disabled != nil {
 			var err error
 			if *disabled {
-				err = staged.DisableUser(username)
+				err = staged.ChangeUserState(username, UserDisable)
 			} else {
-				err = staged.EnableUser(username)
+				err = staged.ChangeUserState(username, UserEnable)
 			}
 			if err != nil {
 				return err

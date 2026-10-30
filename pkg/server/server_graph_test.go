@@ -157,7 +157,7 @@ func advanceMVCCClockPast(t *testing.T, engine storage.Engine, minTimestamp time
 		node, err := engine.GetNode(clockID)
 		require.NoError(t, err)
 		require.NotNil(t, node)
-		require.NoError(t, engine.UpdateNode(node))
+		require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	}
 	head, err := headEngine.GetNodeCurrentHead(clockID)
 	require.NoError(t, err)
@@ -435,8 +435,8 @@ func TestGraphTemporalEndpoint(t *testing.T) {
 	asOf := asOfVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
 	advanceMVCCClockPast(t, engine, asOfVersion.CommitTimestamp)
-	require.NoError(t, engine.UpdateNode(&storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v2"}}))
-	require.NoError(t, engine.UpdateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LIKES", Properties: map[string]interface{}{"weight": 2}}))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v2"}}}))
+	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LIKES", Properties: map[string]interface{}{"weight": 2}}}))
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "temporal"), map[string]interface{}{
 		"node_ids": []string{"a", "b"},
@@ -477,7 +477,7 @@ func TestGraphDiffEndpoint(t *testing.T) {
 	asOf := asOfVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
 	advanceMVCCClockPast(t, engine, asOfVersion.CommitTimestamp)
-	require.NoError(t, engine.UpdateNode(&storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v2"}}))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v2"}}}))
 	require.NoError(t, engine.DeleteEdge("ab"))
 	require.NoError(t, engine.DeleteNode("b"))
 	_, err = engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Carol"}})
@@ -703,11 +703,11 @@ func TestGraphDiffEndpoint_WithCompareToUsesBaselineTimestamp(t *testing.T) {
 	baseline := baselineVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
 	advanceMVCCClockPast(t, engine, baselineVersion.CommitTimestamp)
-	require.NoError(t, engine.UpdateNode(&storage.Node{
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{
 		ID:         "a",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice v2"},
-	}))
+	}}))
 	target := nodeHeadVersionOrNow(t, engine, "a").CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "diff"), map[string]interface{}{

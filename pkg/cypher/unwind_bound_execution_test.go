@@ -93,8 +93,8 @@ type cancelOnFirstUpdateEngine struct {
 	updates int
 }
 
-func (engine *cancelOnFirstUpdateEngine) UpdateNode(node *storage.Node) error {
-	err := engine.Engine.UpdateNode(node)
+func (engine *cancelOnFirstUpdateEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+	err := engine.Engine.UpdateNode(updateRequest)
 	if err == nil {
 		engine.updates++
 		if engine.updates == 1 {

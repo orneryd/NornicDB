@@ -413,20 +413,31 @@ RETURN nodes(p), relationships(p), length(p)
 ### 13. **Transaction Atomicity**
 
 ```go
-// Transaction support with full rollback
-tx := engine.BeginTransaction()
+// Uses the standard-library maps package and pkg/storage.
+func renameNode(engine *storage.BadgerEngine, nodeID storage.NodeID, name string) error {
+    tx, err := engine.BeginTransaction()
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback() // Discard staged changes if any operation fails.
 
-// All operations are buffered
-tx.CreateNode(&storage.Node{...})
-tx.CreateEdge(&storage.Edge{...})
-tx.UpdateGraphNode(&storage.Node{ID: nodeID}, storage.ClientNodeEdits)
-tx.DeleteGraphNode(nodeID, storage.CascadeEdges)
-
-// Atomic commit - all or nothing
-err := tx.Commit()
-
-// Or rollback to discard all changes
-tx.Rollback()
+    before, err := tx.GetNode(nodeID)
+    if err != nil {
+        return err
+    }
+    after := *before
+    after.Properties = maps.Clone(before.Properties)
+    if after.Properties == nil {
+        after.Properties = make(map[string]interface{})
+    }
+    after.Properties["name"] = name
+    if err := tx.UpdateGraphNode(storage.NodeUpdateRequest{
+        Before: before, After: &after, Policy: storage.ClientNodeEdits,
+    }); err != nil {
+        return err
+    }
+    return tx.Commit() // All staged operations commit together.
+}
 ```
 
 **Features Implemented**:
@@ -434,8 +445,8 @@ tx.Rollback()
 - ✅ `BeginTransaction()` - Start new transaction
 - ✅ `Commit()` - Atomically apply all buffered operations
 - ✅ `Rollback()` - Discard all buffered operations
-- ✅ `CreateNode/UpdateNode/DeleteNode` - Node operations in transaction
-- ✅ `CreateEdge/DeleteEdge` - Edge operations in transaction
+- ✅ `CreateNode/UpdateGraphNode/DeleteGraphNode` - Node operations in transaction
+- ✅ `CreateEdge/UpdateEdge/DeleteEdge` - Edge operations in transaction
 - ✅ `GetNode()` - Read-your-writes consistency
 - ✅ `IsActive()` - Check transaction status
 - ✅ Isolation - Uncommitted changes not visible to other operations

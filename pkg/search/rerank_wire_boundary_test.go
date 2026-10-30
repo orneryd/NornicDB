@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -134,7 +135,7 @@ func assertReviewerEnvelope(t *testing.T, provider reviewerBoundaryProvider, tes
 	var engine storage.Engine
 	dimensions := DefaultVectorDimensions
 	if nodeSearch {
-		engine = storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+		engine = storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 		dimensions = 2
 	}
 	service := NewService(engine, dimensions, nil)
@@ -304,7 +305,7 @@ func TestReviewerAliasedFieldsBoundary(t *testing.T) {
 				}
 			}
 
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+			engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 			service := NewService(engine, 2, nil)
 			t.Cleanup(func() { _ = service.Close() })
 			service.SetReranker(reranker)

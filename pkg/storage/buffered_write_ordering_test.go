@@ -37,8 +37,8 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 	routes := []route{
 		{
 			name:    "direct",
-			node:    func(_ *testing.T, b *BadgerEngine, n *Node) error { return b.UpdateNode(n) },
-			edge:    func(_ *testing.T, b *BadgerEngine, e *Edge) error { return b.UpdateEdge(e) },
+			node:    func(_ *testing.T, b *BadgerEngine, n *Node) error { return b.UpdateNode(NodeUpdateRequest{After: n}) },
+			edge:    func(_ *testing.T, b *BadgerEngine, e *Edge) error { return b.UpdateEdge(EdgeUpdateRequest{After: e}) },
 			delNode: func(_ *testing.T, b *BadgerEngine, id NodeID) error { return b.DeleteNode(id) },
 			delEdge: func(_ *testing.T, b *BadgerEngine, id EdgeID) error { return b.DeleteEdge(id) },
 			create: func(_ *testing.T, b *BadgerEngine, n *Node, e *Edge) error {
@@ -51,8 +51,8 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 		},
 		{
 			name:    "bulk",
-			node:    func(_ *testing.T, b *BadgerEngine, n *Node) error { return b.UpdateNode(n) },
-			edge:    func(_ *testing.T, b *BadgerEngine, e *Edge) error { return b.UpdateEdge(e) },
+			node:    func(_ *testing.T, b *BadgerEngine, n *Node) error { return b.UpdateNode(NodeUpdateRequest{After: n}) },
+			edge:    func(_ *testing.T, b *BadgerEngine, e *Edge) error { return b.UpdateEdge(EdgeUpdateRequest{After: e}) },
 			delNode: func(_ *testing.T, b *BadgerEngine, id NodeID) error { return b.BulkDeleteNodes([]NodeID{id}) },
 			delEdge: func(_ *testing.T, b *BadgerEngine, id EdgeID) error { return b.BulkDeleteEdges([]EdgeID{id}) },
 			create: func(_ *testing.T, b *BadgerEngine, n *Node, e *Edge) error {
@@ -65,10 +65,12 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 		{
 			name: "explicit transaction",
 			node: func(t *testing.T, b *BadgerEngine, n *Node) error {
-				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.UpdateGraphNode(n, ClientNodeEdits) })
+				return explicit(t, b, func(tx *BadgerTransaction) error {
+					return tx.UpdateGraphNode(NodeUpdateRequest{After: n, Policy: ClientNodeEdits})
+				})
 			},
 			edge: func(t *testing.T, b *BadgerEngine, e *Edge) error {
-				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.UpdateEdge(e) })
+				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.UpdateEdge(EdgeUpdateRequest{After: e}) })
 			},
 			delNode: func(t *testing.T, b *BadgerEngine, id NodeID) error {
 				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(id, CascadeEdges) })
@@ -120,9 +122,9 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 						require.NoError(t, err)
 						require.NoError(t, tx.SetImplicit(true))
 						if kind == "node" {
-							require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, ClientNodeEdits))
+							require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
 						} else {
-							require.NoError(t, tx.UpdateEdge(edge("acknowledged")))
+							require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge("acknowledged")}))
 						}
 						require.NoError(t, tx.Commit())
 

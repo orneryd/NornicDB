@@ -115,6 +115,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -1862,9 +1863,11 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 				dimensions = v
 			}
 		}
+		before := *node
+		before.EmbedMeta = maps.Clone(node.EmbedMeta)
 		embeddingutil.ApplyManagedEmbedding(node, embeddings, model, dimensions, time.Now())
 		embeddingutil.RecordChunkSpans(node, source, chunks)
-		if err := store.UpdateNode(node); err != nil {
+		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			return err
 		}
 	}

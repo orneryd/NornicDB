@@ -71,9 +71,9 @@ func TestRefreshRetryOwnerPublicEntrances(t *testing.T) {
 
 				update := func() {
 					if kind == "node" {
-						require.NoError(t, tenant.UpdateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "afterowneroutage"}}))
+						require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "afterowneroutage"}}}))
 					} else {
-						require.NoError(t, tenant.UpdateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}))
+						require.NoError(t, tenant.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}}))
 					}
 				}
 				visible := func() bool {
@@ -132,10 +132,10 @@ func TestRefreshRetryOwnerSupersededAndRetired(t *testing.T) {
 				fault.armed.Store(true)
 				if kind == "node" {
 					require.Error(t, svc.RefreshNode("a"))
-					require.NoError(t, tenant.UpdateNode(&storage.Node{ID: "a", Properties: map[string]any{"content": "newestownerword"}}))
+					require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Properties: map[string]any{"content": "newestownerword"}}}))
 				} else {
 					require.Error(t, svc.RefreshEdge("r"))
-					require.NoError(t, tenant.UpdateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}))
+					require.NoError(t, tenant.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}}))
 				}
 				fault.armed.Store(false)
 				if retire {

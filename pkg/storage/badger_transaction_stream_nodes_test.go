@@ -53,8 +53,8 @@ func TestBadgerTransactionStreamNodesWithOptions(t *testing.T) {
 	// property, an update that keeps it, and a delete.
 	_, err = tx.CreateNode(&Node{ID: "a:4", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x", "body": "four"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "a:2", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x", "body": "two-updated"}}, ClientNodeEdits))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "a:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "z", "body": "one-updated"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "a:2", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x", "body": "two-updated"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "a:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "z", "body": "one-updated"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.DeleteGraphNode("a:3", CascadeEdges))
 
 	ids, props = streamTxIDs(t, tx, StreamNodesOptions{})

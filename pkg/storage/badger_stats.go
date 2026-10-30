@@ -253,6 +253,7 @@ func (b *BadgerEngine) Close() error {
 			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
 		}
 		b.writeBehind.Close()
+		b.writeBehind.releaseTransactionBegins()
 	}
 	// The suppressions the deletes so far ended are deleted before the store
 	// closes (forgetManualSuppression).
@@ -1160,8 +1161,9 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 		if err != nil {
 			continue // Skip if node no longer exists
 		}
+		before := *node
 		node.ChunkEmbeddings = nil
-		if err := b.UpdateNode(node); err != nil {
+		if err := b.UpdateNode(NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages}); err != nil {
 			b.log.Warn("failed to clear embedding for node",
 				"subsystem", "embeddings_index",
 				"node_id", string(id),

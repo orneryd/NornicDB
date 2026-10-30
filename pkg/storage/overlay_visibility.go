@@ -116,3 +116,28 @@ func (w *WriteBehindBuffer) commitsSince(since MVCCVersion, visit func(MVCCVersi
 		}
 	}
 }
+
+// readBufferedBeginPresence projects physical existence at an immutable BEGIN
+// cut. It deliberately uses stored visibility: a hidden entity still existed
+// for missing-write conflict classification. Only presence facts escape this
+// composition owner, never buffered bodies or indexes.
+func (presence *transactionBeginPresence) readBufferedBeginPresence(kind bufferedEntityKind, id string) (found, present bool, err error) {
+	if presence == nil {
+		return false, false, nil
+	}
+	presence.mu.RLock()
+	defer presence.mu.RUnlock()
+	if presence.released {
+		return false, false, ErrStorageClosed
+	}
+	state := presence.active.entityState(kind, id, presence.commits)
+	if !state.found {
+		for _, generation := range presence.draining {
+			state = generation.entityState(kind, id)
+			if state.found {
+				break
+			}
+		}
+	}
+	return state.found, state.found && !state.deleted, nil
+}

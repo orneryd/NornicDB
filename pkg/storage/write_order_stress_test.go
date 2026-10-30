@@ -63,17 +63,17 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 					return err
 				},
 				func(r *rand.Rand) error {
-					return engine.UpdateNode(&Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}})
+					return engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}}})
 				},
 				func(r *rand.Rand) error { return engine.DeleteNode(node(r)) },
 				func(r *rand.Rand) error { return engine.CreateEdge(edge(r)) },
-				func(r *rand.Rand) error { return engine.UpdateEdge(edge(r)) },
+				func(r *rand.Rand) error { return engine.UpdateEdge(EdgeUpdateRequest{After: edge(r)}) },
 				func(r *rand.Rand) error { return engine.DeleteEdge(edge(r).ID) },
 				func(r *rand.Rand) error { return engine.BulkDeleteNodes([]NodeID{node(r), node(r)}) },
 				func(r *rand.Rand) error { return engine.BulkCreateEdges([]*Edge{edge(r)}) },
 				func(r *rand.Rand) error {
 					return inTx(true, func(tx *BadgerTransaction) error {
-						return ApplyNodeUpdate(tx, &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}})
+						return ApplyNodeUpdate(tx, NodeUpdateRequest{After: &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}}})
 					})
 				},
 				func(r *rand.Rand) error {
@@ -81,7 +81,7 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 				},
 				func(r *rand.Rand) error {
 					return inTx(false, func(tx *BadgerTransaction) error {
-						return ApplyNodeUpdate(tx, &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}})
+						return ApplyNodeUpdate(tx, NodeUpdateRequest{After: &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}}})
 					})
 				},
 				func(r *rand.Rand) error {

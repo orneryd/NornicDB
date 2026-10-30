@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 
 	"os"
 	"path/filepath"
@@ -185,7 +187,7 @@ func TestIVFPQPersist_ServiceSuccessAndCacheBranches(t *testing.T) {
 	}
 
 	t.Run("unavailable vector store and no-op persist branches", func(t *testing.T) {
-		svc := NewService(newTestMemoryEngine(t), 8, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 8, nil)
 
 		// vfs nil branch when no compatible in-memory/persisted index exists.
 		_, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, nil)
@@ -211,14 +213,14 @@ func TestIVFPQPersist_ServiceSuccessAndCacheBranches(t *testing.T) {
 		require.Equal(t, idx.overflow, loaded.overflow)
 		require.True(t, loaded.compatibleProfile(tinyProfile))
 
-		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.ivfpqIndex = idx
 		var nilCtx context.Context
 		cached, err := svc.getOrBuildIVFPQIndex(nilCtx, tinyProfile, nil, nil)
 		require.NoError(t, err)
 		require.Same(t, idx, cached)
 
-		svc = NewService(newTestMemoryEngine(t), 2, nil)
+		svc = NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.hnswIndexPath = base
 		loadedFromDisk, err := svc.getOrBuildIVFPQIndex(context.Background(), tinyProfile, nil, nil)
 		require.NoError(t, err)

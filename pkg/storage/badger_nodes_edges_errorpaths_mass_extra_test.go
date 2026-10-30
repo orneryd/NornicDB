@@ -17,9 +17,9 @@ func TestBadgerEngine_NodeAndEdgeInputValidationBranches(t *testing.T) {
 	_, err = engine.CreateNode(&Node{ID: "unprefixed"})
 	require.Error(t, err)
 
-	require.ErrorIs(t, engine.UpdateNode(nil), ErrInvalidData)
-	require.ErrorIs(t, engine.UpdateNode(&Node{}), ErrInvalidID)
-	require.Error(t, engine.UpdateNode(&Node{ID: "unprefixed"}))
+	require.ErrorIs(t, engine.UpdateNode(NodeUpdateRequest{After: nil}), ErrInvalidData)
+	require.ErrorIs(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{}}), ErrInvalidID)
+	require.Error(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "unprefixed"}}))
 
 	_, err = engine.GetNode("")
 	require.ErrorIs(t, err, ErrInvalidID)
@@ -51,26 +51,26 @@ func TestBadgerEngine_EdgeCRUDErrorAndBranchPaths(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
 	// Endpoint-change path where new endpoint is missing.
-	require.ErrorIs(t, engine.UpdateEdge(&Edge{
+	require.ErrorIs(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:missing", Type: "REL",
-	}), ErrNotFound)
+	}}), ErrNotFound)
 
 	// Type-change path.
-	require.NoError(t, engine.UpdateEdge(&Edge{
+	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL2",
-	}))
+	}}))
 
 	// Endpoint+type change path.
 	_, err = engine.CreateNode(&Node{ID: "test:c", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateEdge(&Edge{
+	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID: "test:e1", StartNode: "test:b", EndNode: "test:c", Type: "REL3",
-	}))
+	}}))
 
 	// Not found / invalid branches.
-	require.ErrorIs(t, engine.UpdateEdge(nil), ErrInvalidData)
-	require.ErrorIs(t, engine.UpdateEdge(&Edge{}), ErrInvalidID)
-	require.ErrorIs(t, engine.UpdateEdge(&Edge{ID: "test:missing", StartNode: "test:a", EndNode: "test:b", Type: "REL"}), ErrNotFound)
+	require.ErrorIs(t, engine.UpdateEdge(EdgeUpdateRequest{After: nil}), ErrInvalidData)
+	require.ErrorIs(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{}}), ErrInvalidID)
+	require.ErrorIs(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:missing", StartNode: "test:a", EndNode: "test:b", Type: "REL"}}), ErrNotFound)
 
 	require.ErrorIs(t, engine.DeleteEdge(""), ErrInvalidID)
 	require.ErrorIs(t, engine.DeleteEdge("test:missing"), ErrNotFound)

@@ -34,7 +34,7 @@ func TestReviewDLQTerminalWriteCannotOverrideUpdate(t *testing.T) {
 	stamp := n.UpdatedAt
 	// A supported idempotent upsert is still a new attempt, even with the
 	// caller's unchanged body timestamp. Enqueue is the public notification.
-	require.NoError(t, s.UpdateNode(n))
+	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: n}))
 	current, err := s.GetNode("poison")
 	require.NoError(t, err)
 	require.True(t, stamp.Equal(current.UpdatedAt), "exercise idempotent same-version update")

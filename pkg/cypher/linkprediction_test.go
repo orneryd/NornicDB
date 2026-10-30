@@ -224,7 +224,7 @@ func TestGdsLinkPredictionPredict(t *testing.T) {
 		node, _ := engine.GetNode(nodeID)
 		if node != nil {
 			node.ChunkEmbeddings = [][]float32{{0.1, 0.2, 0.3, 0.4}}
-			engine.UpdateNode(node)
+			engine.UpdateNode(storage.NodeUpdateRequest{After: node})
 		}
 	}
 

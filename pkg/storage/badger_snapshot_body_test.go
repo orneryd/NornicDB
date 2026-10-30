@@ -24,8 +24,8 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, writer.SetNamespace("test"))
 	require.NoError(t, writer.SetImplicit(true))
-	require.NoError(t, writer.UpdateGraphNode(&Node{ID: "test:a", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(4)}}, ClientNodeEdits))
-	require.NoError(t, writer.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(4)}}))
+	require.NoError(t, writer.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(4)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, writer.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(4)}}}))
 	require.NoError(t, writer.Commit())
 	require.NoError(t, b.FlushWriteBehind())
 	// Warm the newer bodies before asking the pinned view for its old records.

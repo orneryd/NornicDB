@@ -1160,7 +1160,7 @@ func TestSizeTrackingEngine_NodeWrites(t *testing.T) {
 				node.ID = id
 				node.Properties["name"] = "Alice Updated"
 				node.Properties["age"] = 30
-				require.NoError(t, store.UpdateNode(node))
+				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			} else {
 				assert.NotEmpty(t, id)
 			}
@@ -1242,7 +1242,7 @@ func TestSizeTrackingEngine_UpdateEdge(t *testing.T) {
 	require.NotEmpty(t, outgoing)
 
 	outgoing[0].Properties["since"] = 2021
-	err = store.UpdateEdge(outgoing[0])
+	err = store.UpdateEdge(storage.EdgeUpdateRequest{After: outgoing[0]})
 	require.NoError(t, err)
 }
 

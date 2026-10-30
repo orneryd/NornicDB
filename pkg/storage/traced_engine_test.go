@@ -52,11 +52,11 @@ func TestTracedEngine_DelegatesAllMethods(t *testing.T) {
 	require.Equal(t, int64(1), got.Properties["v"])
 
 	// UpdateNode mutates the property and round-trips.
-	require.NoError(t, traced.UpdateNode(&Node{
+	require.NoError(t, traced.UpdateNode(NodeUpdateRequest{After: &Node{
 		ID:         "test:n1",
 		Labels:     []string{"L"},
 		Properties: map[string]any{"v": int64(2)},
-	}))
+	}}))
 	got, err = traced.GetNode("test:n1")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), got.Properties["v"])
@@ -80,10 +80,10 @@ func TestTracedEngine_DelegatesAllMethods(t *testing.T) {
 	require.Equal(t, "REL", gotEdge.Type)
 
 	// UpdateEdge.
-	require.NoError(t, traced.UpdateEdge(&Edge{
+	require.NoError(t, traced.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2",
 		Type: "REL", Properties: map[string]any{"k": "v2"},
-	}))
+	}}))
 	gotEdge, err = traced.GetEdge("test:e1")
 	require.NoError(t, err)
 	require.Equal(t, "v2", gotEdge.Properties["k"])

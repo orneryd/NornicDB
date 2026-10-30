@@ -19,7 +19,7 @@ func TestSol1482R4BuildSkipsSupersededRefresh(t *testing.T) {
 	edge := &storage.Edge{ID: "nornic:r", Type: "REL", StartNode: "nornic:a", EndNode: "nornic:b", Properties: map[string]any{"v": []float32{1, 0, 0}}}
 	require.NoError(t, engine.CreateEdge(edge))
 	built := startGatedBuild(t, engine, svc)
-	require.NoError(t, engine.UpdateNode(buildWriteNode("nornic:a", "staleword", []float32{0, 0, 1})))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: buildWriteNode("nornic:a", "staleword", []float32{0, 0, 1})}))
 	requireReturnsDuringBuild(t, "node refresh", func() error { return svc.RefreshNode("nornic:a") })
 	require.NoError(t, engine.DeleteEdge("nornic:r"))
 	requireReturnsDuringBuild(t, "edge removal", func() error { return svc.RefreshEdge("nornic:r") })
@@ -33,7 +33,7 @@ func TestSol1482R4BuildSkipsSupersededRefresh(t *testing.T) {
 	require.Equal(t, []string{"nornic:a"}, buildWriteSearchIDs(t, svc, "snapshotword"))
 	require.Empty(t, buildWriteSearchIDs(t, svc, "staleword"))
 	require.True(t, svc.HasRelationshipVectorEntries("REL", "v"), "a skipped edge removal was marked written")
-	require.NoError(t, engine.UpdateNode(buildWriteNode("nornic:a", "finalword", []float32{0, 1, 0})))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: buildWriteNode("nornic:a", "finalword", []float32{0, 1, 0})}))
 	require.NoError(t, svc.RefreshNodeWithMutation(newerNode))
 	require.NoError(t, engine.DeleteEdge("nornic:r"))
 	require.NoError(t, svc.RefreshEdgeWithMutation(newerEdge))

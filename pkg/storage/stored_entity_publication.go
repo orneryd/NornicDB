@@ -455,31 +455,52 @@ func (b *BadgerEngine) initializeManagedEntityNamespace(ctx context.Context, nam
 	return (*registry)[namespace].initialize(ctx)
 }
 
-// PrepareManagedEntityChanges discovers the registered namespace owner through
-// the canonical transparent-engine accessor and invokes its prepare/admit path.
-// The caller must establish leader and wrapper admission before calling; this
-// capability does not submit, forward, journal or apply a command. handled stays
-// true on admission failure so callers cannot bypass the managed owner.
-func PrepareManagedEntityChanges(ctx context.Context, engine Engine, namespace string, operations []Operation, mode EntityCommitMode) (*PreparedEntityCommit, func(CommitOutcome), bool, error) {
+// PrepareEntityChanges stages and validates entity changes through the registered
+// namespace coordinator, or the native transaction owner when unmanaged.
+// Callers establish routing and wrapper admission before preparation; this
+// operation neither journals nor publishes the prepared changes.
+func PrepareEntityChanges(ctx context.Context, engine Engine, namespace string, operations []Operation, mode EntityCommitMode) (*PreparedEntityCommit, func(CommitOutcome), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	var native *BadgerEngine
 	switch current := UnwrapEngine(engine).(type) {
 	case *BadgerEngine:
 		native = current
 	case *MemoryEngine:
 		native = current.BadgerEngine
-	default:
-		return nil, nil, false, nil
 	}
-	registry := native.storedEntityObservers.Load()
-	if registry == nil {
-		return nil, nil, false, nil
+	if native != nil {
+		if registry := native.storedEntityObservers.Load(); registry != nil {
+			if prepare := (*registry)[namespace].preparer; prepare != nil {
+				return prepare(ctx, operations, mode)
+			}
+		}
 	}
-	prepare := (*registry)[namespace].preparer
-	if prepare == nil {
-		return nil, nil, false, nil
+	tx, err := BeginEntityTransaction(engine, mode)
+	if err != nil {
+		return nil, nil, err
 	}
-	prepared, settle, err := prepare(ctx, operations, mode)
-	return prepared, settle, true, err
+	defer tx.Rollback()
+	if err = tx.SetNamespace(namespace); err != nil {
+		return nil, nil, err
+	}
+	if err = tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
+		return nil, nil, err
+	}
+	for _, op := range operations {
+		if err = ApplyEntityChange(tx, op, func(request NodeUpdateRequest) error { return ApplyNodeUpdate(tx, request) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+			return nil, nil, err
+		}
+	}
+	if tx.OperationCount() == 0 {
+		return nil, nil, tx.CommitContext(ctx)
+	}
+	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{LogicalID: tx.ID})
+	return prepared, nil, err
 }
 
 // ManagedEntityUsageResetter is implemented by the canonical attached ledger.

@@ -80,7 +80,7 @@ func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
 	node.Properties["data"] = string(data)
 	delete(node.Properties, "server_id")
 	delete(node.Properties, "server_created_at")
-	require.NoError(t, engine.UpdateNode(node))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	standby, err := NewDatabaseManager(t.Context(), &identityReadOnlyEngine{Engine: inner}, nil)
 	require.NoError(t, err)
 	serverID, createdAt := standby.ServerIdentity()
@@ -110,7 +110,7 @@ func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
 	node, err = engine.GetNode(storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	node.Properties["server_created_at"] = "not-a-date"
-	require.NoError(t, engine.UpdateNode(node))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	_, err = NewDatabaseManager(t.Context(), inner, nil)
 	require.Error(t, err)
 }
@@ -279,7 +279,7 @@ func TestDatabaseManagerStorageEnforcesMaxBytesUpdateDelta(t *testing.T) {
 	require.Positive(t, currentBytes)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "nornic", &Limits{Storage: StorageLimits{MaxBytes: currentBytes + 32}}))
 
-	err = engine.UpdateNode(&storage.Node{ID: "node", Properties: map[string]any{"value": string(make([]byte, 4096))}})
+	err = engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "node", Properties: map[string]any{"value": string(make([]byte, 4096))}}})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 
 	stored, err := engine.GetNode("node")
@@ -926,14 +926,14 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 	}))
 
 	// Update node to change byte footprint.
-	require.NoError(t, store.UpdateNode(&storage.Node{
+	require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{
 		ID:     storage.NodeID("n1"),
 		Labels: []string{"Item"},
 		Properties: map[string]any{
 			"name":  "one",
 			"extra": "payload",
 		},
-	}))
+	}}))
 
 	// Delete node with connected edge; cached edge bytes should also decrement.
 	require.NoError(t, store.DeleteNode(storage.NodeID("n1")))

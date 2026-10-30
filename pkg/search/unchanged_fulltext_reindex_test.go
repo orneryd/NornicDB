@@ -1,6 +1,7 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/indexing"
@@ -27,7 +28,7 @@ func (c *countingBM25Index) Remove(id string) {
 // A node's default searchable text lists its other properties in key order.
 func TestSearchableTextPolicies(t *testing.T) {
 	t.Run("all-property search preserves stable key order", func(t *testing.T) {
-		svc := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
 		node := &storage.Node{Labels: []string{"V"}, Properties: map[string]any{"zeta": "z", "alpha": int64(1), "mid": true, "content": "body"}}
 		for i := 0; i < 20; i++ {
 			require.Equal(t, "V body alpha 1 mid true zeta z", svc.extractSearchableText(node))
@@ -84,7 +85,7 @@ func TestSearchableTextPolicies(t *testing.T) {
 // Re-indexing a node keeps its fulltext document when the text hasn't
 // changed, also when its vectors change, and replaces it when the text does.
 func TestIndexNodeKeepsUnchangedFulltextDocument(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 3, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 	counting := &countingBM25Index{bm25Index: svc.fulltext()}
 	svc.setFulltext(counting)
 	node := func(id int64, embedding []float32) *storage.Node {

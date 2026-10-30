@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -51,7 +52,7 @@ func (c *countingEmbed) embed(_ context.Context, edge *storage.Edge) (Relationsh
 
 func relationshipTestEngine(t *testing.T) storage.Engine {
 	t.Helper()
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
@@ -197,7 +198,7 @@ func TestRelationshipSearchFollowsWrites(t *testing.T) {
 	calls := embed.calls.Load()
 	require.NoError(t, svc.IndexEdge(edge))
 	edge.Properties = map[string]any{"reason": "basalt span"}
-	require.NoError(t, engine.UpdateEdge(edge))
+	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 	require.NoError(t, svc.IndexEdge(edge))
 	require.Eventually(t, func() bool { return embed.calls.Load() == calls+1 }, 5*time.Second, 10*time.Millisecond)
 	waitRelationshipVectors(t, svc, 3)
@@ -243,7 +244,7 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 	edge, err := engine.GetEdge("r2")
 	require.NoError(t, err)
 	edge.Properties["reason"] = "quarrel about river dates"
-	require.NoError(t, engine.UpdateEdge(edge))
+	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 	second := &countingEmbed{}
 	svc = startRelationshipService(t, engine, second.embed, persisted)
 	waitRelationshipVectors(t, svc, 2, relationshipSnapshotPublished)

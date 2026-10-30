@@ -210,7 +210,7 @@ This reuses existing storage APIs and avoids `ensureEmpty`, which remains specif
 1. Build all incoming OKF nodes and edges with stable OKF properties before writing.
 2. Build lookup maps from existing `target.AllNodes()` by `okf_concept_id`.
 3. Create missing nodes in batches with `target.BulkCreateNodes`.
-4. Update existing nodes with `target.UpdateNode`, replacing OKF-owned labels and properties from the bundle while preserving storage-managed timestamps as follows:
+4. Update existing nodes with `target.UpdateNode(storage.NodeUpdateRequest{Before: existing, After: updated})`, retaining the immutable node read in step 2 as `existing` and using an independent `updated` image with separate edited labels/properties, replacing OKF-owned labels and properties from the bundle while preserving storage-managed timestamps as follows:
    - Preserve the original `CreatedAt`.
    - Set `UpdatedAt` to the import time.
    - Preserve non-OKF user properties only when they do not conflict with incoming OKF frontmatter or heading-derived properties.

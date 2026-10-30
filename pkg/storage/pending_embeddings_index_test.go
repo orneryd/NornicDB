@@ -228,7 +228,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Add embedding to the node
 		node.ChunkEmbeddings = [][]float32{{0.1, 0.2, 0.3}}
-		err = engine.UpdateNode(node)
+		err = engine.UpdateNode(NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 
 		// Manually add it back to pending index (simulating stale state)

@@ -41,7 +41,7 @@ func TestReviewSourcePreservingAcceptancePublication(t *testing.T) {
 	require.NoError(t, err)
 	current.Properties["text"] = "novelquartz"
 	current.UpdatedAt = current.UpdatedAt.Add(time.Second)
-	require.NoError(t, store.UpdateNode(current))
+	require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: current}))
 	opts := search.DefaultSearchOptions()
 	opts.MinRRFScore = 0
 	before, err := service.Search(ctx, "novelquartz", nil, opts)
@@ -67,7 +67,7 @@ func TestReviewConsumedSourceCypherPaths(t *testing.T) {
 			node, err := queue.GetNode("node-000")
 			require.NoError(t, err)
 			node.Properties["id"] = "old"
-			require.NoError(t, queue.UpdateNode(node))
+			require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			worker.config.PropertiesInclude = []string{"text"}
 			worker.SetEmbedder(&retryMetadataPropertyEmbedder{mockEmbedder: provider, key: "id", declared: true})
 			require.True(t, worker.processNextBatch())

@@ -33,7 +33,7 @@ func TestManagedEmbeddingSourceTransaction(t *testing.T) {
 		require.NoError(t, err)
 		n.Properties[key] = "new"
 		n.UpdatedAt = n.UpdatedAt.Add(time.Second)
-		require.NoError(t, tx.UpdateGraphNode(n, ClientNodeEdits))
+		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: n, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 	}
 	update("updatedAt")
@@ -59,7 +59,7 @@ func TestManagedEmbeddingSourceAcceptance(t *testing.T) {
 			require.NoError(t, err)
 			current.Properties[key] = "new"
 			current.UpdatedAt = current.UpdatedAt.Add(time.Second)
-			require.NoError(t, b.UpdateNode(current))
+			require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: current}))
 			err = b.UpdateNodeEmbeddingSidecar(payload)
 			if key == "id" {
 				require.ErrorIs(t, err, ErrEmbeddingSourceChanged)

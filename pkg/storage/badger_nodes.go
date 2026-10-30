@@ -24,7 +24,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 
 func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityWriteContext) (NodeID, error) {
 	if node != nil {
-		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
+		if handled, err := b.inMutationTransaction(string(node.ID), false, func(tx *BadgerTransaction) error {
 			_, err := tx.CreateNode(node)
 			return err
 		}); handled {
@@ -441,7 +441,7 @@ func (b *BadgerEngine) getNodeProjected(id NodeID, properties []string, v readVi
 	}
 	include := propertyProjectionSet(properties)
 	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include)
+		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include, nodeBodyDetached)
 	}, func(node *Node) *Node { return projectCachedNodeForRead(node, properties, true) }, nodeReadCacheProjection)
 }
 
@@ -454,12 +454,11 @@ func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 }
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
-func (b *BadgerEngine) UpdateNode(node *Node) error { return b.updateNodeWithWriteContext(node, nil) }
-
-func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityWriteContext) error {
+func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
+	node := updateRequest.After
 	if node != nil {
-		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
-			return ApplyNodeUpdate(tx, node)
+		if handled, err := b.inMutationTransaction(string(node.ID), updateRequest.Before != nil || updateRequest.Policy == StoredNodeImages, func(tx *BadgerTransaction) error {
+			return ApplyNodeUpdate(tx, updateRequest)
 		}); handled {
 			return err
 		}
@@ -470,7 +469,7 @@ func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityW
 	if node != nil {
 		entityID = string(node.ID)
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, inherited)
+	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, nil)
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -759,7 +758,7 @@ func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings 
 
 // DeleteNode removes a node and all its edges.
 func (b *BadgerEngine) DeleteNode(id NodeID) error {
-	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
+	if handled, err := b.inMutationTransaction(string(id), false, func(tx *BadgerTransaction) error {
 		return tx.DeleteGraphNode(id, CascadeEdges)
 	}); handled {
 		return err

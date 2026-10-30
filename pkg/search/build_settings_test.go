@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,7 @@ func TestSearchBuildSettingsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "build_settings")
 
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(engine, 384, nil)
 	snap := svc.currentSearchBuildSettings()
 
@@ -46,7 +47,7 @@ func TestSearchBuildSettingsRoundTrip(t *testing.T) {
 
 // An index built with different format settings must be rebuilt from storage.
 func TestSearchBuildSettingsRebuildsMismatchedFulltextCache(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:current", Properties: map[string]any{"text": "freshlyindexed"}})
 	require.NoError(t, err)
 	svc := NewService(engine, 3, nil)
@@ -69,7 +70,7 @@ func TestSearchBuildSettingsRebuildsMismatchedFulltextCache(t *testing.T) {
 }
 
 func TestComposeHNSWBuildSettingsTracksGraphConfiguration(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	require.Contains(t, svc.composeHNSWBuildSettings(), "gpu_build=true")
 
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
@@ -185,7 +186,7 @@ func TestComposeBuildSettingsFingerprints(t *testing.T) {
 			for _, setting := range tc.before {
 				t.Setenv(setting[0], setting[1])
 			}
-			svc := NewService(newTestMemoryEngine(t), tc.dims, nil)
+			svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), tc.dims, nil)
 			for _, next := range tc.steps {
 				for _, setting := range next.env {
 					t.Setenv(setting[0], setting[1])
@@ -211,7 +212,7 @@ func TestComposeBuildSettingsFingerprints(t *testing.T) {
 }
 
 func TestBuildSettings_BM25FormatAndPersistBranches(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(engine, 384, nil)
 
 	// The single fulltext implementation stamps its own format marker.

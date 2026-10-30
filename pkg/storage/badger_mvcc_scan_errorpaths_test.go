@@ -15,7 +15,7 @@ func TestBadgerEngine_RebuildMVCCHeads_ContextCancelledAndClosedEngine(t *testin
 	id := NodeID(prefixTestID("mvcc-cancel-node"))
 	_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}}}))
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -34,7 +34,7 @@ func TestBadgerEngine_PruneMVCCKeyspaceInTxn_UnsupportedPrefixAndCanceled(t *tes
 
 	_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 1}})
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}}))
 
 	err = engine.withUpdate(func(txn *badger.Txn) error {
 		v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 11}

@@ -1882,35 +1882,60 @@ func TestCompareEqualBothNil(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-func TestToFloat64AllTypes(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
+type numericConversionCase struct {
+	name           string
+	node           storage.Node
+	update         bool
+	query, errCode string
+	want           any
+}
 
-	store := storage.NewNamespacedEngine(baseStore, "test")
+// runNumericConversions preserves each case's create/update sequence and
+// actual Execute query; only storage setup, execution and the oracle are shared.
+func runNumericConversions(t *testing.T, cases []numericConversionCase) {
+	t.Helper()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Test with float32 (we need to create nodes that have various types)
-	node := &storage.Node{
-		ID:     "types-all",
-		Labels: []string{"TypesAll"},
-		Properties: map[string]interface{}{
-			"f64":  float64(100.0),
-			"f32":  float32(50.0),
-			"i":    int(30),
-			"i64":  int64(40),
-			"i32":  int32(20),
-			"str":  "60.5",
-			"bool": true,
-		},
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if test.update {
+				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: &test.node}))
+			} else {
+				_, err := store.CreateNode(&test.node)
+				require.NoError(t, err)
+			}
+			result, err := exec.Execute(context.Background(), test.query, nil)
+			if test.errCode != "" {
+				requireStatusCode(t, err, test.errCode)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			if test.want != nil {
+				assert.Equal(t, test.want, result.Rows[0][0])
+			}
+		})
 	}
-	_, err := store.CreateNode(node)
-	require.NoError(t, err)
-	require.NoError(t, err)
+}
 
-	// Query using float comparison
-	result, err := exec.Execute(ctx, "MATCH (n:TypesAll) WHERE n.f64 > 50 RETURN n", nil)
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 1)
+func TestToFloat64AllTypes(t *testing.T) {
+	runNumericConversions(t, []numericConversionCase{{
+		name: "float64 comparison with mixed properties",
+		node: storage.Node{ID: "types-all", Labels: []string{"TypesAll"}, Properties: map[string]any{
+			"f64": float64(100), "f32": float32(50), "i": int(30), "i64": int64(40), "i32": int32(20), "str": "60.5", "bool": true,
+		}},
+		query: "MATCH (n:TypesAll) WHERE n.f64 > 50 RETURN n",
+	}})
+}
+
+func TestToFloat64TypeCoverage(t *testing.T) {
+	runNumericConversions(t, []numericConversionCase{
+		{name: "float32 comparison", node: storage.Node{ID: "f32-test", Labels: []string{"Float32Test"}, Properties: map[string]any{"val": float32(3.14)}}, query: "MATCH (n:Float32Test) WHERE n.val > 3.0 RETURN n"},
+		{name: "int sum", node: storage.Node{ID: "int-test", Labels: []string{"IntTest"}, Properties: map[string]any{"val": int(100)}}, query: "MATCH (n:IntTest) RETURN sum(n.val)", want: int64(100)},
+		{name: "int32 avg", node: storage.Node{ID: "i32-test", Labels: []string{"Int32Test"}, Properties: map[string]any{"val": int32(50)}}, query: "MATCH (n:Int32Test) RETURN avg(n.val)", want: float64(50)},
+		{name: "numeric string sum", node: storage.Node{ID: "str-num", Labels: []string{"StrNumTest"}, Properties: map[string]any{"val": "42.5"}}, query: "MATCH (n:StrNumTest) RETURN sum(n.val)", errCode: "Neo.ClientError.Statement.TypeError"},
+		{name: "updated non-numeric string sum", update: true, node: storage.Node{ID: "str-num", Labels: []string{"StrNumTest"}, Properties: map[string]any{"val": "not a number"}}, query: "MATCH (n:StrNumTest) RETURN sum(n.val)", errCode: "Neo.ClientError.Statement.TypeError"},
+	})
 }
 
 func TestEvaluateStringOpDefaultCase(t *testing.T) {

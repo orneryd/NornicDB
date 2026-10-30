@@ -214,13 +214,13 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 			_, err := forward.CreateNode(op.Node)
 			return err
 		case storage.OpUpdateNode:
-			return forward.UpdateNode(op.Node)
+			return forward.UpdateNode(op.NodeUpdate())
 		case storage.OpDeleteNode:
 			return forward.DeleteNode(op.NodeID)
 		case storage.OpCreateEdge:
 			return forward.CreateEdge(op.Edge)
 		case storage.OpUpdateEdge:
-			return forward.UpdateEdge(op.Edge)
+			return forward.UpdateEdge(op.EdgeUpdate())
 		case storage.OpDeleteEdge:
 			return forward.DeleteEdge(op.EdgeID)
 		}

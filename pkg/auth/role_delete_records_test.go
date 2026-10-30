@@ -2,6 +2,7 @@ package auth
 
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 
 	"context"
 	"testing"
@@ -16,7 +17,7 @@ func TestDeletedRoleStartsEmptyAfterRecreation(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	roles := seedRoleRename(t, system)
-	require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "solo", Roles: []Role{"ops"}}))
+	require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "solo", Roles: []Role{"ops"}}, nil))
 	require.NoError(t, roles.DeleteRole(ctx, "ops"))
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	grants, err := NewProcedurePrivilegeStore(system).List(ctx)
@@ -42,25 +43,25 @@ func TestDeletedRoleStartsEmptyAfterRecreation(t *testing.T) {
 
 func TestDeleteRoleOwnedRecordFailureChangesNothing(t *testing.T) {
 	for _, test := range []struct {
-		op string
+		op storagefault.MutationOperation
 		id storage.NodeID
 	}{
-		{"delete", "proc_priv:execute:ops:db.a"},
-		{"delete", "db_priv:ops:nornic"},
-		{"delete", "role_db_access:ops"},
-		{"delete", "role_entitlement:ops"},
-		{"update", "user:worker"},
-		{"delete", "role:ops"},
+		{storagefault.MutationDelete, "proc_priv:execute:ops:db.a"},
+		{storagefault.MutationDelete, "db_priv:ops:nornic"},
+		{storagefault.MutationDelete, "role_db_access:ops"},
+		{storagefault.MutationDelete, "role_entitlement:ops"},
+		{storagefault.MutationUpdate, "user:worker"},
+		{storagefault.MutationDelete, "role:ops"},
 	} {
-		t.Run(test.op+string(test.id), func(t *testing.T) {
+		t.Run(string(test.op)+string(test.id), func(t *testing.T) {
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
-			fault := &mutationFault{Engine: system}
+			fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
 			roles := seedRoleRename(t, fault)
 			before, err := system.AllNodes()
 			require.NoError(t, err)
-			fault.failOp, fault.failID = test.op, test.id
+			fault.Operation, fault.ID = test.op, test.id
 			require.ErrorIs(t, roles.DeleteRole(context.Background(), "ops"), errRoleMutation)
 			after, err := system.AllNodes()
 			require.NoError(t, err)
@@ -77,7 +78,7 @@ func TestDeleteRolePublishesCachesAfterCommit(t *testing.T) {
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
-			fault := &mutationFault{Engine: system}
+			fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
 			roles := seedRoleRename(t, fault)
 			stores := RoleMutationStores{Allowlist: NewAllowlistStore(fault), Privileges: NewPrivilegesStore(fault), Entitlements: NewRoleEntitlementsStore(fault), Users: &Authenticator{storage: fault, users: map[string]*User{}}}
 			require.NoError(t, stores.Allowlist.Load(ctx))
@@ -88,11 +89,11 @@ func TestDeleteRolePublishesCachesAfterCommit(t *testing.T) {
 			require.NoError(t, err)
 			switch stage {
 			case "user update":
-				fault.failOp, fault.failID = "update", "user:worker"
+				fault.Operation, fault.ID = storagefault.MutationUpdate, "user:worker"
 			case "role delete":
-				fault.failOp, fault.failID = "delete", "role:ops"
+				fault.Operation, fault.ID = storagefault.MutationDelete, "role:ops"
 			case "cache load":
-				fault.failOp, fault.nth = "allnodes", 4
+				fault.Operation, fault.Nth = storagefault.MutationList, 4
 			}
 			err = roles.DeleteRoleWithStores(ctx, "ops", stores)
 			if stage == "success" {
@@ -130,7 +131,7 @@ func TestRoleChangesPreserveOtherRoles(t *testing.T) {
 			require.NoError(t, NewPrivilegesStore(system).SavePrivilege(ctx, "other", "nornic", true, false))
 			require.NoError(t, NewAllowlistStore(system).SaveRoleDatabases(ctx, "other", []string{"nornic"}))
 			require.NoError(t, NewRoleEntitlementsStore(system).Set(ctx, "other", []string{"read"}))
-			require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "other", Roles: []Role{"other"}}))
+			require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "other", Roles: []Role{"other"}}, nil))
 			var before []*storage.Node
 			for _, id := range []storage.NodeID{"role:other", "proc_priv:boosted:other:db.other", "db_priv:other:nornic", "role_db_access:other", "role_entitlement:other", "user:other"} {
 				node, err := system.GetNode(id)

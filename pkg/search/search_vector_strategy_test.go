@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 
 	"os"
 	"path/filepath"
@@ -84,7 +86,7 @@ func TestResolveCompressedVectorStrategy(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tc.run(t, NewService(newTestMemoryEngine(t), 16, nil))
+			tc.run(t, NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 16, nil))
 		})
 	}
 }

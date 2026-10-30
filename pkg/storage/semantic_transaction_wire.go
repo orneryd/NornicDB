@@ -155,8 +155,13 @@ func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
 			nodes[nextNode] = semanticTransactionNode{
 				ID: string(n.ID), Labels: n.Labels, Properties: semanticPropertyValues{values: n.Properties},
 				NamedEmbeddings: n.NamedEmbeddings, ChunkEmbeddings: n.ChunkEmbeddings,
-				CreatedAtUnixNs: n.CreatedAt.UnixNano(), UpdatedAtUnixNs: n.UpdatedAt.UnixNano(),
 				EmbedMeta: semanticMetadataValues{semanticPropertyValues{values: n.EmbedMeta}}, VisibilitySuppressed: n.RuntimeMetadata().VisibilitySuppressed,
+			}
+			if !n.CreatedAt.IsZero() {
+				nodes[nextNode].CreatedAtUnixNs = n.CreatedAt.UnixNano()
+			}
+			if !n.UpdatedAt.IsZero() {
+				nodes[nextNode].UpdatedAtUnixNs = n.UpdatedAt.UnixNano()
 			}
 			changes[i].Node = &nodes[nextNode]
 			nextNode++
