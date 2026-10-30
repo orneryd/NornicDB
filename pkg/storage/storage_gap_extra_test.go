@@ -884,9 +884,9 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("embedded-node"))
 		data, err := buildV2NodeBody(t, engine, &Node{
-			ID:                         nodeID,
-			EmbeddingsStoredSeparately: true,
-			EmbedMeta:                  map[string]any{"chunk_count": int16(3)},
+			runtime:   &nodeRuntime{metadata: NodeRuntimeMetadata{EmbeddingsStoredSeparately: true}},
+			ID:        nodeID,
+			EmbedMeta: map[string]any{"chunk_count": int16(3)},
 		})
 		require.NoError(t, err)
 
@@ -908,7 +908,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			node, err := engine.decodeNodeWithEmbeddings(txn, data, nodeID)
 			require.NoError(t, err)
-			require.False(t, node.EmbeddingsStoredSeparately)
+			require.False(t, node.RuntimeMetadata().EmbeddingsStoredSeparately)
 			require.Len(t, node.ChunkEmbeddings, 2)
 			assert.Equal(t, []float32{1, 2}, node.ChunkEmbeddings[0])
 			assert.Equal(t, []float32{5, 6}, node.ChunkEmbeddings[1])
@@ -920,9 +920,9 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("embedded-node-str"))
 		data, err := buildV2NodeBody(t, engine, &Node{
-			ID:                         nodeID,
-			EmbeddingsStoredSeparately: true,
-			EmbedMeta:                  map[string]any{"chunk_count": "1"},
+			runtime:   &nodeRuntime{metadata: NodeRuntimeMetadata{EmbeddingsStoredSeparately: true}},
+			ID:        nodeID,
+			EmbedMeta: map[string]any{"chunk_count": "1"},
 		})
 		require.NoError(t, err)
 
@@ -959,9 +959,9 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 				engine := createTestBadgerEngine(t)
 				nodeID := NodeID(prefixTestID("embed-meta-" + tc.name))
 				data, err := buildV2NodeBody(t, engine, &Node{
-					ID:                         nodeID,
-					EmbeddingsStoredSeparately: true,
-					EmbedMeta:                  map[string]any{"chunk_count": tc.chunkCount},
+					runtime:   &nodeRuntime{metadata: NodeRuntimeMetadata{EmbeddingsStoredSeparately: true}},
+					ID:        nodeID,
+					EmbedMeta: map[string]any{"chunk_count": tc.chunkCount},
 				})
 				require.NoError(t, err)
 
@@ -981,10 +981,10 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 					require.NotNil(t, node)
 					if tc.wantChunks == 0 {
 						assert.Empty(t, node.ChunkEmbeddings)
-						assert.True(t, node.EmbeddingsStoredSeparately)
+						assert.True(t, node.RuntimeMetadata().EmbeddingsStoredSeparately)
 					} else {
 						assert.Len(t, node.ChunkEmbeddings, tc.wantChunks)
-						assert.False(t, node.EmbeddingsStoredSeparately)
+						assert.False(t, node.RuntimeMetadata().EmbeddingsStoredSeparately)
 					}
 					return nil
 				}))

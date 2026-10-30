@@ -972,7 +972,11 @@ func encodeNodeV1Body(n *Node) ([]byte, bool, error) {
 	chunkCount := len(nodeCopy.ChunkEmbeddings)
 	nodeCopy.ChunkEmbeddings = nil
 
-	nodeCopy.EmbeddingsStoredSeparately = true
+	{
+		metadata := nodeCopy.RuntimeMetadata()
+		metadata.EmbeddingsStoredSeparately = true
+		nodeCopy.SetRuntimeMetadata(metadata)
+	}
 	if nodeCopy.EmbedMeta == nil {
 		nodeCopy.EmbedMeta = make(map[string]any)
 	}
@@ -1038,7 +1042,11 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 
 	chunkCount := len(bodyCopy.ChunkEmbeddings)
 	bodyCopy.ChunkEmbeddings = nil
-	bodyCopy.EmbeddingsStoredSeparately = true
+	{
+		metadata := bodyCopy.RuntimeMetadata()
+		metadata.EmbeddingsStoredSeparately = true
+		bodyCopy.SetRuntimeMetadata(metadata)
+	}
 	if bodyCopy.EmbedMeta == nil {
 		bodyCopy.EmbedMeta = make(map[string]any)
 	}
@@ -1177,7 +1185,11 @@ func (b *BadgerEngine) loadNodeEmbeddingState(read embeddingRecordReader, node *
 		return nil, err
 	} else if fresh {
 		node.EmbedMeta = sidecarMeta
-		node.EmbeddingsStoredSeparately = false
+		{
+			metadata := node.RuntimeMetadata()
+			metadata.EmbeddingsStoredSeparately = false
+			node.SetRuntimeMetadata(metadata)
+		}
 		chunkCount := chunkCountFromMeta(sidecarMeta)
 		if !vectors {
 			if chunkCount > 0 {
@@ -1192,14 +1204,18 @@ func (b *BadgerEngine) loadNodeEmbeddingState(read embeddingRecordReader, node *
 	}
 
 	// Legacy body-flag path: embeddings stored separately during encode.
-	if node.EmbeddingsStoredSeparately {
+	if node.RuntimeMetadata().EmbeddingsStoredSeparately {
 		if chunkCount := chunkCountFromMeta(node.EmbedMeta); chunkCount > 0 {
 			if vectors {
 				if err := loadEmbeddingChunksFrom(read, node, nodeID, chunkCount); err != nil {
 					return nil, err
 				}
 			}
-			node.EmbeddingsStoredSeparately = false
+			{
+				metadata := node.RuntimeMetadata()
+				metadata.EmbeddingsStoredSeparately = false
+				node.SetRuntimeMetadata(metadata)
+			}
 		}
 	}
 

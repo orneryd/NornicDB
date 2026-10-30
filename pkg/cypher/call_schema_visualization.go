@@ -33,11 +33,11 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	for _, label := range collection.SortedKeys(labels) {
 		indexes, constraints := schemaVisualizationLabelMetadata(store.GetSchema(), label)
 		node := &storage.Node{
-			Database:   e.executionDatabaseName(ctx),
 			ID:         storage.NodeID("-" + strconv.Itoa(len(virtualNodes)+1)),
 			Labels:     []string{label},
 			Properties: map[string]interface{}{"name": label, "indexes": indexes, "constraints": constraints},
 		}
+		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: e.executionDatabaseName(ctx)})
 		virtualNodes = append(virtualNodes, node)
 		virtualByLabel[label] = node
 	}

@@ -88,7 +88,7 @@ func TestLabelChange_TargetedToUntargeted_RescoresAndUnsuppresses(t *testing.T) 
 	require.NoError(t, err,
 		"rebind: relabeling away from a suppressing binding must un-suppress on next read")
 	require.Equal(t, []string{"Untargeted"}, got.Labels)
-	require.False(t, got.VisibilitySuppressed,
+	require.False(t, got.RuntimeMetadata().VisibilitySuppressed,
 		"the suppressed flag must be cleared because the new labels have no binding")
 }
 
@@ -111,7 +111,7 @@ func TestLabelChange_UntargetedToTargeted_RescoresAndSuppresses(t *testing.T) {
 	require.NoError(t, err)
 	got, err := eng.GetNode("test:n2")
 	require.NoError(t, err, "precondition: untargeted stale node is visible")
-	require.False(t, got.VisibilitySuppressed)
+	require.False(t, got.RuntimeMetadata().VisibilitySuppressed)
 
 	// Relabel into Doc — now the binding applies and the age should
 	// suppress it on the next read.
@@ -206,7 +206,7 @@ func TestLabelChange_ReadModifyWrite_TargetedToUntargeted_RescoresOnUpdate(t *te
 			return decodeErr
 		})
 	}))
-	require.True(t, persisted.VisibilitySuppressed,
+	require.True(t, persisted.RuntimeMetadata().VisibilitySuppressed,
 		"the persisted struct must reflect suppressed state for the test to be meaningful")
 
 	// Modify labels (Cypher: REMOVE :Doc SET :Untargeted) and write back.
@@ -231,14 +231,14 @@ func TestLabelChange_ReadModifyWrite_TargetedToUntargeted_RescoresOnUpdate(t *te
 			return decodeErr
 		})
 	}))
-	require.False(t, afterUpdate.VisibilitySuppressed,
+	require.False(t, afterUpdate.RuntimeMetadata().VisibilitySuppressed,
 		"persisted suppression flag must be cleared on disk by UpdateNode after a label rebind")
 	require.Equal(t, []string{"Untargeted"}, afterUpdate.Labels)
 
 	// And the GetNode read path must also see the node visible.
 	got, err := eng.GetNode("test:rmw")
 	require.NoError(t, err)
-	require.False(t, got.VisibilitySuppressed)
+	require.False(t, got.RuntimeMetadata().VisibilitySuppressed)
 	require.Equal(t, []string{"Untargeted"}, got.Labels)
 }
 
@@ -270,7 +270,7 @@ func TestLabelChange_ReadModifyWrite_UntargetedToTargeted_RescoresOnUpdate(t *te
 			return decodeErr
 		})
 	}))
-	require.False(t, persisted.VisibilitySuppressed)
+	require.False(t, persisted.RuntimeMetadata().VisibilitySuppressed)
 
 	// Cypher SET label :Doc REMOVE label :Untargeted — labels move INTO
 	// the suppressing binding; the rescore on UpdateNode must flip the
@@ -288,7 +288,7 @@ func TestLabelChange_ReadModifyWrite_UntargetedToTargeted_RescoresOnUpdate(t *te
 			return decodeErr
 		})
 	}))
-	require.True(t, afterUpdate.VisibilitySuppressed,
+	require.True(t, afterUpdate.RuntimeMetadata().VisibilitySuppressed,
 		"label change INTO a suppressing binding must mark the persisted flag suppressed")
 	require.Equal(t, []string{"Doc"}, afterUpdate.Labels)
 
@@ -321,6 +321,6 @@ func TestLabelChange_NoDecayLabelToNoDecayLabel_StaysVisible(t *testing.T) {
 
 	got, err := eng.GetNode("test:n4")
 	require.NoError(t, err)
-	require.False(t, got.VisibilitySuppressed)
+	require.False(t, got.RuntimeMetadata().VisibilitySuppressed)
 	require.Equal(t, []string{"Other"}, got.Labels)
 }

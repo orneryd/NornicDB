@@ -7,9 +7,16 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func newTestExecutor(t testing.TB) (*StorageExecutor, storage.Engine) {
+// newTestExecutor builds a cleanup-owned executor and its storage. Tests may
+// select a namespace; the ordinary fixture namespace is "test".
+func newTestExecutor(t testing.TB, namespaces ...string) (*StorageExecutor, storage.Engine) {
+	t.Helper()
+	namespace := "test"
+	if len(namespaces) != 0 {
+		namespace = namespaces[0]
+	}
 	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
+	store := storage.NewNamespacedEngine(base, namespace)
 	return NewStorageExecutor(store), store
 }
 

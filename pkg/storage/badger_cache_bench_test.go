@@ -13,7 +13,7 @@ func BenchmarkNodeBodyCacheStoreAndEvict(b *testing.B) {
 		nodeCacheMaxEntries:   64,
 		nodeBodyCacheMaxBytes: 64 << 10,
 	}
-	node := &Node{Labels: []string{"Document"}, Properties: map[string]any{"text": strings.Repeat("x", 2<<10)}, ChunkEmbeddings: [][]float32{make([]float32, 1024)}, EmbeddingsStoredSeparately: true}
+	node := &Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{EmbeddingsStoredSeparately: true}}, Labels: []string{"Document"}, Properties: map[string]any{"text": strings.Repeat("x", 2<<10)}, ChunkEmbeddings: [][]float32{make([]float32, 1024)}}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

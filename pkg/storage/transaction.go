@@ -154,7 +154,6 @@ func copyNodeForCaller(node *Node) *Node {
 	}
 	nodeCopy.ChunkEmbeddings = node.ChunkEmbeddings
 	nodeCopy.NamedEmbeddings = node.NamedEmbeddings
-	nodeCopy.VisibilitySuppressed = node.VisibilitySuppressed
 	return nodeCopy
 }
 
@@ -163,20 +162,16 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 		return nil
 	}
 
+	// The runtime record is immutable, so every copy of an image shares it:
+	// a mutator replaces the record on the image it is called for. Reading the
+	// source nil-safe keeps a detached copy of a zero node zero.
 	nodeCopy := &Node{
-		Database:                   node.Database,
-		embeddingOwner:             node.embeddingOwner,
-		embeddingOwnerID:           node.embeddingOwnerID,
-		ID:                         node.ID,
-		embeddingRevision:          node.embeddingRevision,
-		embeddingAttempt:           node.embeddingAttempt,
-		embeddingPublication:       node.embeddingPublication,
-		Labels:                     make([]string, 0, len(node.Labels)),
-		CreatedAt:                  node.CreatedAt,
-		UpdatedAt:                  node.UpdatedAt,
-		EmbeddingsStoredSeparately: node.EmbeddingsStoredSeparately,
-		VisibilitySuppressed:       node.VisibilitySuppressed,
+		runtime: node.runtime,
+		ID:      node.ID,
+		Labels:  make([]string, 0, len(node.Labels)),
 	}
+	nodeCopy.CreatedAt = node.CreatedAt
+	nodeCopy.UpdatedAt = node.UpdatedAt
 	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
 
 	if node.Properties != nil {

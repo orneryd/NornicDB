@@ -72,7 +72,11 @@ func EntityElementID(ctx Context, value interface{}) (interface{}, error) {
 		}
 		if resolver, ok := ctx.Graphs.(interface{ EntityElementIDDatabase(string, string) string }); ok {
 			copy := *entity
-			copy.Database = resolver.EntityElementIDDatabase(entity.Database, ctx.Database)
+			{
+				metadata := copy.RuntimeMetadata()
+				metadata.Database = resolver.EntityElementIDDatabase(entity.RuntimeMetadata().Database, ctx.Database)
+				copy.SetRuntimeMetadata(metadata)
+			}
 			return copy.ElementID(ctx.Database), nil
 		}
 		return entity.ElementID(ctx.Database), nil

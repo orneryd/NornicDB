@@ -278,7 +278,9 @@ func TestManagedUsageLazyCountThenByteUpgradeIncludesStoredVectorsAndHiddenEntit
 		vector[i] = float32(i%97) / 97
 	}
 	for _, id := range []storage.NodeID{"test:a", "test:b", "test:hidden"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id, VisibilitySuppressed: id == "test:hidden", ChunkEmbeddings: [][]float32{vector}})
+		node := &storage.Node{ID: id, ChunkEmbeddings: [][]float32{vector}}
+		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{VisibilitySuppressed: id == "test:hidden"})
+		_, err = engine.CreateNode(node)
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "test:hidden-edge", StartNode: "test:a", EndNode: "test:b", Type: "LINK", VisibilitySuppressed: true}))
@@ -303,6 +305,6 @@ func TestManagedUsageLazyCountThenByteUpgradeIncludesStoredVectorsAndHiddenEntit
 	require.Greater(t, info.nodeSize, int64(3*len(vector)*4))
 	hidden, err := engine.GetStoredNode("test:hidden")
 	require.NoError(t, err)
-	require.True(t, hidden.VisibilitySuppressed)
+	require.True(t, hidden.RuntimeMetadata().VisibilitySuppressed)
 	require.Equal(t, vector, hidden.ChunkEmbeddings[0])
 }

@@ -364,11 +364,11 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		node = existingNode
 	} else {
 		node = &storage.Node{
-			Database:   storage.DatabaseOf(store),
 			ID:         storage.NodeID(e.generateID()),
 			Labels:     labels,
 			Properties: matchProps,
 		}
+		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: storage.DatabaseOf(store)})
 		if err := validatePropertyValues(node.Properties); err != nil {
 			return nil, err
 		}

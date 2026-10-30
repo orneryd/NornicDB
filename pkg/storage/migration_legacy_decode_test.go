@@ -104,7 +104,7 @@ func TestLegacyDecode_NewFieldsDefaultToZero(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if node.VisibilitySuppressed {
+	if node.RuntimeMetadata().VisibilitySuppressed {
 		t.Error("expected VisibilitySuppressed=false on old data")
 	}
 }

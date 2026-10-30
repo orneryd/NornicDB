@@ -41,7 +41,7 @@ func TestReplicationSnapshotRoundTripsStoredImages(t *testing.T) {
 	require.Equal(t, wantNode.Properties, gotNode.Properties)
 	require.Equal(t, wantNode.NamedEmbeddings, gotNode.NamedEmbeddings)
 	require.Equal(t, wantNode.ChunkEmbeddings, gotNode.ChunkEmbeddings)
-	require.Equal(t, wantNode.VisibilitySuppressed, gotNode.VisibilitySuppressed)
+	require.Equal(t, wantNode.RuntimeMetadata().VisibilitySuppressed, gotNode.RuntimeMetadata().VisibilitySuppressed)
 	wantEdge, err := source.GetEdge(edge.ID)
 	require.NoError(t, err)
 	gotEdge, err := target.GetEdge(edge.ID)
@@ -59,7 +59,7 @@ type snapshotPayload = storage.ReplicationSnapshot
 // []float32, bytes, a nested map, time.Time, named and chunked embeddings, and
 // the visibility-suppression flag. All values are bounded literals.
 func transportContractNode(createdAt, updatedAt time.Time) *storage.Node {
-	return &storage.Node{
+	node := &storage.Node{
 		ID:     storage.NodeID("test:contract-node-1"),
 		Labels: []string{"Doc", "Chunk"},
 		Properties: map[string]any{
@@ -71,12 +71,13 @@ func transportContractNode(createdAt, updatedAt time.Time) *storage.Node {
 			"nested": map[string]any{"inner": []any{"x", int64(7), true}},
 			"when":   createdAt.Add(2 * time.Second),
 		},
-		CreatedAt:            createdAt,
-		UpdatedAt:            updatedAt,
-		NamedEmbeddings:      map[string][]float32{"title": {0.25, -0.5}, "body": {1}},
-		ChunkEmbeddings:      [][]float32{{0.125, 0.25}, {-0.75}},
-		VisibilitySuppressed: true,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+		NamedEmbeddings: map[string][]float32{"title": {0.25, -0.5}, "body": {1}},
+		ChunkEmbeddings: [][]float32{{0.125, 0.25}, {-0.75}},
 	}
+	node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{VisibilitySuppressed: true})
+	return node
 }
 
 // transportContractEdge builds the stored edge paired with transportContractNode.
@@ -97,20 +98,69 @@ func transportContractEdge(createdAt, updatedAt time.Time) *storage.Edge {
 	}
 }
 
-// gobSnapshotBaseline returns the snapshot value the gob codec produced,
-// established here by gob-encoding and gob-decoding the same fixture. Gob only
-// carries exported fields, so the embedded, unexported Node and Edge fields
-// (such as Node.EmbeddingsStoredSeparately) decode as their zero value; taking
-// the expectation from this round trip keeps the comparison to historical
-// behavior rather than to the fixture literal.
+// historicalGobNode freezes the exported node fields of the previous gob
+// transport. It must not track changes to the current runtime Go API.
+type historicalGobNode struct {
+	Database                   string
+	ID                         storage.NodeID
+	Labels                     []string
+	Properties                 map[string]any
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	NamedEmbeddings            map[string][]float32
+	ChunkEmbeddings            [][]float32
+	EmbedMeta                  map[string]any
+	EmbeddingsStoredSeparately bool
+	VisibilitySuppressed       bool
+}
+
+// gobSnapshotBaseline retains the actual historical gob field contract and
+// its dynamic-value decoding, independently of the current in-memory Node.
+type historicalSnapshot struct {
+	WALPosition uint64
+	Nodes       []*historicalGobNode
+	Edges       []*storage.Edge
+}
+
+func historicalGobSnapshotBytes(t *testing.T, fixture snapshotPayload) []byte {
+	t.Helper()
+	historical := historicalSnapshot{WALPosition: fixture.WALPosition, Edges: fixture.Edges}
+	if fixture.Nodes != nil {
+		historical.Nodes = make([]*historicalGobNode, len(fixture.Nodes))
+	}
+	for i, node := range fixture.Nodes {
+		if node == nil {
+			continue
+		}
+		metadata := node.RuntimeMetadata()
+		historical.Nodes[i] = &historicalGobNode{Database: metadata.Database, ID: node.ID,
+			Labels: node.Labels, Properties: node.Properties, CreatedAt: node.CreatedAt, UpdatedAt: node.UpdatedAt,
+			NamedEmbeddings: node.NamedEmbeddings, ChunkEmbeddings: node.ChunkEmbeddings, EmbedMeta: node.EmbedMeta,
+			EmbeddingsStoredSeparately: metadata.EmbeddingsStoredSeparately, VisibilitySuppressed: metadata.VisibilitySuppressed}
+	}
+	var encoded bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&encoded).Encode(historical))
+	return encoded.Bytes()
+}
+
 func gobSnapshotBaseline(t *testing.T, fixture snapshotPayload) snapshotPayload {
 	t.Helper()
-
-	var encoded bytes.Buffer
-	require.NoError(t, gob.NewEncoder(&encoded).Encode(fixture))
-
-	var baseline snapshotPayload
-	require.NoError(t, gob.NewDecoder(bytes.NewReader(encoded.Bytes())).Decode(&baseline))
+	var decoded historicalSnapshot
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(historicalGobSnapshotBytes(t, fixture))).Decode(&decoded))
+	baseline := snapshotPayload{WALPosition: decoded.WALPosition, Edges: decoded.Edges}
+	if decoded.Nodes != nil {
+		baseline.Nodes = make([]*storage.Node, len(decoded.Nodes))
+	}
+	for i, node := range decoded.Nodes {
+		if node == nil {
+			continue
+		}
+		baseline.Nodes[i] = &storage.Node{ID: node.ID, Labels: node.Labels, Properties: node.Properties,
+			CreatedAt: node.CreatedAt, UpdatedAt: node.UpdatedAt, NamedEmbeddings: node.NamedEmbeddings,
+			ChunkEmbeddings: node.ChunkEmbeddings, EmbedMeta: node.EmbedMeta}
+		baseline.Nodes[i].SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: node.Database,
+			EmbeddingsStoredSeparately: node.EmbeddingsStoredSeparately, VisibilitySuppressed: node.VisibilitySuppressed})
+	}
 	return baseline
 }
 
@@ -199,8 +249,8 @@ func TestCommandPayloadEncodesOneMessagePackValuePreservingGobDecodedSnapshot(t 
 	require.True(t, wantNode.UpdatedAt.Equal(gotNode.UpdatedAt), "node UpdatedAt: want %v, got %v", wantNode.UpdatedAt, gotNode.UpdatedAt)
 	require.Equal(t, wantNode.NamedEmbeddings, gotNode.NamedEmbeddings, "named embeddings must survive the transport")
 	require.Equal(t, wantNode.ChunkEmbeddings, gotNode.ChunkEmbeddings, "chunk embeddings must survive the transport")
-	require.Equal(t, wantNode.VisibilitySuppressed, gotNode.VisibilitySuppressed, "node visibility suppression must survive the transport")
-	require.Equal(t, wantNode.EmbeddingsStoredSeparately, gotNode.EmbeddingsStoredSeparately)
+	require.Equal(t, wantNode.RuntimeMetadata().VisibilitySuppressed, gotNode.RuntimeMetadata().VisibilitySuppressed, "node visibility suppression must survive the transport")
+	require.Equal(t, wantNode.RuntimeMetadata().EmbeddingsStoredSeparately, gotNode.RuntimeMetadata().EmbeddingsStoredSeparately)
 	require.Equal(t, wantNode.EmbedMeta, gotNode.EmbedMeta)
 	require.Equal(t, wantNode.Properties, gotNode.Properties, "property values must match the gob-decoded baseline")
 	require.Len(t, gotNode.Properties, len(wantNode.Properties))

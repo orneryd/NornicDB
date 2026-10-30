@@ -451,7 +451,7 @@ func searchPassageFromResult(result SearchResult) SearchPassage {
 }
 
 func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOptions, decayFilter NodeDecayFilterFunc, authorizeNode NodeAuthorizationFunc) (bool, error) {
-	if node == nil || node.VisibilitySuppressed || (decayFilter != nil && decayFilter(string(node.ID))) {
+	if node == nil || node.RuntimeMetadata().VisibilitySuppressed || (decayFilter != nil && decayFilter(string(node.ID))) {
 		return false, nil
 	}
 	if authorizeNode != nil {

@@ -75,7 +75,8 @@ func TestManagedUsageConcurrentReservationsDoNotDoubleSpend(t *testing.T) {
 }
 
 func TestStoredChangesUsagePreservesStoredImages(t *testing.T) {
-	before := &storage.Node{ID: "test:n", Database: "query-provenance", Properties: map[string]any{"v": int64(1)}, ChunkEmbeddings: [][]float32{{1, 2}}, EmbedMeta: map[string]any{"model": "m"}}
+	before := &storage.Node{ID: "test:n", Properties: map[string]any{"v": int64(1)}, ChunkEmbeddings: [][]float32{{1, 2}}, EmbedMeta: map[string]any{"model": "m"}}
+	before.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: "query-provenance"})
 	after := storage.CopyNode(before)
 	after.Properties["v"] = "larger stored value"
 	edge := &storage.Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "LINK"}
@@ -101,7 +102,7 @@ func TestStoredChangesUsagePreservesStoredImages(t *testing.T) {
 	require.Equal(t, storage.NodeID("test:n"), after.ID)
 	require.Equal(t, storage.NodeID("test:n"), edge.StartNode)
 	require.Equal(t, storage.NodeID("test:m"), edge.EndNode)
-	require.Equal(t, "query-provenance", before.Database)
+	require.Equal(t, "query-provenance", before.RuntimeMetadata().Database)
 	require.Equal(t, [][]float32{{1, 2}}, before.ChunkEmbeddings)
 	// Count-only admission must not invoke the byte codec at all.
 	after.Properties["unsupported"] = make(chan int)

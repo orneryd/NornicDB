@@ -30,14 +30,15 @@ func frozenNodeWire(node *Node) *frozenTransportNode {
 	if node == nil {
 		return nil
 	}
+	metadata := node.RuntimeMetadata()
 	return &frozenTransportNode{
-		Database: node.Database, ID: node.ID, Labels: node.Labels,
+		Database: metadata.Database, ID: node.ID, Labels: node.Labels,
 		Properties: transportPropertyMap(node.Properties),
 		CreatedAt:  transportTime(node.CreatedAt), UpdatedAt: transportTime(node.UpdatedAt),
 		NamedEmbeddings: node.NamedEmbeddings, ChunkEmbeddings: node.ChunkEmbeddings,
 		EmbedMeta:                  transportPropertyMap(node.EmbedMeta),
-		EmbeddingsStoredSeparately: node.EmbeddingsStoredSeparately,
-		VisibilitySuppressed:       node.VisibilitySuppressed,
+		EmbeddingsStoredSeparately: metadata.EmbeddingsStoredSeparately,
+		VisibilitySuppressed:       metadata.VisibilitySuppressed,
 	}
 }
 
@@ -67,14 +68,14 @@ func TestTransportNodeWirePreservesCurrentFormat(t *testing.T) {
 	for _, tc := range values {
 		t.Run(tc.name, func(t *testing.T) {
 			node := &Node{
-				Database: "provenance", ID: "test:wire", Labels: []string{"Doc", "Item"},
-				Properties:                 map[string]any{"p": tc.value},
-				CreatedAt:                  time.Date(2024, 3, 9, 23, 30, 45, 123456789, time.FixedZone("", -5*3600)),
-				UpdatedAt:                  time.Date(2024, 11, 3, 1, 30, 15, 987654321, time.FixedZone("", 5*3600+45*60)),
-				NamedEmbeddings:            map[string][]float32{"v": {0.5, -0.5}},
-				ChunkEmbeddings:            [][]float32{{1, 0}, nil, {}},
-				EmbedMeta:                  map[string]any{"count": int(2)},
-				EmbeddingsStoredSeparately: true, VisibilitySuppressed: true,
+				runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{Database: "provenance", EmbeddingsStoredSeparately: true, VisibilitySuppressed: true}},
+				ID:      "test:wire", Labels: []string{"Doc", "Item"},
+				Properties:      map[string]any{"p": tc.value},
+				CreatedAt:       time.Date(2024, 3, 9, 23, 30, 45, 123456789, time.FixedZone("", -5*3600)),
+				UpdatedAt:       time.Date(2024, 11, 3, 1, 30, 15, 987654321, time.FixedZone("", 5*3600+45*60)),
+				NamedEmbeddings: map[string][]float32{"v": {0.5, -0.5}},
+				ChunkEmbeddings: [][]float32{{1, 0}, nil, {}},
+				EmbedMeta:       map[string]any{"count": int(2)},
 			}
 			previous, err := EncodeCommandPayload(frozenNodeWire(node))
 			require.NoError(t, err)

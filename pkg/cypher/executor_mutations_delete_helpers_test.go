@@ -86,7 +86,8 @@ CREATE (:Person {id:'p1', team:'red'}),
 
 	res := &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
 	// A retained native value carries the source of this fixture's store.
-	node := &storage.Node{ID: "n1", Database: "delete_helpers_cov"}
+	node := &storage.Node{ID: "n1"}
+	node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: "delete_helpers_cov"})
 	input := &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{node}, {node}}}
 	exec.applyDeleteReturnProjection(res, "MATCH (n) DELETE n RETURN count(*), count(n), 42 AS literal", "n", deleteProjectionInfo{ctx: ctx, input: input})
 	require.Equal(t, []string{"count(*)", "count(n)", "literal"}, res.Columns)

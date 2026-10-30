@@ -146,7 +146,7 @@ func TestEncodeNodeV1Body_LargeEmbeddingsAreExternalized(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, node.ID, decoded.ID)
 	require.Equal(t, node.Labels, decoded.Labels)
-	require.True(t, decoded.EmbeddingsStoredSeparately)
+	require.True(t, decoded.RuntimeMetadata().EmbeddingsStoredSeparately)
 	require.Nil(t, decoded.ChunkEmbeddings)
 	require.EqualValues(t, len(node.ChunkEmbeddings), decoded.EmbedMeta["chunk_count"])
 }

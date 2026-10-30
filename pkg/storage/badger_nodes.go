@@ -272,7 +272,10 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 			}
 			node, err = decode(txn, item)
 			if node != nil {
-				node.embeddingRevision = EmbeddingBodyRevision{physical: item.Version()}
+				state := node.runtimeState()
+				state.embeddingRevision = EmbeddingBodyRevision{physical: item.Version()}
+				state.embeddingOwner, state.embeddingOwnerID = b, id
+				node.setRuntimeState(state)
 			}
 			return err
 		})
@@ -289,7 +292,9 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 		node = hitCopy(node)
 	}
 	if loaded || hitCopy != nil {
-		node.embeddingOwner, node.embeddingOwnerID = b, id
+		state := node.runtimeState()
+		state.embeddingOwner, state.embeddingOwnerID = b, id
+		node.setRuntimeState(state)
 	}
 	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
