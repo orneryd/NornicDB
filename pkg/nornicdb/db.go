@@ -202,7 +202,7 @@ type DB struct {
 	searchServiceCreationMu sync.Mutex
 	searchConstruction      *lifetime.WorkLifetime   // searchServicesMu; the current constructor epoch
 	searchRetirement        *lifetime.OnceCompletion // searchServicesMu; the running reset, nil otherwise
-	searchReranker          search.Reranker // Optional Stage-2 reranker for hybrid search
+	searchReranker          search.Reranker          // Optional Stage-2 reranker for hybrid search
 
 	// Per-database inference engines (topology, Kalman, etc.).
 	inferenceServicesMu sync.RWMutex

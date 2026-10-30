@@ -429,9 +429,9 @@ func TestClose(t *testing.T) {
 			embedQueue: NewEmbedWorker(nil, searchEngine, &EmbedWorkerConfig{
 				DeferWorkerStart: true,
 			}),
-			clusterTicker:     time.NewTicker(time.Hour),
-			buildCtx:          ctx,
-			buildCancel:       cancel,
+			clusterTicker: time.NewTicker(time.Hour),
+			buildCtx:      ctx,
+			buildCancel:   cancel,
 		}
 		t.Cleanup(func() {
 			// Close already calls Close() on this queue; this is just defensive.

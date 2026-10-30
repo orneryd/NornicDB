@@ -69,7 +69,7 @@ func TestDB_EmbedderOwnershipClosesAfterUsersAndReturnsError(t *testing.T) {
 	closeErr := errors.New("model release failed")
 	e := &orderedClosingEmbedder{err: closeErr, check: func() {
 		require.True(t, joined.Load(), "initialization must join before releasing models")
-		require.True(t, db.GetEmbedQueue().closed.Load(), "queue must stop before releasing models")
+		require.True(t, db.GetEmbedQueue().work.Closing(), "queue must stop before releasing models")
 	}}
 	e.dims = 4
 	require.True(t, db.SetEmbedder(e))

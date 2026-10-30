@@ -179,13 +179,13 @@ func (it *convertingRowIterator) Close() error {
 }
 
 type prefetchRowIterator struct {
-	ctx             context.Context
-	work            *lifecycle.WorkLifetime
-	base            RowIterator
-	rows            chan []interface{}
-	nativeClose     lifecycle.OnceCompletion // the base's one close: EOF, Close or cancellation
-	stopSignal      func() bool
-	cur             []interface{}
+	ctx         context.Context
+	work        *lifecycle.WorkLifetime
+	base        RowIterator
+	rows        chan []interface{}
+	nativeClose lifecycle.OnceCompletion // the base's one close: EOF, Close or cancellation
+	stopSignal  func() bool
+	cur         []interface{}
 }
 
 type concatRowIterator struct {

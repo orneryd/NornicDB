@@ -498,7 +498,6 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	return svc, nil
 }
 
-
 func (db *DB) getOrCreateSearchContinuationRegistry() (*resultstream.Registry, error) {
 	db.searchContinuationMu.Lock()
 	defer db.searchContinuationMu.Unlock()
