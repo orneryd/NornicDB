@@ -41,3 +41,18 @@ func TestHTTPWALTerminalOutcomeValueViews(t *testing.T) {
 		}
 	}
 }
+
+// The 5b9c review's construction through HTTP (Claude, 30 Oct 2026).
+func TestHTTPWALTerminalEnclosedCommittedOutcome(t *testing.T) {
+	_, _, request := walHTTPServer(t)
+	for _, enclosingFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("enclosing_first=%v", enclosingFirst), func(t *testing.T) {
+			flow := walterminal.NewEnclosedOutcomeFlow(t, enclosingFirst)
+			status, response := request(t, http.MethodPost, "/db/nornic/tx/commit", walHTTPStatements(flow.Query))
+			flow.RequireNative(t)
+			require.Equal(t, http.StatusOK, status)
+			require.NotEmpty(t, response.Errors)
+			walterminal.RequireEnclosedView(t, response.Errors[0].Code, walHTTPMessages(response))
+		})
+	}
+}

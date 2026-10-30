@@ -284,3 +284,71 @@ func NewMultipleOutcomeFlow(t testing.TB, engines []*Engine, options ...Multiple
 	})
 	return f
 }
+
+// EnclosedOutcomeFlow is the 5b9c review's construction through public
+// consumers (Claude, 30 Oct 2026). An inner count-only aggregate has an
+// error-free committed child and a transient aborted child whose WAL fails.
+// Its retained outcome is the primary of an enclosing statement whose own
+// abort record fails, and an outer count-only aggregate composes that with
+// another transient aborted child whose WAL fails, in the given order.
+type EnclosedOutcomeFlow struct {
+	Query     string
+	Committed *Engine   // the error-free committed child's store
+	Empty     []*Engine // every other store: nothing stays stored
+	Primaries []error   // both aborted children's primaries
+}
+
+func NewEnclosedOutcomeFlow(t testing.TB, enclosingFirst bool) *EnclosedOutcomeFlow {
+	t.Helper()
+	committed, aborted, enclosing, other := New(t), New(t), New(t), New(t)
+	f := &EnclosedOutcomeFlow{Committed: committed, Empty: []*Engine{aborted, enclosing, other}}
+	inner := NewMultipleOutcomeFlow(t, []*Engine{committed, aborted}, MultipleOutcomeOptions{
+		Kinds: []string{"commit", "abort_memory"}, Closed: []bool{false, true},
+		ObservePrimary: func(primary error) {
+			if primary != nil {
+				f.Primaries = append(f.Primaries, primary)
+			}
+		},
+	})
+	innerExec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(New(t), "nornic"))
+	step := registerFlowProcedure(t, false, func(ctx context.Context, _ *cypher.StorageExecutor, _ string, _ []interface{}) (*cypher.ExecuteResult, error) {
+		_, err := innerExec.Execute(ctx, inner.Query, nil)
+		if closeErr := enclosing.WAL.Close(); closeErr != nil {
+			return nil, closeErr
+		}
+		return nil, err
+	})
+	sibling := NewOutcomeFlow(t, other, "implicit", "abort_memory", true)
+	f.Primaries = append(f.Primaries, sibling.Primary)
+	children := []flowCallback{
+		flowCallbackFunc(func(ctx context.Context) (*cypher.ExecuteResult, error) {
+			return cypher.NewStorageExecutor(storage.NewNamespacedEngine(other, "nornic")).Execute(ctx, sibling.Query, nil)
+		}),
+		flowCallbackFunc(func(ctx context.Context) (*cypher.ExecuteResult, error) {
+			return cypher.NewStorageExecutor(storage.NewNamespacedEngine(enclosing, "nornic")).Execute(ctx, step, nil)
+		}),
+	}
+	if enclosingFirst {
+		children[0], children[1] = children[1], children[0]
+	}
+	f.Query = registerFlowProcedure(t, true, func(ctx context.Context, _ *cypher.StorageExecutor, _ string, _ []interface{}) (*cypher.ExecuteResult, error) {
+		for _, child := range children {
+			_, _ = child.Run(ctx) // a count-only consumer discards child returns
+		}
+		return flowValue(int64(len(children))), nil
+	})
+	return f
+}
+
+// RequireNative checks native truth first: only the committed child stored work.
+func (f *EnclosedOutcomeFlow) RequireNative(t testing.TB) {
+	t.Helper()
+	if got := Count(t, f.Committed); got != 1 {
+		t.Fatalf("committed child stored %d nodes, want 1", got)
+	}
+	for i, engine := range f.Empty {
+		if got := Count(t, engine); got != 0 {
+			t.Fatalf("store %d stored %d nodes, want 0", i, got)
+		}
+	}
+}

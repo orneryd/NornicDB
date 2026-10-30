@@ -49,3 +49,23 @@ func TestWALTerminalOutcomeValueViews(t *testing.T) {
 		}
 	}
 }
+
+// The 5b9c review's construction through Cypher (Claude, 30 Oct 2026): an
+// error-free committed child's outcome becomes the primary of a failed
+// enclosing abort, then is composed with another transient aborted child.
+func TestWALTerminalEnclosedCommittedOutcome(t *testing.T) {
+	for _, enclosingFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("enclosing_first=%v", enclosingFirst), func(t *testing.T) {
+			flow := walterminal.NewEnclosedOutcomeFlow(t, enclosingFirst)
+			exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(walterminal.New(t), "nornic"))
+			_, err := exec.Execute(context.Background(), flow.Query, nil)
+			flow.RequireNative(t)
+			require.Error(t, err)
+			for _, primary := range flow.Primaries {
+				require.ErrorIs(t, err, primary)
+			}
+			code, message := nornicerrors.Neo4jStatus(err)
+			walterminal.RequireEnclosedView(t, code, message)
+		})
+	}
+}

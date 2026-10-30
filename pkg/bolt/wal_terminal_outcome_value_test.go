@@ -39,3 +39,18 @@ func TestBoltWALTerminalOutcomeValueViews(t *testing.T) {
 		}
 	}
 }
+
+// The 5b9c review's construction through Bolt (Claude, 30 Oct 2026).
+func TestBoltWALTerminalEnclosedCommittedOutcome(t *testing.T) {
+	for _, enclosingFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("enclosing_first=%v", enclosingFirst), func(t *testing.T) {
+			flow := walterminal.NewEnclosedOutcomeFlow(t, enclosingFirst)
+			conn := openBoltTestConn(t, startTransactionLifecycleServerWithStore(t, storage.NewNamespacedEngine(walterminal.New(t), "nornic")))
+			require.NoError(t, SendRun(t, conn, flow.Query, nil, nil))
+			code, message, err := AssertFailure(t, conn)
+			require.NoError(t, err)
+			flow.RequireNative(t)
+			walterminal.RequireEnclosedView(t, code, message)
+		})
+	}
+}

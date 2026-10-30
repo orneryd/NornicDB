@@ -1,9 +1,11 @@
 // Author: Codex,NOR-180 consumer-class regressions,29October2026; the
-// driver retry-decision oracle, and the generated composition population with
-// per-child WAL and an oracle from native truth, by Claude, 30 October 2026.
+// driver retry-decision oracle, the generated composition population with
+// per-child WAL and an oracle from native truth, the enclosed construction and
+// the client-visible capture, by Claude, 30 October 2026.
 package walterminal
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -166,8 +168,19 @@ func (c *OutcomeContract) RequireIdentity(t testing.TB, err error) {
 	}
 }
 
+// CaptureOutcome logs one client-visible outcome (status code and message)
+// with its native committed truth, so a run on another head can be compared
+// cell by cell (Claude, 30 Oct 2026).
+func CaptureOutcome(t testing.TB, code, message string, committed bool) {
+	t.Helper()
+	line, err := json.Marshal(map[string]any{"test": t.Name(), "code": code, "message": message, "committed": committed})
+	require.NoError(t, err)
+	t.Logf("NOR180_OUTCOME %s", line)
+}
+
 func (c *OutcomeContract) RequireView(t testing.TB, code, message string) {
 	t.Helper()
+	CaptureOutcome(t, code, message, c.Committed())
 	codes := map[string]int{}
 	messages := map[string]int{}
 	commits, aborts, first := 0, 0, ""
@@ -218,4 +231,19 @@ func (c *OutcomeContract) RequireView(t testing.TB, code, message string) {
 	if aborts+commits != 0 {
 		require.Contains(t, message, storage.ErrWALClosed.Error())
 	}
+}
+
+// RequireEnclosedView checks the client-visible outcome of an
+// EnclosedOutcomeFlow: it contains committed work, so the pinned driver never
+// retries it; both aborted children keep their own status, and every failed
+// abort record (the inner child's, the enclosing statement's and the
+// sibling's) is reported.
+func RequireEnclosedView(t testing.TB, code, message string) {
+	t.Helper()
+	CaptureOutcome(t, code, message, true)
+	memory, _ := ContractStatus("abort_memory")
+	require.False(t, DriverRetries(code), "a driver would retry committed work on %s", code)
+	require.Equal(t, nornicerrors.TransactionCommitFailed, code)
+	require.GreaterOrEqual(t, strings.Count(message, memory), 2, "each aborted child's own classification")
+	require.Equal(t, 3, strings.Count(message, "failed to write WAL tx abort"))
 }
