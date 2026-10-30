@@ -419,24 +419,6 @@
       "input.Unmarshal": 1
     }
   },
-  "pkg/mcp/server.go:Server.handleCallTool": {
-    "read_domain": "input",
-    "write_domain": "property",
-    "contract": "External MCP tool arguments and existing tool results, classified separately by direction.",
-    "calls": {
-      "input.Unmarshal": 1,
-      "property.Marshal": 1
-    }
-  },
-  "pkg/mcp/server.go:Server.handleMCP": {
-    "read_domain": "input",
-    "write_domain": "property",
-    "contract": "External MCP tool arguments and existing tool results, classified separately by direction.",
-    "calls": {
-      "input.Unmarshal": 1,
-      "property.Marshal": 1
-    }
-  },
   "pkg/nornicdb/db_admin.go:DB.Backup": {
     "write_domain": "property",
     "contract": "New JSON backups use version 2.0 and exact PropertyJSON, preserving whole FLOAT kind and negative zero.",

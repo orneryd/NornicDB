@@ -24,7 +24,7 @@ contract, even where its former reader returned float64.
 | APOC graph export/import, `apoc/export`, `apoc/import`, `cypher.callApocImportJson`; generic APOC JSON transforms | External JSON documents and exports; old raw JSON readers | Import / external | Preserve the NOR-68 exact-token contract. Do not impose internal-state float64 decoding on unmarked documents. |
 | Retention archives / subject exports, `nornicdb.Open` archive callback / `ExportUserData` | Plain JSON documents; these changes affect writers only | Import | New writers retain number kind. Any subsequent document import uses the import contract above. |
 | Remote HTTP results and entities, `doRequestToURL`, `decodeRemoteHTTPRowValue`, `remoteHTTPRESTEntity` | Former remote decoder already used `UseNumber` and integral-token int64 decoding; HTTP/Bolt are external value protocols | a* / external | Keep exact persisted-property result decoding and typed temporal/spatial/graph reconstruction. External input follows its separately registered input domain. |
-| HTTP/MCP/GraphQL/tool/LLM input, load.json, explicit fromJson, migration HTTP reads, JSON redaction | External documents/protocol values, not internal persisted replay state | External | Keep their approved input/property domain contracts. Redaction retains number text using `json.Number`; it does not select an internal-state format. |
+| HTTP/GraphQL/tool/LLM input (MCP keeps release behaviour; 1.5.0 MCP process), load.json, explicit fromJson, migration HTTP reads, JSON redaction | External documents/protocol values, not internal persisted replay state | External | Keep their approved input/property domain contracts. Redaction retains number text using `json.Number`; it does not select an internal-state format. |
 
 For legacy JSON backup/export imports, the old token `1152921504606847000`
 restores as INTEGER `1152921504606847000`. An original whole FLOAT
@@ -49,9 +49,7 @@ The domain-reader functions (excluding the shared codec owners) are:
 - `pkg/cypher`: `loadJsonFromURL`, `loadJsonFromFile`, `callApocImportJson`,
   `callDbInfer`, `apocConvertFromJSON`.
 - `pkg/graphql/models`: `JSON.UnmarshalGQL`.
-- `pkg/heimdall`: `parseActionEnvelope`, `runAgenticLoopWithTools`,
-  `tryParseActionResponse`.
-- `pkg/mcp`: `handleMCP`, `handleCallTool`.
+- `pkg/heimdall`: `parseActionEnvelope`, `tryParseActionResponse`.
 - `pkg/nornicdb`: `DB.Restore`.
 - `pkg/storage/entity_payload_codec.go`: `decodeCommandPayload`, `decodeNodePayload`, `decodeEdgePayload`; replication consumes these shared storage owners.
 - `pkg/server`: `decodeTransactionRequest`, `readJSON`.

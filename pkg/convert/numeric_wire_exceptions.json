@@ -315,9 +315,17 @@
     "reason": "Typed signed key/audit byte envelope, preserving its protocol/hash bytes; not graph property JSON.",
     "sha256": "77b2743fdc5e964a7f9aaf8ed9aa5a0b4fdd8b0dd5761c1a8c1aee36e32e82d4"
   },
+  "pkg/mcp/server.go:Server.handleCallTool": {
+    "reason": "Author: #1665 implementation lane (Claude Opus 5.5). MCP JSON-RPC and tool-call path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2: anything MCP leaves #1665, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON for arguments, PropertyJSON for results) once the 1.5.0 MCP process adopts it.",
+    "sha256": "c047717851c999c5ac6bf5093275f687a2276b7360226cbe9b63c8ab4334f85c"
+  },
   "pkg/mcp/server.go:Server.handleInitialize": {
-    "reason": "Author: #1665 implementation lane (Codex). MCP initialization decodes the typed protocol/version envelope. The only reconciliation delta is the response adapter; no graph-property input decoder is used here.",
-    "sha256": "b4ec9a394d0f3cbd850ca79eb74a6de6432b828852fe4c1c56f0ddd84cfe7cf9"
+    "reason": "Author: #1665 implementation lane (Codex; release body restored by Claude Opus 5.5). MCP initialization decodes the typed protocol/version envelope; no graph-property input decoder is used here. Release behaviour (MCP routed to the 1.5.0 process).",
+    "sha256": "d3d8f6ce1b9311c28da415aae199611e7fa4f168f1c008418f5e717ac1c117c6"
+  },
+  "pkg/mcp/server.go:Server.handleMCP": {
+    "reason": "Author: #1665 implementation lane (Claude Opus 5.5). MCP JSON-RPC and tool-call path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2: anything MCP leaves #1665, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON for arguments, PropertyJSON for results) once the 1.5.0 MCP process adopts it.",
+    "sha256": "5ff5d015ff5bbd97d92145b069793fb7e17c1928a5abc46f32d77a3f6b1544be"
   },
   "pkg/mcp/tools.go:getDiscoverTool": {
     "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",

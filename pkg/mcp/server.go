@@ -51,6 +51,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/localizationboundary"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
 	"net/http"
 	"sort"
@@ -60,11 +61,9 @@ import (
 
 	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"github.com/orneryd/nornicdb/pkg/auth"
-	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -510,7 +509,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := valueconvert.CypherInputJSON.Unmarshal(body, &req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		s.writeLocalizedJSONRPCError(w, r, nil, -32700, localization.MCPParseError(), err.Error())
 		return
 	}
@@ -543,7 +542,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			// Wrap result in MCP content format (required by MCP spec)
-			resultJSON, _ := valueconvert.PropertyJSON.Marshal(toolResult)
+			resultJSON, _ := json.Marshal(toolResult)
 			result = CallToolResponse{
 				Content: []Content{{Type: "text", Text: string(resultJSON)}},
 			}
@@ -585,7 +584,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request) {
 		"clientInfo":      req.ClientInfo,
 	})
 
-	httpresponse.WritePropertyJSON(w, http.StatusOK, result)
+	httpresponse.WriteJSON(w, http.StatusOK, result)
 }
 
 // handleListTools returns the list of available tools.
@@ -597,7 +596,7 @@ func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	result := s.doListTools(ctx)
-	httpresponse.WritePropertyJSON(w, http.StatusOK, result)
+	httpresponse.WriteJSON(w, http.StatusOK, result)
 }
 func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -611,7 +610,7 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.RequestBodyReadFailed())
 		return
 	}
-	if err := valueconvert.CypherInputJSON.Unmarshal(body, &req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.MCPInvalidRequestBody())
 		return
 	}
@@ -626,7 +625,7 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		httpresponse.WritePropertyJSON(w, http.StatusOK, CallToolResponse{
+		httpresponse.WriteJSON(w, http.StatusOK, CallToolResponse{
 			Content: []Content{{Type: "text", Text: s.renderError(r.Context(), err)}},
 			IsError: true,
 		})
@@ -634,15 +633,15 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert result to JSON string
-	resultJSON, _ := valueconvert.PropertyJSON.Marshal(result)
-	httpresponse.WritePropertyJSON(w, http.StatusOK, CallToolResponse{
+	resultJSON, _ := json.Marshal(result)
+	httpresponse.WriteJSON(w, http.StatusOK, CallToolResponse{
 		Content: []Content{{Type: "text", Text: string(resultJSON)}},
 	})
 }
 
 // handleHealth returns server health status.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "healthy",
 		"uptime":  time.Since(s.started).String(),
 		"version": "1.0.0",
@@ -1978,7 +1977,7 @@ func (s *Server) validateAndConvertEmbedding(input interface{}) ([]float32, erro
 // =============================================================================
 
 func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
-	httpresponse.WritePropertyJSON(w, status, map[string]string{"error": message})
+	httpresponse.WriteJSON(w, status, map[string]string{"error": message})
 }
 
 func (s *Server) localizedHandler(next http.HandlerFunc) http.HandlerFunc {
@@ -2035,7 +2034,7 @@ func (s *Server) writeLocalizedJSONRPCError(w http.ResponseWriter, r *http.Reque
 
 // writeJSONRPCResponse owns the common version, ID and selected payload envelope.
 func (s *Server) writeJSONRPCResponse(w http.ResponseWriter, id interface{}, member string, payload interface{}) {
-	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      id,
 		member:    payload,
