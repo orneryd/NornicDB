@@ -290,10 +290,10 @@ func TestForeignBufferedWALNumericIDsUpdateKeepsDestinationIndexes(t *testing.T)
 	}))
 
 	entry := f.bufferedEdgeCommit(t, func(tx *BadgerTransaction) error {
-		return tx.UpdateEdge(&Edge{
+		return tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 			ID: movingID, StartNode: foreignStartNode, EndNode: foreignEndNode,
 			Type: newType, Properties: map[string]any{"v": "new"},
-		})
+		}})
 	})
 	f.closeSource(t)
 	f.replay(t, entry)

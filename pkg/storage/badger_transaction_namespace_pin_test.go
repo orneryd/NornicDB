@@ -101,7 +101,7 @@ func TestBadgerTransaction_NodeMutationCrossNamespaceRejected(t *testing.T) {
 		mutate func(*BadgerTransaction) error
 	}{
 		{"UpdateNode", func(tx *BadgerTransaction) error {
-			return tx.UpdateGraphNode(newPrefixedNode("tenant_b:n1", "L"), ClientNodeEdits)
+			return tx.UpdateGraphNode(NodeUpdateRequest{After: newPrefixedNode("tenant_b:n1", "L"), Policy: ClientNodeEdits})
 		}},
 		{"DeleteNode", func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(NodeID("tenant_b:n1"), CascadeEdges) }},
 	} {

@@ -188,7 +188,7 @@ func TestProcedurePrivilegeStoreReadsOnlyItsOwnNodes(t *testing.T) {
 	granted, err := system.GetNode(procedurePrivilegeNodeID(ProcedurePrivilege{Role: "editor", Procedure: "db.ping"}))
 	require.NoError(t, err)
 	granted.Properties["procedure"], granted.Properties["boosted"] = "*", true
-	require.NoError(t, system.UpdateNode(granted))
+	require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: granted}))
 
 	grants, err := store.List(ctx)
 	require.NoError(t, err)

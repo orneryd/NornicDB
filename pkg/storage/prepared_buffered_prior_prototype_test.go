@@ -20,7 +20,7 @@ func TestPreparedPriorSurvivesAcknowledgedBufferRetirement(t *testing.T) {
 	tx, err := b.BeginTransaction()
 	require.NoError(t, err)
 	defer tx.Rollback()
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:prior", Properties: map[string]any{"value": "new"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:prior", Properties: map[string]any{"value": "new"}}, Policy: ClientNodeEdits}))
 	// The canonical coherent-usage initializer drains before preparation. The
 	// transaction began after this ACK and must retain its actual prior image.
 	require.NoError(t, b.FlushWriteBehind())

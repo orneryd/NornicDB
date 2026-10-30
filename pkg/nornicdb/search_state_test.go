@@ -50,7 +50,7 @@ func searchConsumerConfigs() []searchConsumerConfig {
 				require.NoError(t, err)
 			case replication.CmdUpdateNode:
 				p := payload.(*storage.Node)
-				require.NoError(t, store.UpdateNode(p))
+				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: p}))
 			case replication.CmdDeleteNode:
 				require.NoError(t, store.DeleteNode(storage.NodeID(payload.(string))))
 			case replication.CmdCreateEdge:
@@ -217,7 +217,7 @@ func TestColdPersistedSearchStateIsReset(t *testing.T) {
 			node, err := tenant.GetNode("a")
 			require.NoError(t, err)
 			node.Properties["content"] = "laterword"
-			require.NoError(t, tenant.UpdateNode(node))
+			require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			settleQueuedRefreshes()
 			require.NoError(t, db.Close())
 

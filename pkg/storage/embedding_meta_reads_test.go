@@ -85,7 +85,7 @@ func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 	require.NoError(t, err)
 	stored.Properties["text"] = "changed"
 	stored.UpdatedAt = stored.UpdatedAt.Add(time.Second)
-	require.NoError(t, badgerEngine.UpdateNode(stored))
+	require.NoError(t, badgerEngine.UpdateNode(NodeUpdateRequest{After: stored}))
 	meta, err = badgerEngine.GetNodeEmbeddingMeta("nornic:doc")
 	require.NoError(t, err)
 	require.Empty(t, meta["chunk_texts"])

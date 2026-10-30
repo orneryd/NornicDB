@@ -40,7 +40,9 @@ func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetNamespace("test"))
-				update := func(node *Node) error { return tx.UpdateGraphNode(node, ClientNodeEdits) }
+				update := func(node *Node) error {
+					return tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
+				}
 
 				first := CopyNode(originalStored)
 				first.ChunkEmbeddings = [][]float32{vector(1), vector(2)}
@@ -117,7 +119,7 @@ func BenchmarkTransactionNodeUpdateWithoutVectors(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := tx.UpdateGraphNode(&Node{ID: "test:bench-node", Labels: []string{"L"}, Properties: map[string]any{"x": i}}, ClientNodeEdits); err != nil {
+		if err := tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:bench-node", Labels: []string{"L"}, Properties: map[string]any{"x": i}}, Policy: ClientNodeEdits}); err != nil {
 			b.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {

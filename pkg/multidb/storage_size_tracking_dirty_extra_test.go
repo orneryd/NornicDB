@@ -157,11 +157,13 @@ func (e *dirtyBranchEngine) WithEntityChange(op storage.Operation, apply func() 
 	}
 	return apply()
 }
-func (e *dirtyBranchEngine) UpdateNode(node *storage.Node) error {
-	return e.WithEntityChange(storage.Operation{Type: storage.OpUpdateNode, Node: node}, func() error { return e.Engine.UpdateNode(node) })
+func (e *dirtyBranchEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+	node := updateRequest.After
+	return e.WithEntityChange(storage.Operation{Type: storage.OpUpdateNode, Node: node}, func() error { return e.Engine.UpdateNode(updateRequest) })
 }
-func (e *dirtyBranchEngine) UpdateEdge(edge *storage.Edge) error {
-	return e.WithEntityChange(storage.Operation{Type: storage.OpUpdateEdge, Edge: edge}, func() error { return e.Engine.UpdateEdge(edge) })
+func (e *dirtyBranchEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+	edge := updateRequest.After
+	return e.WithEntityChange(storage.Operation{Type: storage.OpUpdateEdge, Edge: edge}, func() error { return e.Engine.UpdateEdge(updateRequest) })
 }
 func (e *dirtyBranchEngine) DeleteNode(id storage.NodeID) error {
 	return e.WithEntityChange(storage.Operation{Type: storage.OpDeleteNode, NodeID: id}, func() error { return e.Engine.DeleteNode(id) })
@@ -235,11 +237,11 @@ func TestSizeTrackingEngine_MarksDirtyWhenUpdatedNodeCannotBeSized(t *testing.T)
 	inner := &dirtyBranchEngine{Engine: base, failGetNode: true}
 	wrapped := newSizeTrackingEngine(inner, manager, dbName)
 
-	require.NoError(t, wrapped.UpdateNode(&storage.Node{
+	require.NoError(t, wrapped.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{
 		ID:         nodeID,
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "updated"},
-	}))
+	}}))
 	require.False(t, storageSizeInitialized(t, manager, dbName))
 }
 
@@ -259,7 +261,7 @@ func TestSizeTrackingEngine_NodePublicationIgnoresMalformedLatestReadback(t *tes
 	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
 	require.True(t, storageSizeInitialized(t, manager, dbName))
 	inner.badNodeOnGet = true
-	require.NoError(t, wrapped.UpdateNode(&storage.Node{ID: id, Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "new"}}))
+	require.NoError(t, wrapped.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: id, Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "new"}}}))
 	stored, err := base.GetStoredNode(id)
 	require.NoError(t, err)
 	require.Equal(t, "new", stored.Properties["name"])
@@ -300,7 +302,7 @@ func TestSizeTrackingEngine_EdgePublicationIgnoresMalformedLatestReadback(t *tes
 	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
 	require.True(t, storageSizeInitialized(t, manager, dbName))
 	inner.badEdgeOnGet = true
-	require.NoError(t, wrapped.UpdateEdge(&storage.Edge{ID: edgeID, StartNode: idA, EndNode: idB, Type: "LIKES"}))
+	require.NoError(t, wrapped.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: edgeID, StartNode: idA, EndNode: idB, Type: "LIKES"}}))
 	stored, err := base.GetStoredEdge(edgeID)
 	require.NoError(t, err)
 	require.Equal(t, "LIKES", stored.Type)
@@ -507,12 +509,12 @@ func TestSizeTrackingEngineMutationErrorBranches(t *testing.T) {
 	wrapper := newSizeTrackingEngine(inner, manager, dbName).(*sizeTrackingEngine)
 
 	inner.failUpdateNode = true
-	err = wrapper.UpdateNode(&storage.Node{ID: nodeID, Labels: []string{"Person"}, Properties: map[string]interface{}{"x": 1}})
+	err = wrapper.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: nodeID, Labels: []string{"Person"}, Properties: map[string]interface{}{"x": 1}}})
 	require.ErrorContains(t, err, "update node failed")
 	inner.failUpdateNode = false
 
 	inner.failUpdateEdge = true
-	err = wrapper.UpdateEdge(&storage.Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "LIKES"})
+	err = wrapper.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "LIKES"}})
 	require.ErrorContains(t, err, "update edge failed")
 	inner.failUpdateEdge = false
 
@@ -572,10 +574,10 @@ func TestSizeTrackingEngineMutationsPropagateMissingDatabase(t *testing.T) {
 
 	_, err := wrapper.CreateNode(&storage.Node{ID: "ghost-node", Labels: []string{"Ghost"}})
 	require.ErrorIs(t, err, ErrDatabaseNotFound)
-	require.ErrorIs(t, wrapper.UpdateNode(&storage.Node{ID: "ghost-node"}), ErrDatabaseNotFound)
+	require.ErrorIs(t, wrapper.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "ghost-node"}}), ErrDatabaseNotFound)
 	require.ErrorIs(t, wrapper.DeleteNode("ghost-node"), ErrDatabaseNotFound)
 	require.ErrorIs(t, wrapper.CreateEdge(&storage.Edge{ID: "ghost-edge", StartNode: "a", EndNode: "b", Type: "R"}), ErrDatabaseNotFound)
-	require.ErrorIs(t, wrapper.UpdateEdge(&storage.Edge{ID: "ghost-edge"}), ErrDatabaseNotFound)
+	require.ErrorIs(t, wrapper.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "ghost-edge"}}), ErrDatabaseNotFound)
 	require.ErrorIs(t, wrapper.DeleteEdge("ghost-edge"), ErrDatabaseNotFound)
 }
 
@@ -592,7 +594,7 @@ func TestSizeTrackingEngineUpdatesUsePublicationImages(t *testing.T) {
 
 	inner := &flipAfterGetEngine{Engine: base}
 	wrapper := newSizeTrackingEngine(inner, manager, dbName).(*sizeTrackingEngine)
-	require.NoError(t, wrapper.UpdateNode(&storage.Node{ID: nodeID, Labels: []string{"Person"}, Properties: map[string]interface{}{"v": 1}}))
+	require.NoError(t, wrapper.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: nodeID, Labels: []string{"Person"}, Properties: map[string]interface{}{"v": 1}}}))
 	storedNode, err := base.GetStoredNode(nodeID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), storedNode.Properties["v"])
@@ -601,7 +603,7 @@ func TestSizeTrackingEngineUpdatesUsePublicationImages(t *testing.T) {
 
 	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
 	inner.edgeCalls = 0
-	require.NoError(t, wrapper.UpdateEdge(&storage.Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "LIKES"}))
+	require.NoError(t, wrapper.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "LIKES"}}))
 	storedEdge, err := base.GetStoredEdge(edgeID)
 	require.NoError(t, err)
 	require.Equal(t, "LIKES", storedEdge.Type)

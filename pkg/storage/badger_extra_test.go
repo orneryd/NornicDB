@@ -301,7 +301,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		require.NoError(t, b.CreateEdge(edge))
 
 		edge.StartNode = NodeID(prefixTestID("missing-node"))
-		err = b.UpdateEdge(edge)
+		err = b.UpdateEdge(EdgeUpdateRequest{After: edge})
 		require.ErrorIs(t, err, ErrNotFound)
 	})
 
@@ -324,7 +324,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
 			return txn.Set(edgeKey(edge.ID), []byte("not-an-edge"))
 		}))
-		err = b.UpdateEdge(edge)
+		err = b.UpdateEdge(EdgeUpdateRequest{After: edge})
 		require.Error(t, err)
 	})
 
@@ -987,7 +987,7 @@ func TestBadgerEngine_UpdateNode_LargeEmbedding_SeparateStorage(t *testing.T) {
 
 	// Update with large embeddings
 	node.ChunkEmbeddings = makeLargeChunkEmbeddings()
-	err = engine.UpdateNode(node)
+	err = engine.UpdateNode(NodeUpdateRequest{After: node})
 	require.NoError(t, err)
 
 	got, err := engine.GetNode(node.ID)
@@ -1082,7 +1082,7 @@ func TestBadgerEngine_UpdateNode_UpsertNewNode(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	err := engine.UpdateNode(node)
+	err := engine.UpdateNode(NodeUpdateRequest{After: node})
 	require.NoError(t, err)
 
 	// Verify the node was created
@@ -1116,7 +1116,7 @@ func TestBadgerEngine_UpdateNode_LabelChange(t *testing.T) {
 
 	// Update labels
 	node.Labels = []string{"Employee"}
-	err = engine.UpdateNode(node)
+	err = engine.UpdateNode(NodeUpdateRequest{After: node})
 	require.NoError(t, err)
 
 	// Old label should not find it

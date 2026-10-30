@@ -113,7 +113,7 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 			require.True(t, labelled(t, b, "Doc", "test:n"), "a node created mid-backfill isn't found by its label")
 		}},
 		{"update", func(tx *BadgerTransaction) error {
-			return tx.UpdateGraphNode(&Node{ID: "test:a", Labels: []string{"Topic"}}, ClientNodeEdits)
+			return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Topic"}}, Policy: ClientNodeEdits})
 		}, func(t *testing.T, b *BadgerEngine) {
 			require.False(t, labelled(t, b, "Doc", "test:a"), "a label removed mid-backfill keeps its entry")
 			require.True(t, labelled(t, b, "Topic", "test:a"), "a label added mid-backfill has no entry")

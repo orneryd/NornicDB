@@ -230,14 +230,14 @@ func TestDynamicTokenBranches(t *testing.T) {
 	node, err = store.GetNode(node.ID)
 	require.NoError(t, err)
 	node.Properties["k"] = int64(1)
-	require.NoError(t, store.UpdateNode(node))
+	require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	edge, err = store.GetEdge(edge.ID)
 	require.NoError(t, err)
 	if edge.Properties == nil {
 		edge.Properties = make(map[string]interface{})
 	}
 	edge.Properties["k"] = int64(1)
-	require.NoError(t, store.UpdateEdge(edge))
+	require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)

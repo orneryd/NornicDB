@@ -46,7 +46,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("legacy"))
 				require.NoError(t, tx.SetImplicit(true))
-				require.NoError(t, tx.UpdateGraphNode(&Node{ID: "legacy:a", Properties: map[string]any{"value": int64(i)}}, ClientNodeEdits))
+				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "legacy:a", Properties: map[string]any{"value": int64(i)}}, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
 			}
@@ -142,7 +142,7 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 		if i == 0 {
 			_, err = tx.CreateNode(node)
 		} else {
-			err = tx.UpdateGraphNode(node, ClientNodeEdits)
+			err = tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 		}
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
@@ -226,8 +226,8 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace(ns))
 					require.NoError(t, tx.SetImplicit(true))
-					require.NoError(t, tx.UpdateGraphNode(&Node{ID: NodeID(ns + ":a"), Properties: props}, ClientNodeEdits))
-					require.NoError(t, tx.UpdateEdge(&Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: props}))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: NodeID(ns + ":a"), Properties: props}, Policy: ClientNodeEdits}))
+					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: props}}))
 					require.NoError(t, tx.Commit())
 					require.True(t, tx.AcknowledgedBuffered())
 					require.NoError(t, source.FlushWriteBehind())
@@ -304,7 +304,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 			require.NoError(t, tx.SetImplicit(true))
 			node, err := dest.GetNode("growth:a")
 			require.NoError(t, err)
-			require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
 			require.True(t, tx.AcknowledgedBuffered())
 			third := reviewBindingEngine(t, t.TempDir())

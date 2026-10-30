@@ -49,7 +49,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	require.NoError(t, view.AddPropertyIndex("created", "Account", []string{"id"}))
 	require.NoError(t, view.BackfillPropertyIndex("Account", "id", map[NodeID]interface{}{"schema_lifetime:created": int64(1)}))
 	require.NoError(t, view.AddUniqueConstraint("created_unique", "Account", "uid"))
-	view.RegisterUniqueValue("Account", "uid", "created", "schema_lifetime:created")
+	view.ApplyUniqueValue("Account", "uid", "created", "schema_lifetime:created", ValidatedUniqueClaim)
 	view.uniqueConstraints["Account:uid"].valuesCacheComplete = true
 	require.NoError(t, view.AddCompositeIndex("created_composite", "Account", []string{"id", "uid"}))
 	view.compositeIndexes["created_composite"].fullIndex["created"] = []NodeID{"schema_lifetime:created"}
@@ -64,7 +64,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	require.Equal(t, []NodeID{"schema_lifetime:created"}, committed.compositeIndexes["created_composite"].fullIndex["created"])
 	require.Equal(t, []NodeID{"schema_lifetime:created"}, committed.compositeIndexes["created_composite"].prefixIndex["created"])
 	require.Equal(t, float64(1), committed.rangeIndexes["created_range"].nodeValue["schema_lifetime:created"])
-	_, found, exists, complete := committed.LookupUniqueConstraintValueForPlanning("Account", "uid", "created")
+	_, found, exists, complete := committed.LookupUniqueConstraintValue("Account", "uid", "created")
 	require.True(t, found)
 	require.True(t, exists)
 	require.True(t, complete)
@@ -89,11 +89,13 @@ func TestSchemaTransactionRejectsAllEntityMutations(t *testing.T) {
 	_, err = tx.CreateNode(&Node{ID: "schema_mutations:node"})
 	require.ErrorContains(t, err, "ForbiddenDueToTransactionType")
 	for _, mutation := range []func() error{
-		func() error { return tx.UpdateGraphNode(&Node{ID: "schema_mutations:node"}, ClientNodeEdits) },
+		func() error {
+			return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "schema_mutations:node"}, Policy: ClientNodeEdits})
+		},
 		func() error { return tx.DeleteGraphNode("schema_mutations:node", CascadeEdges) },
 		func() error { return tx.CreateEdge(&Edge{ID: "schema_mutations:edge"}) },
 		func() error { return tx.BulkCreateEdges([]*Edge{{ID: "schema_mutations:edge"}}) },
-		func() error { return tx.UpdateEdge(&Edge{ID: "schema_mutations:edge"}) },
+		func() error { return tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "schema_mutations:edge"}}) },
 		func() error { return tx.DeleteEdge("schema_mutations:edge") },
 	} {
 		require.ErrorContains(t, mutation(), "ForbiddenDueToTransactionType")

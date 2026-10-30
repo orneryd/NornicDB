@@ -16,7 +16,7 @@ func TestDeletedRoleStartsEmptyAfterRecreation(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	roles := seedRoleRename(t, system)
-	require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "solo", Roles: []Role{"ops"}}))
+	require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "solo", Roles: []Role{"ops"}}, nil))
 	require.NoError(t, roles.DeleteRole(ctx, "ops"))
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	grants, err := NewProcedurePrivilegeStore(system).List(ctx)
@@ -130,7 +130,7 @@ func TestRoleChangesPreserveOtherRoles(t *testing.T) {
 			require.NoError(t, NewPrivilegesStore(system).SavePrivilege(ctx, "other", "nornic", true, false))
 			require.NoError(t, NewAllowlistStore(system).SaveRoleDatabases(ctx, "other", []string{"nornic"}))
 			require.NoError(t, NewRoleEntitlementsStore(system).Set(ctx, "other", []string{"read"}))
-			require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "other", Roles: []Role{"other"}}))
+			require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "other", Roles: []Role{"other"}}, nil))
 			var before []*storage.Node
 			for _, id := range []storage.NodeID{"role:other", "proc_priv:boosted:other:db.other", "db_priv:other:nornic", "role_db_access:other", "role_entitlement:other", "user:other"} {
 				node, err := system.GetNode(id)

@@ -168,7 +168,7 @@ func (b *BadgerEngine) CensusMutantRunnerKeeps(id NodeID) { b.censusMutantRunWit
 
 func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	if b.censusMutantHidden(n.ID) {
-		return b.UpdateNode(n)
+		return b.UpdateNode(NodeUpdateRequest{After: n})
 	}
 	return nil
 }

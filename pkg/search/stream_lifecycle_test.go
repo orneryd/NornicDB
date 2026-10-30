@@ -40,7 +40,7 @@ func TestSearchStreamLifecycleInvalidation(t *testing.T) {
 				node, err := store.GetNode("b")
 				require.NoError(t, err)
 				node.ChunkEmbeddings = [][]float32{{1, 0}}
-				require.NoError(t, store.UpdateNode(node))
+				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			case "policy":
 				svc.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxMembers: 10})
 			}

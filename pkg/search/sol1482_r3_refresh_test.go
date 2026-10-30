@@ -111,7 +111,7 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 									if missing {
 										require.NoError(t, store.CreateEdge(rel))
 									} else {
-										require.NoError(t, store.UpdateEdge(rel))
+										require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: rel}))
 									}
 								} else {
 									node.Properties["content"] = "newword"
@@ -120,7 +120,7 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 										_, err := store.CreateNode(node)
 										require.NoError(t, err)
 									} else {
-										require.NoError(t, store.UpdateNode(node))
+										require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
 									}
 								}
 							}
@@ -217,7 +217,7 @@ func TestSol1482R3RelationshipStartupCannotOverwriteRefresh(t *testing.T) {
 				require.NoError(t, store.DeleteEdge("r"))
 			} else {
 				edge.Properties["reason"] = "newword"
-				require.NoError(t, store.UpdateEdge(edge))
+				require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 			}
 			require.NoError(t, svc.RefreshEdge("r"))
 			b.open()

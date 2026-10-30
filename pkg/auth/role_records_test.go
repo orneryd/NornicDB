@@ -12,14 +12,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newTestMemoryEngine owns an in-memory engine for the duration of a test.
+func newTestMemoryEngine(t testing.TB) *storage.MemoryEngine {
+	t.Helper()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+	t.Cleanup(func() { _ = base.Close() })
+	return base
+}
+
 // newSystemTestEngine is a system database as the server gives the auth
 // stores one: a namespaced engine, in which a role and its records share
 // one namespace, so one transaction can change them together.
 func newSystemTestEngine(t testing.TB) storage.Engine {
 	t.Helper()
-	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
-	return storage.NewNamespacedEngine(base, "system")
+	return storage.NewNamespacedEngine(newTestMemoryEngine(t), "system")
 }
 
 // roleRecordGate pauses a role-record write inside its transaction, at its
@@ -163,7 +169,7 @@ func TestRoleRecordOwnerEdges(t *testing.T) {
 	require.NoError(t, NewRoleEntitlementsStore(system).Set(ctx, "ops", nil), "no override stored, none to remove")
 
 	for _, id := range []storage.NodeID{"role:ops", "role_entitlement:ops"} {
-		fault := &mutationFault{Engine: system, failOp: "get", failID: id}
+		fault := &mutationFault{Engine: system, mutationSelector: mutationSelector{failOp: "get", failID: id}}
 		require.ErrorIs(t, NewRoleEntitlementsStore(fault).Set(ctx, "ops", []string{"read"}), errRoleMutation, id)
 		_, err := system.GetNode("role_entitlement:ops")
 		require.ErrorIs(t, err, storage.ErrNotFound, "nothing is written")

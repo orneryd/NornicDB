@@ -153,7 +153,9 @@ func (r *RoleStore) LockRoleForGrant(ctx context.Context, name string) (bool, er
 	}
 	for _, label := range node.Labels {
 		if label == roleLabel {
-			return true, r.storage.UpdateNode(node)
+			// The role record is written back exactly as read, so the read
+			// image is both the immutable Before and the After.
+			return true, r.storage.UpdateNode(storage.NodeUpdateRequest{Before: node, After: node})
 		}
 	}
 	return false, nil

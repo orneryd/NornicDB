@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -10,37 +9,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type userChangeFault struct {
-	storage.Engine
-	kind     string
-	disabled bool
-}
-
-func (e *userChangeFault) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
-	return WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
-		return mutate(&userChangeFault{Engine: view, kind: e.kind, disabled: e.disabled})
-	})
-}
-
-func (e *userChangeFault) UpdateNode(node *storage.Node) error {
-	if e.kind == "roles" || (e.kind == "status" && node.Properties["disabled"] == e.disabled) {
-		return errRoleMutation
-	}
-	return e.Engine.UpdateNode(node)
-}
-
-func combinedUserFixture(t *testing.T) (*Authenticator, *userChangeFault) {
+// newMutationTestAuthenticator builds the authenticator the auth mutation
+// tests share: a caller-owned system namespace and no default admin, at test
+// bcrypt cost.
+func newMutationTestAuthenticator(t *testing.T, system storage.Engine) *Authenticator {
 	t.Helper()
-	base := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "system")
-	t.Cleanup(func() { _ = base.Close() })
-	fault := &userChangeFault{Engine: base}
 	config := DefaultAuthConfig()
 	config.BcryptCost = 4
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
 	config.DefaultAdminUsername = ""
-	users, err := NewAuthenticator(config, fault)
+	users, err := NewAuthenticator(config, system)
 	require.NoError(t, err)
-	_, err = users.CreateUser("worker", "password123", []Role{RoleViewer})
+	return users
+}
+
+func combinedUserFixture(t *testing.T) (*Authenticator, *mutationFault) {
+	t.Helper()
+	fault := &mutationFault{Engine: newSystemTestEngine(t)}
+	users := newMutationTestAuthenticator(t, fault)
+	_, err := users.CreateUser("worker", "password123", []Role{RoleViewer})
 	require.NoError(t, err)
 	return users, fault
 }
@@ -64,9 +51,9 @@ func TestCombinedUserChangeFailureChangesNothing(t *testing.T) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			} else if kind == "roles" {
-				fault.kind = kind
+				fault.rejectUpdate = func(*storage.Node) bool { return true }
 			} else {
-				fault.kind, fault.disabled = "status", disabled
+				fault.rejectUpdate = func(node *storage.Node) bool { return node.Properties["disabled"] == disabled }
 			}
 			err = users.UpdateRolesAndStatus(ctx, "worker", []Role{RoleAdmin}, &disabled)
 			if kind == "commit" {
@@ -88,7 +75,7 @@ func TestCombinedUserChangePublishesAfterCommit(t *testing.T) {
 	user := users.users["worker"]
 	user.Disabled, user.FailedLogins = true, 3
 	user.LockedUntil = time.Now().Add(time.Hour)
-	require.NoError(t, users.saveUser(user))
+	require.NoError(t, users.saveUser(user, nil))
 	var events []AuditEvent
 	users.auditLog = func(event AuditEvent) {
 		node, err := fault.Engine.GetNode("user:worker")

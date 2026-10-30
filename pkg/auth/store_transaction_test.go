@@ -9,13 +9,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mutationSelector picks the staged mutation a fault engine rejects. A fault
+// engine embeds storage.Engine so its exact staged view serves every operation
+// it does not intercept.
+type mutationSelector struct {
+	failID     storage.NodeID
+	failOp     string
+	nth, calls int
+}
+
+// fails reports whether the current call is the selected one: the operation
+// matches, the ID matches when one is set, and it is the nth such call (0 means
+// every call).
+func (s *mutationSelector) fails(op string, id storage.NodeID) bool {
+	if op != s.failOp || (s.failID != "" && s.failID != id) {
+		return false
+	}
+	s.calls++
+	return s.nth == 0 || s.calls == s.nth
+}
+
 // mutationFault keeps the same real storage transaction, failing a selected
 // operation after earlier operations have already been staged in that view.
 type mutationFault struct {
 	storage.Engine
-	failID     storage.NodeID
-	failOp     string
-	nth, calls int
+	mutationSelector
+	rejectUpdate func(*storage.Node) bool
 }
 
 func (e *mutationFault) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
@@ -26,25 +45,18 @@ func (e *mutationFault) WithStoreTransaction(ctx context.Context, mutate func(st
 	})
 }
 
-func (e *mutationFault) fails(op string, id storage.NodeID) bool {
-	if op != e.failOp || (e.failID != "" && e.failID != id) {
-		return false
-	}
-	e.calls++
-	return e.nth == 0 || e.calls == e.nth
-}
-
 func (e *mutationFault) CreateNode(node *storage.Node) (storage.NodeID, error) {
 	if e.fails("create", node.ID) {
 		return "", errRoleMutation
 	}
 	return e.Engine.CreateNode(node)
 }
-func (e *mutationFault) UpdateNode(node *storage.Node) error {
-	if e.fails("update", node.ID) {
+func (e *mutationFault) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+	node := updateRequest.After
+	if (e.rejectUpdate != nil && e.rejectUpdate(node)) || e.fails("update", node.ID) {
 		return errRoleMutation
 	}
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(updateRequest)
 }
 func (e *mutationFault) DeleteNode(id storage.NodeID) error {
 	if e.fails("delete", id) {
@@ -131,7 +143,7 @@ func TestAllowlistBatchFailureChangesNothing(t *testing.T) {
 	for _, role := range []string{"a", "b"} {
 		require.NoError(t, NewRoleStore(system).CreateRole(context.Background(), role))
 	}
-	fault := &mutationFault{Engine: system, failOp: "create", nth: 2}
+	fault := &mutationFault{Engine: system, mutationSelector: mutationSelector{failOp: "create", nth: 2}}
 	allowlist := NewAllowlistStore(fault)
 	require.ErrorIs(t, allowlist.SaveMappings(context.Background(), map[string][]string{"a": {"nornic"}, "b": {"system"}}), errRoleMutation)
 	require.Empty(t, allowlist.Allowlist())
@@ -141,17 +153,11 @@ func TestAllowlistBatchFailureChangesNothing(t *testing.T) {
 }
 
 func TestUserMutationFailureChangesNothing(t *testing.T) {
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := newTestMemoryEngine(t)
 	fault := &mutationFault{Engine: base}
-	config := DefaultAuthConfig()
-	config.BcryptCost = 4
-	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	config.DefaultAdminUsername = ""
-	users, err := NewAuthenticator(config, fault)
-	require.NoError(t, err)
+	users := newMutationTestAuthenticator(t, fault)
 	fault.failOp, fault.failID = "create", "user:new"
-	_, err = users.CreateUser("new", "password123", []Role{RoleViewer})
+	_, err := users.CreateUser("new", "password123", []Role{RoleViewer})
 	require.ErrorIs(t, err, errRoleMutation)
 	require.NotContains(t, users.users, "new")
 	_, err = base.GetNode("user:new")
@@ -196,7 +202,7 @@ func TestCoordinatedRoleRenameFailureChangesNothing(t *testing.T) {
 	users := &Authenticator{storage: fault, users: map[string]*User{}}
 	for _, name := range []string{"alice", "bob"} {
 		user := &User{Username: name, Roles: []Role{"ops"}}
-		require.NoError(t, users.saveUser(user))
+		require.NoError(t, users.saveUser(user, nil))
 		users.users[name] = user
 	}
 	fault.failOp, fault.nth = "update", 2
@@ -334,7 +340,7 @@ func TestCoordinatedRoleRenameStagedFailuresChangeNothing(t *testing.T) {
 			allowlist := NewAllowlistStore(fault)
 			require.NoError(t, allowlist.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 			users := &Authenticator{storage: fault, users: map[string]*User{"worker": {Username: "worker", Roles: []Role{"ops"}}}}
-			require.NoError(t, users.saveUser(users.users["worker"]))
+			require.NoError(t, users.saveUser(users.users["worker"], nil))
 			before, err := system.AllNodes()
 			require.NoError(t, err)
 			fault.failOp, fault.failID, fault.nth = test.op, test.id, test.nth

@@ -2,17 +2,15 @@ package storage
 
 import "errors"
 
-// inCaptureTransaction runs a direct (non-transactional) write as a
-// transaction when the database it writes captures changes, so that its
-// changes are recorded by the one capture point, BadgerTransaction.Commit
-// (#937); handled is false for a database that doesn't capture, which keeps
-// the direct write. id is any of the write's prefixed entity IDs.
-func (b *BadgerEngine) inCaptureTransaction(id string, write func(tx *BadgerTransaction) error) (handled bool, err error) {
+// inMutationTransaction uses the native transaction owner when a write must
+// validate an observed predecessor or capture changes. Blind writes without
+// capture retain their direct path. id identifies the target namespace.
+func (b *BadgerEngine) inMutationTransaction(id string, observed bool, write func(tx *BadgerTransaction) error) (handled bool, err error) {
 	namespace, _, ok := ParseDatabasePrefix(id)
-	if !ok || b.ChangeCapture(namespace) == ChangeCaptureOff {
+	if !observed && (!ok || b.ChangeCapture(namespace) == ChangeCaptureOff) {
 		return false, nil
 	}
-	tx, err := b.BeginTransaction()
+	tx, err := BeginEntityTransaction(b, CommitModeDirect)
 	if err != nil {
 		return true, err
 	}
@@ -25,8 +23,9 @@ func (b *BadgerEngine) inCaptureTransaction(id string, write func(tx *BadgerTran
 
 // ApplyNodeUpdate is UpdateNode's upsert in a transaction: an
 // update, or a create when the node doesn't exist.
-func ApplyNodeUpdate(tx *BadgerTransaction, node *Node) error {
-	err := tx.UpdateGraphNode(node, ClientNodeEdits)
+func ApplyNodeUpdate(tx *BadgerTransaction, updateRequest NodeUpdateRequest) error {
+	node := updateRequest.After
+	err := tx.UpdateGraphNode(updateRequest)
 	if errors.Is(err, ErrNotFound) {
 		_, err = tx.CreateNode(node)
 	}

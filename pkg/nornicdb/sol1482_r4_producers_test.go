@@ -39,7 +39,7 @@ func TestSol1482R4ColdPersistedNamespaceReset(t *testing.T) {
 			node, err := tenant.GetNode("a")
 			require.NoError(t, err)
 			node.Properties["content"] = "laterword"
-			require.NoError(t, tenant.UpdateNode(node))
+			require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			settleQueuedRefreshes()
 			svc.PersistIndexesToDisk()
 			path, err := searchPersistenceBasePath(config.Database.DataDir, "tenant")

@@ -117,7 +117,7 @@ func TestBadgerTransactionUniqueConstraintUsesRegisteredValueIndex(t *testing.T)
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	if got, found, constrained := schema.LookupUniqueConstraintValue("User", "email", "alice@example.com"); !constrained || !found || got != firstID {
+	if got, found, constrained, _ := schema.LookupUniqueConstraintValue("User", "email", "alice@example.com"); !constrained || !found || got != firstID {
 		t.Fatalf("LookupUniqueConstraintValue() = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
 	}
 	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
@@ -191,14 +191,14 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
 		t.Fatalf("rebuildUniqueConstraintValues failed: %v", err)
 	}
-	if got, found, constrained := schema.LookupUniqueConstraintValue("User", "age", int(1)); !constrained || !found || got != firstID {
+	if got, found, constrained, _ := schema.LookupUniqueConstraintValue("User", "age", int(1)); !constrained || !found || got != firstID {
 		t.Fatalf("LookupUniqueConstraintValue(int) = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
 	}
 
-	if got, found, constrained := schema.LookupUniqueConstraintValue("User", "age", float64(1)); !constrained || !found || got != firstID {
+	if got, found, constrained, _ := schema.LookupUniqueConstraintValue("User", "age", float64(1)); !constrained || !found || got != firstID {
 		t.Fatalf("LookupUniqueConstraintValue() = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
 	}
-	if got, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation("User", "age", float64(1)); !constrained || !cacheComplete || !found || got != firstID {
+	if got, found, constrained, cacheComplete := schema.LookupUniqueConstraintValue("User", "age", float64(1)); !constrained || !cacheComplete || !found || got != firstID {
 		t.Fatalf("lookupUniqueConstraintValueForValidation() = (%q, %v, %v, %v), want (%q, true, true, true)", got, found, cacheComplete, constrained, firstID)
 	}
 	constraints := schema.GetConstraintsForLabels([]string{"User"})
@@ -743,13 +743,13 @@ func TestBadgerEngine_UpdateNode_EnforcesUniqueConstraint(t *testing.T) {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
 
-	err = engine.UpdateNode(&Node{
+	err = engine.UpdateNode(NodeUpdateRequest{After: &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
 			"email": "alice@example.com",
 		},
-	})
+	}})
 	if err == nil {
 		t.Fatal("Expected UNIQUE constraint violation on update, got nil")
 	}

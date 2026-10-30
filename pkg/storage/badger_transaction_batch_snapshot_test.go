@@ -33,7 +33,7 @@ func TestAdvanceImplicitSnapshotAfterBatch(t *testing.T) {
 	nodes, err = tx.GetNodesByLabel("Child")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:child", Labels: []string{"Child"}, Properties: map[string]interface{}{"v": int64(2)}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:child", Labels: []string{"Child"}, Properties: map[string]interface{}{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	require.ErrorIs(t, tx.AdvanceImplicitSnapshot(), ErrConflict)
 	node, err = tx.GetNode("test:child")
 	require.NoError(t, err)

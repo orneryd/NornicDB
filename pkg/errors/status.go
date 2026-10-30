@@ -17,6 +17,9 @@ const (
 	// TransactionCommitFailed is the status of a COMMIT that failed for a
 	// reason with no more specific classification.
 	TransactionCommitFailed = "Neo.ClientError.Transaction.TransactionCommitFailed"
+	// DatabaseTransactionCommitFailed identifies an infrastructure failure
+	// while reading or decoding the committed state needed by a commit.
+	DatabaseTransactionCommitFailed = "Neo.DatabaseError.Transaction.TransactionCommitFailed"
 	// TransactionTimedOut is the status of a statement stopped by a timeout
 	// the server configures (Neo4j's db.transaction.timeout; NornicDB's query
 	// time limit and Bolt statement timeout).
@@ -146,6 +149,16 @@ func neo4jStatus(err error) (code, message string, classified bool) {
 			return code, trimStatusPrefix(message, code), true
 		}
 	}
+	// The causal wrapper identifies the public failure; an inner ErrConflict
+	// does not turn an established UNIQUE violation into a retryable error.
+	var violation *storage.ConstraintViolationError
+	if stderrors.As(err, &violation) && violation != nil {
+		return ConstraintValidationFailed, message, true
+	}
+	var commitFailure *storage.CommitFailureError
+	if stderrors.As(err, &commitFailure) {
+		return DatabaseTransactionCommitFailed, message, true
+	}
 	if transientCode, ok := MapTransientTransactionError(err); ok {
 		return transientCode, message, true
 	}
@@ -154,10 +167,6 @@ func neo4jStatus(err error) (code, message string, classified bool) {
 	}
 	if storage.IsTransactionTooBig(err) {
 		return ClientTransactionOutOfMemory, transactionTooBigMessage(message), true
-	}
-	var violation *storage.ConstraintViolationError
-	if stderrors.As(err, &violation) && violation != nil {
-		return ConstraintValidationFailed, message, true
 	}
 	if start := strings.Index(message, "Neo."); start >= 0 {
 		rest := message[start:]

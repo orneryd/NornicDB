@@ -164,11 +164,12 @@ func (e *userStatusFailureEngine) WithStoreTransaction(ctx context.Context, muta
 	})
 }
 
-func (e *userStatusFailureEngine) UpdateNode(node *storage.Node) error {
+func (e *userStatusFailureEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+	node := updateRequest.After
 	if node.Properties["disabled"] == true {
 		return errors.New("injected user status failure")
 	}
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(updateRequest)
 }
 
 func TestCombinedUserChangeFailureChangesNothingOverHTTP(t *testing.T) {

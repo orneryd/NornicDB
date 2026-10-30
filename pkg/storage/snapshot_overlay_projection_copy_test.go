@@ -88,7 +88,7 @@ func TestSnapshotOverlayStrippedStreamOwnership(t *testing.T) {
 						_, err = tx.CreateNode(node)
 						require.NoError(t, err)
 					} else if reader == "pending-replace" {
-						require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+						require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 					} else if reader == "legacy" {
 						tx.snapshotTx.Discard()
 						tx.snapshotTx = nil

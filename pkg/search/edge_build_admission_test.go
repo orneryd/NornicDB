@@ -122,7 +122,7 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 				go func() { live <- svc.RemoveEdge(edge.ID) }()
 			} else {
 				updated := &storage.Edge{ID: edge.ID, StartNode: edge.StartNode, EndNode: edge.EndNode, Type: edge.Type, Properties: map[string]any{"v": []float32{0, 1, 0}}}
-				require.NoError(t, engine.UpdateEdge(updated))
+				require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: updated}))
 				go func() { live <- svc.IndexEdge(updated) }()
 			}
 			time.Sleep(200 * time.Millisecond)

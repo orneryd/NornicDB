@@ -125,7 +125,7 @@ func TestEmbeddingRevisionCapturedBufferedUpdates(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: old.ID, UpdatedAt: stamp, Properties: map[string]any{"text": "after"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: old.ID, UpdatedAt: stamp, Properties: map[string]any{"text": "after"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	ack, err := b.GetNode("test:doc")
 	require.NoError(t, err)

@@ -113,12 +113,12 @@ func TestRemoteStorageOperationsSupplyDeclaredAccessMode(t *testing.T) {
 		run   func(*RemoteEngine) error
 	}{
 		{"create node", RemoteAccessWrite, node, func(e *RemoteEngine) error { _, err := e.CreateNode(&Node{ID: "n"}); return err }},
-		{"update node", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.UpdateNode(&Node{ID: "n"}) }},
+		{"update node", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n"}}) }},
 		{"delete node", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.DeleteNode("n") }},
 		{"create edge", RemoteAccessWrite, edge, func(e *RemoteEngine) error {
 			return e.CreateEdge(&Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK"})
 		}},
-		{"update edge", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.UpdateEdge(&Edge{ID: "e"}) }},
+		{"update edge", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e"}}) }},
 		{"delete edge", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.DeleteEdge("e") }},
 		{"get node", RemoteAccessRead, node, func(e *RemoteEngine) error { _, err := e.GetNode("n"); return err }},
 		{"get edge", RemoteAccessRead, edge, func(e *RemoteEngine) error { _, err := e.GetEdge("e"); return err }},

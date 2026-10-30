@@ -74,7 +74,7 @@ func TestContinuationFilteredBM25EnumeratesBeyondShortFirstBatch(t *testing.T) {
 		node, err := engine.GetNode(storage.NodeID(id))
 		require.NoError(t, err)
 		node.Properties["eligible"] = "yes"
-		require.NoError(t, engine.UpdateNode(node))
+		require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	}
 	opts = DefaultSearchOptions()
 	opts.Limit = 4

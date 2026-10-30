@@ -33,7 +33,7 @@ func TestBadgerEngine_LabelCountMetadataMaintainedAcrossNodeMutations(t *testing
 	require.NoError(t, err)
 	require.Equal(t, int64(3), count)
 
-	require.NoError(t, engine.UpdateNode(&Node{ID: "db1:n1", Labels: []string{"Employee", "Admin"}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "db1:n1", Labels: []string{"Employee", "Admin"}}}))
 
 	count, err = engine.NodeCountByLabelInNamespace("db1", "Person")
 	require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestBadgerEngine_LabelCountMetadataMaintainedAcrossTransactionalCommit(t *t
 
 	_, err = tx.CreateNode(&Node{ID: "db1:t1", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "db1:t1", Labels: []string{"Employee"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db1:t1", Labels: []string{"Employee"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 
 	count, err := engine.NodeCountByLabelInNamespace("db1", "Person")

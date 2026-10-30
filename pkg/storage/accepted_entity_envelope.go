@@ -34,7 +34,7 @@ type EntityTransactionEnvelope struct {
 type entityWriter interface {
 	CreateNode(*Node) (NodeID, error)
 	CreateEdge(*Edge) error
-	UpdateEdge(*Edge) error
+	UpdateEdge(updateRequest EdgeUpdateRequest) error
 	DeleteEdge(EdgeID) error
 }
 
@@ -80,19 +80,19 @@ func DecodeEntityChange(kind EntityCommandKind, data []byte) (Operation, error) 
 	}
 	return op, nil
 }
-func ApplyEntityChange(target entityWriter, op Operation, updateNode func(*Node) error, deleteNode func(NodeID) error) error {
+func ApplyEntityChange(target entityWriter, op Operation, updateNode func(NodeUpdateRequest) error, deleteNode func(NodeID) error) error {
 	switch op.Type {
 	case OpCreateNode:
 		_, err := target.CreateNode(op.Node)
 		return err
 	case OpUpdateNode:
-		return updateNode(op.Node)
+		return updateNode(op.NodeUpdate())
 	case OpDeleteNode:
 		return deleteNode(op.NodeID)
 	case OpCreateEdge:
 		return target.CreateEdge(op.Edge)
 	case OpUpdateEdge:
-		return target.UpdateEdge(op.Edge)
+		return target.UpdateEdge(op.EdgeUpdate())
 	case OpDeleteEdge:
 		return target.DeleteEdge(op.EdgeID)
 	default:

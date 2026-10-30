@@ -166,13 +166,13 @@ func TestCatalogUpgradeV4RejectsWithoutWrites(t *testing.T) {
 				node, err := b.GetNode(id)
 				require.NoError(t, err)
 				node.Properties["data"] = int64(1)
-				require.NoError(t, b.UpdateNode(node))
+				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: node}))
 			}
 			if kind == "missing-data" {
 				node, err := b.GetNode(id)
 				require.NoError(t, err)
 				delete(node.Properties, "data")
-				require.NoError(t, b.UpdateNode(node))
+				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: node}))
 			}
 			if kind == "corrupt-body" {
 				require.NoError(t, b.db.Update(func(tx *badger.Txn) error { return tx.Set(nodeKey(id), []byte("corrupt")) }))

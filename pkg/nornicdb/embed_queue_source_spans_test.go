@@ -16,7 +16,7 @@ func TestEmbedWorkerPropertyOnlySourceLeavesFallbackUnconsumed(t *testing.T) {
 		require.NoError(t, err)
 		n.Properties["id"] = "old"
 		n.Properties["text"] = "constant"
-		require.NoError(t, queue.UpdateNode(n))
+		require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: n}))
 	}
 	structured := &retryMetadataPropertyBatchEmbedder{&retryMetadataPropertyEmbedder{mockEmbedder: base, key: "id", declared: true, textless: true}}
 	provider := embed.NewCachedEmbedder(embed.NewTracedEmbedder(structured), 8)
@@ -33,7 +33,7 @@ func TestEmbedWorkerPropertyOnlySourceLeavesFallbackUnconsumed(t *testing.T) {
 		spans, _ := embeddingutil.StoredChunkSpans(n.EmbedMeta)
 		require.Empty(t, spans, "property-only chunks cannot claim spans into unconsumed fallback text")
 		n.Properties["text"] = "new fallback"
-		require.NoError(t, queue.UpdateNode(n))
+		require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: n}))
 		n, err = queue.GetNode(id)
 		require.NoError(t, err)
 		require.NotEmpty(t, n.ChunkEmbeddings, "fallback text was not consumed by this result")

@@ -188,7 +188,7 @@ type Engine interface {
     // Node operations
     CreateNode(node *Node) error
     GetNode(id NodeID) (*Node, error)
-    UpdateNode(node *Node) error
+    UpdateNode(request NodeUpdateRequest) error
     DeleteNode(id NodeID) error
     
     // Edge operations
@@ -689,7 +689,7 @@ type NodeReader interface {
 
 type NodeWriter interface {
     CreateNode(node *Node) error
-    UpdateNode(node *Node) error
+    UpdateNode(request NodeUpdateRequest) error
     DeleteNode(id NodeID) error
 }
 

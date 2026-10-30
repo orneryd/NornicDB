@@ -123,7 +123,7 @@ func TestEdgeUpdateKeepsPhysicalCounts(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(true))
-				require.NoError(t, tx.UpdateEdge(updated))
+				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: updated}))
 				require.NoError(t, tx.Commit())
 				verify := func(stage string) {
 					t.Helper()

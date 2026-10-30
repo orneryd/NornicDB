@@ -37,7 +37,7 @@ func TestDecayRelaxAfterHiddenEdgeUpdateRestoresAdjacency(t *testing.T) {
 				edge, err := engine.GetEdge("test:e")
 				require.NoError(t, err)
 				edge.Properties = map[string]any{"changed": true}
-				require.NoError(t, engine.UpdateEdge(edge))
+				require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: edge}))
 				engine.SetRevealAll(false)
 			}
 			// Warm both directions while suppressed before restoring visibility.
@@ -86,7 +86,7 @@ func TestDecayRelaxAfterHiddenNodeUpdateRefreshesCache(t *testing.T) {
 	node, err := engine.GetNode("test:n")
 	require.NoError(t, err)
 	node.Properties = map[string]any{"changed": true}
-	require.NoError(t, engine.UpdateNode(node))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: node}))
 	engine.SetRevealAll(false)
 	require.NoError(t, schema.AlterDecayProfile("node_decay", map[string]any{"decayEnabled": false}))
 	node, err = engine.GetNode("test:n")

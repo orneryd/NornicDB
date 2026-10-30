@@ -68,8 +68,7 @@ func (m *DatabaseManager) migrateLegacyData() error {
 
 	if !hasUnprefixedData {
 		// No unprefixed data - mark migration as complete
-		_ = m.markMigrationComplete()
-		return nil
+		return m.markMigrationComplete()
 	}
 
 	log.Printf("⚠️  Legacy (unprefixed) data detected; attempting one-time migration into default database %q", m.config.DefaultDatabase)
@@ -85,9 +84,7 @@ func (m *DatabaseManager) migrateLegacyData() error {
 	}
 
 	// Mark migration as complete
-	_ = m.markMigrationComplete()
-
-	return nil
+	return m.markMigrationComplete()
 }
 
 // isMigrationComplete checks if legacy data migration has been completed.
@@ -132,7 +129,7 @@ func (m *DatabaseManager) markMigrationComplete() error {
 	}
 
 	// Try update first, then create
-	err := systemEngine.UpdateNode(node)
+	err := systemEngine.UpdateNode(storage.NodeUpdateRequest{After: node})
 	if err == storage.ErrNotFound {
 		_, err := systemEngine.CreateNode(node)
 		return err

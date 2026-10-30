@@ -77,7 +77,7 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 					reservation := svc.ReserveNodeMutation(node.ID)
 					if (writer+i)%2 == 0 {
 						_ = engine.DeleteNode(node.ID)
-					} else if err := engine.UpdateNode(node); err != nil {
+					} else if err := engine.UpdateNode(storage.NodeUpdateRequest{After: node}); err != nil {
 						_, _ = engine.CreateNode(node)
 					}
 					_ = svc.RefreshNode(node.ID)

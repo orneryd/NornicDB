@@ -111,7 +111,7 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 			if value == nil {
 				continue
 			}
-			if existingNode, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, value); constrained && cacheComplete {
+			if existingNode, found, constrained, cacheComplete := schema.LookupUniqueConstraintValue(c.Label, prop, value); constrained && cacheComplete {
 				if found && existingNode != excludeNodeID {
 					return uniqueConstraintViolation(c.Label, prop, value, existingNode)
 				}

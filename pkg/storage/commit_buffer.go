@@ -138,7 +138,10 @@ type CommitBuffer struct {
 	// retired guards the buffer's pending-node index retirement: a
 	// generation that reached the applied state retires its nodes from the
 	// index exactly once, whichever drain path reaches it first.
-	retired atomic.Bool
+	retired        atomic.Bool
+	beginPins      atomic.Int64
+	queueRetired   atomic.Bool
+	leasesReleased atomic.Bool
 
 	// settled is closed once the generation is applied and its
 	// notifications are delivered, or handed to the caller that drained it
@@ -392,7 +395,10 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 // generations. Apply is injected so the replay destination (Badger) stays a
 // detail of the caller.
 type WriteBehindBuffer struct {
-	mu sync.RWMutex
+	mu                  sync.RWMutex
+	beginPresenceMu     sync.Mutex
+	beginPresences      *transactionBeginPresence
+	beginPresenceClosed bool
 	// order orders the writes that commit to Badger themselves after the
 	// commits acknowledged before them (orderAfterBufferedCommits).
 	order        writeOrder
@@ -863,8 +869,9 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	}
 	w.mu.Unlock()
 	if retired {
-		for _, commit := range buf.commits {
-			commit.memoryLease.Release()
+		buf.queueRetired.Store(true)
+		if buf.beginPins.Load() == 0 {
+			buf.releaseMemoryLeases()
 		}
 	}
 }

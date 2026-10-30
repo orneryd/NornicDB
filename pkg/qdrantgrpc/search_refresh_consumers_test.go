@@ -2,39 +2,23 @@ package qdrantgrpc
 
 import (
 	"context"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
 )
 
-// consumerPointWriteBarrier pauses the first armed point update after its commit,
-// before the upsert indexes its payload. No goroutine stacks are inspected.
-type consumerPointWriteBarrier struct {
-	storage.Engine
-	armed   *atomic.Bool
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (b *consumerPointWriteBarrier) UpdateNode(node *storage.Node) error {
-	err := b.Engine.UpdateNode(node)
-	if err == nil && b.armed.CompareAndSwap(true, false) {
-		close(b.entered)
-		<-b.release
-	}
-	return err
-}
-
+// consumerBarrierCollections opens each collection behind the shared
+// post-success update barrier, so one armed flag covers every engine the
+// collection store returns. No goroutine stacks are inspected.
 type consumerBarrierCollections struct {
 	CollectionStore
-	armed   atomic.Bool
-	entered chan struct{}
-	release chan struct{}
+	barrier *storagefault.PostUpdateBarrier
 }
 
 func (c *consumerBarrierCollections) Open(ctx context.Context, name string) (storage.Engine, *CollectionMeta, error) {
@@ -42,7 +26,7 @@ func (c *consumerBarrierCollections) Open(ctx context.Context, name string) (sto
 	if err != nil {
 		return nil, nil, err
 	}
-	return &consumerPointWriteBarrier{Engine: engine, armed: &c.armed, entered: c.entered, release: c.release}, meta, nil
+	return c.barrier.PauseUpdateAfterCommit(engine), meta, nil
 }
 
 func consumerUpsert(id *qpb.PointId, vector []float32) *qpb.UpsertPoints {
@@ -58,7 +42,8 @@ func setupConsumerPoints(t *testing.T) (*PointsService, *consumerBarrierCollecti
 	require.NoError(t, err)
 	svc := search.NewService(store, 4, nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	barrier := &consumerBarrierCollections{CollectionStore: collections, entered: make(chan struct{}), release: make(chan struct{})}
+	barrier := &consumerBarrierCollections{CollectionStore: collections, barrier: storagefault.NewPostUpdateBarrier()}
+	t.Cleanup(barrier.barrier.ReleaseWrites)
 	points.collections = barrier
 	points.searchProvider = func(string, storage.Engine) (*search.Service, error) { return svc, nil }
 	return points, barrier, svc, store
@@ -66,12 +51,7 @@ func setupConsumerPoints(t *testing.T) (*PointsService, *consumerBarrierCollecti
 
 func (c *consumerBarrierCollections) wait(t *testing.T) {
 	t.Helper()
-	select {
-	case <-c.entered:
-	case <-time.After(5 * time.Second):
-		close(c.release)
-		t.Fatal("upsert did not reach its barrier")
-	}
+	runtimeFixtureOwner.WaitForBarrier(t, c.barrier.Entered, 5*time.Second, c.barrier.ReleaseWrites, "upsert did not reach its barrier")
 }
 
 // An upsert's late index call must not resurrect a point deleted after its
@@ -83,7 +63,7 @@ func TestQdrantUpsertIndexCannotResurrectDelete(t *testing.T) {
 	_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{1, 0, 0, 0}))
 	require.NoError(t, err)
 	require.Positive(t, svc.EmbeddingCount())
-	barrier.armed.Store(true)
+	barrier.barrier.Armed.Store(true)
 	done := make(chan error, 1)
 	go func() {
 		_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{0, 1, 0, 0}))
@@ -92,7 +72,7 @@ func TestQdrantUpsertIndexCannotResurrectDelete(t *testing.T) {
 	barrier.wait(t)
 	_, err = points.Delete(ctx, &qpb.DeletePoints{CollectionName: "test_vectors", Points: &qpb.PointsSelector{PointsSelectorOneOf: &qpb.PointsSelector_Points{Points: &qpb.PointsIdsList{Ids: []*qpb.PointId{pid}}}}})
 	require.NoError(t, err)
-	close(barrier.release)
+	barrier.barrier.ReleaseWrites()
 	require.NoError(t, <-done)
 	_, err = store.GetNode(pointIDToNodeID(pid))
 	require.ErrorIs(t, err, storage.ErrNotFound)
@@ -109,7 +89,7 @@ func TestQdrantUpsertIndexCannotOverwriteNewerUpsert(t *testing.T) {
 	control, err := svc.VectorSearchCandidates(ctx, []float32{1, 0, 0, 0}, search.DefaultSearchOptions())
 	require.NoError(t, err)
 	require.NotEmpty(t, control, "harness: an upserted vector is searchable")
-	barrier.armed.Store(true)
+	barrier.barrier.Armed.Store(true)
 	done := make(chan error, 1)
 	go func() {
 		_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{0, 1, 0, 0}))
@@ -118,7 +98,7 @@ func TestQdrantUpsertIndexCannotOverwriteNewerUpsert(t *testing.T) {
 	barrier.wait(t)
 	_, err = points.Upsert(ctx, consumerUpsert(pid, []float32{0, 0, 1, 0}))
 	require.NoError(t, err)
-	close(barrier.release)
+	barrier.barrier.ReleaseWrites()
 	require.NoError(t, <-done)
 	stored, err := store.GetNode(pointIDToNodeID(pid))
 	require.NoError(t, err)

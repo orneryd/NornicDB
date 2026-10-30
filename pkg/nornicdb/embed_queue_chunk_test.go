@@ -193,7 +193,7 @@ func TestNonFileNodeChunking(t *testing.T) {
 
 		// Update node with a property that doesn't feed the embedding text
 		node.Properties["updatedAt"] = "2026-10-08T00:00:00Z"
-		err = engine.UpdateNode(node)
+		err = engine.UpdateNode(storage.NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 
 		// Verify chunk embeddings are preserved in struct field
@@ -206,7 +206,7 @@ func TestNonFileNodeChunking(t *testing.T) {
 		// A change to the embedded text leaves the old vectors behind
 		// (#963): the node is embedded again.
 		updatedNode.Properties["content"] = "Different content."
-		require.NoError(t, engine.UpdateNode(updatedNode))
+		require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: updatedNode}))
 		changedNode, err := engine.GetNode("test-node")
 		require.NoError(t, err)
 		assert.Empty(t, changedNode.ChunkEmbeddings, "stale ChunkEmbeddings should be dropped")

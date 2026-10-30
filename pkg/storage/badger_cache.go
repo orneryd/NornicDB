@@ -138,7 +138,7 @@ func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
 	return copyNodeForCaller(cached), true
 }
 
-func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64) (*Node, bool) {
+func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properties []string, access nodeBodyAccess) (*Node, bool) {
 	if id == "" {
 		return nil, false
 	}
@@ -156,7 +156,10 @@ func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64) (*Node, 
 		return nil, false
 	}
 	entry.referenced.Store(true)
-	node := copyNodeWithoutEmbeddings(entry.node)
+	node := entry.node
+	if access != nodeBodyBorrowed {
+		node = projectCachedNodeForRead(node, properties, true)
+	}
 	b.nodeBodyCacheMu.RUnlock()
 	return node, true
 }

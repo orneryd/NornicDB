@@ -184,7 +184,8 @@ type recoveryFieldsVisitor struct {
 func (v *recoveryFieldsVisitor) VisitNode(n *Node) error { v.nodes = append(v.nodes, n); return nil }
 func (v *recoveryFieldsVisitor) VisitEdge(e *Edge) error { v.edges = append(v.edges, e); return nil }
 
-func TestWALEngineDefaultTimesRecordedBeforeCreation(t *testing.T) {
+func newTimestampRecoveryWAL(t *testing.T) (*WALEngine, *WAL, string) {
+	t.Helper()
 	enabled := config.IsWALEnabled()
 	config.EnableWAL()
 	t.Cleanup(func() {
@@ -193,12 +194,17 @@ func TestWALEngineDefaultTimesRecordedBeforeCreation(t *testing.T) {
 		}
 	})
 	dir := t.TempDir()
-	wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})
+	wal, err := NewWAL(dir, &WALConfig{SyncMode: "immediate"})
 	require.NoError(t, err)
 	live := NewWALEngine(newTestMemoryEngine(t), wal)
 	t.Cleanup(func() { _ = live.Close() })
+	return live, wal, dir
+}
+
+func TestWALEngineDefaultTimesRecordedBeforeCreation(t *testing.T) {
+	live, wal, dir := newTimestampRecoveryWAL(t)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err = live.CreateNode(&Node{ID: id})
+		_, err := live.CreateNode(&Node{ID: id})
 		require.NoError(t, err)
 	}
 	require.NoError(t, live.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINKS"}))
@@ -221,25 +227,14 @@ func TestWALEngineDefaultTimesRecordedBeforeCreation(t *testing.T) {
 }
 
 func TestWALEngineDefaultUpdateTimeRecordedBeforeMutation(t *testing.T) {
-	enabled := config.IsWALEnabled()
-	config.EnableWAL()
-	t.Cleanup(func() {
-		if !enabled {
-			config.DisableWAL()
-		}
-	})
-	dir := t.TempDir()
-	wal, err := NewWAL(dir, &WALConfig{SyncMode: "immediate"})
-	require.NoError(t, err)
-	live := NewWALEngine(newTestMemoryEngine(t), wal)
-	t.Cleanup(func() { _ = live.Close() })
-	_, err = live.CreateNode(&Node{ID: "test:a"})
+	live, wal, dir := newTimestampRecoveryWAL(t)
+	_, err := live.CreateNode(&Node{ID: "test:a"})
 	require.NoError(t, err)
 	node, err := live.GetNode("test:a")
 	require.NoError(t, err)
 	node.UpdatedAt = time.Time{}
 	node.Properties = map[string]any{"changed": true}
-	require.NoError(t, live.UpdateNode(node))
+	require.NoError(t, live.UpdateNode(NodeUpdateRequest{After: node}))
 	want, err := live.GetNode(node.ID)
 	require.NoError(t, err)
 	require.False(t, want.UpdatedAt.IsZero())

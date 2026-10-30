@@ -675,6 +675,8 @@ func (a *Authenticator) logAudit(event AuditEvent) {
 
 // loadUsers loads all users from the system database.
 // Users are stored as nodes with labels ["_User", "_System"].
+// A non-nil transaction is an already admitted staged view; nil asks this
+// operation to own admission. Both use the same record mutation implementation.
 func (a *Authenticator) loadUsers() error {
 	ctx := context.Background()
 	var loadedUsers []*User
@@ -715,36 +717,34 @@ func (a *Authenticator) loadUsers() error {
 
 // saveUser saves a user to the system database.
 // Users are stored as nodes with labels ["_User", "_System"].
-func (a *Authenticator) saveUser(user *User) error {
-	return WithStoreTransaction(context.Background(), a.storage, func(view storage.Engine) error {
-		staged := &Authenticator{storage: view}
-		return staged.saveUserInTransaction(user)
-	})
-}
+func (a *Authenticator) saveUser(user *User, transaction storage.Engine) error {
+	mutate := func(view storage.Engine) error {
+		node := mapUserRecord(storeUserRecord, user, nil).Node
 
-func (a *Authenticator) saveUserInTransaction(user *User) error {
-	node := mapUserRecord(storeUserRecord, user, nil).Node
+		// Check if node exists
+		nodeID := storage.NodeID("user:" + user.Username)
+		existing, err := view.GetNode(nodeID)
+		if err == storage.ErrNotFound {
+			// Create new user node
+			node.ID = nodeID
+			_, err = view.CreateNode(node)
+			return err
+		}
+		if err != nil {
+			return fmt.Errorf("failed to check existing user: %w", err)
+		}
 
-	// Check if node exists
-	nodeID := storage.NodeID("user:" + user.Username)
-	existing, err := a.storage.GetNode(nodeID)
-	if err == storage.ErrNotFound {
-		// Create new user node
+		// Update existing user node
 		node.ID = nodeID
-		_, err = a.storage.CreateNode(node)
-		return err
+		node.CreatedAt = existing.CreatedAt // Preserve original creation time
+		return view.UpdateNode(storage.NodeUpdateRequest{Before: existing, After: node})
 	}
-	if err != nil {
-		return fmt.Errorf("failed to check existing user: %w", err)
+	if transaction != nil {
+		return mutate(transaction)
 	}
-
-	// Update existing user node
-	node.ID = nodeID
-	node.CreatedAt = existing.CreatedAt // Preserve original creation time
-	return a.storage.UpdateNode(node)
+	return WithStoreTransaction(context.Background(), a.storage, mutate)
 }
 
-// deleteUserNode deletes a user node from the system database.
 func (a *Authenticator) deleteUserNode(username string) error {
 	nodeID := storage.NodeID("user:" + username)
 	return WithStoreTransaction(context.Background(), a.storage, func(view storage.Engine) error {
@@ -831,7 +831,7 @@ func (a *Authenticator) CreateUser(username, password string, roles []Role) (*Us
 	}
 
 	// Save to storage
-	if err := a.saveUser(user); err != nil {
+	if err := a.saveUser(user, nil); err != nil {
 		return nil, fmt.Errorf("failed to persist user: %w", err)
 	}
 
@@ -971,7 +971,7 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 			user.UpdatedAt = time.Now()
 
 			// Persist failed login state
-			a.saveUser(user) // Ignore error - don't fail on storage issues
+			a.saveUser(user, nil) // Ignore error - don't fail on storage issues
 
 			a.logAudit(AuditEvent{
 				EventType: "login",
@@ -1004,7 +1004,7 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 	user.UpdatedAt = time.Now()
 
 	// Persist login state changes
-	a.saveUser(user) // Ignore error - don't fail authentication on storage issues
+	a.saveUser(user, nil) // Ignore error - don't fail authentication on storage issues
 
 	// Generate JWT token
 	token, err := a.issueUserJWT(user, a.config.TokenExpiry)
@@ -1262,7 +1262,7 @@ func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string
 	user.UpdatedAt = time.Now()
 
 	// Persist password change
-	if err := a.saveUser(user); err != nil {
+	if err := a.saveUser(user, nil); err != nil {
 		return fmt.Errorf("failed to persist password change: %w", err)
 	}
 
@@ -1298,7 +1298,7 @@ func (a *Authenticator) UpdateRoles(username string, newRoles []Role) error {
 	user.UpdatedAt = time.Now()
 
 	// Persist role change
-	if err := a.saveUser(user); err != nil {
+	if err := a.saveUser(user, nil); err != nil {
 		return fmt.Errorf("failed to persist role change: %w", err)
 	}
 
@@ -1331,7 +1331,7 @@ func (a *Authenticator) DisableUser(username string) error {
 	user.UpdatedAt = time.Now()
 
 	// Persist disable
-	if err := a.saveUser(user); err != nil {
+	if err := a.saveUser(user, nil); err != nil {
 		return fmt.Errorf("failed to persist user disable: %w", err)
 	}
 
@@ -1365,7 +1365,7 @@ func (a *Authenticator) EnableUser(username string) error {
 	user.UpdatedAt = time.Now()
 
 	// Persist enable
-	if err := a.saveUser(user); err != nil {
+	if err := a.saveUser(user, nil); err != nil {
 		return fmt.Errorf("failed to persist user enable: %w", err)
 	}
 
@@ -1398,7 +1398,7 @@ func (a *Authenticator) UnlockUser(username string) error {
 	user.UpdatedAt = time.Now()
 
 	// Persist unlock
-	if err := a.saveUser(user); err != nil {
+	if err := a.saveUser(user, nil); err != nil {
 		return fmt.Errorf("failed to persist user unlock: %w", err)
 	}
 
@@ -1445,7 +1445,7 @@ func (a *Authenticator) UpdateUser(username string, email string, metadata map[s
 	user.UpdatedAt = time.Now()
 
 	// Persist changes
-	if err := a.saveUser(user); err != nil {
+	if err := a.saveUser(user, nil); err != nil {
 		return fmt.Errorf("failed to persist user update: %w", err)
 	}
 

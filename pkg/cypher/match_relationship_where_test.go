@@ -108,7 +108,7 @@ func TestMatchRelationshipWithWhereIdFunction(t *testing.T) {
 	t.Run("outgoing edges with id() OR property in WHERE", func(t *testing.T) {
 		// Add id property to node for testing OR condition
 		n1.Properties["id"] = "node-1"
-		require.NoError(t, store.UpdateNode(n1))
+		require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: n1}))
 
 		query := "MATCH (n)-[r]->(m) WHERE (id(n) = $nodeId OR n.id = $nodeId) RETURN r, id(n) as source, id(m) as target"
 		params := map[string]interface{}{"nodeId": "node-1"}

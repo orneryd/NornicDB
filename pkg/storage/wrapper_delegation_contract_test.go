@@ -102,9 +102,9 @@ func (s *delegationSpyEngine) GetNode(id NodeID) (*Node, error) {
 	return s.MemoryEngine.GetNode(id)
 }
 
-func (s *delegationSpyEngine) UpdateNode(node *Node) error {
+func (s *delegationSpyEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	s.record("UpdateNode")
-	return s.MemoryEngine.UpdateNode(node)
+	return s.MemoryEngine.UpdateNode(updateRequest)
 }
 
 func (s *delegationSpyEngine) DeleteNode(id NodeID) error {
@@ -122,9 +122,9 @@ func (s *delegationSpyEngine) GetEdge(id EdgeID) (*Edge, error) {
 	return s.MemoryEngine.GetEdge(id)
 }
 
-func (s *delegationSpyEngine) UpdateEdge(edge *Edge) error {
+func (s *delegationSpyEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	s.record("UpdateEdge")
-	return s.MemoryEngine.UpdateEdge(edge)
+	return s.MemoryEngine.UpdateEdge(updateRequest)
 }
 
 func (s *delegationSpyEngine) DeleteEdge(id EdgeID) error {
@@ -690,8 +690,8 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			// AsyncEngine stages writes and flushes them as bulk operations, so
 			// on async-bearing stacks the contract is verified by observable
 			// state after flush; synchronous stacks assert exact delegation.
-			require.NoError(t, engine.UpdateNode(&Node{ID: id("n1"), Labels: []string{"Person"}, Properties: map[string]any{"name": "alice2"}}))
-			require.NoError(t, engine.UpdateEdge(&Edge{ID: eid("e1"), StartNode: id("n1"), EndNode: id("n2"), Type: "KNOWS"}))
+			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id("n1"), Labels: []string{"Person"}, Properties: map[string]any{"name": "alice2"}}}))
+			require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: eid("e1"), StartNode: id("n1"), EndNode: id("n2"), Type: "KNOWS"}}))
 			require.NoError(t, engine.BulkCreateNodes([]*Node{{ID: id("b1")}, {ID: id("b2")}}))
 			require.NoError(t, engine.BulkCreateEdges([]*Edge{{ID: eid("b:e"), StartNode: id("b1"), EndNode: id("b2"), Type: "BULK"}}))
 			require.NoError(t, engine.BulkDeleteNodes([]NodeID{id("b1"), id("b2")}))

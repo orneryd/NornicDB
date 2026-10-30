@@ -61,7 +61,7 @@ func BenchmarkDeferredSearchFlushThroughput(b *testing.B) {
 	for n := range b.N {
 		for i := range nodes {
 			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("bench-%d", i)), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": fmt.Sprintf("update %d text", n)}}
-			require.NoError(b, db.storage.UpdateNode(node))
+			require.NoError(b, db.storage.UpdateNode(storage.NodeUpdateRequest{After: node}))
 		}
 		waitFlushIdle(b, entry)
 	}

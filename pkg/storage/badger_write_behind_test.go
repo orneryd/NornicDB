@@ -118,7 +118,7 @@ func TestWriteBehind_MultipleCommitsApplyInOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	err = tx.UpdateGraphNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits)
+	err = tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
@@ -523,7 +523,7 @@ func TestWriteBehind_PropertyIndexBufferedGenerations(t *testing.T) {
 					bufferedCreate(t, engine, node(step.id, step.version))
 				case "update":
 					bufferedWrite(t, engine, func(tx *BadgerTransaction) error {
-						return tx.UpdateGraphNode(node(step.id, step.version), ClientNodeEdits)
+						return tx.UpdateGraphNode(NodeUpdateRequest{After: node(step.id, step.version), Policy: ClientNodeEdits})
 					})
 				case "delete":
 					bufferedWrite(t, engine, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:u1", CascadeEdges) })

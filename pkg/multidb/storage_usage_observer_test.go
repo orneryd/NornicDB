@@ -82,7 +82,7 @@ func TestManagedUsageSnapshotUpgradeAndNativePublication(t *testing.T) {
 	require.False(t, info.sizeInitialized)
 	require.Equal(t, int64(2), info.usageNodes)
 	require.Zero(t, info.totalSize)
-	require.NoError(t, engine.UpdateNode(&storage.Node{ID: "test:n", Properties: map[string]any{"value": "larger value before bytes are requested"}}))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "test:n", Properties: map[string]any{"value": "larger value before bytes are requested"}}}))
 	require.Equal(t, int64(2), info.usageNodes)
 	require.False(t, info.sizeInitialized)
 	require.Zero(t, info.totalSize)
@@ -113,7 +113,7 @@ func TestManagedUsageSnapshotUpgradeAndNativePublication(t *testing.T) {
 	require.ErrorIs(t, info.reserveStorageUsage("test", "competitor", storageUsage{nodes: 1}, StorageLimits{MaxNodes: 3}), ErrStorageLimitExceeded)
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "LINK", Properties: map[string]any{"value": "first"}}))
 	check(3, 1)
-	require.NoError(t, engine.UpdateEdge(&storage.Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "LINK", Properties: map[string]any{"value": "larger stored edge"}}))
+	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "LINK", Properties: map[string]any{"value": "larger stored edge"}}}))
 	check(3, 1)
 	require.NoError(t, engine.DeleteNode("test:n"))
 	check(2, 0)
@@ -121,7 +121,7 @@ func TestManagedUsageSnapshotUpgradeAndNativePublication(t *testing.T) {
 	require.Empty(t, info.pending)
 	// A later count-only request cannot downgrade the installed byte observer.
 	require.NoError(t, manager.initializeStorageUsage("test", engine, false, nil))
-	require.NoError(t, engine.UpdateNode(&storage.Node{ID: "test:m", Properties: map[string]any{"value": "updated after byte initialization"}}))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "test:m", Properties: map[string]any{"value": "updated after byte initialization"}}}))
 	check(2, 0)
 }
 

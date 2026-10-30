@@ -21,7 +21,47 @@ type bufferedEntityState struct {
 
 // entityState is the single per-generation visibility owner. Typed commit
 // tombstones and legacy generic deletes are resolved before the stored body.
-func (b *CommitBuffer) entityState(kind bufferedEntityKind, id string) bufferedEntityState {
+func (b *CommitBuffer) entityState(kind bufferedEntityKind, id string, prefix ...[]bufferedCommit) bufferedEntityState {
+	if len(prefix) != 0 {
+		// A pinned active prefix is immutable. Its current maps may already
+		// include later commits, so resolve the same entity at this older cut.
+		for i := len(prefix[0]) - 1; i >= 0; i-- {
+			operations := prefix[0][i].ops
+			for j := len(operations) - 1; j >= 0; j-- {
+				operation := &operations[j]
+				if kind == bufferedNodeEntity {
+					switch operation.Type {
+					case OpCreateNode, OpUpdateNode:
+						if operation.Node != nil && string(operation.Node.ID) == id {
+							return bufferedEntityState{node: operation.Node, found: true}
+						}
+					case OpDeleteNode:
+						if string(operation.NodeID) == id {
+							return bufferedEntityState{found: true, deleted: true}
+						}
+					}
+				} else {
+					switch operation.Type {
+					case OpCreateEdge, OpUpdateEdge:
+						if operation.Edge != nil && string(operation.Edge.ID) == id {
+							return bufferedEntityState{edge: operation.Edge, found: true}
+						}
+					case OpDeleteEdge:
+						if string(operation.EdgeID) == id {
+							return bufferedEntityState{found: true, deleted: true}
+						}
+					case OpDeleteNode:
+						for _, edgeID := range operation.DeletedEdgeIDs {
+							if string(edgeID) == id {
+								return bufferedEntityState{found: true, deleted: true}
+							}
+						}
+					}
+				}
+			}
+		}
+		return bufferedEntityState{}
+	}
 	if b.deletes[id]&kind != 0 {
 		return bufferedEntityState{found: true, deleted: true}
 	}

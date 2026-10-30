@@ -677,10 +677,16 @@ func TestCompositeEngine_BulkCreateNodes(t *testing.T) {
 	}
 }
 
+func compositePairFixture(t *testing.T) (*CompositeEngine, *MemoryEngine, *MemoryEngine) {
+	t.Helper()
+	first, second := newTestMemoryEngine(t), newTestMemoryEngine(t)
+	return NewCompositeEngine(map[string]Engine{"db1": first, "db2": second},
+		map[string]string{"db1": "db1", "db2": "db2"},
+		map[string]string{"db1": "read_write", "db2": "read_write"}), first, second
+}
+
 func TestCompositeEngine_GetSchema(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes with labels to populate schema
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -691,21 +697,6 @@ func TestCompositeEngine_GetSchema(t *testing.T) {
 	engine1.CreateNode(node2)
 	engine2.CreateNode(node3)
 	engine2.CreateNode(node4)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Get merged schema
 	mergedSchema := composite.GetSchema()
@@ -773,7 +764,7 @@ func TestCompositeEngine_NodeAccess(t *testing.T) {
 				map[string]string{"db1": "read_write", "db2": "read_write"})
 			if mode == "update" {
 				node1.Properties["age"] = 30
-				require.NoError(t, composite.UpdateNode(node1))
+				require.NoError(t, composite.UpdateNode(NodeUpdateRequest{After: node1}))
 			}
 			retrieved, err := composite.GetNode(node1.ID)
 			require.NoError(t, err)
@@ -891,7 +882,7 @@ func TestCompositeEngine_UpdateEdge(t *testing.T) {
 
 	// Update edge
 	edge1.Properties = map[string]interface{}{"since": 2020}
-	err := composite.UpdateEdge(edge1)
+	err := composite.UpdateEdge(EdgeUpdateRequest{After: edge1})
 	require.NoError(t, err)
 
 	// Verify update
@@ -1912,28 +1903,11 @@ func TestCompositeEngine_CreateNode_NoWritableConstituents(t *testing.T) {
 }
 
 func TestCompositeEngine_UpdateNode_NotFound(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Try to update non-existent node
 	node := &Node{ID: NodeID(prefixTestID("nonexistent")), Labels: []string{"Person"}}
-	err := composite.UpdateNode(node)
+	err := composite.UpdateNode(NodeUpdateRequest{After: node})
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -2012,7 +1986,7 @@ func TestCompositeEngine_UpdateEdge_NotFound(t *testing.T) {
 
 	// Try to update non-existent edge
 	edge := &Edge{ID: EdgeID(prefixTestID("nonexistent")), StartNode: NodeID(prefixTestID("node1")), EndNode: NodeID(prefixTestID("node2")), Type: "KNOWS"}
-	err := composite.UpdateEdge(edge)
+	err := composite.UpdateEdge(EdgeUpdateRequest{After: edge})
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -2290,7 +2264,7 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		errEngine.getNodeErr = boom
 		_, err = errorOnly.GetNode(okNode.ID)
 		require.ErrorIs(t, err, boom)
-		err = errorOnly.UpdateNode(&Node{ID: okNode.ID, Labels: []string{"Person"}})
+		err = errorOnly.UpdateNode(NodeUpdateRequest{After: &Node{ID: okNode.ID, Labels: []string{"Person"}}})
 		require.ErrorIs(t, err, boom)
 		err = errorOnly.DeleteNode(okNode.ID)
 		require.ErrorIs(t, err, boom)
@@ -2299,7 +2273,7 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		errEngine.getEdgeErr = boom
 		_, err = errorOnly.GetEdge(EdgeID(prefixTestID("missing-edge")))
 		require.ErrorIs(t, err, boom)
-		err = errorOnly.UpdateEdge(&Edge{ID: EdgeID(prefixTestID("missing-edge")), StartNode: okNode.ID, EndNode: okNode.ID, Type: "REL"})
+		err = errorOnly.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: EdgeID(prefixTestID("missing-edge")), StartNode: okNode.ID, EndNode: okNode.ID, Type: "REL"}})
 		require.ErrorIs(t, err, boom)
 		err = errorOnly.DeleteEdge(EdgeID(prefixTestID("missing-edge")))
 		require.ErrorIs(t, err, boom)

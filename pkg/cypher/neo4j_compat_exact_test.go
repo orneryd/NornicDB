@@ -185,7 +185,7 @@ func TestNeo4jCompatExactQueriesWithEmbeddings(t *testing.T) {
 		nodes[i].ChunkEmbeddings = [][]float32{{0.1, 0.2, 0.3}}
 		nodes[i].Properties["embedding"] = true // Marker for f.embedding IS NOT NULL compatibility
 		nodes[i].EmbedMeta = map[string]any{"has_embedding": true}
-		err = store.UpdateNode(nodes[i])
+		err = store.UpdateNode(storage.NodeUpdateRequest{After: nodes[i]})
 		require.NoError(t, err)
 	}
 
@@ -411,7 +411,7 @@ func TestNeo4jCompatE2EWithServerStorageAndEmbeddings(t *testing.T) {
 			"embedding_model":      "test-model",
 			"has_embedding":        true,
 		}
-		err := store.UpdateNode(node)
+		err := store.UpdateNode(storage.NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 	}
 
@@ -430,7 +430,7 @@ func TestNeo4jCompatE2EWithServerStorageAndEmbeddings(t *testing.T) {
 			"embedding_model":      "test-model",
 			"has_embedding":        true,
 		}
-		err := store.UpdateNode(node)
+		err := store.UpdateNode(storage.NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 	}
 

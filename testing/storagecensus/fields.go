@@ -111,7 +111,9 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.uniqueConstraintSeenTable.keys":    {class: "constraint lock request scratch"},
 	// The operation kind belongs to a newly encoded transaction image, not
 	// the stored entity or its publication-order state.
-	"pkg/storage.semanticTransactionChange.Type": {class: "semantic transaction serialization kind"},
+	"pkg/storage.semanticTransactionChange.Type":          {class: "semantic transaction serialization kind"},
+	"pkg/storage.semanticTransactionNode.CreatedAtUnixNs": {class: "semantic transaction serialized timestamp"},
+	"pkg/storage.semanticTransactionNode.UpdatedAtUnixNs": {class: "semantic transaction serialized timestamp"},
 	// QueryCypher owns the resolved mode; Fabric consumes it to claim writes.
 	"pkg/storage.remoteCypherTx.resolvedMode": {class: "resolved remote query mode"},
 
@@ -143,6 +145,7 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.BadgerTransaction.snapshotPrefixNodeBytesByID":  {class: "transaction read cache"},
 	"pkg/storage.CommitBuffer.deletes":                           {class: "write-behind generation contents"},
 	"pkg/storage.CommitBuffer.ops":                               {class: "write-behind generation size"},
+	"pkg/storage.CommitBuffer.beginPins":                         {class: "transaction snapshot readers"},
 	"pkg/storage.WriteBehindBuffer.curInterval":                  {class: "write-behind scheduling"},
 	"pkg/storage.WriteBehindBuffer.drainDur":                     {class: "write-behind scheduling"},
 	"pkg/storage.WriteBehindBuffer.drainRate":                    {class: "write-behind scheduling"},

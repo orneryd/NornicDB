@@ -242,7 +242,7 @@ func applyRoleRecords(view storage.Engine, records []roleOwnedRecord, oldName, n
 			}
 			user.Roles = roles
 			user.UpdatedAt = time.Now()
-			if err := (&Authenticator{storage: view}).saveUserInTransaction(user); err != nil {
+			if err := (&Authenticator{storage: view}).saveUser(user, view); err != nil {
 				return nil, err
 			}
 			changedUsers[user.Username] = user

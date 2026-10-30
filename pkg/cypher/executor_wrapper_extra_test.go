@@ -43,7 +43,7 @@ func TestTransactionStorageWrapper_CreateGetDelete_WithNamespace(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, storage.NodeID("n1"), got.ID)
 
-	err = w.UpdateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	err = w.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}}})
 	require.NoError(t, err)
 
 	err = w.DeleteNode("n1")

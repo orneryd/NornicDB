@@ -169,11 +169,11 @@ func (e *restoreFailEngine) CreateNode(node *storage.Node) (storage.NodeID, erro
 	return e.Engine.CreateNode(node)
 }
 
-func (e *restoreFailEngine) UpdateNode(node *storage.Node) error {
+func (e *restoreFailEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	if e.updateNodeErr != nil {
 		return e.updateNodeErr
 	}
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(updateRequest)
 }
 
 func (e *restoreFailEngine) CreateEdge(edge *storage.Edge) error {
@@ -183,11 +183,11 @@ func (e *restoreFailEngine) CreateEdge(edge *storage.Edge) error {
 	return e.Engine.CreateEdge(edge)
 }
 
-func (e *restoreFailEngine) UpdateEdge(edge *storage.Edge) error {
+func (e *restoreFailEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
 	if e.updateEdgeErr != nil {
 		return e.updateEdgeErr
 	}
-	return e.Engine.UpdateEdge(edge)
+	return e.Engine.UpdateEdge(updateRequest)
 }
 
 func TestOpen(t *testing.T) {

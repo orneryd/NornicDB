@@ -245,7 +245,7 @@ func TestEmbedWorkerDLQPublicUpdatePullsMainAndRejectsStale(t *testing.T) {
 	n, err := s.GetNode("bad")
 	require.NoError(t, err)
 	n.Properties["text"] = "updated source"
-	require.NoError(t, s.UpdateNode(n))
+	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: n}))
 	s.mu.Lock()
 	s.reject["bad"] = false
 	s.mu.Unlock()
@@ -328,7 +328,7 @@ func TestEmbedWorkerDLQPublicUpdateResetsRetryLimit(t *testing.T) {
 	require.NoError(t, err)
 	n.Properties["text"] = "new attempt"
 	n.UpdatedAt = time.Now()
-	require.NoError(t, s.UpdateNode(n))
+	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: n}))
 	w.Enqueue("bad")
 	paused.Store(false)
 	w.TriggerImmediate()
@@ -377,7 +377,7 @@ func TestEmbedWorkerDLQPublicUpdateRejectsInFlightRetry(t *testing.T) {
 	require.NoError(t, err)
 	n.Properties["text"] = "changed in flight"
 	n.UpdatedAt = time.Now()
-	require.NoError(t, s.UpdateNode(n))
+	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: n}))
 	w.Enqueue("bad")
 	once.Do(func() { close(release) })
 	require.Eventually(t, func() bool { return w.Stats().Processed == 1 }, 3*time.Second, time.Millisecond)

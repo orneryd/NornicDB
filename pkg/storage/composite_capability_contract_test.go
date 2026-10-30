@@ -186,8 +186,8 @@ func TestCompositeEvents_SharedEngineTranslatesEveryNamespace(t *testing.T) {
 
 	var updated []NodeID
 	composite.OnNodeUpdated(func(node *Node) { updated = append(updated, node.ID) })
-	require.NoError(t, nsA.UpdateNode(&Node{ID: "shared-a", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(2)}}))
-	require.NoError(t, nsB.UpdateNode(&Node{ID: "shared-b", Labels: []string{"Other"}, Properties: map[string]any{"v": int64(3)}}))
+	require.NoError(t, nsA.UpdateNode(NodeUpdateRequest{After: &Node{ID: "shared-a", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(2)}}}))
+	require.NoError(t, nsB.UpdateNode(NodeUpdateRequest{After: &Node{ID: "shared-b", Labels: []string{"Other"}, Properties: map[string]any{"v": int64(3)}}}))
 	require.ElementsMatch(t, []NodeID{"shared-a", "shared-b"}, updated)
 	var deleted []NodeID
 	composite.OnNodeDeleted(func(nodeID NodeID) { deleted = append(deleted, nodeID) })
@@ -204,7 +204,7 @@ func TestCompositeEvents_SharedEngineTranslatesEveryNamespace(t *testing.T) {
 	require.Equal(t, []EdgeID{"shared-e"}, createdEdges)
 	var updatedEdges []EdgeID
 	composite.OnEdgeUpdated(func(edge *Edge) { updatedEdges = append(updatedEdges, edge.ID) })
-	require.NoError(t, nsB.UpdateEdge(&Edge{ID: "shared-e", StartNode: "shared-b2", EndNode: "shared-b3", Type: "R", Properties: map[string]any{"v": int64(4)}}))
+	require.NoError(t, nsB.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "shared-e", StartNode: "shared-b2", EndNode: "shared-b3", Type: "R", Properties: map[string]any{"v": int64(4)}}}))
 	require.Equal(t, []EdgeID{"shared-e"}, updatedEdges)
 	var deletedEdges []EdgeID
 	composite.OnEdgeDeleted(func(edgeID EdgeID) { deletedEdges = append(deletedEdges, edgeID) })

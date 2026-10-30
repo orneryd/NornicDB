@@ -91,6 +91,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Classify concurrent non-key updates as ordinary retryable write conflicts,
+  preserve genuine unique-key claim violations, and prevent stale cached key
+  images from overwriting acknowledged renames. Native commit validation refreshes
+  endpoint heads after metadata callbacks, and buffered begin snapshots retain
+  their target-presence cut across flushes. Infrastructure commit-read failures
+  preserve their cause and database-level transaction failure status. Preserve
+  UNIQUE ownership across prefix deletion, restart, buffered key reuse and crash
+  recovery. Typed Go update requests retain observed images without read tracking;
+  rejected observed updates never enter the WAL (#1655).
+
 - Unify database-info metadata projection and range/vector index creation while
   preserving their public result, schema-transaction and vector-registration contracts.
 
