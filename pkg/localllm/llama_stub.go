@@ -89,17 +89,28 @@ func (m *Model) MaxTokens() int { return defaultEmbeddingContextCap }
 func (m *Model) Close() error { return nil }
 
 // RerankerModel wraps a GGUF model for reranking; stub returns errors.
-type RerankerModel struct{}
+type RerankerModel struct{ backend RerankerBackend }
 
 // LoadRerankerModel returns an error on unsupported platforms.
 func LoadRerankerModel(opts Options) (*RerankerModel, error) {
+	if model, supplied, err := loadRerankerBackend(opts); supplied {
+		return model, err
+	}
 	return nil, errNotSupported
 }
 
 // Score returns an error on unsupported platforms.
 func (r *RerankerModel) Score(ctx context.Context, query, document string) (float32, error) {
+	if r != nil && r.backend != nil {
+		return r.backend.Score(ctx, query, document)
+	}
 	return 0, errNotSupported
 }
 
 // Close is a no-op on unsupported platforms.
-func (r *RerankerModel) Close() error { return nil }
+func (r *RerankerModel) Close() error {
+	if r != nil && r.backend != nil {
+		return r.backend.Close()
+	}
+	return nil
+}

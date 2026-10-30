@@ -126,21 +126,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/gorilla/websocket"
-	"github.com/orneryd/nornicdb/internal/catalogadapter"
-	"github.com/orneryd/nornicdb/pkg/auth"
-	"github.com/orneryd/nornicdb/pkg/buildinfo"
-	"github.com/orneryd/nornicdb/pkg/cypher"
-	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
-	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/memory"
-	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/observability"
-	"github.com/orneryd/nornicdb/pkg/resultstream"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"golang.org/x/text/language"
 	"io"
 	"log/slog"
 	"net"
@@ -150,8 +135,27 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-)
 
+	"github.com/gorilla/websocket"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/buildinfo"
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/text/language"
+)
 
 // Protocol versions supported
 const (
@@ -215,6 +219,11 @@ type Server struct {
 	config                         *Config
 	listener                       net.Listener
 	lifecycleMu                    sync.Mutex
+	work                           *lifecycle.WorkLifetime
+	serving                        bool
+	stopStarted                    bool
+	stopDone                       chan struct{}
+	stopErr                        error
 	mu                             sync.RWMutex
 	sessions                       map[string]*Session
 	connectionListings             map[string]cypher.ConnectionListing
@@ -290,8 +299,8 @@ type Server struct {
 	// to plain GET / probes on the Bolt port. Refreshed by a 1s ticker so
 	// the Date header stays current.
 	discoveryResponse atomic.Pointer[[]byte]
-	// discoveryStop cancels the discovery refresh goroutine on Close.
-	discoveryStop chan struct{}
+	// The shared lifetime cancels and joins the one discovery worker.
+	discoveryStarted bool
 
 	// upgrader is the gorilla/websocket Upgrader configured per Config at
 	// ListenAndServe time. Reused across all WS upgrades.
@@ -572,6 +581,10 @@ func (r *BoltAuthResult) HasPermission(perm string) bool {
 //	config = bolt.DefaultConfig()
 //	config.Port = 7688 // Use different port
 type Config struct {
+	// Lifetime binds resources constructed before New (such as TLS polling)
+	// to the same native service admission, cancellation and completion owner.
+	// Nil gives New a fresh owner. A supplied owner is immutable for this service.
+	Lifetime        *lifecycle.WorkLifetime
 	Host            string
 	Port            int
 	MaxConnections  int
@@ -903,6 +916,7 @@ func NewWithDatabaseManager(config *Config, executor QueryExecutor, dbManager Da
 	}
 
 	return &Server{
+		work:      config.Lifetime,
 		config:    config,
 		sessions:  make(map[string]*Session),
 		executors: make(map[string]QueryExecutor),
@@ -1010,17 +1024,24 @@ func (s *Server) SetMemoryPolicy(policy *memory.Policy) {
 //	}
 //
 // The server will print its listening address when started successfully.
-func (s *Server) ListenAndServe() error {
-	host := strings.TrimSpace(s.config.Host)
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	addr := net.JoinHostPort(host, strconv.Itoa(s.config.Port))
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-	return s.Serve(listener)
+func (s *Server) ListenAndServe() error { return s.Run(context.Background()) }
+
+// Run bounds its caller by ctx while retaining actual native startup/serving
+// work in the service owner. Cancellation initiates that same retirement.
+func (s *Server) Run(ctx context.Context) error {
+	err, _ := s.runServing(ctx, func(native context.Context) (net.Listener, error) {
+		host := strings.TrimSpace(s.config.Host)
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		addr := net.JoinHostPort(host, strconv.Itoa(s.config.Port))
+		listener, err := (&net.ListenConfig{}).Listen(native, "tcp", addr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
+		}
+		return listener, nil
+	})
+	return err
 }
 
 // Serve accepts Bolt connections from an already-bound listener.
@@ -1041,14 +1062,33 @@ func (s *Server) Serve(listener net.Listener) error {
 	if listener == nil {
 		return fmt.Errorf("bolt listener is nil")
 	}
-	s.lifecycleMu.Lock()
-	if s.closed.Load() {
-		s.lifecycleMu.Unlock()
-		_ = listener.Close()
-		return fmt.Errorf("bolt server is closed")
+	err, accepted := s.runServing(context.Background(), func(context.Context) (net.Listener, error) { return listener, nil })
+	if !accepted {
+		return compose.Outcomes(err, listener.Close())
 	}
+	return err
+}
+
+func (s *Server) serveListener(ctx context.Context, listener net.Listener) error {
+	s.lifecycleMu.Lock()
 	s.listener = listener
 	s.lifecycleMu.Unlock()
+	closed := make(chan struct{})
+	stop := context.AfterFunc(s.lifetime().Context(), func() {
+		defer close(closed)
+		if err := s.closeListener(); !util.ErrorIsOnly(err, net.ErrClosed) {
+			s.lifetime().RecordError("close Bolt listener", err)
+		}
+	})
+	defer func() {
+		if stop() {
+			if err := s.closeListener(); !util.ErrorIsOnly(err, net.ErrClosed) {
+				s.lifetime().RecordError("close Bolt listener", err)
+			}
+		} else {
+			<-closed
+		}
+	}()
 
 	announceHost := strings.TrimSpace(s.config.Host)
 	if announceHost == "0.0.0.0" || announceHost == "::" || announceHost == "" {
@@ -1062,12 +1102,11 @@ func (s *Server) Serve(listener net.Listener) error {
 
 	// Validate the discovery body once at startup and start the 1s Date
 	// refresh ticker. Startup fails if OAuthConfig has malformed URLs.
-	if err := s.startDiscoveryRefresher(); err != nil {
-		_ = s.closeListener()
+	if err := s.startDiscoveryRefresher(ctx); err != nil {
 		return fmt.Errorf("discovery response startup: %w", err)
 	}
 
-	return s.serve()
+	return s.serveAccepted(ctx)
 }
 
 func (s *Server) listenerSnapshot() net.Listener {
@@ -1090,37 +1129,28 @@ func (s *Server) closeListener() error {
 }
 
 // serve accepts connections in a loop.
-func (s *Server) serve() error {
+func (s *Server) serve() error { return s.Serve(s.listenerSnapshot()) }
+
+func (s *Server) serveAccepted(ctx context.Context) error {
 	listener := s.listenerSnapshot()
 	for {
-		if s.closed.Load() {
+		if s.closed.Load() || ctx.Err() != nil {
 			return nil
 		}
 
 		conn, err := listener.Accept()
 		if err != nil {
-			if s.closed.Load() {
+			if s.closed.Load() || ctx.Err() != nil {
+				if !util.ErrorIsOnly(err, net.ErrClosed) && !util.ErrorIsOnly(err, ctx.Err()) {
+					s.lifetime().RecordError("finish Bolt accept", err)
+				}
 				return nil // Clean shutdown
 			}
 			continue
 		}
 
-		go s.handleConnection(conn)
+		s.startConnection(ctx, conn)
 	}
-}
-
-// Close stops the Bolt server.
-func (s *Server) Close() error {
-	s.lifecycleMu.Lock()
-	s.closed.Store(true)
-	s.lifecycleMu.Unlock()
-	s.statementCacheIndex.Close()
-	s.executorsMu.Lock()
-	s.executors = nil
-	s.executorsMu.Unlock()
-	s.fallbackStatementCaches().Dispose()
-	s.stopDiscoveryRefresher()
-	return s.closeListener()
 }
 
 // IsClosed returns whether the server is closed.
@@ -1131,7 +1161,7 @@ func (s *Server) IsClosed() bool {
 // handleConnection handles a single client connection. It performs
 // transport selection (raw TCP / TLS / WS / WS+TLS) before constructing
 // the Bolt Session and then drives the message loop.
-func (s *Server) handleConnection(conn net.Conn) {
+func (s *Server) handleConnectionOwned(workCtx context.Context, conn net.Conn) {
 	// MaxConnections enforcement (single shared cap across all four
 	// transports). Atomic CAS — no channel, no syscall on the hot path.
 	if max := s.config.MaxConnections; max > 0 {
@@ -1141,7 +1171,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 				incBoltConnectionsRejected(ms.bag, "max_connections")
 			}
 			s.logConnectionLimit(conn, max, time.Now())
-			_ = conn.Close()
+			if err := conn.Close(); !util.ErrorIsOnly(err, net.ErrClosed) {
+				s.lifetime().RecordError("close excess Bolt connection", err)
+			}
 			return
 		}
 	} else {
@@ -1155,13 +1187,22 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// close_notify, wsConn writes a WS close frame, etc. Closing the
 	// raw conn directly would skip those.
 	closeTarget := conn
-	defer func() { _ = closeTarget.Close() }()
-
-	// Disable Nagle's algorithm on the underlying TCP socket for lower
-	// latency. Harmless no-op for non-TCP wrappers (tls.Conn, wsConn).
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		tcpConn.SetNoDelay(true)
+	joinInterrupt := s.interruptConnection(conn)
+	var transportClose lifecycle.OnceCompletion
+	closeTransport := func() {
+		transportClose.Run(func() {
+			joinInterrupt()
+			if native, ok := conn.(*lifetimeConn); ok {
+				native.closing.Store(true)
+			}
+			if err := closeTarget.Close(); !util.ErrorIsOnly(err, net.ErrClosed) {
+				s.lifetime().RecordError("close Bolt connection", err)
+			}
+		})
 	}
+	defer func() {
+		closeTransport()
+	}()
 
 	// Plan 04-02 D-11 session-lifecycle instrumentation. We defer Inc
 	// until after transport selection so the label that gets Inc'd
@@ -1289,7 +1330,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 
 	// TRC-13: session-level span wraps the entire connection lifetime.
-	sessionCtx, sessionSpan := startSessionSpan(remoteAddr)
+	_, sessionSpan := startSessionSpan(remoteAddr)
 	defer func() {
 		sessionSpan.SetAttributes(attribute.String("bolt.result", sessionResult))
 		sessionSpan.SetAttributes(attribute.String("bolt.transport", transportLabel))
@@ -1306,17 +1347,26 @@ func (s *Server) handleConnection(conn net.Conn) {
 		writeBufSize = s.config.WebSocketWriteBufferSize
 	}
 
+	sessionCtx := trace.ContextWithSpan(workCtx, sessionSpan)
 	connCtx, connCancel := context.WithCancel(sessionCtx)
+	cancelled := make(chan struct{})
+	stopCancellation := context.AfterFunc(s.lifetime().Context(), func() { connCancel(); close(cancelled) })
 	// Cancel the connection-scoped context the moment handleConnection
 	// returns. This is the load-bearing signal that propagates client
 	// disconnects to in-flight RUN handlers — see Session.connCtx for
 	// the full bug context.
-	defer connCancel()
+	defer func() {
+		connCancel()
+		if !stopCancellation() {
+			<-cancelled
+		}
+	}()
 
 	session := &Session{
 		connectionID:   "bolt-" + strconv.FormatUint(s.nextConnectionID.Add(1), 10),
 		connectedAt:    time.Now().UTC(),
 		conn:           sniffedConn,
+		closeTransport: closeTransport,
 		reader:         br, // load-bearing: holds peeked bytes from peekTransport
 		writer:         bufio.NewWriterSize(sniffedConn, writeBufSize),
 		server:         s,
@@ -1361,10 +1411,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 	defer func() {
 		session.releaseDatabaseConnection()
-		_ = session.rollbackExplicitTransaction(transactionTerminalDisconnect)
+		s.lifetime().RecordError("rollback disconnected Bolt transaction", session.rollbackExplicitTransaction(transactionTerminalDisconnect))
 		if !session.transactionCleanupFailed && session.pendingFlush {
 			if flushable, ok := session.executor.(FlushableExecutor); ok {
-				_ = flushable.Flush()
+				s.lifetime().RecordError("flush disconnected Bolt session", flushable.Flush())
 			}
 			session.pendingFlush = false
 		}
@@ -1431,7 +1481,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		// (no-op for raw TCP). Idempotent guard prevents re-installing.
 		if !keepaliveStarted && session.authenticated {
 			if wc, ok := sniffedConn.(*wsConn); ok {
-				s.startWebSocketKeepalive(wc)
+				s.startWebSocketKeepalive(connCtx, wc)
 			}
 			keepaliveStarted = true
 		}
@@ -1515,6 +1565,7 @@ func unwrapTLS(conn net.Conn) (net.Conn, bool) {
 
 // Session represents a client session.
 type Session struct {
+	closeTransport func() // same physical-close owner for timeout and teardown
 	// connectionID identifies the connection in SHOW TRANSACTIONS.
 	connectionID string
 	connectedAt  time.Time
@@ -2032,8 +2083,13 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 
 		txExec, _ := s.executor.(TransactionalExecutor)
 		s.txLifecycle.setTimeoutCleanupFailureHandler(s.failClosedTransactionCleanup)
+		var owner *lifecycle.WorkLifetime
+		if s.server != nil {
+			owner = s.server.lifetime()
+		}
 		if beginErr := s.txLifecycle.begin(
 			txParent,
+			owner,
 			txTimeout,
 			txDatabase,
 			txExec,
@@ -2186,6 +2242,7 @@ func (s *Session) databaseScopedExecutorOptions(dbName string, useAuthScopedReso
 		if provider, ok := s.server.executor.(baseCypherExecutorProvider); ok && provider != nil {
 			if baseExec := provider.BaseCypherExecutor(); baseExec != nil {
 				executor.ShareEmbedderFrom(baseExec)
+				executor.ShareInferenceManagerFrom(baseExec)
 			}
 		}
 		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {

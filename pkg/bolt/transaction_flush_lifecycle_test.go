@@ -152,7 +152,7 @@ func TestPendingFlushJoinsTimeoutCleanupThatWonAdmission(t *testing.T) {
 		pendingFlush:  true,
 	}
 	require.NoError(t, session.txLifecycle.begin(
-		context.Background(), transactionLifecycleShortTimeout, "nornic", executor, nil, nil))
+		context.Background(), testTxOwner(), transactionLifecycleShortTimeout, "nornic", executor, nil, nil))
 
 	select {
 	case <-executor.rollbackEntered:

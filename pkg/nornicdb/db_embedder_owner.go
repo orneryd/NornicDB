@@ -2,10 +2,13 @@ package nornicdb
 
 import (
 	"context"
+	"fmt"
 	"reflect"
-	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // beginProviderUse is the admission/cancellation owner for foreground provider
@@ -13,14 +16,16 @@ import (
 // lifetime, and waits outside that lock. Providers which honor context cancel
 // promptly; an uncancellable call retains its model until it actually returns.
 func (db *DB) beginProviderUse(ctx context.Context) (context.Context, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := bulk.ObserveContext(ctx); err != nil {
+		return nil, nil, err
+	}
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return nil, nil, ErrClosed
-	}
-	if err := ctx.Err(); err != nil {
-		db.mu.RUnlock()
-		return nil, nil, err
 	}
 	db.foregroundWg.Add(1)
 	db.mu.RUnlock()
@@ -33,25 +38,34 @@ func (db *DB) beginProviderUse(ctx context.Context) (context.Context, func(), er
 	}, nil
 }
 
-// embedderResource is the single release path for a provider, whether it is
+// BeginProviderUse retains an owned model during a constructor's raw health
+// call, before a published wrapper can supply this same foreground guard.
+func (db *DB) BeginProviderUse(ctx context.Context) (context.Context, func(), error) {
+	return db.beginProviderUse(ctx)
+}
+
+// providerResource is the single release path for a provider, whether it is
 // still being checked, installed, replaced, or shared through a cache/registry.
-type embedderResource struct {
-	provider embed.Embedder
-	once     sync.Once
-	err      error
+type providerResource struct {
+	provider   interface{}
+	name       string
+	completion lifecycle.OnceCompletion
+	reported   bool // guarded by DB.mu
 }
 
 func sameEmbedder(a, b embed.Embedder) bool {
-	return a != nil && reflect.TypeOf(a).Comparable() && a == b
+	return sameProvider(a, b)
 }
 
-func (r *embedderResource) close() error {
-	r.once.Do(func() {
+func sameProvider(a, b interface{}) bool { return a != nil && reflect.TypeOf(a).Comparable() && a == b }
+
+func (r *providerResource) close() error {
+	return r.completion.Do(func() error {
 		if closer, ok := r.provider.(interface{ Close() error }); ok {
-			r.err = closer.Close()
+			return closer.Close()
 		}
+		return nil
 	})
-	return r.err
 }
 
 // OwnEmbedder gives the database ownership of a constructed provider before its
@@ -71,56 +85,110 @@ func (db *DB) OwnEmbedder(provider embed.Embedder) (release func() error, accept
 		}
 		provider = cached.Unwrap()
 	}
+	return db.OwnProvider("embedder", provider)
+}
+
+// OwnProvider transfers one constructed provider to the canonical DB lifetime.
+// Construction must be enrolled in RunBackgroundTask (the server driver joins
+// its constructor work too). A rejected or failed attempt is released through
+// the same idempotent path and its cleanup outcome is retained until DB.Close.
+func (db *DB) OwnProvider(name string, provider interface{}) (release func() error, accepted bool) {
 	if provider == nil {
 		return func() error { return nil }, false
 	}
 	db.mu.Lock()
 	// Comparable identities cover pointer-backed model providers without making
 	// a non-comparable custom value panic when used as an interface/map key.
-	for _, resource := range db.ownedEmbedders {
-		if sameEmbedder(provider, resource.provider) {
+	for _, resource := range db.ownedProviders {
+		if sameProvider(provider, resource.provider) {
 			accepted = !db.closed
 			db.mu.Unlock()
-			return func() error { return db.releaseEmbedder(resource) }, accepted
+			return func() error { return db.releaseProvider(resource) }, accepted
 		}
 	}
-	resource := &embedderResource{provider: provider}
+	resource := &providerResource{provider: provider, name: name}
 	accepted = !db.closed
 	if accepted {
-		db.ownedEmbedders = append(db.ownedEmbedders, resource)
+		db.ownedProviders = append(db.ownedProviders, resource)
 	}
 	db.mu.Unlock()
 	if !accepted {
-		_ = resource.close()
+		_ = db.releaseProvider(resource)
 	}
-	return func() error { return db.releaseEmbedder(resource) }, accepted
+	return func() error { return db.releaseProvider(resource) }, accepted
 }
 
-func (db *DB) releaseEmbedder(resource *embedderResource) error {
+func (db *DB) releaseProvider(resource *providerResource) error {
 	err := resource.close()
+	var attributed error
+	if err != nil {
+		attributed = fmt.Errorf("%s close: %w", resource.name, err)
+	}
 	db.mu.Lock()
-	for i, owned := range db.ownedEmbedders {
+	// A caller constructing after the DB outcome was published owns its own
+	// rejected attempt; it cannot mutate the completed DB outcome retroactively.
+	published := false
+	if db.closeDone != nil {
+		select {
+		case <-db.closeDone:
+			published = true
+		default:
+		}
+	}
+	report := !resource.reported && !published
+	if report {
+		resource.reported = true
+	}
+	for i, owned := range db.ownedProviders {
 		if owned == resource {
-			db.ownedEmbedders = append(db.ownedEmbedders[:i], db.ownedEmbedders[i+1:]...)
+			db.ownedProviders = append(db.ownedProviders[:i], db.ownedProviders[i+1:]...)
 			break
 		}
 	}
 	db.mu.Unlock()
+	if report {
+		db.recordBackgroundError(attributed)
+	}
 	return err
+}
+
+// Accepted asynchronous work reports before its DB retention is released.
+func (db *DB) recordBackgroundError(err error) {
+	db.ownedWork.Record("", err)
 }
 
 // Called only after cancellation and joining every DB-owned model user. Retain
 // replaced providers until here: an in-flight query may still hold its snapshot.
-func (db *DB) closeOwnedEmbedders() []error {
+func (db *DB) closeOwnedProviders() []error {
 	db.mu.Lock()
-	resources := db.ownedEmbedders
-	db.ownedEmbedders = nil
+	resources := db.ownedProviders
+	db.ownedProviders = nil
 	db.mu.Unlock()
-	var errs []error
 	for _, resource := range resources {
-		if err := resource.close(); err != nil {
-			errs = append(errs, err)
-		}
+		_ = db.releaseProvider(resource)
 	}
-	return errs
+	if err := db.ownedWork.Err(); err != nil {
+		return []error{err}
+	}
+	return nil
+}
+
+// SetInferenceManager adopts the model before publishing it to db.infer and
+// binds every manager alias to DB's existing foreground provider admission.
+func (db *DB) SetInferenceManager(manager *heimdall.Manager) bool {
+	if manager == nil {
+		return false
+	}
+	manager.SetLifetime(db.beginProviderUse)
+	_, accepted := db.OwnProvider("Heimdall inference manager", manager)
+	if !accepted {
+		return false
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed {
+		return false
+	}
+	db.cypherExecutor.SetInferenceManager(manager)
+	return true
 }

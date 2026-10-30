@@ -67,6 +67,7 @@ var (
 	pluginFunctions    = make(map[string]PluginFunction)
 	pluginProcedures   = make(map[string]PluginProcedure)
 	pluginsMu          sync.RWMutex
+	loadingPluginPaths = make(map[string]bool)
 	pluginsInitialized bool
 )
 
@@ -130,9 +131,6 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 		return nil
 	}
 
-	pluginsMu.Lock()
-	defer pluginsMu.Unlock()
-
 	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
 	fmt.Println("║ Loading Plugins                                              ║")
 	fmt.Println("╠══════════════════════════════════════════════════════════════╣")
@@ -149,7 +147,22 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 
 	var failures []error
 	for _, path := range matches {
+		// Reserve only the identity. Native constructors and lifecycle methods
+		// may reenter public registry readers, including from their stop signal.
+		pluginsMu.Lock()
+		loading := loadingPluginPaths[path]
+		if !loading {
+			loadingPluginPaths[path] = true
+		}
+		pluginsMu.Unlock()
+		if loading {
+			failures = append(failures, fmt.Errorf("plugin load already in progress: %s", path))
+			continue
+		}
 		loaded, err := loadPluginFile(path, heimdallCtx)
+		pluginsMu.Lock()
+		delete(loadingPluginPaths, path)
+		pluginsMu.Unlock()
 		if err != nil {
 			// Embedded startup may scan plugins before a host context is supplied.
 			// Server plugin-only startup supplies that context even without inference.
@@ -172,19 +185,23 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 			continue
 		}
 
+		pluginsMu.Lock()
 		loadedPlugins[loaded.Name] = loaded
-		stats.total++
-
-		switch loaded.Type {
-		case PluginTypeFunction:
-			stats.function++
-			stats.functions += len(loaded.Functions)
+		if loaded.Type == PluginTypeFunction {
 			for _, fn := range loaded.Functions {
 				pluginFunctions[fn.Name] = fn
 			}
 			for _, proc := range loaded.Procedures {
 				pluginProcedures[proc.Name] = proc
 			}
+		}
+		pluginsMu.Unlock()
+		stats.total++
+
+		switch loaded.Type {
+		case PluginTypeFunction:
+			stats.function++
+			stats.functions += len(loaded.Functions)
 			fmt.Printf("║ ✓ [FUNC] %-15s v%-8s %3d functions %12s ║\n",
 				observability.RedactText(loaded.Name, diagnosticCredentials...), observability.RedactText(loaded.Version, diagnosticCredentials...), len(loaded.Functions), "")
 
@@ -220,7 +237,9 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 	}
 	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
 
+	pluginsMu.Lock()
 	pluginsInitialized = true
+	pluginsMu.Unlock()
 	return compose.Outcomes(nil, failures...)
 }
 
@@ -370,14 +389,8 @@ func registerHeimdallPlugin(hp heimdall.HeimdallPlugin, path string, ctx *heimda
 	mgr.SetContext(*ctx)
 
 	// Register with Heimdall
-	if err := mgr.RegisterPlugin(hp, path, false); err != nil {
+	if err := mgr.RegisterStartedPlugin(ctx.Context, hp, path, false); err != nil {
 		return nil, fmt.Errorf("register: %w", err)
-	}
-
-	// Start the plugin
-	if err := hp.Start(); err != nil {
-		mgr.UnregisterPlugin(hp.Name())
-		return nil, compose.Outcomes(fmt.Errorf("start: %w", err), hp.Shutdown())
 	}
 
 	return &LoadedPlugin{

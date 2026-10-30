@@ -141,6 +141,11 @@ func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
 	}
@@ -199,6 +204,11 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
 	}

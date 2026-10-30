@@ -10,6 +10,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 const (
@@ -60,6 +61,7 @@ type transactionLifecycle struct {
 	cancel                  context.CancelFunc
 	cleanupBase             context.Context
 	timer                   *time.Timer
+	timerRelease            func()
 	executor                TransactionalExecutor
 	startedAt               time.Time
 	database                string
@@ -77,6 +79,7 @@ type transactionLifecycle struct {
 // accepted transaction as Active or already TimingOut without an expired gap.
 func (l *transactionLifecycle) begin(
 	parent context.Context,
+	owner *lifecycle.WorkLifetime,
 	timeout time.Duration,
 	database string,
 	executor TransactionalExecutor,
@@ -87,6 +90,26 @@ func (l *transactionLifecycle) begin(
 	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, retErr) }()
 	if parent == nil {
 		parent = context.Background()
+	}
+	var timerRelease func()
+	timerTransferred := false
+	if timeout > 0 {
+		// The timeout timer is retained by the server's lifetime, which joins
+		// it on shutdown. A transaction cannot begin outside that owner.
+		if owner == nil {
+			return errors.New("bolt transaction has no server lifetime")
+		}
+		var accepted bool
+		_, timerRelease, accepted = owner.Acquire(parent)
+		if !accepted {
+			return context.Canceled
+		}
+		timerRelease = sync.OnceFunc(timerRelease)
+		defer func() {
+			if !timerTransferred {
+				timerRelease()
+			}
+		}()
 	}
 
 	l.mu.Lock()
@@ -164,7 +187,9 @@ func (l *transactionLifecycle) begin(
 		if l.afterFunc != nil {
 			afterFunc = l.afterFunc
 		}
-		l.timer = afterFunc(remaining, func() { l.expireGeneration(generation) })
+		l.timerRelease = timerRelease
+		l.timer = afterFunc(remaining, func() { defer timerRelease(); l.expireGeneration(generation) })
+		timerTransferred = true
 	} else {
 		l.timer = nil
 	}
@@ -495,8 +520,11 @@ func (l *transactionLifecycle) finishTimedOut(reason transactionTerminalReason) 
 // stopTimerLocked disarms the deadline while lifecycle ownership is held.
 func (l *transactionLifecycle) stopTimerLocked() {
 	if l.timer != nil {
-		l.timer.Stop()
+		if l.timer.Stop() && l.timerRelease != nil {
+			l.timerRelease()
+		}
 		l.timer = nil
+		l.timerRelease = nil
 	}
 }
 
