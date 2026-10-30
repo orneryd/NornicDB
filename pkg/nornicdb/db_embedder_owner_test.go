@@ -41,7 +41,7 @@ func TestDB_EmbedderOwnershipReleaseIsIdempotent(t *testing.T) {
 	require.True(t, accepted)
 	require.NoError(t, release())
 	require.NoError(t, release())
-	require.Empty(t, db.ownedEmbedders, "failed attempts must not accumulate during retries")
+	require.Empty(t, db.ownedProviders, "failed attempts must not accumulate during retries")
 	require.NoError(t, db.Close())
 	require.EqualValues(t, 1, e.closes.Load())
 }

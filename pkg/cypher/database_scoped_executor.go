@@ -73,6 +73,7 @@ func NewDatabaseScopedExecutor(options DatabaseScopedExecutorOptions) (*StorageE
 	}
 	if options.BaseExecutor != nil {
 		executor.ShareEmbedderFrom(options.BaseExecutor)
+		executor.ShareInferenceManagerFrom(options.BaseExecutor)
 	}
 	if options.Configure != nil {
 		options.Configure(executor, engine)

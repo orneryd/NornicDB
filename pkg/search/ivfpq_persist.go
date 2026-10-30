@@ -165,6 +165,7 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 		return
 	}
 	if err := saveIVFPQBundleSnapshot(basePath, idx, mutations); err != nil {
+		s.recordLifetimeOutcome("IVFPQ save", err)
 		logSearchPrintf("⚠️ Background persist: failed to save IVFPQ bundle (%s): %v", basePath, err)
 		return
 	}

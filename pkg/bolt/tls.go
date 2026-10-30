@@ -3,14 +3,15 @@
 // Mirrors Neo4j's sslContext + requiresEncryption pattern; cert rotation
 // requires atomic rename of cert+key files. The returned *tls.Config
 // leaves Certificates nil and installs a GetCertificate closure that
-// re-loads from disk on every handshake. A 5s background ticker
-// periodically re-reads the files; transient failures during the periodic
+// re-loads from disk on every handshake for config-only callers. An explicit
+// service lifetime also owns a 5s polling worker; transient failures during
 // reload are absorbed (the previous cert stays cached) — operator update
 // protocol is atomic rename so partial reads are an expected event, not
 // a logged anomaly.
 package bolt
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -18,6 +19,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // ClientAuthMode selects the TLS client-authentication policy applied to
@@ -79,12 +82,18 @@ type certRotator struct {
 	mu      sync.RWMutex
 	loaded  *tls.Certificate
 	lastErr error
+	owner   *lifecycle.WorkLifetime
 }
 
 // getCertificate is wired to tls.Config.GetCertificate. It returns the
 // cached certificate, falling back to a synchronous reload on the first
 // call if the cache is empty.
 func (r *certRotator) getCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	// A config-only caller owns synchronous lookups, not an unretirable
+	// goroutine. Explicit service owners additionally refresh in the background.
+	if r.owner == nil {
+		return r.reload()
+	}
 	r.mu.RLock()
 	current := r.loaded
 	r.mu.RUnlock()
@@ -104,6 +113,9 @@ func (r *certRotator) reload() (*tls.Certificate, error) {
 		r.lastErr = err
 		previous := r.loaded
 		r.mu.Unlock()
+		if r.owner != nil {
+			r.owner.RecordError("refresh Bolt TLS certificate", err)
+		}
 		if previous != nil {
 			return previous, nil
 		}
@@ -121,11 +133,16 @@ func (r *certRotator) reload() (*tls.Certificate, error) {
 // r.lastErr (read-via-RLock) but do not invalidate the previously cached
 // cert; this matches the spec's "atomic-rename only" robustness contract
 // where mid-write reads are expected and intentionally absorbed.
-func (r *certRotator) runRotation(interval time.Duration) {
+func (r *certRotator) runRotation(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		_, _ = r.reload()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_, _ = r.reload() // reload retains failures in the owner
+		}
 	}
 }
 
@@ -133,10 +150,11 @@ func (r *certRotator) runRotation(interval time.Duration) {
 // suitable for the Bolt listener. The returned config has
 // MinVersion=TLS1.2 and a GetCertificate closure that re-reads the
 // cert+key from disk on every handshake (cert rotation). Certificates
-// is intentionally left nil so the closure fires on every handshake. A
-// 5s background ticker re-reads the files in a goroutine and swaps the
-// cached cert under a sync.RWMutex on successful load. Failures during
-// the periodic reload are logged but do not invalidate the previous cert.
+// is intentionally left nil so the closure fires on every handshake.
+// An explicit lifetime owns periodic refresh and its completion outcomes;
+// without it the returned configuration has no asynchronous resources.
+// For owned periodic refresh use LoadTLSConfigForLifetime. This config-only
+// helper refreshes synchronously and constructs no worker.
 func LoadTLSConfig(certFile, keyFile string) (*tls.Config, error) {
 	return loadTLSConfigWithRotation(certFile, keyFile, "", ClientAuthNone, 5*time.Second)
 }
@@ -149,15 +167,40 @@ func LoadTLSConfigWithClientCA(certFile, keyFile, clientCAFile string, mode Clie
 	return loadTLSConfigWithRotation(certFile, keyFile, clientCAFile, mode, 5*time.Second)
 }
 
+// LoadTLSConfigForLifetime constructs polling TLS configuration in the same
+// Lifetime passed to the Bolt Config. The owner also covers failed setup before
+// New: callers close it on every return. The config-only constructors above
+// preserve their signatures and refresh synchronously at handshake time.
+func LoadTLSConfigForLifetime(lifetime *lifecycle.WorkLifetime, certFile, keyFile, clientCAFile string, mode ClientAuthMode) (*tls.Config, error) {
+	if lifetime == nil {
+		return nil, fmt.Errorf("Bolt TLS polling requires a lifetime")
+	}
+	return loadTLSConfigWithRotation(certFile, keyFile, clientCAFile, mode, 5*time.Second, lifetime)
+}
+
 // loadTLSConfigWithRotation is the shared implementation. It is unexported
 // so tests can supply a faster ticker interval without exposing the knob
 // in the public API.
-func loadTLSConfigWithRotation(certFile, keyFile, clientCAFile string, mode ClientAuthMode, tickInterval time.Duration) (*tls.Config, error) {
+func loadTLSConfigWithRotation(certFile, keyFile, clientCAFile string, mode ClientAuthMode, tickInterval time.Duration, lifetime ...*lifecycle.WorkLifetime) (*tls.Config, error) {
 	if certFile == "" || keyFile == "" {
 		return nil, errors.New("bolt: cert and key file paths must be non-empty")
 	}
 
-	rot := &certRotator{certFile: certFile, keyFile: keyFile}
+	var owner *lifecycle.WorkLifetime
+	if len(lifetime) > 0 {
+		owner = lifetime[0]
+	}
+	var ctx context.Context
+	if owner != nil {
+		var release func()
+		var accepted bool
+		ctx, release, accepted = owner.Acquire(owner.Context())
+		if !accepted {
+			return nil, fmt.Errorf("bolt TLS lifetime is closed")
+		}
+		defer release()
+	}
+	rot := &certRotator{certFile: certFile, keyFile: keyFile, owner: owner}
 	if _, err := rot.reload(); err != nil {
 		return nil, fmt.Errorf("bolt: load tls keypair: %w", err)
 	}
@@ -184,7 +227,13 @@ func loadTLSConfigWithRotation(certFile, keyFile, clientCAFile string, mode Clie
 
 	cfg.ClientAuth = mode.toTLSClientAuth()
 
-	go rot.runRotation(tickInterval)
+	if owner != nil {
+		workerCtx, release, accepted := owner.Acquire(ctx)
+		if !accepted {
+			return nil, fmt.Errorf("bolt TLS lifetime is closed")
+		}
+		go func() { defer release(); rot.runRotation(workerCtx, tickInterval) }()
+	}
 
 	return cfg, nil
 }
