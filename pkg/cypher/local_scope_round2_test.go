@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -270,11 +271,11 @@ func TestLocalScopeRound4Edges(t *testing.T) {
 	require.Equal(t, "CALL db.labels() YIELD label", maskNestedScopeBodies("CALL db.labels() YIELD label"))
 	require.Equal(t, "CALL { RETURN 1", maskNestedScopeBodies("CALL { RETURN 1"))
 
-	_, _, ok, err := callSubqueryImports(t.Context(), "CALL db.labels()", typeScope{})
+	_, _, ok, err := callSubqueryImports(t.Context(), retainedClauseForTest(t.Context(), "CALL db.labels()"), typeScope{})
 	require.NoError(t, err)
 	require.False(t, ok)
 	exec := &StorageExecutor{}
-	returned, _, err := exec.callSubqueryReturnTypes(t.Context(), "CALL db.labels()", nil, typeScope{}, false)
+	returned, _, err := exec.callSubqueryReturnTypes(t.Context(), retainedClauseForTest(t.Context(), "CALL db.labels()"), queryBodiesForTest(t.Context(), nil), typeScope{}, false)
 	require.NoError(t, err)
 	require.Nil(t, returned)
 }

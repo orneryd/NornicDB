@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -68,13 +69,13 @@ func TestCallSubqueryReturnsOuterUnchangedBranches(t *testing.T) {
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{int64(1), int64(2)}}, result.Rows, query)
 	}
-	require.True(t, callSubqueryReturnsOuterUnchanged(t.Context(), []string{"WITH a RETURN a"}, "a"))
+	require.True(t, callSubqueryReturnsOuterUnchanged(t.Context(), queryBodiesForTest(t.Context(), []string{"WITH a RETURN a"}), "a"))
 	for _, branch := range []string{
 		"MATCH (n)", // no RETURN: the branch returns nothing unchanged
 		"CALL db.labels() YIELD * RETURN a",
 		"CALL db.labels() YIELD label AS a RETURN a",
 	} {
-		require.False(t, callSubqueryReturnsOuterUnchanged(t.Context(), []string{branch}, "a"), branch)
+		require.False(t, callSubqueryReturnsOuterUnchanged(t.Context(), queryBodiesForTest(t.Context(), []string{branch}), "a"), branch)
 	}
 }
 

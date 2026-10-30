@@ -13,7 +13,7 @@ func BenchmarkStretchEffectsConvergence(b *testing.B) {
 		b.Run(mode, func(b *testing.B) {
 			ctx := context.Background()
 			text := "CREATE (n:Doc {copied:m.source})"
-			if _, err := pipelineClauseEffectsFor(ctx, text); err != nil {
+			if _, err := clauseEffectsForTest(ctx, text); err != nil {
 				b.Fatal(err)
 			}
 			b.ReportAllocs()
@@ -23,7 +23,7 @@ func BenchmarkStretchEffectsConvergence(b *testing.B) {
 				if mode == "cold" {
 					query = fmt.Sprintf("CREATE (n:Doc%d {copied:m.source})", i)
 				}
-				if _, err := pipelineClauseEffectsFor(ctx, query); err != nil {
+				if _, err := clauseEffectsForTest(ctx, query); err != nil {
 					b.Fatal(err)
 				}
 			}

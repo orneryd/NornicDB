@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -43,7 +44,8 @@ func pipelineProcedureCallsAreClauses(ctx context.Context, cypher string) bool {
 //
 // Void calls without YIELD preserve input rows; non-void calls require YIELD.
 // Explicit arguments are evaluated as typed values in the canonical invocation.
-func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clause string, totals *QueryStats) ([]pipelineRow, []string, bool, error) {
+func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, source pipelineClause, totals *QueryStats) ([]pipelineRow, []string, bool, error) {
+	clause := source.text
 	yieldIndex := findKeywordIndexInContext(clause, "YIELD")
 	invocation := strings.TrimSpace(clause)
 	if yieldIndex >= 0 {
@@ -73,7 +75,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		yieldText = "YIELD " + yieldBody
 	}
 
-	arguments := explicitProcedureArgumentTexts(ctx, invocation)
+	arguments := procedureArgumentTextsFromSyntax(source.syntax)
 	if arguments != nil {
 		if err := validateProcedureArgumentCount(procedure.Spec, len(arguments)); err != nil {
 			return nil, nil, true, err
@@ -89,7 +91,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 
 	var yielded []string
 	if yieldIndex >= 0 {
-		yield := parseYieldClause(ctx, clause)
+		yield := yieldFromSyntax(source.syntax)
 		if err := validateProcedureYieldBindings(yield, true); err != nil {
 			return nil, nil, true, err
 		}

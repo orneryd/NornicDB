@@ -74,15 +74,15 @@ func TestMergeReturnClauseCountHandling_Branches(t *testing.T) {
 		exec.mergeBindingRow(ctx, map[string]*storage.Node{"n": n}, map[string]*storage.Edge{"r": r}),
 		exec.mergeBindingRow(ctx, map[string]*storage.Node{"n": n}, map[string]*storage.Edge{"r": nil}),
 	}
-	result, err := exec.projectMergeReturn(ctx, rows, "RETURN count(*) AS c_all, count(n) AS c_n, count(r) AS c_r")
+	result, err := exec.projectMergeReturnForTest(ctx, rows, "RETURN count(*) AS c_all, count(n) AS c_n, count(r) AS c_r")
 	require.NoError(t, err)
 	require.Equal(t, []string{"c_all", "c_n", "c_r"}, result.Columns)
 	require.Equal(t, [][]interface{}{{int64(2), int64(2), int64(1)}}, result.Rows)
 
-	result, err = exec.projectMergeReturn(ctx, rows, "RETURN n.name AS name ORDER BY name SKIP 1 LIMIT 1")
+	result, err = exec.projectMergeReturnForTest(ctx, rows, "RETURN n.name AS name ORDER BY name SKIP 1 LIMIT 1")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a"}}, result.Rows)
-	result, err = exec.projectMergeReturn(ctx, rows, "RETURN DISTINCT n.name AS name")
+	result, err = exec.projectMergeReturnForTest(ctx, rows, "RETURN DISTINCT n.name AS name")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a"}}, result.Rows)
 }

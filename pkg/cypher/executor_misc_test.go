@@ -921,7 +921,7 @@ func TestParseReturnClauseBasic(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			result, err := exec.projectMergeReturn(ctx, []pipelineRow{exec.mergeBindingRow(ctx, map[string]*storage.Node{tt.varName: node}, nil)}, "RETURN "+tt.returnClause)
+			result, err := exec.projectMergeReturnForTest(ctx, []pipelineRow{exec.mergeBindingRow(ctx, map[string]*storage.Node{tt.varName: node}, nil)}, "RETURN "+tt.returnClause)
 			require.NoError(t, err)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, tt.expectedCols, result.Columns)
@@ -1708,7 +1708,7 @@ func TestPropertyAccessInMatch(t *testing.T) {
 
 	// First, test parseReturnItems directly
 	returnClause := "n.order_id as order_id, n.amount as amount"
-	returnItems := exec.parseReturnItems(t.Context(), returnClause)
+	returnItems := returnItemsForTest(t.Context(), "RETURN "+returnClause)
 	t.Logf("parseReturnItems returned %d items for %q", len(returnItems), returnClause)
 	for i, item := range returnItems {
 		t.Logf("  Item %d: expr=%q, alias=%q", i, item.expr, item.alias)
@@ -1778,7 +1778,6 @@ func TestPropertyAccessInMatch(t *testing.T) {
 }
 
 func TestParseReturnItems_OrderByAfterAliasWithOrderPrefix(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	for _, tc := range []struct {
 		clause      string
 		expressions []string
@@ -1787,7 +1786,7 @@ func TestParseReturnItems_OrderByAfterAliasWithOrderPrefix(t *testing.T) {
 		{"textKey128, texts\nORDER BY textKey128", []string{"textKey128", "texts"}},
 	} {
 		t.Run(tc.clause, func(t *testing.T) {
-			items := exec.parseReturnItems(t.Context(), tc.clause)
+			items := returnItemsForTest(t.Context(), "RETURN "+tc.clause)
 			require.Len(t, items, len(tc.expressions))
 			for i, expression := range tc.expressions {
 				assert.Equal(t, expression, items[i].expr)

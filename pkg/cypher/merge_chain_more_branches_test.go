@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -151,7 +152,7 @@ func TestApplyWithProjection_Populations(t *testing.T) {
 				if test.failure {
 					operationCtx = withExpressionFailureSlot(ctx)
 				}
-				projected, ok := exec.pipelineApplyWith(operationCtx, group.input, test.clause, nil, false)
+				projected, ok := exec.pipelineApplyWithTextForTest(operationCtx, group.input, test.clause, nil, false)
 				if test.failure {
 					require.False(t, ok)
 					require.Nil(t, projected)

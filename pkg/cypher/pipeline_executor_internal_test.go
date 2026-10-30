@@ -76,8 +76,10 @@ func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
 			ctx := context.Background()
 			_, err := exec.Execute(ctx, "CREATE (:UnwindError {id: 1})", nil)
 			require.NoError(t, err)
-			plan := topLevelUnwindPlan{variable: "row", items: []interface{}{int64(1)}, remainder: fixture.remainder}
-			rewritten, ok := rewriteUnwindCorrelationToIn(plan.remainder, plan.variable, "__unwind_items")
+			plan, prepared, err := exec.prepareTopLevelUnwind(ctx, "UNWIND [1] AS row "+fixture.remainder)
+			require.NoError(t, err)
+			require.True(t, prepared)
+			rewritten, ok := rewriteUnwindCorrelationToIn(plan.body.executionText, plan.variable, "__unwind_items")
 			require.True(t, ok)
 			_, expectedErr := exec.Execute(ctx, rewritten, map[string]interface{}{"__unwind_items": plan.items})
 			require.Error(t, expectedErr)

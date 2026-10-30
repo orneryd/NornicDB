@@ -126,11 +126,7 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 	for index, row := range rows {
 		bindings[index] = pipelineRowFromTraversalOptionalRow(row)
 	}
-	plan := &returnProjectionPlan{}
-	for _, item := range items {
-		plan.addProjection(item.expr, item.column())
-	}
-	plan.valid = len(plan.projections) > 0
+	plan := projectionPlanOfItems(items)
 	if result, ok := e.pipelineApplyReturnPlan(ctx, bindings, plan, pipelineRowsSource(bindings), false); ok {
 		return result.Rows, nil
 	}

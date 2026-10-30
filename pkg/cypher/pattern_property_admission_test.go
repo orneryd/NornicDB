@@ -16,8 +16,8 @@ func TestPatternPropertyAdmissionIsStructural(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "pattern_admission"))
 	ctx := context.Background()
 	clauses := []pipelineClause{
-		{kind: pipelineClauseMatch, text: "MATCH (a:CodeIntel {id:inspection.value()})-[r:T]->()"},
-		{kind: pipelineClauseReturn, text: "RETURN r"},
+		retainedClauseForTest(t.Context(), "MATCH (a:CodeIntel {id:inspection.value()})-[r:T]->()"),
+		retainedClauseForTest(t.Context(), "RETURN r"),
 	}
 	_, handled, err := exec.tryExecutePipelineSimpleRelationshipCountPlan(ctx, clauses, nil)
 	require.NoError(t, err)

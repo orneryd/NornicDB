@@ -145,10 +145,10 @@ func TestDeletedEntityReadsAfterWithMatchNeo4j(t *testing.T) {
 }
 
 func TestDeletedEntityReadTextAndIteration(t *testing.T) {
-	require.Equal(t, "n.p\n1\n", deletedEntityReadText(pipelineClause{kind: pipelineClauseSet, text: "SET n.q = n.p, m += 1, n:L"}))
-	require.Empty(t, deletedEntityReadText(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n.p"}))
-	require.Empty(t, deletedEntityReadText(pipelineClause{kind: pipelineClauseDelete, text: "DELETE n"}))
-	require.Equal(t, "RETURN n.p", deletedEntityReadText(pipelineClause{kind: pipelineClauseReturn, text: "RETURN n.p"}))
+	require.Equal(t, "n.p\n1\n", deletedEntityReadText(retainedClauseForTest(t.Context(), "SET n.q = n.p, m += 1, n:L")))
+	require.Empty(t, deletedEntityReadText(retainedClauseForTest(t.Context(), "REMOVE n.p")))
+	require.Empty(t, deletedEntityReadText(retainedClauseForTest(t.Context(), "DELETE n")))
+	require.Equal(t, "RETURN n.p", deletedEntityReadText(retainedClauseForTest(t.Context(), "RETURN n.p")))
 	require.Equal(t, "xs", iterationSourceVariable("RETURN [x IN xs | x.p]", "x"))
 	require.Equal(t, "ys", iterationSourceVariable("RETURN 'x IN zs', any(x  in ys WHERE x.p > 1)", "x"))
 	require.Empty(t, iterationSourceVariable("RETURN x.p, xin", "x"))

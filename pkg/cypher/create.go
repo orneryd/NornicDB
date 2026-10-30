@@ -400,7 +400,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 	for name, path := range out.paths {
 		row[name] = e.pathToMap(path)
 	}
-	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
+	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher, out.returnIdx)
 	if err != nil {
 		return err
 	}

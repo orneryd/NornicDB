@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -62,13 +63,13 @@ func TestParseUnwindSimpleAssignments_Branches(t *testing.T) {
 	_, _, _, _, ok = parseUnwindNodePatternClauseInternal("MATCH (n:LabelA|LabelB {id: row.id})", "MATCH", false)
 	require.False(t, ok)
 
-	withPlan, ok := parseUnwindWithClause(t.Context(), "WITH n, row.score AS score")
+	withPlan, ok := parseUnwindWithClause(t.Context(), "WITH n, row.score AS score", "WITH n, row.score AS score")
 	require.True(t, ok)
 	require.Len(t, withPlan.assignments, 1)
 	require.Equal(t, "score", withPlan.assignments[0].alias)
 	require.Equal(t, "row.score", withPlan.assignments[0].expr)
 
-	_, ok = parseUnwindWithClause(t.Context(), "WITH n, row.score")
+	_, ok = parseUnwindWithClause(t.Context(), "WITH n, row.score", "WITH n, row.score")
 	require.False(t, ok)
 
 	wherePlan, ok := parseUnwindWhereClause("WHERE score > 0")
@@ -144,9 +145,11 @@ func TestGh713CountCompilersUseSharedProjectionPlans(t *testing.T) {
 		parse func(context.Context, string) (string, bool)
 	}{
 		{"merge count", func(ctx context.Context, clause string) (string, bool) {
-			return parseSimpleCountReturn(ctx, clause, "n")
+			return parseSimpleCountReturn(countReturnPlanForTest(ctx, clause), "n")
 		}},
-		{"unwind count", parseUnwindBatchCountReturn},
+		{"unwind count", func(ctx context.Context, clause string) (string, bool) {
+			return parseUnwindBatchCountReturn(countReturnPlanForTest(ctx, clause))
+		}},
 	} {
 		t.Run(compiler.name, func(t *testing.T) {
 			for _, clause := range []string{
@@ -156,7 +159,7 @@ func TestGh713CountCompilersUseSharedProjectionPlans(t *testing.T) {
 				t.Run(clause, func(t *testing.T) {
 					alias, ok := compiler.parse(t.Context(), clause)
 					require.True(t, ok)
-					require.Equal(t, returnProjectionPlanFor(t.Context(), clause).columns[0], alias)
+					require.Equal(t, returnPlanForTest(t.Context(), clause).columns[0], alias)
 				})
 			}
 			for _, clause := range []string{
@@ -183,10 +186,10 @@ func TestGh713WithCompilerUsesSharedProjectionPlan(t *testing.T) {
 		"WITH `n`, row.k AS `k`",
 	} {
 		t.Run(clause, func(t *testing.T) {
-			compiled, ok := parseUnwindWithClause(t.Context(), clause)
+			compiled, ok := parseUnwindWithClause(t.Context(), clause, clause)
 			require.True(t, ok)
 			require.Len(t, compiled.assignments, 1)
-			shared := returnProjectionPlanFor(t.Context(), "RETURN"+clause[len("WITH"):])
+			shared := returnPlanForTest(t.Context(), "RETURN"+clause[len("WITH"):])
 			require.Equal(t, shared.projections[1].expr, compiled.assignments[0].expr)
 			require.Equal(t, shared.columns[1], compiled.assignments[0].alias)
 		})
@@ -199,7 +202,7 @@ func TestGh713WithCompilerUsesSharedProjectionPlan(t *testing.T) {
 		"WITH *", "WITH n AS", "WITH row.k", "WITH",
 	} {
 		t.Run("decline "+clause, func(t *testing.T) {
-			_, ok := parseUnwindWithClause(t.Context(), clause)
+			_, ok := parseUnwindWithClause(t.Context(), clause, clause)
 			require.False(t, ok)
 		})
 	}
@@ -221,7 +224,7 @@ func TestGh713WithCompilerRoutesAndWriteAdmission(t *testing.T) {
 				var err error
 				if route == "batch" {
 					var supported bool
-					result, supported, err = exec.executeUnwindMergeChainBatch(ctx, "row", items, mutation, "RETURN count(m) AS total")
+					result, supported, err = exec.executeUnwindMergeChainBatch(ctx, "row", items, queryBodyForTest(t.Context(), (mutation)+" "+("RETURN count(m) AS total")))
 					require.True(t, supported)
 				} else {
 					if route == "explicit transaction" {
@@ -251,7 +254,7 @@ func TestGh713WithCompilerRoutesAndWriteAdmission(t *testing.T) {
 			exec, ctx := newUnitExecutor(t)
 			mutation := "MERGE (n:WithSeed {id: row.id}) WITH " + projection +
 				" MERGE (m:WithValue {id: row.id}) SET m.score = score"
-			result, supported, err := exec.executeUnwindMergeChainBatch(ctx, "row", items, mutation, "RETURN count(m) AS total")
+			result, supported, err := exec.executeUnwindMergeChainBatch(ctx, "row", items, queryBodyForTest(t.Context(), (mutation)+" "+("RETURN count(m) AS total")))
 			require.NoError(t, err)
 			require.False(t, supported)
 			require.Nil(t, result)
@@ -272,7 +275,7 @@ func TestGh713CompiledWithItemsReadIncomingScope(t *testing.T) {
 					" MERGE (m:ScopeValue {id: row.id}) SET m.value = previous"
 				var err error
 				if route == "batch" {
-					_, supported, batchErr := exec.executeUnwindMergeChainBatch(ctx, "row", items, mutation, "RETURN count(m) AS total")
+					_, supported, batchErr := exec.executeUnwindMergeChainBatch(ctx, "row", items, queryBodyForTest(t.Context(), (mutation)+" "+("RETURN count(m) AS total")))
 					require.True(t, supported)
 					err = batchErr
 				} else {
@@ -348,7 +351,7 @@ func TestGh713CountReturnWindowsPreserveWrites(t *testing.T) {
 				}
 				result, err := exec.Execute(ctx, "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN "+test.projection, params)
 				require.NoError(t, err)
-				require.Equal(t, returnProjectionPlanFor(t.Context(), "RETURN "+test.projection).columns, result.Columns)
+				require.Equal(t, returnPlanForTest(t.Context(), "RETURN "+test.projection).columns, result.Columns)
 				require.Len(t, result.Rows, len(test.rows))
 				if len(test.rows) > 0 {
 					require.Equal(t, test.rows, result.Rows)
@@ -366,33 +369,33 @@ func TestGh713CountReturnWindowsPreserveWrites(t *testing.T) {
 }
 
 func TestParseSimpleCountAndBatchReturn_Branches(t *testing.T) {
-	alias, ok := parseSimpleCountReturn(t.Context(), "RETURN count(n) AS cnt", "n")
+	alias, ok := parseSimpleCountReturn(countReturnPlanForTest(t.Context(), "RETURN count(n) AS cnt"), "n")
 	require.True(t, ok)
 	require.Equal(t, "cnt", alias)
 
-	alias, ok = parseSimpleCountReturn(t.Context(), "RETURN count(n) AS", "n")
+	alias, ok = parseSimpleCountReturn(countReturnPlanForTest(t.Context(), "RETURN count(n) AS"), "n")
 	require.False(t, ok)
 	require.Empty(t, alias)
 
-	_, ok = parseSimpleCountReturn(t.Context(), "RETURN count(m) AS cnt", "n")
+	_, ok = parseSimpleCountReturn(countReturnPlanForTest(t.Context(), "RETURN count(m) AS cnt"), "n")
 	require.False(t, ok)
-	_, ok = parseSimpleCountReturn(t.Context(), "count(n) AS cnt", "n")
+	_, ok = parseSimpleCountReturn(countReturnPlanForTest(t.Context(), "count(n) AS cnt"), "n")
 	require.False(t, ok)
 
-	alias, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN count(*) AS total")
+	alias, ok = parseUnwindBatchCountReturn(countReturnPlanForTest(t.Context(), "RETURN count(*) AS total"))
 	require.True(t, ok)
 	require.Equal(t, "total", alias)
 
-	alias, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN COUNT(id) AS total")
+	alias, ok = parseUnwindBatchCountReturn(countReturnPlanForTest(t.Context(), "RETURN COUNT(id) AS total"))
 	require.True(t, ok)
 	require.Equal(t, "total", alias)
 
-	_, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN count(a.b) AS total")
+	_, ok = parseUnwindBatchCountReturn(countReturnPlanForTest(t.Context(), "RETURN count(a.b) AS total"))
 	require.False(t, ok)
-	alias, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN count(*)")
+	alias, ok = parseUnwindBatchCountReturn(countReturnPlanForTest(t.Context(), "RETURN count(*)"))
 	require.True(t, ok)
 	require.Equal(t, "count(*)", alias)
-	_, ok = parseUnwindBatchCountReturn(t.Context(), "MATCH (n) RETURN n")
+	_, ok = parseUnwindBatchCountReturn(countReturnPlanForTest(t.Context(), "MATCH (n) RETURN n"))
 	require.False(t, ok)
 }
 

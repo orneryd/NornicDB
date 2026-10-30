@@ -1,8 +1,11 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
 	"context"
 	"strings"
+
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 // tryFastPathSimpleMatchReturnLimit handles the common low-latency read shape:
@@ -43,8 +46,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return nil, false
 	}
 
-	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : limitIdx])
-	columnName, ok := parseSimpleReturnVariable(ctx, returnPart, varName)
+	columnName, ok := parseSimpleReturnVariable(ctx, trimmed, returnIdx, varName)
 	if !ok {
 		return nil, false
 	}
@@ -102,9 +104,20 @@ func parseSimpleMatchSingleNodePattern(pattern string) (string, []string, bool) 
 	return varName, labels, true
 }
 
-func parseSimpleReturnVariable(ctx context.Context, returnPart string, varName string) (string, bool) {
-	plan := returnProjectionPlanFor(ctx, "RETURN "+strings.TrimSpace(returnPart))
-	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
+// parseSimpleReturnVariable reads RETURN v [AS a] from the RETURN occurrence
+// of statement at offset at; its LIMIT is the caller's, and any ORDER BY or
+// SKIP declines the plan.
+func parseSimpleReturnVariable(ctx context.Context, statement string, at int, varName string) (string, bool) {
+	clause, found := projectionClauseAt(ctx, statement, at)
+	if !found {
+		return "", false
+	}
+	body := clause.ChildRule(cypherantlr.CypherParserRULE_projectionBody)
+	if body.ChildRule(cypherantlr.CypherParserRULE_orderSt).Valid() || body.ChildRule(cypherantlr.CypherParserRULE_skipSt).Valid() {
+		return "", false
+	}
+	plan := projectionPlanOf(ctx, clause)
+	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
 	if simpleSemanticIdentifier(plan.projections[0].expr) != varName {

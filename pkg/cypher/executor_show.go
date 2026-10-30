@@ -502,6 +502,44 @@ func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult 
 // same row operators as every other clause. Any other form (RETURN after a
 // WHERE without YIELD, a WHERE before YIELD's ORDER BY, a non-literal YIELD
 // SKIP / LIMIT) is a SyntaxError, as in Neo4j.
+// showYieldItems reads a SHOW tail's YIELD item list in place: the sole "*",
+// or name [AS alias] items between gaps, decoded as the grammar's yieldItem
+// symbols. NornicDB's own SHOW commands are not grammar input, so no CALL
+// clause is composed around the list. nil when the list is malformed.
+// Author: Claude R17 implementation agent, 30 October 2026.
+func showYieldItems(items string) *yieldClause {
+	if queryGapEnd(items, 0) == len(items) {
+		return nil
+	}
+	parts := splitTopLevelCommaKeepEmpty(items)
+	if len(parts) == 1 {
+		start := queryGapEnd(parts[0], 0)
+		if start < len(parts[0]) && parts[0][start] == '*' && queryGapEnd(parts[0], start+1) == len(parts[0]) {
+			return &yieldClause{items: []yieldItem{}, yieldAll: true}
+		}
+	}
+	yield := &yieldClause{items: []yieldItem{}}
+	for _, part := range parts {
+		name, ok := cyphertext.ScanIdentifier(part, queryGapEnd(part, 0))
+		if !ok {
+			return nil
+		}
+		item := yieldItem{name: name.Value}
+		if next := queryGapEnd(part, name.End); next < len(part) {
+			if !matchKeywordAt(part, next, "AS") {
+				return nil
+			}
+			alias, ok := cyphertext.ScanIdentifier(part, queryGapEnd(part, next+len("AS")))
+			if !ok || queryGapEnd(part, alias.End) != len(part) {
+				return nil
+			}
+			item.alias, item.aliased = alias.Value, true
+		}
+		yield.items = append(yield.items, item)
+	}
+	return yield
+}
+
 func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
 	head := showCommandHead(query)
@@ -595,7 +633,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	}
 
 	items := strings.TrimSpace(body[:itemsEnd])
-	yield := parseYieldClause(ctx, "CALL show() YIELD "+items)
+	yield := showYieldItems(items)
 	if yield == nil || items == "" || continuation != "" && yield.yieldAll {
 		return nil, invalid()
 	}
@@ -653,8 +691,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 				types[item.column()] = types[item.name]
 			}
 		}
-		clause := pipelineClause{kind: pipelineClauseWith, text: "WITH * WHERE " + where}
-		if err := e.validateStaticOperatorTypes(ctx, clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx)); err != nil {
+		if err := validateStaticPredicateOperatorTypes(where, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, getParamsFromContext(ctx)); err != nil {
 			return nil, nornicerrors.MarkCompileTime(err)
 		}
 		clauses.WriteString("WITH * WHERE " + where + " ")

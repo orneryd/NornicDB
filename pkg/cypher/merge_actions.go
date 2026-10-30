@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -265,7 +266,7 @@ func directedMergePath(pattern string) string {
 // row) or the whole path is created, reusing the row's bound variables
 // (#907). created reports which. A null or NaN property in the pattern is a
 // SemanticError, as for a single relationship (validateMergePatternProperties).
-func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
+func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow, syntax cypherantlr.SyntaxNode, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
 	// The match is the statement rewrite's MATCH: a property map reading
 	// the pattern's own variables (b {k: a.k}) is a WHERE predicate there.
 	match, _, err := desugarLabelExpressions("MATCH "+pattern, nil, cypherVersionFromContext(ctx) == "25")
@@ -342,8 +343,11 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 		createPattern = strings.TrimSpace(match[len("MATCH"):where])
 		assignments = strings.Join(splitTopLevelAndConjuncts(match[where+len("WHERE"):]), ", ")
 	}
-	// One row: the create reports not-ok only with an error.
-	createdRows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{row}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE " + directedMergePath(createPattern)}})
+	// MERGE chooses creation for this admitted pattern. The existing CREATE
+	// plan/apply owner receives a physical input, never a fabricated clause.
+	result := &ExecuteResult{Stats: &QueryStats{}}
+	createdRow, err := e.pipelineCreateInputsRow(ctx, row, []pipelineCreateInput{createInputFromMerge(syntax, createPattern)}, result)
+	createdRows := []pipelineRow{createdRow}
 	if err == nil && assignments != "" {
 		err = e.applyMergeActions(ctx, createdRows, "SET "+assignments, result.Stats)
 	}

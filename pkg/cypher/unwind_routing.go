@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -5,45 +6,49 @@ import (
 	"maps"
 	"strings"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-type topLevelUnwindPlan struct {
-	variable      string
-	parameterName string
-	items         []interface{}
-	remainder     string
-}
-
 // prepareTopLevelUnwind parses and evaluates the leading UNWIND exactly once
 // for both optimized physical operators and the general row pipeline.
-func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher string) (topLevelUnwindPlan, error) {
+func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher string) (topLevelUnwindPlan, bool, error) {
+	var absent topLevelUnwindPlan
+	if err := ctx.Err(); err != nil {
+		return absent, false, err
+	}
 	head := queryGapEnd(cypher, 0)
 	if !startsWithKeywordFold(cypher[head:], "UNWIND") {
-		return topLevelUnwindPlan{}, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
+		return absent, false, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
-	product, ok := splitUnwindBody(cypher)
-	if !ok {
-		return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
+	query := readQueryBodyText(ctx, cypher, 0, len(cypher))
+	if query.status != queryBodyRead || len(query.branches) != 1 || len(query.branches[0].clauses) == 0 || query.branches[0].clauses[0].kind != pipelineClauseUnwind {
+		return absent, false, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
 	}
-	listExpr := product.expression
-	plan := topLevelUnwindPlan{variable: product.variableWritten, remainder: product.remainder}
+	unwind := query.branches[0].clauses[0].syntax
+	if unwind.ChildRule(cypherantlr.CypherParserRULE_where).Valid() {
+		// Batch operators lower a bare iteration, not an attached predicate.
+		// Keep that admitted occurrence in the general clause pipeline.
+		return absent, false, nil
+	}
+	plan := unwindPlanFromSyntax(query)
+	listExpr := plan.expression
 
 	params := getParamsFromContext(ctx)
 	var list interface{}
 	if strings.HasPrefix(strings.TrimSpace(listExpr), "$") {
 		plan.parameterName = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(listExpr), "$"))
 		if plan.parameterName == "" {
-			return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindParameterNameRequired(), nil)
+			return absent, false, localizedError(localization.CypherMutationsUnwindParameterNameRequired(), nil)
 		}
 		if params == nil {
-			return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindParametersRequired(plan.parameterName), nil)
+			return absent, false, localizedError(localization.CypherMutationsUnwindParametersRequired(plan.parameterName), nil)
 		}
 		var exists bool
 		list, exists = params[plan.parameterName]
 		if !exists {
-			return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindParameterNotFound(plan.parameterName), nil)
+			return absent, false, localizedError(localization.CypherMutationsUnwindParameterNotFound(plan.parameterName), nil)
 		}
 	} else {
 		list = e.evaluateExpressionWithContext(ctx, listExpr, map[string]*storage.Node{}, map[string]*storage.Edge{})
@@ -55,42 +60,36 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 	if plan.items == nil {
 		plan.items = []interface{}{}
 	}
-	return plan, nil
+	return plan, true, nil
 }
 
 // executeUnwindBatchOperator chooses an optimized physical operator without
 // changing clause semantics. Unsupported shapes return handled=false and are
 // executed by the same pipeline's general row operators.
 func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
-	if plan.remainder == "" {
+	remainder := plan.body.executionText
+	if remainder == "" {
 		return nil, false, nil
 	}
-	upperRest := upperASCII(strings.TrimSpace(plan.remainder))
+	upperRest := upperASCII(strings.TrimSpace(remainder))
 	matchMutation := (strings.HasPrefix(upperRest, "MATCH") || strings.HasPrefix(upperRest, "OPTIONAL MATCH")) &&
-		(findKeywordIndexInContext(plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(plan.remainder, "SET") >= 0)
+		(findKeywordIndexInContext(remainder, "MERGE") >= 0 || findKeywordIndexInContext(remainder, "CREATE") >= 0 || findKeywordIndexInContext(remainder, "SET") >= 0)
 	if matchMutation {
 		if strings.HasPrefix(upperRest, "MATCH") {
-			if result, handled, err := e.executeUnwindRelationshipMergeBatch(ctx, plan.variable, plan.items, plan.remainder); handled || err != nil {
+			if result, handled, err := e.executeUnwindRelationshipMergeBatch(ctx, plan.variable, plan.items, plan.body); handled || err != nil {
 				return result, true, err
 			}
-			if result, handled, err := e.executeUnwindMultiMatchCreateBatch(ctx, plan.variable, plan.items, plan.remainder); handled || err != nil {
+			if result, handled, err := e.executeUnwindMultiMatchCreateBatch(ctx, plan.variable, plan.items, plan.body); handled || err != nil {
 				return result, true, err
 			}
-			if result, handled, err := e.executeUnwindFixedChainLinkBatch(ctx, plan.variable, plan.items, plan.remainder); handled || err != nil {
+			if result, handled, err := e.executeUnwindFixedChainLinkBatch(ctx, plan.variable, plan.items, plan.body); handled || err != nil {
 				return result, true, err
 			}
 		}
-		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
-		mutationPart := plan.remainder
-		returnPart := ""
-		if returnIndex > 0 {
-			mutationPart = strings.TrimSpace(plan.remainder[:returnIndex])
-			returnPart = strings.TrimSpace(plan.remainder[returnIndex:])
-		}
-		if result, handled, err := e.executeUnwindMergeChainBatch(ctx, plan.variable, plan.items, mutationPart, returnPart); handled || err != nil {
+		if result, handled, err := e.executeUnwindMergeChainBatch(ctx, plan.variable, plan.items, plan.body); handled || err != nil {
 			return result, true, err
 		}
-		if result, handled, err := e.executeUnwindCompoundMutationBatch(ctx, plan.variable, plan.parameterName, plan.items, plan.remainder); handled || err != nil {
+		if result, handled, err := e.executeUnwindCompoundMutationBatch(ctx, plan.variable, plan.parameterName, plan.items, plan.body); handled || err != nil {
 			return result, true, err
 		}
 		if result, handled, err := e.executeSetBasedUnwindCreateOperator(ctx, plan); handled || err != nil {
@@ -98,22 +97,15 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 		}
 	}
 	if strings.HasPrefix(upperRest, "MERGE") || strings.HasPrefix(upperRest, "OPTIONAL MATCH") {
-		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
-		mutationPart := plan.remainder
-		returnPart := ""
-		if returnIndex > 0 {
-			mutationPart = strings.TrimSpace(plan.remainder[:returnIndex])
-			returnPart = strings.TrimSpace(plan.remainder[returnIndex:])
-		}
-		if result, handled, err := e.executeUnwindMergeChainBatch(ctx, plan.variable, plan.items, mutationPart, returnPart); handled || err != nil {
+		if result, handled, err := e.executeUnwindMergeChainBatch(ctx, plan.variable, plan.items, plan.body); handled || err != nil {
 			return result, true, err
 		}
-		if result, handled, err := e.executeUnwindCompoundMutationBatch(ctx, plan.variable, plan.parameterName, plan.items, plan.remainder); handled || err != nil {
+		if result, handled, err := e.executeUnwindCompoundMutationBatch(ctx, plan.variable, plan.parameterName, plan.items, plan.body); handled || err != nil {
 			return result, true, err
 		}
 	}
 	if strings.HasPrefix(upperRest, "MATCH") {
-		normalized := normalizeMultiMatchWhereClauses(plan.remainder)
+		normalized := normalizeMultiMatchWhereClauses(remainder)
 		if canApplySetBasedUnwindRewrite(normalized, plan.items) {
 			if rewritten, ok := rewriteUnwindCorrelationToIn(normalized, plan.variable, "__unwind_items"); ok {
 				rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
@@ -135,43 +127,28 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	// could read what another row writes (MERGE, SET, MATCH, aggregation
 	// via WITH) keeps the row-by-row route.
 	if strings.HasPrefix(upperRest, "CREATE") &&
-		findKeywordIndexInContext(plan.remainder, "MERGE") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "SET") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "DELETE") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "REMOVE") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "FOREACH") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "MATCH") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "WITH") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "CALL") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "LOAD CSV") < 0 {
+		findKeywordIndexInContext(remainder, "MERGE") < 0 &&
+		findKeywordIndexInContext(remainder, "SET") < 0 &&
+		findKeywordIndexInContext(remainder, "DELETE") < 0 &&
+		findKeywordIndexInContext(remainder, "REMOVE") < 0 &&
+		findKeywordIndexInContext(remainder, "FOREACH") < 0 &&
+		findKeywordIndexInContext(remainder, "MATCH") < 0 &&
+		findKeywordIndexInContext(remainder, "WITH") < 0 &&
+		findKeywordIndexInContext(remainder, "CALL") < 0 &&
+		findKeywordIndexInContext(remainder, "LOAD CSV") < 0 {
 		ctx = context.WithValue(ctx, pipelineIndependentCreateBatchKey{}, true)
-		return e.executeUnwindRowsPipeline(ctx, plan.variable, plan.items, plan.remainder)
+		return e.executeUnwindRowsPipeline(ctx, plan.variable, plan.items, plan.body)
 	}
 	return nil, false, nil
 }
 
-func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query queryBody) (*ExecuteResult, bool, error) {
 	split := parsePipelineClauses(ctx, query)
 	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return nil, false, nil
 	}
 	originalClauses := clauses
-	if independent, _ := ctx.Value(pipelineIndependentCreateBatchKey{}).(bool); independent {
-		var patterns []string
-		for _, clause := range clauses {
-			if clause.kind != pipelineClauseMatch {
-				break
-			}
-			patterns = append(patterns, pipelineClauseBody(clause.text, "MATCH"))
-		}
-		if len(patterns) > 1 {
-			combined := "MATCH " + strings.Join(patterns, ", ")
-			if e.compilePipelineNodeMatchSource(combined).supported {
-				clauses = append([]pipelineClause{{kind: pipelineClauseMatch, text: combined}}, clauses[len(patterns):]...)
-			}
-		}
-	}
 	ctx = withExpressionFailureSlot(ctx)
 	scope := map[string]struct{}{variable: {}}
 	base := pipelineRow{}
@@ -198,7 +175,7 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 }
 
 func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
-	query := normalizeMultiMatchWhereClauses(plan.remainder)
+	query := normalizeMultiMatchWhereClauses(plan.body.executionText)
 	if findKeywordIndexInContext(query, "CREATE") < 0 ||
 		findKeywordIndexInContext(query, "MERGE") >= 0 ||
 		findKeywordIndexInContext(query, "SET") >= 0 ||
@@ -211,7 +188,7 @@ func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Contex
 	if returnIndex < 0 {
 		return nil, false, nil
 	}
-	if _, ok := parseUnwindBatchCountReturn(ctx, strings.TrimSpace(query[returnIndex:])); !ok {
+	if _, ok := parseUnwindBatchCountReturn(projectionPlanAt(ctx, query, returnIndex)); !ok {
 		return nil, false, nil
 	}
 	rewritten, ok := rewriteUnwindCorrelationToIn(query, plan.variable, "__unwind_items")

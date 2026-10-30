@@ -885,7 +885,9 @@ func extractLabelsFromQuery(cypher string) []string {
 // from defeating a hit. Column-name spelling remains part of the key.
 func resultCacheEntryKey(ctx context.Context, cypher string, params map[string]interface{}) string {
 	source := trimTrailingStatementDelimiters(cypher)
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	// Author: Codex R17 implementer. Cache presentation inspects the retained
+	// product; it does not perform another statement admission.
+	syntax, err := cypherantlr.InspectSyntax(ctx, source, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if ctx.Err() != nil {
 		return ""
 	}

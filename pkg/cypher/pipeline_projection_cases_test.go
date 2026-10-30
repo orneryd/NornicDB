@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -59,7 +60,7 @@ func TestPipelineWithProjectionCases(t *testing.T) {
 					if tc.input != nil {
 						input = tc.input
 					}
-					out, ok := exec.pipelineApplyWith(context.Background(), input, tc.query, nil, false)
+					out, ok := exec.pipelineApplyWithTextForTest(context.Background(), input, tc.query, nil, false)
 					require.Equal(t, tc.recognized, ok)
 					if !tc.recognized {
 						require.Nil(t, out)

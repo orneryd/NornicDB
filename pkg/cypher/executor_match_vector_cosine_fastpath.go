@@ -96,8 +96,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		label = labels[0]
 	}
 
-	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItems(ctx, returnPart)
+	returnItems := e.parseReturnItems(ctx, trimmed, returnIdx)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -305,7 +304,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	_ = withProjectionEnd
 	withProjection := strings.TrimSpace(withProjectionRaw)
 	withProjection, _ = cutDistinct(withProjection)
-	withItems := e.parseReturnItems(ctx, withProjection)
+	withItems := e.parseReturnItems(ctx, trimmed, withIdx)
 	if len(withItems) < 2 {
 		return nil, false
 	}
@@ -338,12 +337,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		}
 	}
 
-	returnEndIdx := orderIdx
-	if orderBeforeReturn {
-		returnEndIdx = len(trimmed)
-	}
-	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : returnEndIdx])
-	returnItems := e.parseReturnItems(ctx, returnPart)
+	returnItems := e.parseReturnItems(ctx, trimmed, returnIdx)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -556,8 +550,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return nil, false
 	}
 
-	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItems(ctx, returnPart)
+	returnItems := e.parseReturnItems(ctx, trimmed, returnIdx)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -683,17 +676,14 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 
 	withToReturn := strings.TrimSpace(trimmed[withIdx+len("WITH") : returnIdx])
 	postWhereClause := ""
-	withProjectionRaw := withToReturn
 	if postWhereIdx := findKeywordIndex(withToReturn, "WHERE"); postWhereIdx > 0 {
 		postWhereClause = strings.TrimSpace(withToReturn[postWhereIdx+len("WHERE"):])
-		withProjectionRaw = strings.TrimSpace(withToReturn[:postWhereIdx])
 		if postWhereClause == "" {
 			return nil, false
 		}
 	}
 
-	withProjection, _ := cutDistinct(withProjectionRaw)
-	withItems := e.parseReturnItems(ctx, withProjection)
+	withItems := e.parseReturnItems(ctx, trimmed, withIdx)
 	if len(withItems) < 2 || !withProjectionContainsVariable(withItems, pattern.relVar) {
 		return nil, false
 	}
@@ -714,8 +704,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		scoreCmp = cmp
 	}
 
-	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItems(ctx, returnPart)
+	returnItems := e.parseReturnItems(ctx, trimmed, returnIdx)
 	if len(returnItems) == 0 {
 		return nil, false
 	}

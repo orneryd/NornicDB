@@ -137,12 +137,3 @@ func cloneStringAnyMap(src map[string]interface{}) map[string]interface{} {
 	}
 	return dst
 }
-
-func (e *StorageExecutor) resolveReturnItem(ctx context.Context, item returnItem, variable string, node *storage.Node) interface{} {
-	row := e.mergeBindingRow(ctx, map[string]*storage.Node{variable: node}, nil)
-	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, "RETURN "+item.expr)
-	if err != nil || len(projected.Rows) == 0 || len(projected.Rows[0]) == 0 {
-		return nil
-	}
-	return projected.Rows[0][0]
-}

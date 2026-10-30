@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -31,6 +32,7 @@ type boundStatementProgram struct {
 	bindings    []statementBinding
 	uses        []statementBindingUse
 	projections map[int]*returnProjectionPlan
+	columns     map[int]resultmetadata.Columns
 	effects     map[int]pipelineClauseEffects
 	scalars     map[int]scalarExpressionSyntax
 }

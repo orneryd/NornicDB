@@ -1,3 +1,4 @@
+// Author of retained query compilation: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -98,8 +99,8 @@ func programFailure(reason resultmetadata.UnresolvedReason, position int, err er
 // compileStatementProgram compiles the execution clause operators and their
 // scope transfers. WITH and RETURN use the same cached projection plans that
 // execute rows; CALL stores its nested program rather than re-inferring exports.
-func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
-	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25}
+func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool, syntax cypherantlr.StatementSyntax) *projectedScopeFacts {
+	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25, syntax: syntax}
 	return compiler.root(ctx, incoming, retained)
 }
 

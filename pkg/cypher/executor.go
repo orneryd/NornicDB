@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // Package cypher provides Neo4j-compatible Cypher query execution for NornicDB.
 //
 // This package implements a Cypher query parser and executor that supports
@@ -113,6 +114,7 @@ import (
 	"context"
 	"errors"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"io"
 	"log/slog"
 	"net/http"
@@ -172,6 +174,32 @@ func hasCallSubqueryPattern(ctx context.Context, query string) bool {
 // brackets, so a CALL inside an EXISTS / COUNT / COLLECT subquery or another
 // CALL body is not the statement's (#652). -1 when there is none.
 func firstTopLevelCallSubquery(ctx context.Context, query string) int {
+	if !containsFold(query, "CALL") {
+		return -1
+	}
+	if !isNornicExtensionStatement(query) {
+		body := readQueryBodyText(ctx, query, 0, len(query))
+		if body.status != queryBodyDeclined {
+			for _, branch := range body.branches {
+				for _, clause := range branch.clauses {
+					if clause.kind == pipelineClauseCallSubquery {
+						for i := 0; i < clause.syntax.ChildCount(); i++ {
+							child := clause.syntax.Child(i)
+							if child.IsToken(cypherantlr.CypherLexerCALL) {
+								start, _ := child.InputSpan()
+								return start
+							}
+						}
+					}
+				}
+			}
+			return -1
+		}
+	}
+	return firstTopLevelCallSubqueryText(ctx, query)
+}
+
+func firstTopLevelCallSubqueryText(ctx context.Context, query string) int {
 	depth := 0
 	for i := 0; i < len(query); i++ {
 		switch cypherLexicalByte(query[i]) {
@@ -204,7 +232,29 @@ func callSubqueryAt(ctx context.Context, query string, i int) bool {
 	}
 	// Classification consumes the same CALL frame as scope and execution.
 	// In particular, comments before or after imports are query trivia.
-	body := i + readCallSubqueryScope(ctx, query[i:]).bodyOffset
+	if !isNornicExtensionStatement(query) {
+		body := readQueryBodyText(ctx, query, 0, len(query))
+		if body.status != queryBodyDeclined {
+			for _, branch := range body.branches {
+				for _, clause := range branch.clauses {
+					if clause.kind != pipelineClauseCallSubquery {
+						continue
+					}
+					for n := 0; n < clause.syntax.ChildCount(); n++ {
+						child := clause.syntax.Child(n)
+						if child.IsToken(cypherantlr.CypherLexerCALL) {
+							start, _ := child.InputSpan()
+							if start == i {
+								return true
+							}
+						}
+					}
+				}
+			}
+			return false
+		}
+	}
+	body := i + readCallSubqueryScopeText(ctx, query[i:]).bodyOffset
 	return body < len(query) && query[body] == '{'
 }
 

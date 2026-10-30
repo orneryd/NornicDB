@@ -87,20 +87,15 @@ type createEdgeSpec struct {
 // (result, true, err) on success, (nil, false, nil) if the shape doesn't
 // match (caller falls back), or (nil, true, err) on mid-execution error.
 func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
-	ctx context.Context, unwindVar string, items []interface{}, restQuery string,
+	ctx context.Context, unwindVar string, items []interface{}, body queryBody,
 ) (*ExecuteResult, bool, error) {
 	// Bail on shapes we don't handle.
-	trimmed := strings.TrimSpace(restQuery)
-	if trimmed == "" {
+	mutationPart, returned, hasReturn := body.mutationReturnSources()
+	if strings.TrimSpace(mutationPart) == "" {
 		return nil, false, nil
 	}
-
-	mutationPart := trimmed
-	returnPart := ""
-	if returnIdx := findKeywordIndexInContext(trimmed, "RETURN"); returnIdx >= 0 {
-		mutationPart = strings.TrimSpace(trimmed[:returnIdx])
-		returnPart = strings.TrimSpace(trimmed[returnIdx:])
-		_, ok := parseUnwindBatchCountReturn(ctx, returnPart)
+	if hasReturn {
+		_, ok := parseUnwindBatchCountReturn(returnPlanOf(ctx, returned, true))
 		if !ok {
 			return nil, false, nil
 		}
@@ -174,7 +169,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		ctx = context.WithValue(ctx, pipelinePrefetchedNodeCandidatesKey{}, prefetched)
 	}
 	ctx = context.WithValue(ctx, pipelineIndependentCreateBatchKey{}, true)
-	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, restQuery)
+	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, body)
 	if handled && err == nil {
 		e.markUnwindMultiMatchCreateBatchUsed()
 	}

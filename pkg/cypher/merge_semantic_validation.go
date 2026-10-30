@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -83,7 +84,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 	if cached {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(ctx, cypher)
+	clauses, ok := splitPipelineTextClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
@@ -96,13 +97,13 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 		case pipelineClauseCreate:
 			addMergePatternBindings(scope, clause.text)
 		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause)
 		case pipelineClauseLet:
 			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(clause); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:

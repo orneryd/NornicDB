@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -3258,7 +3259,7 @@ RETURN
   t.translatedText AS translatedText
 `
 
-	branches, all, mixed, ok := parseTopLevelUnionBranches(t.Context(), body)
+	branches, all, mixed, ok := parseTopLevelUnionTextBranches(t.Context(), body)
 	require.True(t, ok)
 	require.False(t, mixed)
 	require.True(t, all)
@@ -3392,19 +3393,19 @@ func TestSubqueryHelpers_CallInTransactions_IterativeBatchingWithMatchMerge(t *t
 func TestSubqueryHelpers_ParseCallSubquery_EdgeBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
-	body, after, inTx, batch := exec.parseCallSubquery(t.Context(), "CALL db.info()")
+	body, after, inTx, batch := exec.parseCallSubqueryText(t.Context(), "CALL db.info()")
 	assert.Empty(t, body)
 	assert.Empty(t, after)
 	assert.False(t, inTx)
 	assert.Nil(t, batch)
 
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 ")
+	body, after, inTx, batch = exec.parseCallSubqueryText(t.Context(), "CALL { RETURN 1 ")
 	assert.Empty(t, body)
 	assert.Empty(t, after)
 	assert.False(t, inTx)
 	assert.Nil(t, batch)
 
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF nope ROWS RETURN x")
+	body, after, inTx, batch = exec.parseCallSubqueryText(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF nope ROWS RETURN x")
 	assert.Equal(t, "RETURN 1 AS x", body)
 	assert.Equal(t, "RETURN x", after)
 	assert.True(t, inTx)
@@ -3412,7 +3413,7 @@ func TestSubqueryHelpers_ParseCallSubquery_EdgeBranches(t *testing.T) {
 	require.NotNil(t, batch)
 	assert.Equal(t, "nope", batch.Expression)
 
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF 7 ROWS RETURN x")
+	body, after, inTx, batch = exec.parseCallSubqueryText(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF 7 ROWS RETURN x")
 	assert.Equal(t, "RETURN 1 AS x", body)
 	assert.Equal(t, "RETURN x", after)
 	assert.True(t, inTx)

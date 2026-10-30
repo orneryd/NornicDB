@@ -374,14 +374,14 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 			{int64(7), nodes["n"]},
 		},
 	}
-	out, err := exec.projectTransactionReturn(ctx, input, "x AS val, n.name AS name")
+	out, err := exec.projectTransactionReturnForTest(ctx, input, "x AS val, n.name AS name")
 	require.NoError(t, err)
 	require.Equal(t, []string{"val", "name"}, out.Columns)
 	require.Len(t, out.Rows, 1)
 	require.Equal(t, int64(7), out.Rows[0][0])
 	require.Equal(t, "alice", out.Rows[0][1])
 
-	empty, err := exec.projectTransactionReturn(ctx, input, "")
+	empty, err := exec.projectTransactionReturnForTest(ctx, input, "")
 	require.NoError(t, err)
 	require.Equal(t, []string{"n", "x"}, empty.Columns)
 	require.Len(t, empty.Rows, 1)

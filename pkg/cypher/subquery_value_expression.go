@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -389,7 +391,7 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	}
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnion) joins them, as for a top-level UNION.
-	if _, unionAll, _, union := parseTopLevelUnionBranches(ctx, query); union {
+	if _, unionAll, _, union := parseTopLevelUnionTextBranches(ctx, query); union {
 		return e.executeUnion(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
 			return e.runCorrelatedSubquery(ctx, branch, values)
 		})
@@ -553,12 +555,34 @@ type boundNodeShape struct {
 	ok       bool
 }
 
+// singleMatchBody reports whether an EXISTS / COUNT body is one MATCH clause,
+// or the grammar's bare pattern [WHERE …] form, from the body's own text: a
+// MATCH-led body through the clause owner, a bare pattern through the pattern
+// entry. No MATCH clause is composed around a bare pattern.
+// Author: Claude R17 implementation agent, 30 October 2026.
+func singleMatchBody(ctx context.Context, body string) bool {
+	trimmed := strings.TrimSpace(body)
+	if hasPrefixFold(trimmed, "MATCH ") {
+		clauses, ok := splitPipelineTextClauses(ctx, trimmed)
+		return ok && len(clauses) == 1 && clauses[0].kind == pipelineClauseMatch
+	}
+	pattern := trimmed
+	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+		pattern = strings.TrimSpace(pattern[:index])
+	}
+	if pattern == "" {
+		return false
+	}
+	_, err := cypherantlr.ParseSyntax(ctx, pattern, cypherantlr.PatternEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	return err == nil
+}
+
 func parseBoundNodeShape(ctx context.Context, body string) boundNodeShape {
 	pattern := strings.TrimSpace(body)
 	if hasPrefixFold(pattern, "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH"):])
 	}
-	if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	if !singleMatchBody(ctx, body) {
 		return boundNodeShape{}
 	}
 	where := ""
@@ -618,7 +642,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	}
 	// One MATCH clause, its WHERE included: a RETURN or any other clause is
 	// the kernel's or the pipeline's.
-	if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	if !singleMatchBody(ctx, body) {
 		return 0, false
 	}
 	where := ""

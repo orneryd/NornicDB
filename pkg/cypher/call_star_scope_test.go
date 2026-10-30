@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -213,7 +214,7 @@ func TestCallScopeClauseSyntax(t *testing.T) {
 		{"MATCH (n) CALL (n) { RETURN n }", false, nil, false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			scope := readCallSubqueryScope(t.Context(), tc.query)
+			scope := readCallSubqueryScopeText(t.Context(), tc.query)
 			if tc.invalid {
 				// Invalid syntax retains its error without partial scope facts.
 				// Verify public rejection as well as the explicit invalid marker.

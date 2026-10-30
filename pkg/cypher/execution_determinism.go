@@ -1,3 +1,4 @@
+// Author of retained syntax inspection: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -141,7 +142,7 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 			continue
 		}
 		var arguments []string
-		syntax, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+		syntax, err := cypherantlr.InspectSyntax(ctx, text, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 		if err != nil {
 			return policy
 		}

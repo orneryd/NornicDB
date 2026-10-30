@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -29,7 +30,7 @@ func (e *StorageExecutor) sharedForeachForTest(ctx context.Context, query string
 		row[name] = edge
 	}
 	bindParameterRow(ctx, row)
-	split := parsePipelineClauses(ctx, query)
+	split := parsePipelineClauses(ctx, queryBodyForTest(ctx, query))
 	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return e.Execute(withValueBindings(ctx, row), query, getParamsFromContext(ctx))
@@ -68,7 +69,7 @@ func (e *StorageExecutor) sharedPathComparisonForTest(left, right interface{}, o
 }
 
 func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, query string, input, output *ExecuteResult) (*ExecuteResult, bool, error) {
-	split := parsePipelineClauses(ctx, query)
+	split := parsePipelineClauses(ctx, queryBodyForTest(ctx, query))
 	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return nil, false, fmt.Errorf("invalid pipeline clauses: %s", query)
@@ -220,7 +221,7 @@ func (e *StorageExecutor) sharedScopedTransactionalCallForTest(ctx context.Conte
 }
 
 func (e *StorageExecutor) sharedCallTailForTest(ctx context.Context, input *ExecuteResult, tail string) (*ExecuteResult, error) {
-	if split := parsePipelineClauses(ctx, tail); !split.ok {
+	if split := parsePipelineClauses(ctx, queryBodyForTest(ctx, tail)); !split.ok {
 		tail = "RETURN * " + tail
 	}
 	return e.sharedTrailingRowsForTest(ctx, tail, input, input)
@@ -236,7 +237,7 @@ func (e *StorageExecutor) sharedAggregationRowsForTest(ctx context.Context, rows
 		projections = append(projections, projection)
 	}
 	ctx = withExpressionFailureSlot(ctx)
-	projected, handled := e.pipelineApplyReturn(ctx, rows, "RETURN "+strings.Join(projections, ", "))
+	projected, handled := e.pipelineApplyReturnTextForTest(ctx, rows, "RETURN "+strings.Join(projections, ", "))
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return nil, failure
 	}
@@ -324,7 +325,7 @@ func (e *StorageExecutor) sharedPipelineRowsForTest(ctx context.Context, query s
 }
 
 func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
-	split := parsePipelineClauses(ctx, query)
+	split := parsePipelineClauses(ctx, queryBodyForTest(ctx, query))
 	clauses, ok := split.clauses, split.ok
 	if !ok || len(clauses) == 0 || clauses[0].kind != pipelineClauseCreate {
 		if pattern := strings.TrimSpace(strings.TrimPrefix(query, "CREATE")); patternHasRelationship(pattern) {
@@ -353,7 +354,7 @@ func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query
 	}
 	result := created
 	if len(clauses) > 1 {
-		result, _ = e.pipelineApplyReturn(ctx, rows, clauses[1].text)
+		result, _ = e.pipelineApplyReturnTextForTest(ctx, rows, clauses[1].text)
 		result.Stats = created.Stats
 	}
 	return result, nodes, edges, getExpressionFailure(ctx)
@@ -1169,7 +1170,7 @@ func TestMergeActionsRejectUndefinedVariablesBeforeExecution(t *testing.T) {
 		"MERGE (node) ON CREATE SET missing.value = 1",
 		"MERGE (node) ON MATCH SET missing.value = 1",
 	} {
-		clauses, ok := splitPipelineClauses(t.Context(), query)
+		clauses, ok := splitPipelineTextClauses(t.Context(), query)
 		require.True(t, ok)
 		require.Len(t, clauses, 1)
 		require.Equal(t, query, clauses[0].text)
@@ -1344,7 +1345,7 @@ func TestGh908PipelineCreateCancellationHasNoEffects(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	ctx, cancel := context.WithCancel(ctx)
 	cancel()
-	rows, created, handled, err := exec.pipelineApplyCreateClauses(ctx, []pipelineRow{{}}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (a:Cancelled)"}})
+	rows, created, handled, err := exec.pipelineApplyCreateClauses(ctx, []pipelineRow{{}}, []pipelineClause{retainedClauseForTest(t.Context(), "CREATE (a:Cancelled)")})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, rows)
 	require.Nil(t, created)
@@ -1495,7 +1496,7 @@ RETURN count(*) AS created`, map[string]interface{}{
 
 func TestConvergedSetPipelineHelpers(t *testing.T) {
 	t.Run("clause kind detection scopes normalization", func(t *testing.T) {
-		clauses := []pipelineClause{{kind: pipelineClauseMatch}, {kind: pipelineClauseSet}}
+		clauses := []pipelineClause{retainedClauseForTest(t.Context(), "MATCH (n)"), retainedClauseForTest(t.Context(), "SET n.x = 1")}
 		require.True(t, pipelineHasClauseKind(clauses, pipelineClauseSet))
 		require.False(t, pipelineHasClauseKind(clauses, pipelineClauseReturn))
 	})

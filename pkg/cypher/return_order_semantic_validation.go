@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -7,26 +8,29 @@ import (
 
 import "strings"
 
-func validateReturnOrderBySemanticScope(ctx context.Context, clause string) error {
+func validateReturnOrderBySemanticScope(ctx context.Context, clause pipelineClause) error {
 	return validateReturnOrderBySemanticScopeIn(ctx, clause, nil)
 }
 
 // Retained imports are available throughout a subquery, including a DISTINCT
 // or aggregating horizon's ORDER BY. They remain outside its projection key.
-func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, retained typeScope) error {
-	body := strings.TrimSpace(clause[len("RETURN"):])
+func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause pipelineClause, retained typeScope) error {
+	keyword := "RETURN"
+	if clause.kind == pipelineClauseWith {
+		keyword = "WITH"
+	}
+	body := strings.TrimSpace(clause.text[len(keyword):])
 	orderIndex := topLevelKeywordIndex(body, "ORDER BY")
 	if orderIndex < 0 {
 		return nil
 	}
-	projectionBody := strings.TrimSpace(body[:orderIndex])
 	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
 			orderBody = strings.TrimSpace(orderBody[:index])
 		}
 	}
-	projectionBody, distinct := cutDistinct(projectionBody)
+	_, distinct := cutDistinct(strings.TrimSpace(body[:orderIndex]))
 
 	aliases := make(map[string]struct{})
 	directExpressions := make(map[string]struct{})
@@ -36,8 +40,7 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 	// star: a * item projects every variable in scope, so ORDER BY may use
 	// any of them (RETURN DISTINCT *, x AS y ORDER BY z, #883).
 	star := false
-	for _, item := range splitTopLevelComma(projectionBody) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
+	for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
 		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "*" {
 			star = true
@@ -156,27 +159,18 @@ func canonicalSemanticExpression(expression string) string {
 	return normalized.String()
 }
 
-func validateReturnAggregationSemantics(ctx context.Context, body string) error {
-	return validateReturnAggregationSemanticsIn(ctx, body, nil)
+func validateReturnAggregationSemantics(ctx context.Context, clause pipelineClause) error {
+	return validateReturnAggregationSemanticsIn(ctx, clause, nil)
 }
 
 // validateReturnAggregationSemanticsIn is validateReturnAggregationSemantics
 // with outer's variables constants: in an EXISTS / COUNT / COLLECT body the
 // enclosing query's variables aren't grouping keys.
-func validateReturnAggregationSemanticsIn(ctx context.Context, body string, outer typeScope) error {
-	end := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
-			end = index
-		}
-	}
-	body = strings.TrimSpace(body[:end])
-	body, _ = cutDistinct(body)
+func validateReturnAggregationSemanticsIn(ctx context.Context, clause pipelineClause, outer typeScope) error {
 	directExpressions := make(map[string]struct{})
 	aliases := make(map[string]struct{})
 	expressions := make([]string, 0)
-	for _, item := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
+	for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
 		expression, alias := itemSource.expression, itemSource.alias
 		expressions = append(expressions, expression)
 		if alias != "" && alias != expression {

@@ -11,9 +11,9 @@ import (
 // TestMergeNodeWritesOf pins which MERGE-bound variables a statement writes
 // (NOR-117): those writes make the MERGE take its key lock.
 func TestMergeNodeWritesOf(t *testing.T) {
-	merge := func(text string) pipelineClause { return pipelineClause{kind: pipelineClauseMerge, text: text} }
+	merge := func(text string) pipelineClause { return retainedClauseForTest(t.Context(), text) }
 	clause := func(kind pipelineClauseKind, text string) pipelineClause {
-		return pipelineClause{kind: kind, text: text}
+		return retainedClauseForTest(t.Context(), text)
 	}
 	for _, c := range []struct {
 		name     string
@@ -29,8 +29,6 @@ func TestMergeNodeWritesOf(t *testing.T) {
 		{"set label and map", []pipelineClause{merge("MERGE (n:Doc {id: 1})"), clause(pipelineClauseSet, "SET n:Seen, m += $p")}, []string{"n", "m"}, nil, false},
 		{"relationship set", []pipelineClause{merge("MERGE (n:Doc {id: 1})-[r:R]->(m:Doc {id: 2})"), clause(pipelineClauseSet, "SET r.w = 1")}, []string{"r"}, []string{"n", "m"}, false},
 		{"remove", []pipelineClause{merge("MERGE (n:Doc {id: 1})"), clause(pipelineClauseRemove, "REMOVE n.x, m:L")}, []string{"n", "m"}, nil, false},
-		{"bad remove", []pipelineClause{merge("MERGE (n:Doc {id: 1})"), clause(pipelineClauseRemove, "REMOVE n")}, nil, nil, true},
-		{"unreadable set", []pipelineClause{merge("MERGE (n:Doc {id: 1})"), clause(pipelineClauseSet, "SET n.x")}, nil, nil, true},
 		{"delete", []pipelineClause{merge("MERGE (n:Doc {id: 1})"), clause(pipelineClauseDelete, "DETACH DELETE n")}, []string{"n"}, []string{"m"}, false},
 		{"delete expression", []pipelineClause{merge("MERGE (n:Doc {id: 1})"), clause(pipelineClauseDelete, "DELETE head([n])")}, nil, nil, true},
 		{"with, no rename", []pipelineClause{merge("MERGE (n:Doc {id: 1})"), clause(pipelineClauseWith, "WITH n"), clause(pipelineClauseSet, "SET n.x = 1")}, []string{"n"}, []string{"m"}, false},
@@ -52,6 +50,13 @@ func TestMergeNodeWritesOf(t *testing.T) {
 			}
 			require.False(t, writes.writes(""))
 		})
+	}
+	// Invalid native inputs cannot be fabricated as admitted logical clauses.
+	// REMOVE n is valid grammar (removeItem's propertyExpression), so only the
+	// incomplete SET is an invalid fixture.
+	for _, text := range []string{"SET n.x"} {
+		_, admitted := fixtureClauseForTest(t.Context(), text)
+		require.False(t, admitted, text)
 	}
 	var none *mergeNodeWrites
 	require.False(t, none.writes("n"))

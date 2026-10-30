@@ -1,3 +1,4 @@
+// Author of retained CALL inspection: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -46,12 +47,8 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 // extractProcedureName uses the same component reader as authorization,
 // retaining exact case while accepting quoted names and spaced separators.
 func extractProcedureName(ctx context.Context, source string) string {
-	syntax, _ := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
-	if !syntax.Valid() {
-		return ""
-	}
-	call, found := syntax.LeadingCall()
-	if !found {
+	call, _ := cypherantlr.LeadingCallSyntax(ctx, source, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	if !call.Valid() {
 		return ""
 	}
 	invocation := call.ChildRule(cypherantlr.CypherParserRULE_invocationName)

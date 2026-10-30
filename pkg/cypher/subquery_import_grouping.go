@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -80,8 +81,7 @@ func cypher5ImportGrouping(body string, imports map[string]interface{}) (string,
 		aggregating := false
 		projected := map[string]bool{}
 		for _, item := range items {
-			itemSource := readProjectionItemSource(context.Background(), item, projectionBeforeRewrite)
-			expression, alias := itemSource.expression, itemSource.alias
+			expression, alias := rewriteStageProjectionItem(item)
 			projected[alias] = true
 			spans := findAggregateSpans(expression)
 			if len(spans) == 0 {

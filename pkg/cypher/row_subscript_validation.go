@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -301,8 +302,12 @@ func mapElementAccessByNonStringError(value interface{}) error {
 	)
 }
 
-func (e *StorageExecutor) validatePipelineSizeArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
-	for _, expression := range projectionExpressions(ctx, clause, keyword) {
+func (e *StorageExecutor) validatePipelineSizeArguments(ctx context.Context, rows []pipelineRow, clause pipelineClause, keyword string) error {
+	return e.validatePipelineSizeExpressions(ctx, rows, projectionExpressions(ctx, clause, keyword))
+}
+
+func (e *StorageExecutor) validatePipelineSizeExpressions(ctx context.Context, rows []pipelineRow, expressions []string) error {
+	for _, expression := range expressions {
 		var callFacts1 functionCallFacts
 		functionCall := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts1)
 		name, argument := callFacts1.name, callFacts1.inner

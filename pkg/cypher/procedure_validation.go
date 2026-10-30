@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -169,7 +170,7 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 }
 
 func explicitProcedureArgumentTexts(ctx context.Context, source string) []string {
-	clause, ok := canonicalQueryClause(ctx, source)
+	clause, ok := leadingCallClause(ctx, source)
 	if !ok {
 		return nil
 	}
@@ -226,12 +227,12 @@ func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{},
 // itself checks (coerceProcedureArgument) are checked here: a NODE, MAP or
 // LIST parameter also takes NornicDB's other forms (a node id, a label, a
 // request's short form).
-func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope staticTypeScope, unwound map[string]struct{}) error {
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause))
+func staticProcedureArgumentTypeError(ctx context.Context, clause pipelineClause, scope staticTypeScope, unwound map[string]struct{}) error {
+	procedure, found := globalProcedureRegistry.Get(clause.syntax.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName())
 	if !found {
 		return nil
 	}
-	texts := explicitProcedureArgumentTexts(ctx, clause)
+	texts := procedureArgumentTextsFromSyntax(clause.syntax)
 	if len(texts) == 0 {
 		return nil
 	}
@@ -263,11 +264,10 @@ func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope 
 // projectUnwoundValues returns which of the variables a WITH clause binds
 // carry a type that came from UNWIND: an alias of such a variable, or the
 // variable itself under WITH *.
-func projectUnwoundValues(ctx context.Context, unwound map[string]struct{}, clause string) map[string]struct{} {
+func projectUnwoundValues(ctx context.Context, unwound map[string]struct{}, clause pipelineClause) map[string]struct{} {
 	if len(unwound) == 0 {
 		return nil
 	}
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	var projected map[string]struct{}
 	keep := func(name string) {
 		if projected == nil {
@@ -275,8 +275,7 @@ func projectUnwoundValues(ctx context.Context, unwound map[string]struct{}, clau
 		}
 		projected[name] = struct{}{}
 	}
-	for _, raw := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+	for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
 		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "*" {
 			for name := range unwound {

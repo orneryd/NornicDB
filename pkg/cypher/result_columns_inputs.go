@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -6,9 +7,20 @@ import (
 )
 
 // scopeClauseFromSyntax reads CALL's declared symbols, not their spellings.
-// A nil all-list differs from the non-nil empty list in CALL ().
+// A nil all-list differs from the non-nil empty list in CALL (). It is the one
+// constructor of a scope clause: a procedure call has no scope and its body
+// offset is its procedure name; an absent node has neither.
 func scopeClauseFromSyntax(call cypherantlr.SyntaxNode) callSubqueryScopeClause {
 	clause := callSubqueryScopeClause{}
+	if !call.Valid() {
+		return clause
+	}
+	if call.Rule() != cypherantlr.CypherParserRULE_callSubquery {
+		if name := call.ChildRule(cypherantlr.CypherParserRULE_invocationName); name.Valid() {
+			clause.bodyOffset, _ = name.Span()
+		}
+		return clause
+	}
 	if token, found := call.DirectToken(cypherantlr.CypherLexerLPAREN); found {
 		clause.scoped = true
 		clause.names = []string{}
@@ -71,7 +83,7 @@ func addSyntaxPatternBindings(scope map[string]struct{}, clause cypherantlr.Synt
 	syntaxPatternDefinitions(clause, func(_ int, symbol cypherantlr.SyntaxNode) { scope[syntaxSymbolName(symbol)] = struct{}{} })
 }
 
-func canonicalPatternVariables(ctx context.Context, source string) []string {
+func standalonePatternVariables(ctx context.Context, source string) []string {
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.PatternEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return nil

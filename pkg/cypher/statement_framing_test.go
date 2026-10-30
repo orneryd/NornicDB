@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 // Neo4j 5 statement framing (#743, #744): the CYPHER … query-option preamble
@@ -496,7 +497,7 @@ func TestFinishTerminatorReturnsNoRows(t *testing.T) {
 	require.False(t, callSubqueryHasScopeClause(t.Context(), "MATCH (n) CALL () { RETURN 1 }"))
 	_, err = exec.Execute(ctx, "UNWIND [1] AS i CALL { WITH i } RETURN 1 AS one", nil)
 	require.Error(t, err)
-	_, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, "CALL { WITH i }", nil)
+	_, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, retainedClauseForTest(ctx, "CALL { WITH i }"), nil)
 	require.True(t, handled)
 	require.Error(t, err)
 

@@ -1,3 +1,4 @@
+// Author of retained syntax cache identity: Codex R17 implementation agent.
 package cypher
 
 // Pipeline executor for composite queries of the form
@@ -60,22 +61,9 @@ const (
 	pipelineClauseCall
 	pipelineClauseLet
 	pipelineClauseFilter
+	// USE belongs to bound source selection, never a row operator.
+	pipelineClauseUse
 )
-
-// pipelineClause is one segment of the pipeline. `text` includes the leading
-// keyword (MATCH/CREATE/WITH/UNWIND/RETURN) and the clause body — exactly
-// what you would pass to the clause implementation.
-type pipelineClause struct {
-	kind               pipelineClauseKind
-	syntax             cypherantlr.SyntaxNode
-	embeddingCandidate string
-	text               string
-	// optional marks OPTIONAL CALL (kinds pipelineClauseCall and
-	// pipelineClauseCallSubquery; text is the CALL itself): an input row the
-	// call produces no row for is kept, with null for the call's columns
-	// (#907).
-	optional bool
-}
 
 // pipelineMatchPhysicalHint describes downstream row requirements that a
 // MATCH operator may safely push into candidate collection or traversal. The
@@ -164,7 +152,7 @@ type pipelineRow map[string]interface{}
 // subquery, etc.) causes a false return so the
 // caller can select a specialized physical plan.
 func canExecuteAsPipeline(ctx context.Context, cypher string) ([]pipelineClause, bool) {
-	clauses, ok := pipelineClausesFor(ctx, cypher)
+	clauses, ok := pipelineTextClausesFor(ctx, cypher)
 	if !ok {
 		return nil, false
 	}
@@ -193,26 +181,23 @@ func canExecuteAsPipeline(ctx context.Context, cypher string) ([]pipelineClause,
 
 // pipelineClausesFor splits a statement, or the clauses after a CALL …
 // YIELD, into pipeline clauses when every clause is one the pipeline runs.
-func pipelineClausesFor(ctx context.Context, cypher string) ([]pipelineClause, bool) {
-	return splitPipelineClausesAllowingProcedureCalls(ctx, cypher)
+func pipelineClausesFor(ctx context.Context, body queryBody) ([]pipelineClause, bool) {
+	return splitPipelineClausesAllowingProcedureCalls(ctx, body)
+}
+func pipelineTextClausesFor(ctx context.Context, source string) ([]pipelineClause, bool) {
+	return splitPipelineTextClausesAllowingProcedureCalls(ctx, source)
 }
 
-// unwindBodySource keeps the admitted source views needed by iteration and
-// top-level execution. aliasTail stays whole so semantic validation rejects
-// trailing tokens; variableWritten and remainder share its canonical name extent.
-type unwindBodySource struct {
-	expression      string
-	aliasTail       string
-	variableWritten string
-	remainder       string
-}
-
-// splitUnwindBody reads a full original UNWIND clause with the existing native
-// scanner. AS in an operand or identifier remains part of the expression.
-func splitUnwindBody(source string) (unwindBodySource, bool) {
+// startsUnwindBinding reports whether pre-grammar rewrite text begins with a
+// complete UNWIND expr AS variable binding. It is a lexical predicate for the
+// Cypher 5 ALL rewrite, which runs before its statement exists; admitted UNWIND
+// clauses are read from their retained syntax (unwindIteration).
+// Author: Claude R17 implementation agent, 30 October 2026 (from the former
+// native UNWIND body scanner).
+func startsUnwindBinding(source string) bool {
 	head := queryGapEnd(source, 0)
 	if !startsWithKeywordFold(source[head:], "UNWIND") {
-		return unwindBodySource{}, false
+		return false
 	}
 	exprStart := queryGapEnd(source, keywordEndAt(source, head, "UNWIND"))
 	opts := defaultKeywordScanOpts()
@@ -220,24 +205,15 @@ func splitUnwindBody(source string) (unwindBodySource, bool) {
 	for from := exprStart; ; {
 		at := keywordIndexFrom(source, "AS", from, opts)
 		if at < 0 {
-			return unwindBodySource{}, false
+			return false
 		}
 		if wordIsName(source, at) || insideCaseBlock(source, at) {
 			from = at + len("AS")
 			continue
 		}
 		expression := strings.TrimSpace(source[exprStart:at])
-		aliasStart := queryGapEnd(source, at+len("AS"))
-		token, _, found := cyphertext.ScanIdentifierExtent(source, aliasStart)
-		if expression == "" || !found {
-			return unwindBodySource{}, false
-		}
-		return unwindBodySource{
-			expression:      expression,
-			aliasTail:       strings.TrimSpace(source[aliasStart:]),
-			variableWritten: source[aliasStart:token.End],
-			remainder:       strings.TrimSpace(source[token.End:]),
-		}, true
+		_, _, found := cyphertext.ScanIdentifierExtent(source, queryGapEnd(source, at+len("AS")))
+		return expression != "" && found
 	}
 }
 
@@ -257,8 +233,16 @@ func pipelineClauseBody(text, keyword string) string {
 // it for workloads with unbounded distinct texts.
 var pipelineClauseSplits = struct {
 	sync.RWMutex
-	splits map[string]pipelineClauseSplit
-}{splits: make(map[string]pipelineClauseSplit)}
+	splits map[pipelineClauseKey]pipelineClauseSplit
+}{splits: make(map[pipelineClauseKey]pipelineClauseSplit)}
+
+type pipelineClauseKey struct {
+	source            string
+	origin            cypherantlr.SyntaxOrigin
+	cypher25          bool
+	node, first, last int
+	use, finished     bool
+}
 
 // pipelineClauseSplit is a text's split with procedure calls as clauses;
 // topLevelCall records whether the text has a CALL of its own, which makes
@@ -267,15 +251,15 @@ type pipelineClauseSplit struct {
 	clauses      []pipelineClause
 	ok           bool
 	topLevelCall bool
-	firstReturn  string
+	firstReturn  pipelineClause
 }
 
 const pipelineClauseSplitLimit = 4096
 
 // splitPipelineClauses cuts a statement into its pipeline clauses (see
 // parsePipelineClauses); a CALL makes it unsupported.
-func splitPipelineClauses(ctx context.Context, cypher string) ([]pipelineClause, bool) {
-	split := cachedPipelineClauses(ctx, cypher, false)
+func splitPipelineClauses(ctx context.Context, body queryBody) ([]pipelineClause, bool) {
+	split := cachedPipelineClauses(ctx, body, false)
 	return split.clauses, split.ok
 }
 
@@ -283,27 +267,69 @@ func splitPipelineClauses(ctx context.Context, cypher string) ([]pipelineClause,
 // accepts top-level procedure calls (CALL proc(args) YIELD …) as clauses of
 // kind pipelineClauseCall, for the pipeline executor and call-aware semantic
 // validation. splitPipelineClauses rejects statements with procedure calls.
-func splitPipelineClausesAllowingProcedureCalls(ctx context.Context, cypher string) ([]pipelineClause, bool) {
-	split := cachedPipelineClauses(ctx, cypher, true)
+func splitPipelineClausesAllowingProcedureCalls(ctx context.Context, body queryBody) ([]pipelineClause, bool) {
+	split := cachedPipelineClauses(ctx, body, true)
 	return split.clauses, split.ok
 }
 
 // cachedPipelineClauses computes the split of a text once, for both
 // callers: without procedure calls as clauses, a text with a CALL of its own
 // is unsupported, and any other text splits the same way. Callers get their
-// own copy of the clause list. Cancellation is recorded in the statement's
-// existing failure slot so dispatch can distinguish it from unsupported text.
-func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bool) pipelineClauseSplit {
+// own copy of the clause list.
+// cachedPipelineClauses retains the existing split cache, keyed by the exact
+// grammar occurrence/window. Equal text in another CALL cannot supply node IDs.
+func cachedPipelineClauses(ctx context.Context, body queryBody, procedureCalls bool) pipelineClauseSplit {
 	if err := ctx.Err(); err != nil {
 		recordExpressionFailure(ctx, err)
 		return pipelineClauseSplit{}
 	}
-	key := semanticCacheKey(cypher, cypherVersionFromContext(ctx) == "25")
+	if !body.syntax.Valid() || body.status != queryBodyRead || len(body.branches) != 1 {
+		return pipelineClauseSplit{}
+	}
+	branch := body.branches[0]
+	key := pipelineClauseKey{source: body.syntax.Source(), origin: body.syntax.Origin(), cypher25: cypherVersionFromContext(ctx) == "25", node: body.syntax.ID(), first: -1, last: -1, use: branch.useStart >= 0, finished: branch.finished}
+	if len(branch.clauses) > 0 {
+		key.first = branch.clauses[0].syntax.ID()
+		key.last = branch.clauses[len(branch.clauses)-1].syntax.ID()
+	}
+	return pipelineClauseSplitFor(ctx, key, procedureCalls, func() pipelineClauseSplit { return parsePipelineClauses(ctx, body) })
+}
+
+// cachedPipelineTextClauses is the explicit whole/native source boundary. Its
+// existing QuerySyntax admission remains separate from retained clause readers.
+func cachedPipelineTextClauses(ctx context.Context, source string, procedureCalls bool) pipelineClauseSplit {
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return pipelineClauseSplit{}
+	}
+	syntax, err := cypherantlr.QuerySyntax(ctx, source, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	if err != nil {
+		if canceled := ctx.Err(); canceled != nil {
+			recordExpressionFailure(ctx, canceled)
+		}
+		return pipelineClauseSplit{}
+	}
+	return cachedPipelineClauses(ctx, readQueryBody(statementSyntaxQuery(syntax)), procedureCalls)
+}
+
+func splitPipelineTextClauses(ctx context.Context, source string) ([]pipelineClause, bool) {
+	split := cachedPipelineTextClauses(ctx, source, false)
+	return split.clauses, split.ok
+}
+
+func splitPipelineTextClausesAllowingProcedureCalls(ctx context.Context, source string) ([]pipelineClause, bool) {
+	split := cachedPipelineTextClauses(ctx, source, true)
+	return split.clauses, split.ok
+}
+
+// pipelineClauseSplitFor is the sole split-cache publication/lifetime owner.
+// Neither source adapters nor retained readers cache a second implementation.
+func pipelineClauseSplitFor(ctx context.Context, key pipelineClauseKey, procedureCalls bool, build func() pipelineClauseSplit) pipelineClauseSplit {
 	pipelineClauseSplits.RLock()
 	split, cached := pipelineClauseSplits.splits[key]
 	pipelineClauseSplits.RUnlock()
 	if !cached {
-		split = parsePipelineClauses(ctx, cypher)
+		split = build()
 		if err := ctx.Err(); err != nil {
 			recordExpressionFailure(ctx, err)
 			return pipelineClauseSplit{}
@@ -315,7 +341,7 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 			return pipelineClauseSplit{}
 		}
 		if len(pipelineClauseSplits.splits) >= pipelineClauseSplitLimit {
-			pipelineClauseSplits.splits = make(map[string]pipelineClauseSplit)
+			pipelineClauseSplits.splits = make(map[pipelineClauseKey]pipelineClauseSplit)
 		}
 		pipelineClauseSplits.splits[key] = split
 		pipelineClauseSplits.Unlock()
@@ -332,9 +358,8 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 // parsePipelineClauses projects the retained query-body product once. A final
 // RETURN remains available for semantic column export when USE or FINISH makes
 // the body unsupported by execution's pipeline; unsupported clauses stay nil.
-func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSplit {
-	body := readQueryBody(ctx, source, 0, len(source))
-	if body.status != queryBodyRead || len(body.branches) != 1 {
+func parsePipelineClauses(ctx context.Context, body queryBody) pipelineClauseSplit {
+	if ctx.Err() != nil || body.status != queryBodyRead || len(body.branches) != 1 {
 		return pipelineClauseSplit{}
 	}
 	branch := body.branches[0]
@@ -342,7 +367,7 @@ func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSpli
 	if len(branch.clauses) > 0 {
 		last := branch.clauses[len(branch.clauses)-1]
 		if last.kind == pipelineClauseReturn {
-			split.firstReturn = strings.TrimSpace(last.text)
+			split.firstReturn = last.pipelineClause
 		}
 	}
 	if branch.useStart >= 0 || branch.finished || len(branch.clauses) == 0 {
@@ -355,7 +380,6 @@ func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSpli
 			split.topLevelCall = true
 		}
 		item := clause.pipelineClause
-		item.syntax = clause.syntax
 		item.embeddingCandidate = embeddingCandidate(branch.clauses, index)
 		split.clauses = append(split.clauses, item)
 	}
@@ -473,13 +497,15 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	}()
 	hasCallSubquery := firstTopLevelCallSubquery(ctx, cypher) >= 0
 	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
-		if !pipelineUnwindUsesRange(cypher) {
-			plan, err := e.prepareTopLevelUnwind(ctx, cypher)
+		if unwind, found := pipelineClauseAt(ctx, cypher, queryGapEnd(cypher, 0), cypherantlr.CypherParserRULE_unwindSt); !found || !pipelineUnwindUsesRange(unwind) {
+			plan, prepared, err := e.prepareTopLevelUnwind(ctx, cypher)
 			if err != nil {
 				return newPipelineDispatchOutcome(nil, true, err)
 			}
-			if result, handled, err := e.executeUnwindBatchOperator(ctx, plan); handled || err != nil {
-				return newPipelineDispatchOutcome(result, handled, err)
+			if prepared {
+				if result, handled, err := e.executeUnwindBatchOperator(ctx, plan); handled || err != nil {
+					return newPipelineDispatchOutcome(result, handled, err)
+				}
 			}
 		}
 	}
@@ -553,7 +579,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	// Projections and effects are looked up by the executing clause's syntax.
 	// When whitespace normalization re-read the statement, bind that source.
 	if len(programClauses) == 0 || len(clauses) > 0 && clauses[0].syntax.Valid() && programClauses[0].syntax.Valid() &&
-		clauses[0].syntax.Source() != programClauses[0].syntax.Source() {
+		(clauses[0].syntax.Source() != programClauses[0].syntax.Source() || clauses[0].syntax.Origin() != programClauses[0].syntax.Origin()) {
 		programClauses = clauses
 	}
 	var programErr error
@@ -588,7 +614,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				break
 			}
 			if clause.kind == pipelineClauseWith {
-				if _, local := parsePipelineRowWith(ctx, clause.text); !local {
+				if _, local := parsePipelineRowWith(ctx, clause); !local {
 					break
 				}
 			}
@@ -643,7 +669,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		}
 		var callBatch *boundTransactionBatch
 		if clause.kind == pipelineClauseCallSubquery {
-			_, _, inTransactions, _ := e.parseCallSubquery(ctx, clause.text)
+			_, _, inTransactions, _ := e.parseCallSubquery(ctx, clause)
 			if inTransactions {
 				if idx >= callChainEnd {
 					maximumRows := len(rows)
@@ -701,6 +727,30 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			source, rows = transformed, nil
 			continue
 		case pipelineClauseMatch:
+			// Group physical scans without replacing the logical clauses. The
+			// scope and binding readers still consume every admitted occurrence.
+			end := idx + 1
+			if independentCreate {
+				for end < len(clauses) && clauses[end].kind == pipelineClauseMatch {
+					end++
+				}
+			}
+			if end > idx+1 {
+				plan := e.compilePipelineNodeMatchGroup(clauses[idx:end])
+				if plan.supported {
+					input := source
+					if input == nil {
+						input = pipelineRowsSource(rows)
+					}
+					hint := e.pipelineMatchHint(ctx, clauses[end:])
+					source, rows = e.pipelineNodeMatchSourceFromPlan(ctx, input, plan, hint), nil
+					for _, member := range clauses[idx:end] {
+						addPipelinePatternBindings(scope, member)
+					}
+					idx = end - 1
+					continue
+				}
+			}
 			hint := e.pipelineMatchHint(ctx, clauses[idx+1:])
 			hint.streamScan = source == nil && len(rows) == 1 && len(scope) == 0 && stream.streamsScan(clauses)
 			input := source
@@ -713,7 +763,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			if supported {
 				source, rows = matched, nil
-				addPipelinePatternBindings(ctx, e, scope, clause.text, "MATCH")
+				addPipelinePatternBindings(scope, clause)
 				continue
 			}
 			if source != nil {
@@ -735,7 +785,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			rows = newRows
-			addPipelinePatternBindings(ctx, e, scope, clause.text, "MATCH")
+			addPipelinePatternBindings(scope, clause)
 		case pipelineClauseOptionalMatch:
 			newRows, err := e.pipelineApplyOptionalMatch(ctx, rows, clause.text)
 			if err != nil {
@@ -745,7 +795,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			rows = newRows
-			addPipelinePatternBindings(ctx, e, scope, clause.text, "OPTIONAL MATCH")
+			addPipelinePatternBindings(scope, clause)
 		case pipelineClauseCreate:
 			end := idx + 1
 			for end < len(clauses) && clauses[end].kind == pipelineClauseCreate {
@@ -774,7 +824,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			rows = newRows
 			for _, createClause := range clauses[idx:end] {
-				addPipelinePatternBindings(ctx, e, scope, createClause.text, "CREATE")
+				addPipelinePatternBindings(scope, createClause)
 			}
 			addQueryStats(result.Stats, created.Stats)
 			if created.Metadata != nil {
@@ -783,12 +833,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			idx = end - 1
 			wrote = true
 		case pipelineClauseMerge:
-			newRows, stats, err := e.pipelineApplyMerge(ctx, rows, clause.text)
+			newRows, stats, err := e.pipelineApplyMerge(ctx, rows, clause)
 			if err != nil {
 				return nil, true, err
 			}
 			rows = newRows
-			addPipelinePatternBindings(ctx, e, scope, clause.text, "MERGE")
+			addPipelinePatternBindings(scope, clause)
 			if stats != nil {
 				addQueryStats(result.Stats, stats)
 			}
@@ -862,14 +912,14 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			carried := pipelineImports(ctx)
 			carryAfter := len(carried) > 0 && pipelineClauseAggregates(ctx, clause)
 			if source != nil && !carryAfter {
-				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
+				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause); supported {
 					source = windowed
-					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					scope = pipelineProjectionScope(ctx, scope, clause, pipelineImports(ctx))
 					continue
 				}
-				if plan, local := parsePipelineRowWith(ctx, clause.text); local {
+				if plan, local := parsePipelineRowWith(ctx, clause); local {
 					source = e.pipelineWithRowSource(ctx, source, plan)
-					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					scope = pipelineProjectionScope(ctx, scope, clause, pipelineImports(ctx))
 					continue
 				}
 			}
@@ -883,7 +933,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					}
 				}
 			}
-			if err := e.validatePipelineWithRows(ctx, rows, clause.text); err != nil {
+			if err := e.validatePipelineWithRows(ctx, rows, clause); err != nil {
 				return nil, true, err
 			}
 			// The rows just validated are the clause's input when no
@@ -892,7 +942,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text, source, rowsValidated)
+			newRows, ok := e.pipelineApplyWith(ctx, rows, clause, source, rowsValidated)
 			source = nil
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
@@ -901,23 +951,23 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			rows = newRows
-			scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+			scope = pipelineProjectionScope(ctx, scope, clause, pipelineImports(ctx))
 			if carryAfter {
 				carryPipelineImports(rows, scope, carried)
 			}
 		case pipelineClauseUnwind:
-			if err := e.validatePipelineRangeArguments(ctx, rows, clause.text, "UNWIND"); err != nil {
+			if err := e.validatePipelineRangeArguments(ctx, rows, clause, "UNWIND"); err != nil {
 				return nil, true, err
 			}
 			unwound, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses[idx:])
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			if alias := pipelineUnwindAlias(clause.text); alias != "" {
+			if alias := pipelineUnwindAlias(clause); alias != "" {
 				scope[alias] = struct{}{}
 			}
 			for offset := 1; offset <= consumed; offset++ {
-				scope = pipelineProjectionScope(ctx, scope, clauses[idx+offset].text, pipelineImports(ctx))
+				scope = pipelineProjectionScope(ctx, scope, clauses[idx+offset], pipelineImports(ctx))
 			}
 			idx += consumed
 			if idx+1 < len(clauses) && (pipelineClauseAggregates(ctx, clauses[idx+1]) || stream.forClause(ctx, &clauses[idx+1]) != nil) {
@@ -948,12 +998,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			var err error
 			if clause.optional {
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
-					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause.text, result.Stats)
+					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause, result.Stats)
 					yielded = names
 					return rowsOut, names, handled, err
 				}, &ok)
 			} else {
-				newRows, yielded, ok, err = e.pipelineApplyProcedureCall(ctx, rows, clause.text, result.Stats)
+				newRows, yielded, ok, err = e.pipelineApplyProcedureCall(ctx, rows, clause, result.Stats)
 			}
 			if err != nil {
 				return nil, true, err
@@ -977,12 +1027,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if clause.optional && len(rows) > 0 {
 				stats = &QueryStats{}
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
-					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.text, callMetadata)
+					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause, callMetadata)
 					addQueryStats(stats, rowStats)
 					return rowsOut, callMetadata.columns, handled, err
 				}, &ok)
 			} else {
-				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.text, callMetadata)
+				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause, callMetadata)
 			}
 			addQueryStats(result.Stats, stats)
 			if err != nil {
@@ -1019,10 +1069,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				result.Columns, result.Rows = columns, streamedRows
 				return result, true, nil
 			}
-			if err := e.validatePipelinePercentileArguments(ctx, rows, clause.text, "RETURN"); err != nil {
+			if err := e.validatePipelinePercentileArguments(ctx, rows, clause, "RETURN"); err != nil {
 				return nil, true, err
 			}
-			if err := e.validatePipelineProjectionValues(ctx, rows, clause.text, "RETURN"); err != nil {
+			if err := e.validatePipelineProjectionValues(ctx, rows, clause, "RETURN"); err != nil {
 				return nil, true, err
 			}
 			// The rows just validated are the clause's input when no
@@ -1034,7 +1084,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			// Fused input operators can change clause indexes; each retained
 			// syntax node still names its own canonical projection.
 			original := clause
-			plan := returnProjectionPlanFor(ctx, original.text, original)
+			plan := returnProjectionPlanFor(ctx, original)
 			if plan == nil {
 				return nil, true, unresolvedStatementError()
 			}
@@ -1070,8 +1120,8 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		output.wrote = wrote
 	}
 	if output == nil && len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseCallSubquery {
-		body, _, _, _ := e.parseCallSubquery(ctx, clauses[len(clauses)-1].text)
-		if topLevelKeywordIndex(body, "RETURN") >= 0 {
+		body, _, _, _ := e.parseCallSubquery(ctx, clauses[len(clauses)-1])
+		if topLevelKeywordIndex(body.executionText, "RETURN") >= 0 {
 			result = callPipelineResultFromRows(rows, nil, result.Stats, terminalCallColumns)
 		}
 	}
@@ -1170,7 +1220,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	}
 	// A counter owns one projected item. Decline other projections before
 	// reading a traversal that this plan cannot consume.
-	items := e.parseReturnItems(ctx, strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	items := returnItemsOfPlan(projectionPlanOf(ctx, clauses[1].syntax))
 	if len(items) != 1 {
 		return nil, false, nil
 	}
@@ -1223,7 +1273,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, false, nil
 	}
 
-	items := e.parseReturnItems(ctx, strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	items := returnItemsOfPlan(projectionPlanOf(ctx, clauses[1].syntax))
 	if len(items) > 1 && items[0].expr == "*" {
 		// RETURN *, items: the general projection writes the * out (#883).
 		return nil, false, nil
@@ -1273,7 +1323,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 			rows = append(rows, row)
 		}
 	}
-	result, projected := e.pipelineApplyReturn(ctx, rows, clauses[1].text)
+	result, projected := e.pipelineApplyReturn(ctx, rows, clauses[1])
 	if !projected {
 		return nil, false, nil
 	}

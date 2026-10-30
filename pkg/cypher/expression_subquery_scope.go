@@ -1,8 +1,7 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import "context"
-
-import "strings"
 
 // expressionSubqueryClauseBindingError protects an expression subquery's
 // outer variables from declarations in its clauses. Passing a variable
@@ -22,16 +21,9 @@ func expressionSubqueryClauseBindingError(ctx context.Context, clause pipelineCl
 	}
 	switch clause.kind {
 	case pipelineClauseUnwind:
-		return check("", unwindBindingName(clause.text))
+		return check("", unwindBindingName(clause))
 	case pipelineClauseWith, pipelineClauseReturn:
-		keyword := "WITH"
-		if clause.kind == pipelineClauseReturn {
-			keyword = "RETURN"
-		}
-		projection, _ := projectionSemanticBodyAndTail(clause.text, keyword)
-		projection, _ = cutDistinct(strings.TrimSpace(projection))
-		for _, raw := range splitTopLevelComma(projection) {
-			itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+		for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
 			expression, alias := itemSource.expression, itemSource.alias
 			if err := check(expression, alias); err != nil {
 				return err

@@ -1,3 +1,4 @@
+// Author of statement-lifetime syntax retention: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -146,6 +148,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if administrative {
 		ctx = withStatementCredentials(ctx, cypher)
 	}
+	ctx = cypherantlr.WithStatementSyntax(ctx, source.Text)
 	// The statement's context (deadlineCtx, once the database's query limits
 	// apply) ends at the first of its deadlines, and its cause names that
 	// deadline's owner: a Bolt client's tx_timeout, the server's statement
@@ -314,6 +317,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		ctx = withSourceRewrite(ctx, rewrite)
 		defer func() { result, retErr = (resultRestoration{source: rewrite}).restore(result, retErr, nil) }()
 	}
+	ctx = cypherantlr.WithStatementSyntax(ctx, source.Text, cypher)
 	// Digit-grouping underscores (1_000) go here, on every route; columns
 	// and messages keep the client's text (#907).
 	if grouped, numericRewrite := canonicalizeNumericLiterals(cypher); numericRewrite != nil {
@@ -503,7 +507,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		ctx = withQuotedVariableNames(ctx, names)
 		rowsRewritten = true
 		defer func() {
-			result, retErr = (resultRestoration{names: names}).restore(result, retErr, func(text string) []returnItem { return e.parseReturnItems(ctx, text) })
+			result, retErr = (resultRestoration{names: names}).restore(result, retErr, func(statement string, at int) []returnItem { return e.parseReturnItems(ctx, statement, at) })
 		}()
 	}
 
@@ -747,6 +751,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 
 	// Validate basic syntax
+	ctx = cypherantlr.WithStatementSyntax(ctx, source.Text, cypher)
 	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
@@ -797,6 +802,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if finishTerminated {
 		scopeText += " FINISH"
 	}
+	ctx = cypherantlr.WithStatementSyntax(ctx, source.Text, scopeText)
 	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
 		return nil, err
 	}

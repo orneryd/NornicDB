@@ -50,7 +50,7 @@ RETURN count(o) AS linked
 	t.Run("root_label_lookup_error", func(t *testing.T) {
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "fixed_chain_root_err")
 		exec := NewStorageExecutor(&getNodesByLabelErrEngine{Engine: base, label: "OriginalText", err: errors.New("root label boom")})
-		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, queryBodyForTest(t.Context(), rest))
 		require.Error(t, err)
 		require.True(t, supported)
 		require.Contains(t, err.Error(), "root label boom")
@@ -61,7 +61,7 @@ RETURN count(o) AS linked
 		_, err := base.CreateNode(&storage.Node{ID: storage.NodeID("orig-a"), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "a"}})
 		require.NoError(t, err)
 		exec := NewStorageExecutor(&getNodesByLabelErrEngine{Engine: base, label: "Hop", err: errors.New("hop label boom")})
-		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, queryBodyForTest(t.Context(), rest))
 		require.Error(t, err)
 		require.True(t, supported)
 		require.Contains(t, err.Error(), "hop label boom")
@@ -76,7 +76,7 @@ RETURN count(o) AS linked
 			require.NoError(t, err)
 		}
 		exec := NewStorageExecutor(&createEdgeErrEngine{Engine: base, err: errors.New("edge create boom")})
-		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, queryBodyForTest(t.Context(), rest))
 		require.Error(t, err)
 		require.True(t, supported)
 		require.Contains(t, err.Error(), "edge create boom")
@@ -99,7 +99,7 @@ func TestExecuteUnwindFixedChainLinkBatch_MalformedShapesMoreBranches(t *testing
 	}
 
 	for i, rest := range cases {
-		result, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+		result, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, queryBodyForTest(t.Context(), rest))
 		require.NoError(t, err, "case %d", i)
 		if i == 1 {
 			require.True(t, supported)
@@ -117,7 +117,7 @@ MATCH (h1:Hop {hopId: row.textKey + ':1'})
 MERGE (o)-[:NEXT]->(h1)
 RETURN count(o) AS linked
 `
-	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", []interface{}{int64(1), "bad"}, validRest)
+	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", []interface{}{int64(1), "bad"}, queryBodyForTest(t.Context(), validRest))
 	require.Error(t, err)
 	require.True(t, supported)
 	require.Nil(t, res)

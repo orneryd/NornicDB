@@ -51,11 +51,11 @@ func TestStaticFunctionArgumentsFromCatalog(t *testing.T) {
 	require.Equal(t, "Float", joinTypeNames([]string{"Float"}))
 	require.Equal(t, "Float or Integer", joinTypeNames([]string{"Float", "Integer"}))
 
-	require.Equal(t, "Map, Node or Relationship", unwoundOperand(typeScope{}, staticTypeScope{}, "UNWIND [{k: 1}, {k: 2}] AS x").typeName())
-	require.Equal(t, "Float, Integer or Number", unwoundOperand(typeScope{}, staticTypeScope{}, "UNWIND [1, 2.5] AS x").typeName())
-	require.Equal(t, "Integer", unwoundOperand(typeScope{}, staticTypeScope{}, "UNWIND [1, 2] AS x").typeName())
-	require.Equal(t, "", unwoundOperand(typeScope{}, staticTypeScope{}, "UNWIND [1, 'a'] AS x").typeName())
-	require.Equal(t, "", unwoundOperand(typeScope{}, staticTypeScope{}, "UNWIND $list AS x").typeName())
+	require.Equal(t, "Map, Node or Relationship", unwoundOperand(typeScope{}, staticTypeScope{}, retainedClauseForTest(t.Context(), "UNWIND [{k: 1}, {k: 2}] AS x")).typeName())
+	require.Equal(t, "Float, Integer or Number", unwoundOperand(typeScope{}, staticTypeScope{}, retainedClauseForTest(t.Context(), "UNWIND [1, 2.5] AS x")).typeName())
+	require.Equal(t, "Integer", unwoundOperand(typeScope{}, staticTypeScope{}, retainedClauseForTest(t.Context(), "UNWIND [1, 2] AS x")).typeName())
+	require.Equal(t, "", unwoundOperand(typeScope{}, staticTypeScope{}, retainedClauseForTest(t.Context(), "UNWIND [1, 'a'] AS x")).typeName())
+	require.Equal(t, "", unwoundOperand(typeScope{}, staticTypeScope{}, retainedClauseForTest(t.Context(), "UNWIND $list AS x")).typeName())
 }
 
 // TestStaticFunctionArgumentTypesThroughExecute: an argument of a type no

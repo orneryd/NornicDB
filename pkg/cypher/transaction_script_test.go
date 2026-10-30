@@ -454,7 +454,7 @@ func TestTransactionScript_ProjectAndConditionAdditionalBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// Empty return expression should not error and should produce deterministic output.
-	out, err := exec.projectTransactionReturn(ctx, &ExecuteResult{
+	out, err := exec.projectTransactionReturnForTest(ctx, &ExecuteResult{
 		Columns: []string{"x"},
 		Rows:    [][]interface{}{{1}},
 	}, "")
@@ -483,7 +483,7 @@ func TestTransactionProjectionCanonicalRowSet(t *testing.T) {
 		{"* ORDER BY value DESC LIMIT 1", []string{"value"}, [][]interface{}{{int64(3)}}},
 	} {
 		t.Run(test.projection, func(t *testing.T) {
-			result, err := exec.projectTransactionReturn(ctx, input, test.projection)
+			result, err := exec.projectTransactionReturnForTest(ctx, input, test.projection)
 			require.NoError(t, err)
 			require.Equal(t, test.columns, result.Columns)
 			require.Equal(t, test.rows, result.Rows)
@@ -532,7 +532,7 @@ CASE WHEN u.age < 18 THEN ROLLBACK ELSE RETURN u.id AS id, u.last_seen AS seen C
 	assert.NotNil(t, caseCommitRes.Rows[0][1])
 
 	// projectTransactionReturn: direct row map fallback (non-expression column alias).
-	projected, err := exec.projectTransactionReturn(ctx, &ExecuteResult{
+	projected, err := exec.projectTransactionReturnForTest(ctx, &ExecuteResult{
 		Columns: []string{"plain"},
 		Rows:    [][]interface{}{{int64(7)}},
 	}, "plain AS p")

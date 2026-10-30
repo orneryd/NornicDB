@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -130,7 +131,7 @@ func (stream *ResultStream) bind(cypher string, clauses []pipelineClause) {
 // of the clause list it is bound to: the statement's own RETURN, not one of
 // a subquery the statement runs.
 func (stream *ResultStream) forClause(ctx context.Context, clause *pipelineClause) *ResultStream {
-	if stream == nil || stream.frame == nil || stream.frame != clause || clause.kind != pipelineClauseReturn || !streamableReturnPlan(returnProjectionPlanFor(ctx, clause.text)) {
+	if stream == nil || stream.frame == nil || stream.frame != clause || clause.kind != pipelineClauseReturn || !streamableReturnPlan(returnProjectionPlanFor(ctx, *clause)) {
 		return nil
 	}
 	return stream

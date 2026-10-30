@@ -476,7 +476,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 	if err == nil {
 		err = e.validateSemanticScopes(ctx, desugared)
 	}
-	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
+	parseItems := func(statement string, at int) []returnItem { return e.parseReturnItems(ctx, statement, at) }
 	_, err = (resultRestoration{names: names}).restore(nil, err, parseItems)
 	return err
 }
@@ -857,7 +857,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	previousBindings := exec.fabricRecordBindings
 	exec.fabricRecordBindings = recordBindings
 	defer func() { exec.fabricRecordBindings = previousBindings }()
-	parseReturnItems := func(text string) []returnItem { return exec.parseReturnItems(ctx, text) }
+	parseReturnItems := func(statement string, at int) []returnItem { return exec.parseReturnItems(ctx, statement, at) }
 	// Fragment imports are installed before the engine's shared compile-time
 	// scope/type owner runs. As at the composite entry, this validation copy
 	// must desugar label expressions first. executeInternal owns rewriting the
