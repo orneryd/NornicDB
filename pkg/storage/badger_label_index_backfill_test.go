@@ -303,7 +303,7 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 	reopened.labelIndexBackfillMu.Unlock()
 	require.NotNil(t, done, "a legacy ready marker must schedule the existing backfill")
 	select {
-	case <-done:
+	case <-done.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("legacy label-index backfill did not finish")
 	}
