@@ -27,7 +27,7 @@ func (b *BadgerEngine) Backup(path string) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if b.closed {
+	if b.work.Closing() {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 

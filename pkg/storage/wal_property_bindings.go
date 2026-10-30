@@ -24,11 +24,11 @@ type walPropertyToken struct {
 // record or its explicit immutable epoch. Unstamped legacy bytes need the
 // own-WAL constructor authority; no matching token establishes that authority.
 func (b *BadgerEngine) importBufferedWALRecord(data *WALBufferedCommitData, authority walPropertyAuthority) (bufferedCommit, error) {
-	db, err := b.beginHelperTxn()
+	db, release, err := b.beginHelperTxn()
 	if err != nil {
 		return bufferedCommit{}, err
 	}
-	defer b.txnWG.Done()
+	defer release()
 	c := bufferedCommit{
 		recovered: true, logicalTxID: data.LogicalTxID,
 		namespace: data.Namespace, txID: data.TxID, ops: data.Ops,

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -177,8 +178,7 @@ type BadgerEngine struct {
 
 	db      *managedBadgerDB
 	mu      sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
-	closed  bool
-	closing bool // write admission is closed before the final buffered drain
+	closing bool         // write admission is closed before the final buffered drain
 	// prefixDrops records prefix deletes for the transactions open across
 	// them (prefixDroppedSince).
 	prefixDrops prefixDrops
@@ -188,21 +188,21 @@ type BadgerEngine struct {
 	pendingEmbeddingAdds        sync.Map // *badger.Txn -> map[NodeID]struct{}
 	pendingCandidatesGeneration atomic.Uint64
 	// changes is the change data capture state (change_capture.go, #937).
-	changes changeCapture
-	// notifyWG tracks publication-registered listeners and bulk-delete events.
-	// Close rejects new writes, releases writeBarrier, then waits for listener
-	// re-entry before releasing engine state.
-	notifyWG                           sync.WaitGroup
+	changes                            changeCapture
 	notificationMu                     sync.Mutex
 	notificationHead, notificationTail *commitNotification
 	notificationDraining               bool
 	closeMu                            sync.Mutex
-	txnWG                              sync.WaitGroup
+	// work is the engine's one admission, completion and outcome owner.
+	// Helper transactions and reserved commit notifications are its accepted
+	// work; Close seals it after the last durable write published, and its
+	// Shutdown releases engine state only after every ticket returned.
+	work lifecycle.WorkLifetime
 	// writeBarrier orders Close against durable writes. Every public
 	// non-transactional mutator holds it for read for its whole duration,
 	// and an explicit transaction holds it for read from just before its
 	// Badger commit through the post-commit tail (derived counts, MVCC
-	// sequence, ID counters, caches). Listeners transfer to notifyWG. Close takes it for write
+	// sequence, ID counters, caches). Listeners hold their notification's work ticket. Close takes it for write
 	// before releasing engine state, so a write whose Badger commit has
 	// already returned always finishes publishing and reports success, and a
 	// write that arrives after Close fails cleanly with ErrStorageClosed.

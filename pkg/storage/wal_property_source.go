@@ -135,11 +135,11 @@ func (b *BadgerEngine) markPropertySourceForeignLocked(db *managedBadgerDB) erro
 }
 
 func (b *BadgerEngine) beginSemanticPropertyRestore() error {
-	db, err := b.beginHelperTxn()
+	db, release, err := b.beginHelperTxn()
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer release()
 	b.walPropertySource.Lock()
 	defer b.walPropertySource.Unlock()
 	return b.persistPropertyIdentityLocked(db, uuid.NewString(), true, false)
@@ -154,11 +154,11 @@ func beginRecoveryPropertyRestore(destination Engine) error {
 
 func markRecoveryPropertyForeign(destination Engine) error {
 	if b, ok := UnwrapEngine(destination).(*BadgerEngine); ok {
-		db, err := b.beginHelperTxn()
+		db, release, err := b.beginHelperTxn()
 		if err != nil {
 			return err
 		}
-		defer b.txnWG.Done()
+		defer release()
 		b.walPropertySource.Lock()
 		defer b.walPropertySource.Unlock()
 		return b.markPropertySourceForeignLocked(db)
