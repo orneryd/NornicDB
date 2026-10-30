@@ -95,7 +95,7 @@ func TestRelationshipEmbeddingCloseJoinsSave(t *testing.T) {
 	unblock()
 	require.NoError(t, <-closed)
 	select {
-	case <-svc.relationshipSearch().done:
+	case <-svc.relationshipSearch().worker.Done():
 	default:
 		t.Fatal("Close did not join the worker")
 	}

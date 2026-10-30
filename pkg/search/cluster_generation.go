@@ -9,6 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // clusterGeneration is the one owner of what clustered routing serves:
@@ -35,9 +36,10 @@ type clusterGeneration struct {
 	index     *gpu.ClusterIndex // the population (embeddings)
 	routing   *gpu.Clustering   // centroids and membership by node ID
 	published bool
-	// holders counts the queries serving from generations of index; a
-	// retired index's GPU buffers are released after the last one finishes.
-	holders  *sync.WaitGroup
+	// holders is the owner of the queries serving from generations of index:
+	// a retired index's GPU buffers are its dispose, released after the last
+	// query returned.
+	holders  *lifecycle.WorkLifetime
 	graphs   map[int]*HNSWIndex
 	terms    map[int]*clusterTerms
 	profiles map[int]map[string]float64
@@ -628,7 +630,7 @@ func (s *Service) publishClusterGeneration(ctx context.Context, pub clusterPubli
 	if prev := s.clusterGen; prev != nil && prev.index == gen.index {
 		gen.holders = prev.holders
 	} else {
-		gen.holders = &sync.WaitGroup{}
+		gen.holders = &lifecycle.WorkLifetime{}
 	}
 	s.clusterGen = gen
 	s.clusterStateMu.Unlock()
@@ -688,19 +690,23 @@ func (s *Service) retireClusterGeneration(replace func(old *gpu.ClusterIndex) *g
 	if old == nil || old == replacement {
 		return
 	}
-	var holders *sync.WaitGroup
+	var holders *lifecycle.WorkLifetime
 	if gen != nil && gen.index == old {
 		holders = gen.holders
 	}
-	go func() {
-		if holders != nil {
-			holders.Wait()
-		}
+	release := func() error {
 		if hook := clusterIndexReleaseHook; hook != nil {
 			hook(old)
 		}
 		old.Release()
-	}()
+		return nil
+	}
+	if holders == nil {
+		go func() { _ = release() }()
+		return
+	}
+	// The holders' stop: refuse new queries, release once the last returned.
+	holders.BeginStop(release)
 }
 
 // publishClusterServing publishes the serving pipeline for the current
@@ -741,14 +747,14 @@ type clusterSnapshotKey struct{}
 func (s *Service) acquireClusterSnapshot(ctx context.Context) (context.Context, *clusterGeneration, func()) {
 	s.clusterStateMu.RLock()
 	gen := s.clusterGen
-	if gen != nil {
-		gen.holders.Add(1)
+	if gen != nil && !gen.holders.Enter() {
+		gen = nil // retired: the query serves without a cluster generation
 	}
 	s.clusterStateMu.RUnlock()
 	release := func() {}
 	if gen != nil {
 		var once sync.Once
-		release = func() { once.Do(gen.holders.Done) }
+		release = func() { once.Do(gen.holders.Leave) }
 	}
 	return context.WithValue(ctx, clusterSnapshotKey{}, &clusterSnapshot{gen: gen}), gen, release
 }

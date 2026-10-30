@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/security"
@@ -213,8 +216,35 @@ func writeSearchStateToken(path, token string) error {
 // with discard, its persisted files are removed, loaded service or not. The
 // next use creates the next generation, from storage when discarded.
 func (db *DB) invalidateSearchState(match func(name string) bool, discard bool) {
+	if !db.work.Enter() {
+		return
+	}
+	defer db.work.Leave()
+	for {
+		db.searchServiceCreationMu.Lock()
+		db.searchServicesMu.RLock()
+		running := db.searchRetirement
+		db.searchServicesMu.RUnlock()
+		if running == nil {
+			break
+		}
+		db.searchServiceCreationMu.Unlock()
+		<-running.Done()
+	}
+	// This is a lifetime state, not a generation or origin transition.
+	retirement := &lifecycle.OnceCompletion{}
+	db.searchServicesMu.Lock()
+	db.searchRetirement = retirement
+	epoch := db.searchConstruction
+	db.searchServicesMu.Unlock()
+	// Preserve the creation fence's original order: admitted preparation
+	// publishes before Reset retires that generation. Foreign resolvers run
+	// without the native fence, and the phase refuses later constructors.
+	db.searchServiceCreationMu.Unlock()
+	if epoch != nil {
+		db.recordBackgroundError(epoch.Shutdown(context.Background(), nil))
+	}
 	db.searchServiceCreationMu.Lock()
-	defer db.searchServiceCreationMu.Unlock()
 	var retired []*dbSearchService
 	db.searchServicesMu.Lock()
 	if db.searchGenerations == nil {
@@ -233,8 +263,17 @@ func (db *DB) invalidateSearchState(match func(name string) bool, discard bool) 
 		}
 	}
 	db.searchServicesMu.Unlock()
+	// All native generation publication remains fenced by the retiring phase.
+	// No host fence spans cancellation callbacks or the actual lifetime join.
+	db.searchServiceCreationMu.Unlock()
 	for _, entry := range retired {
-		entry.retire()
+		if entry.svc != nil {
+			entry.svc.BeginShutdown()
+		}
+	}
+	var retirementErr error
+	for _, entry := range retired {
+		retirementErr = compose.Outcomes(retirementErr, entry.retire())
 	}
 	// Creation binds a service to its registry epoch before publication.
 	// Keep epoch retirement under the same creation fence as state retirement,
@@ -247,13 +286,30 @@ func (db *DB) invalidateSearchState(match func(name string) bool, discard bool) 
 			registry.DiscardDatabase(name)
 		}
 	}
+	db.searchServiceCreationMu.Lock()
+	defer func() {
+		db.searchServicesMu.Lock()
+		if epoch != nil {
+			// The sealed epoch stopped above; later constructors use a new one.
+			db.searchConstruction = &lifecycle.WorkLifetime{}
+		}
+		db.searchRetirement = nil
+		db.searchServicesMu.Unlock()
+		retirement.Do(func() error { return nil })
+		db.searchServiceCreationMu.Unlock()
+		db.recordBackgroundError(retirementErr)
+	}()
+
 	if !discard || db.searchStateRoot() == "" {
 		return
 	}
 	for _, name := range names {
-		if path, err := searchPersistenceBasePath(db.config.Database.DataDir, name); err == nil {
-			_ = security.RemoveAllRootedPath(path)
+		path, err := searchPersistenceBasePath(db.config.Database.DataDir, name)
+		if err != nil {
+			retirementErr = compose.Outcomes(retirementErr, err)
+			continue
 		}
+		retirementErr = compose.Outcomes(retirementErr, security.RemoveAllRootedPath(path))
 	}
 }
 
@@ -284,7 +340,7 @@ func (db *DB) searchStateNamesLocked() []string {
 // retire ends an entry that is no longer its database's current one: its
 // service is closed (its build, persistence and maintenance stop), and no
 // refresh is retried or flushed for it again.
-func (e *dbSearchService) retire() {
+func (e *dbSearchService) retire() error {
 	e.pendingMu.Lock()
 	e.retired = true
 	for key, retry := range e.refreshRetries {
@@ -300,8 +356,9 @@ func (e *dbSearchService) retire() {
 	clear(e.pendingEdgeOps)
 	e.pendingMu.Unlock()
 	if e.svc != nil {
-		_ = e.svc.Close()
+		return e.svc.Close()
 	}
+	return nil
 }
 
 func (e *dbSearchService) isRetired() bool {

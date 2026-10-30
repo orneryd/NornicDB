@@ -3007,13 +3007,14 @@ func TestSearchService_CloseStopsHNSWMaintenance(t *testing.T) {
 	svc.hnswMu.Unlock()
 
 	svc.ensureHNSWMaintenance()
-	require.NotNil(t, svc.hnswMaintDone)
 	require.NoError(t, svc.Close())
 
+	// The maintenance loop is accepted service work: Close returns only after
+	// it actually returned.
 	select {
-	case <-svc.hnswMaintDone:
-	case <-time.After(time.Second):
-		t.Fatal("HNSW maintenance did not stop after Close")
+	case <-svc.lifetimeWork.Quiescent():
+	default:
+		t.Fatal("HNSW maintenance did not stop before Close returned")
 	}
 
 	require.NoError(t, svc.Close())

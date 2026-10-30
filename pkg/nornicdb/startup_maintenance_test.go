@@ -84,7 +84,7 @@ func TestStartupRebuildFailurePreventsCleanShutdownMarker(t *testing.T) {
 
 	healthy := prepareDerivedIndexes(context.Background(), engine)
 	require.False(t, healthy)
-	require.NoError(t, markStorageCleanShutdown(engine, healthy))
+	require.NoError(t, markStorageCleanShutdown(t.Context(), engine, healthy))
 	require.Zero(t, engine.markCalls)
 }
 
@@ -102,21 +102,21 @@ func TestStartupMVCCRebuildFailurePreventsCleanShutdownMarker(t *testing.T) {
 	engine := &startupMaintenanceEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), mvccErr: rebuildErr}
 
 	require.False(t, prepareDerivedIndexes(context.Background(), engine))
-	require.NoError(t, markStorageCleanShutdown(engine, false))
+	require.NoError(t, markStorageCleanShutdown(t.Context(), engine, false))
 	require.Zero(t, engine.markCalls)
 }
 
 func TestCleanShutdownFlushesWritesBeforeRecordingMarker(t *testing.T) {
 	engine := &startupMaintenanceEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 
-	require.NoError(t, markStorageCleanShutdown(engine, true))
+	require.NoError(t, markStorageCleanShutdown(t.Context(), engine, true))
 	require.Equal(t, []string{"flush", "mark"}, engine.shutdownOperations)
 }
 
 func TestDerivedIndexPersistenceStartsAfterCleanStorageMarker(t *testing.T) {
 	engine := &startupMaintenanceEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 
-	require.NoError(t, persistDerivedAfterStorageBoundary(engine, true, func() {
+	require.NoError(t, persistDerivedAfterStorageBoundary(t.Context(), engine, true, func() {
 		engine.shutdownOperations = append(engine.shutdownOperations, "persist-search")
 	}))
 	require.Equal(t, []string{"flush", "mark", "persist-search"}, engine.shutdownOperations)
@@ -126,7 +126,7 @@ func TestCleanShutdownDoesNotRecordMarkerAfterFlushFailure(t *testing.T) {
 	flushErr := errors.New("flush failed")
 	engine := &startupMaintenanceEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), flushErr: flushErr}
 
-	require.ErrorIs(t, markStorageCleanShutdown(engine, true), flushErr)
+	require.ErrorIs(t, markStorageCleanShutdown(t.Context(), engine, true), flushErr)
 	require.Equal(t, []string{"flush"}, engine.shutdownOperations)
 	require.Zero(t, engine.markCalls)
 }
@@ -135,18 +135,18 @@ func TestCleanShutdownReturnsMarkerFailure(t *testing.T) {
 	markerErr := errors.New("marker failed")
 	engine := &startupMaintenanceEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), markErr: markerErr}
 
-	require.ErrorIs(t, markStorageCleanShutdown(engine, true), markerErr)
+	require.ErrorIs(t, markStorageCleanShutdown(t.Context(), engine, true), markerErr)
 	require.Equal(t, []string{"flush", "mark"}, engine.shutdownOperations)
 }
 
 func TestCleanShutdownIgnoresUnsupportedMarker(t *testing.T) {
 	engine := &startupMaintenanceEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), markErr: storage.ErrNotImplemented}
 
-	require.NoError(t, markStorageCleanShutdown(engine, true))
+	require.NoError(t, markStorageCleanShutdown(t.Context(), engine, true))
 }
 
 func TestCleanShutdownWithoutMarkerCapabilityIsNoOp(t *testing.T) {
-	require.NoError(t, markStorageCleanShutdown(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), true))
+	require.NoError(t, markStorageCleanShutdown(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), true))
 }
 
 func BenchmarkStartupDerivedIndexPreparation(b *testing.B) {

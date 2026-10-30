@@ -87,7 +87,7 @@ func TestEmbedWorker_TriggerDebounce_ClosedAndStaleSequence(t *testing.T) {
 		t.Cleanup(func() { w.Close() })
 
 		w.Trigger()
-		w.closed.Store(true)
+		w.work.CloseAdmission()
 		time.Sleep(35 * time.Millisecond)
 		require.Zero(t, w.QueueLen())
 	})
@@ -157,7 +157,7 @@ func TestEmbedWorker_EmbedBatchHelpers_EdgeBranches(t *testing.T) {
 		})
 		t.Cleanup(func() { w.Close() })
 
-		w.cancel()
+		w.generation().Cancel()
 
 		embs, err := w.embedBatchWithRetry([]string{"a", "b"})
 		require.Error(t, err)

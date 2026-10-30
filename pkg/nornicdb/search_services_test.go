@@ -190,7 +190,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		require.False(t, db.shouldIgnoreSearchIndexingError(nil))
 		require.False(t, db.shouldIgnoreSearchIndexingError(errors.New("boom")))
 
-		db.closed = true
+		db.work.CloseAdmission()
 		require.True(t, db.shouldIgnoreSearchIndexingError(errors.New("after close")))
 	})
 
@@ -203,10 +203,9 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		entry := &dbSearchService{
 			dbName:            "nornic",
 			svc:               svc,
-			buildDone:         make(chan struct{}),
 			pendingFlushDelay: 20 * time.Millisecond,
 		}
-		close(entry.buildDone)
+		entry.build.Do(func() error { return nil }) // the initial build has completed
 
 		_, err := store.CreateNode(&storage.Node{ID: "debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
 		require.NoError(t, err)
@@ -218,7 +217,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		require.Eventually(t, func() bool {
 			return svc.EmbeddingCount() == 1
 		}, time.Second, 10*time.Millisecond)
-		db.bgWg.Wait()
+		waitDBWorkIdle(t, db)
 	})
 }
 
@@ -360,19 +359,26 @@ func TestSearchServices_DropSearchServiceState_RemovesPersistedArtifacts(t *test
 	require.True(t, os.IsNotExist(statErr), "expected persisted search directory to be removed")
 }
 
+type failedStatusBuildEngine struct {
+	storage.Engine
+	failure error
+}
+
+func (e *failedStatusBuildEngine) IterateNodes(func(*storage.Node) bool) error {
+	return e.failure
+}
+
 func TestSearchStatusReportsFailedBuild(t *testing.T) {
 	db, err := Open("", DefaultConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	dbName := db.defaultDatabaseName()
-	_, err = db.GetOrCreateSearchService(dbName, db.storage)
-	require.NoError(t, err)
-	db.searchServicesMu.RLock()
-	entry := db.searchServices[dbName]
-	db.searchServicesMu.RUnlock()
-	entry.buildErrMu.Lock()
-	entry.buildErr = errors.New("index rebuild failed")
-	entry.buildErrMu.Unlock()
+	// Exercise an actual failed population. A synthetic buildErr on a ready
+	// service is not a failed current build and must not replace its ready phase.
+	dbName := "failed_status_build"
+	failure := errors.New("index rebuild failed")
+	engine := &failedStatusBuildEngine{Engine: db.storage, failure: failure}
+	_, err = db.EnsureSearchIndexes(t.Context(), dbName, engine, SearchIndexBuildWait)
+	require.ErrorIs(t, err, failure)
 	status := db.GetDatabaseSearchStatus(dbName)
 	require.Equal(t, "failed", status.Phase)
 	require.Equal(t, "index rebuild failed", status.Error)
@@ -526,7 +532,7 @@ func TestSearchServices_RunClusteringOnceAllDatabases(t *testing.T) {
 		if db.buildCancel != nil {
 			db.buildCancel()
 		}
-		db.bgWg.Wait()
+		waitDBWorkIdle(t, db)
 
 		// Add namespace lister branch coverage (skips empty/system namespaces).
 		db.baseStorage = &namespaceListEngine{
@@ -845,7 +851,7 @@ func TestSearchServices_ClosedDBCannotCreateService(t *testing.T) {
 	if db.buildCancel != nil {
 		db.buildCancel()
 	}
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 	db.ResetSearchService(defaultName)
 	db.ResetSearchService("tenant_closed")
 	require.NoError(t, db.Close())
@@ -875,12 +881,11 @@ func TestSearchServices_EnsureBuilt_ContextDonePath(t *testing.T) {
 	svc := search.NewService(engine, 3, nil)
 
 	entry := &dbSearchService{
-		dbName:    "tenant_timeout",
-		svc:       svc,
-		buildDone: make(chan struct{}),
+		dbName: "tenant_timeout",
+		svc:    svc,
 	}
-	// Pre-consume buildOnce so startSearchIndexBuild does not launch a goroutine.
-	entry.buildOnce.Do(func() {})
+	// A held initial build keeps the wait open until the caller's deadline.
+	t.Cleanup(holdInitialBuild(entry))
 	db.searchServices["tenant_timeout"] = entry
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -935,9 +940,8 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 		const dbName = "tenant_modes"
 		engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), dbName)
 		entry := &dbSearchService{
-			dbName:    dbName,
-			svc:       search.NewService(engine, 3, nil),
-			buildDone: make(chan struct{}),
+			dbName: dbName,
+			svc:    search.NewService(engine, 3, nil),
 		}
 		db.searchServices[dbName] = entry
 		return db, entry, dbName
@@ -945,9 +949,9 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 
 	t.Run("start returns without waiting for the build", func(t *testing.T) {
 		db, entry, dbName := start(t)
-		// A pre-consumed Once keeps the build from running, so the buildDone
-		// signal stays open: only a mode that does not wait can return.
-		entry.buildOnce.Do(func() {})
+		// A held initial build stays open: only a mode that does not wait
+		// can return.
+		t.Cleanup(holdInitialBuild(entry))
 		svc, err := db.EnsureSearchIndexes(nil, dbName, nil, SearchIndexBuildStart)
 		require.NoError(t, err)
 		require.Same(t, entry.svc, svc)
@@ -966,21 +970,13 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 		require.Same(t, entry.svc, svc)
 		require.True(t, svc.GetBuildProgress().Ready)
 
-		entry.buildErrMu.RLock()
-		buildErr := entry.buildErr
-		entry.buildErrMu.RUnlock()
-		require.NoError(t, buildErr)
+		require.NoError(t, entry.build.Err())
 	})
 
 	t.Run("wait reports the failed build's error", func(t *testing.T) {
 		db, entry, dbName := start(t)
 		buildErr := errors.New("index build failed")
-		entry.buildOnce.Do(func() {
-			entry.buildErrMu.Lock()
-			entry.buildErr = buildErr
-			entry.buildErrMu.Unlock()
-			entry.closeBuildDone()
-		})
+		entry.build.Do(func() error { return buildErr })
 
 		svc, err := db.EnsureSearchIndexes(context.Background(), dbName, nil, SearchIndexBuildWait)
 		require.ErrorIs(t, err, buildErr)
@@ -989,7 +985,7 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 
 	t.Run("wait returns the caller context error while the build runs", func(t *testing.T) {
 		db, entry, dbName := start(t)
-		entry.buildOnce.Do(func() {})
+		t.Cleanup(holdInitialBuild(entry))
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		svc, err := db.EnsureSearchIndexes(ctx, dbName, nil, SearchIndexBuildWait)
@@ -1077,12 +1073,17 @@ func TestSearchServices_OffLazyStatsAndRemoveBranches(t *testing.T) {
 	require.Zero(t, bytes)
 }
 
-func TestSearchServices_CloseBuildDone_IsIdempotent(t *testing.T) {
-	entry := &dbSearchService{buildDone: make(chan struct{})}
-	entry.closeBuildDone()
-	require.NotPanics(t, func() {
-		entry.closeBuildDone()
-	})
+// The initial build has one completion: it runs once, and every later
+// dispatch joins its first outcome.
+func TestSearchServices_InitialBuildCompletesOnce(t *testing.T) {
+	entry := &dbSearchService{}
+	first := errors.New("first build outcome")
+	require.ErrorIs(t, entry.build.Do(func() error { return first }), first)
+	require.ErrorIs(t, entry.build.Do(func() error {
+		t.Fatal("a completed build ran again")
+		return nil
+	}), first)
+	<-entry.build.Done()
 }
 
 func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
@@ -1091,10 +1092,10 @@ func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 	svc := search.NewService(engine, 3, nil)
 
 	entry := &dbSearchService{
-		dbName:    "tenant_flush",
-		svc:       svc,
-		buildDone: make(chan struct{}),
+		dbName: "tenant_flush",
+		svc:    svc,
 	}
+	finishBuild := holdInitialBuild(entry)
 
 	// Queue refreshes before the build completes: one for a node that is
 	// missing (tolerated) and one for a stored node (applied).
@@ -1104,7 +1105,7 @@ func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1")})
 
 	db.ensurePendingFlush(entry)
-	close(entry.buildDone)
+	finishBuild()
 
 	require.Eventually(t, func() bool {
 		return svc.EmbeddingCount() == 1

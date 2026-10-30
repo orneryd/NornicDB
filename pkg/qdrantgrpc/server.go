@@ -67,6 +67,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/grpcresponse"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"log"
 	"log/slog"
 	"net"
@@ -245,12 +247,16 @@ type Server struct {
 	resolvedAccessResolver          func(roles []string, dbName string) auth.ResolvedAccess
 	databaseOperationAccessResolver func([]string, string, auth.DatabaseAccessMode, bool) (bool, auth.ResolvedAccess)
 
-	grpcServer *grpc.Server
-	listener   net.Listener
-	register   []func(*grpc.Server)
+	grpcServer   *grpc.Server
+	listener     net.Listener
+	listenNative func(string, string) (net.Listener, error)
+	register     []func(*grpc.Server)
 
 	mu      sync.RWMutex
-	started bool
+	started bool // a server starts once
+	// work admits Start and the serving goroutine, joins them on Stop and keeps
+	// their outcomes.
+	work lifecycle.WorkLifetime
 }
 
 // AuthenticatedPrincipalID returns the trusted principal installed by this
@@ -503,18 +509,39 @@ func (s *Server) RegisterAdditionalServices(fn func(*grpc.Server)) error {
 // Start begins listening for gRPC connections.
 func (s *Server) Start() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.started {
-		return fmt.Errorf("server already started")
+		s.mu.Unlock()
+		return fmt.Errorf("server already started or stopped")
 	}
+	startCtx, startRelease, accepted := s.work.Acquire(context.Background())
+	if !accepted {
+		s.mu.Unlock()
+		return fmt.Errorf("server already started or stopped")
+	}
+	s.started = true
+	callbacks := append([]func(*grpc.Server){}, s.register...)
+	s.mu.Unlock()
+	defer startRelease()
 
 	// Create listener
-	listener, err := net.Listen("tcp", s.config.ListenAddr)
+	listen := s.listenNative
+	if listen == nil {
+		listen = net.Listen
+	}
+	listener, err := listen("tcp", s.config.ListenAddr)
 	if err != nil {
+		s.work.RecordError("", err)
+		s.mu.Lock()
+		s.started = false
+		s.mu.Unlock()
 		return fmt.Errorf("failed to listen on %s: %w", s.config.ListenAddr, err)
 	}
+	listener = util.ObserveListenerClose(listener, func(err error) {
+		s.work.RecordError("gRPC listener close", err)
+	})
+	s.mu.Lock()
 	s.listener = listener
+	s.mu.Unlock()
 
 	// Create gRPC server with options
 	unaryInterceptors := make([]grpc.UnaryServerInterceptor, 0, 2)
@@ -551,7 +578,7 @@ func (s *Server) Start() error {
 		opts = append(opts, grpc.Creds(credentials.NewTLS(s.config.TLSConfig.Clone())))
 	}
 
-	s.grpcServer = grpc.NewServer(opts...)
+	server := grpc.NewServer(opts...)
 
 	var checker DatabaseAccessChecker = s
 	if s.databaseAccessModeResolver == nil {
@@ -559,28 +586,43 @@ func (s *Server) Start() error {
 	}
 	collectionsService := NewCollectionsService(s.collections, checker)
 	collectionsService.localizer = s.config.Localizer
-	qpb.RegisterCollectionsServer(s.grpcServer, collectionsService)
+	qpb.RegisterCollectionsServer(server, collectionsService)
 
 	pointsService := NewPointsService(s.config, s.collections, s.searchService, checker)
-	qpb.RegisterPointsServer(s.grpcServer, pointsService)
+	qpb.RegisterPointsServer(server, pointsService)
 
 	snapshotsService := NewSnapshotsService(s.config, s.collections, s.baseStorage, s.config.SnapshotDir, checker)
-	qpb.RegisterSnapshotsServer(s.grpcServer, snapshotsService)
+	qpb.RegisterSnapshotsServer(server, snapshotsService)
 
-	for _, fn := range s.register {
-		fn(s.grpcServer)
+	for _, fn := range callbacks {
+		fn(server)
 	}
 
 	// Enable reflection for debugging
 	if s.config.EnableReflection {
-		reflection.Register(s.grpcServer)
+		reflection.Register(server)
 	}
 
-	s.started = true
+	// Publish and check under the same lock as Stop's read: either Stop sees
+	// this server, or Start sees the closed admission and stops it itself.
+	s.mu.Lock()
+	s.grpcServer = server
+	closing := s.work.Closing()
+	s.mu.Unlock()
+	if closing {
+		server.Stop()
+		if err := listener.Close(); err != nil {
+			s.work.RecordError("", err)
+		}
+		return fmt.Errorf("server stopped during start")
+	}
 
-	// Start serving in background
+	// The serving goroutine is a child of this Start's admission.
+	_, serveRelease, _ := s.work.Acquire(startCtx)
 	go func() {
-		if err := s.grpcServer.Serve(listener); err != nil {
+		defer serveRelease()
+		if err := server.Serve(listener); err != nil && err != grpc.ErrServerStopped {
+			s.work.RecordError("", err)
 			log.Printf("Qdrant gRPC server error: %v", err)
 		}
 	}()
@@ -589,29 +631,44 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop gracefully shuts down the server.
+// Stop gracefully shuts down the server. It is the owner's one stop: the
+// first caller signals the transport; every caller joins actual retirement.
 func (s *Server) Stop() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.started {
-		return
+	first := s.work.CloseAdmission()
+	server := s.grpcServer
+	s.mu.Unlock()
+	if first {
+		s.work.Cancel()
+		if server != nil {
+			server.GracefulStop()
+		}
 	}
+	<-s.work.BeginStop(s.retire)
+}
 
-	if s.grpcServer != nil {
-		s.grpcServer.GracefulStop()
-	}
+// retire runs once, after Start and the serving goroutine actually returned.
+func (s *Server) retire() error {
+	s.mu.Lock()
 	s.started = false
+	s.mu.Unlock()
 	log.Println("Qdrant gRPC server stopped")
+	return nil
+}
+
+// WaitStopped observes actual transport completion and its serving outcome.
+func (s *Server) WaitStopped(ctx context.Context) error {
+	return s.work.WaitStopped(ctx)
 }
 
 // Addr returns the server's listen address.
 func (s *Server) Addr() string {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	listener := s.listener
+	s.mu.RUnlock()
 
-	if s.listener != nil {
-		return s.listener.Addr().String()
+	if listener != nil {
+		return listener.Addr().String()
 	}
 	return ""
 }

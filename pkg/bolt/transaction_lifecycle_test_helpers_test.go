@@ -2,12 +2,14 @@ package bolt
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 const transactionLifecycleControlledQuery = "RETURN 1 /* transaction lifecycle barrier */"
@@ -137,7 +139,7 @@ func (e *controlledTransactionExecutor) RollbackTransaction(ctx context.Context)
 
 // startControlledTransactionServer runs a server with one explicitly supplied
 // executor, preserving the production Session and raw Bolt message path.
-func startControlledTransactionServer(t *testing.T, executor QueryExecutor) int {
+func startControlledTransactionServer(t *testing.T, executor QueryExecutor, shutdownChecks ...func(error)) int {
 	t.Helper()
 	server := New(&Config{
 		Port:            0,
@@ -145,7 +147,24 @@ func startControlledTransactionServer(t *testing.T, executor QueryExecutor) int 
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	return startBoltTestServer(t, server)
+	return startBoltTestServer(t, server, shutdownChecks...)
+}
+
+// rollbackShutdownCheck verifies that retirement retains the exact failure the
+// fixture injected. Successful fixtures keep requiring a clean shutdown.
+func rollbackShutdownCheck(t *testing.T, rollbackErr error, rollbackPanic any) func(error) {
+	t.Helper()
+	return func(err error) {
+		t.Helper()
+		switch {
+		case rollbackErr != nil:
+			require.ErrorIs(t, err, rollbackErr)
+		case rollbackPanic != nil:
+			require.ErrorContains(t, err, fmt.Sprint(rollbackPanic))
+		default:
+			require.NoError(t, err)
+		}
+	}
 }
 
 // primeTestTransactionLifecycle initializes a hand-built Session through the
@@ -157,6 +176,7 @@ func primeTestTransactionLifecycle(t *testing.T, session *Session) {
 	txExec, _ := session.executor.(TransactionalExecutor)
 	if err := session.txLifecycle.begin(
 		context.Background(),
+		testTxOwner(),
 		0,
 		session.txDatabase,
 		txExec,

@@ -44,6 +44,6 @@ func TestSearchFlushKeepsEmbeddingOverAnOlderEventCopy(t *testing.T) {
 		entry := db.searchServices[db.defaultDatabaseName()]
 		return entry != nil && !entry.hasPending()
 	}, 5*time.Second, 10*time.Millisecond)
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 	require.Equal(t, 1, svc.EmbeddingCount())
 }

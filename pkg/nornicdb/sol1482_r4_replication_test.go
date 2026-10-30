@@ -27,7 +27,7 @@ func TestSol1482R4ReplicatedEventConsumption(t *testing.T) {
 			db, err := Open(config.Database.DataDir, config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			require.NotNil(t, db.replicationAdapter)
 			apply := func(kind replication.CommandType, payload any) {
 				data := searchConsumerCommandData(t, kind, payload)

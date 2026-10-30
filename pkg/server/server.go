@@ -1491,7 +1491,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 				cfg := search.DefaultLocalRerankerConfig()
 				cfg.Enabled = true
-				r := search.NewLocalReranker(rerankerModel, cfg)
+				r := search.NewLocalReranker(rerankerModel, cfg, db.BeginProviderUse)
 				db.SetSearchReranker(r)
 				setGlobalRerankerResolver(func(string) search.Reranker { return r })
 				s.logEvent(context.Background(), slog.LevelInfo,

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -43,8 +44,8 @@ type AccessFlusher struct {
 	store              AccessMetaStore
 	interval           time.Duration
 	mu                 sync.Mutex
-	cancel             context.CancelFunc
-	done               chan struct{}
+	active             *lifecycle.WorkLifetime // mu; the current run, replaced only after it has stopped
+	outcomes           lifecycle.Outcomes      // native outcomes of every run
 	flushNow           chan struct{}
 	scorerFunc         ScorerFunc
 	entityMeta         EntityMetaLookup
@@ -116,39 +117,58 @@ func (f *AccessFlusher) BufferFullness() float64 {
 }
 
 // Start begins the flush loop. It exits immediately if the accumulator is disabled.
+// The run is enrolled in its own lifetime before its goroutine can start. The
+// caller's context is foreign code, so the run is built outside the host lock
+// and published under it; a run that loses publication is retired unused.
 func (f *AccessFlusher) Start(ctx context.Context) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if !f.accumulator.enabled {
+	skip := !f.accumulator.enabled || f.runLive()
+	f.mu.Unlock()
+	if skip {
 		return
 	}
-	if f.cancel != nil {
+	run := lifecycle.NewWorkLifetime(ctx)
+	_, release, _ := run.Acquire(context.Background())
+	f.mu.Lock()
+	if f.runLive() {
+		f.mu.Unlock()
+		release()
+		run.BeginStop(nil)
 		return
 	}
-
-	ctx, f.cancel = context.WithCancel(ctx)
-	f.done = make(chan struct{})
-
-	go f.run(ctx)
+	f.active = run
+	f.mu.Unlock()
+	go func() { defer release(); f.run(run.Context()) }()
 }
 
-// Stop stops the flush loop and performs a final flush.
-func (f *AccessFlusher) Stop() {
-	f.mu.Lock()
-	cancel := f.cancel
-	done := f.done
-	f.cancel = nil
-	f.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-		<-done
+// runLive reports whether the current run has not finished its stop; a new
+// run is published only after the previous one stopped. f.mu must be held.
+func (f *AccessFlusher) runLive() bool {
+	if f.active == nil {
+		return false
 	}
+	select {
+	case <-f.active.Stopped():
+		return false
+	default:
+		return true
+	}
+}
+
+// Stop is the current run's one stop: it seals and signals the run, joins its
+// actual completion and returns every accumulated native outcome. Every
+// caller joins the same stop; a stopping run cannot be replaced.
+func (f *AccessFlusher) Stop() error {
+	f.mu.Lock()
+	run := f.active
+	f.mu.Unlock()
+	if run != nil {
+		f.outcomes.Record("", run.Shutdown(context.Background(), nil))
+	}
+	return f.outcomes.Err()
 }
 
 func (f *AccessFlusher) run(ctx context.Context) {
-	defer close(f.done)
 	ticker := time.NewTicker(f.interval)
 	defer ticker.Stop()
 
@@ -214,6 +234,7 @@ func (f *AccessFlusher) flush() {
 	for entityID, delta := range merged {
 		result, err := f.store.ReadAccessMeta(AccessMetaReadRequest{Mode: AccessMetaReadPoint, EntityID: entityID})
 		if err != nil {
+			f.outcomes.Record("access metadata read", err)
 			continue
 		}
 		entry := result.Entry
@@ -231,6 +252,8 @@ func (f *AccessFlusher) flush() {
 				if meta.Scope != "" {
 					entry.TargetScope = meta.Scope
 				}
+			} else {
+				f.outcomes.Record("access entity metadata", err)
 			}
 		}
 
@@ -280,7 +303,7 @@ func (f *AccessFlusher) flush() {
 			}
 		}
 
-		_ = f.store.PutAccessMeta(entityID, entry)
+		f.outcomes.Record("access metadata write", f.store.PutAccessMeta(entityID, entry))
 		if f.suppressionRecheck != nil {
 			f.suppressionRecheck(entityID, meta)
 		}

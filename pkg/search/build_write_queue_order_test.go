@@ -706,7 +706,7 @@ func TestRelationshipLoaderLeavesLiveUpdatesInPlace(t *testing.T) {
 	engine.open()
 	rs := svc.relationshipSearch()
 	select {
-	case <-rs.ready:
+	case <-rs.loaded.Done():
 	case <-time.After(10 * time.Second):
 		t.Fatal("the relationship loader did not finish")
 	}

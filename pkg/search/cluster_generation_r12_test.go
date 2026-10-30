@@ -176,7 +176,12 @@ func TestClusterGenerationRoutingPanicReleasesLock(t *testing.T) {
 			}
 			require.False(t, locked, "a recovered routing panic leaves clusterStateMu unlocked")
 			released := make(chan struct{})
-			go func() { f.svc.clusterGen.holders.Wait(); close(released) }()
+			go func() {
+				for f.svc.clusterGen.holders.Active() != 0 {
+					time.Sleep(time.Millisecond)
+				}
+				close(released)
+			}()
 			select {
 			case <-released:
 			case <-time.After(10 * time.Second):
@@ -196,7 +201,12 @@ func TestClusterGenerationCancelledQueryReleasesHolder(t *testing.T) {
 	_, err := f.svc.vectorSearchOnly(ctx, vec, DefaultSearchOptions())
 	require.ErrorIs(t, err, context.Canceled)
 	released := make(chan struct{})
-	go func() { f.svc.clusterGen.holders.Wait(); close(released) }()
+	go func() {
+		for f.svc.clusterGen.holders.Active() != 0 {
+			time.Sleep(time.Millisecond)
+		}
+		close(released)
+	}()
 	select {
 	case <-released:
 	case <-time.After(10 * time.Second):

@@ -118,11 +118,7 @@ func (db *DB) retentionContext(ctx context.Context) context.Context {
 	if ctx != nil {
 		return ctx
 	}
-	if db != nil && db.buildCtx != nil {
-		return db.buildCtx
-	}
-	log.Printf("⚠️  Retention: no lifecycle context available, using background context")
-	return context.Background()
+	return db.LifetimeContext()
 }
 
 // CollectSubjectRetentionRecords returns retention records for all nodes owned by a subject.

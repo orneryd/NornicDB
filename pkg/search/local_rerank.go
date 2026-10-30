@@ -54,14 +54,32 @@ func DefaultLocalRerankerConfig() *LocalRerankerConfig {
 type LocalReranker struct {
 	scorer RerankScorer
 	cfg    *LocalRerankerConfig
+	// admit is the required admission of the scorer's owner (the DB's
+	// provider owner): every scorer call is accepted work it joins.
+	admit func(context.Context) (context.Context, func(), error)
 }
 
-// NewLocalReranker creates a reranker that uses the given scorer (e.g. *localllm.RerankerModel).
-func NewLocalReranker(scorer RerankScorer, cfg *LocalRerankerConfig) *LocalReranker {
+// UnderlyingScorer identifies the resource adopted by the DB's provider owner.
+func (r *LocalReranker) UnderlyingScorer() RerankScorer { return r.scorer }
+
+func (r *LocalReranker) beginUse(ctx context.Context) (context.Context, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return r.admit(ctx)
+}
+
+// NewLocalReranker creates a reranker that uses the given scorer (e.g.
+// *localllm.RerankerModel). admit is the scorer owner's admission and is
+// required: there is no untracked mode.
+func NewLocalReranker(scorer RerankScorer, cfg *LocalRerankerConfig, admit func(context.Context) (context.Context, func(), error)) *LocalReranker {
+	if admit == nil {
+		panic("search: NewLocalReranker requires its owner's admission")
+	}
 	if cfg == nil {
 		cfg = DefaultLocalRerankerConfig()
 	}
-	return &LocalReranker{scorer: scorer, cfg: cfg}
+	return &LocalReranker{scorer: scorer, cfg: cfg, admit: admit}
 }
 
 func (r *LocalReranker) Name() string { return "local_gguf" }
@@ -74,7 +92,12 @@ func (r *LocalReranker) IsAvailable(ctx context.Context) bool {
 	if !r.Enabled() {
 		return false
 	}
-	_, err := r.scorer.Score(ctx, "health", "check")
+	ctx, finish, err := r.beginUse(ctx)
+	if err != nil {
+		return false
+	}
+	defer finish()
+	_, err = r.scorer.Score(ctx, "health", "check")
 	return err == nil
 }
 
@@ -91,6 +114,11 @@ func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []R
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx, finish, useErr := r.beginUse(ctx)
+	if useErr != nil {
+		return nil, useErr
+	}
+	defer finish()
 
 	maxCandidates := r.cfg.MaxCandidates
 	if maxCandidates <= 0 {

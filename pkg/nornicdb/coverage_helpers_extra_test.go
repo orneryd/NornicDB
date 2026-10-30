@@ -147,18 +147,13 @@ func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
 	require.Nil(t, nodes)
 	require.Nil(t, edges)
 
-	entry.buildDone = make(chan struct{})
-	entry.closeBuildDone()
-	entry.closeBuildDone()
-	(*dbSearchService)(nil).closeBuildDone()
-
 	db := &DB{}
 	require.False(t, db.shouldIgnoreSearchIndexingError(nil))
 	require.True(t, db.shouldIgnoreSearchIndexingError(context.Canceled))
 	require.True(t, db.shouldIgnoreSearchIndexingError(storage.ErrStorageClosed))
 	require.True(t, db.shouldIgnoreSearchIndexingError(ErrClosed))
 	require.False(t, db.shouldIgnoreSearchIndexingError(errors.New("boom")))
-	db.closed = true
+	db.work.CloseAdmission()
 	require.True(t, db.shouldIgnoreSearchIndexingError(errors.New("boom")))
 
 	dbName, local, ok := splitQualifiedID("tenant:n1")

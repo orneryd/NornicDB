@@ -2,7 +2,10 @@ package fabric
 
 import (
 	"context"
-	"sync"
+	"sync/atomic"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // ResultStream holds the tabular output of a fragment execution.
@@ -176,21 +179,22 @@ func (it *convertingRowIterator) Close() error {
 }
 
 type prefetchRowIterator struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	base   RowIterator
-	rows   chan []interface{}
-	once   sync.Once
-	errMu  sync.Mutex
-	err    error
-	cur    []interface{}
+	ctx         context.Context
+	work        *lifecycle.WorkLifetime
+	base        RowIterator
+	rows        chan []interface{}
+	nativeClose lifecycle.OnceCompletion // the base's one close: EOF, Close or cancellation
+	stopSignal  func() bool
+	cur         []interface{}
 }
 
 type concatRowIterator struct {
-	its []RowIterator
-	cur int
-	row []interface{}
-	err error
+	its      []RowIterator
+	cur      atomic.Int64
+	closed   atomic.Bool
+	row      []interface{}
+	outcomes lifecycle.Outcomes
+	closes   []lifecycle.OnceCompletion
 }
 
 type distinctRowIterator struct {
@@ -204,7 +208,8 @@ type distinctRowIterator struct {
 	added func([]interface{}) bool
 }
 
-// NewPrefetchRowIterator creates a bounded prefetch iterator with backpressure.
+// NewPrefetchRowIterator owns its producer before dispatch and preserves
+// bounded backpressure. Close signals the base before joining real completion.
 func NewPrefetchRowIterator(ctx context.Context, base RowIterator, buffer int) RowIterator {
 	if base == nil {
 		base = NewResultRowIterator(nil)
@@ -212,27 +217,36 @@ func NewPrefetchRowIterator(ctx context.Context, base RowIterator, buffer int) R
 	if buffer < 1 {
 		buffer = 1
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	work := lifecycle.NewWorkLifetime(ctx)
+	_, release, accepted := work.Acquire(work.Context())
+	if !accepted {
+		panic("fabric: new iterator lifetime refused its producer")
 	}
-	runCtx, cancel := context.WithCancel(ctx)
-	it := &prefetchRowIterator{
-		ctx:    runCtx,
-		cancel: cancel,
-		base:   base,
-		rows:   make(chan []interface{}, buffer),
-	}
-	go it.produce()
+	it := &prefetchRowIterator{ctx: work.Context(), work: work, base: base,
+		rows: make(chan []interface{}, buffer)}
+	// The producer obligation is enrolled before this stop signal is armed.
+	// The callback only dispatches the same native stop owner; it never declares
+	// native or producer completion, and can do no resource work after that owner.
+	it.stopSignal = context.AfterFunc(it.ctx, func() { it.beginStop() })
+	go func() { defer release(); it.produce() }()
 	return it
 }
 
+// beginStop dispatches the base's one native close, shared by EOF, explicit
+// Close and cancellation. The producer joins it before returning its ticket,
+// so the close is always retained by the iterator's admitted producer.
+func (it *prefetchRowIterator) beginStop() <-chan struct{} {
+	return it.nativeClose.Go(func() error {
+		err := it.base.Close()
+		it.work.RecordError("iterator close", err)
+		return err
+	})
+}
 func (it *prefetchRowIterator) produce() {
-	defer close(it.rows)
-	defer func() {
-		if err := it.base.Close(); err != nil {
-			it.setErr(err)
-		}
-	}()
+	defer func() { <-it.beginStop(); it.stopSignal(); close(it.rows) }()
+	if it.ctx.Err() != nil {
+		return
+	}
 	for it.base.Next() {
 		row := it.base.Row()
 		select {
@@ -241,22 +255,8 @@ func (it *prefetchRowIterator) produce() {
 		case it.rows <- row:
 		}
 	}
-	if err := it.base.Err(); err != nil {
-		it.setErr(err)
-	}
+	it.work.RecordError("iterator producer", it.base.Err())
 }
-
-func (it *prefetchRowIterator) setErr(err error) {
-	if err == nil {
-		return
-	}
-	it.errMu.Lock()
-	if it.err == nil {
-		it.err = err
-	}
-	it.errMu.Unlock()
-}
-
 func (it *prefetchRowIterator) Next() bool {
 	if it == nil {
 		return false
@@ -273,32 +273,30 @@ func (it *prefetchRowIterator) Next() bool {
 		return true
 	}
 }
-
 func (it *prefetchRowIterator) Row() []interface{} {
 	if it == nil {
 		return nil
 	}
 	return it.cur
 }
-
 func (it *prefetchRowIterator) Err() error {
 	if it == nil {
 		return nil
 	}
-	it.errMu.Lock()
-	defer it.errMu.Unlock()
-	return it.err
+	if err := it.work.Err(); err != nil {
+		return err
+	}
+	return it.ctx.Err()
 }
-
 func (it *prefetchRowIterator) Close() error {
 	if it == nil {
 		return nil
 	}
-	it.once.Do(func() { it.cancel() })
-	return nil
+	return it.work.Shutdown(context.Background(), nil)
 }
 
-// NewConcatRowIterator returns a row iterator that reads iterators in order.
+// NewConcatRowIterator owns each child close once. Concurrent stop may interrupt
+// a producer without holding the cursor/error publication lock across its code.
 func NewConcatRowIterator(iterators ...RowIterator) RowIterator {
 	clean := make([]RowIterator, 0, len(iterators))
 	for _, it := range iterators {
@@ -306,62 +304,67 @@ func NewConcatRowIterator(iterators ...RowIterator) RowIterator {
 			clean = append(clean, it)
 		}
 	}
-	return &concatRowIterator{its: clean}
+	return &concatRowIterator{its: clean, closes: make([]lifecycle.OnceCompletion, len(clean))}
+}
+func (it *concatRowIterator) closeChild(index int) error {
+	return it.closes[index].Do(func() error {
+		err := it.its[index].Close()
+		it.outcomes.Record("", err)
+		return err
+	})
 }
 
 func (it *concatRowIterator) Next() bool {
 	if it == nil {
 		return false
 	}
-	for it.cur < len(it.its) {
-		cur := it.its[it.cur]
-		if cur.Next() {
-			it.row = cur.Row()
+	for !it.closed.Load() {
+		index := int(it.cur.Load())
+		if index >= len(it.its) {
+			break
+		}
+		current := it.its[index]
+		if current.Next() {
+			if it.closed.Load() {
+				return false
+			}
+			it.row = current.Row()
 			return true
 		}
-		if err := cur.Err(); err != nil && it.err == nil {
-			it.err = err
-		}
-		_ = cur.Close()
-		it.cur++
+		err := current.Err()
+		it.outcomes.Record("", err)
+		it.closeChild(index)
+		it.cur.Store(int64(index + 1))
 	}
 	it.row = nil
 	return false
 }
-
 func (it *concatRowIterator) Row() []interface{} {
 	if it == nil {
 		return nil
 	}
 	return it.row
 }
-
 func (it *concatRowIterator) Err() error {
 	if it == nil {
 		return nil
 	}
-	if it.err != nil {
-		return it.err
+	err := it.outcomes.Err()
+	// Foreign Err implementations run outside the owner's publication mutex.
+	for i := int(it.cur.Load()); i < len(it.its); i++ {
+		err = compose.Outcomes(err, it.its[i].Err())
 	}
-	for i := it.cur; i < len(it.its); i++ {
-		if err := it.its[i].Err(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return err
 }
-
 func (it *concatRowIterator) Close() error {
 	if it == nil {
 		return nil
 	}
-	var first error
-	for i := it.cur; i < len(it.its); i++ {
-		if err := it.its[i].Close(); err != nil && first == nil {
-			first = err
-		}
+	it.closed.Store(true)
+	for i := int(it.cur.Load()); i < len(it.its); i++ {
+		it.closeChild(i)
 	}
-	return first
+	return it.Err()
 }
 
 // NewDistinctRowIterator filters duplicate rows while streaming.

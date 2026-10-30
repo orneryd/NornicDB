@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/search"
 )
 
@@ -14,7 +15,7 @@ type pendingSearchRetry struct {
 	attempt int
 	due     time.Time
 	waiting bool
-	timer   *time.Timer
+	timer   *lifecycle.OwnedTimer
 }
 
 func (db *DB) searchRefreshRetry(entry *dbSearchService) search.RefreshRetryOwner {
@@ -63,7 +64,7 @@ func (db *DB) searchRefreshRetry(entry *dbSearchService) search.RefreshRetryOwne
 			entry.refreshRetries = make(map[string]*pendingSearchRetry)
 		}
 		entry.refreshRetries[key] = retry
-		retry.timer = time.AfterFunc(delay, func() { db.dispatchSearchRetry(entry, key, retry) })
+		retry.timer = entry.svc.AfterFunc(delay, func() { db.dispatchSearchRetry(entry, key, retry) })
 	}
 }
 
@@ -85,7 +86,7 @@ func (db *DB) dispatchSearchRetry(entry *dbSearchService, key string, retry *pen
 		delay = entry.flushDelay()
 	}
 	if delay > 0 {
-		retry.timer = time.AfterFunc(delay, func() { db.dispatchSearchRetry(entry, key, retry) })
+		retry.timer = entry.svc.AfterFunc(delay, func() { db.dispatchSearchRetry(entry, key, retry) })
 		entry.pendingMu.Unlock()
 		return
 	}
@@ -127,7 +128,7 @@ func (db *DB) finishSearchRefresh(e *dbSearchService, work search.RefreshRetry) 
 		retry.waiting = true
 		delay := e.flushDelay()
 		retry.due = time.Now().Add(delay)
-		retry.timer = time.AfterFunc(delay, func() { db.dispatchSearchRetry(e, key, retry) })
+		retry.timer = e.svc.AfterFunc(delay, func() { db.dispatchSearchRetry(e, key, retry) })
 	}
 }
 

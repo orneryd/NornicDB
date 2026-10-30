@@ -50,7 +50,7 @@ func TestRelationshipSnapshotUpgradeReusesVectorsOnRestart(t *testing.T) {
 		s.SetFulltextIndexPath(path)
 	})
 	select {
-	case <-restarted.relationshipSearch().ready:
+	case <-restarted.relationshipSearch().loaded.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("relationship search did not become ready")
 	}
