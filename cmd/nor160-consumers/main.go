@@ -847,6 +847,28 @@ func (c *NOR160ControlCache) GetWrappedSelected(id NodeID, hidden func(*Node) bo
 	}
 	return NOR160ControlWrap{Node: n}
 }
+
+// Callback receipt. A copy streamed to another package's callback that
+// overwrites it is that package's handling (clean, see pkg/cypher
+// NOR160ControlStripReceived); a shared cached node lent to such a callback
+// stays a storage member (K0, must report).
+func (c *NOR160ControlCache) StreamCopiesFor(visit func(*Node) error) error {
+	for _, n := range c.nodes {
+		if err := visit(copyNode(n)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *NOR160ControlCache) StreamLent(visit func(*Node) error) error {
+	for _, n := range c.nodes {
+		if err := visit(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 `
 
 const cypherControlFile = `package cypher
@@ -899,6 +921,23 @@ func (c *NOR160ControlCypherCache) Get(k string, hidden func(*storage.Node) bool
 	return n
 }
 
+// NOR160ControlStripReceived strips copies a storage stream handed to its
+// callback: its own handling. NOR160ControlUseLent does the same to nodes
+// storage lends; the lend stays storage's member.
+func NOR160ControlStripReceived(c *storage.NOR160ControlCache) error {
+	return c.StreamCopiesFor(func(n *storage.Node) error {
+		n.ChunkEmbeddings = nil
+		return nil
+	})
+}
+
+func NOR160ControlUseLent(c *storage.NOR160ControlCache) error {
+	return c.StreamLent(func(n *storage.Node) error {
+		n.ChunkEmbeddings = nil
+		return nil
+	})
+}
+
 // NOR160ControlReceiver drops a node that storage's public read delivered to
 // it. The census must prove the receipt and not report it.
 func NOR160ControlReceiver(c *storage.NOR160ControlCache, id storage.NodeID, hidden func(*storage.Node) bool) *storage.Node {
@@ -944,6 +983,8 @@ var controls = []control{
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).nor160GetVia", false},
 	{"K1", storagePkg + ".nor160ControlStoredGet$1", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetWrappedSelected", false},
+	{"K1", module + "/pkg/cypher.NOR160ControlStripReceived", true},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).StreamLent", false},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherDrops", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherCopyReceived", true},
 	{"K1", "(*" + module + "/pkg/cypher.NOR160ControlCypherCache).Get", false},
@@ -1066,6 +1107,8 @@ func (s *fnState) val(v ssa.Value) org {
 }
 
 type analysis struct {
+	crossOff   bool                                 // facts computed without cross-package callback callees
+	receipts   []string                             // exemptions: callback-delivered, proven caller-owned
 	reach      map[*ssa.Function]map[ssa.Value]bool // values that reach a public read exit
 	scope      *readScope
 	candidates []string                // every function found deciding between a value and its copy
@@ -2660,6 +2703,9 @@ func (a *analysis) droppingCallIn(fn *ssa.Function, d map[ssa.Value]bool, drops 
 			}
 			args := callArgs(call.Common())
 			for _, g := range a.calleesOf(call) {
+				if a.crossOff && crossCallback(fn, call, g) {
+					continue
+				}
 				dg := drops[g]
 				for j, arg := range args {
 					if j < len(dg) && dg[j] && d[arg] {
@@ -2826,6 +2872,9 @@ func (a *analysis) overwrites() map[*ssa.Function][]bool {
 					case ssa.CallInstruction:
 						args := callArgs(x.Common())
 						for _, g := range a.calleesOf(x) {
+							if a.crossOff && crossCallback(fn, x, g) {
+								continue
+							}
 							for m, arg := range args {
 								if m < len(out[g]) && out[g][m] && d[arg] {
 									w[j] = true
@@ -2881,6 +2930,66 @@ func (a *analysis) copiesToCallback() map[*ssa.Function][]bool {
 			}
 		}
 		out[fn] = cb
+	}
+	return out
+}
+
+// copiesOwnedToCallback: the function-valued parameters a function calls only
+// with proven caller-owned values (and at least once), itself or through a
+// callee that does.
+func (a *analysis) copiesOwnedToCallback() map[*ssa.Function][]bool {
+	out := map[*ssa.Function][]bool{}
+	bad := map[*ssa.Function][]bool{}
+	for _, fn := range a.postOrder() {
+		s := a.states[fn]
+		if s == nil {
+			continue
+		}
+		ok := make([]bool, len(fn.Params))
+		no := make([]bool, len(fn.Params))
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				call, isCall := ins.(ssa.CallInstruction)
+				if !isCall {
+					continue
+				}
+				c := call.Common()
+				if pv, isParam := c.Value.(*ssa.Parameter); isParam {
+					if k := paramIndex(fn, pv); k >= 0 {
+						for _, arg := range c.Args {
+							if !family(arg.Type()) {
+								continue
+							}
+							if provenOwned(s.val(arg)) {
+								ok[k] = true
+							} else {
+								no[k] = true
+							}
+						}
+					}
+				}
+				args := callArgs(c)
+				for _, g := range a.calleesOf(call) {
+					for m, arg := range args {
+						k := paramIndex(fn, arg)
+						if k < 0 {
+							continue
+						}
+						if m < len(out[g]) && out[g][m] {
+							ok[k] = true
+						}
+						if m < len(bad[g]) && bad[g][m] {
+							no[k] = true
+						}
+					}
+				}
+			}
+		}
+		res := make([]bool, len(fn.Params))
+		for k := range res {
+			res[k] = ok[k] && !no[k]
+		}
+		out[fn], bad[fn] = res, no
 	}
 	return out
 }
@@ -4118,6 +4227,31 @@ func (a *analysis) inReadScopeByFlow(fn *ssa.Function, pos token.Pos) bool {
 	return !found
 }
 
+// provenOwned: a value made for this read and kept by nothing: a fresh copy or
+// a decoded value, with no retained, unknown or parameter-dependent origin.
+func provenOwned(o org) bool {
+	return (o.Copy || o.Decoded) && !o.Retained && !o.Unknown && !o.Received && o.Params == 0 && o.FuncRes == 0 && o.Delivered == 0
+}
+
+func pkgPathOf(fn *ssa.Function) string {
+	fn = top(originFn(fn))
+	if fn == nil || fn.Pkg == nil {
+		return ""
+	}
+	return fn.Pkg.Pkg.Path()
+}
+
+// crossCallback: g is reached from fn's call through a function value (a
+// callback, not an interface method or a static call) and lives in another
+// package.
+func crossCallback(fn *ssa.Function, call ssa.CallInstruction, g *ssa.Function) bool {
+	c := call.Common()
+	if c.IsInvoke() || c.StaticCallee() != nil {
+		return false
+	}
+	return pkgPathOf(g) != "" && pkgPathOf(g) != pkgPathOf(fn)
+}
+
 // ---------------------------------------------------------------- report
 
 type hit struct {
@@ -4132,21 +4266,22 @@ type hit struct {
 }
 
 type report struct {
-	Author          string            `json:"author"`
-	Target          string            `json:"target"`
-	Loader          string            `json:"loader"`
-	Functions       int               `json:"functions_loaded"`
-	Analyzed        int               `json:"functions_analyzed"`
-	SummaryRounds   int               `json:"summary_rounds"`
-	Converged       bool              `json:"summaries_converged"`
-	Owners          []string          `json:"owners"`
-	OutOfScope      map[string]int    `json:"out_of_read_scope"`
-	OwnerCandidates []string          `json:"owner_candidates"`
-	Counts          map[string]int    `json:"counts"`
-	Hits            []hit             `json:"hits"`
-	Mappers         []string          `json:"population_mappers"`
-	Controls        map[string]string `json:"controls"`
-	AllControlsOK   bool              `json:"all_controls_detected"`
+	Author           string            `json:"author"`
+	Target           string            `json:"target"`
+	Loader           string            `json:"loader"`
+	Functions        int               `json:"functions_loaded"`
+	Analyzed         int               `json:"functions_analyzed"`
+	SummaryRounds    int               `json:"summary_rounds"`
+	Converged        bool              `json:"summaries_converged"`
+	Owners           []string          `json:"owners"`
+	OutOfScope       map[string]int    `json:"out_of_read_scope"`
+	CallbackReceipts []string          `json:"received_by_callback"`
+	OwnerCandidates  []string          `json:"owner_candidates"`
+	Counts           map[string]int    `json:"counts"`
+	Hits             []hit             `json:"hits"`
+	Mappers          []string          `json:"population_mappers"`
+	Controls         map[string]string `json:"controls"`
+	AllControlsOK    bool              `json:"all_controls_detected"`
 }
 
 func (a *analysis) postOrder() []*ssa.Function {
@@ -4342,9 +4477,14 @@ func main() {
 	r.Converged = converged1 && converged2
 
 	drops := a.paramDrops()
+	a.crossOff = true
+	dropsOwn := a.paramDrops()
+	overwriteOwn := a.overwrites()
+	a.crossOff = false
 	ownerReports := a.ownerChecks()
 	overwrite := a.overwrites()
 	callbackCopy := a.copiesToCallback()
+	callbackOwned := a.copiesOwnedToCallback()
 	a.computeReadScope()
 	seenHit := map[string]bool{}
 	outOfScope := map[string]int{}
@@ -4454,6 +4594,10 @@ func main() {
 							continue
 						}
 						if g := a.funcOf(arg); g != nil && anyTrue(overwrite[g]) {
+							if pkgPathOf(g) != pkgPathOf(t) && k < len(callbackOwned[t]) && callbackOwned[t][k] {
+								a.receipts = append(a.receipts, fmt.Sprintf("K1 %s: %s hands only proven caller-owned copies to %s (package %s), which overwrites them", fullName(fn), strings.TrimPrefix(fullName(t), module+"/"), strings.TrimPrefix(fullName(g), module+"/"), strings.TrimPrefix(pkgPathOf(g), module+"/")))
+								continue
+							}
 							add("K1", fn, call.Pos(), strings.TrimPrefix(fullName(t), module+"/")+" hands copies to "+strings.TrimPrefix(fullName(g), module+"/")+", which overwrites their fields")
 						}
 					}
@@ -4480,9 +4624,16 @@ func main() {
 				}
 				d := a.derived(fn, s, []ssa.Value{v}, true)
 
-				// K1 on a copy handed to a callee that selects it out.
+				// K1 on a copy handed to a callee that selects it out. A proven
+				// caller-owned copy delivered to another package's callback is
+				// that package's handling.
+				owned := provenOwned(s.val(v))
 				if g, j, ok := a.droppingCallIn(fn, d, drops); ok {
-					add("K1", fn, ins.Pos(), "copy "+copyLabel(v)+" is selected out inside "+strings.TrimPrefix(fullName(g), module+"/")+" (parameter "+fmt.Sprint(j)+")")
+					if _, _, own := a.droppingCallIn(fn, d, dropsOwn); owned && !own {
+						a.receipts = append(a.receipts, fmt.Sprintf("K1 %s: proven caller-owned copy %s is selected out only inside another package's callback %s", fullName(fn), copyLabel(v), strings.TrimPrefix(fullName(g), module+"/")))
+					} else {
+						add("K1", fn, ins.Pos(), "copy "+copyLabel(v)+" is selected out inside "+strings.TrimPrefix(fullName(g), module+"/")+" (parameter "+fmt.Sprint(j)+")")
+					}
 				}
 
 				// K1 on a copy whose fields a callee overwrites.
@@ -4496,6 +4647,11 @@ func main() {
 						for _, g := range a.calleesOf(call) {
 							for m, arg := range args {
 								if m < len(overwrite[g]) && overwrite[g][m] && d[arg] {
+									ownFact := m < len(overwriteOwn[g]) && overwriteOwn[g][m] && !crossCallback(fn, call, g)
+									if owned && !ownFact {
+										a.receipts = append(a.receipts, fmt.Sprintf("K1 %s: fields of proven caller-owned copy %s are overwritten only inside another package's callback %s", fullName(fn), copyLabel(v), strings.TrimPrefix(fullName(g), module+"/")))
+										continue
+									}
 									add("K1", fn, ins.Pos(), "fields of copy "+copyLabel(v)+" are overwritten inside "+strings.TrimPrefix(fullName(g), module+"/"))
 								}
 							}
@@ -4835,6 +4991,8 @@ func main() {
 		r.Controls[c.class+" "+c.fn] = state
 	}
 	r.OutOfScope = outOfScope
+	sort.Strings(a.receipts)
+	r.CallbackReceipts = a.receipts
 	data, err := json.MarshalIndent(r, "", " ")
 	if err != nil {
 		panic(err)
