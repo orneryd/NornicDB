@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // logger returns a non-nil *slog.Logger for WALEngine emissions. If the
@@ -51,11 +52,13 @@ type WALEngine struct {
 	mutationMu sync.RWMutex
 
 	// Automatic snapshot and compaction
-	snapshotDir       string
-	snapshotMu        sync.RWMutex // Protects snapshotTicker and stopSnapshot
-	snapshotTicker    *time.Ticker
-	stopSnapshot      chan struct{}
-	snapshotWg        sync.WaitGroup // Waits for auto-compaction goroutine to finish
+	snapshotDir    string
+	snapshotMu     sync.RWMutex // Protects snapshotTicker and snapshot
+	snapshotTicker *time.Ticker
+	snapshot       *engineWorker // the running auto-compaction loop, accepted work of work
+	// work is the WAL engine's one owner: the auto-compaction loop is its
+	// accepted work and Close is its one stop.
+	work              lifecycle.WorkLifetime
 	lastSnapshotTime  atomic.Int64
 	totalSnapshots    atomic.Int64
 	compactedSequence atomic.Uint64
@@ -343,7 +346,7 @@ func (w *WALEngine) EnableAutoCompaction(snapshotDir string) error {
 	w.snapshotMu.Lock()
 	defer w.snapshotMu.Unlock()
 
-	if w.stopSnapshot != nil {
+	if w.snapshot != nil {
 		return fmt.Errorf("wal: auto-compaction already enabled")
 	}
 
@@ -362,14 +365,15 @@ func (w *WALEngine) EnableAutoCompaction(snapshotDir string) error {
 		interval = 1 * time.Hour // Default if not configured
 	}
 
-	// Create ticker and channel BEFORE starting goroutine to avoid race
-	w.snapshotTicker = time.NewTicker(interval)
-	w.stopSnapshot = make(chan struct{})
-
-	// Now start goroutine - ticker is already initialized and protected by lock
-	w.snapshotWg.Add(1)
-	go w.autoSnapshotLoop()
-
+	// Create the ticker BEFORE starting the loop: it reads it under the lock.
+	ticker := time.NewTicker(interval)
+	loop := startOwnedWorker(&w.work, w.work.Context(), func(ctx context.Context) { w.autoSnapshotLoop(ctx, ticker) })
+	if loop == nil {
+		ticker.Stop()
+		return ErrWALClosed
+	}
+	w.snapshotTicker = ticker
+	w.snapshot = loop
 	return nil
 }
 
@@ -378,40 +382,22 @@ func (w *WALEngine) EnableAutoCompaction(snapshotDir string) error {
 // race conditions when the engine is closed.
 func (w *WALEngine) DisableAutoCompaction() {
 	w.snapshotMu.Lock()
-	shouldWait := false
-	if w.stopSnapshot != nil {
-		close(w.stopSnapshot)
-		w.stopSnapshot = nil
-		shouldWait = true
-	}
+	loop := w.snapshot
+	w.snapshot = nil
 	if w.snapshotTicker != nil {
 		w.snapshotTicker.Stop()
 		w.snapshotTicker = nil
 	}
 	w.snapshotMu.Unlock()
 
-	// Wait for goroutine to finish (outside lock to avoid deadlock)
-	if shouldWait {
-		w.snapshotWg.Wait()
-	}
+	// Join the loop's actual return outside the lock to avoid deadlock.
+	loop.stopAndJoin()
 }
 
-// autoSnapshotLoop runs in background, creating periodic snapshots and truncating WAL.
-func (w *WALEngine) autoSnapshotLoop() {
-	defer w.snapshotWg.Done()
+// autoSnapshotLoop runs in background, creating periodic snapshots and
+// truncating the WAL, until its worker context ends.
+func (w *WALEngine) autoSnapshotLoop(ctx context.Context, ticker *time.Ticker) {
 	for {
-		// Get local copies of channels under lock to avoid races
-		w.snapshotMu.RLock()
-		ticker := w.snapshotTicker
-		stopCh := w.stopSnapshot
-		w.snapshotMu.RUnlock()
-
-		// Check if shutdown was requested
-		if ticker == nil || stopCh == nil {
-			return
-		}
-
-		// Select on local channel copies (safe to do without lock)
 		select {
 		case <-ticker.C:
 			if err := w.createSnapshotAndCompact(); err != nil {
@@ -423,7 +409,7 @@ func (w *WALEngine) autoSnapshotLoop() {
 					slog.Any("error", err),
 				)
 			}
-		case <-stopCh:
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -435,7 +421,7 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 	w.mutationMu.Lock()
 	defer w.mutationMu.Unlock()
 
-	if w.wal.closed.Load() {
+	if w.wal.work.Closing() {
 		return ErrWALClosed
 	}
 	if err := removeInterruptedSnapshotFiles(w.snapshotDir); err != nil {
@@ -1178,9 +1164,24 @@ func (w *WALEngine) EdgeCountByPrefix(prefix string) (int64, error) {
 
 // Close closes both the WAL and underlying engine.
 func (w *WALEngine) Close() error {
-	// Seal admission before draining registered native frames. Registration uses
-	// the same WAL mutex, so no pending frame can appear after this cut.
-	_ = w.wal.Close()
+	// The first caller's stop signal runs as accepted work, so retirement
+	// cannot overtake it; every caller joins the same stop and outcome.
+	if w.work.Enter() {
+		if w.work.CloseAdmission() {
+			w.signalStop()
+		}
+		w.work.Leave()
+	}
+	return w.work.Shutdown(context.Background(), w.engine.Close)
+}
+
+// signalStop seals the WAL and drains registered native frames. Registration
+// uses the same WAL mutex, so no pending frame can appear after this cut. A
+// snapshot loop waiting behind an accepted mutation lease is released here;
+// the owner's stop then cancels it and joins its return before the engine
+// underneath closes.
+func (w *WALEngine) signalStop() {
+	w.work.RecordError("", w.wal.Close())
 	w.stopEntityWait()
 	w.pendingEntityCommits.Range(func(_, value any) bool {
 		accepted := value.(*walAcceptedEntityCommit)
@@ -1189,9 +1190,7 @@ func (w *WALEngine) Close() error {
 		_ = accepted.resolve.Resolve(CommitOutcome{State: CommitRecoveryPending, Err: ErrStorageClosed})
 		return true
 	})
-	// A snapshot worker may have been waiting behind an accepted mutation lease.
 	w.DisableAutoCompaction()
-	return w.engine.Close()
 }
 
 // GetWAL returns the underlying WAL for direct access.

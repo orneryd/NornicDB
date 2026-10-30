@@ -139,7 +139,7 @@ func (b *BadgerEngine) beginSemanticPropertyRestore() error {
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 	b.walPropertySource.Lock()
 	defer b.walPropertySource.Unlock()
 	return b.persistPropertyIdentityLocked(db, uuid.NewString(), true, false)
@@ -158,7 +158,7 @@ func markRecoveryPropertyForeign(destination Engine) error {
 		if err != nil {
 			return err
 		}
-		defer b.txnWG.Done()
+		defer b.work.Leave()
 		b.walPropertySource.Lock()
 		defer b.walPropertySource.Unlock()
 		return b.markPropertySourceForeignLocked(db)

@@ -48,10 +48,11 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	}
 	// The batch reader retains engine state through import, physical apply
 	// and count repair. Close rejects later admissions and waits for this lease.
-	if _, err := b.beginHelperTxn(); err != nil {
+	_, err := b.beginHelperTxn()
+	if err != nil {
 		return 0, err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 
 	// A kill -9 can leave a torn tail record at EOF. Truncate it back to
 	// the last good boundary before reading (the same conservative repair
@@ -76,7 +77,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		pendingBytes = 0
 		return nil
 	}
-	err := VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
+	err = VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
 		if entry.Operation == OpEntityCommit {
 			// Keep the existing streaming replay owner: an earlier physical
 			// batch must finish before this semantic record can inspect its

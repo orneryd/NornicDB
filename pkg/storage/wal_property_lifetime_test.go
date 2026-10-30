@@ -101,7 +101,7 @@ func TestReviewR73ReplayLifetime(t *testing.T) {
 					require.Eventually(t, func() bool {
 						b.mu.RLock()
 						defer b.mu.RUnlock()
-						return b.closed
+						return b.work.Closing()
 					}, 5*time.Second, time.Millisecond)
 					// Close has stopped admission, but cannot clear an admitted handle.
 					b.mu.RLock()

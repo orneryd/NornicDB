@@ -34,7 +34,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/jsontext"
 	"hash/crc32"
 	"io"
 	"log/slog"
@@ -46,7 +45,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -381,7 +383,9 @@ type WAL struct {
 	sequence atomic.Uint64
 	entries  atomic.Int64
 	bytes    atomic.Int64
-	closed   atomic.Bool
+	// work is the WAL's one owner: the batch sync loop is its accepted work,
+	// its seal is the closed state, and Close is its one stop.
+	work lifecycle.WorkLifetime
 
 	segmentFirstSeq  uint64
 	segmentEntries   int64
@@ -394,7 +398,6 @@ type WAL struct {
 
 	// Background sync goroutine
 	syncTicker *time.Ticker
-	stopSync   chan struct{}
 
 	// Stats
 	totalWrites   atomic.Int64
@@ -500,10 +503,9 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 	}
 
 	w := &WAL{
-		config:   cfg,
-		file:     file,
-		writer:   bufio.NewWriterSize(file, 64*1024), // 64KB buffer
-		stopSync: make(chan struct{}),
+		config: cfg,
+		file:   file,
+		writer: bufio.NewWriterSize(file, 64*1024), // 64KB buffer
 		// D-07 subsystem-tag once: walLog inherits cfg.SlogLogger with
 		// subsystem=wal. Recovery, truncation, and corruption paths reuse it.
 		walLog: cfg.SlogLogger.With("subsystem", "wal"),
@@ -527,7 +529,9 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 	// Start batch sync if configured
 	if cfg.SyncMode == "batch" && cfg.BatchSyncInterval > 0 {
 		w.syncTicker = time.NewTicker(cfg.BatchSyncInterval)
-		go w.batchSyncLoop()
+		if w.work.Enter() {
+			go w.batchSyncLoop()
+		}
 	}
 
 	return w, nil
@@ -568,11 +572,13 @@ func (w *WAL) loadActiveSegmentState() {
 
 // batchSyncLoop periodically syncs writes to disk.
 func (w *WAL) batchSyncLoop() {
+	defer w.work.Leave()
+	stop := w.work.Context().Done()
 	for {
 		select {
 		case <-w.syncTicker.C:
 			w.Sync()
-		case <-w.stopSync:
+		case <-stop:
 			return
 		}
 	}
@@ -615,7 +621,7 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 		return 0, nil // WAL disabled, skip
 	}
 
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return 0, ErrWALClosed
 	}
 
@@ -755,7 +761,7 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	if !config.IsWALEnabled() {
 		return 0, nil
 	}
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return 0, ErrWALClosed
 	}
 	if op != OpBufferedCommit {
@@ -854,7 +860,7 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 // bulk seed: batchSyncLoop's 100ms ticks used to block every Append
 // for the duration of each fsync.
 func (w *WAL) Sync() error {
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return ErrWALClosed
 	}
 
@@ -1020,27 +1026,26 @@ func (w *WAL) Checkpoint() error {
 
 // Close closes the WAL, flushing all pending writes.
 func (w *WAL) Close() error {
-	// The closed flag and final handle release share the file owner. Epoch
+	// The seal and the final handle release share the file owner. Epoch
 	// sealing also owns mu and must never mistake a Close waiting here for
 	// an already flushed and closed handle.
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.closed.Swap(true) {
-		return nil // Already closed
-	}
-
-	// Stop sync goroutine
-	if w.syncTicker != nil {
+	if w.work.CloseAdmission() && w.syncTicker != nil {
 		w.syncTicker.Stop()
-		close(w.stopSync)
 	}
+	w.mu.Unlock()
+	// Every caller, first or repeated, joins the one stop: the sync loop
+	// returns, then the final sync and handle release run once.
+	return w.work.Shutdown(context.Background(), w.closeFile)
+}
 
-	// Final sync
-	if err := w.syncLocked(); err != nil {
-		// Log but continue closing
-	}
-
-	return w.file.Close()
+// closeFile is the WAL owner's dispose, after the sync loop returned.
+func (w *WAL) closeFile() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	syncErr := w.syncLocked()
+	closeErr := w.file.Close()
+	return compose.Outcomes(syncErr, closeErr)
 }
 
 // Stats returns current WAL statistics.
@@ -1061,7 +1066,7 @@ func (w *WAL) Stats() WALStats {
 		TotalSyncs:    w.totalSyncs.Load(),
 		LastSyncTime:  lastSync,
 		LastEntryTime: lastEntry,
-		Closed:        w.closed.Load(),
+		Closed:        w.work.Closing(),
 	}
 }
 
@@ -1298,7 +1303,7 @@ type Snapshot struct {
 
 // CreateSnapshot creates a point-in-time snapshot from the engine.
 func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return nil, ErrWALClosed
 	}
 
@@ -1525,7 +1530,7 @@ func (m WALSnapshotMode) String() string {
 //	wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)  // Reclaim disk space
 //	wal.ManageSnapshot(snapshot.Sequence, WALSnapshotRetention) // Retention only
 func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return ErrWALClosed
 	}
 	if mode != WALSnapshotTruncate && mode != WALSnapshotRetention {
@@ -1539,7 +1544,7 @@ func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
 	defer w.mu.Unlock()
 	// Close publishes the closed state while holding the same lock. It may
 	// have won after the optimistic check above and before this acquisition.
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return ErrWALClosed
 	}
 
@@ -2314,10 +2319,11 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		// A lifetime lease permits delegated CRUD to acquire its own write
 		// barrier; holding that barrier here would risk recursive-read deadlock.
 		if b, ok := UnwrapEngine(engine).(*BadgerEngine); ok {
-			if _, err := b.beginHelperTxn(); err != nil {
+			_, err := b.beginHelperTxn()
+			if err != nil {
 				return err
 			}
-			defer b.txnWG.Done()
+			defer b.work.Leave()
 		}
 		if err := markRecoveryPropertyForeign(engine); err != nil {
 			return err
