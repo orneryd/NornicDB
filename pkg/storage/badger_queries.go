@@ -204,9 +204,23 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 // borrowed, committed rows decoded for this read (the cache admits its own
 // copy), buffered ones borrowed.
 func (b *BadgerEngine) labelNodeImages(scope, label string, v readVisibility) ([]nodeImage, error) {
+	nodes, complete, err := b.labelNodeImagesWith(scope, label, v, true)
+	if err == nil && !complete {
+		nodes, _, err = b.labelNodeImagesWith(scope, label, v, false)
+	}
+	return nodes, err
+}
+
+// labelNodeImagesWith is one attempt of labelNodeImages. Node-cache hits are
+// selected in the cache and copied only after the whole read stands; if the
+// cache moved meanwhile the attempt reports incomplete, having copied nothing,
+// and the read is answered from storage (NOR-160).
+func (b *BadgerEngine) labelNodeImagesWith(scope, label string, v readVisibility, useCache bool) ([]nodeImage, bool, error) {
 	// Single-pass: iterate label index and fetch nodes in same transaction
 	// This reduces transaction overhead compared to two-phase approach
 	var overlay []nodeImage
+	var cachedSlots []int
+	var cachedIDs []NodeID
 	var touched map[NodeID]bool
 	var current bool
 	var nodes []nodeImage
@@ -220,6 +234,7 @@ func (b *BadgerEngine) labelNodeImages(scope, label string, v readVisibility) ([
 	}, func(txn *badger.Txn) error {
 		nodes = nil
 		loaded = nil
+		cachedSlots, cachedIDs = nil, nil
 		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 
@@ -236,16 +251,15 @@ func (b *BadgerEngine) labelNodeImages(scope, label string, v readVisibility) ([
 			}
 
 			// Cache-first: avoid Badger reads/decodes for hot label scans.
-			b.nodeCacheMu.RLock()
-			if cached, ok := b.nodeCache[nodeID]; ok && current {
-				b.nodeCacheMu.RUnlock()
-				if b.filterEntityByDecay(v, cached, nowNanos) {
+			if useCache && current {
+				if hit, selected := b.cacheSelectNode(nodeID, func(cached *Node) bool { return !b.filterEntityByDecay(v, cached, nowNanos) }); hit {
+					if selected {
+						cachedSlots, cachedIDs = append(cachedSlots, len(nodes)), append(cachedIDs, nodeID)
+						nodes = append(nodes, nodeImage{})
+					}
 					continue
 				}
-				nodes = append(nodes, borrowedNode(cached))
-				continue
 			}
-			b.nodeCacheMu.RUnlock()
 
 			// Fetch node data in same transaction
 			item, err := txn.Get(nodeKey(nodeID))
@@ -275,7 +289,16 @@ func (b *BadgerEngine) labelNodeImages(scope, label string, v readVisibility) ([
 	}, readViewOptions{scope: scope, scopeKind: readPrefixScope, current: &current})
 
 	if err != nil {
-		return nil, err
+		return nil, true, err
+	}
+	if len(cachedIDs) != 0 {
+		copies, ok := b.cacheCopyNodes(cachedIDs, gen, nil, false)
+		if !ok {
+			return nil, false, nil
+		}
+		for i, slot := range cachedSlots {
+			nodes[slot] = decodedNode(copies[i])
+		}
 	}
 
 	// Cache loaded nodes for future label scans.
@@ -290,7 +313,7 @@ func (b *BadgerEngine) labelNodeImages(scope, label string, v readVisibility) ([
 			return nodeIDInScope(n.ID, scope)
 		})
 	}
-	return nodes, nil
+	return nodes, true, nil
 }
 
 // StreamNodesByLabelProjected iterates label-matching nodes in a single read
@@ -602,7 +625,18 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 func (b *BadgerEngine) allNodeImages() ([]nodeImage, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
+	nodes, complete, err := b.allNodeImagesWith(true)
+	if err == nil && !complete {
+		nodes, _, err = b.allNodeImagesWith(false)
+	}
+	return nodes, err
+}
+
+// allNodeImagesWith is one attempt of allNodeImages (see labelNodeImagesWith).
+func (b *BadgerEngine) allNodeImagesWith(useCache bool) ([]nodeImage, bool, error) {
 	var current bool
+	var cachedSlots []int
+	var cachedIDs []NodeID
 	var nodes []nodeImage
 	var loaded []*Node
 	var overlay []nodeImage
@@ -616,6 +650,7 @@ func (b *BadgerEngine) allNodeImages() ([]nodeImage, error) {
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		nodes = nil
 		loaded = nil
+		cachedSlots, cachedIDs = nil, nil
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -631,16 +666,15 @@ func (b *BadgerEngine) allNodeImages() ([]nodeImage, error) {
 				continue // the write-behind overlay shadows committed rows
 			}
 
-			b.nodeCacheMu.RLock()
-			if cached, ok := b.nodeCache[nodeID]; ok && current {
-				b.nodeCacheMu.RUnlock()
-				if b.filterEntityByDecay(visibleRead, cached, nowNanos) {
+			if useCache && current {
+				if hit, selected := b.cacheSelectNode(nodeID, func(cached *Node) bool { return !b.filterEntityByDecay(visibleRead, cached, nowNanos) }); hit {
+					if selected {
+						cachedSlots, cachedIDs = append(cachedSlots, len(nodes)), append(cachedIDs, nodeID)
+						nodes = append(nodes, nodeImage{})
+					}
 					continue
 				}
-				nodes = append(nodes, borrowedNode(cached))
-				continue
 			}
-			b.nodeCacheMu.RUnlock()
 
 			var node *Node
 			var readErr error
@@ -662,14 +696,23 @@ func (b *BadgerEngine) allNodeImages() ([]nodeImage, error) {
 	}, readViewOptions{current: &current})
 
 	if err != nil {
-		return nil, err
+		return nil, true, err
+	}
+	if len(cachedIDs) != 0 {
+		copies, ok := b.cacheCopyNodes(cachedIDs, gen, nil, false)
+		if !ok {
+			return nil, false, nil
+		}
+		for i, slot := range cachedSlots {
+			nodes[slot] = decodedNode(copies[i])
+		}
 	}
 	for _, node := range loaded {
 		if node != nil {
 			b.cacheFillNode(gen, node, nodeReadCacheFull)
 		}
 	}
-	return append(nodes, overlay...), nil
+	return append(nodes, overlay...), true, nil
 }
 
 // AllEdges returns all edges (implements Engine interface).

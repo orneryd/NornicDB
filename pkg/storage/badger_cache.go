@@ -118,10 +118,9 @@ func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
 	delete(b.queryNodeCache, copied.ID)
 }
 
-// cacheLoadQueryNode returns a copy of id's GetQueryNode entry, sharing its
-// in-memory vectors.
-// Cached query images are immutable, so their copies can be made after the
-// map lookup releases its read lock.
+// cacheLoadQueryNode returns a copy of id's GetQueryNode entry; the copy owns
+// its vectors too (NOR-160). Cached query images are immutable, so their
+// copies can be made after the map lookup releases its read lock.
 func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
 	b.nodeCacheMu.RLock()
 	cached, ok := b.queryNodeCache[id]
@@ -130,6 +129,44 @@ func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
 		return nil, false
 	}
 	return copyNode(cached), true
+}
+
+// cacheSelectNode reports whether the node cache holds id and, if so, whether
+// the read's selection (keep, nil for all) accepts the cached node. The cached
+// node never leaves the cache: a read copies the nodes it selected with
+// cacheCopyNodes once it knows it returns them (NOR-160).
+func (b *BadgerEngine) cacheSelectNode(id NodeID, keep func(*Node) bool) (hit, selected bool) {
+	b.nodeCacheMu.RLock()
+	cached, ok := b.nodeCache[id]
+	b.nodeCacheMu.RUnlock()
+	if !ok || cached == nil {
+		return false, false
+	}
+	return true, keep == nil || keep(cached)
+}
+
+// cacheCopyNodes copies the listed cached nodes into one shape, all or
+// nothing, and only while the node cache is still at gen, the generation the
+// read selected them under; otherwise it copies nothing and the read answers
+// without the cache. Cached nodes are replaced wholesale and never changed in
+// place, so the copies are of exactly the nodes the read selected.
+func (b *BadgerEngine) cacheCopyNodes(ids []NodeID, gen uint64, properties []string, strip bool) ([]*Node, bool) {
+	held := make([]*Node, 0, len(ids))
+	b.nodeCacheMu.RLock()
+	if b.nodeCacheGen.current() != gen {
+		b.nodeCacheMu.RUnlock()
+		return nil, false
+	}
+	for _, id := range ids {
+		cached, ok := b.nodeCache[id]
+		if !ok || cached == nil {
+			b.nodeCacheMu.RUnlock()
+			return nil, false
+		}
+		held = append(held, cached)
+	}
+	b.nodeCacheMu.RUnlock()
+	return callerowned.Each(held, func(node *Node) *Node { return copyShaped(node, properties, strip) }), true
 }
 
 // cacheLoadNodeBody materializes a cached body in the requested shape. keep,
