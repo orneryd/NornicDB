@@ -267,13 +267,12 @@ type DB struct {
 	// warming. The default DB hit this most visibly because it's the
 	// first thing warmed.
 	//
-	// Closed by MarkSearchWarmupReady (typically called by server.New
+	// Completed by MarkSearchWarmupReady (typically called by server.New
 	// AFTER SetDbSearchFlagsResolver). Embedded callers that never set
 	// a resolver still get warmup — the auto-ready timer in
-	// startSearchIndexWarmup closes the channel after a grace window
+	// startSearchIndexWarmup completes the gate after a grace window
 	// so callers without a server layer don't deadlock.
-	searchWarmupReady     chan struct{}
-	searchWarmupReadyOnce sync.Once
+	searchWarmupReady lifetime.OnceCompletion
 
 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
 	embedderRegistryMu sync.RWMutex
@@ -676,7 +675,6 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	db := &DB{
 		config:                 config,
 		preparedReplicationWAL: preparedWAL,
-		searchWarmupReady:      make(chan struct{}),
 	}
 	db.remoteCredentialKey, db.remoteCredentialKeySource = config.RemoteCredentialEncryptionKey()
 	// Every construction failure enters the same retirement owner as Close.
@@ -1356,7 +1354,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		// race window: either the caller signed up for the gate and
 		// will release it, or it was never closed.
 		select {
-		case <-db.searchWarmupReady:
+		case <-db.searchWarmupReady.Done():
 		case <-ctx.Done():
 			return
 		}
@@ -2230,11 +2228,7 @@ func (db *DB) SetDbSearchFlagsResolver(resolver DbSearchFlagsResolver) {
 // that don't run a server layer don't need to call this — Open's
 // warmup auto-readies after a grace window so they aren't blocked.
 func (db *DB) MarkSearchWarmupReady() {
-	db.searchWarmupReadyOnce.Do(func() {
-		if db.searchWarmupReady != nil {
-			close(db.searchWarmupReady)
-		}
-	})
+	db.searchWarmupReady.Do(func() error { return nil })
 }
 
 // resolveSearchFlags returns the per-database search index master switches
