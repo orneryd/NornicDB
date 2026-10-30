@@ -869,6 +869,45 @@ func (c *NOR160ControlCache) StreamLent(visit func(*Node) error) error {
 	}
 	return nil
 }
+
+// Origins through non-entity types. Retained nodes lent through a map range in
+// a helper, a comma-ok lookup and an interface box must report K0 at the read
+// exit; a map range over nodes decoded for this read must not.
+func (c *NOR160ControlCache) nor160CollectLent() []*Node {
+	var out []*Node
+	for _, n := range c.nodes {
+		out = append(out, n)
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetAllLent() []*Node { return c.nor160CollectLent() }
+
+func (c *NOR160ControlCache) GetSharedOk(id NodeID) *Node {
+	n, ok := c.nodes[id]
+	if !ok {
+		return nil
+	}
+	return n
+}
+
+func (c *NOR160ControlCache) GetSharedViaAny(id NodeID) *Node {
+	var x any = c.nodes[id]
+	n, _ := x.(*Node)
+	return n
+}
+
+func (c *NOR160ControlCache) GetDecodedRange(ids []NodeID) []*Node {
+	decoded := make(map[NodeID]*Node, len(ids))
+	for _, id := range ids {
+		decoded[id] = &Node{ID: id}
+	}
+	var out []*Node
+	for _, n := range decoded {
+		out = append(out, n)
+	}
+	return out
+}
 `
 
 const cypherControlFile = `package cypher
@@ -985,6 +1024,10 @@ var controls = []control{
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetWrappedSelected", false},
 	{"K1", module + "/pkg/cypher.NOR160ControlStripReceived", true},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).StreamLent", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetAllLent", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSharedOk", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSharedViaAny", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetDecodedRange", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherDrops", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherCopyReceived", true},
 	{"K1", "(*" + module + "/pkg/cypher.NOR160ControlCypherCache).Get", false},
@@ -1107,20 +1150,23 @@ func (s *fnState) val(v ssa.Value) org {
 }
 
 type analysis struct {
-	crossOff   bool                                 // facts computed without cross-package callback callees
-	receipts   []string                             // exemptions: callback-delivered, proven caller-owned
-	reach      map[*ssa.Function]map[ssa.Value]bool // values that reach a public read exit
-	scope      *readScope
-	candidates []string                // every function found deciding between a value and its copy
-	owners     map[*ssa.Function]owner // the single owner of each entity type
-	slots      map[*ssa.Function]map[*ssa.Alloc]bool
-	cellRoot   bool // mayDrop is following callback-filled variables
-	p          *workcensus.Program
-	fns        []*ssa.Function
-	sums       map[*ssa.Function]*summary
-	states     map[*ssa.Function]*fnState
-	callees    map[ssa.CallInstruction][]*ssa.Function
-	callers    map[*ssa.Function][]*ssa.Function
+	filterSeen    map[ssa.Value]bool
+	filterKept    map[string]int                       // instruction kinds whose origin the old type filter discarded, now kept
+	filterDropped map[string]int                       // the same, still discarded: basic types only
+	crossOff      bool                                 // facts computed without cross-package callback callees
+	receipts      []string                             // exemptions: callback-delivered, proven caller-owned
+	reach         map[*ssa.Function]map[ssa.Value]bool // values that reach a public read exit
+	scope         *readScope
+	candidates    []string                // every function found deciding between a value and its copy
+	owners        map[*ssa.Function]owner // the single owner of each entity type
+	slots         map[*ssa.Function]map[*ssa.Alloc]bool
+	cellRoot      bool // mayDrop is following callback-filled variables
+	p             *workcensus.Program
+	fns           []*ssa.Function
+	sums          map[*ssa.Function]*summary
+	states        map[*ssa.Function]*fnState
+	callees       map[ssa.CallInstruction][]*ssa.Function
+	callers       map[*ssa.Function][]*ssa.Function
 }
 
 // ---------------------------------------------------------------- types
@@ -1693,10 +1739,38 @@ func (a *analysis) origin(fn *ssa.Function, s *fnState, v ssa.Value) org {
 	default:
 		return org{}
 	}
-	if !family(v.Type()) {
+	if !family(v.Type()) && !o.empty() {
+		// The old filter discarded every non-family type here. Only a type
+		// that cannot carry a reference loses its origin now.
+		kind := fmt.Sprintf("%T", v)
+		if a.filterSeen == nil {
+			a.filterSeen = map[ssa.Value]bool{}
+			a.filterKept = map[string]int{}
+			a.filterDropped = map[string]int{}
+		}
+		if !a.filterSeen[v] {
+			a.filterSeen[v] = true
+			if mayCarry(v.Type()) {
+				a.filterKept[kind]++
+			} else {
+				a.filterDropped[kind]++
+			}
+		}
+	}
+	if !mayCarry(v.Type()) {
 		return org{}
 	}
 	return o
+}
+
+// mayCarry: a value of this type can hold or reach a reference (anything but
+// a basic type: strings, numbers, booleans and the IDs defined on them).
+func mayCarry(t types.Type) bool {
+	b, ok := t.Underlying().(*types.Basic)
+	if !ok {
+		return true
+	}
+	return b.Kind() == types.UnsafePointer
 }
 
 // loadOrigin: the origin of what addr points to.
@@ -4275,6 +4349,7 @@ type report struct {
 	Converged        bool              `json:"summaries_converged"`
 	Owners           []string          `json:"owners"`
 	OutOfScope       map[string]int    `json:"out_of_read_scope"`
+	OriginFilter     map[string]string `json:"origin_type_filter"`
 	CallbackReceipts []string          `json:"received_by_callback"`
 	OwnerCandidates  []string          `json:"owner_candidates"`
 	Counts           map[string]int    `json:"counts"`
@@ -4991,6 +5066,13 @@ func main() {
 		r.Controls[c.class+" "+c.fn] = state
 	}
 	r.OutOfScope = outOfScope
+	r.OriginFilter = map[string]string{}
+	for k, n := range a.filterKept {
+		r.OriginFilter[k] = fmt.Sprintf("kept %d", n)
+	}
+	for k, n := range a.filterDropped {
+		r.OriginFilter[k] = strings.TrimPrefix(r.OriginFilter[k]+fmt.Sprintf(", discarded %d (basic type)", n), ", ")
+	}
 	sort.Strings(a.receipts)
 	r.CallbackReceipts = a.receipts
 	data, err := json.MarshalIndent(r, "", " ")
