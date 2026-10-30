@@ -81,6 +81,23 @@ func NOR160ControlQueueCopier(node *Node) *Node {
 	return &clone
 }
 
+// NOR160ControlSliceCopier is a hand-written slice copier beside the slice owner.
+func NOR160ControlSliceCopier(nodes []*Node) []*Node {
+	out := make([]*Node, len(nodes))
+	for i, n := range nodes {
+		out[i] = copyNode(n)
+	}
+	return out
+}
+
+// NOR160ControlDispatch is a second Copier dispatch rule beside the owner's.
+func NOR160ControlDispatch(v any) any {
+	if c, ok := v.(interface{ CallerCopy() any }); ok {
+		return c.CallerCopy()
+	}
+	return v
+}
+
 // NOR160ControlPartialHit omits its relationship from its caller copy.
 type NOR160ControlPartialHit struct {
 	Props map[string]any
@@ -157,6 +174,8 @@ type report struct {
 	Copiers       []copierImpl    `json:"caller_copy_implementations"`
 	CopySites     []string        `json:"copier_call_sites"`
 	EntityCopiers []string        `json:"independent_entity_copiers"`
+	SliceCopiers  []string        `json:"slice_copiers"`
+	Dispatchers   []string        `json:"copier_dispatch_rules"`
 	Controls      map[string]bool `json:"controls_detected"`
 	AllControlsOK bool            `json:"all_controls_detected"`
 }
@@ -489,6 +508,88 @@ func rebuiltEntityFields(fn *ssa.Function) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// declaresCallerCopy: an interface type that declares CallerCopy.
+func declaresCallerCopy(t types.Type) bool {
+	iface, ok := t.Underlying().(*types.Interface)
+	if !ok {
+		return false
+	}
+	for i := 0; i < iface.NumMethods(); i++ {
+		if iface.Method(i).Name() == "CallerCopy" {
+			return true
+		}
+	}
+	return false
+}
+
+// elementCopier: a structural copier, a type's own copier, or the owner's
+// typed walk.
+func elementCopier(c *ssa.CallCommon) bool {
+	name := calleeName(c)
+	if copierNames[name] && !strings.HasSuffix(name, ".shapeNode") {
+		return true
+	}
+	if strings.HasSuffix(name, ".shapeNode") && len(c.Args) == 4 && !constTrue(c.Args[3]) {
+		return true
+	}
+	if f := staticCallee(c); f != nil {
+		n := origin(f).Name()
+		return n == "CallerCopy" || n == "callerOwned" || strings.HasSuffix(fullName(f), "/pkg/callerowned.Of")
+	}
+	return false
+}
+
+// inCycle: the block lies on a loop of its function.
+func inCycle(start *ssa.BasicBlock) bool {
+	seen := map[*ssa.BasicBlock]bool{}
+	stack := append([]*ssa.BasicBlock(nil), start.Succs...)
+	for len(stack) > 0 {
+		b := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if b == start {
+			return true
+		}
+		if seen[b] {
+			continue
+		}
+		seen[b] = true
+		stack = append(stack, b.Succs...)
+	}
+	return false
+}
+
+// storedAsElement: the call's result is stored into a slice element or
+// appended to a slice.
+func storedAsElement(call *ssa.Call) bool {
+	refs := call.Referrers()
+	if refs == nil {
+		return false
+	}
+	for _, ref := range *refs {
+		switch x := ref.(type) {
+		case *ssa.Store:
+			if _, ok := x.Addr.(*ssa.IndexAddr); ok && x.Val == call {
+				return true
+			}
+		case *ssa.MakeInterface, *ssa.ChangeType:
+			if v, ok := ref.(ssa.Value); ok && v.Referrers() != nil {
+				for _, inner := range *v.Referrers() {
+					if st, ok := inner.(*ssa.Store); ok {
+						if _, ok := st.Addr.(*ssa.IndexAddr); ok {
+							return true
+						}
+					}
+				}
+			}
+		case *ssa.Call:
+			if b, ok := x.Call.Value.(*ssa.Builtin); ok && b.Name() == "append" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // retains: fn stores a delivery-derived value into memory that outlives the call
@@ -837,6 +938,45 @@ func main() {
 	}
 	sort.Strings(r.EntityCopiers)
 
+	// 6 and 7: every hand-written slice copier (a copier call inside a loop
+	// whose result is stored into a slice element or appended) and every Copier
+	// dispatch rule (a CallerCopy call through an interface, or an assertion to
+	// an interface declaring it) outside the owner package.
+	for _, fn := range fns {
+		owner := fn
+		for owner.Pkg == nil && owner.Parent() != nil {
+			owner = owner.Parent()
+		}
+		if owner.Pkg == nil || strings.HasPrefix(owner.Pkg.Pkg.Path(), module+"/pkg/callerowned") {
+			continue
+		}
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				switch x := ins.(type) {
+				case *ssa.TypeAssert:
+					if declaresCallerCopy(x.AssertedType) {
+						file, line := pos(fn, x.Pos())
+						r.Dispatchers = append(r.Dispatchers, fmt.Sprintf("%s:%d %s asserts %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), x.AssertedType))
+					}
+				case ssa.CallInstruction:
+					c := x.Common()
+					if c.IsInvoke() && c.Method.Name() == "CallerCopy" {
+						file, line := pos(fn, x.Pos())
+						r.Dispatchers = append(r.Dispatchers, fmt.Sprintf("%s:%d %s calls CallerCopy through %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), c.Value.Type()))
+					}
+					call, ok := ins.(*ssa.Call)
+					if !ok || !elementCopier(c) || !inCycle(b) || !storedAsElement(call) {
+						continue
+					}
+					file, line := pos(fn, x.Pos())
+					r.SliceCopiers = append(r.SliceCopiers, fmt.Sprintf("%s:%d %s -> %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), calleeName(c)))
+				}
+			}
+		}
+	}
+	sort.Strings(r.SliceCopiers)
+	sort.Strings(r.Dispatchers)
+
 	// Controls.
 	r.Controls["second copy of an owned delivery"] = false
 	for _, c := range r.Consumers {
@@ -854,6 +994,18 @@ func main() {
 	for _, c := range r.EntityCopiers {
 		if strings.Contains(c, "NOR160ControlQueueCopier") && strings.Contains(c, "Labels,Properties") {
 			r.Controls["second entity copier"] = true
+		}
+	}
+	r.Controls["hand-written slice copier"] = false
+	for _, c := range r.SliceCopiers {
+		if strings.Contains(c, "NOR160ControlSliceCopier") {
+			r.Controls["hand-written slice copier"] = true
+		}
+	}
+	r.Controls["second Copier dispatch rule"] = false
+	for _, c := range r.Dispatchers {
+		if strings.Contains(c, "NOR160ControlDispatch") {
+			r.Controls["second Copier dispatch rule"] = true
 		}
 	}
 	partial, complete := false, true
