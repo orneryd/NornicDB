@@ -461,6 +461,12 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 // validateCommitLocked keeps both optimistic and protected validation on the
 // same constraint/conflict and consumer error-classification owner.
 func (tx *BadgerTransaction) validateCommitLocked() error {
+	// Author: NOR-288 lane (Codex), 2026-10-26. The leader/preparation owner
+	// validated accepted command semantics before the durable decision. Only
+	// the physical application may retry; user constraints are not re-admitted.
+	if tx.acceptedApplication {
+		return nil
+	}
 	if err := tx.resolveConnectedDeletesLocked(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err

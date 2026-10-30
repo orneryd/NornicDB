@@ -118,9 +118,19 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		return err
 	}
 	var publicationErr error
+	handoff := &dropHandoff{name: policy.dropName}
 	receipt, err := owner.route.Submitter.SubmitEntityCommit(ctx, prepared, func(outcome storage.CommitOutcome) {
 		if outcome.State == storage.CommitApplied {
+			freshDrop := false
+			if policy.durability == catalogDurableDrop && candidate.pendingDrops[policy.dropName] {
+				m.mu.RLock()
+				freshDrop = !m.pendingDrops[policy.dropName]
+				m.mu.RUnlock()
+			}
 			publicationErr = m.publishCatalog(candidate)
+			if freshDrop {
+				defer handoff.intentApplied(m)
+			}
 			if policy.durability == catalogDurableDrop {
 				syncErr := m.syncDropMetadata()
 				if syncErr != nil {
@@ -145,11 +155,12 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		return compose.Outcomes(errors.New("catalog commit discarded"), outcome.Err)
 	}
 	if outcome.State == storage.CommitRecoveryPending {
-		return &storage.AcceptedCommitError{State: outcome.State, LogicalID: logicalID, Err: outcome.Err}
+		handoff.waiterDetached(m)
+		return storage.AcceptedOutcome(outcome.State, logicalID, outcome.Err)
 	}
 	err = compose.Outcomes(outcome.Err, publicationErr)
 	if err != nil {
-		return &storage.AcceptedCommitError{State: storage.CommitApplied, LogicalID: logicalID, Err: err}
+		return storage.AcceptedOutcome(storage.CommitApplied, logicalID, err)
 	}
 	return nil
 }

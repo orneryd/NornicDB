@@ -328,6 +328,7 @@ func (b *BadgerEngine) retire() error {
 //
 // b.mu must be held and the engine owner must have sealed admission.
 func (b *BadgerEngine) releaseClosedStateLocked() {
+	b.acceptedApplications = nil
 	b.transitionPending(namespaceDropRelease, "", nil)
 	b.db = nil
 	b.nodeCache = nil
@@ -362,6 +363,9 @@ func (b *BadgerEngine) releaseClosedStateLocked() {
 func (b *BadgerEngine) Sync() error {
 	if err := b.ensureOpen(false); err != nil {
 		return err
+	}
+	if b.nativeSyncHook != nil {
+		b.nativeSyncHook()
 	}
 	return b.db.Sync()
 }

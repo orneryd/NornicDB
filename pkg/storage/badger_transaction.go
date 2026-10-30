@@ -40,6 +40,9 @@ type snapshotLabelCacheKey struct {
 //   - Isolation: Changes invisible until commit
 //   - Durability: Badger's WAL ensures persistence
 type BadgerTransaction struct {
+	// Author: NOR-288 lane (Codex), 2026-10-26. Accepted log application is
+	// already validated input, not a new transaction admission decision.
+	acceptedApplication            bool
 	clientDetached                 atomic.Bool
 	commitLogicalID                string
 	commitReleaseAcceptedAuthority func()
@@ -854,7 +857,11 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 	// This batches all writes together for better performance while maintaining ACID guarantees
 
 	// Stamp creation times before encoding, as direct engine creation does (#1228).
-	initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
+	// Author: NOR-288/NOR-292 lane (Codex), 2026-10-27. Accepted replay
+	// materializes an image, including zero timestamps, rather than a new create.
+	if !tx.acceptedApplication {
+		initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
+	}
 	// Serialize node (may store embeddings separately if too large)
 	_, embeddingsSeparate, err := tx.engine.writeCreatedNode(tx.badgerTx, tx.staged(), nodeKey(node.ID), node)
 	if err != nil {
@@ -1706,7 +1713,9 @@ func (tx *BadgerTransaction) sameEdgeCreateIdentityLocked(stored, candidate *Edg
 // counters for its endpoints' labels (as validateNewEdgeLocked returned
 // them), the read-your-writes copy and the create operation.
 func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string) error {
-	initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
+	if !tx.acceptedApplication {
+		initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
+	}
 	tx.engine.NotePropertyKeysInNamespace(namespaceForEdgeID(edge.ID), edge.Properties)
 	delete(tx.cancelledEdgeWrites, edge.ID)
 	_, recreated := tx.deletedEdges[edge.ID]

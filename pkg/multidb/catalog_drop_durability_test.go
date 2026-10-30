@@ -85,6 +85,15 @@ func newCatalogDropBarrier(t *testing.T) (*DatabaseManager, *f25CatalogReceiptPr
 	manager, err := NewDatabaseManager(t.Context(), probe, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
+	// Runs before Close (cleanups are LIFO). The probe holds the commit it
+	// intercepted until the test settles it; when an assertion aborts the test
+	// first, abort that frame so Close's lifecycle barrier is not left waiting.
+	// Author: NOR-288 lane (Claude), 2026-10-30.
+	t.Cleanup(func() {
+		if probe.prepared != nil {
+			probe.prepared.Abort()
+		}
+	})
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "target"}))
 	view, err := manager.GetStorage("target")
 	require.NoError(t, err)
@@ -119,8 +128,10 @@ func TestCatalogDropDurabilityFollowsPhysicalOutcome(t *testing.T) {
 		state      storage.CommitOutcomeState
 		wantSync   int32
 	}{
+		// An applied intent whose acknowledgement failed is finished by the DROP
+		// owner in the same call, so its final transition also Syncs.
 		{"rejected", 1, storage.CommitDiscarded, 0}, {"pending-discarded", 1, storage.CommitDiscarded, 0},
-		{"applied-ack-error", 1, storage.CommitApplied, 1}, {"applied-ack-error", 2, storage.CommitApplied, 2},
+		{"applied-ack-error", 1, storage.CommitApplied, 2}, {"applied-ack-error", 2, storage.CommitApplied, 2},
 		{"accepted-wait", 2, storage.CommitApplied, 2},
 	} {
 		t.Run(fmt.Sprintf("%s/%d", test.phase, test.faultAfter), func(t *testing.T) {
@@ -137,7 +148,7 @@ func TestCatalogDropDurabilityFollowsPhysicalOutcome(t *testing.T) {
 				cancel()
 				var accepted *storage.AcceptedCommitError
 				require.ErrorAs(t, <-result, &accepted)
-				require.ErrorIs(t, accepted, context.Canceled)
+				requireCatalogAcceptedDiagnostic(t, accepted, context.Canceled)
 				require.NoError(t, storagefault.FinishPreparedReceipt(probe.prepared, probe.receiptOwner, storage.CommitOutcome{State: test.state, Err: storage.ErrConflict}))
 			} else {
 				require.Error(t, manager.DropDatabase(t.Context(), "target"))
@@ -155,7 +166,11 @@ func TestCatalogDropSyncFailureRetainsAbsentNameFence(t *testing.T) {
 		t.Run(recovery, func(t *testing.T) {
 			manager, _, native, dir := newCatalogDropBarrier(t)
 			native.failSync = 2
-			require.ErrorIs(t, manager.DropDatabase(t.Context(), "target"), storage.ErrConflict)
+			// Author: NOR-288 lane (Codex), 2026-10-27. Applied metadata's
+			// failed acknowledgement remains accepted, with an inspectable cause.
+			var accepted *storage.AcceptedCommitError
+			require.ErrorAs(t, manager.DropDatabase(t.Context(), "target"), &accepted)
+			requireCatalogAcceptedDiagnostic(t, accepted, storage.ErrConflict)
 			assert.False(t, manager.Exists("target"), "Applied catalog removal must not resurrect metadata")
 			assert.True(t, manager.pendingDrops["target"], "failed durability acknowledgement retains unavailable-name fence")
 			purges := native.purgeCalls.Load()
@@ -164,7 +179,8 @@ func TestCatalogDropSyncFailureRetainsAbsentNameFence(t *testing.T) {
 			}
 			assert.ErrorIs(t, manager.CreateCompositeDatabase(t.Context(), "target", []ConstituentRef{{Alias: "a", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"}}), ErrDatabaseExists)
 			native.failSync = 3
-			require.ErrorIs(t, manager.DropDatabase(t.Context(), "target"), storage.ErrConflict, "renewed completion Sync failure retains the same fence")
+			require.ErrorAs(t, manager.DropDatabase(t.Context(), "target"), &accepted)
+			requireCatalogAcceptedDiagnostic(t, accepted, storage.ErrConflict, "renewed completion Sync failure retains the same fence")
 			assert.False(t, manager.Exists("target"))
 			assert.True(t, manager.pendingDrops["target"])
 			assert.Equal(t, purges, native.purgeCalls.Load(), "missing-record retries never purge")
@@ -295,7 +311,7 @@ func TestCatalogCanceledWaitDuringCompletionSyncRetainsReceiptLease(t *testing.T
 	}
 	var accepted *storage.AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
-	require.ErrorIs(t, err, context.Canceled)
+	requireCatalogAcceptedDiagnostic(t, accepted, context.Canceled)
 	assert.Equal(t, storage.CommitRecoveryPending, accepted.State)
 	assert.Zero(t, len(manager.catalogGate), "physical receipt retains catalog gate while Sync is unfinished")
 	assert.False(t, manager.Exists("target"), "Applied metadata is not rolled back by caller cancellation")
@@ -359,7 +375,7 @@ func TestCatalogDurableDropPublicationDuringClose(t *testing.T) {
 	require.NoError(t, <-native.syncResults)
 	syncErr := <-native.syncResults
 	if syncErr != nil {
-		assert.ErrorIs(t, err, syncErr)
+		assert.True(t, catalogAcceptedDiagnosticContains(accepted, syncErr))
 	}
 	assert.Equal(t, syncErr != nil, manager.pendingDrops["target"])
 	assert.False(t, manager.Exists("target"))

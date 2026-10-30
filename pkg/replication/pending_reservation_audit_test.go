@@ -53,7 +53,12 @@ func TestPendingReplicationRetainsByteReservation(t *testing.T) {
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: ceiling}}))
 	route.delay = true
 	err = view.UpdateNode(growth)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	// Author: NOR-288 lane, 2026-10-29. The accepted allowance survives a
+	// stopped wait; only explicit diagnostic inspection exposes the deadline.
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, err, &accepted)
+	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+	requireAcceptedDiagnosticCause(t, err, context.DeadlineExceeded)
 	pending := route.pending
 	require.NotNil(t, pending)
 	route.delay = false

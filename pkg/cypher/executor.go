@@ -684,6 +684,8 @@ type hotPathTraceState struct {
 // Read-only resolution/storage APIs retain their existing signatures.
 type DatabaseManagerInterface interface {
 	CreateDatabase(ctx context.Context, request multidb.DatabaseCreateRequest) error
+	// DropDatabase is the single DROP-state owner: it reports a truly absent
+	// name as multidb.ErrDatabaseNotFound and finishes a pending drop.
 	DropDatabase(ctx context.Context, name string) error
 	ListDatabases() []DatabaseInfoInterface
 	Exists(name string) bool

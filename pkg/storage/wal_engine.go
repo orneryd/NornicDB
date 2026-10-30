@@ -41,8 +41,6 @@ func (w *WALEngine) logger() *slog.Logger {
 //     unbounded WAL growth.
 type WALEngine struct {
 	pendingEntityCommits sync.Map
-	entityWaitCtx        context.Context
-	stopEntityWait       context.CancelFunc
 	engine               Engine
 	// keyRegistry is engine's PropertyKeyRegistry, nil when it keeps none.
 	keyRegistry PropertyKeyRegistry
@@ -287,9 +285,7 @@ func (w *WALEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 
 // NewWALEngine creates a WAL-backed storage engine.
 func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
-	waitCtx, stopWait := context.WithCancel(context.Background())
 	w := &WALEngine{
-		entityWaitCtx: waitCtx, stopEntityWait: stopWait,
 		engine: engine,
 		wal:    wal,
 	}
@@ -1170,12 +1166,13 @@ func (w *WALEngine) Close() error {
 	// Seal admission before draining registered native frames. Registration uses
 	// the same WAL mutex, so no pending frame can appear after this cut.
 	walErr := w.wal.Close()
-	w.stopEntityWait()
 	w.pendingEntityCommits.Range(func(_, value any) bool {
 		accepted := value.(*walAcceptedEntityCommit)
-		accepted.prepared.CloseNative()
 		accepted.releaseMutation()
-		_ = accepted.resolve.Resolve(CommitOutcome{State: CommitRecoveryPending, Err: ErrStorageClosed})
+		// Author: NOR-288 lane (Codex), 2026-10-27. Closing staging cannot
+		// certify rejection of a command already recorded in this WAL; its
+		// accepted owner releases its staging and keeps it pending.
+		accepted.handle.Close(accepted.resolve, ErrStorageClosed)
 		return true
 	})
 	// A snapshot worker may have been waiting behind an accepted mutation lease.

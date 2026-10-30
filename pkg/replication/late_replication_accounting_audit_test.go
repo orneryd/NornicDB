@@ -14,12 +14,13 @@ import (
 
 type managedRouteReplicator struct {
 	Replicator
-	peer         *StorageAdapter
-	reject       bool
-	calls        int
-	delay        bool
-	pending      *Command
-	pendingOwner storage.CommitReceiptOwner
+	peer           *StorageAdapter
+	reject         bool
+	calls          int
+	delay          bool
+	pending        *Command
+	pendingOwner   storage.CommitReceiptOwner
+	pendingReceipt *storage.CommitReceipt
 }
 
 func (r *managedRouteReplicator) Apply(cmd *Command, timeout time.Duration) error {
@@ -62,7 +63,12 @@ func TestManagedReplicationLateApplyUsesAccountingOwner(t *testing.T) {
 	before, _, _ := manager.GetStorageSize("late_apply")
 	r.delay = true
 	err = view.UpdateNode(&storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: map[string]any{"payload": "late committed body"}})
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	// Author: NOR-288 lane, 2026-10-29. This is an accepted wait outcome,
+	// rather than a new-command rejection with a retryable deadline identity.
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, err, &accepted)
+	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+	requireAcceptedDiagnosticCause(t, err, context.DeadlineExceeded)
 	require.False(t, nornicerrors.IsCommitRolledBack(err), "replication timeout cannot certify logical rollback")
 	require.NotNil(t, r.pending)
 	unchanged, _, _ := manager.GetStorageSize("late_apply")
@@ -91,7 +97,7 @@ func (r *managedRouteReplicator) SubmitAcceptedCommand(ctx context.Context, cmd 
 		r.calls++
 		r.pending = cmd
 		receipt, owner := storage.NewCommitReceipt(settle)
-		r.pendingOwner = owner
+		r.pendingOwner, r.pendingReceipt = owner, receipt
 		if err := owner.Resolve(storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: context.DeadlineExceeded}); err != nil {
 			return nil, err
 		}
@@ -109,9 +115,13 @@ func (r *managedRouteReplicator) applyPending(adapter *StorageAdapter, cmd *Comm
 	if err == nil {
 		err = r.peer.ApplyCommand(&Command{Type: cmd.Type, Data: cmd.Data, Timestamp: cmd.Timestamp, RequestID: cmd.RequestID})
 	}
-	outcome := acceptedCommandOutcome(cmd, err)
-	if resolveErr := r.pendingOwner.Resolve(outcome); resolveErr != nil {
-		return resolveErr
+	// The accepted owner joins the late application; accounting is published
+	// by the terminal settlement the caller observes next.
+	cmd.accepted.Settle(r.pendingOwner, err)
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return r.pendingReceipt.Wait(ctx)
 	}
 	return err
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 )
 
 // EntityCommitSubmitter is discovered before unwrapping a storage wrapper.
@@ -19,6 +20,11 @@ type EntityCommitSubmitter interface {
 // command chooses physical commit or definite discard. Caller wait cancellation
 // is not a discard decision.
 type PreparedEntityCommit struct {
+	// Author: NOR-288 lane (Codex), 2026-10-26. The retained authority owner
+	// is reused by applications of this same accepted logical command.
+	accepted             atomic.Bool
+	application          acceptedEntityApplication
+	authorityOwner       string
 	mode                 EntityCommitMode
 	markRecoveryPending  func()
 	hooksMu              sync.Mutex
@@ -199,7 +205,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			}
 			nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
-			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
+			prepared = &PreparedEntityCommit{engine: tx.engine, authorityOwner: tx.ID, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
 			prepared.retainAuthority = func() (func(), error) {
 				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, endpoints))
@@ -243,6 +249,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			}
 			// Accepted work belongs to its terminal owner, no longer the waiter.
 			tx.commitCtx = nil
+			tx.acceptedApplication = tx.acceptedApplication || prepared.accepted.Load()
 			return nil
 		}})
 		if prepared != nil {
@@ -285,6 +292,7 @@ func (p *PreparedEntityCommit) RetainAcceptedAuthority() (func(), error) {
 	p.hooksMu.Lock()
 	p.appliedHooks = append(p.appliedHooks, releaseOnce)
 	p.hooksMu.Unlock()
+	p.accepted.Store(true)
 	return releaseOnce, nil
 }
 

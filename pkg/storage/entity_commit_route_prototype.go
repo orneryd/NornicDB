@@ -58,6 +58,11 @@ func (b *BadgerEngine) SubmitEntityCommit(ctx context.Context, prepared *Prepare
 	if prepared == nil || prepared.engine != b {
 		return nil, ErrInvalidData
 	}
+	// Author: NOR-288 lane (Codex), 2026-10-26. A durable outer owner has
+	// accepted this command. A native conflict cannot reject that decision.
+	if prepared.accepted.Load() {
+		return b.submitAcceptedEntityApplication(prepared, settle), nil
+	}
 	if ctx != nil && ctx.Err() != nil {
 		prepared.Abort()
 		return nil, ctx.Err()

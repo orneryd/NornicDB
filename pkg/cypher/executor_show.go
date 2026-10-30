@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"log/slog"
@@ -1193,12 +1194,15 @@ func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher stri
 	if strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
-	if e.dbManager.Exists(dbName) {
-		if mode == replaceExistingDatabase {
-			if err := e.dbManager.DropDatabase(ctx, dbName); err != nil {
-				return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
-			}
-		} else if ifNotExists {
+	if mode == replaceExistingDatabase {
+		// Author: NOR-288 lane (Claude), 2026-10-30. The DROP owner decides what
+		// replace removes: an existing database, a pending drop it completes, or
+		// nothing when the name is truly absent.
+		if err := e.dbManager.DropDatabase(ctx, dbName); err != nil && !errors.Is(err, multidb.ErrDatabaseNotFound) {
+			return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
+		}
+	} else if e.dbManager.Exists(dbName) {
+		if ifNotExists {
 			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{dbName}}}, nil
 		} else {
 			return nil, localizedError(localization.CypherAdminDatabaseAlreadyExists(dbName), nil)

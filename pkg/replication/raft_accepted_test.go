@@ -92,7 +92,12 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				t.Cleanup(func() { queueCtx.once.Do(func() { close(queueCtx.release) }) })
 				queued := make(chan error, 1)
 				go func() {
-					_, err := r.SubmitAcceptedCommand(queueCtx, &Command{Type: CmdCommitTransaction, accepted: &acceptedEntityCommand{prepared: storage.NewAcceptedEntityCommitHandle(prepared)}}, nil)
+					accepted, _, err := storage.AcceptEntityCommit(engine, prepared)
+					if err != nil {
+						queued <- err
+						return
+					}
+					_, err = r.SubmitAcceptedCommand(queueCtx, &Command{Type: CmdCommitTransaction, accepted: accepted}, nil)
 					queued <- err
 				}()
 				<-queueCtx.entered
@@ -131,7 +136,9 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 					stop()
 					outcome := receipt.WaitOutcome(canceled)
 					require.Equal(t, storage.CommitRecoveryPending, outcome.State)
-					require.ErrorIs(t, outcome.Err, context.Canceled)
+					var accepted *storage.AcceptedCommitError
+					require.ErrorAs(t, outcome.Err, &accepted)
+					require.ErrorIs(t, accepted.Cause(), context.Canceled)
 					require.Zero(t, settled.Load())
 					_, err = engine.GetStoredNode("wire:accepted")
 					require.ErrorIs(t, err, storage.ErrNotFound)
@@ -148,7 +155,11 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				case "commit-timeout":
 					outcome := receipt.WaitOutcome(ctx)
 					require.Equal(t, storage.CommitRecoveryPending, outcome.State)
-					require.ErrorContains(t, outcome.Err, "commit timeout")
+					// Author: NOR-288 lane (Codex), 2026-10-27. Public accepted
+					// text cannot advertise a fresh rejection; diagnostics stay typed.
+					var accepted *storage.AcceptedCommitError
+					require.ErrorAs(t, outcome.Err, &accepted)
+					require.ErrorContains(t, accepted.Cause(), "commit timeout")
 					require.Zero(t, settled.Load())
 					_, err = engine.GetStoredNode("wire:accepted")
 					require.ErrorIs(t, err, storage.ErrNotFound)
@@ -159,7 +170,9 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				case "apply-failure", "committed-shutdown":
 					outcome := receipt.WaitOutcome(ctx)
 					require.Equal(t, storage.CommitRecoveryPending, outcome.State)
-					require.ErrorIs(t, outcome.Err, fault.failure)
+					var accepted *storage.AcceptedCommitError
+					require.ErrorAs(t, outcome.Err, &accepted)
+					require.ErrorIs(t, accepted.Cause(), fault.failure)
 					require.Zero(t, settled.Load())
 					require.EqualValues(t, 1, r.commitIndex)
 					require.Zero(t, r.lastApplied)
@@ -167,7 +180,8 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 						require.NoError(t, r.Shutdown())
 						outcome = receipt.WaitOutcome(ctx)
 						require.Equal(t, storage.CommitRecoveryPending, outcome.State)
-						require.ErrorIs(t, outcome.Err, ErrClosed)
+						require.ErrorAs(t, outcome.Err, &accepted)
+						require.ErrorIs(t, accepted.Cause(), ErrClosed)
 						require.Zero(t, settled.Load(), "shutdown cannot certify a committed entry discarded")
 						select {
 						case <-receipt.Done():

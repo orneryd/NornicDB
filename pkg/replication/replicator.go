@@ -8,6 +8,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Replicator is the unified interface for all replication modes.
@@ -81,7 +82,7 @@ type Replicator interface {
 
 // Command represents a write operation to be replicated.
 type Command struct {
-	accepted *acceptedEntityCommand
+	accepted *storage.AcceptedEntityCommitHandle
 	// Type identifies the operation type.
 	Type CommandType
 

@@ -60,9 +60,9 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 	if prepared == nil {
 		return nil, nil, true, nil
 	}
-	// The prepared commit owns an immutable private snapshot; encoding reads it
-	// rather than duplicating a detached public Operations copy.
-	payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Prepared: prepared})
+	// The storage accepted owner encodes the snapshot once and retains its
+	// authority. Author: NOR-288 lane (Codex), 2026-10-26. Preserve accepted identity.
+	accepted, payload, err := storage.AcceptEntityCommit(a.engine, prepared)
 	if err != nil {
 		prepared.Abort()
 		if settle != nil {
@@ -70,33 +70,8 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 		}
 		return nil, nil, true, err
 	}
-	inner, found := storage.EntityCommitSubmitterFor(a.engine)
-	if !found {
-		prepared.Abort()
-		if settle != nil {
-			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: storage.ErrInvalidData})
-		}
-		return nil, nil, true, storage.ErrInvalidData
-	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthority()
-	if err != nil {
-		prepared.Abort()
-		if settle != nil {
-			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
-		}
-		return nil, nil, true, err
-	}
-	normalized := &Command{Type: CmdCommitTransaction, Data: payload, Timestamp: cmd.Timestamp, RequestID: prepared.LogicalID()}
-	normalized.accepted = &acceptedEntityCommand{owner: a.engine, prepared: storage.NewAcceptedEntityCommitHandle(prepared), inner: inner.Submitter, nativeDone: make(chan struct{})}
-	complete := func(outcome storage.CommitOutcome) {
-		if outcome.State != storage.CommitRecoveryPending {
-			normalized.accepted.prepared.Retire()
-			releaseAuthority()
-		}
-		if settle != nil {
-			settle(outcome)
-		}
-	}
+	normalized := &Command{Type: CmdCommitTransaction, Data: payload, Timestamp: cmd.Timestamp, RequestID: prepared.LogicalID(), accepted: accepted}
+	complete := accepted.Terminal(settle)
 	return normalized, complete, true, nil
 }
 func entityOperationsNamespace(ops []storage.Operation) (string, error) {
@@ -162,23 +137,17 @@ func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command
 	}
 	submitter, ok := replicator.(AcceptedCommandSubmitter)
 	if !ok {
-		normalized.accepted.prepared.AbortNative()
-		if settle != nil {
-			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: ErrNotReady})
-		}
+		normalized.accepted.Discard(settle, ErrNotReady)
 		return true, ErrNotReady
 	}
 	receipt, err := submitter.SubmitAcceptedCommand(ctx, normalized, settle)
 	if err != nil {
-		normalized.accepted.prepared.AbortNative()
-		if settle != nil {
-			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
-		}
+		normalized.accepted.Discard(settle, err)
 		return true, err
 	}
 	outcome := receipt.WaitOutcome(ctx)
 	if outcome.Err == nil || outcome.State == storage.CommitDiscarded {
 		return true, outcome.Err
 	}
-	return true, &storage.AcceptedCommitError{State: outcome.State, LogicalID: normalized.RequestID, Err: outcome.Err}
+	return true, storage.AcceptedOutcome(outcome.State, normalized.RequestID, outcome.Err)
 }

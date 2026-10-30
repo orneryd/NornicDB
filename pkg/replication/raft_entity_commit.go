@@ -67,15 +67,12 @@ func (f *applyFuture) discardBeforeCommit(err error) {
 		}
 		return
 	}
-	if f.cmd.accepted != nil && f.cmd.accepted.prepared != nil {
-		f.cmd.accepted.prepared.AbortNative()
-	}
-	_ = f.accepted.owner.Resolve(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
+	f.cmd.accepted.Reject(f.accepted.owner, err)
 }
 
-// reportRecorded preserves pending recovery when a consensus decision exists.
-// Physical publication can release storage authority before native listeners
-// finish. The final join runs outside Raft's application/log locks.
+// reportRecorded hands every recorded application result, initial or retry,
+// before or after native submission, to the one accepted owner. Its join runs
+// outside Raft's application/log locks.
 func (f *applyFuture) reportRecorded(err error) {
 	if f.accepted == nil {
 		select {
@@ -84,24 +81,5 @@ func (f *applyFuture) reportRecorded(err error) {
 		}
 		return
 	}
-	if err != nil {
-		if f.cmd.accepted != nil && f.cmd.accepted.started.Load() {
-			f.cmd.accepted.prepared.MarkRecoveryPending()
-		}
-		_ = f.accepted.owner.Resolve(storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: err})
-		// Snapshot this attempt's ownership before scheduling a join. An apply
-		// rejected before native execution must not later observe another
-		// successful attempt and attach its stale error to that completion.
-		if f.cmd.accepted == nil || !f.cmd.accepted.started.Load() {
-			return
-		}
-	} else {
-		f.accepted.owner.PublishPhysical(storage.CommitOutcome{State: storage.CommitApplied})
-	}
-	go func() {
-		outcome := acceptedCommandOutcome(f.cmd, err)
-		if outcome.State != storage.CommitRecoveryPending || outcome.Err != nil {
-			_ = f.accepted.owner.Resolve(outcome)
-		}
-	}()
+	f.cmd.accepted.Settle(f.accepted.owner, err)
 }
