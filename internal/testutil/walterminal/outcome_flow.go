@@ -312,9 +312,17 @@ func NewEnclosedOutcomeFlow(t testing.TB, enclosingFirst bool) *EnclosedOutcomeF
 	})
 	innerExec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(New(t), "nornic"))
 	step := registerFlowProcedure(t, false, func(ctx context.Context, _ *cypher.StorageExecutor, _ string, _ []interface{}) (*cypher.ExecuteResult, error) {
-		_, err := innerExec.Execute(ctx, inner.Query, nil)
+		// The inner operation is an independent client operation: its returned
+		// outcome, with its committed work, is what this statement wraps. No
+		// live journal of the outer operation remembers the inner commit.
+		_, err := innerExec.Execute(context.Background(), inner.Query, nil)
 		if closeErr := enclosing.WAL.Close(); closeErr != nil {
 			return nil, closeErr
+		}
+		if err == nil {
+			// The construction needs a failed inner outcome; without one the
+			// assertions fail (a procedure never returns a nil result).
+			return flowValue(0), nil
 		}
 		return nil, err
 	})
