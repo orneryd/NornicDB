@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
-
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
@@ -250,22 +249,24 @@ func (b *BadgerEngine) Close() error {
 
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
+	var drainErr error
 	if b.writeBehind != nil {
-		if err := b.FlushWriteBehind(); err != nil && b.log != nil {
-			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
+		drainErr = b.FlushWriteBehind()
+		if drainErr != nil && b.log != nil {
+			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", drainErr)
 		}
 		b.writeBehind.Close()
 	}
 	// The suppressions the deletes so far ended are deleted before the store
 	// closes (forgetManualSuppression).
 	b.writeBarrier.RLock()
-	b.endSuppressions(&entityWriteContext{engine: b, owner: newEngineWriteLockOwner()})
+	suppressionErr := b.endSuppressions(&entityWriteContext{engine: b, owner: newEngineWriteLockOwner()})
 	b.writeBarrier.RUnlock()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call
-	// is idempotent, so the lifecycle stop under b.mu below stays as the
-	// guard for a controller installed after this point.
+	// Controller injection is part of the unpublished DB construction frame;
+	// invoke its one stop outside the engine publication lock.
 	b.mu.RLock()
 	lifecycle := b.lifecycleController
 	b.mu.RUnlock()
@@ -285,10 +286,6 @@ func (b *BadgerEngine) Close() error {
 		b.writeBarrier.Unlock()
 		return nil
 	}
-	if b.lifecycleController != nil {
-		b.lifecycleController.StopLifecycle()
-	}
-
 	b.closed = true
 	db := b.db
 	b.mu.Unlock()
@@ -301,6 +298,9 @@ func (b *BadgerEngine) Close() error {
 	// new notifications can start: BulkDeleteNodes adds them under mu only
 	// when the engine is not closed.
 	b.txnWG.Wait()
+	b.mu.RLock()
+	backgroundErr := b.retirementOutcomes.Err()
+	b.mu.RUnlock()
 	// Deliver what is ready but undelivered (a replay queues its events for
 	// whoever retired it) before waiting for every reserved notification.
 	b.drainCommitNotifications()
@@ -308,7 +308,7 @@ func (b *BadgerEngine) Close() error {
 
 	// Fold any derived-count deltas the last commits left behind so a clean
 	// reopen has no open-time write to perform (PR #1043 item #2).
-	b.foldRemainingCountDeltasOnClose(db)
+	countErr := b.foldRemainingCountDeltasOnClose(db)
 	b.releasePendingEmbeddingCandidates()
 	propertyErr := b.finishPropertyWALOnClose(db)
 
@@ -317,9 +317,9 @@ func (b *BadgerEngine) Close() error {
 	b.mu.Unlock()
 
 	if db == nil {
-		return nil
+		return compose.Outcomes(backgroundErr, drainErr, suppressionErr, countErr, propertyErr)
 	}
-	return compose.Outcomes(propertyErr, db.Close())
+	return compose.Outcomes(backgroundErr, drainErr, suppressionErr, countErr, propertyErr, db.Close())
 }
 
 // releaseClosedStateLocked drops large heap graphs that are not needed after

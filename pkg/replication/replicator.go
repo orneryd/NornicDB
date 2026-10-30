@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -35,6 +36,10 @@ type Replicator interface {
 	// Start initializes and starts the replicator.
 	// This should be called after the storage engine is ready.
 	Start(ctx context.Context) error
+
+	// LifetimeContext is the immutable context canceled by this owner's Shutdown.
+	// It is available before Start; accepted work must not replace its parent.
+	LifetimeContext() context.Context
 
 	// Apply applies a write command to the cluster.
 	// Returns ErrNotLeader if this node cannot accept writes.
@@ -72,6 +77,14 @@ type Replicator interface {
 
 	// NodeID returns this node's unique identifier.
 	NodeID() string
+}
+
+// lifecycleAttempt is the actual completion and result of one admitted native
+// lifecycle operation. Each component publishes it under its existing mutex;
+// the component's existing worker wait group retains the executing operation.
+type lifecycleAttempt struct {
+	done chan struct{}
+	err  error
 }
 
 // Command represents a write operation to be replicated.
@@ -311,6 +324,7 @@ type StandaloneReplicator struct {
 	mu      sync.RWMutex
 	started bool
 	closed  bool
+	work    lifecycle.WorkLifetime // stop signal of this replicator
 
 	// metrics is the Plan-04-06 observation seam. Standalone never
 	// publishes per-peer or transition metrics (no peers, no role
@@ -332,6 +346,9 @@ func NewStandaloneReplicator(config *Config, storage Storage) *StandaloneReplica
 		storage: storage,
 	}
 }
+
+// LifetimeContext returns the standalone owner's immutable shutdown context.
+func (r *StandaloneReplicator) LifetimeContext() context.Context { return r.work.Context() }
 
 // Start initializes the standalone replicator (no-op).
 func (r *StandaloneReplicator) Start(ctx context.Context) error {
@@ -420,9 +437,9 @@ func (r *StandaloneReplicator) WaitForLeader(ctx context.Context) error {
 // Shutdown stops the standalone replicator.
 func (r *StandaloneReplicator) Shutdown() error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	r.closed = true
+	r.mu.Unlock()
+	r.work.Cancel()
 	return nil
 }
 
