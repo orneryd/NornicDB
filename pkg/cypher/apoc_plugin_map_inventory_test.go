@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: inspect admitted callable signature metadata.
+
 import (
 	"context"
 	"reflect"
@@ -19,7 +21,7 @@ func TestAPOCMapReturnNullInventory(t *testing.T) {
 	withPluginFunctions(t, functions)
 	var names []string
 	for name, handler := range functions {
-		typ := reflect.TypeOf(handler)
+		typ := mustCallableForTest(handler).Signature()
 		if typ.Kind() == reflect.Func && typ.NumOut() > 0 && typ.Out(0).Kind() == reflect.Map {
 			names = append(names, name)
 		}
@@ -28,7 +30,7 @@ func TestAPOCMapReturnNullInventory(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "map_inventory"))
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
-			typ := reflect.TypeOf(functions[name])
+			typ := mustCallableForTest(functions[name]).Signature()
 			if typ.NumIn() == 0 {
 				t.Logf("MAP POLICY %s no null input", name)
 				return

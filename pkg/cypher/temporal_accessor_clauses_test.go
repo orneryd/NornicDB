@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"fmt"
@@ -41,7 +43,7 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			previous := PluginFunctionLookup
-			PluginFunctionLookup = mode.lookup
+			PluginFunctionLookup = checkedTestLookup(mode.lookup)
 			t.Cleanup(func() { PluginFunctionLookup = previous })
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_accessors"))
 			ctx := context.Background()

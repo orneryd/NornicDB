@@ -6,6 +6,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
@@ -43,7 +44,11 @@ var PluginFunctionList func() []PluginFunctionInfo
 // PluginFunctionLookup is a callback to look up functions from loaded plugins.
 // Set by pkg/nornicdb during database initialization.
 // Returns the function handler and true if found, nil and false otherwise.
-var PluginFunctionLookup func(name string) (handler interface{}, found bool)
+// PluginFunctionHandler is an admitted callable. Raw Go functions must pass
+// registry.Compile before lookup publication. Author: Codex NOR-184 lane.
+type PluginFunctionHandler = registry.Callable
+
+var PluginFunctionLookup func(name string) (handler *PluginFunctionHandler, found bool)
 
 func isFunctionCall(expr, funcName string) bool {
 	return inspectFunctionCall(expr, namedFunctionCall, funcName, nil)

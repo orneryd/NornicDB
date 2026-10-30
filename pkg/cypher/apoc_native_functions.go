@@ -1,9 +1,10 @@
 package cypher
 
+// Author: Codex NOR-184 lane: immutable callable metadata preserves identity checks.
+
 import (
 	"context"
 	"reflect"
-	"runtime"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/apocmeta"
@@ -280,19 +281,14 @@ func (e *StorageExecutor) nativeAPOCPath(name string, args []interface{}) (inter
 // through reflection would invoke the foreign helper and panic instead of
 // applying the function's null contract. Native/custom compatible handlers
 // remain eligible for ordinary plugin precedence.
-func nativeAPOCForeignGraphHandler(name string, handler interface{}) bool {
+func nativeAPOCForeignGraphHandler(name string, handler *PluginFunctionHandler) bool {
 	if !isNativeAPOCFunction(name) {
 		return false
 	}
-	if name == "apoc.temporal.format" && handler != nil {
-		v := reflect.ValueOf(handler)
-		if v.Kind() == reflect.Func && !v.IsNil() {
-			if fn := runtime.FuncForPC(v.Pointer()); fn != nil && fn.Name() == "github.com/orneryd/nornicdb/apoc/temporal.Format" {
-				return true
-			}
-		}
+	if name == "apoc.temporal.format" && handler.Symbol() == "github.com/orneryd/nornicdb/apoc/temporal.Format" {
+		return true
 	}
-	typ := reflect.TypeOf(handler)
+	typ := handler.Signature()
 	if typ == nil || typ.Kind() != reflect.Func {
 		return false
 	}

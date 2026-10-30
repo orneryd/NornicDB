@@ -1,10 +1,14 @@
 package cypher
 
+// Author: Codex NOR-184 lane: checked callable consumption, existing context policy.
+
 import (
 	"context"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/apoc/registry"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,14 +16,14 @@ import (
 
 // errUnsupportedPluginSignature is a plugin handler whose Go signature
 // callPluginHandler can't call.
-var errUnsupportedPluginSignature = errors.New("unsupported function signature")
+var errUnsupportedPluginSignature = registry.ErrUnsupportedSignature
 
 // pluginFunctionHandler is the one plugin function lookup, for the
 // unknown-function check and both evaluators: the loaded plugin's handler
 // for a dotted function name, matched as written. Plugin function names are
 // case-sensitive, as in Neo4j (apoc.text.camelCase, not apoc.text.camelcase;
 // #1163).
-func pluginFunctionHandler(name string) (interface{}, bool) {
+func pluginFunctionHandler(name string) (*PluginFunctionHandler, bool) {
 	if PluginFunctionLookup == nil || !strings.Contains(name, ".") {
 		return nil, false
 	}
@@ -32,7 +36,7 @@ func pluginFunctionHandler(name string) (interface{}, bool) {
 // with the statement error a failed call is. A plugin function overrides a
 // built-in of the same name; when its handler can't take a call, the
 // built-in answers instead: handled is false (#1163).
-func callPluginFunction(ctx context.Context, name string, handler interface{}, args []interface{}) (value interface{}, handled bool, err error) {
+func callPluginFunction(ctx context.Context, name string, handler *PluginFunctionHandler, args []interface{}) (value interface{}, handled bool, err error) {
 	if nativeAPOCForeignGraphHandler(name, handler) {
 		return nil, false, nil
 	}
@@ -96,12 +100,7 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 	return result, handled
 }
 
-// callPluginHandler invokes a plugin function handler with the given arguments.
-func callPluginHandler(handler interface{}, args []interface{}) (interface{}, error) {
-	return callPluginHandlerContext(context.Background(), handler, args)
-}
-
-func callPluginHandlerContext(ctx context.Context, handler interface{}, args []interface{}) (result interface{}, err error) {
+func callPluginHandlerContext(ctx context.Context, handler *PluginFunctionHandler, args []interface{}) (result interface{}, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -117,126 +116,6 @@ func callPluginHandlerContext(ctx context.Context, handler interface{}, args []i
 		// Plugin dispatch consumes this registration invariant and falls back to
 		// built-in function handling; it is never returned by query execution.
 		return nil, fmt.Errorf("nil handler")
-	}
-
-	// Type-based dispatch for common function signatures
-	switch fn := handler.(type) {
-	// No args
-	case func() interface{}:
-		if len(args) == 0 {
-			return fn(), nil
-		}
-	case func() string:
-		if len(args) == 0 {
-			return fn(), nil
-		}
-	case func() int64:
-		if len(args) == 0 {
-			return fn(), nil
-		}
-	case func() float64:
-		if len(args) == 0 {
-			return fn(), nil
-		}
-
-	// Single arg functions
-	case func(interface{}) interface{}:
-		if len(args) == 1 {
-			return fn(args[0]), nil
-		}
-	case func([]interface{}) interface{}:
-		if len(args) == 1 {
-			if list, ok := cypherListValue(args[0]); ok {
-				return fn(list), nil
-			}
-		}
-	case func([]interface{}) float64:
-		if len(args) == 1 {
-			if list, ok := cypherListValue(args[0]); ok {
-				return fn(list), nil
-			}
-		}
-	case func(string) string:
-		if len(args) == 1 {
-			if s, ok := args[0].(string); ok {
-				return fn(s), nil
-			}
-		}
-	case func(float64) float64:
-		if len(args) == 1 {
-			if f, ok := toFloat64(args[0]); ok {
-				return fn(f), nil
-			}
-		}
-	case func([]float64) []float64:
-		if len(args) == 1 {
-			if list, ok := toFloat64Slice(args[0]); ok {
-				return fn(list), nil
-			}
-		}
-
-	// Two arg functions
-	case func(interface{}, interface{}) interface{}:
-		if len(args) == 2 {
-			return fn(args[0], args[1]), nil
-		}
-	case func([]interface{}, interface{}) bool:
-		if len(args) == 2 {
-			if list, ok := cypherListValue(args[0]); ok {
-				return fn(list, args[1]), nil
-			}
-		}
-	case func([]interface{}, []interface{}) []interface{}:
-		if len(args) == 2 {
-			list1, ok1 := cypherListValue(args[0])
-			list2, ok2 := cypherListValue(args[1])
-			if ok1 && ok2 {
-				return fn(list1, list2), nil
-			}
-		}
-	case func(string, string) string:
-		if len(args) == 2 {
-			s1, ok1 := args[0].(string)
-			s2, ok2 := args[1].(string)
-			if ok1 && ok2 {
-				return fn(s1, s2), nil
-			}
-		}
-	case func(string, string) int:
-		if len(args) == 2 {
-			s1, ok1 := args[0].(string)
-			s2, ok2 := args[1].(string)
-			if ok1 && ok2 {
-				return fn(s1, s2), nil
-			}
-		}
-	case func(string, string) float64:
-		if len(args) == 2 {
-			s1, ok1 := args[0].(string)
-			s2, ok2 := args[1].(string)
-			if ok1 && ok2 {
-				return fn(s1, s2), nil
-			}
-		}
-	case func([]float64, []float64) float64:
-		if len(args) == 2 {
-			list1, ok1 := toFloat64Slice(args[0])
-			list2, ok2 := toFloat64Slice(args[1])
-			if ok1 && ok2 {
-				return fn(list1, list2), nil
-			}
-		}
-
-	// Three arg functions
-	case func(string, string, string) string:
-		if len(args) == 3 {
-			s1, ok1 := args[0].(string)
-			s2, ok2 := args[1].(string)
-			s3, ok3 := args[2].(string)
-			if ok1 && ok2 && ok3 {
-				return fn(s1, s2, s3), nil
-			}
-		}
 	}
 
 	return invokeTypedPlugin(ctx, handler, args)

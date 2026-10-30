@@ -7,7 +7,6 @@ package registry
 
 import (
 	"fmt"
-	"reflect"
 	"sync"
 )
 
@@ -18,13 +17,13 @@ type FunctionRegistry struct {
 }
 
 // FunctionDescriptor describes a registered function.
+// Author: Codex NOR-184 lane: only admitted callables can be published.
 type FunctionDescriptor struct {
-	Name        string                               // Full name (e.g., "apoc.coll.sum")
-	Category    string                               // Category (e.g., "coll", "text", "math")
-	Function    interface{}                          // The actual function
-	Description string                               // Human-readable description
-	Examples    []string                             // Usage examples
-	Handler     func(args []interface{}) interface{} // Wrapper for type-safe execution
+	Name        string
+	Category    string
+	Description string
+	Examples    []string
+	Handler     *Callable
 }
 
 // Global registry instance
@@ -56,7 +55,7 @@ func (r *FunctionRegistry) RegisterFunction(name, category string, fn interface{
 	}
 
 	// Create type-safe handler
-	handler, err := createHandler(fn)
+	handler, err := Compile(fn)
 	if err != nil {
 		return fmt.Errorf("failed to create handler for %s: %w", name, err)
 	}
@@ -64,7 +63,6 @@ func (r *FunctionRegistry) RegisterFunction(name, category string, fn interface{
 	r.functions[name] = &FunctionDescriptor{
 		Name:        name,
 		Category:    category,
-		Function:    fn,
 		Description: description,
 		Examples:    examples,
 		Handler:     handler,
@@ -93,8 +91,7 @@ func (r *FunctionRegistry) CallFunction(name string, args []interface{}) (interf
 	}
 
 	// Call the handler
-	result := descriptor.Handler(args)
-	return result, nil
+	return descriptor.Handler.Call(args)
 }
 
 // Get retrieves a function descriptor by name.
@@ -163,33 +160,6 @@ func (r *FunctionRegistry) Clear() {
 	defer r.mu.Unlock()
 
 	r.functions = make(map[string]*FunctionDescriptor)
-}
-
-// createHandler creates a type-safe handler for a function.
-func createHandler(fn interface{}) (func([]interface{}) interface{}, error) {
-	fnValue := reflect.ValueOf(fn)
-	fnType := fnValue.Type()
-
-	if fnType.Kind() != reflect.Func {
-		return nil, fmt.Errorf("not a function")
-	}
-
-	return func(args []interface{}) interface{} {
-		// Convert args to reflect.Value
-		in := make([]reflect.Value, len(args))
-		for i, arg := range args {
-			in[i] = reflect.ValueOf(arg)
-		}
-
-		// Call function
-		out := fnValue.Call(in)
-
-		// Return first result (or nil if no results)
-		if len(out) == 0 {
-			return nil
-		}
-		return out[0].Interface()
-	}, nil
 }
 
 // GetGlobalRegistry returns the global registry instance.

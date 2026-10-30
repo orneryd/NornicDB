@@ -5,9 +5,11 @@
 package apoc
 
 import (
+	"errors"
 	"fmt"
-	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sync"
+
+	"github.com/orneryd/nornicdb/apoc/registry"
 
 	"github.com/orneryd/nornicdb/apoc/agg"
 	"github.com/orneryd/nornicdb/apoc/algo"
@@ -63,13 +65,14 @@ var (
 	store     storage.Storage
 	mu        sync.RWMutex
 	initOnce  sync.Once
+	initErr   error
 )
 
 // Function represents a registered APOC function.
 type Function struct {
 	Name        string
 	Category    string
-	Handler     interface{}
+	Handler     *registry.Callable
 	Description string
 	Examples    []string
 }
@@ -77,7 +80,6 @@ type Function struct {
 // Initialize sets up APOC with storage and configuration.
 // This should be called once at application startup.
 func Initialize(storage storage.Storage, cfg *Config) error {
-	var err error
 	initOnce.Do(func() {
 		store = storage
 		if cfg == nil {
@@ -94,9 +96,9 @@ func Initialize(storage storage.Storage, cfg *Config) error {
 		// xml.SetStorage(storage)
 
 		functions = make(map[string]Function)
-		err = registerAllFunctions()
+		initErr = registerAllFunctions()
 	})
-	return err
+	return initErr
 }
 
 // SetStorage updates the storage backend (for testing or reconfiguration).
@@ -208,7 +210,17 @@ func GetInfo(name string) (*Function, bool) {
 }
 
 // register adds a function to the registry.
-func register(name, category string, handler interface{}, description string, examples []string) {
+// Author: Codex NOR-184 lane. Admission occurs before publishing a handler.
+func registerFunction(name, category string, function interface{}, description string, examples []string) error {
+	handler, err := registry.Compile(function)
+	if errors.Is(err, registry.ErrNonScalarResult) {
+		// Existing tuple declarations remain metadata-only, as before: neither
+		// their values nor an error result can be silently selected.
+		handler, err = registry.DescribeNonScalar(function)
+	}
+	if err != nil {
+		return fmt.Errorf("register %s: %w", name, err)
+	}
 	functions[name] = Function{
 		Name:        name,
 		Category:    category,
@@ -216,11 +228,16 @@ func register(name, category string, handler interface{}, description string, ex
 		Description: description,
 		Examples:    examples,
 	}
+	return nil
 }
 
 // registerAllFunctions registers all APOC functions at startup.
 // This is called once during initialization.
 func registerAllFunctions() error {
+	var registrationError error
+	register := func(name, category string, function interface{}, description string, examples []string) {
+		registrationError = errors.Join(registrationError, registerFunction(name, category, function, description, examples))
+	}
 	// ========================================
 	// Collection Functions (apoc.coll.*)
 	// ========================================
@@ -1380,162 +1397,10 @@ func registerAllFunctions() error {
 	register("apoc.xml.namespace", "xml", xml.Namespace, "Get namespace", []string{"apoc.xml.namespace(node) => ns"})
 	register("apoc.xml.getNamespace", "xml", xml.GetNamespace, "Get namespace", []string{"apoc.xml.getNamespace(node) => ns"})
 
-	return nil
+	return registrationError
 }
 
-// callFunction invokes a function with type conversion.
-func callFunction(handler interface{}, args []interface{}) (interface{}, error) {
-	// Simple type-based dispatch
-	// In production, use reflection for full type safety
-
-	switch fn := handler.(type) {
-	// Collection functions
-	case func([]interface{}) float64:
-		if len(args) != 1 {
-			return nil, fmt.Errorf("expected 1 argument, got %d", len(args))
-		}
-		list, ok := valueconvert.ListValue(args[0])
-		if !ok {
-			return nil, fmt.Errorf("expected list argument")
-		}
-		return fn(list), nil
-
-	case func([]interface{}) interface{}:
-		if len(args) != 1 {
-			return nil, fmt.Errorf("expected 1 argument, got %d", len(args))
-		}
-		list, ok := valueconvert.ListValue(args[0])
-		if !ok {
-			return nil, fmt.Errorf("expected list argument")
-		}
-		return fn(list), nil
-
-	case func([]interface{}, interface{}) bool:
-		if len(args) != 2 {
-			return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
-		}
-		list, ok := valueconvert.ListValue(args[0])
-		if !ok {
-			return nil, fmt.Errorf("expected list as first argument")
-		}
-		return fn(list, args[1]), nil
-
-	// Text functions
-	case func([]string, string) string:
-		if len(args) != 2 {
-			return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
-		}
-		view, isList := valueconvert.ReadList(args[0])
-		list := valueconvert.ToStringSlice(args[0])
-		if !isList || list == nil && view.Len() != 0 {
-			return nil, fmt.Errorf("expected string list")
-		}
-		delim, ok := args[1].(string)
-		if !ok {
-			return nil, fmt.Errorf("expected string delimiter")
-		}
-		return fn(list, delim), nil
-
-	case func(string, string) []string:
-		if len(args) != 2 {
-			return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
-		}
-		text, ok := args[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("expected string")
-		}
-		delim, ok := args[1].(string)
-		if !ok {
-			return nil, fmt.Errorf("expected string delimiter")
-		}
-		return fn(text, delim), nil
-
-	case func(string) string:
-		if len(args) != 1 {
-			return nil, fmt.Errorf("expected 1 argument, got %d", len(args))
-		}
-		text, ok := args[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("expected string")
-		}
-		return fn(text), nil
-
-	case func(string, string) int:
-		if len(args) != 2 {
-			return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
-		}
-		s1, ok := args[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("expected string")
-		}
-		s2, ok := args[1].(string)
-		if !ok {
-			return nil, fmt.Errorf("expected string")
-		}
-		return fn(s1, s2), nil
-
-	case func(string, string) float64:
-		if len(args) != 2 {
-			return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
-		}
-		s1, ok := args[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("expected string")
-		}
-		s2, ok := args[1].(string)
-		if !ok {
-			return nil, fmt.Errorf("expected string")
-		}
-		return fn(s1, s2), nil
-
-	// ML functions - single float
-	case func(float64) float64:
-		if len(args) != 1 {
-			return nil, fmt.Errorf("expected 1 argument, got %d", len(args))
-		}
-		v, ok := toFloat64(args[0])
-		if !ok {
-			return nil, fmt.Errorf("expected numeric argument")
-		}
-		return fn(v), nil
-
-	// ML functions - float slice
-	case func([]float64) []float64:
-		if len(args) != 1 {
-			return nil, fmt.Errorf("expected 1 argument, got %d", len(args))
-		}
-		slice, ok := toFloat64Slice(args[0])
-		if !ok {
-			return nil, fmt.Errorf("expected numeric list")
-		}
-		return fn(slice), nil
-
-	// ML functions - two float slices
-	case func([]float64, []float64) float64:
-		if len(args) != 2 {
-			return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
-		}
-		a, ok := toFloat64Slice(args[0])
-		if !ok {
-			return nil, fmt.Errorf("expected numeric list as first argument")
-		}
-		b, ok := toFloat64Slice(args[1])
-		if !ok {
-			return nil, fmt.Errorf("expected numeric list as second argument")
-		}
-		return fn(a, b), nil
-
-	default:
-		return nil, fmt.Errorf("unsupported function signature")
-	}
-}
-
-// toFloat64 converts various numeric types to float64
-func toFloat64(v interface{}) (float64, bool) {
-	return valueconvert.NumericFloat64(v)
-}
-
-// toFloat64Slice converts various slice types to []float64
-func toFloat64Slice(v interface{}) ([]float64, bool) {
-	return valueconvert.NumericFloat64Slice(v)
+// callFunction preserves root argument admission and delegates all invocation.
+func callFunction(handler *registry.Callable, args []interface{}) (interface{}, error) {
+	return handler.CallWithPolicy(args, nil, registry.APOCArguments)
 }

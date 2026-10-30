@@ -1,20 +1,31 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 // withPluginFunctions installs a plugin lookup over functions, keyed by name
 // as registered.
-func withPluginFunctions(t *testing.T, functions map[string]interface{}) {
+// Author: Codex NOR-184 lane, 2026-10-29: share the fixture with benchmarks.
+func withPluginFunctions(t testing.TB, functions map[string]interface{}) {
 	t.Helper()
 	previous := PluginFunctionLookup
-	PluginFunctionLookup = func(name string) (interface{}, bool) {
-		handler, found := functions[name]
+	// Admission belongs to fixture setup, never to the measured query path.
+	checked := make(map[string]*registry.Callable, len(functions))
+	for name, function := range functions {
+		handler, err := registry.Compile(function)
+		require.NoError(t, err, name)
+		checked[name] = handler
+	}
+	PluginFunctionLookup = func(name string) (*PluginFunctionHandler, bool) {
+		handler, found := checked[name]
 		return handler, found
 	}
 	t.Cleanup(func() { PluginFunctionLookup = previous })

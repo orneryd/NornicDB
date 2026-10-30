@@ -2,9 +2,11 @@
 //
 // This package implements all apoc.math.* functions for mathematical
 // operations in Cypher queries.
+// Author: Codex implementation lane for NOR-184 (LCM values), 2026-10-26.
 package math
 
 import (
+	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/rand"
@@ -316,25 +318,59 @@ func Normalize(value, oldMin, oldMax, newMin, newMax float64) float64 {
 	return newMin + t*(newMax-newMin)
 }
 
-// Gcd returns the greatest common divisor.
+// Gcd returns the non-negative greatest common divisor, including gcd(0,0)=0.
+// It returns an error when the mathematical magnitude exceeds int64.
 //
 // Example:
 //
 //	apoc.math.gcd(48, 18) => 6
-func Gcd(a, b int64) int64 {
-	for b != 0 {
-		a, b = b, a%b
-	}
-	return a
+func Gcd(a, b int64) (int64, error) {
+	return integerDivisorValue(a, b, false)
 }
 
-// Lcm returns the least common multiple.
+// Lcm returns the non-negative least common multiple, or zero if either input
+// is zero. It returns an error if the mathematical result exceeds int64.
 //
 // Example:
 //
 //	apoc.math.lcm(12, 18) => 36
-func Lcm(a, b int64) int64 {
-	return (a * b) / Gcd(a, b)
+func Lcm(a, b int64) (int64, error) {
+	return integerDivisorValue(a, b, true)
+}
+
+// integerDivisorValue owns the magnitude, Euclidean and result-range policy
+// for both operations. Unsigned magnitudes represent abs(MinInt64) exactly;
+// narrowing and multiplication occur only after their bounds are checked.
+// Author: Codex NOR-184 lane, 2026-10-29.
+func integerDivisorValue(a, b int64, lcm bool) (int64, error) {
+	const maximum = uint64(1<<63 - 1)
+	left, right := integerMagnitude(a), integerMagnitude(b)
+	if lcm && (left == 0 || right == 0) {
+		return 0, nil
+	}
+	x, y := left, right
+	for y != 0 {
+		x, y = y, x%y
+	}
+	result := x
+	if lcm {
+		quotient := left / x // Both operands, and therefore their GCD, are nonzero.
+		if quotient > maximum/right {
+			return 0, fmt.Errorf("lcm result exceeds int64")
+		}
+		result = quotient * right
+	}
+	if result > maximum {
+		return 0, fmt.Errorf("gcd result exceeds int64")
+	}
+	return int64(result), nil
+}
+
+func integerMagnitude(value int64) uint64 {
+	if value < 0 {
+		return uint64(-(value + 1)) + 1
+	}
+	return uint64(value)
 }
 
 // Factorial returns the factorial of n.

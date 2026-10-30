@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"strconv"
@@ -39,9 +41,10 @@ func TestLouvainEntryPointsShareRingCommunities(t *testing.T) {
 		require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
 		registered, found := apoc.GetInfo("apoc.community.louvain")
 		require.True(t, found)
-		handler, ok := registered.Handler.(func([]*community.Node, []*community.Relationship, community.LouvainConfig) []community.CommunityResult)
+		value, err := registered.Handler.Call([]interface{}{nodes, relationships, community.DefaultLouvainConfig()})
+		require.NoError(t, err)
+		result, ok := value.([]community.CommunityResult)
 		require.True(t, ok)
-		result := handler(nodes, relationships, community.DefaultLouvainConfig())
 		require.Len(t, result, 4)
 		for _, row := range result {
 			require.Equal(t, int64(0), row.CommunityID)
@@ -86,11 +89,13 @@ func TestLouvainEntryPointsSelfLoopsAndParallelEdges(t *testing.T) {
 			require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
 			registered, ok := apoc.GetInfo("apoc.community.louvain")
 			require.True(t, ok)
-			handler := registered.Handler.(func([]*community.Node, []*community.Relationship, community.LouvainConfig) []community.CommunityResult)
-			check(t, handler(nodes, rels, community.DefaultLouvainConfig()))
+			handler := registered.Handler
+			registeredValue, err := handler.Call([]interface{}{nodes, rels, community.DefaultLouvainConfig()})
+			require.NoError(t, err)
+			check(t, registeredValue.([]community.CommunityResult))
 			// Exercise the bundled typed-dispatch path, rather than calling the
 			// library handler only; this is also the plugin's exact handler.
-			value, err := callPluginHandlerContext(context.Background(), handler, []interface{}{nodes, rels, community.DefaultLouvainConfig()})
+			value, err := callTestPluginHandlerContext(context.Background(), handler, []interface{}{nodes, rels, community.DefaultLouvainConfig()})
 			require.NoError(t, err)
 			runtimeRows, ok := cypherListValue(value)
 			require.True(t, ok, "plugin result must remain a runtime list")

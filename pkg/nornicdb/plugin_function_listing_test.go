@@ -1,5 +1,7 @@
 package nornicdb
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"testing"
 
@@ -10,16 +12,16 @@ import (
 // its handler's Go type (#1168).
 func TestPluginFunctionsAreListedWithTheirGoSignature(t *testing.T) {
 	require.Equal(t, "zz.f(arg1 :: STRING, arg2 :: INTEGER, arg3 :: FLOAT, arg4 :: BOOLEAN) :: LIST<STRING>",
-		pluginFunctionSignature("zz.f", func(string, int64, float64, bool) []string { return nil }))
+		pluginFunctionSignature("zz.f", mustCallableForTest(func(string, int64, float64, bool) []string { return nil })))
 	require.Equal(t, "zz.g(arg1 :: MAP, arg2 :: LIST<ANY>, arg3 :: ANY) :: MAP",
-		pluginFunctionSignature("zz.g", func(map[string]interface{}, []interface{}, interface{}) map[string]interface{} { return nil }))
-	require.Equal(t, "zz.h(arg1 :: LIST<FLOAT>) :: ANY", pluginFunctionSignature("zz.h", func(...float64) {}))
-	require.Equal(t, "zz.i() :: ANY", pluginFunctionSignature("zz.i", "not a function"))
+		pluginFunctionSignature("zz.g", mustCallableForTest(func(map[string]interface{}, []interface{}, interface{}) map[string]interface{} { return nil })))
+	require.Equal(t, "zz.h(arg1 :: LIST<FLOAT>) :: ANY", pluginFunctionSignature("zz.h", mustCallableForTest(func(...float64) {})))
+	require.Equal(t, "zz.i() :: ANY", pluginFunctionSignature("zz.i", nil))
 
 	pluginsMu.Lock()
 	previous := pluginFunctions
 	pluginFunctions = map[string]PluginFunction{
-		"zz.text.camelCase": {Name: "zz.text.camelCase", Handler: func(string) string { return "" }, Description: "Camel-cases text", Category: "text"},
+		"zz.text.camelCase": {Name: "zz.text.camelCase", Handler: mustCallableForTest(func(string) string { return "" }), Description: "Camel-cases text", Category: "text"},
 	}
 	pluginsMu.Unlock()
 	t.Cleanup(func() {
