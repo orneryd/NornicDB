@@ -194,7 +194,10 @@ func (s *Service) StartRelationshipIndex() {
 		rs.mu.Lock()
 		rs.loading, rs.live = true, make(map[string]struct{})
 		rs.mu.Unlock()
-		go s.runRelationshipIndex(rs)
+		if !s.RunBackgroundTask(func() { s.runRelationshipIndex(rs) }) {
+			close(rs.ready)
+			close(rs.done)
+		}
 	})
 }
 
@@ -622,6 +625,11 @@ type relationshipCandidate struct {
 // Each result names the relationship, its type and both endpoints, with its
 // properties. Types filters by relationship type.
 func (s *Service) SearchRelationships(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (*SearchResponse, error) {
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	rs := s.relationshipSearch()
 	if rs == nil {
 		return nil, localizedError(localization.SearchRelationshipsDisabled(), ErrRelationshipSearchDisabled)

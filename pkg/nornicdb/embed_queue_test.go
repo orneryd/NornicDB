@@ -2077,17 +2077,29 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			defer mu.Unlock()
 			return append([]int(nil), got...)
 		}
-		ew := &EmbedWorker{
-			config: &EmbedWorkerConfig{
-				ClusterDebounceDelay: 15 * time.Millisecond,
-				ClusterMinBatchSize:  2,
-			},
-			onQueueEmpty: func(processedCount int) {
-				mu.Lock()
-				got = append(got, processedCount)
-				mu.Unlock()
-			},
-		}
+		// The debounce timer is owned by the worker's lifetime, so the worker is
+		// built by its constructor; DeferWorkerStart keeps it free of goroutines.
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		ew := NewEmbedWorker(newMockEmbedder(), storage.NewNamespacedEngine(base, "test"), &EmbedWorkerConfig{
+			NumWorkers:           1,
+			ScanInterval:         time.Second,
+			BatchDelay:           time.Millisecond,
+			MaxRetries:           1,
+			ChunkSize:            64,
+			ChunkOverlap:         8,
+			TriggerDebounceDelay: 10 * time.Millisecond,
+			ClusterDebounceDelay: 15 * time.Millisecond,
+			ClusterMinBatchSize:  2,
+			DeferWorkerStart:     true,
+			EmbedBatchSize:       1,
+			IncludeLabels:        true,
+		})
+		defer ew.Close()
+		ew.SetOnQueueEmpty(func(processedCount int) {
+			mu.Lock()
+			got = append(got, processedCount)
+			mu.Unlock()
+		})
 
 		ew.scheduleClusteringDebounced(1)
 		ew.scheduleClusteringDebounced(2)
@@ -2483,9 +2495,8 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			ChunkOverlap:     8,
 			DeferWorkerStart: true,
 		})
-		worker.clusterDebounceMu.Lock()
-		worker.clusterDebounceTimer = time.NewTimer(time.Hour)
-		worker.clusterDebounceMu.Unlock()
+		worker.config.ClusterDebounceDelay = time.Hour
+		worker.scheduleClusteringDebounced(1)
 		worker.Close()
 
 		worker.clusterDebounceMu.Lock()

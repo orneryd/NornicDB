@@ -16,7 +16,7 @@ func TestTransactionOperationFinishJoinsTimeoutCleanupBeforeDisposition(t *testi
 	}
 	requested := make(chan struct{}, 1)
 	lifecycle := &transactionLifecycle{}
-	require.NoError(t, lifecycle.begin(context.Background(), 0, "nornic", executor, nil,
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), 0, "nornic", executor, nil,
 		func(reason transactionTerminalReason, _ string, _ time.Duration, _ error) {
 			if reason == transactionTerminalTimeoutCleanupRequested {
 				requested <- struct{}{}
@@ -55,7 +55,7 @@ func TestTransactionOperationFinishCommitsResponseBeforeLaterIdleExpiry(t *testi
 	}
 	lifecycle := &transactionLifecycle{}
 	require.NoError(t, lifecycle.begin(
-		context.Background(), 0, "nornic", executor, nil, nil))
+		context.Background(), testTxOwner(), 0, "nornic", executor, nil, nil))
 	_, err := lifecycle.claimOperation()
 	require.NoError(t, err)
 	require.NoError(t, lifecycle.finishOperation(),

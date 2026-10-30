@@ -15,7 +15,7 @@ func installRunningInitialBuild(t *testing.T, db *DB) (finish func()) {
 	t.Helper()
 	dbName := db.defaultDatabaseName()
 	entry := &dbSearchService{dbName: dbName, buildDone: make(chan struct{})}
-	entry.buildOnce.Do(func() {})
+	entry.buildOnce.Run(func() {})
 	db.searchServicesMu.Lock()
 	db.searchServices[dbName] = entry
 	db.searchServicesMu.Unlock()
