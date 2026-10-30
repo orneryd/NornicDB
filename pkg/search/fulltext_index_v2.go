@@ -21,7 +21,8 @@ const (
 
 // bm25V2FormatVersion is the semver written into saved BM25 index files.
 // On load, a file whose version is not equal to this is not loaded (caller rebuilds).
-const bm25V2FormatVersion = "2.1.0"
+// Integrity trailer format: Codex NOR-283 lane, 29 October 2026.
+const bm25V2FormatVersion = "2.2.0"
 
 const (
 	bm25PrefixWeight           = 0.8
