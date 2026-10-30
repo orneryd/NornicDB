@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -169,6 +168,13 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 		return nil, fmt.Errorf("complete continuation requires graph mutation revisions: %w", resultstream.ErrInvalidated)
 	}
 
+	// The wanted-type set is compiled once for this build. Every candidate
+	// node is tested against it by nodeMatchesType, the canonical predicate.
+	var wantedTypes map[string]struct{}
+	if len(options.Types) > 0 {
+		wantedTypes = wantedTypesLower(options.Types)
+	}
+
 	s.mu.RLock()
 	decayFilter := s.nodeDecayFilter
 	s.mu.RUnlock()
@@ -220,7 +226,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 		if scannedNodes > policy.MaxScannedNodes {
 			return resultstream.ErrCapacity
 		}
-		eligible, err := s.continuationNodeEligible(node, &options, decayFilter, request.AuthorizeNode)
+		eligible, err := s.continuationNodeEligible(node, &options, wantedTypes, decayFilter, request.AuthorizeNode)
 		if err != nil || !eligible {
 			return err
 		}
@@ -450,7 +456,16 @@ func searchPassageFromResult(result SearchResult) SearchPassage {
 	return result
 }
 
-func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOptions, decayFilter NodeDecayFilterFunc, authorizeNode NodeAuthorizationFunc) (bool, error) {
+// continuationNodeEligible is the single eligibility rule for a catalog
+// candidate, applied in this order: suppression and decay, then authorization
+// and its error, then the Types predicate, then the property filters and Where,
+// then whether the node is current enough to index (shouldIndexNode).
+//
+// wantedTypes is wantedTypesLower(options.Types), compiled once by the caller
+// for the whole build; its nil/empty value means Types doesn't constrain the
+// candidate. The membership test itself is nodeMatchesType, so every Type
+// decision on this path is the canonical one.
+func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOptions, wantedTypes map[string]struct{}, decayFilter NodeDecayFilterFunc, authorizeNode NodeAuthorizationFunc) (bool, error) {
 	if node == nil || node.RuntimeMetadata().VisibilitySuppressed || (decayFilter != nil && decayFilter(string(node.ID))) {
 		return false, nil
 	}
@@ -460,26 +475,8 @@ func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOp
 			return false, err
 		}
 	}
-	if len(options.Types) > 0 {
-		matched := false
-		for _, wanted := range options.Types {
-			wanted = strings.ToLower(wanted)
-			for _, label := range node.Labels {
-				if wanted == strings.ToLower(label) {
-					matched = true
-					break
-				}
-			}
-			if nodeType, ok := node.Properties["type"].(string); ok && wanted == strings.ToLower(nodeType) {
-				matched = true
-			}
-			if matched {
-				break
-			}
-		}
-		if !matched {
-			return false, nil
-		}
+	if len(options.Types) > 0 && !nodeMatchesType(node, wantedTypes) {
+		return false, nil
 	}
 	if !options.admitsNode(node) {
 		return false, nil

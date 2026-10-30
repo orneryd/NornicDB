@@ -20,7 +20,7 @@ Scope: all remaining failures from full `make verify` on `release/v1.4.4`, plus 
 - [x] Resolve running-statement registration/transaction observation ownership (inventory 9).
 - [x] Inventory the invalid cache-capacity sweep: inherited cache settings were stripped; exclude its capacity comparison.
 - [x] Reproduce the query discrepancy with explicit config and effective decay/cache settings; correct benchmark isolation. Controlled result hashes match; warmed decay-off reads recover expected latency.
-- [ ] Profile the verified 100,000-entry configuration and test promising follow-on creation optimizations.
+- [x] Profile the verified 100,000-entry configuration and test promising follow-on creation optimizations. See the portable Northwind report, including the GOGC=400 RSS tradeoff and separate default-GC diagnostic.
 - [ ] Verify frozen native/transport payloads and rerun allocation ceilings after the runtime API migration.
 - [x] Rebase onto fetched release `f0c932b902b4112114eaeb1fd8a160a6b2bb05cc` without a merge commit; working changes restored intact. Final rebased verification remains required.
 - [ ] Run final integrated checks on the committed correction head.
@@ -43,3 +43,13 @@ exclusions or ownership proof rules are changed by this policy decision.
 - [x] Repeat full integrated `make test` after source freeze and rebase; final command passes with no failures, including cached unchanged packages. The earlier failed runs remain recorded as failures.
 
 - [x] Rebase exposed a newly merged raw Badger fixture constructor in the checkpoint release test; register it with the existing fixture owner while preserving explicit close/reopen behavior. Focused and integrated checks recorded separately.
+
+## Final advisory follow-up
+
+- [x] Review every row of the completed 25-candidate advisory inventory against current source; preserve original nine dispositions.
+- [x] Converge continuation type membership, raw label-transition reads and publication identity cleanup; focused tests pass.
+- [x] Verify native codec error propagation and identity preservation (encoder 100%, decoder 92.9% statement coverage at focused scope).
+- [x] Complete follow-up full `make test` (exit 0; unchanged packages may use the Go test cache).
+- [ ] Complete committed-head `make verify ALL=1`.
+
+Evidence: [advisory dispositions](followup-advisory-dispositions.md), [Northwind measurements](../../../docs/performance/release144-verification-convergence.md).
