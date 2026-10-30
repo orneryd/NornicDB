@@ -45,116 +45,12 @@ func validatePropertyAccessTypes(ctx context.Context, cypher string, params map[
 // outer map is never modified. Declaration validity belongs to the shared
 // semantic scope walk; this visitor only tracks property receiver types.
 func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map[string]string, params map[string]interface{}) error {
-	clauses, ok := splitPipelineClauses(ctx, cypher)
-	if !ok {
-		return nil
+	input := make(typeScope, len(outer))
+	for name, kind := range outer {
+		input[name] = typedOperand(kind).proved()
 	}
-	types := outer
-	for _, clause := range clauses {
-		text := clause.text
-		switch clause.kind {
-		case pipelineClauseLet:
-			projections, err := parsePipelineLet(text)
-			if err != nil {
-				return err
-			}
-			next := make(map[string]string, len(types)+len(projections))
-			for name, typeName := range types {
-				next[name] = typeName
-			}
-			for _, projection := range projections {
-				if err := checkExpressionPropertyAccesses(ctx, projection.expression, types, params); err != nil {
-					return err
-				}
-				next[projection.alias] = propertyAccessExpressionType(projection.expression, types, params)
-			}
-			types = next
-		case pipelineClauseFilter:
-			if err := checkExpressionPropertyAccesses(ctx, pipelineFilterExpression(text), types, params); err != nil {
-				return err
-			}
-		case pipelineClauseWith, pipelineClauseReturn:
-			keyword := "WITH"
-			if clause.kind == pipelineClauseReturn {
-				keyword = "RETURN"
-			}
-			body, tail := projectionSemanticBodyAndTail(text, keyword)
-			if err := checkExpressionPropertyAccesses(ctx, body, types, params); err != nil {
-				return err
-			}
-			next := types
-			if clause.kind == pipelineClauseWith {
-				next = map[string]string{}
-				for _, raw := range splitTopLevelComma(body) {
-					itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
-					expression, alias := itemSource.expression, itemSource.alias
-					if expression == "*" {
-						for variable, typeName := range types {
-							next[variable] = typeName
-						}
-						continue
-					}
-					name := alias
-					if name == "" {
-						name = simpleSemanticIdentifier(expression)
-					}
-					if name == "" {
-						continue
-					}
-					name = normalizeProjectionColumnName(name)
-					next[name] = propertyAccessExpressionType(expression, types, params)
-				}
-			}
-			// WHERE and ORDER BY see the projection's names; ORDER BY also
-			// sees the names it replaced.
-			if tail != "" {
-				visible := make(map[string]string, len(types)+len(next))
-				for variable, typeName := range types {
-					visible[variable] = typeName
-				}
-				for variable, typeName := range next {
-					visible[variable] = typeName
-				}
-				if err := checkExpressionPropertyAccesses(ctx, tail, visible, params); err != nil {
-					return err
-				}
-			}
-			types = next
-		case pipelineClauseUnwind:
-			expression, alias, ok := parsePipelineIteration(text)
-			if !ok {
-				continue
-			}
-			if err := checkExpressionPropertyAccesses(ctx, expression, types, params); err != nil {
-				return err
-			}
-			variable := normalizeProjectionColumnName(alias)
-			// The element type of each list alternative, from the one
-			// list-element reader; unknown for a list of unknown elements.
-			element := elementOfType(propertyAccessExpressionType(expression, types, params))
-			if _, known := types[variable]; known || element != "" {
-				next := make(map[string]string, len(types)+1)
-				for name, typeName := range types {
-					next[name] = typeName
-				}
-				delete(next, variable)
-				if element != "" {
-					next[variable] = element
-				}
-				types = next
-			}
-		default:
-			if err := checkPropertyAccesses(ctx, text, types, params); err != nil {
-				return err
-			}
-			if clause.kind == pipelineClauseSet {
-				if err := setClauseSourceTypeError(text, types, params); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
+	_, _, err := (&StorageExecutor{}).enrichBoundTypes(withParams(ctx, params), cypher, input, semanticBodyFromContext(ctx), "", cypherVersionFromContext(ctx) == "25")
+	return err
 }
 
 // projectionSemanticBody is the projection items of a WITH / RETURN clause.
@@ -182,27 +78,40 @@ func projectionSemanticBodyAndTail(clause, keyword string) (string, string) {
 // expression: a parameter's (when checking with parameter values), the type
 // of the variable it copies, or the operator check's. A list comprehension is a
 // list of a type this check doesn't infer (List<T>). "" is unknown.
-func propertyAccessExpressionType(expression string, types map[string]string, params map[string]interface{}) string {
+func propertyAccessExpressionType(ctx context.Context, expression string, types map[string]string, params map[string]interface{}) string {
+	return (staticTypeScope{values: types, params: params}).parameterExpressionType(ctx, expression)
+}
+
+// parameterExpressionType is the one reader of request-parameter values. It
+// keeps the caller's whole typed environment: a typed program's atom, alone
+// or inside a larger expression, is never read as a request parameter.
+func (scope staticTypeScope) parameterExpressionType(ctx context.Context, expression string) string {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return ""
 	}
+	if operand, known := scope.typeParameters[expression]; known {
+		return operand.typeName()
+	}
 	if expression[0] == '$' && simpleSemanticIdentifier(strings.TrimSpace(expression[1:])) != "" {
-		if params == nil {
+		if scope.params == nil {
 			return ""
 		}
-		value, bound := params[strings.TrimSpace(expression[1:])]
+		value, bound := scope.params[strings.TrimSpace(expression[1:])]
 		if !bound {
 			return ""
 		}
 		return parameterPropertyAccessType(value)
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
-		return types[normalizeProjectionColumnName(variable)]
+		return scope.values[normalizeProjectionColumnName(variable)]
 	}
 	// Every other expression (CASE, a computed list, a call, arithmetic) is
 	// typed by the static operand owner, which keeps a union's alternatives.
-	if typeName := (staticTypeScope{values: types}).staticExpressionType(expression); typeName != "" {
+	// Only the parameter values are left out; the typed environment stays.
+	rest := scope
+	rest.params = nil
+	if typeName := rest.staticExpressionType(ctx, expression); typeName != "" {
 		return typeName
 	}
 	if _, list := stripEnclosingRowDelimiter(expression, '[', ']'); list {
@@ -251,7 +160,7 @@ func checkPropertyAccesses(ctx context.Context, text string, types map[string]st
 // Map, Node or Relationship but was Integer" for a base without properties.
 func checkExpressionPropertyAccesses(ctx context.Context, text string, types map[string]string, params map[string]interface{}) error {
 	if params != nil {
-		if err := validateStaticPropertySubscripts(text, staticTypeScope{values: types, params: params}); err != nil {
+		if err := validateStaticPropertySubscripts(ctx, text, staticTypeScope{values: types, params: params}); err != nil {
 			return err
 		}
 	}

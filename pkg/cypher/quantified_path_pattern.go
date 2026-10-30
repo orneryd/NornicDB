@@ -150,7 +150,6 @@ func parseQuantifiedPathMatch(body string) (*quantifiedPathMatch, bool, error) {
 		generated++
 		return generatedVariablePrefix + "qpp" + strconv.Itoa(generated)
 	}
-	outside := map[string]bool{}
 	for at := 0; at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {
 		open, close, quantifier, grouped := nextQuantifiedGroup(pattern, at)
 		if grouped && open == at {
@@ -176,19 +175,8 @@ func parseQuantifiedPathMatch(body string) (*quantifiedPathMatch, bool, error) {
 		}
 		piece := quantifiedPathPiece{}
 		piece.chain, piece.first, piece.last = nameChainEnds(chain, name)
-		structure := matchPatternStructure(chain)
-		for _, variable := range append(extractNodeVariables(structure), extractRelationshipVariables(structure)...) {
-			outside[variable] = true
-		}
 		m.pieces = append(m.pieces, piece)
 		at = end
-	}
-	for _, piece := range m.pieces {
-		for _, variable := range piece.variables {
-			if outside[variable] || variable == m.pathVariable {
-				return nil, true, labelExpressionSyntaxError(localization.CypherMatchingQuantifiedPathVariableOutside(variable))
-			}
-		}
 	}
 	for index := range m.pieces {
 		splitDeferredGroupWhere(m.pieces, index)

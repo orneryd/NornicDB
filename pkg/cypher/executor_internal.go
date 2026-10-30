@@ -51,7 +51,7 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 		}
 		return nil, e.failTransaction(ctx, statementTypeError(ctx, statement, "Administration", "Data", transaction))
 	}
-	return e.executeInternal(ctx, statement, params)
+	return e.executeInternal(withFinishedStatement(ctx, "", ""), statement, params)
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
@@ -62,7 +62,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if member.statement != nil {
 		ctx = &compositeContext{Context: ctx, statement: member.statement, storage: member.storage}
 	}
-
+	authoredStatement := statementAdmissionSource(ctx, cypher)
 	if e.txContext != nil && e.txContext.active {
 		defer func() { e.failTransaction(ctx, retErr) }()
 	}
@@ -112,11 +112,20 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateStatementFraming(ctx, cypher); err != nil {
 		return nil, err
 	}
-	finishTerminated := false
+	finishTerminated := endsInFinish(ctx, cypher)
 	if stripped, ok := stripUnionBranchFinishes(ctx, cypher); ok {
 		cypher = strings.TrimSpace(stripped)
 		finishTerminated = true
-		ctx = withFinishedStatement(ctx, cypher)
+		ctx = withFinishedStatement(ctx, cypher, authoredStatement)
+	}
+	if finishTerminated {
+		admitted, err := e.admitBoundStatement(ctx, statementAdmissionSource(ctx, cypher))
+		if err != nil {
+			return nil, err
+		}
+		if admitted.program != nil {
+			ctx = withBoundStatementProgram(ctx, admitted.program)
+		}
 	}
 	if cypher == "" {
 		if finishTerminated {
@@ -159,7 +168,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 
 	// Local fragments own their lowering and restore generated names before
 	// returning to Fabric or their containing expression.
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressions(ctx, cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -177,8 +186,12 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateTransactionalCalls(ctx, cypher, nil); err != nil {
 		return nil, err
 	}
-	if err := e.validateDuplicateReturnColumnName(ctx, cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
+	admission, err := e.admitBoundStatement(ctx, statementAdmissionSource(ctx, cypher))
+	if err != nil {
 		return nil, err
+	}
+	if admission.program != nil {
+		ctx = withBoundStatementProgram(ctx, admission.program)
 	}
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {
 		return nil, err
@@ -234,7 +247,7 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if err := validateStaticPropertyAccessParameters(ctx, cypher, params); err != nil {
 		return err
 	}
-	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := validateStaticFunctionParameters(ctx, cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	// A transactional CALL commits independently before later runtime
@@ -245,5 +258,5 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 			return err
 		}
 	}
-	return validateListOperands(cypher, params)
+	return validateListOperands(ctx, cypher, params)
 }

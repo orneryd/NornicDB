@@ -11,8 +11,9 @@ import (
 // Source diagnostics and quoted names select explicit policies in one tree
 // owner, preserving container contracts without callbacks or a second type switch.
 type resultRestoration struct {
-	source *queryRewrite
-	names  *quotedVariableNames
+	source  *queryRewrite
+	names   *quotedVariableNames
+	program *boundStatementProgram
 }
 
 // restore owns result copying, metadata and EXPLAIN row presentation for both
@@ -79,7 +80,13 @@ func (restoration resultRestoration) restore(result *ExecuteResult, err error, p
 						}
 					}
 				}
-				if !restoreRows && len(restored.Columns) > 0 {
+				if restoration.program != nil {
+					// The executable labels were verified before presentation.
+					// All modes pass the same declared view to the naming owner.
+					restoration.names.restoreResultColumns(&restored, nil, restoration.program.presentationProjection())
+				} else if !restoreRows && len(restored.Columns) > 0 {
+					// Command continuations and the uncomposed legacy Fabric
+					// coordinator retain their existing presentation adapter.
 					restoration.names.restoreResultColumns(&restored, parseItems)
 				}
 			}

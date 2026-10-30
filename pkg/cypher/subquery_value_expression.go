@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -301,11 +300,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		}
 	}
 	if cypherVersionFromContext(ctx) != "25" {
-		grouped, err := cypher5ImportGrouping(body, values)
-		if err != nil {
-			return nil, false, err
-		}
-		body = grouped
+		body = cypher5ImportGrouping(body, values)
 	}
 	query := strings.TrimSpace(body)
 	patternOnly := strings.HasPrefix(query, "(")
@@ -320,7 +315,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 			query += " RETURN 1 AS __exists LIMIT 1"
 		}
 	}
-	result, err := e.runCorrelatedSubquery(ctx, query, values)
+	result, err := e.runCorrelatedSubquery(ctx, query, values, kind)
 	if err != nil {
 		return nil, false, err
 	}
@@ -331,12 +326,9 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	if kind == "EXISTS" || kind == "COUNT" {
 		return rowCountValue(kind, int64(len(result.Rows))), true, nil
 	}
-	// A COLLECT subquery collects one value per row: its RETURN has
-	// exactly one column (Neo4j 5.26 rejects any other RETURN, #907).
-	if len(result.Columns) != 1 {
-		return nil, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCollectSubquery",
-			localization.CypherSubqueriesCollectSingleColumn(len(result.Columns)))
-	}
+	// The canonical constructor has admitted the expanded one-column result.
+	// Execution collects values; observed rows cannot admit or reject its schema.
+
 	collected := make([]interface{}, 0, len(result.Rows))
 	for _, row := range result.Rows {
 		if len(row) > 0 {
@@ -360,7 +352,10 @@ func rowCountValue(kind string, rows int64) interface{} {
 // values bound when the pipeline declines the body (a CALL subquery or a
 // procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
 // here, so a body gives the same rows whichever of them wraps it.
-func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}, scalar ...string) (*ExecuteResult, error) {
+	if len(scalar) != 0 {
+		ctx = withScalarCompilation(ctx, query, scalar[0])
+	}
 	// Correlated expression imports remain visible across a WITH horizon. The
 	// existing context masks them when a nested CALL selects its own imports.
 	// Without a WITH there is no dropping horizon and the row already owns them.
@@ -391,7 +386,7 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	// combiner (executeUnion) joins them, as for a top-level UNION.
 	if _, unionAll, _, union := parseTopLevelUnionBranches(ctx, query); union {
 		return e.executeUnion(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
-			return e.runCorrelatedSubquery(ctx, branch, values)
+			return e.runCorrelatedSubquery(ctx, branch, values, scalar...)
 		})
 	}
 	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)

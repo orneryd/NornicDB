@@ -1,13 +1,13 @@
 package cypher
 
 import (
-	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"errors"
+	"context"
 	"fmt"
 	"strings"
 
-	"github.com/orneryd/nornicdb/internal/cyphertext"
-
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -90,7 +90,7 @@ func newSemanticError(code, detail, message string) error {
 }
 
 // syntaxAdmissionError retains specific pattern diagnostics at grammar admission.
-func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage, cause error) error {
+func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage, cause error, partial ...cypherantlr.StatementSyntax) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -103,6 +103,25 @@ func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage,
 		if err := malformedCallScopeError(ctx, source); err != nil {
 			return err
 		}
+	}
+	if activeSyntaxValidator() != syntaxValidANTLR {
+		// This native declaration-spelling diagnostic is only framing for a
+		// failed grammar product. Accepted lexical bindings come from the CST.
+		if err := validateListComprehensionVariables(source); err != nil {
+			return err
+		}
+		if len(partial) > 0 {
+			if err := syntaxProjectionDeclarationError(ctx, partial[0]); err != nil {
+				return err
+			}
+		}
+		// Retain the existing reduce/allReduce signature diagnostic when grammar
+		// admission fails: the text has no grammar calls, so the REDUCE and
+		// allReduce keywords are located directly and their form is checked.
+		if err := reduceFormSyntaxError(ctx, source); err != nil {
+			return err
+		}
+
 	}
 	if invalidRelationshipPattern(source) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidRelationshipPattern", "invalid variable-length relationship pattern")
@@ -124,4 +143,68 @@ func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage,
 // operands, returning a fresh mutable SemanticError for each rejected statement.
 func invalidForeachError() error {
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidForeach", "invalid or unsupported FOREACH update")
+}
+
+// invalidCallImportError preserves the release status-bearing public diagnostic.
+// Header grammar admission decides validity; this is only its message factory.
+func invalidCallImportError() error {
+	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
+}
+
+// Failed native framing can retain a complete RETURN after an invalid command
+// prefix. Preserve the release declaration diagnostic by asking the same
+// ordered declaration constructor; this diagnostic-only grammar window never
+// publishes a scope, binding identity, accepted statement or result header.
+func syntaxProjectionDeclarationError(ctx context.Context, syntax cypherantlr.StatementSyntax) error {
+	if !syntax.Valid() {
+		return nil
+	}
+	if err := admitCommandProjectionItems(ctx, syntax); err != nil {
+		return err
+	}
+	for i := 0; i < syntax.TokenCount(); i++ {
+		token := syntax.Token(i)
+		if token.Channel() != 0 || token.Kind() != cypherantlr.CypherLexerRETURN {
+			continue
+		}
+		start, _ := token.Span()
+		source := syntax.Source()[start:]
+		if names := quotedVariableNamesFor(ctx, syntax.Source()); names != nil {
+			source, _ = names.OriginalText(cyphertext.Span{Start: start, End: len(syntax.Source())}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
+		}
+		projection, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.ClauseEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err == nil {
+			if err := admitCommandProjectionItems(ctx, projection); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// reduceFormSyntaxError checks the form of each REDUCE / allReduce keyword
+// followed by "(" in text the grammar rejected, outside strings and comments.
+func reduceFormSyntaxError(ctx context.Context, source string) error {
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
+	for _, keyword := range []string{"REDUCE", "allReduce"} {
+		for from := 0; from < len(source); {
+			at := keywordIndexFrom(source, keyword, from, opts)
+			if at < 0 {
+				break
+			}
+			from = at + len(keyword)
+			open := queryGapEnd(source, from)
+			if open >= len(source) || source[open] != '(' {
+				continue
+			}
+			if err := checkReduceForm(ctx, source[at:from], source, open, func(staticArgumentType, string, int) error { return nil }); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

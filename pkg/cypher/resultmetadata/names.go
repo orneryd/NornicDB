@@ -43,12 +43,30 @@ func (n Names) Visit(known func([]string), unknown func()) {
 type Projection struct {
 	Expressions []string
 	Names       Names
-	Standalone  bool
-	Distinct    bool
-	Modifiers   string
+	// WrittenWildcard records the original projection before executable expansion.
+	// It is provenance, independent of Names and the expanded expressions.
+	WrittenWildcard bool
+	// WrittenNames are the ordered explicit output declarations before wildcard
+	// expansion and source canonicalization. They do not replace binding names.
+	WrittenNames Names
+	Standalone   bool
+	Distinct     bool
+	Modifiers    string
 	// PassThrough means every expression is a variable projected under its
 	// own name. Literal words such as true are distinguished by syntax.
 	PassThrough bool
+	// Retention serializes the same current-value precedence as local WITH.
+	// ItemsEnd is the original CST insertion position before projection tails.
+	ItemsEnd  int
+	Retention []RetainedProjection
+}
+
+// RetainedProjection carries an omitted rebound import without making it a
+// DISTINCT/grouping key. Entry identifies its empty-stream default.
+type RetainedProjection struct {
+	Name      string
+	Entry     BindingID
+	Aggregate bool
 }
 
 // ProjectionProvider supplies the canonical single-clause projection reader.

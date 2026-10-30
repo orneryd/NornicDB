@@ -84,7 +84,8 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 	if requirements.Write || requirements.Schema || requirements.Admin {
 		return policy
 	}
-	if err := forEachFunctionInvocation(text, func(name, normalized string, open int) error {
+	if err := textFunctionCalls(ctx, text, func(call syntaxFunctionCall) error {
+		name, normalized := call.name, call.normalized
 		volatility, known := functionCacheDeclarations[normalized]
 		if !known || volatility == functionVolatile {
 			return errNonDeterministicExecution
@@ -93,15 +94,10 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 		if volatility == functionStable {
 			return nil
 		}
-		close := findMatchingCallParen(text, open)
-		if close < 0 {
+		args := syntaxArgumentTexts(call)
+		if len(args) == 0 {
 			return errNonDeterministicExecution
 		}
-		body := strings.TrimSpace(text[open+1 : close])
-		if body == "" {
-			return errNonDeterministicExecution
-		}
-		args := splitTopLevelComma(body)
 		if volatility == functionTemporalTruncation && len(args) < 2 {
 			return errNonDeterministicExecution
 		}
@@ -122,16 +118,24 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 	}); err != nil {
 		return policy
 	}
-	for from := 0; from < len(text); {
-		at := keywordIndexFrom(text, "CALL", from, opts)
-		if at < 0 {
-			break
+	// Procedure calls are read from the grammar, as everywhere else: their
+	// registered name and argument expressions, including calls nested in
+	// CALL { } bodies.
+	var calls []cypherantlr.SyntaxNode
+	if keywordIndexFrom(text, "CALL", 0, opts) >= 0 {
+		syntax, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+		if err != nil {
+			return policy
 		}
-		from = at + len("CALL")
-		name, named := procedureNameAt(text, queryGapEnd(text, from))
-		if !named {
-			continue
-		} // CALL { ... }: this pass also scans its body.
+		syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+			if node.Rule() == cypherantlr.CypherParserRULE_queryCallSt || node.Rule() == cypherantlr.CypherParserRULE_standaloneCall {
+				calls = append(calls, node)
+			}
+			return nil
+		})
+	}
+	for _, node := range calls {
+		name := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
 		procedure, known := globalProcedureRegistry.Get(name)
 		if !known || procedure.User || procedure.Spec.Mode != ProcedureModeRead || !procedure.Spec.ResultCache.Deterministic {
 			return policy
@@ -140,18 +144,7 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 		if len(declaration.CypherInputs) == 0 {
 			continue
 		}
-		var arguments []string
-		syntax, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
-		if err != nil {
-			return policy
-		}
-		syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
-			start, _ := node.Span()
-			if start == at && (node.Rule() == cypherantlr.CypherParserRULE_queryCallSt || node.Rule() == cypherantlr.CypherParserRULE_standaloneCall) {
-				arguments = procedureArgumentTextsFromSyntax(node)
-			}
-			return nil
-		})
+		arguments := procedureArgumentTextsFromSyntax(node)
 		call := executionCallPolicy{name: name, continuation: declaration.Continuation}
 		var request map[string]any
 		if declaration.RetrievalRequest {

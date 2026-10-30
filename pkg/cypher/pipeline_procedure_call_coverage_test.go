@@ -50,39 +50,33 @@ func TestPipelineProcedureCallPerRow(t *testing.T) {
 	require.Contains(t, err.Error(), "cov.fail failed")
 }
 
-// TestPipelineApplyProcedureCallEdges: the pipeline's procedure call
-// rejects a non-void call without YIELD and aggregate arguments, and fails when
-// an argument or the call fails.
+// TestPipelineApplyProcedureCallEdges: a procedure call inside a query
+// rejects a non-void call without YIELD and aggregate arguments at
+// admission, fails when an argument or the call fails, and filters the
+// extended rows with its YIELD's WHERE.
 func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 	registerCoverageProcedures(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
-	rows := []pipelineRow{{"x": int64(1)}}
 
-	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x)", nil)
+	_, err := exec.Execute(ctx, "UNWIND [1] AS x CALL cov.echo(x) RETURN x", nil)
 	requireSyntaxErrorStatus(t, err, "non-void procedure without explicit YIELD")
-	require.True(t, ok)
-	require.Nil(t, out)
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(count(x)) YIELD echoed", nil)
-	require.True(t, ok)
+	_, err = exec.Execute(ctx, "UNWIND [1] AS x CALL cov.echo(count(x)) YIELD echoed RETURN echoed", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "aggregate")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x % 0) YIELD echoed", nil)
-	require.True(t, ok)
+	_, err = exec.Execute(ctx, "UNWIND [1] AS x CALL cov.echo(x % 0) YIELD echoed RETURN echoed", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "/ by zero")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.fail(x) YIELD echoed", nil)
-	require.True(t, ok)
+	_, err = exec.Execute(ctx, "UNWIND [1] AS x CALL cov.fail(x) YIELD echoed RETURN echoed", nil)
 	require.Error(t, err)
 
-	out, yielded, ok, err := exec.pipelineApplyProcedureCall(ctx, []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}, "CALL cov.echo(x) YIELD echoed WHERE echoed > 1", nil)
+	result, err := exec.Execute(ctx, "UNWIND [1, 2] AS x CALL cov.echo(x) YIELD echoed WHERE echoed > 1 RETURN x, echoed", nil)
 	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, []string{"echoed"}, yielded)
-	require.Equal(t, []pipelineRow{{"x": int64(2), "echoed": int64(2)}}, out)
+	require.Equal(t, []string{"x", "echoed"}, result.Columns)
+	require.Equal(t, [][]interface{}{{int64(2), int64(2)}}, result.Rows)
 }
 
 func TestExplicitProcedureArgumentTexts_EmptyAndNested(t *testing.T) {
@@ -107,9 +101,7 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	spec, found := globalProcedureRegistry.Get("cov.echo")
-	require.True(t, found)
-	_, err := extractProcedureInvocationArguments(ctx, spec.Spec, "CALL cov.echo(count(1))")
+	_, err := exec.Execute(ctx, "CALL cov.echo(count(1))", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
@@ -121,7 +113,7 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 	// The modifier validator also rejects an explicitly constructed invalid
 	// modifier order; the canonical parser never admits that sequence.
 	yield := &yieldClause{items: []yieldItem{{name: "echoed"}}, orderBy: "echoed", where: "echoed = 1", misplacedWhere: true}
-	err = exec.validateYieldModifiers(context.Background(), yield, true)
+	err = admitYieldModifiers(yield, true)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
@@ -131,6 +123,7 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 	} {
 		yield := parseYieldClause(t.Context(), call)
 		require.NotNil(t, yield, call)
-		require.Error(t, exec.validateYieldModifiers(context.Background(), yield, true), call)
+		_, err := exec.Execute(ctx, call+" RETURN echoed", nil)
+		require.Error(t, err, call)
 	}
 }

@@ -34,8 +34,12 @@ func syntaxSymbolName(node cypherantlr.SyntaxNode) string {
 }
 
 func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func(cypherantlr.SyntaxNode)) *returnProjectionPlan {
+	return projectionPlanFromSemantics(projectionSemanticsForSyntax(clause), expressions...)
+}
+
+func projectionPlanFromSemantics(projection projectionSemantics, expressions ...func(cypherantlr.SyntaxNode)) *returnProjectionPlan {
 	plan := &returnProjectionPlan{}
-	body := clause.ChildRule(cypherantlr.CypherParserRULE_projectionBody)
+	body := projection.body
 	if !body.Valid() {
 		return plan
 	}
@@ -49,43 +53,33 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 		}
 	}
 	plan.modifiers = strings.Join(modifiers, " ")
-	items := body.ChildRule(cypherantlr.CypherParserRULE_projectionItems)
+	items := projection.items
 	if !items.Valid() {
 		return plan
 	}
 	_, plan.star = items.DirectToken(cypherantlr.CypherLexerMULT)
-	for i := 0; i < items.ChildCount(); i++ {
-		item := items.Child(i)
-		if item.Rule() != cypherantlr.CypherParserRULE_projectionItem {
-			continue
-		}
-		expression := item.ChildRule(cypherantlr.CypherParserRULE_expression)
-		if !expression.Valid() {
-			return &returnProjectionPlan{}
-		}
-		definition := item.ChildRule(cypherantlr.CypherParserRULE_symbol)
-		alias := syntaxSymbolName(definition)
-		if !definition.Valid() {
-			alias = projectionNameFromSyntax(expression)
-		}
+	valid := projection.eachItem(func(item projectionSemanticItem) {
+		expression := item.expression
+		alias, definition := item.output()
 		target := plan
 		if plan.star {
 			target = &returnProjectionPlan{}
 		}
 		target.addProjection(expression.Code(), alias)
-		projection := &target.projections[len(target.projections)-1]
-		projection.variable, projection.direct = projectionVariableFromSyntax(expression)
+		projected := &target.projections[len(target.projections)-1]
+		projected.syntax = expression
+		projected.variable, projected.direct = projectionVariableFromSyntax(expression)
 		for _, visit := range expressions {
 			visit(expression)
 		}
-		if !definition.Valid() {
-			definition = expression
-		}
-		projection.definitionStart, projection.definitionEnd = definition.Span()
+		projected.definitionStart, projected.definitionEnd = definition.Span()
 		if plan.star {
-			plan.starItems = append(plan.starItems, item.Code())
-			plan.starProjections = append(plan.starProjections, *projection)
+			plan.starItems = append(plan.starItems, item.node.Code())
+			plan.starProjections = append(plan.starProjections, *projected)
 		}
+	})
+	if !valid {
+		return &returnProjectionPlan{}
 	}
 	plan.valid = plan.star || len(plan.projections) > 0
 	return plan
@@ -102,14 +96,9 @@ func projectionNameFromSyntax(expression cypherantlr.SyntaxNode) string {
 }
 
 func projectionVariableFromSyntax(expression cypherantlr.SyntaxNode) (string, bool) {
-	for node := expression; node.Valid(); {
-		if name, symbol := node.Name(); symbol {
-			return name, true
-		}
-		if node.ChildCount() != 1 {
-			break
-		}
-		node = node.Child(0)
+	semantic := expression.SemanticExpression()
+	if semantic.Valid() {
+		return semantic.Name()
 	}
 	return "", false
 }

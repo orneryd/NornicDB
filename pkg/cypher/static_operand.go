@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"context"
 	"strings"
 )
 
@@ -384,8 +385,8 @@ func (operand staticOperand) reversedOperand() staticOperand {
 // reads a type through it and decides through fits or excludes. Each call
 // types the expression in this scope only, so the same text in another
 // scope (a shadowing WITH, another UNION branch) is typed by that scope.
-func (scope staticTypeScope) operandOf(expression string) staticOperand {
-	operand, err := (staticOperatorChecker{scope: scope}).check(strings.TrimSpace(expression))
+func (scope staticTypeScope) operandOf(ctx context.Context, expression string) staticOperand {
+	operand, err := (staticOperatorChecker{scope: scope}).check(ctx, strings.TrimSpace(expression))
 	if err != nil {
 		return staticOperand{}
 	}
@@ -396,8 +397,8 @@ func (scope staticTypeScope) operandOf(expression string) staticOperand {
 // expression with no variable or parameter facts: a literal's, a
 // constructor's, an operator's, a function call's; "" when it derives none.
 // A reader without a scope reads an expression's type here.
-func staticTextType(expression string) string {
-	return (staticTypeScope{}).operandOf(expression).typeName()
+func staticTextType(ctx context.Context, expression string) string {
+	return (staticTypeScope{}).operandOf(ctx, expression).typeName()
 }
 
 type staticLiteralPolicy uint8
@@ -410,7 +411,7 @@ const (
 // staticLiteralType owns literal-head admission for both operator leaves and
 // literal-led SET sources. Only the latter unwraps parentheses and delegates
 // compound expression typing back to the canonical static operand checker.
-func staticLiteralType(expression string, policy staticLiteralPolicy) string {
+func staticLiteralType(ctx context.Context, expression string, policy staticLiteralPolicy) string {
 	if policy == literalLedExpression {
 		expression = strings.TrimSpace(expression)
 		for {
@@ -428,7 +429,7 @@ func staticLiteralType(expression string, policy staticLiteralPolicy) string {
 		return ""
 	}
 	if policy == literalLedExpression {
-		return staticTextType(expression)
+		return staticTextType(ctx, expression)
 	}
 	value, literal := parseLiteralScalarForPipeline(expression)
 	if !literal {

@@ -449,7 +449,7 @@ func callSubqueryHasScopeClause(ctx context.Context, cypher string) bool {
 func parseCallSubqueryImportVariables(ctx context.Context, cypher string) ([]string, error) {
 	scope := readCallSubqueryScope(ctx, cypher)
 	if scope.invalid {
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
+		return nil, invalidCallImportError()
 	}
 	return scope.names, nil
 }
@@ -688,171 +688,6 @@ func isLeadingWithFollower(word string) bool {
 		return equalFoldASCII(word, "optional") || equalFoldASCII(word, "nodetach")
 	}
 	return false
-}
-
-// unscopedCallImports reads the importing WITHs of an unscoped CALL
-// subquery's body: whether any UNION branch (or the body, without UNION)
-// starts with an importing WITH (branchLeadingWithImport), and the
-// variables those WITHs list. A branch that imports nothing adds none,
-// whatever the other branches import (#907); it still reads outer variables
-// through NornicDB's implicit import (pipelineApplyCallSubqueryWithMetadata).
-// A CALL with a scope clause has no importing WITH
-// (callSubqueryHasScopeClause).
-//
-// names is filled only when collectNames.
-func unscopedCallImports(ctx context.Context, source string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	body := readQueryBody(ctx, source, 0, len(source))
-	for _, branch := range body.branches {
-		next, imports, failure := branchSyntaxImports(branch, outer, collectNames)
-		if failure != nil {
-			return nil, false, failure
-		}
-		if imports {
-			importing = true
-			names = append(names, next...)
-		}
-	}
-	return names, importing, nil
-}
-
-func branchLeadingWithImport(ctx context.Context, source string, outer func(string) bool, collectNames bool) ([]string, bool, error) {
-	body := readQueryBody(ctx, source, 0, len(source))
-	if len(body.branches) == 0 {
-		return nil, false, nil
-	}
-	return branchSyntaxImports(body.branches[0], outer, collectNames)
-}
-
-func branchSyntaxImports(branch queryBodyBranch, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	if len(branch.clauses) == 0 || branch.clauses[0].kind != pipelineClauseWith {
-		return nil, false, nil
-	}
-	plan := projectionPlanFromSyntax(branch.clauses[0].syntax)
-	importing = plan.star
-	if plan.star {
-		plan = plan.withStarExpanded(nil)
-	}
-	for _, item := range plan.projections {
-		if collectNames {
-			names = append(names, item.alias)
-		}
-		for _, name := range expressionFreeVariables(item.expr) {
-			if outer(name) {
-				importing = true
-			}
-		}
-	}
-	if !importing {
-		return nil, false, nil
-	}
-	if len(branch.clauses) == 1 && branch.useStart < 0 && !branch.finished {
-		return names, true, localizedError(localization.CypherSubqueriesWithQueryClauseRequired(), nil)
-	}
-	return names, true, nil
-}
-
-// unscopedBranchLocals returns the outer variables (names) that one branch
-// of an unscoped CALL body declares itself (branchDeclaresVariable): the
-// branch doesn't receive their outer values through NornicDB's implicit
-// import, so they are new variables there, as in Cypher (#907).
-func unscopedBranchLocals(ctx context.Context, branch string, names []string) []string {
-	var locals []string
-	for _, name := range names {
-		if branchDeclaresVariable(ctx, branch, name) {
-			locals = append(locals, name)
-		}
-	}
-	return locals
-}
-
-// branchDeclaresVariable reports whether a branch of an unscoped CALL body
-// declares variable before it reads it: its first use is a node or
-// relationship variable of a MATCH, OPTIONAL MATCH, CREATE or MERGE pattern
-// (or the pattern's path name), or the name UNWIND … AS or WITH … AS binds.
-// Cypher gives such a branch a new variable; NornicDB's implicit import of an
-// outer variable applies only to a name the branch reads first (#907).
-func branchDeclaresVariable(ctx context.Context, branch, variable string) bool {
-	clauses, ok := splitPipelineClauses(ctx, strings.TrimSpace(branch))
-	if !ok {
-		return false
-	}
-	for _, clause := range clauses {
-		index := firstVariableOccurrence(clause.text, variable)
-		if index < 0 {
-			continue
-		}
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate, pipelineClauseMerge:
-			return index < patternPartEnd(clause) && isPatternVariableAt(clause.text, index, len(variable))
-		case pipelineClauseUnwind, pipelineClauseWith:
-			return precededByAS(clause.text, index)
-		}
-		return false
-	}
-	return false
-}
-
-// patternPartEnd is where a MATCH, CREATE or MERGE clause's pattern ends:
-// at its WHERE, or MERGE's ON CREATE / ON MATCH, else the clause's end.
-func patternPartEnd(clause pipelineClause) int {
-	end := len(clause.text)
-	for _, keyword := range [...]string{"WHERE", "ON"} {
-		if index := topLevelKeywordIndex(clause.text, keyword); index > 0 && index < end {
-			end = index
-		}
-	}
-	return end
-}
-
-// firstVariableOccurrence is the index of the first use of variable in text
-// as a variable: a whole word outside string literals, not a property key
-// (m.variable), a parameter ($variable) or a map key ({variable: …}).
-// -1 when there is none.
-func firstVariableOccurrence(text, variable string) int {
-	for index := 0; index+len(variable) <= len(text); index++ {
-		switch c := text[index]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			index = skipCypherQuotedText(text, index, c) - 1
-			continue
-		}
-		if text[index:index+len(variable)] != variable {
-			continue
-		}
-		end := index + len(variable)
-		if (index > 0 && cyphertext.NamePartAt(text, index-1)) || (end < len(text) && cyphertext.NamePartAt(text, end)) {
-			continue
-		}
-		previous, next := previousNonSpace(text, index), nextNonSpace(text, end)
-		if previous == '.' || previous == '$' || ((previous == '{' || previous == ',') && next == ':') {
-			continue
-		}
-		return index
-	}
-	return -1
-}
-
-// isPatternVariableAt reports whether the word at index is a pattern's node
-// or relationship variable ((n:L), (n), -[r:T]->) or its path name (p = …).
-func isPatternVariableAt(text string, index, length int) bool {
-	next := nextNonSpace(text, index+length)
-	switch previousNonSpace(text, index) {
-	case '(':
-		// Not a function call's argument (size(n)): a name before the
-		// parenthesis is a function, unless it is the clause keyword
-		// (MATCH (n), OPTIONAL MATCH (n), CREATE (n), MERGE (n)).
-		opening := strings.LastIndexByte(text[:index], '(')
-		if word := rawWordBefore(text, opening); word != "" && !isPatternClauseKeyword(word) {
-			return false
-		}
-		return next == ':' || next == ')' || next == '{'
-	case '[':
-		opening := strings.LastIndexByte(text[:index], '[')
-		if before := previousNonSpace(text, opening); before != '-' && before != '<' {
-			return false
-		}
-		return next == ':' || next == ']' || next == '{' || next == '*'
-	}
-	return next == '=' && nextNonSpace(text, strings.IndexByte(text[index:], '=')+index+1) == '('
 }
 
 // wordBefore is the identifier that ends right before index (spaces
@@ -1961,3 +1796,14 @@ var (
 	// callPropertyAccessPattern is a variable.property reference in a CALL.
 	callPropertyAccessPattern = regexp.MustCompile(`(\w+)\.(\w+)`)
 )
+
+// patternPartEnd is the admitted pattern window, before WHERE or MERGE ON.
+func patternPartEnd(clause pipelineClause) int {
+	end := len(clause.text)
+	for _, keyword := range [...]string{"WHERE", "ON"} {
+		if at := topLevelKeywordIndex(clause.text, keyword); at > 0 && at < end {
+			end = at
+		}
+	}
+	return end
+}

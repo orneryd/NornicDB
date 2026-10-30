@@ -51,9 +51,13 @@ func TestProcedureOutputTypes(t *testing.T) {
 	} {
 		require.Equal(t, expected, procedureStaticType(input))
 	}
-	require.Nil(t, procedureOutputTypes(t.Context(), "CALL missing.procedure()"))
-	require.Equal(t, map[string]string{"label": "String"}, procedureOutputTypes(t.Context(), "CALL db.labels()"))
-	require.Equal(t, "List<String>", procedureOutputTypes(t.Context(), "CALL db.indexes()")["properties"])
+	spec := func(name string) ProcedureSpec {
+		procedure, found := globalProcedureRegistry.Get(name)
+		require.True(t, found, name)
+		return procedure.Spec
+	}
+	require.Equal(t, map[string]string{"label": "String"}, procedureOutputTypes(spec("db.labels")))
+	require.Equal(t, "List<String>", procedureOutputTypes(spec("db.indexes"))["properties"])
 	require.NoError(t, globalProcedureRegistry.RegisterUser(ProcedureSpec{
 		Name: "test.yieldTypes", Mode: ProcedureModeRead,
 		Returns: []ProcedureColumn{{Name: "valid", Type: "BOOLEAN"}},
@@ -61,7 +65,7 @@ func TestProcedureOutputTypes(t *testing.T) {
 		return nil, nil
 	}))
 	t.Cleanup(ClearUserProcedures)
-	require.Equal(t, map[string]string{"valid": "Boolean"}, procedureOutputTypes(t.Context(), "CALL test.yieldTypes()"))
+	require.Equal(t, map[string]string{"valid": "Boolean"}, procedureOutputTypes(spec("test.yieldTypes")))
 }
 
 func TestCallYieldWhereRejectsNonBooleanValue(t *testing.T) {

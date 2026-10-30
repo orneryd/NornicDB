@@ -8,165 +8,7 @@ import (
 	"maps"
 	"strconv"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/localization"
 )
-
-// validateProcedureCallArguments rejects an aggregate in a procedure call's
-// arguments, as Neo4j does when it compiles the statement: whether the call
-// runs on its own or as a clause of a larger query, and whatever rows reach
-// it.
-func validateProcedureCallArguments(callCypher string) error {
-	if procedureCallContainsAggregation(callCypher) {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidAggregation",
-			"procedure arguments cannot contain aggregate expressions",
-		)
-	}
-	return nil
-}
-
-func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
-	if err := validateProcedureCallArguments(callCypher); err != nil {
-		return nil, err
-	}
-	if strings.Index(callCypher, "(") >= 0 {
-		args, err := extractCallArguments(callCypher)
-		if err != nil {
-			return nil, err
-		}
-		if err := validateProcedureArgCount(spec, args); err != nil {
-			return nil, err
-		}
-		return validateAndCoerceProcedureArguments(spec, args, explicitProcedureArgumentTexts(ctx, callCypher))
-	}
-
-	params := getParamsFromContext(ctx)
-	args := make([]interface{}, 0, len(spec.Params))
-	for index, parameter := range spec.Params {
-		value, exists := params[parameter.Name]
-		if !exists {
-			if index >= spec.MinArgs && parameter.Optional {
-				continue
-			}
-			return nil, newSemanticError(
-				"Neo.ClientError.Statement.ParameterMissing",
-				"MissingParameter",
-				fmt.Sprintf("missing implicit procedure parameter %s", parameter.Name),
-			)
-		}
-		args = append(args, value)
-	}
-	if err := validateProcedureArgCount(spec, args); err != nil {
-		return nil, err
-	}
-	return validateAndCoerceProcedureArguments(spec, args, nil)
-}
-
-func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
-	ctx = withExpressionFailureSlot(ctx)
-	bindings := valueBindingsFromContext(ctx)
-	texts := explicitProcedureArgumentTexts(ctx, callCypher)
-	if texts == nil {
-		return extractProcedureInvocationArguments(ctx, spec, callCypher)
-	}
-	if bindings == nil {
-		bindings = make(map[string]interface{})
-		bindParameterRow(ctx, pipelineRow(bindings))
-	}
-	if err := validateProcedureCallArguments(callCypher); err != nil {
-		return nil, err
-	}
-	args := make([]interface{}, len(texts))
-	if err := validateProcedureArgCount(spec, args); err != nil {
-		return nil, err
-	}
-	for index, text := range texts {
-		value, resolved := e.evaluateRowExpressionWithContext(ctx, text, pipelineRow(bindings))
-		if !resolved {
-			pipelineItemUnevaluable(ctx, text)
-			return nil, getExpressionFailure(ctx)
-		}
-		if err := getExpressionFailure(ctx); err != nil {
-			return nil, err
-		}
-		args[index] = value
-	}
-	return validateAndCoerceProcedureArguments(spec, args, texts)
-}
-
-func validateProcedureArgumentPassingMode(ctx context.Context, spec ProcedureSpec, callCypher string, hasTail bool) error {
-	if len(spec.Params) == 0 || strings.Contains(callCypher, "(") {
-		return nil
-	}
-	if parseYieldClause(ctx, callCypher) == nil && !hasTail {
-		return nil
-	}
-	return newSemanticError(
-		"Neo.ClientError.Statement.SyntaxError",
-		"InvalidArgumentPassingMode",
-		fmt.Sprintf("procedure %s arguments must be passed explicitly inside a query", spec.Name),
-	)
-}
-
-// validateYieldModifiers checks a YIELD's WHERE / ORDER BY / SKIP / LIMIT
-// as Neo4j does when it compiles the statement: a standalone call (nothing
-// after the YIELD) can't have any of them, a WHERE must come before
-// ORDER BY / SKIP / LIMIT, and SKIP / LIMIT follow the same rules as in a
-// WITH or RETURN.
-func (e *StorageExecutor) validateYieldModifiers(ctx context.Context, yield *yieldClause, hasTail bool) error {
-	if yield == nil || !yield.hasModifiers() {
-		return nil
-	}
-	if !hasTail {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
-			localization.CypherCoreStandaloneCallModifiers())
-	}
-	if yield.misplacedWhere {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
-			localization.CypherCoreYieldWhereMisplaced())
-	}
-	if yield.skip != "" {
-		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{"SKIP", yield.skip}); err != nil {
-			return err
-		}
-	}
-	if yield.limit != "" {
-		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{"LIMIT", yield.limit}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
-	if yield == nil {
-		return nil
-	}
-	if yield.yieldAll && hasTail {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"UnexpectedSyntax",
-			"YIELD * is only valid for a standalone procedure call",
-		)
-	}
-
-	bindings := make(map[string]struct{}, len(yield.items))
-	for _, item := range yield.items {
-		binding := item.column()
-		binding = normalizeProjectionColumnName(binding)
-		if _, exists := bindings[binding]; exists {
-			return newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"VariableAlreadyBound",
-				fmt.Sprintf("variable %s is already bound by this YIELD clause", binding),
-			)
-		}
-		bindings[binding] = struct{}{}
-	}
-	return nil
-}
 
 func explicitProcedureArgumentTexts(ctx context.Context, source string) []string {
 	clause, ok := canonicalQueryClause(ctx, source)
@@ -226,11 +68,7 @@ func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{},
 // itself checks (coerceProcedureArgument) are checked here: a NODE, MAP or
 // LIST parameter also takes NornicDB's other forms (a node id, a label, a
 // request's short form).
-func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope staticTypeScope, unwound map[string]struct{}) error {
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause))
-	if !found {
-		return nil
-	}
+func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope staticTypeScope, unwound map[string]struct{}, spec ProcedureSpec) error {
 	texts := explicitProcedureArgumentTexts(ctx, clause)
 	if len(texts) == 0 {
 		return nil
@@ -246,14 +84,14 @@ func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope 
 		}
 	}
 	for index, text := range texts {
-		if index >= len(procedure.Spec.Params) {
+		if index >= len(spec.Params) {
 			break
 		}
-		typeName := scope.staticExpressionType(text)
+		typeName := scope.staticExpressionType(ctx, text)
 		if typeName == "" {
 			continue
 		}
-		if expected, accepted := procedureParameterAcceptsStaticType(procedure.Spec.Params[index].Type, typeName); !accepted {
+		if expected, accepted := procedureParameterAcceptsStaticType(spec.Params[index].Type, typeName); !accepted {
 			return typeNameMismatchError(expected, procedureArgumentTypeName(typeName))
 		}
 	}
@@ -387,24 +225,6 @@ func isIntegerProcedureValue(value interface{}) bool {
 func isFloatProcedureValue(value interface{}) bool {
 	_, ok := valueconvert.FloatValue(value)
 	return ok
-}
-
-func procedureCallContainsAggregation(callCypher string) bool {
-	open := strings.Index(callCypher, "(")
-	if open < 0 {
-		return false
-	}
-	close := findMatchingCallParen(callCypher, open)
-	if close < 0 {
-		return false
-	}
-	body := callCypher[open+1 : close]
-	for _, name := range []string{"count", "sum", "avg", "min", "max", "collect", "stdev", "stdevp", "percentilecont", "percentiledisc"} {
-		if findKeywordIndexInContext(body, name) >= 0 && strings.Contains(lowerASCII(body), name+"(") {
-			return true
-		}
-	}
-	return false
 }
 
 // unknownProcedureError is the shared planning/execution terminal for a missing procedure.

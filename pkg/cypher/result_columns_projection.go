@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"strings"
 	"sync"
 )
@@ -12,6 +14,8 @@ import (
 // aggregate is nested in a larger expression, aggregateExpr then being the
 // whole expression).
 type returnProjection struct {
+	// syntax is the expression retained by the canonical projection constructor.
+	syntax cypherantlr.SyntaxNode
 	expr                           string
 	variable                       string
 	direct                         bool
@@ -178,24 +182,6 @@ func (plan *returnProjectionPlan) addProjection(expr, alias string) {
 	plan.columns = append(plan.columns, alias)
 }
 
-// pipelineReturnSourceColumns is a legacy semantic/source-spelling adapter of
-// execution's projection plan, not another RETURN parser. The semantic walk
-// still uses nil for bare star and a star marker for mixed projections; the
-// execution header path expands wildcards through the complete statement owner.
-func pipelineReturnSourceColumns(ctx context.Context, clause string) []string {
-	plan := returnProjectionPlanFor(ctx, clause)
-	if !plan.valid {
-		return nil
-	}
-	if plan.star {
-		if len(plan.starItems) == 0 {
-			return nil
-		}
-		return append([]string{"*"}, plan.withStarExpanded(nil).columns...)
-	}
-	return append([]string{}, plan.columns...)
-}
-
 // buildColumnsFromReturnItems builds column names from parsed return items
 func (e *StorageExecutor) buildColumnsFromReturnItems(items []returnItem) []string {
 	columns := make([]string, len(items))
@@ -248,19 +234,6 @@ func projectionPlanScope(plan *returnProjectionPlan, previous map[string]struct{
 	return next
 }
 
-func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
-	projection, _ := splitWithProjection(clause)
-	plan := returnProjectionPlanFor(ctx, "RETURN "+pipelineClauseBody(projection, "WITH"))
-	next := projectionPlanScope(plan, previous)
-	if next == nil {
-		return nil
-	}
-	for name := range imports {
-		next[name] = struct{}{}
-	}
-	return next
-}
-
 // returnShapeItems returns the trimmed projection items of query's RETURN clause
 // with the trailing ORDER BY / SKIP / LIMIT clauses removed. It is the single
 // owner of that RETURN-location, trailing-clause trimming and comma-splitting
@@ -303,7 +276,38 @@ func trimReturnItemAlias(item string) string {
 
 // restoreResultColumns preserves final RETURN spelling after quoted variables
 // have executed with internal identities. Parsed aliases are already decoded.
-func (names *quotedVariableNames) restoreResultColumns(result *ExecuteResult, parseItems func(string) []returnItem) {
+func (names *quotedVariableNames) restoreResultColumns(result *ExecuteResult, parseItems func(string) []returnItem, declared ...resultmetadata.Projection) {
+	if len(declared) != 0 {
+		projection := declared[0]
+		if !projection.WrittenWildcard {
+			projection.WrittenNames.Visit(func(columns []string) {
+				if len(columns) == len(result.Columns) {
+					result.Columns = columns
+				}
+			}, func() {})
+			return
+		}
+		// Membership and the explicit items come from construction. Preserve
+		// this naming owner's existing wildcard presentation order and row
+		// permutation without parsing the projection or observing row keys.
+		projection.Names.Visit(func(columns []string) {
+			projection.WrittenNames.Visit(func(explicit []string) {
+				if len(columns) != len(result.Columns) || len(explicit) > len(columns) {
+					return
+				}
+				prefix := len(columns) - len(explicit)
+				for index, column := range columns[:prefix] {
+					if original, found := names.internal[column]; found {
+						columns[index] = original.name
+					}
+				}
+				copy(columns[prefix:], explicit)
+				result.Columns = columns
+				sortColumnsByName(result)
+			}, func() {})
+		}, func() {})
+		return
+	}
 	if start, end, ok := finalReturnBody(names.Text); ok {
 		body, _ := cutDistinct(strings.TrimSpace(names.Text[start:end]))
 		if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(body, "UNION") < 0 {

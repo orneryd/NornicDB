@@ -7,26 +7,14 @@ import (
 
 import "strings"
 
-func validateReturnOrderBySemanticScope(ctx context.Context, clause string) error {
-	return validateReturnOrderBySemanticScopeIn(ctx, clause, nil)
-}
-
-// Retained imports are available throughout a subquery, including a DISTINCT
-// or aggregating horizon's ORDER BY. They remain outside its projection key.
-func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, retained typeScope) error {
-	body := strings.TrimSpace(clause[len("RETURN"):])
-	orderIndex := topLevelKeywordIndex(body, "ORDER BY")
-	if orderIndex < 0 {
-		return nil
+// validateReturnOrderPlan consumes the retained projection and tail. Its sets
+// describe aggregate/grouping expressions; binding membership is already admitted.
+func validateReturnOrderPlan(ctx context.Context, plan *returnProjectionPlan, order string, retained typeScope) error {
+	orderBody := strings.TrimSpace(order)
+	if end, found := keywordSpanAt(orderBody, 0, "ORDER BY"); found {
+		orderBody = strings.TrimSpace(orderBody[end:])
 	}
-	projectionBody := strings.TrimSpace(body[:orderIndex])
-	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
-	for _, keyword := range []string{"SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
-			orderBody = strings.TrimSpace(orderBody[:index])
-		}
-	}
-	projectionBody, distinct := cutDistinct(projectionBody)
+	distinct := plan.distinct
 
 	aliases := make(map[string]struct{})
 	directExpressions := make(map[string]struct{})
@@ -35,10 +23,9 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 	hasProjectionAggregate := false
 	// star: a * item projects every variable in scope, so ORDER BY may use
 	// any of them (RETURN DISTINCT *, x AS y ORDER BY z, #883).
-	star := false
-	for _, item := range splitTopLevelComma(projectionBody) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
-		expression, alias := itemSource.expression, itemSource.alias
+	star := plan.star
+	for _, item := range writtenProjectionItems(plan) {
+		expression, alias := item.expr, item.alias
 		if expression == "*" {
 			star = true
 			continue
@@ -156,28 +143,14 @@ func canonicalSemanticExpression(expression string) string {
 	return normalized.String()
 }
 
-func validateReturnAggregationSemantics(ctx context.Context, body string) error {
-	return validateReturnAggregationSemanticsIn(ctx, body, nil)
-}
-
-// validateReturnAggregationSemanticsIn is validateReturnAggregationSemantics
-// with outer's variables constants: in an EXISTS / COUNT / COLLECT body the
-// enclosing query's variables aren't grouping keys.
-func validateReturnAggregationSemanticsIn(ctx context.Context, body string, outer typeScope) error {
-	end := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
-			end = index
-		}
-	}
-	body = strings.TrimSpace(body[:end])
-	body, _ = cutDistinct(body)
+// validateProjectionAggregatePlan owns structural aggregation admission. The
+// constructor supplies its retained written projection and admitted constants.
+func validateProjectionAggregatePlan(plan *returnProjectionPlan, outer typeScope) error {
 	directExpressions := make(map[string]struct{})
 	aliases := make(map[string]struct{})
 	expressions := make([]string, 0)
-	for _, item := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
-		expression, alias := itemSource.expression, itemSource.alias
+	for _, item := range writtenProjectionItems(plan) {
+		expression, alias := item.expr, item.alias
 		expressions = append(expressions, expression)
 		if alias != "" && alias != expression {
 			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
@@ -465,4 +438,13 @@ func removeAggregateCalls(expression string) string {
 		}
 	}
 	return string(result)
+}
+
+// Written items remain separate from wildcard expansion. No query membership is
+// inferred here: the constructor has already decoded every explicit item.
+func writtenProjectionItems(plan *returnProjectionPlan) []returnProjection {
+	if plan.star {
+		return plan.starProjections
+	}
+	return plan.projections
 }

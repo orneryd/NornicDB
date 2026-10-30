@@ -27,8 +27,11 @@ type projectedScopeFacts struct {
 }
 
 type projectionFactsKey struct {
+	writtenSource                          string
 	query, incoming, retained              string
 	incomingKnown, retainedKnown, cypher25 bool
+	body                                   *semanticBodyScope
+	scalarKind                             string
 }
 
 var projectionFactsCache = newBoundedCache[projectionFactsKey, *projectedScopeFacts](4096, func(key projectionFactsKey) int {
@@ -83,16 +86,24 @@ func projectionKey(query string, incoming, retained resultmetadata.Names, cypher
 	retainedKey, retainedKnown := namesKey(retained)
 	return projectionFactsKey{query: query, incoming: inputKey, retained: retainedKey, incomingKnown: inputKnown, retainedKnown: retainedKnown, cypher25: cypher25}
 }
-func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
+func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool, bodies ...*semanticBodyScope) *projectedScopeFacts {
+	query = statementAdmissionSource(ctx, query)
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
 	key := projectionKey(query, incoming, retained, cypher25)
+	key.scalarKind = scalarCompilationKind(ctx, query)
+	if names := quotedVariableNamesFor(ctx, query); names != nil {
+		key.writtenSource = names.Original
+	}
+	if len(bodies) != 0 {
+		key.body = bodies[0]
+	}
 	generation := globalProcedureRegistry.generation.Load()
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == generation {
 		return facts
 	}
-	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25)
+	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25, key.body)
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
@@ -113,8 +124,8 @@ func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, 
 	return facts
 }
 
-func (e *StorageExecutor) projectedStatementScope(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
-	return e.projectionFactsFor(ctx, query, incoming, retained, cypher25)
+func (e *StorageExecutor) projectedStatementScope(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool, bodies ...*semanticBodyScope) *projectedScopeFacts {
+	return e.projectionFactsFor(ctx, query, incoming, retained, cypher25, bodies...)
 }
 
 func projectedNameMap(names resultmetadata.Names) map[string]struct{} {
@@ -155,15 +166,7 @@ func mergeProjectedNames(incoming, retained resultmetadata.Names) resultmetadata
 	return addProjectedNames(incoming, retained)
 }
 
-func projectedProcedureNames(ctx context.Context, source string) resultmetadata.Names {
-	clause, ok := canonicalQueryClause(ctx, source)
-	if !ok {
-		return resultmetadata.Unknown()
-	}
-	return projectedProcedureNodeNames(clause)
-}
-
-func projectedProcedureNodeNames(clause cypherantlr.SyntaxNode) resultmetadata.Names {
+func projectedProcedureNodeNames(clause cypherantlr.SyntaxNode, spec ProcedureSpec) resultmetadata.Names {
 	if yield := yieldFromSyntax(clause); yield != nil && !yield.yieldAll {
 		columns := make([]string, 0, len(yield.items))
 		for _, item := range yield.items {
@@ -171,13 +174,8 @@ func projectedProcedureNodeNames(clause cypherantlr.SyntaxNode) resultmetadata.N
 		}
 		return resultmetadata.Known(columns)
 	}
-	name := clause.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
-	procedure, found := globalProcedureRegistry.Get(name)
-	if !found {
-		return resultmetadata.Unknown()
-	}
 	var columns []string
-	for _, output := range procedureDeclaredReturns(procedure.Spec) {
+	for _, output := range procedureDeclaredReturns(spec) {
 		columns = append(columns, output.Name)
 	}
 	return resultmetadata.Known(columns)

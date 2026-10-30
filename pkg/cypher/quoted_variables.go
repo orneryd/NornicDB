@@ -497,10 +497,23 @@ func quotedVariableNamesFor(ctx context.Context, cypher string) *quotedVariableN
 		return nil
 	}
 	names, _ := ctx.Value(quotedVariablesKey{}).(*quotedVariableNames)
-	if names == nil || names.Text != cypher {
+	if names == nil || names.Text == cypher {
+		return names
+	}
+	mode, body := parseExecutionMode(names.Text)
+	if mode == ModeNormal || body != cypher {
 		return nil
 	}
-	return names
+	// The framing owner's body is a suffix of the whitespace-trimmed input.
+	// Select that exact window; never locate it by searching for equal text.
+	_, end := sourceWhitespaceExtent(names.Text)
+	start := end - len(body)
+	if start < 0 || names.Text[start:end] != body {
+		return nil
+	}
+	view := *names
+	view.Source = *names.Source.Window(start, end)
+	return &view
 }
 
 // finalReturnBody locates the body of text's last top-level RETURN (after

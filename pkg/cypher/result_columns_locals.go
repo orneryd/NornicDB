@@ -68,18 +68,25 @@ func expressionLocalSyntax(node cypherantlr.SyntaxNode) []syntaxLocalBinding {
 // syntaxLocalAt is the same declaration view used by the binding walk. It
 // distinguishes an implicit import from a name the body binds locally.
 func syntaxLocalAt(node, body cypherantlr.SyntaxNode, name string, outer map[string]struct{}) bool {
+	if binding, found := syntaxLocalBindingAt(node, body, name); found {
+		if binding.reuse {
+			_, imported := outer[name]
+			return !imported
+		}
+		return true
+	}
+	return false
+}
+
+func syntaxLocalBindingAt(node, body cypherantlr.SyntaxNode, name string) (syntaxLocalBinding, bool) {
 	at, _ := node.Span()
 	for parent, ok := node.Parent(); ok && parent.ID() != body.ID(); parent, ok = parent.Parent() {
 		for _, binding := range expressionLocalSyntax(parent) {
 			if syntaxSymbolName(binding.symbol) != name || !binding.visible(at) {
 				continue
 			}
-			if binding.reuse {
-				_, imported := outer[name]
-				return !imported
-			}
-			return true
+			return binding, true
 		}
 	}
-	return false
+	return syntaxLocalBinding{}, false
 }

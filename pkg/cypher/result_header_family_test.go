@@ -259,7 +259,6 @@ func TestResultHeaderColdExecution(t *testing.T) {
 		t.Cleanup(func() {
 			globalProcedureRegistry.mu.Lock()
 			delete(globalProcedureRegistry.user, name)
-			delete(globalProcedureRegistry.userFold, name)
 			globalProcedureRegistry.generation.Add(1)
 			globalProcedureRegistry.mu.Unlock()
 		})

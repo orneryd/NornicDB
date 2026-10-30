@@ -38,13 +38,13 @@ func TestFoundationScannerConsumers(t *testing.T) {
 	t.Run("list token closure and exponents", func(t *testing.T) {
 		for _, source := range []string{"'open", "\"open"} {
 			require.NotPanics(t, func() {
-				end, kind, _ := staticListOperand(source, 0, nil)
+				end, kind, _ := staticListOperand(t.Context(), source, 0, nil)
 				require.LessOrEqual(t, end, len(source))
 				require.Empty(t, kind)
 			})
 		}
 		for _, source := range []string{"'a\\'b'", "\"a,b\"", "1e-3", "2E+4"} {
-			end, _, _ := staticListOperand(source+" IN []", 0, nil)
+			end, _, _ := staticListOperand(t.Context(), source+" IN []", 0, nil)
 			require.Equal(t, len(source), end, source)
 		}
 		require.Equal(t, []string{"1e-3 ", "+", " 2E+4"}, splitArithmeticExpression("1e-3 + 2E+4"))

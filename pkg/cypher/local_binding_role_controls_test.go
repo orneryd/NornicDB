@@ -62,7 +62,7 @@ func TestNamedPatternKeywordPrefixRoles(t *testing.T) {
 		pattern := name + " = (s:LocalPathSource)-[:LocalPathRel]->(t:LocalPathTarget)"
 		for _, prefix := range []string{"", "CREATE ", "CREATE/*c*/", "MERGE\t"} {
 			kinds := make(matchSemanticScope)
-			addMatchPatternBindingKinds(kinds, prefix+pattern)
+			addMatchPatternBindingKinds(t.Context(), kinds, prefix+pattern)
 			require.Equal(t, matchBindingPath, kinds[name], prefix+pattern)
 			require.Equal(t, matchBindingNode, kinds["s"], prefix+pattern)
 		}

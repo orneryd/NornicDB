@@ -40,7 +40,7 @@ func TestSharedDelimiterSectionsUseCypherQuoting(t *testing.T) {
 			var ok bool
 			if test.open == '(' {
 				inside, rest, ok = extractParenSection(test.text)
-				require.Equal(t, len(test.inside)+1, findMatchingCallParen(test.text, 0))
+				require.Equal(t, len(test.inside)+1, cyphertext.FindMatchingDelimiter(test.text, 0, '(', ')', cyphertext.OpeningDelimiter))
 			} else {
 				inside, rest, ok = extractBracketSection(test.text)
 				require.Equal(t, len(test.inside)+1, findMatchingBracket(test.text, 0))

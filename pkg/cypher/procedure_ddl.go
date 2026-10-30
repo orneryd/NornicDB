@@ -265,10 +265,9 @@ func (e *StorageExecutor) compilePersistedProcedure(ctx context.Context, record 
 		spec.Params = append(spec.Params, param)
 	}
 
+	// Arity is the statement compiler's: a CALL reaches this handler only
+	// with an admitted argument count.
 	handler := func(ctx context.Context, exec *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-		if len(args) < minArgs || len(args) > len(argNames) {
-			return nil, localizedError(localization.CypherProceduresArgumentCount(record.Name, len(argNames), len(args)), nil)
-		}
 		params := make(map[string]interface{}, len(argNames))
 		for i, arg := range argNames {
 			if i < len(args) {
@@ -276,7 +275,11 @@ func (e *StorageExecutor) compilePersistedProcedure(ctx context.Context, record 
 				continue
 			}
 			// An omitted optional argument takes its declared default.
-			params[arg], _ = parseLiteralValueFromComputedRow(record.ArgDefaults[i])
+			if i < len(record.ArgDefaults) {
+				params[arg], _ = parseLiteralValueFromComputedRow(record.ArgDefaults[i])
+			} else {
+				params[arg] = nil
+			}
 		}
 		// The body is a statement the procedure runs, like one
 		// apoc.cypher.run runs: through the one route for those, which

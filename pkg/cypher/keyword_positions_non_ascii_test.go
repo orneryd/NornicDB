@@ -95,6 +95,8 @@ func TestKeywordPositionHelpersWithNonASCIIText(t *testing.T) {
 	require.True(t, exec.evaluateRowStringPredicate(ctx, "n.tag", "'İ-'", map[string]interface{}{"n": node}, strings.Contains))
 	require.False(t, exec.evaluateRowStringPredicate(ctx, "n.name", "'ıı'", map[string]interface{}{"n": node}, strings.HasSuffix))
 
-	require.NoError(t, exec.validateSetAssignments([]string{"n.a = toUpper('ıı')", "n:İ"}))
-	require.Error(t, exec.validateSetAssignments([]string{"n.a = notAFunction('ıı')"}))
+	_, err := exec.Execute(ctx, "CREATE (n:P) SET n.a = toUpper('ıı'), n:İ RETURN n.a", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (n:P) SET n.a = notAFunction('ıı') RETURN n.a", nil)
+	require.Error(t, err)
 }

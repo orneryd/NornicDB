@@ -60,17 +60,29 @@ func TestPipelineDBMSProcedureRunsPerInputRow(t *testing.T) {
 
 func TestCanonicalTypedProcedureArgumentBoundaries(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	spec := ProcedureSpec{Name: "typed", MinArgs: 1, MaxArgs: 1, Params: []ProcedureParam{{Name: "value", Type: "ANY"}}}
+	ClearUserProcedures()
+	t.Cleanup(ClearUserProcedures)
+	var received []interface{}
+	require.NoError(t, RegisterUserProcedure(
+		ProcedureSpec{Name: "typed", Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 1, Params: []ProcedureParam{{Name: "value", Type: "ANY"}}},
+		func(_ context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
+			received = append([]interface{}(nil), args...)
+			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		},
+	))
+	// Arity, aggregation and scope are rejected at admission; a failing
+	// argument expression fails when the call evaluates it.
 	for _, query := range []string{"CALL typed()", "CALL typed(count(1))", "CALL typed(missing)", "CALL typed(1 / 0)"} {
 		t.Run(query, func(t *testing.T) {
-			arguments, err := exec.extractBoundProcedureInvocationArguments(context.Background(), spec, query)
+			received = nil
+			_, err := exec.Execute(context.Background(), query, nil)
 			require.Error(t, err)
-			require.Nil(t, arguments)
+			require.Nil(t, received)
 		})
 	}
-	arguments, err := exec.extractBoundProcedureInvocationArguments(withQueryParams(context.Background(), map[string]interface{}{"value": int64(7)}), spec, "CALL typed")
+	_, err := exec.Execute(context.Background(), "CALL typed", map[string]interface{}{"value": int64(7)})
 	require.NoError(t, err)
-	require.Equal(t, []interface{}{int64(7)}, arguments)
+	require.Equal(t, []interface{}{int64(7)}, received)
 	_, err = exec.callVectorQueryArguments(context.Background(), nil, false)
 	requireSyntaxErrorStatus(t, err, "no vector arguments")
 	// A value of another type reaching the procedure is a TypeError; the

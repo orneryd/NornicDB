@@ -39,8 +39,8 @@ func TestPatternComprehensionsRemainValidProjectionExpressions(t *testing.T) {
 }
 
 func TestWithProjectionRequiresUniqueNamedExpressions(t *testing.T) {
-	requireSemanticPatternDetail(t, validateProjectionSemantics(t.Context(), "WITH 1 AS a, 2 AS a RETURN a"), "ColumnNameConflict")
-	requireSemanticPatternDetail(t, validateProjectionSemantics(t.Context(), "MATCH (a) WITH a, count(*) RETURN a"), "NoExpressionAlias")
+	requireSemanticPatternDetail(t, boundRuleAdmissionError(t.Context(), "WITH 1 AS a, 2 AS a RETURN a"), "ColumnNameConflict")
+	requireSemanticPatternDetail(t, boundRuleAdmissionError(t.Context(), "MATCH (a) WITH a, count(*) RETURN a"), "NoExpressionAlias")
 	require.NoError(t, validateProjectionSemantics(t.Context(), "MATCH (a) WITH a, count(*) AS count RETURN a, count"))
 }
 

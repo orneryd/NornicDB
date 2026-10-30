@@ -2,11 +2,11 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
-	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/callinputtrace"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -15,6 +15,7 @@ type pipelineCallMetadata struct {
 	scope   map[string]struct{}
 	columns []string
 	batch   *boundTransactionBatch
+	call    *resultmetadata.Call
 }
 
 func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
@@ -38,28 +39,11 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			batch = &boundTransactionBatch{size: size}
 		}
 	}
-	// An unscoped body imports through its branches' leading WITHs
-	// (unscopedCallImports, #907).
-	callScope := readCallSubqueryScope(ctx, clause)
-	scopedImports, scoped := callScope.names, callScope.scoped
-	if metadata != nil {
-		declared := scopedImports
-		if declared == nil && !scoped {
-			var importErr error
-			declared, _, importErr = unscopedCallImports(ctx, body, func(name string) bool {
-				_, exists := metadata.scope[name]
-				return exists
-			}, true)
-			if importErr != nil {
-				return nil, nil, true, importErr
-			}
-		}
-		for _, name := range declared {
-			if _, exists := metadata.scope[name]; !exists {
-				return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", "variable "+name+" is not defined")
-			}
-		}
+	if metadata == nil || metadata.call == nil || metadata.call.Statement == nil {
+		return nil, nil, true, unresolvedStatementError()
 	}
+	call := metadata.call
+	imports := call.Imports
 	targetExec := e
 	if use, remaining, hasUse, err := parseUseClause(ctx, body, true, cyphertext.AcceptedSource); hasUse || err != nil {
 		if err != nil {
@@ -78,69 +62,54 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 
 	if len(rows) == 0 {
-		if metadata != nil {
-			columns, err := e.ResultColumns(ctx, clause, resultmetadata.KnownScope(pipelineScopeColumns(metadata.scope)), cypherVersionFromContext(ctx) == "25", AcceptedSource)
-			if err != nil {
-				return nil, nil, true, err
-			}
-			metadata.columns = columns
-			for _, name := range metadata.columns {
-				metadata.scope[name] = struct{}{}
-			}
+		var failure error
+		call.Body.Visit(func(columns []string) { metadata.columns = columns }, func() { failure = unresolvedStatementError() })
+		if failure != nil {
+			return nil, nil, true, failure
+		}
+		for _, name := range metadata.columns {
+			metadata.scope[name] = struct{}{}
 		}
 		return []pipelineRow{}, &QueryStats{}, true, nil
 	}
 
-	hasLegacyImports := false
-	if !scoped {
-		var importErr error
-		_, hasLegacyImports, importErr = unscopedCallImports(ctx, body, func(name string) bool {
-			_, exists := rows[0][name]
-			return exists && !strings.HasPrefix(name, "$")
-		}, false)
-		if importErr != nil {
-			return nil, nil, true, importErr
-		}
-	}
-	// CALL (*) imports every outer variable, including for WITH/RETURN *.
-	// An unscoped body without an importing WITH implicitly imports the
-	// outer variables it reads: a NornicDB extension.
-	// Neo4j 5.26 rejects the outer variable there ("Variable `n` not
-	// defined"); NornicDB keeps running such statements as before, since
-	// the import is unambiguous (#907, kept at the owner's direction).
-	imports := scopedImports
-	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(body, name)) {
-				imports = append(imports, name)
-			}
-		}
-	}
 	write := callSubqueryQueryIsWrite(body)
-	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
-	_, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, body)
+	independentRead := len(imports) == 0 && !write
+	branches, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, body)
+	if !isUnion {
+		branches = []string{body}
+	}
 
-	// A branch of an unscoped body that declares an outer variable's name
-	// itself (MATCH (n)-->(m)) gets a new variable, as in Cypher, not the
-	// implicitly imported outer value (unscopedBranchLocals, #907).
-	var branchLocals map[string][]string
-	if !scoped && len(rows) > 0 {
-		var outerNames []string
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") {
-				outerNames = append(outerNames, name)
+	// Execution consumes the compiler's branch inputs. No row or text reader
+	// reconstructs imports, local-shadowing decisions, or returning/unit kind.
+	branchFacts := call.Statement.Branches
+	if len(branchFacts) == 0 {
+		branchFacts = []resultmetadata.Statement{*call.Statement}
+	}
+	if len(branchFacts) != len(branches) {
+		return nil, nil, true, unresolvedStatementError()
+	}
+	branchInputs := map[string]map[string]struct{}{}
+	branchRetained := map[string][]string{}
+	for index, query := range branches {
+		var allowed map[string]struct{}
+		branchFacts[index].Incoming.Visit(func(names []string) {
+			allowed = map[string]struct{}{}
+			for _, name := range names {
+				allowed[name] = struct{}{}
 			}
+		}, func() {})
+		if allowed == nil {
+			return nil, nil, true, unresolvedStatementError()
 		}
-		branchLocals = map[string][]string{}
-		branches := []string{body}
-		if unionBranches, _, _, union := parseTopLevelUnionBranches(ctx, body); union {
-			branches = unionBranches
+		branchInputs[strings.TrimSpace(query)] = allowed
+		var retained []string
+		known := false
+		branchFacts[index].Retained.Visit(func(names []string) { retained, known = names, true }, func() {})
+		if !known {
+			return nil, nil, true, unresolvedStatementError()
 		}
-		for _, branch := range branches {
-			if locals := unscopedBranchLocals(ctx, branch, outerNames); len(locals) > 0 {
-				branchLocals[strings.TrimSpace(branch)] = locals
-			}
-		}
+		branchRetained[strings.TrimSpace(query)] = retained
 	}
 
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
@@ -150,7 +119,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		}
 		stats := &QueryStats{}
 		out := make([]pipelineRow, 0, len(outerRows))
-		hasReturn := isUnion || pipelineHasClauseKind(clauses, pipelineClauseReturn)
+		hasReturn := call.Kind == resultmetadata.CallReturning
 		// What each outer row's run of the body takes goes back when the run
 		// ends; the rows kept from it count below (#1343).
 		memory := memoryScopeFromContext(runCtx)
@@ -161,18 +130,12 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			rowMark := memory.mark()
 			input := pipelineRow{}
 			bindParameterRow(runCtx, input)
-			if hasLegacyImports {
-				for name, value := range outer {
-					input[name] = value
+			for _, name := range imports {
+				value, exists := outer[name]
+				if !exists {
+					return out, stats, true, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(name), nil)
 				}
-			} else {
-				for _, name := range imports {
-					value, exists := outer[name]
-					if !exists {
-						return out, stats, true, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(name), nil)
-					}
-					input[name] = value
-				}
+				input[name] = value
 			}
 			runBranch := func(query string) (*ExecuteResult, error) {
 				branchClauses := clauses
@@ -186,37 +149,41 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				branchInput := make(pipelineRow, len(input))
 				scope := make(map[string]struct{}, len(input))
 				for name, value := range input {
+					if _, allowed := branchInputs[strings.TrimSpace(query)][name]; !allowed && !strings.HasPrefix(name, "$") {
+						continue
+					}
 					branchInput[name] = value
 					if !strings.HasPrefix(name, "$") {
 						scope[name] = struct{}{}
 					}
 				}
-				for _, name := range branchLocals[strings.TrimSpace(query)] {
-					delete(branchInput, name)
-					delete(scope, name)
+				if callinputtrace.Enabled(runCtx) {
+					var inputNames []string
+					for name := range scope {
+						inputNames = append(inputNames, name)
+					}
+					for index, candidate := range branches {
+						if strings.TrimSpace(candidate) == strings.TrimSpace(query) {
+							callinputtrace.Observe(runCtx, "local-execution", branchFacts[index], inputNames)
+							break
+						}
+					}
+
 				}
 				var carried pipelineRow
-				if scoped {
-					carried = make(pipelineRow, len(imports))
-					for _, name := range imports {
-						carried[name] = branchInput[name]
-					}
-				}
-				if !scoped && hasLegacyImports {
-					names := map[string]struct{}{}
-					var nodes []cypherantlr.SyntaxNode
-					for name := range branchInput {
-						names[name] = struct{}{}
-					}
-					for _, clause := range branchClauses {
-						nodes = append(nodes, clause.syntax)
-					}
-					carried = pipelineRow{}
-					for _, name := range implicitSyntaxImports(names, nodes...) {
+				if retained := branchRetained[strings.TrimSpace(query)]; len(retained) > 0 {
+					carried = make(pipelineRow, len(retained))
+					for _, name := range retained {
 						carried[name] = branchInput[name]
 					}
 				}
 				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
+				for index, candidate := range branches {
+					if strings.TrimSpace(candidate) == strings.TrimSpace(query) {
+						branchCtx = withSemanticBodyClause(branchCtx, executionBranchFrame(runCtx, branchFacts[index].Start))
+						break
+					}
+				}
 
 				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
 				if execErr == nil {

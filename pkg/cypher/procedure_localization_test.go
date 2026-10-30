@@ -61,14 +61,15 @@ func TestProcedureDDLErrorsHaveTypedIdentity(t *testing.T) {
 		requireCypherProceduresLocalizedError(t, err, localization.MessageCypherProceduresInvalidMode, "invalid procedure mode: UNKNOWN")
 	})
 
-	t.Run("handler argument count", func(t *testing.T) {
-		_, handler, _, err := exec.compilePersistedProcedure(t.Context(), persistedProcedureRecord{Name: "custom.echo", Mode: "READ", Body: "RETURN 1", ArgNames: []string{"value"}})
+	t.Run("argument count is the compiler's", func(t *testing.T) {
+		// A persisted procedure's declared arity is enforced by the statement
+		// compiler before its handler runs, with Neo4j's arity error.
+		spec, _, _, err := exec.compilePersistedProcedure(t.Context(), persistedProcedureRecord{Name: "custom.echo", Mode: "READ", Body: "RETURN 1", ArgNames: []string{"value"}})
 		require.NoError(t, err)
-		_, err = handler(context.Background(), exec, "", nil)
-		localizedErr := requireCypherProceduresLocalizedError(t, err, localization.MessageCypherProceduresArgumentCount, "procedure custom.echo requires 1 arguments, got 0")
-		require.Equal(t, "custom.echo", localizedErr.Message.Data["Procedure"])
-		require.Equal(t, 1, localizedErr.Message.Data["Expected"])
-		require.Equal(t, 0, localizedErr.Message.Data["Actual"])
+		_, err = constructProcedureArity(spec, 0)
+		code, detail, _ := boundRuleError(err)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+		require.Equal(t, "InvalidNumberOfArguments", detail)
 	})
 
 	t.Run("wrapped persistence cause", func(t *testing.T) {

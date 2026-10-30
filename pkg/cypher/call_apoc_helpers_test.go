@@ -39,14 +39,6 @@ func TestApocHelpers_SplitBySemicolon(t *testing.T) {
 	assert.Equal(t, []string{"RETURN 1"}, e.splitBySemicolon("RETURN 1"))
 }
 
-func TestApocHelpers_ExtractProcedureName(t *testing.T) {
-	assert.Equal(t, "db.labels", extractProcedureName(t.Context(), "CALL db.labels()"))
-	assert.Equal(t, "apoc.cypher.run", extractProcedureName(t.Context(), "call apoc.cypher.run('RETURN 1',{})"))
-	long := "THIS TEXT HAS NO PROC KEYWORD AND SHOULD FALL BACK TO TRUNCATED QUERY STRING BEHAVIOR"
-	got := extractProcedureName(t.Context(), long)
-	assert.Empty(t, got, "a declined syntax read must not invent a procedure name")
-}
-
 func TestApocHelpers_SharedCallUtilities(t *testing.T) {
 	parts := splitTopLevelComma(`a, [1,2], {x: 'a,b'}, "c,d"`)
 	assert.Equal(t, []string{"a", "[1,2]", "{x: 'a,b'}", `"c,d"`}, parts)

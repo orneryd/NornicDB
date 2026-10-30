@@ -112,6 +112,6 @@ func TestElementPredicateSpansPreserveWhereBindings(t *testing.T) {
 	close := strings.IndexByte(pattern, ')')
 	require.Equal(t, [][2]int{{strings.Index(pattern, "WHERE"), close}}, elementPredicateSpans(pattern, open, close+1))
 	scope := matchSemanticScope{}
-	addMatchPatternBindingKinds(scope, "CREATE (where {v:7})")
+	addMatchPatternBindingKinds(t.Context(), scope, "CREATE (where {v:7})")
 	require.Equal(t, matchBindingNode, scope["where"])
 }

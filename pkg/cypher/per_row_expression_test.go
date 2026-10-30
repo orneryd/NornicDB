@@ -302,7 +302,7 @@ func TestRowPredicateProgramAdapterConsistency(t *testing.T) {
 	evaluate := func(expr string, row map[string]interface{}, program bool) (bool, error) {
 		ctx := withExpressionFailureSlot(context.Background())
 		if program {
-			return compileRowPredicateProgram(expr).holds(exec, ctx, row), getExpressionFailure(ctx)
+			return compileRowPredicateProgram(t.Context(), expr).holds(exec, ctx, row), getExpressionFailure(ctx)
 		}
 		rowValueProgramsDisabled.Store(true)
 		defer rowValueProgramsDisabled.Store(false)

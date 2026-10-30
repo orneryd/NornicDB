@@ -292,8 +292,12 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 		return nil, false, nil
 	}
 	combined := &ExecuteResult{Columns: append([]string(nil), prefixColumns...)}
+	incoming := make(map[string]struct{}, len(prefixColumns))
+	for _, column := range prefixColumns {
+		incoming[column] = struct{}{}
+	}
 	for _, bindings := range projected {
-		procedureResult, err := e.executeProcedureCall(ctx, callParts.callOnly, true)
+		procedureResult, err := e.executeProcedureCall(ctx, callParts.callOnly, incoming)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1156,10 +1160,6 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 	if yield == nil {
 		return result, nil
 	}
-	if err := validateYieldColumnsExist(result.Columns, yield); err != nil {
-		return nil, err
-	}
-
 	// Apply column selection and aliasing (if not YIELD *)
 	if !yield.yieldAll && len(yield.items) > 0 {
 		colIndex := make(map[string]int, len(result.Columns))
@@ -1206,7 +1206,7 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		}
 		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String(), nil, false)
 		if !ok {
-			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
+			// SKIP / LIMIT passed the admitted pagination operand checks,
 			// so only a parameter can make them invalid here.
 			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentType",
 				localization.CypherCoreYieldPaginationInvalid())
@@ -1225,91 +1225,41 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 }
 
 func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	return e.executeProcedureCall(ctx, cypher, false)
+	return e.executeProcedureCall(ctx, cypher, nil)
 }
 
-// executeProcedureCall runs a procedure call and the tail after it. inQuery is
-// true when the call is part of a larger query whose other clauses the caller
-// runs (MATCH … CALL, a CALL in a tail): its YIELD may then filter, order and
-// page, which a standalone call can't (validateYieldModifiers).
-func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher string, inQuery bool) (*ExecuteResult, error) {
+// executeProcedureCall runs the procedure call that starts cypher, then the
+// tail after it. The call is the one the statement compiler admitted: its
+// procedure, arguments and YIELD are read from the bound program. incoming
+// names the variables a caller has already bound for the call.
+func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher string, incoming map[string]struct{}) (*ExecuteResult, error) {
 	// A RETURN right after YIELD is the start of the tail, like any other
 	// clause, so it runs over all yielded rows (executeCallTail): an aggregate
 	// in it groups the rows, and ORDER BY / SKIP / LIMIT apply to all of them.
 	parts := splitChainedProcedureCall(ctx, cypher)
-	callCypher := parts.callOnly
 	tailCypher := parts.tail
-
-	// Parse YIELD clause for post-processing
-	yield := parseYieldClause(ctx, callCypher)
-	if err := e.validateYieldModifiers(ctx, yield, inQuery || strings.TrimSpace(tailCypher) != "" || endsInFinish(ctx, cypher)); err != nil {
+	ctx, call, err := e.bindProcedureCall(ctx, cypher, parts.callOnly, incoming)
+	if err != nil {
 		return nil, err
 	}
-
-	// Registry-first path: canonical procedure contract for built-ins and UDFs.
-	ensureBuiltInProceduresRegistered()
-	procName := extractProcedureName(ctx, callCypher)
-	if proc, found := globalProcedureRegistry.Get(procName); found {
-		hasTail := strings.TrimSpace(tailCypher) != ""
-		if err := validateProcedureArgumentPassingMode(ctx, proc.Spec, callCypher, hasTail); err != nil {
-			return nil, err
-		}
-		if err := validateProcedureYieldBindings(yield, hasTail); err != nil {
-			return nil, err
-		}
-		args, err := e.extractBoundProcedureInvocationArguments(ctx, proc.Spec, callCypher)
-		if err != nil {
-			return nil, err
-		}
-		if yield == nil && strings.TrimSpace(tailCypher) != "" && len(proc.Spec.Returns) > 0 {
-			for _, column := range proc.Spec.Returns {
-				if referencesVariable(tailCypher, column.Name) {
-					return nil, newSemanticError(
-						"Neo.ClientError.Statement.SyntaxError",
-						"UndefinedVariable",
-						fmt.Sprintf("procedure output %s must be introduced with YIELD", column.Name),
-					)
-				}
-			}
-		}
-		procedureCtx, procedureExec := e.systemProcedureScope(ctx)
-		if proc.Spec.OwnsTransactions {
-			if err := procedureExec.checkPeriodicTransactionScope(procedureCtx, procName); err != nil {
-				return nil, err
-			}
-		}
-		result, err := procedureExec.executeProcedureHandler(procedureCtx, proc, callCypher, args)
-		if err != nil {
-			return nil, procedureRuntimeError(procName, err)
-		}
-		if proc.User {
-			result = runtimeProcedureResult(result)
-		}
-		if yield != nil {
-			result, err = e.applyYieldFilter(ctx, result, yield)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if strings.TrimSpace(tailCypher) != "" {
-			if yield == nil && len(proc.Spec.Returns) == 0 {
-				// A void procedure leaves the row it was called for as it
-				// is: the clauses after it run once, as after any other
-				// leading clause.
-				seed := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
-				if result != nil {
-					seed.Stats = result.Stats
-				}
-				result = seed
-			}
-			return e.executeCallTail(ctx, result, tailCypher)
-		}
-		return result, nil
+	result, err := e.invokeProcedure(ctx, call)
+	if err != nil {
+		return nil, err
 	}
-
-	// Terminal chokepoint of the converged procedure router: every built-in
-	// procedure is registered, so an unrecognized name is rejected here.
-	return nil, unknownProcedureError(procName)
+	if strings.TrimSpace(tailCypher) != "" {
+		if call.yield == nil && len(call.procedure.Spec.Returns) == 0 {
+			// A void procedure leaves the row it was called for as it is:
+			// the clauses after it run once, as after any other leading
+			// clause.
+			seed := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
+			if result != nil {
+				seed.Stats = result.Stats
+			}
+			result = seed
+		}
+		return e.executeCallTail(ctx, result, tailCypher)
+	}
+	return result, nil
 }
 
 func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {

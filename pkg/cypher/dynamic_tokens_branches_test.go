@@ -124,26 +124,26 @@ func TestDynamicTokenBranches(t *testing.T) {
 	// Static checks: MERGE actions, REMOVE label items on a relationship, a
 	// write pattern's row-dependent term, an unbalanced predicate call.
 	scope := staticTypeScope{kinds: matchSemanticScope{"n": matchBindingNode, "r": matchBindingRelationship}, values: map[string]string{"i": "Integer"}}
-	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON CREATE SET n:$(1)"}, scope), "Neo.ClientError.Statement.SyntaxError")
-	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON MATCH SET n[1] = 1"}, scope), "Neo.ClientError.Statement.SyntaxError")
-	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE r:$('X')"}, scope), "Neo.ClientError.Statement.SyntaxError")
-	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n:$(i)"}, scope), "Neo.ClientError.Statement.SyntaxError")
+	requireCode(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON CREATE SET n:$(1)"}, scope), "Neo.ClientError.Statement.SyntaxError")
+	requireCode(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON MATCH SET n[1] = 1"}, scope), "Neo.ClientError.Statement.SyntaxError")
+	requireCode(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE r:$('X')"}, scope), "Neo.ClientError.Statement.SyntaxError")
+	requireCode(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n:$(i)"}, scope), "Neo.ClientError.Statement.SyntaxError")
 	// No label item, key or non-entity target: nothing to check here (the
 	// REMOVE scope check reports an item of no form).
-	require.NoError(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n"}, scope))
-	require.Error(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE i"}, scope))
-	require.NoError(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseSet, text: "SET n.p = 1"}, staticTypeScope{}))
-	require.NoError(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseSet, text: "SET n.p = i, n.q = i.x"}, scope))
-	require.NoError(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A {k: 1}) ON CREATE SET n.p = i"}, scope))
-	require.Error(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON CREATE SET n.p = 1, i.q = 2"}, scope))
-	require.Error(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseSet, text: "SET p.k = 1"}, staticTypeScope{kinds: matchSemanticScope{"p": matchBindingPath}}))
-	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseSet, text: "SET n:Bad Label"}, scope), "Neo.ClientError.Statement.SyntaxError")
-	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseCreate, text: "CREATE (m:$(i))"}, scope), "Neo.ClientError.Statement.SyntaxError")
-	require.NoError(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseCreate, text: "CREATE (m:$(i"}, scope))
-	require.NoError(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseCreate, text: "CREATE (m {k: '$(1)', v: $p})"}, scope))
-	require.NoError(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMatch, text: "MATCH (m) WHERE " + dynamicLabelTestFunction + "(m, i"}, scope))
-	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMatch, text: "MATCH (m) WHERE " + dynamicLabelTestFunction + "(m, i, false)"}, scope), "Neo.ClientError.Statement.SyntaxError")
-	require.NoError(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMatch, text: "MATCH (m) WHERE m.__x = 1"}, scope))
+	require.NoError(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n"}, scope))
+	require.Error(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE i"}, scope))
+	require.NoError(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseSet, text: "SET n.p = 1"}, staticTypeScope{}))
+	require.NoError(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseSet, text: "SET n.p = i, n.q = i.x"}, scope))
+	require.NoError(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A {k: 1}) ON CREATE SET n.p = i"}, scope))
+	require.Error(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON CREATE SET n.p = 1, i.q = 2"}, scope))
+	require.Error(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseSet, text: "SET p.k = 1"}, staticTypeScope{kinds: matchSemanticScope{"p": matchBindingPath}}))
+	requireCode(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseSet, text: "SET n:Bad Label"}, scope), "Neo.ClientError.Statement.SyntaxError")
+	requireCode(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseCreate, text: "CREATE (m:$(i))"}, scope), "Neo.ClientError.Statement.SyntaxError")
+	require.NoError(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseCreate, text: "CREATE (m:$(i"}, scope))
+	require.NoError(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseCreate, text: "CREATE (m {k: '$(1)', v: $p})"}, scope))
+	require.NoError(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseMatch, text: "MATCH (m) WHERE " + dynamicLabelTestFunction + "(m, i"}, scope))
+	requireCode(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseMatch, text: "MATCH (m) WHERE " + dynamicLabelTestFunction + "(m, i, false)"}, scope), "Neo.ClientError.Statement.SyntaxError")
+	require.NoError(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseMatch, text: "MATCH (m) WHERE m.__x = 1"}, scope))
 
 	// The label-chain reader: malformed dynamic items.
 	for _, chain := range []string{"$(x", "$(x) y", "`A` y", "A:$()"} {
@@ -176,13 +176,13 @@ func TestDynamicTokenBranches(t *testing.T) {
 	negated := &labelExpression{kind: labelExpressionNot, operands: []*labelExpression{{kind: labelExpressionDynamic, expression: "x"}}}
 	_, _, err = negated.resolveDynamic(func(string) (interface{}, bool, error) { return nil, true, nil })
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	r := &labelExpressionRewriter{query: "n:$(x)", writeItems: true}
+	r := &labelExpressionRewriter{ctx: t.Context(), query: "n:$(x)", writeItems: true}
 	value2, constant, err := r.resolveConstant("$1")
 	require.NoError(t, err)
 	require.False(t, constant)
 	require.Nil(t, value2)
 	require.False(t, r.writeItemHead(0))
-	got, _, err := desugarLabelExpressions("MATCH (n) SET n IS $(x RETURN n", nil, false)
+	got, _, err := desugarLabelExpressions(t.Context(), "MATCH (n) SET n IS $(x RETURN n", nil, false)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH (n) SET n IS $(x RETURN n", got)
 	var references []string
@@ -204,16 +204,16 @@ func TestDynamicTokenBranches(t *testing.T) {
 	// The scope checks, called directly as the MERGE validator calls them.
 	scope2 := newSemanticBindingScope()
 	scope2.bind("n")
-	require.Error(t, exec.validateSetClauseScope(scope2, "SET n[1 +] = 1"))
-	require.Error(t, exec.validateSetClauseScope(scope2, "SET n:$(missing)"))
-	require.Error(t, exec.validateSetClauseScope(scope2, "SET n:$()"))
-	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE n"))
-	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE n[missing]"))
-	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE n:$(missing)"))
-	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE m.p"))
-	require.NoError(t, validateRemoveClauseScope(scope2, "REMOVE n:$('A'), n['k'], n.p"))
+	require.Error(t, exec.validateSetClauseScope(t.Context(), scope2, "SET n[1 +] = 1"))
+	require.Error(t, exec.validateSetClauseScope(t.Context(), scope2, "SET n:$(missing)"))
+	require.Error(t, exec.validateSetClauseScope(t.Context(), scope2, "SET n:$()"))
+	require.Error(t, validateRemoveClauseScope(t.Context(), scope2, "REMOVE n"))
+	require.Error(t, validateRemoveClauseScope(t.Context(), scope2, "REMOVE n[missing]"))
+	require.Error(t, validateRemoveClauseScope(t.Context(), scope2, "REMOVE n:$(missing)"))
+	require.Error(t, validateRemoveClauseScope(t.Context(), scope2, "REMOVE m.p"))
+	require.NoError(t, validateRemoveClauseScope(t.Context(), scope2, "REMOVE n:$('A'), n['k'], n.p"))
 
-	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON CREATE SET n[1] = 1"}, scope), "Neo.ClientError.Statement.SyntaxError")
+	requireCode(t, staticWriteTokenError(t.Context(), pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON CREATE SET n[1] = 1"}, scope), "Neo.ClientError.Statement.SyntaxError")
 	_, _, err = exec.pipelineApplyMerge(cancelled, []pipelineRow{{"l": "L"}}, "MERGE (n:$(l) {k: 1})")
 	require.ErrorIs(t, err, context.Canceled)
 	_, _, err = exec.pipelineApplyMerge(ctx, []pipelineRow{{"l": int64(1)}}, "MERGE (n:$(l) {k: 1})")

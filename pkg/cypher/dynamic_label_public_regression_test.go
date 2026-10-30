@@ -57,7 +57,7 @@ func TestDynamicLabelGeneratedFunctionContract(t *testing.T) {
 			continue
 		}
 		query, _ := stripCypherPreamble(c.Query)
-		rewritten, _, err := desugarLabelExpressions(query, c.Params, c.Cypher25)
+		rewritten, _, err := desugarLabelExpressions(t.Context(), query, c.Params, c.Cypher25)
 		require.NoError(t, err, c.Query)
 		require.NoError(t, forEachFunctionCall(rewritten, func(name, normalized string) error {
 			if !strings.HasPrefix(normalized, "__nornic_") {

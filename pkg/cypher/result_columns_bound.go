@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"context"
 	"slices"
 	"strings"
 
@@ -10,7 +11,13 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-type statementBindingID uint32
+type statementBindingID = resultmetadata.BindingID
+
+func boundBindingScope(names resultmetadata.Names, ids map[string]statementBindingID) resultmetadata.Scope {
+	scope := resultmetadata.UnknownScope()
+	names.Visit(func(names []string) { scope = resultmetadata.KnownBindingScope(names, ids) }, func() {})
+	return scope
+}
 
 type statementBinding struct {
 	id         statementBindingID
@@ -31,8 +38,19 @@ type boundStatementProgram struct {
 	bindings    []statementBinding
 	uses        []statementBindingUse
 	projections map[int]*returnProjectionPlan
+	calls       map[int]*resultmetadata.Call
+	scopes      map[int]resultmetadata.Clause
+	bodies      map[int]*semanticBodyScope
+	frames      map[int]*semanticBodyScope
 	effects     map[int]pipelineClauseEffects
 	scalars     map[int]scalarExpressionSyntax
+	// Typing consumes these admitted source handles. It cannot construct a
+	// second branch/clause schedule or choose names from operand maps.
+	root        *boundBody
+	clauses     map[int]*boundClause
+	expressions map[int]resultmetadata.Scope
+	nested      map[int]*boundBody
+	nodes       map[int]cypherantlr.SyntaxNode
 }
 
 func cloneBindingIDs(input map[string]statementBindingID) map[string]statementBindingID {
@@ -62,6 +80,18 @@ func (compilation *boundCompilation) defineClause(clause *boundClause) {
 		}
 	}
 	for _, name := range names {
+		if clause.source.kind == pipelineClauseCall {
+			if _, output := projectedNameMap(clause.outputs)[name]; output {
+				start, end := syntaxDeclarationSpan(clause.source.syntax, name)
+				clause.afterIDs[name] = compilation.define(name, start, end)
+				continue
+			}
+		}
+		if clause.fresh[name] {
+			start, end := syntaxDeclarationSpan(clause.source.syntax, name)
+			clause.afterIDs[name] = compilation.define(name, start, end)
+			continue
+		}
 		if item, found := projected[name]; found && (!item.direct || item.variable != item.alias) {
 			clause.afterIDs[name] = compilation.define(name, item.definitionStart, item.definitionEnd)
 			continue
@@ -95,12 +125,7 @@ func syntaxDeclarationSpan(clause cypherantlr.SyntaxNode, name string) (start, e
 		if !symbol || identity != name {
 			return nil
 		}
-		parent, ok := node.Parent()
-		if !ok {
-			return nil
-		}
-		switch parent.Rule() {
-		case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_letItem, cypherantlr.CypherParserRULE_yieldItem:
+		if syntaxBindingDefinition(node) {
 			start, end = node.Span()
 			found = true
 		}
@@ -156,7 +181,7 @@ func variableSyntaxRead(node cypherantlr.SyntaxNode) bool {
 	}
 }
 
-func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypherantlr.SyntaxNode) {
+func (compilation *boundCompilation) bindSymbol(ctx context.Context, clause *boundClause, node cypherantlr.SyntaxNode) {
 	if clause.transparent || !variableSyntaxRead(node) {
 		return
 	}
@@ -164,7 +189,7 @@ func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypher
 	start, end := node.Span()
 	scope, identities, restricted := compilation.expressionBindings(clause, node)
 	if _, found := scope[name]; !found {
-		if _, previous := clause.before[name]; restricted && previous {
+		if _, previous := clause.before[name]; restricted && previous && (!clause.branch.body.call || (projectionSemantics{clause: clause.source.syntax}).readPhase(node) == projectionOrdered) {
 			compilation.fail(resultmetadata.ReasonUndefinedVariable, start, localizedStatusError(
 				"Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", localization.CypherMatchingAggregationScopeVariable(name)))
 			return
@@ -174,7 +199,7 @@ func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypher
 			for variable := range scope {
 				semantic[variable] = matchBindingUnknown
 			}
-			if undefinedExpressionVariable(semantic, node.Text()) == nil {
+			if undefinedExpressionVariable(ctx, semantic, node.Text()) == nil {
 				return
 			}
 		}
@@ -187,11 +212,22 @@ func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypher
 	for variable := range scope {
 		semantic[variable] = matchBindingUnknown
 	}
-	if err := undefinedExpressionVariable(semantic, cyphertext.PrintIdentifier(name, nil, cyphertext.AcceptedSource)); err != nil {
+	if err := undefinedExpressionVariable(ctx, semantic, cyphertext.PrintIdentifier(name, nil, cyphertext.AcceptedSource)); err != nil {
 		compilation.failUndefined(start, name)
 		return
 	}
 	id := identities[name]
+	if clause.source.kind == pipelineClauseLet && clause.branch.bindings != nil {
+		for _, read := range semanticScopeReads(clause.source.syntax) {
+			if read.node.ID() == node.ID() {
+				clause.branch.bindings.readEvent(read, clause.branch.bindings.entry)
+				break
+			}
+		}
+	}
+	if clause.source.syntax.Rule() != cypherantlr.CypherParserRULE_useClause && id != 0 && id == clause.branch.input.ids[name] {
+		clause.branch.dependencies.readIdentity(name, id)
+	}
 	if id != 0 {
 		definition := compilation.product.bindings[int(id)-1]
 		if definition.start == start && definition.end == end {
