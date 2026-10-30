@@ -14,6 +14,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
@@ -267,7 +268,7 @@ func (s *Session) handleRun(data []byte) error {
 		result, err = executor.Execute(ctx, query, params)
 		// Bolt owns this deadline, so it marks the timeout for any executor,
 		// not only one that marks it itself.
-		err = nornicerrors.MarkStatementTimeout(err, context.Cause(ctx))
+		err = nornicerrors.MarkStatementTimeout(err, bulk.Cause(ctx))
 		err = nornicerrors.NormalizeTerminalOutcome(err)
 	}
 	// Complete any RUN-owned timeout cleanup before sending a response. The
