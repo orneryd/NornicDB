@@ -58,13 +58,18 @@ func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, err
 	ctx, cancel := context.WithCancel(ctx)
 	job := &hnswBuildJob{ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	s.hnswBuild = job
-	go func() {
+	if !s.RunBackgroundTask(func() {
 		job.index, job.err = s.buildInitialHNSWIndex(ctx, dimensions)
+		s.recordLifetimeOutcome("HNSW build", job.err)
 		if job.err != nil && ctx.Err() == nil {
 			s.logPrintf("[HNSW] background build failed: %v", job.err)
 		}
 		close(job.done)
-	}()
+	}) {
+		job.err = context.Canceled
+		cancel()
+		close(job.done)
+	}
 	return nil, job, nil
 }
 
@@ -341,13 +346,13 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 
 func (s *Service) ensureHNSWMaintenance() {
 	s.hnswMaintOnce.Do(func() {
-		ctx := s.lifecycleCtx
-		if ctx == nil {
-			ctx = context.Background()
+		release, accepted := s.retainBackground()
+		if !accepted {
+			return
 		}
-		ctx, cancel := context.WithCancel(ctx)
-		s.hnswMaintCancel = cancel
-		s.hnswMaintDone = make(chan struct{})
+		// The service owner's cancellation is the loop's only exit; its
+		// enrolled ticket is what Close's quiescence waits for.
+		ctx := s.lifecycleCtx
 
 		interval := envDurationMs("NORNICDB_HNSW_MAINT_INTERVAL_MS", 30_000)
 		minRebuildInterval := envDurationSec("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", 60)
@@ -357,8 +362,8 @@ func (s *Service) ensureHNSWMaintenance() {
 
 		ticker := time.NewTicker(interval)
 		go func() {
+			defer release()
 			defer ticker.Stop()
-			defer close(s.hnswMaintDone)
 			for {
 				select {
 				case <-ticker.C:
@@ -368,27 +373,13 @@ func (s *Service) ensureHNSWMaintenance() {
 					if s.buildInProgress.Load() {
 						continue
 					}
-					_ = s.maybeRebuildHNSW(ctx, rebuildRatio, maxOverhead, minRebuildInterval)
+					s.recordLifetimeOutcome("HNSW maintenance", s.maybeRebuildHNSW(ctx, rebuildRatio, maxOverhead, minRebuildInterval))
 				case <-ctx.Done():
-					// stopHNSWMaintenance and the service's lifecycle
-					// cancel this context; it is the loop's only exit.
 					return
 				}
 			}
 		}()
 	})
-}
-
-func (s *Service) stopHNSWMaintenance() {
-	if s == nil {
-		return
-	}
-	if s.hnswMaintCancel != nil {
-		s.hnswMaintCancel()
-	}
-	if s.hnswMaintDone != nil {
-		<-s.hnswMaintDone
-	}
 }
 
 func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold, maxOverheadFactor float64, minInterval time.Duration) error {

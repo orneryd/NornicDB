@@ -96,7 +96,7 @@ func (db *DB) GetGPUManager() interface{} {
 // Returns nil if clustering is not enabled or there are too few embeddings.
 func (db *DB) TriggerSearchClustering() error {
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	if closed {
 		return ErrClosed
@@ -126,19 +126,16 @@ func (db *DB) TriggerSearchClustering() error {
 // finishes rather than up to an interval later.
 func (db *DB) startClusteringTimer(interval time.Duration) {
 	db.mu.Lock()
-	if db.clusterTicker != nil || db.closed {
+	if db.clusterTicker != nil || !db.work.Enter() {
 		db.mu.Unlock()
 		return
 	}
 	ticker := time.NewTicker(interval)
-	stopCh := make(chan struct{})
 	db.clusterTicker = ticker
-	db.clusterTickerStop = stopCh
-	db.bgWg.Add(1)
 	db.mu.Unlock()
 
-	go func(t *time.Ticker, stop <-chan struct{}) {
-		defer db.bgWg.Done()
+	go func(t *time.Ticker) {
+		defer db.work.Leave()
 		log.Printf("🔬 K-means clustering timer started (interval: %v)", interval)
 
 		// Use buildCtx so clustering stops when DB is closed (e.g. SIGINT/SIGTERM).
@@ -165,7 +162,7 @@ func (db *DB) startClusteringTimer(interval time.Duration) {
 		// Then run on timer
 		for {
 			select {
-			case <-stop:
+			case <-db.work.Context().Done():
 				log.Printf("🔬 K-means clustering timer stopped")
 				return
 			case <-t.C:
@@ -174,25 +171,18 @@ func (db *DB) startClusteringTimer(interval time.Duration) {
 				db.runClusteringAllDatabases(ctx, clusteringGrowthDue(growthRatio), false)
 			}
 		}
-	}(ticker, stopCh)
+	}(ticker)
 }
 
 // stopClusteringTimer stops the k-means clustering timer if running.
 func (db *DB) stopClusteringTimer() {
 	db.mu.Lock()
 	ticker := db.clusterTicker
-	stopCh := db.clusterTickerStop
-	if ticker == nil {
-		db.mu.Unlock()
-		return
-	}
 	db.clusterTicker = nil
-	db.clusterTickerStop = nil
 	db.mu.Unlock()
-
-	ticker.Stop()
-	if stopCh != nil {
-		close(stopCh)
+	// The loop exits on the DB owner's cancellation; Close joins it.
+	if ticker != nil {
+		ticker.Stop()
 	}
 }
 
@@ -248,7 +238,7 @@ type CypherResult struct {
 // ExecuteCypher runs a Cypher query and returns structured results.
 func (db *DB) ExecuteCypher(ctx context.Context, query string, params map[string]interface{}) (*CypherResult, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
@@ -469,7 +459,7 @@ func (db *DB) ListNodes(ctx context.Context, label string, limit, offset int) ([
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -527,7 +517,7 @@ func (db *DB) GetNode(ctx context.Context, id string) (*Node, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -564,7 +554,7 @@ func (db *DB) CreateNodeWithID(ctx context.Context, id string, labels []string, 
 
 func (db *DB) createNode(ctx context.Context, id string, labels []string, properties map[string]interface{}, rejectExisting bool) (*Node, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
@@ -621,7 +611,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 // UpdateNode updates a node's properties.
 func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]interface{}) (*Node, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
@@ -690,7 +680,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 // DeleteNode deletes a node.
 func (db *DB) DeleteNode(ctx context.Context, id string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -728,7 +718,7 @@ func (db *DB) ListEdges(ctx context.Context, relType string, limit, offset int) 
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -775,7 +765,7 @@ func (db *DB) GetEdge(ctx context.Context, id string) (*GraphEdge, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -800,7 +790,7 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -847,7 +837,7 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
 // CreateEdge creates a new edge.
 func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, properties map[string]interface{}) (*GraphEdge, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
@@ -891,7 +881,7 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 // DeleteEdge deletes an edge.
 func (db *DB) DeleteEdge(ctx context.Context, id string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -995,12 +985,11 @@ func (db *DB) Search(ctx context.Context, query string, labels []string, limit i
 // SearchDatabase is Search over one database: database names it and engine
 // is its storage (the caller has resolved and authorized both).
 func (db *DB) SearchDatabase(ctx context.Context, database string, engine storage.Engine, query string, labels []string, limit int) ([]*SearchResult, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer finish()
 
 	svc, err := db.GetOrCreateSearchService(database, engine)
 	if err != nil || svc == nil {
@@ -1042,12 +1031,11 @@ func (db *DB) HybridSearch(ctx context.Context, query string, queryEmbedding []f
 // It is intended for callers that need reproducible retrieval settings, such as
 // offline benchmark runners.
 func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEmbedding []float32, opts *search.SearchOptions) ([]*SearchResult, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer finish()
 
 	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
 	if err != nil || svc == nil {
@@ -1077,12 +1065,11 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 // FindSimilarInDatabase is FindSimilar over one database's storage, engine
 // (the caller has resolved and authorized it).
 func (db *DB) FindSimilarInDatabase(ctx context.Context, engine storage.Engine, nodeID string, limit int) ([]*SearchResult, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer finish()
 	if limit <= 0 {
 		return nil, localizedError(localization.NornicDBCoreFindSimilarLimitInvalid(), nil)
 	}
@@ -1164,7 +1151,7 @@ func (db *DB) GetLabels(ctx context.Context) ([]string, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -1184,7 +1171,7 @@ func (db *DB) GetRelationshipTypes(ctx context.Context) ([]string, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -1223,7 +1210,7 @@ func (db *DB) GetIndexes(ctx context.Context) ([]*IndexInfo, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -1260,7 +1247,7 @@ func (db *DB) GetIndexes(ctx context.Context) ([]*IndexInfo, error) {
 // Supported types: "property", "fulltext", "vector", "range"
 func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -1317,7 +1304,7 @@ func (db *DB) RebuildTemporalIndexes(ctx context.Context) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	return db.rebuildTemporalIndexesNoLock(ctx)
@@ -1328,7 +1315,7 @@ func (db *DB) PruneTemporalHistory(ctx context.Context, opts storage.TemporalPru
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return 0, ErrClosed
 	}
 	if maint, ok := db.baseStorage.(storage.TemporalMaintenanceEngine); ok {
@@ -1342,7 +1329,7 @@ func (db *DB) RebuildMVCCHeads(ctx context.Context) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
@@ -1356,7 +1343,7 @@ func (db *DB) PruneMVCCVersions(ctx context.Context, opts storage.MVCCPruneOptio
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return 0, ErrClosed
 	}
 	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
@@ -1370,7 +1357,7 @@ func (db *DB) LifecycleStatus() (map[string]interface{}, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
@@ -1384,7 +1371,7 @@ func (db *DB) TriggerLifecyclePrune(ctx context.Context) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
@@ -1398,7 +1385,7 @@ func (db *DB) PauseLifecycle() error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
@@ -1412,7 +1399,7 @@ func (db *DB) ResumeLifecycle() error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
@@ -1428,7 +1415,7 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 
@@ -1486,7 +1473,7 @@ const restoreEmbeddingDrainTimeout = 30 * time.Second
 //	err := db.Restore(ctx, "backup-20241201.json")
 func (db *DB) Restore(ctx context.Context, path string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -1508,7 +1495,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 		}
 		if !isJSON {
 			db.mu.Lock()
-			if db.closed {
+			if db.work.Closing() {
 				db.mu.Unlock()
 				return ErrClosed
 			}
@@ -1563,7 +1550,7 @@ legacyJSONRestore:
 	}
 
 	db.mu.Lock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.Unlock()
 		return ErrClosed
 	}
@@ -1656,7 +1643,7 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -1771,7 +1758,7 @@ func escapeCSV(s string) string {
 // Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -1804,7 +1791,7 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 // Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}

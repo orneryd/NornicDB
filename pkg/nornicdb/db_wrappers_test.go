@@ -457,6 +457,6 @@ func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
 	})
 	require.Equal(t, 2, db.EmbeddingCount())
 
-	db.closed = true
+	db.work.CloseAdmission()
 	require.ErrorIs(t, db.BuildSearchIndexes(context.Background()), ErrClosed)
 }
