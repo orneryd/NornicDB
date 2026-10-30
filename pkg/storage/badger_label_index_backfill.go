@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // Label-index startup backfill.
@@ -148,18 +150,27 @@ func (b *BadgerEngine) startIndexBackfill(kind startupIndexKind, mode indexBackf
 		}
 	}
 	mu.Lock()
-	if *doneSlot != nil {
+	if *doneSlot != nil || !b.work.Enter() {
 		mu.Unlock()
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
+	done := &lifecycle.OnceCompletion{}
 	*cancelSlot = cancel
 	*doneSlot = done
 	mu.Unlock()
 
+	// The backfill is accepted engine work; its completion is what
+	// stopIndexBackfill joins.
 	go func() {
-		defer close(done)
+		defer b.work.Leave()
+		done.Run(func() { b.runIndexBackfill(ctx, rebuild, indexName, message, entity) })
+	}()
+	return nil
+}
+
+func (b *BadgerEngine) runIndexBackfill(ctx context.Context, rebuild func(context.Context) (int, error), indexName, message, entity string) {
+	{
 		start := time.Now()
 		idxLog := b.log.With("subsystem", "index_rebuild", "index", indexName)
 		idxLog.Info(message + " started")
@@ -182,8 +193,7 @@ func (b *BadgerEngine) startIndexBackfill(kind startupIndexKind, mode indexBackf
 				slog.Any("error", err),
 			)
 		}
-	}()
-	return nil
+	}
 }
 
 // stopIndexBackfill detaches, cancels and waits for the selected startup rebuild.
@@ -205,7 +215,7 @@ func (b *BadgerEngine) stopIndexBackfill(kind startupIndexKind) {
 		cancel()
 	}
 	if done != nil {
-		<-done
+		<-done.Done()
 	}
 }
 
