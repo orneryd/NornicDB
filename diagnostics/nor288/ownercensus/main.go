@@ -432,14 +432,61 @@ func nor288PlantedGHookTarget(p *PreparedEntityCommit, b *BadgerEngine) { nor288
 var nor288PlantedGHook = nor288PlantedGHookTarget
 
 func nor288PlantedGFuncValue(p *PreparedEntityCommit, b *BadgerEngine) { nor288PlantedGHook(p, b) }
+
+func nor288PlantedNilGuardLogHelper(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	slog.Default().Log(ctx, slog.LevelInfo, "planted")
+}
+
+func nor288PlantedNilGuardWaitHelper(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	<-ctx.Done()
+}
+
+func nor288PlantedGNilGuardLog()  { nor288PlantedNilGuardLogHelper(context.Background()) }
+func nor288PlantedGNilGuardWait() { nor288PlantedNilGuardWaitHelper(context.Background()) }
+
+func (b *BadgerEngine) nor288PlantedGNilGuard() bool {
+	return b.RunAcceptedContinuation(func(ctx context.Context) {
+		nor288PlantedGNilGuardLog()
+		nor288PlantedGNilGuardWait()
+	})
+}
 `, false},
+	// D: parent context plus deadline (classified) and a derived context
+	// without a deadline (must report), on planted (added) lines.
+	{"pkg/storage/zz_nor288_d_deadline.go", "nor288PlantedDDeadline", "D", `package storage
+
+import (
+	"context"
+	"time"
+)
+
+func nor288PlantedDDeadline(ctx context.Context) {
+	_, cancel := context.WithTimeout(ctx, time.Second)
+	cancel()
+}
+`, false},
+	{"pkg/storage/zz_nor288_d_cancel.go", "nor288PlantedDCancel", "D", `package storage
+
+import "context"
+
+func nor288PlantedDCancel(ctx context.Context) {
+	_, cancel := context.WithCancel(ctx)
+	cancel()
+}
+`, true},
 }
 
 type finding struct {
-	Class string `json:"class"`
-	Func  string `json:"func"`
-	File  string `json:"file"`
-	Line  int    `json:"line"`
+	Class string   `json:"class"`
+	Func  string   `json:"func"`
+	File  string   `json:"file"`
+	Line  int      `json:"line"`
 	Shape string   `json:"shape,omitempty"`
 	Path  []string `json:"path,omitempty"`
 	Added bool     `json:"added_line"`
@@ -692,34 +739,90 @@ func main() {
 			}
 		}
 	}
-	// Minimum non-fallback hop distance from f to a write site; -1 if none.
-	// Unbounded (Nornic2's soundness condition): the earlier 3-hop bound is
-	// reported as a difference only.
-	reachesWrite := func(f *ssa.Function) int {
-		seen := map[*ssa.Function]bool{}
-		frontier := []*ssa.Function{f}
-		for d := 0; len(frontier) > 0; d++ {
-			var next []*ssa.Function
-			for _, g := range frontier {
-				if writeSites[g] {
-					return d
+	// F on control dependence: a Closing() read gates a write admission when
+	// the function is itself a write site, or a call in the region its
+	// not-closing branch alone reaches is a write site or directly calls one.
+	// A function returning the read is judged by its callers' regions.
+	fStaticObj := func(cc *ssa.CallCommon) types.Object {
+		if f := cc.StaticCallee(); f != nil && f.Object() != nil {
+			return f.Object()
+		}
+		return nil
+	}
+	directWrite := func(g *ssa.Function) bool {
+		if g == nil {
+			return false
+		}
+		if writeSites[g] {
+			return true
+		}
+		for _, block := range g.Blocks {
+			for _, instr := range block.Instrs {
+				if c, ok := instr.(ssa.CallInstruction); ok && writeSites[c.Common().StaticCallee()] {
+					return true
 				}
-				if seen[g] {
+			}
+		}
+		return false
+	}
+	reach := func(from *ssa.BasicBlock) map[*ssa.BasicBlock]bool {
+		seen := map[*ssa.BasicBlock]bool{}
+		stack := []*ssa.BasicBlock{from}
+		for len(stack) > 0 {
+			b := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if b == nil || seen[b] {
+				continue
+			}
+			seen[b] = true
+			stack = append(stack, b.Succs...)
+		}
+		return seen
+	}
+	// gatedWrite reports the write call in the region only the not-closing
+	// branch of an If on v reaches.
+	gatedWrite := func(fn *ssa.Function, v ssa.Value) string {
+		for _, block := range fn.Blocks {
+			for _, instr := range block.Instrs {
+				ifi, ok := instr.(*ssa.If)
+				if !ok || len(block.Succs) != 2 {
 					continue
 				}
-				seen[g] = true
-				for _, e := range graph.out[g] {
-					if !graph.fallback[e.site] {
-						next = append(next, e.callee)
+				closingSucc, openSucc := -1, -1
+				if ifi.Cond == v {
+					closingSucc, openSucc = 0, 1
+				} else if u, ok := ifi.Cond.(*ssa.UnOp); ok && u.Op == token.NOT && u.X == v {
+					closingSucc, openSucc = 1, 0
+				}
+				if closingSucc < 0 {
+					continue
+				}
+				open, closing := reach(block.Succs[openSucc]), reach(block.Succs[closingSucc])
+				for b := range open {
+					if closing[b] {
+						continue
+					}
+					for _, in := range b.Instrs {
+						if c, ok := in.(ssa.CallInstruction); ok {
+							if callee := c.Common().StaticCallee(); directWrite(callee) {
+								return callee.String()
+							}
+						}
 					}
 				}
-				next = append(next, g.AnonFuncs...)
 			}
-			frontier = next
 		}
-		return -1
+		return ""
 	}
-	gateDepth := map[*types.Func]int{}
+	type fVerdict struct {
+		Func   string `json:"func"`
+		File   string `json:"file"`
+		Line   int    `json:"line"`
+		Member bool   `json:"member"`
+		Reason string `json:"reason"`
+	}
+	var fVerdicts []fVerdict
+	gateReason := map[*types.Func]string{}
 	gatesWrite := func(obj *types.Func) bool {
 		if obj == nil {
 			return false
@@ -728,17 +831,44 @@ func main() {
 		if f == nil {
 			return false
 		}
-		best := reachesWrite(f)
-		// A decider returning the phase: its callers gate on it (one more hop).
-		if r := f.Signature.Results(); r.Len() == 1 && types.Identical(r.At(0).Type(), types.Typ[types.Bool]) {
-			for _, e := range graph.in[f] {
-				if d := reachesWrite(e.caller); !graph.fallback[e.site] && d >= 0 && (best < 0 || d+1 < best) {
-					best = d + 1
+		if writeSites[f] {
+			gateReason[obj] = "the function is itself a write-admission site"
+			return true
+		}
+		for _, block := range f.Blocks {
+			for _, instr := range block.Instrs {
+				c, ok := instr.(*ssa.Call)
+				if !ok || fStaticObj(c.Common()) != types.Object(closingFn) {
+					continue
+				}
+				if w := gatedWrite(f, c); w != "" {
+					gateReason[obj] = "its not-closing branch alone reaches " + w
+					return true
+				}
+				returned := false
+				for _, b := range f.Blocks {
+					for _, in := range b.Instrs {
+						if ret, ok := in.(*ssa.Return); ok {
+							for _, r := range ret.Results {
+								returned = returned || r == ssa.Value(c)
+							}
+						}
+					}
+				}
+				if returned {
+					for _, e := range graph.in[f] {
+						if call, ok := e.site.(*ssa.Call); ok && !graph.fallback[e.site] {
+							if w := gatedWrite(e.caller, call); w != "" {
+								gateReason[obj] = "returned to " + e.caller.String() + ", whose not-closing branch alone reaches " + w
+								return true
+							}
+						}
+					}
 				}
 			}
 		}
-		gateDepth[obj] = best
-		return best >= 0
+		gateReason[obj] = "no not-closing branch reaches a write-admission call (read, drain or reporting only)"
+		return false
 	}
 	rel := func(file string) string {
 		r, err := filepath.Rel(root, file)
@@ -859,6 +989,9 @@ func main() {
 						path := fo.Pkg().Path()
 						if (path == "context" && strings.HasPrefix(fo.Name(), "With") && fo.Name() != "WithValue" && fo.Name() != "WithoutCancel") || path == "golang.org/x/sync/errgroup" {
 							site := finding{Class: "D", Func: funcName(fn), File: rel(p.CompiledGoFiles[i]), Line: fset.Position(n.Pos()).Line, Shape: fo.Pkg().Name() + "." + fo.Name()}
+							if path == "context" && (fo.Name() == "WithTimeout" || fo.Name() == "WithDeadline") {
+								site.Class, site.Shape = "D-classified", "parent context plus deadline, no new lifetime ("+fo.Name()+")"
+							}
 							findings = append(findings, site)
 							lifetimeSites = append(lifetimeSites, site)
 						}
@@ -907,13 +1040,22 @@ func main() {
 						if !ok || reported {
 							return !reported
 						}
-						if obj, ok := info.Uses[sel.Sel].(*types.Func); ok && obj == closingFn && fnObj != writeDecider && fnObj != ownerClose && gatesWrite(fnObj) {
-							if recv, ok := sel.X.(*ast.SelectorExpr); ok {
-								if rs := info.Selections[recv]; rs != nil && rs.Obj() == types.Object(engineWork) {
-									record("F", path, fn, "gates a write admission on the engine owner's sealed phase; write site at "+strconv.Itoa(gateDepth[fnObj])+" non-fallback hops")
-									if gateDepth[fnObj] > 3 {
-										findings[len(findings)-1].Shape += " (beyond the earlier 3-hop bound)"
-									}
+						if obj, ok := info.Uses[sel.Sel].(*types.Func); ok && obj == closingFn && fnObj != writeDecider && fnObj != ownerClose && func() bool {
+							recv, ok := sel.X.(*ast.SelectorExpr)
+							if !ok {
+								return false
+							}
+							rs := info.Selections[recv]
+							return rs != nil && rs.Obj() == types.Object(engineWork)
+						}() {
+							member := gatesWrite(fnObj)
+							fVerdicts = append(fVerdicts, fVerdict{Func: funcName(fn), File: rel(path), Line: fset.Position(sel.Pos()).Line, Member: member, Reason: gateReason[fnObj]})
+							if !member {
+								return true
+							}
+							{
+								{
+									record("F", path, fn, "gates a write admission on the engine owner's sealed phase: "+gateReason[fnObj])
 									findings[len(findings)-1].Added = onAdded(sel.Pos())
 									findings[len(findings)-1].Line = fset.Position(sel.Pos()).Line
 									reported = true
@@ -1003,6 +1145,9 @@ func main() {
 					where = " @ " + rel(p.Filename) + ":" + strconv.Itoa(p.Line)
 				}
 				out = append([]string{f.String() + " [" + st.kind + where + "]"}, out...)
+				if strings.HasPrefix(st.kind, "root:") {
+					break // the path starts at its root
+				}
 				f = st.from
 			}
 			return out
@@ -1105,55 +1250,110 @@ func main() {
 		sinkPkg := func(path string) bool {
 			return path == "log/slog" || path == "log" || path == nornic+"pkg/observability" || strings.HasPrefix(path, "go.opentelemetry.io/")
 		}
-		memo := map[string]int{} // 1 non-blocking, 2 blocking-or-unknown, 3 in progress
-		var nonBlocking func(fn *ssa.Function, idx, depth int) bool
-		nonBlocking = func(fn *ssa.Function, idx, depth int) bool {
-			if fn == nil || idx >= len(fn.Params) || depth > 6 {
+		// A context value is used only non-blockingly when every use is a
+		// sink call, Value/Err, a nil comparison, a nil-guard phi (other edges
+		// Background/TODO or the value itself), or a parameter of a callee
+		// that uses it only non-blockingly. The first other use is the reason.
+		isBackground := func(v ssa.Value) bool {
+			c, ok := v.(*ssa.Call)
+			if !ok {
 				return false
+			}
+			o := staticObj(c.Common())
+			return o != nil && background[o]
+		}
+		memo := map[ssa.Value]string{} // "" non-blocking; "…" reason; "~" in progress
+		var nonBlockingValue func(v ssa.Value, depth int) string
+		nonBlockingValue = func(v ssa.Value, depth int) string {
+			if depth > 12 {
+				return "context use nested too deeply to follow"
+			}
+			if r, ok := memo[v]; ok {
+				if r == "~" {
+					return ""
+				}
+				return r
+			}
+			memo[v] = "~"
+			reason := ""
+			where := func(i ssa.Instruction) string {
+				pos := fset.Position(i.Pos())
+				fn := i.Parent().String()
+				if pos.Filename == "" {
+					return " in " + fn
+				}
+				return " at " + rel(pos.Filename) + ":" + strconv.Itoa(pos.Line) + " in " + fn
+			}
+			refs := v.Referrers()
+			if refs == nil {
+				memo[v] = ""
+				return ""
+			}
+			for _, ref := range *refs {
+				if reason != "" {
+					break
+				}
+				switch r := ref.(type) {
+				case *ssa.DebugRef:
+				case *ssa.BinOp:
+					other := r.X
+					if other == v {
+						other = r.Y
+					}
+					if c, ok := other.(*ssa.Const); !(ok && c.IsNil() && (r.Op == token.EQL || r.Op == token.NEQ)) {
+						reason = "comparison" + where(r)
+					}
+				case *ssa.Phi:
+					for _, e := range r.Edges {
+						if e != v && e != ssa.Value(r) && !isBackground(e) {
+							if _, isPhi := e.(*ssa.Phi); !isPhi {
+								reason = "merged with another context" + where(r)
+							}
+						}
+					}
+					if reason == "" {
+						reason = nonBlockingValue(r, depth+1)
+					}
+				case ssa.CallInstruction:
+					cc := r.Common()
+					if cc.IsInvoke() && cc.Value == v {
+						if m := cc.Method.Name(); m != "Value" && m != "Err" {
+							reason = "ctx." + m + "()" + where(r)
+						}
+						continue
+					}
+					callee := cc.StaticCallee()
+					if callee == nil {
+						reason = "passed to a dynamic call" + where(r)
+						continue
+					}
+					if callee.Pkg != nil && sinkPkg(callee.Pkg.Pkg.Path()) {
+						continue
+					}
+					for i, a := range cc.Args {
+						if a == v && reason == "" {
+							if i >= len(callee.Params) {
+								reason = "passed variadically" + where(r)
+							} else {
+								reason = nonBlockingValue(callee.Params[i], depth+1)
+							}
+						}
+					}
+				default:
+					reason = fmt.Sprintf("%T use", ref) + where(ref)
+				}
+			}
+			memo[v] = reason
+			return reason
+		}
+		nonBlockingReason := func(fn *ssa.Function, idx int) string {
+			if fn == nil || idx >= len(fn.Params) {
+				return "callee parameter not found"
 			}
 			if fn.Pkg != nil && sinkPkg(fn.Pkg.Pkg.Path()) {
-				return true
+				return ""
 			}
-			key := fn.String() + "#" + strconv.Itoa(idx)
-			switch memo[key] {
-			case 1, 3:
-				return true
-			case 2:
-				return false
-			}
-			memo[key] = 3
-			ok := true
-			for _, ref := range *fn.Params[idx].Referrers() {
-				c, isCall := ref.(ssa.CallInstruction)
-				if !isCall {
-					ok = false
-					break
-				}
-				cc := c.Common()
-				if cc.IsInvoke() && cc.Value == fn.Params[idx] {
-					if m := cc.Method.Name(); m != "Value" && m != "Err" {
-						ok = false
-					}
-					continue
-				}
-				callee := cc.StaticCallee()
-				pos := -1
-				for i, a := range cc.Args {
-					if a == fn.Params[idx] {
-						pos = i
-					}
-				}
-				if callee == nil || pos < 0 || !(callee.Pkg != nil && sinkPkg(callee.Pkg.Pkg.Path()) || nonBlocking(callee, pos, depth+1)) {
-					ok = false
-					break
-				}
-			}
-			if ok {
-				memo[key] = 1
-			} else {
-				memo[key] = 2
-			}
-			return ok
+			return nonBlockingValue(fn.Params[idx], 0)
 		}
 		ctxDeadline := map[types.Object]bool{ctxPkg.Types.Scope().Lookup("WithTimeout"): true, ctxPkg.Types.Scope().Lookup("WithDeadline"): true}
 		var shutdownFn types.Object
@@ -1162,7 +1362,9 @@ func main() {
 				shutdownFn = m
 			}
 		}
+		lastReason := ""
 		classifyG := func(cc *ssa.CallCommon, arg *ssa.Call) string {
+			lastReason = ""
 			o := staticObj(cc)
 			if o != nil && ctxDeadline[o] {
 				return "deadline parent: the derived context is bounded by its deadline"
@@ -1172,10 +1374,16 @@ func main() {
 			}
 			if callee := cc.StaticCallee(); callee != nil {
 				for i, a := range cc.Args {
-					if a == ssa.Value(arg) && nonBlocking(callee, i, 0) {
-						return "context used only non-blockingly (logging, metrics or tracing sinks, Value, Err)"
+					if a == ssa.Value(arg) {
+						if why := nonBlockingReason(callee, i); why == "" {
+							return "context used only non-blockingly (logging, metrics or tracing sinks, Value, Err, nil guards)"
+						} else {
+							lastReason = why
+						}
 					}
 				}
+			} else {
+				lastReason = "dynamic call"
 			}
 			return ""
 		}
@@ -1227,6 +1435,8 @@ func main() {
 							g.Class, g.Shape = "G-classified", why
 						} else if !vtaReach[f] {
 							g.Class, g.Shape = "G-closed", "reached only through the signature fallback; VTA alone (no fallback edges) finds no path from any root"
+						} else if lastReason != "" {
+							g.Shape += "; blocking or unknown use: " + lastReason
 						}
 						findings = append(findings, g)
 					}
@@ -1247,6 +1457,7 @@ func main() {
 		{"nor288PlantedGDeadline", "G-classified"}, {"nor288PlantedGCancel", "G"},
 		{"nor288PlantedGJoin", "G-classified"}, {"nor288PlantedGAcquire", "G"},
 		{"nor288PlantedGHook", "G"},
+		{"nor288PlantedGNilGuardLog", "G-classified"}, {"nor288PlantedGNilGuardWait", "G"},
 	}
 	for _, cc := range classControls {
 		found := false
@@ -1277,12 +1488,6 @@ func main() {
 		verdicts[c.class+":"+c.marker] = fmt.Sprintf("expected reported=%v found=%v pass=%v", c.report, found, ok)
 	}
 	beyond := map[string][]finding{"A": {}, "B": {}, "C": {}, "D": {}, "E": {}, "F": {}, "G": {}}
-	var boundDiff []finding
-	for _, f := range findings {
-		if f.Class == "F" && strings.Contains(f.Shape, "beyond the earlier 3-hop bound") {
-			boundDiff = append(boundDiff, f)
-		}
-	}
 	for _, f := range findings {
 		if !strings.Contains(f.Func, "nor288Planted") {
 			beyond[f.Class] = append(beyond[f.Class], f)
@@ -1306,7 +1511,7 @@ func main() {
 		"beyond_owner_count":        counts,
 		"beyond_owner":              beyond,
 		"receipt_waits":             receiptWaits,
-		"F_bound_difference":        boundDiff,
+		"F_verdicts":                fVerdicts,
 		"scope_FG":                  "unit scope of reassessment §7 (packages storage, replication, multidb, qdrantgrpc, cypher; unit-owner roots), every line; added_line marks this diff; G-classified and G-closed are computed",
 		"findings":                  findings,
 		"probe_candidates_A":        candidatesA,
