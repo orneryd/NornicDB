@@ -316,6 +316,57 @@ func (c *NOR160ControlCache) GetCapturedLabelled(label string) []*Node {
 	}
 	return out
 }
+
+// Selection inside a callee: a copied population handed to a function that
+// drops some of its elements must be reported at the caller (K1); handed to
+// one that returns all of them, not.
+func nor160ControlKeep(all []*Node, skip map[NodeID]bool) []*Node {
+	var out []*Node
+	for _, n := range all {
+		if skip[n.ID] {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func nor160ControlKeepAll(all []*Node) []*Node {
+	var out []*Node
+	for _, n := range all {
+		out = append(out, n)
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetSelectedInCallee(skip map[NodeID]bool) []*Node {
+	return nor160ControlKeep(c.nor160CopyAll(), skip)
+}
+
+func (c *NOR160ControlCache) GetKeptInCallee() []*Node {
+	return nor160ControlKeepAll(c.nor160CopyAll())
+}
+
+// A copy accumulated in a local population that one path does not return
+// must be reported (K1); one returned on every path, not.
+func (c *NOR160ControlCache) GetFirstUnused(ids []NodeID, small bool) []*Node {
+	var first []*Node
+	for _, id := range ids {
+		first = append(first, copyNode(c.nodes[id]))
+	}
+	if small {
+		return c.nor160CopyAll()
+	}
+	return first
+}
+
+func (c *NOR160ControlCache) GetFirstUsed(ids []NodeID) []*Node {
+	var first []*Node
+	for _, id := range ids {
+		first = append(first, copyNode(c.nodes[id]))
+	}
+	return first
+}
 `
 
 const cypherControlFile = `package cypher
@@ -362,6 +413,10 @@ var controls = []control{
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedSelected", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLabelled", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedAll", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetSelectedInCallee", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetKeptInCallee", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetFirstUnused", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetFirstUsed", true},
 }
 
 var tree string
@@ -1645,15 +1700,24 @@ func errorReturn(ret *ssa.Return) bool {
 func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d map[ssa.Value]bool) (dropKind, bool) {
 	rootCall, _ := root.(*ssa.Call)
 	has := func(v ssa.Value) bool { return d[v] }
-	start := root.Block()
+	var start *ssa.BasicBlock
 	idx := -1
-	for i, ins := range start.Instrs {
-		if ins == root {
-			idx = i
+	if root == nil {
+		// A parameter: its obligation starts at the function's entry.
+		if len(fn.Blocks) == 0 {
+			return noDrop, false
 		}
-	}
-	if idx < 0 {
-		return noDrop, false
+		start = fn.Blocks[0]
+	} else {
+		start = root.Block()
+		for i, ins := range start.Instrs {
+			if ins == root {
+				idx = i
+			}
+		}
+		if idx < 0 {
+			return noDrop, false
+		}
 	}
 	storedRetention := false
 	for _, b := range fn.Blocks {
@@ -1670,17 +1734,9 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 			}
 		}
 	}
-	anyDelivery := false
-	for _, b := range fn.Blocks {
-		for _, ins := range b.Instrs {
-			if a.deliversWith(fn, ins, has) {
-				anyDelivery = true
-			}
-		}
-	}
-	// moves: the root goes into a local container; when that container is
-	// delivered somewhere, the obligation moves with it (partial consumption of
-	// the container is K3's question).
+	// moves: the root goes into a local container. The obligation moves with
+	// it: the container must then be delivered on every path, and coming
+	// round to the root again after a move is not a drop.
 	moves := func(ins ssa.Instruction) bool {
 		switch x := ins.(type) {
 		case *ssa.Call:
@@ -1691,6 +1747,9 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 					}
 				}
 			}
+			if len(a.closureWritesTo(x, has)) > 0 {
+				return true
+			}
 		case *ssa.Store:
 			return has(x.Val) && local(storeBase(x.Addr))
 		case *ssa.MapUpdate:
@@ -1698,15 +1757,28 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 		}
 		return false
 	}
-	scan := func(instrs []ssa.Instruction) bool {
+	// scan: whether the instructions deliver, and whether the root has moved.
+	scan := func(instrs []ssa.Instruction, moved bool) (bool, bool) {
 		for _, ins := range instrs {
-			if a.deliversWith(fn, ins, has) || (anyDelivery && moves(ins)) {
-				return true
+			if a.deliversWith(fn, ins, has) {
+				return true, moved
+			}
+			if moves(ins) {
+				moved = true
 			}
 		}
-		return false
+		return false, moved
 	}
-	if scan(start.Instrs[idx+1:]) {
+	type state struct {
+		b     *ssa.BasicBlock
+		moved bool
+	}
+	var first []ssa.Instruction
+	if idx+1 < len(start.Instrs) {
+		first = start.Instrs[idx+1:]
+	}
+	done, moved0 := scan(first, false)
+	if done {
 		return noDrop, storedRetention
 	}
 	if ret, ok := start.Instrs[len(start.Instrs)-1].(*ssa.Return); ok {
@@ -1715,34 +1787,39 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 		}
 		return dropPlain, storedRetention
 	}
-	seen := map[*ssa.BasicBlock]bool{}
-	var stack []*ssa.BasicBlock
-	push := func(b *ssa.BasicBlock) {
-		if iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If); ok {
+	seen := map[state]bool{}
+	var stack []state
+	push := func(b *ssa.BasicBlock, moved bool) {
+		if iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If); ok && !moved {
 			if br := presentBranch(iff.Cond, d, rootCall); br >= 0 {
-				stack = append(stack, b.Succs[br])
+				stack = append(stack, state{b.Succs[br], moved})
 				return
 			}
 		}
-		stack = append(stack, b.Succs...)
+		for _, succ := range b.Succs {
+			stack = append(stack, state{succ, moved})
+		}
 	}
-	push(start)
+	push(start, moved0)
 	result := noDrop
 	for len(stack) > 0 {
-		b := stack[len(stack)-1]
+		st := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if b == start {
-			// The next iteration redefines the root: this one is dropped.
-			if result == noDrop {
+		b := st.b
+		if b == start && root != nil {
+			// The next iteration redefines the root: unless it moved into a
+			// container, this one is dropped.
+			if !st.moved && result == noDrop {
 				result = dropPlain
 			}
 			continue
 		}
-		if seen[b] {
+		if seen[st] {
 			continue
 		}
-		seen[b] = true
-		if scan(b.Instrs) {
+		seen[st] = true
+		done, moved := scan(b.Instrs, st.moved)
+		if done {
 			continue
 		}
 		last := b.Instrs[len(b.Instrs)-1]
@@ -1759,9 +1836,132 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 		if _, ok := last.(*ssa.Panic); ok {
 			continue
 		}
-		push(b)
+		push(b, moved)
 	}
 	return result, storedRetention
+}
+
+// closureWritesTo: captured variables a call of a closure made here writes
+// with a value accepted by has.
+func (a *analysis) closureWritesTo(call *ssa.Call, has func(ssa.Value) bool) []*ssa.Alloc {
+	mc, ok := call.Call.Value.(*ssa.MakeClosure)
+	if !ok {
+		return nil
+	}
+	g, _ := mc.Fn.(*ssa.Function)
+	sg := a.sums[g]
+	if sg == nil {
+		return nil
+	}
+	var out []*ssa.Alloc
+	for i, b := range mc.Bindings {
+		al, ok := b.(*ssa.Alloc)
+		if !ok || i >= len(sg.FreeStores) {
+			continue
+		}
+		for j, arg := range call.Call.Args {
+			if has(arg) && sg.FreeStores[i].Params&bit(j) != 0 {
+				out = append(out, al)
+			}
+		}
+	}
+	return out
+}
+
+// paramDrops: for each function, the parameters whose value (an entity) or
+// some element (a population) it can leave undelivered after handing some of
+// it on: a selection made inside the callee. A function that never hands the
+// value on only reads it, and its caller still holds it. Computed after the
+// summaries converge, callees first, so a parameter passed on to a callee that
+// drops it is dropped here too.
+func (a *analysis) paramDrops() map[*ssa.Function][]bool {
+	out := map[*ssa.Function][]bool{}
+	for _, fn := range a.postOrder() {
+		s := a.states[fn]
+		if s == nil {
+			continue
+		}
+		drops := make([]bool, len(fn.Params))
+		for j, p := range fn.Params {
+			if !family(p.Type()) {
+				continue
+			}
+			if a.passesToDropper(fn, s, p, out) {
+				drops[j] = true
+				continue
+			}
+			if container(p.Type()) {
+				d := a.derived(fn, s, []ssa.Value{p}, false)
+				if a.receivesAny(fn, d) {
+					continue // the population is handed on whole
+				}
+				for _, e := range a.leafElements(fn, s, d) {
+					ei, _ := e.(ssa.Instruction)
+					if ei == nil {
+						continue
+					}
+					ed := a.derived(fn, s, []ssa.Value{e}, true)
+					if !a.receivesAny(fn, ed) {
+						continue
+					}
+					if k, _ := a.mayDrop(fn, s, ei, ed); k == dropPlain {
+						drops[j] = true
+					}
+				}
+				continue
+			}
+			d := a.derived(fn, s, []ssa.Value{p}, true)
+			if !a.receivesAny(fn, d) {
+				continue
+			}
+			if k, _ := a.mayDrop(fn, s, nil, d); k == dropPlain {
+				drops[j] = true
+			}
+		}
+		out[fn] = drops
+	}
+	return out
+}
+
+// receivesAny: some instruction hands a value of d on.
+func (a *analysis) receivesAny(fn *ssa.Function, d map[ssa.Value]bool) bool {
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			if a.deliversWith(fn, ins, func(x ssa.Value) bool { return d[x] }) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// passesToDropper: fn hands parameter p to a callee that drops it.
+func (a *analysis) passesToDropper(fn *ssa.Function, s *fnState, p ssa.Value, drops map[*ssa.Function][]bool) bool {
+	d := a.derived(fn, s, []ssa.Value{p}, false)
+	_, _, ok := a.droppingCallIn(fn, d, drops)
+	return ok
+}
+
+// droppingCallIn: some call in fn hands a value of d to a callee that drops it.
+func (a *analysis) droppingCallIn(fn *ssa.Function, d map[ssa.Value]bool, drops map[*ssa.Function][]bool) (*ssa.Function, int, bool) {
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			call, ok := ins.(ssa.CallInstruction)
+			if !ok {
+				continue
+			}
+			args := callArgs(call.Common())
+			for _, g := range a.calleesOf(call) {
+				dg := drops[g]
+				for j, arg := range args {
+					if j < len(dg) && dg[j] && d[arg] {
+						return g, j, true
+					}
+				}
+			}
+		}
+	}
+	return nil, 0, false
 }
 
 // ---------------------------------------------------------------- loops
@@ -2081,6 +2281,7 @@ func main() {
 		}
 	}
 
+	drops := a.paramDrops()
 	seenHit := map[string]bool{}
 	add := func(class string, fn *ssa.Function, p token.Pos, detail string) {
 		file, line := pos(fn, p)
@@ -2140,6 +2341,11 @@ func main() {
 					continue // the caller of a public read received it
 				}
 				d := a.derived(fn, s, []ssa.Value{v}, true)
+
+				// K1 on a copy handed to a callee that selects it out.
+				if g, j, ok := a.droppingCallIn(fn, d, drops); ok {
+					add("K1", fn, ins.Pos(), "copy "+copyLabel(v)+" is selected out inside "+strings.TrimPrefix(fullName(g), module+"/")+" (parameter "+fmt.Sprint(j)+")")
+				}
 
 				// K1 / K1e / K2 on the copy itself.
 				kind, stored := a.mayDrop(fn, s, ins, d)
