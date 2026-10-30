@@ -1079,7 +1079,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Wire up plugin function lookup and listing for Cypher executor
 	cypher.PluginFunctionList = pluginFunctionInfos
-	cypher.PluginFunctionLookup = func(name string) (interface{}, bool) {
+	// Author: Codex NOR-184 lane. Only admitted callables reach query dispatch.
+	cypher.PluginFunctionLookup = func(name string) (*cypher.PluginFunctionHandler, bool) {
 		fn, found := GetPluginFunction(name)
 		if !found {
 			return nil, false

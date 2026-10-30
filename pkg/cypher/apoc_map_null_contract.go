@@ -1,9 +1,10 @@
 package cypher
 
+// Author: Codex NOR-184 lane: immutable callable metadata preserves identity checks.
+
 import (
 	"fmt"
 	"reflect"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -99,12 +100,11 @@ func apocNullValue(value interface{}) bool {
 
 // bundledAPOCMapHandler identifies the actual bundled implementation, so
 // third-party handlers retain their own contract and override precedence.
-func bundledAPOCMapHandler(name string, handler interface{}, argumentCount int) bool {
-	v := reflect.ValueOf(handler)
-	if !v.IsValid() || v.Kind() != reflect.Func || v.IsNil() {
+func bundledAPOCMapHandler(name string, handler *PluginFunctionHandler, argumentCount int) bool {
+	typ := handler.Signature()
+	if typ == nil {
 		return false
 	}
-	typ := v.Type()
 	if typ.NumOut() == 0 || (typ.Out(0).Kind() != reflect.Map && !(name == "apoc.map.get" && typ.Out(0).Kind() == reflect.Interface)) {
 		return false
 	}
@@ -125,8 +125,7 @@ func bundledAPOCMapHandler(name string, handler interface{}, argumentCount int) 
 			return false
 		}
 	}
-	fn := runtime.FuncForPC(v.Pointer())
-	return fn != nil && strings.HasPrefix(fn.Name(), "github.com/orneryd/nornicdb/apoc/")
+	return strings.HasPrefix(handler.Symbol(), "github.com/orneryd/nornicdb/apoc/")
 }
 
 func init() {
