@@ -27,16 +27,17 @@ func (r *RaftReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command
 	r.mu.RLock()
 	err := r.acceptedAdmissionErrorLocked(0)
 	term := r.currentTerm
-	if err == nil {
-		// Shutdown closes admission under mu before waiting for all queue
-		// producers and consumers. No accepted producer may enqueue after drain.
-		r.wg.Add(1)
-	}
 	r.mu.RUnlock()
 	if err != nil {
 		return nil, err
 	}
-	defer r.wg.Done()
+	// The producer is accepted work: Shutdown's retirement drains the queue
+	// only after every accepted producer and consumer has returned.
+	release, accepted := r.enter()
+	if !accepted {
+		return nil, ErrClosed
+	}
+	defer release()
 	receipt, owner := storage.NewCommitReceipt(settle)
 	future := &applyFuture{cmd: cmd, errCh: make(chan error, 1), accepted: &raftAcceptedOutcome{receipt: receipt, owner: owner, term: term}}
 	if err := r.processApply(ctx, future, raftApplyQueue{}); err != nil {
@@ -49,7 +50,7 @@ func (r *RaftReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command
 // while append retains the same role/term read lease. Prepared work is never
 // forwarded to another authority after a leadership change.
 func (r *RaftReplicator) acceptedAdmissionErrorLocked(term uint64) error {
-	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+	if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 		return err
 	}
 	if r.state != StateLeader || (term != 0 && term != r.currentTerm) {

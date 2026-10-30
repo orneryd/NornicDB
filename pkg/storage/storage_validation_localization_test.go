@@ -104,7 +104,8 @@ func TestStorageValidationLocalizedConstraintViolation(t *testing.T) {
 
 func TestStorageValidationLocalizedTransactionErrorsPreserveSentinels(t *testing.T) {
 	t.Run("closed engine", func(t *testing.T) {
-		engine := &BadgerEngine{closed: true}
+		engine := &BadgerEngine{}
+		engine.work.CloseAdmission()
 		_, err := engine.BeginTransaction()
 		requireStorageValidationLocalizedError(t, err, localization.MessageStorageTransactionEngineClosed, "engine is closed")
 		require.ErrorIs(t, err, ErrStorageClosed)

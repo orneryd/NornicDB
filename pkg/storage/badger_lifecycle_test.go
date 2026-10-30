@@ -149,7 +149,7 @@ func TestBadgerEngine_CloseReleasesRetainedState(t *testing.T) {
 
 	require.NoError(t, e.Close())
 
-	require.True(t, e.closed)
+	require.True(t, e.work.Closing())
 	require.Nil(t, e.DB())
 	require.Nil(t, e.nodeCache)
 	require.Nil(t, e.nodeBodyCache)
