@@ -725,6 +725,41 @@ func NOR160ControlCrossCopy(n *storage.Node, keep bool) *storage.Node {
 	return c
 }
 
+// The boundary (received provenance). A helper that passes on a node a
+// public read delivered, and a caller that drops it: the receiver's own
+// handling (clean). A copy of a received node, dropped: clean. A cache this
+// package owns, copying its own retained node and dropping the copy: in scope
+// (K1, must be reported).
+func nor160ControlCypherHelper(c *storage.NOR160ControlCache, id storage.NodeID) *storage.Node {
+	return c.GetCopied(id)
+}
+
+func NOR160ControlCypherDrops(c *storage.NOR160ControlCache, id storage.NodeID, hidden func(*storage.Node) bool) *storage.Node {
+	n := nor160ControlCypherHelper(c, id)
+	if hidden(n) {
+		return nil
+	}
+	return n
+}
+
+func NOR160ControlCypherCopyReceived(c *storage.NOR160ControlCache, id storage.NodeID, keep bool) *storage.Node {
+	n := storage.CopyNode(c.GetCopied(id))
+	if !keep {
+		return nil
+	}
+	return n
+}
+
+type NOR160ControlCypherCache struct{ nodes map[string]*storage.Node }
+
+func (c *NOR160ControlCypherCache) Get(k string, hidden func(*storage.Node) bool) *storage.Node {
+	n := storage.CopyNode(c.nodes[k])
+	if hidden(n) {
+		return nil
+	}
+	return n
+}
+
 // NOR160ControlReceiver drops a node that storage's public read delivered to
 // it. The census must prove the receipt and not report it.
 func NOR160ControlReceiver(c *storage.NOR160ControlCache, id storage.NodeID, hidden func(*storage.Node) bool) *storage.Node {
@@ -759,6 +794,9 @@ var controls = []control{
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSlotted", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSlottedCopied", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCrossCopy", false},
+	{"K1", module + "/pkg/cypher.NOR160ControlCypherDrops", true},
+	{"K1", module + "/pkg/cypher.NOR160ControlCypherCopyReceived", true},
+	{"K1", "(*" + module + "/pkg/cypher.NOR160ControlCypherCache).Get", false},
 	{"K5", "(*" + storagePkg + ".NOR160ControlCache).nor160CopyAll", false},
 	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetDecodedCopy", false},
 	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetCopyOfCopy", false},
@@ -810,17 +848,22 @@ type org struct {
 	// Delivered: parameters handed back through the owner's decision. On
 	// substitution a retained argument becomes the owner's copy.
 	Delivered uint64
+	// Received: delivered to this package by another package's public read.
+	Received bool
 }
 
 func (o org) or(p org) org {
-	return org{o.Copy || p.Copy, o.Retained || p.Retained, o.Decoded || p.Decoded, o.Unknown || p.Unknown, o.Params | p.Params, o.FuncRes | p.FuncRes, o.Delivered | p.Delivered}
+	return org{o.Copy || p.Copy, o.Retained || p.Retained, o.Decoded || p.Decoded, o.Unknown || p.Unknown, o.Params | p.Params, o.FuncRes | p.FuncRes, o.Delivered | p.Delivered, o.Received || p.Received}
 }
+
+// receivedOnly: nothing but a value received across the boundary.
+func (o org) receivedOnly() bool { return o == org{Received: true} }
 
 func (o org) empty() bool { return o == (org{}) }
 
 // private: only values made for this read (decoded or copied here).
 func (o org) private() bool {
-	return !o.empty() && !o.Retained && !o.Unknown && o.Params == 0 && o.FuncRes == 0 && o.Delivered == 0
+	return !o.empty() && !o.Retained && !o.Unknown && !o.Received && o.Params == 0 && o.FuncRes == 0 && o.Delivered == 0
 }
 
 func (o org) overlaps(p org) bool {
@@ -1356,6 +1399,9 @@ func (a *analysis) origin(fn *ssa.Function, s *fnState, v ssa.Value) org {
 	case *ssa.Alloc:
 		elem := pointee(x.Type())
 		if src, ok := copySource(s, x); ok {
+			if src.receivedOnly() {
+				return org{Received: true} // the receiver's own handling
+			}
 			s.src[x] = src
 			s.intro[x] = true
 			return org{Copy: true}
@@ -1600,6 +1646,14 @@ func (a *analysis) callResults(fn *ssa.Function, s *fnState, call *ssa.Call) []o
 		}
 		return out
 	}
+	if a.receivedAcross(fn, call) {
+		for i, t := range rts {
+			if family(t) {
+				out[i] = org{Received: true}
+			}
+		}
+		return out
+	}
 	args := callArgs(c)
 	callees := a.calleesOf(call)
 	if len(callees) == 0 {
@@ -1653,14 +1707,42 @@ func (a *analysis) callResults(fn *ssa.Function, s *fnState, call *ssa.Call) []o
 			}
 		}
 	}
+	if introduces && src.receivedOnly() && !a.copiesOwnState(callees) {
+		// A copy of a received value: the receiver's own handling.
+		delete(s.intro, call)
+		for i := range out {
+			if out[i].Copy {
+				out[i].Copy = false
+				out[i].Received = true
+			}
+		}
+		return out
+	}
 	if introduces && len(out) > 0 && out[0].Copy {
 		s.src[call] = src
 	}
 	return out
 }
 
+// copiesOwnState: some callee also returns a copy of state it holds itself
+// (not only of its arguments).
+func (a *analysis) copiesOwnState(callees []*ssa.Function) bool {
+	for _, g := range callees {
+		sg := a.sums[g]
+		if sg == nil {
+			return true
+		}
+		for _, r := range sg.Ret {
+			if r.Retained || r.Decoded || r.Unknown {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (a *analysis) subst(fn *ssa.Function, s *fnState, o org, args []ssa.Value) org {
-	r := org{Copy: o.Copy, Retained: o.Retained, Decoded: o.Decoded, Unknown: o.Unknown}
+	r := org{Copy: o.Copy, Retained: o.Retained, Decoded: o.Decoded, Unknown: o.Unknown, Received: o.Received}
 	for j := 0; j < 64; j++ {
 		if o.Params&bit(j) != 0 {
 			if j < len(args) {
@@ -1679,7 +1761,7 @@ func (a *analysis) subst(fn *ssa.Function, s *fnState, o org, args []ssa.Value) 
 		if o.Delivered&bit(j) != 0 {
 			if j < len(args) {
 				v := s.val(args[j])
-				r = r.or(org{Copy: v.Copy || v.Retained, Decoded: v.Decoded, Unknown: v.Unknown || v.FuncRes != 0, Delivered: v.Params | v.Delivered})
+				r = r.or(org{Copy: v.Copy || v.Retained, Decoded: v.Decoded, Unknown: v.Unknown || v.FuncRes != 0, Delivered: v.Params | v.Delivered, Received: v.Received})
 			} else {
 				r.Unknown = true
 			}
