@@ -45,7 +45,12 @@ type parkedAcceptedSubmitter struct {
 func (p *parkedAcceptedSubmitter) SubmitEntityCommit(ctx context.Context, prepared *PreparedEntityCommit, settle func(CommitOutcome)) (*CommitReceipt, error) {
 	defer close(p.returned)
 	close(p.entered)
-	<-p.release
+	// Like a real submitter, it yields to its caller's cancellation.
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	route, _ := EntityCommitSubmitterFor(p.Engine)
 	return route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
 }

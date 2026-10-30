@@ -182,6 +182,13 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 						require.Equal(t, storage.CommitRecoveryPending, outcome.State)
 						require.ErrorAs(t, outcome.Err, &accepted)
 						require.ErrorIs(t, accepted.Cause(), ErrClosed)
+						// Author: NOR-288 lane (Claude), 2026-10-30. The handle's
+						// join finishes after Shutdown's report; it cannot put the
+						// earlier apply failure back as the pending cause.
+						require.Never(t, func() bool {
+							var current *storage.AcceptedCommitError
+							return !errors.As(receipt.Outcome().Err, &current) || !errors.Is(current.Cause(), ErrClosed)
+						}, 100*time.Millisecond, time.Millisecond, "a later join restored an older pending cause")
 						require.Zero(t, settled.Load(), "shutdown cannot certify a committed entry discarded")
 						select {
 						case <-receipt.Done():
