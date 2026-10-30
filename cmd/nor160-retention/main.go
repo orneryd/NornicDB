@@ -732,6 +732,12 @@ var baseCopiers = map[string]bool{
 	module + "/pkg/storage.CopyNode": true, module + "/pkg/storage.CopyEdge": true,
 	module + "/pkg/storage.copyPropertyValue": true, module + "/pkg/storage.copyImagesForCaller": true,
 	module + "/pkg/storage.projectCachedNodeForRead": true, module + "/pkg/storage.edgeMatchCandidate": true,
+	module + "/pkg/storage.shapeNode": true,
+	// The single ownership implementation (NOR-160 converged head).
+	module + "/pkg/callerowned.Value": true, module + "/pkg/callerowned.Map": true,
+	module + "/pkg/callerowned.List": true, module + "/pkg/callerowned.Rows": true,
+	module + "/pkg/callerowned.RowsObservingMaps": true, module + "/pkg/callerowned.Strings": true,
+	module + "/pkg/callerowned.Of": true,
 }
 
 func fullName(fn *ssa.Function) string {
