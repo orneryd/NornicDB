@@ -814,15 +814,15 @@ func (b *BadgerEngine) streamNodesOwned(ctx context.Context, opts StreamNodesOpt
 	}
 	// Write-behind overlay: acknowledged-but-unflushed nodes shadow
 	// committed rows for their IDs and are visited after the scan.
-	var overlay []nodeImage
+	var overlay bufferedEntityResult
 	var touched map[NodeID]bool
 	v := storedRead
 	if opts.ApplyDecayFilter {
 		v = visibleRead
 	}
 	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
-		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		overlay = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		touched = overlay.nodesTouched
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
@@ -852,18 +852,19 @@ func (b *BadgerEngine) streamNodesOwned(ctx context.Context, opts StreamNodesOpt
 	if stopped {
 		return nil
 	}
-	for _, node := range overlay {
+	err = overlay.visitNodes(func(node *Node) (bool, error) {
 		if !inScope(node.ID) {
-			continue
+			return false, nil
 		}
-		if err := fn(node); err != nil {
-			if err == ErrIterationStopped {
-				return nil
-			}
-			return err
+		if decide == nil {
+			return true, nil
 		}
+		return decide(node)
+	}, opts.Projection, opts.StripEmbeddings, out)
+	if err == ErrIterationStopped {
+		return nil
 	}
-	return nil
+	return err
 }
 
 // streamNodesWithOptionsInTxn is StreamNodesWithOptions over one read
@@ -999,11 +1000,11 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	}
 	// Write-behind overlay: acknowledged-but-unflushed edges shadow
 	// committed rows for their IDs and are visited after the scan.
-	var overlay []edgeImage
+	var overlay bufferedEntityResult
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
-		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+		overlay = b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
+		touched = overlay.edgesTouched
 	}
 	nowNanos := DecayScoringTime()
 	stopped := false
@@ -1066,13 +1067,8 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	if stopped {
 		return nil
 	}
-	for _, edge := range overlay {
-		if err := fn(deliverEdge(edge)); err != nil {
-			if err == ErrIterationStopped {
-				return nil
-			}
-			return err
-		}
+	if err := overlay.visitEdges(nil, fn); err != ErrIterationStopped {
+		return err
 	}
 	return nil
 }

@@ -138,16 +138,16 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 	if visit == nil {
 		return ErrInvalidData
 	}
-	return b.streamEdgeImagesByTypeInScope(ctx, scope, edgeType, v, func(image edgeImage) error {
-		return visit(deliverEdge(image))
-	}, body)
+	return b.streamEdgesByTypeDecided(ctx, scope, edgeType, v, nil, visit, body)
 }
 
-// streamEdgeImagesByTypeInScope is the edge type stream over images: committed
-// rows decoded for this read, buffered edges borrowed. It copies nothing; the
-// consumer delivers each edge it keeps, once (NOR-160).
-func (b *BadgerEngine) streamEdgeImagesByTypeInScope(ctx context.Context, scope, edgeType string, v readVisibility, visit func(edgeImage) error, body storedEdgeBodyVisitor) error {
-	if visit == nil {
+// streamEdgesByTypeDecided is the edge type stream with the consumer's
+// decision: committed rows are decoded for this read, buffered edges read in
+// place. decide (nil keeps all) runs on that edge first and may visit a
+// replacement itself; only a buffered edge it keeps is copied, once, right
+// before out receives it (NOR-160).
+func (b *BadgerEngine) streamEdgesByTypeDecided(ctx context.Context, scope, edgeType string, v readVisibility, decide func(*Edge) (bool, error), out func(*Edge) error, body storedEdgeBodyVisitor) error {
+	if out == nil {
 		return ErrInvalidData
 	}
 	if ctx == nil {
@@ -163,16 +163,15 @@ func (b *BadgerEngine) streamEdgeImagesByTypeInScope(ctx context.Context, scope,
 	// shadow committed rows for their IDs and are visited after the scan.
 	// An empty edgeType streams every edge, so it uses the whole-buffer
 	// edge overlay.
-	var overlay []edgeImage
+	var overlay bufferedEntityResult
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		if edgeType != "" {
-			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope})
-			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+			overlay = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope})
 		} else {
-			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges, prefix: scope})
-			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+			overlay = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges, prefix: scope})
 		}
+		touched = overlay.edgesTouched
 	}
 
 	nowNanos := DecayScoringTime()
@@ -183,7 +182,13 @@ func (b *BadgerEngine) streamEdgeImagesByTypeInScope(ctx context.Context, scope,
 		if len(touched) > 0 && touched[edge.ID] {
 			return nil // the overlay shadows committed rows for this ID
 		}
-		return visit(decodedEdge(edge))
+		if decide != nil {
+			keep, err := decide(edge)
+			if err != nil || !keep {
+				return err
+			}
+		}
+		return out(edge)
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		if edgeType == "" {
@@ -231,18 +236,19 @@ func (b *BadgerEngine) streamEdgeImagesByTypeInScope(ctx context.Context, scope,
 	if err != nil {
 		return err
 	}
-	for _, e := range overlay {
-		if !edgeIDInScope(e.ID, scope) {
-			continue
+	err = overlay.visitEdges(func(edge *Edge) (bool, error) {
+		if !edgeIDInScope(edge.ID, scope) {
+			return false, nil
 		}
-		if err := visit(e); err != nil {
-			if err == ErrIterationStopped {
-				return nil
-			}
-			return err
+		if decide == nil {
+			return true, nil
 		}
+		return decide(edge)
+	}, out)
+	if err == ErrIterationStopped {
+		return nil
 	}
-	return nil
+	return err
 }
 
 // readEdgeInTxn decodes one edge record; a missing record is (nil, nil).

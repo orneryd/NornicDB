@@ -33,13 +33,13 @@ type readSnapshotPrefixKey struct{}
 // timestamp between scans, which keeps compaction from discarding a version
 // it can see until Close; each scan opens its own transaction at it.
 type badgerReadSnapshot struct {
-	prefix       string
-	b            *BadgerEngine
-	view         *badgerReadView
-	overlayNodes []nodeImage
-	nodesTouched map[NodeID]bool
-	overlayEdges []edgeImage
-	edgesTouched map[EdgeID]bool
+	prefix string
+	b      *BadgerEngine
+	view   *badgerReadView
+	// overlayNodes and overlayEdges stay borrowed for every scan; each scan
+	// copies the buffered values it visits, as it visits them (NOR-160).
+	overlayNodes bufferedEntityResult
+	overlayEdges bufferedEntityResult
 }
 
 // OpenReadSnapshot captures a long-lived read view and, at the same point,
@@ -56,10 +56,8 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 		// Nodes are read whatever their visibility, relationships as visible
 		// reads see them, as their stored rows below.
-		pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
-		snap.overlayNodes, snap.nodesTouched = pendingNodes.nodes, pendingNodes.nodesTouched
-		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
-		snap.overlayEdges, snap.edgesTouched = pendingEdges.edges, pendingEdges.edgesTouched
+		snap.overlayNodes = b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
+		snap.overlayEdges = b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
 	}, readViewOptions{longLived: true, scope: prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return nil, err
@@ -83,7 +81,7 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 				continue
 			}
 			nodeID := NodeID(key[1:])
-			if s.nodesTouched[nodeID] {
+			if s.overlayNodes.nodesTouched[nodeID] {
 				continue // the write-behind overlay shadows this committed row
 			}
 			var node *Node
@@ -104,12 +102,13 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 	if err != nil || stopped {
 		return err
 	}
-	// The snapshot keeps borrowed overlay images for every iteration; each
-	// iteration delivers its own copies.
-	for _, node := range s.overlayNodes {
-		if !fn(deliverNode(node, nil, false)) {
-			return nil
+	if err := s.overlayNodes.visitNodes(nil, nil, false, func(node *Node) error {
+		if !fn(node) {
+			return ErrIterationStopped
 		}
+		return nil
+	}); err != ErrIterationStopped {
+		return err
 	}
 	return nil
 }
@@ -131,7 +130,7 @@ func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) err
 			if len(key) > 1 {
 				edgeID = EdgeID(key[1:])
 			}
-			if s.edgesTouched[edgeID] {
+			if s.overlayEdges.edgesTouched[edgeID] {
 				continue // the write-behind overlay shadows this committed row
 			}
 			var edge *Edge
@@ -160,13 +159,8 @@ func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) err
 	if err != nil {
 		return err
 	}
-	for _, edge := range s.overlayEdges {
-		if err := fn(deliverEdge(edge)); err != nil {
-			if err == ErrIterationStopped {
-				return nil
-			}
-			return err
-		}
+	if err := s.overlayEdges.visitEdges(nil, fn); err != ErrIterationStopped {
+		return err
 	}
 	return nil
 }

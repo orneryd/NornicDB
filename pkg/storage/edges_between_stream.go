@@ -82,22 +82,19 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	if b.writeBehind == nil {
 		return b.committedMatchEdgesBetween(startID, endID, edgeType, properties, match)
 	}
-	var live []edgeImage
-	var suppressed map[EdgeID]struct{}
-	var sourceDeleted, targetDeleted bool
+	var overlay bufferedEntityResult
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-		pendingBetween := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
-		live, suppressed, sourceDeleted, targetDeleted = pendingBetween.edges, pendingBetween.suppressed, pendingBetween.sourceDeleted, pendingBetween.targetDeleted
+		overlay = b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
 	}, readViewOptions{scope: namespaceForNodeID(startID)})
 	if err != nil {
 		return nil, err
 	}
 	defer view.Close()
-	if sourceDeleted || targetDeleted {
+	if overlay.sourceDeleted || overlay.targetDeleted {
 		return nil, nil
 	}
 	matched, err := b.committedMatchEdgesBetween(startID, endID, edgeType, properties, func(edge *Edge) bool {
-		if _, dead := suppressed[edge.ID]; dead {
+		if _, dead := overlay.suppressed[edge.ID]; dead {
 			return false
 		}
 		return match(edge)
@@ -105,15 +102,9 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range live {
-		if e.Edge == nil || e.Type != edgeType {
-			continue
-		}
-		if match(edgeMatchCandidate(e.Edge, properties)) {
-			matched = append(matched, deliverEdge(e))
-		}
-	}
-	return matched, nil
+	return append(matched, overlay.ownedEdges(func(edge *Edge) bool {
+		return edge != nil && edge.Type == edgeType && match(edgeMatchCandidate(edge, properties))
+	})...), nil
 }
 
 // committedMatchEdgesBetween reads the typed edge-between set index, matches

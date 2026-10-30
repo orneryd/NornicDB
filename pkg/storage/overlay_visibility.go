@@ -59,9 +59,14 @@ const (
 	bufferedBetween
 )
 
+// bufferedEntityResult is a read's captured overlay. Its visible nodes and
+// edges are the buffer's published values, borrowed: they leave it only
+// through ownedNodes/ownedEdges (a collection read, once it stands) or
+// visitNodes/visitEdges (a stream, one value at a time), which copy exactly
+// what the read selects (NOR-160).
 type bufferedEntityResult struct {
-	nodes                        []nodeImage
-	edges                        []edgeImage
+	nodes                        []*Node
+	edges                        []*Edge
 	nodesTouched                 map[NodeID]bool
 	edgesTouched                 map[EdgeID]bool
 	suppressed                   map[EdgeID]struct{}
@@ -71,10 +76,10 @@ type bufferedEntityResult struct {
 // readBufferedEntities is the sole indexed-overlay capture/filter owner. The
 // caller holds w's read lock; touched IDs and deletion masks remain unfiltered
 // so hidden buffered bodies cannot reveal their older committed predecessors.
-// The visible images it returns are borrowed, never copied: published buffer
-// images are replaced, never changed in place, so a read may look at them
-// after the lock is released, and copies exactly what it delivers through the
-// read delivery owner (read_delivery.go, NOR-160).
+// Nothing is copied here: published buffer values are replaced, never changed
+// in place, so a read may look at them after the lock is released and copies
+// only through the result's exits, after it has decided what it hands out
+// (NOR-160).
 func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult) {
 	var nodes []*Node
 	var edges []*Edge
@@ -96,9 +101,74 @@ func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibili
 	case bufferedBetween:
 		edges, result.suppressed, result.sourceDeleted, result.targetDeleted = w.edgesBetweenOverlayLocked(request.source, request.target)
 	}
-	result.nodes = borrowedNodes(visibleBufferedEntities(b, v, nodes))
-	result.edges = borrowedEdges(visibleBufferedEntities(b, v, edges))
+	result.nodes = visibleBufferedEntities(b, v, nodes)
+	result.edges = visibleBufferedEntities(b, v, edges)
 	return result
+}
+
+// ownedNodes is the overlay's node exit for a collection read that stands:
+// only the buffered nodes keep selects (nil selects all) are copied, once,
+// straight into the read's shape (copyShaped). Nil when none is selected.
+func (r bufferedEntityResult) ownedNodes(keep func(*Node) bool, properties []string, strip bool) []*Node {
+	var out []*Node
+	for _, node := range r.nodes {
+		if keep == nil || keep(node) {
+			out = append(out, copyShaped(node, properties, strip))
+		}
+	}
+	return out
+}
+
+// ownedEdges is ownedNodes for buffered relationships.
+func (r bufferedEntityResult) ownedEdges(keep func(*Edge) bool) []*Edge {
+	var out []*Edge
+	for _, edge := range r.edges {
+		if keep == nil || keep(edge) {
+			out = append(out, copyEdge(edge))
+		}
+	}
+	return out
+}
+
+// visitNodes is the overlay's node exit for a stream: decide (nil keeps all)
+// runs on the buffered node itself, and only a node it keeps is copied into
+// the stream's shape, right before visit receives it. A stream that stops
+// leaves no copy behind; decide may visit a replacement of its own.
+func (r bufferedEntityResult) visitNodes(decide func(*Node) (bool, error), properties []string, strip bool, visit func(*Node) error) error {
+	for _, node := range r.nodes {
+		if decide != nil {
+			keep, err := decide(node)
+			if err != nil {
+				return err
+			}
+			if !keep {
+				continue
+			}
+		}
+		if err := visit(copyShaped(node, properties, strip)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// visitEdges is visitNodes for buffered relationships.
+func (r bufferedEntityResult) visitEdges(decide func(*Edge) (bool, error), visit func(*Edge) error) error {
+	for _, edge := range r.edges {
+		if decide != nil {
+			keep, err := decide(edge)
+			if err != nil {
+				return err
+			}
+			if !keep {
+				continue
+			}
+		}
+		if err := visit(copyEdge(edge)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // commitsSince visits the operations of each commit the buffer acknowledged

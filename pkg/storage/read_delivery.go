@@ -5,8 +5,11 @@ package storage
 // A read pipeline carries images, not results: an edgeImage or nodeImage is
 // either a retained image (a cache, the write-behind buffer or a
 // transaction's snapshot keeps it, so the read may only look at it) or a value
-// decoded for this read alone. Producers (caches, the overlay, indexed
-// readers, transaction overlays) only borrow or decode; they never copy.
+// decoded for this read alone. Producers (caches, indexed readers,
+// transaction overlays) only borrow or decode; they never copy. The
+// write-behind overlay is not an image producer: its values leave it only
+// through its own exits (bufferedEntityResult), copied once the read has
+// selected them.
 // Selection, visibility filtering, overlay replacement and cache fallback all
 // run on images. A read turns images into results only here, after it has
 // chosen exactly what it hands out: a retained image is copied once, a
@@ -93,17 +96,6 @@ func decodedNodes(nodes []*Node) []nodeImage {
 	out := make([]nodeImage, len(nodes))
 	for i, node := range nodes {
 		out[i] = decodedNode(node)
-	}
-	return out
-}
-
-func borrowedNodes(nodes []*Node) []nodeImage {
-	if nodes == nil {
-		return nil
-	}
-	out := make([]nodeImage, len(nodes))
-	for i, node := range nodes {
-		out[i] = borrowedNode(node)
 	}
 	return out
 }

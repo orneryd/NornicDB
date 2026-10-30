@@ -305,7 +305,7 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 	out, outErr := deliveredEdges(tx.getCommittedAdjacentEdgesLocked(start, Outgoing, nil))
 	in, inErr := deliveredEdges(tx.getCommittedAdjacentEdgesLocked(target, Incoming, nil))
 	_, badDirErr := deliveredEdges(tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99), nil))
-	nodes, nodesErr := deliveredNodes(tx.getAllCommittedNodesLocked())
+	nodes, nodesErr := deliveredNodesWithOverlay(tx.getAllCommittedNodesLocked())
 	tx.mu.Unlock()
 
 	require.True(t, zeroed)

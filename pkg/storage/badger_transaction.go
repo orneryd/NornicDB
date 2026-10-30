@@ -2362,10 +2362,12 @@ func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, and buffered edges are
 		// invisible to the pinned view. Read the latest overlaid view.
-		committed, err := tx.engine.allEdgeImages(visibleRead)
+		committed, overlay, err := tx.engine.allEdgeImages(visibleRead)
 		if err != nil {
 			return nil, err
 		}
+		// Buffered edges this transaction deletes or rewrites are never copied.
+		committed = append(committed, decodedEdges(overlay.ownedEdges(tx.committedEdgeKeptLocked))...)
 		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool { return edge != nil }), nil
 	}
 	return tx.getCommittedEdgesByTypeLocked("", func(edge *Edge) bool { return edge != nil })
@@ -2387,10 +2389,11 @@ func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		committed, err := tx.engine.edgeTypeImages(edgeType, visibleRead)
+		committed, overlay, err := tx.engine.edgeTypeImages(edgeType, visibleRead)
 		if err != nil {
 			return nil, err
 		}
+		committed = append(committed, decodedEdges(overlay.ownedEdges(tx.committedEdgeKeptLocked))...)
 		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
 			return edge.Type == edgeType
 		}), nil
@@ -2750,28 +2753,31 @@ func (tx *BadgerTransaction) streamCommittedNodesLocked(ctx context.Context, opt
 			}, opts)
 		})
 	}
-	nodes, err := tx.getAllCommittedNodesLocked()
+	nodes, overlay, err := tx.getAllCommittedNodesLocked()
 	if err != nil {
 		return err
 	}
-	for _, image := range nodes {
-		if !inScope(image.ID) {
-			continue
+	// The filter reads the delivered shape's properties; only a node it
+	// accepts is delivered (copied once if retained).
+	accept := func(node *Node) (bool, error) {
+		if !inScope(node.ID) {
+			return false, nil
 		}
-		// The filter reads the delivered shape's properties; only a node it
-		// accepts is delivered (copied once if retained).
-		properties := image.Properties
+		properties := node.Properties
 		if opts.Projection != nil {
-			properties = selectProperties(image.Properties, opts.Projection, false)
+			properties = selectProperties(node.Properties, opts.Projection, false)
 		}
-		if opts.PropertyFilter != nil && !opts.PropertyFilter(properties) {
+		return opts.PropertyFilter == nil || opts.PropertyFilter(properties), nil
+	}
+	for _, image := range nodes {
+		if keep, _ := accept(image.Node); !keep {
 			continue
 		}
 		if err := emit(deliverNode(image, opts.Projection, opts.StripEmbeddings)); err != nil {
 			return err
 		}
 	}
-	return nil
+	return overlay.visitNodes(accept, opts.Projection, opts.StripEmbeddings, emit)
 }
 
 // A long-lived explicit transaction may execute many unrelated projections.
@@ -2842,10 +2848,12 @@ func (tx *BadgerTransaction) AllNodes() ([]*Node, error) {
 		return nil, err
 	}
 
-	committed, err := tx.getAllCommittedNodesLocked()
+	committed, overlay, err := tx.getAllCommittedNodesLocked()
 	if err != nil {
 		return nil, err
 	}
+	// Buffered nodes this transaction deletes or rewrites are never copied.
+	committed = append(committed, decodedNodes(overlay.ownedNodes(tx.committedNodeKeptLocked, nil, false))...)
 	return tx.mergePendingNodesLocked(committed, func(node *Node) bool {
 		return node != nil
 	}), nil
@@ -3451,8 +3459,13 @@ func (tx *BadgerTransaction) getNodesByLabelLocked(label string) ([]nodeImage, e
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
-		// (overlaid) view instead.
-		return tx.engine.labelNodeImages(tx.labelScanScopeLocked(), label, visibleRead)
+		// (overlaid) view instead. Buffered nodes this transaction deletes
+		// or rewrites are left in the buffer, never copied (NOR-160).
+		images, overlay, err := tx.engine.labelNodeImages(tx.labelScanScopeLocked(), label, visibleRead)
+		if err != nil {
+			return nil, err
+		}
+		return append(images, decodedNodes(overlay.ownedNodes(tx.committedNodeKeptLocked, nil, false))...), nil
 	}
 	if tx.snapshotTx != nil {
 		// The pinned label index and bodies share one physical snapshot, as
@@ -3519,6 +3532,12 @@ func (tx *BadgerTransaction) committedNodeSupersededLocked(id NodeID) bool {
 	}
 	_, rewritten := tx.pendingNodes[id]
 	return rewritten
+}
+
+// committedNodeKeptLocked is the selection form of
+// committedNodeSupersededLocked, for producers that decide before they copy.
+func (tx *BadgerTransaction) committedNodeKeptLocked(node *Node) bool {
+	return !tx.committedNodeSupersededLocked(node.ID)
 }
 
 // committedEdgeSupersededLocked is committedNodeSupersededLocked for a
@@ -4165,14 +4184,13 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	// Commits update the index before releasing the key's commit lock, so a
 	// concurrent commit of the same key is listed or still holds the lock.
 	if idx := tx.engine.GetSchemaForNamespace(tx.namespace).filledKeyIndex(c.Label, c.Properties); idx != nil {
-		candidates, err := tx.engine.keyConstraintNodes(idx, c.Label, c.Properties[0], values)
+		candidates, err := tx.engine.keyConstraintNodes(idx, c.Label, c.Properties[0], values, func(existing *Node) bool {
+			return existing.ID != node.ID && !tx.committedNodeSupersededLocked(existing.ID) && nodeHoldsKey(existing, tx.namespace, c.Label, c.Properties, node.Properties)
+		})
 		if err != nil {
 			return err
 		}
 		for _, existing := range candidates {
-			if existing.ID == node.ID || tx.committedNodeSupersededLocked(existing.ID) || !nodeHoldsKey(existing, tx.namespace, c.Label, c.Properties, node.Properties) {
-				continue
-			}
 			message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
 			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 		}
@@ -4335,16 +4353,14 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 	// the nodes this transaction rewrites or deletes, whose pending versions
 	// were checked above.
 	if tx.engine.temporalIndexAuthoritative(tx.engine.GetSchemaForNamespace(tx.namespace), c) {
-		history, ok, err := tx.engine.temporalKeyHistoryNodesLatest(tx.commitCtx, tx.namespace, c, node)
+		history, ok, err := tx.engine.temporalKeyHistoryNodesLatest(tx.commitCtx, tx.namespace, c, node, func(other *Node) bool {
+			return other.ID != node.ID && !tx.committedNodeSupersededLocked(other.ID) && strings.HasPrefix(string(other.ID), nsPrefix) && spec.keyMatches(other.Properties, keyVal)
+		})
 		if err != nil {
 			return err
 		}
 		if ok {
 			for _, other := range history {
-				if other.ID == node.ID || tx.committedNodeSupersededLocked(other.ID) || !strings.HasPrefix(string(other.ID), nsPrefix) {
-					continue
-				}
-
 				if err := collides(other); err != nil {
 					return err
 				}

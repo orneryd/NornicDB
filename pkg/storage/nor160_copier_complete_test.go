@@ -50,3 +50,9 @@ func deliveredNodes(images []nodeImage, err error) ([]*Node, error) {
 func deliveredEdges(images []edgeImage, err error) ([]*Edge, error) {
 	return deliverEdges(images), err
 }
+
+// deliveredNodesWithOverlay also delivers the buffered nodes an internal
+// reader returns behind its committed images.
+func deliveredNodesWithOverlay(images []nodeImage, overlay bufferedEntityResult, err error) ([]*Node, error) {
+	return append(deliverNodes(images, nil, false), overlay.ownedNodes(nil, nil, false)...), err
+}

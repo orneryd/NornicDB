@@ -73,24 +73,21 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 		// snapshot.
 		// The engine's images: an edge this transaction deleted or rewrote
 		// is replaced before anything is delivered (NOR-160).
-		err = tx.engine.streamEdgeImagesByTypeInScope(ctx, scope, edgeType, v, func(image edgeImage) error {
-			if image.Edge == nil {
-				return nil
-			}
+		err = tx.engine.streamEdgesByTypeDecided(ctx, scope, edgeType, v, func(edge *Edge) (bool, error) {
 			if hasPending {
-				if _, deleted := tx.deletedEdges[image.ID]; deleted {
-					return nil
+				if _, deleted := tx.deletedEdges[edge.ID]; deleted {
+					return false, nil
 				}
-				if pending, exists := tx.pendingEdges[image.ID]; exists {
-					seen[image.ID] = struct{}{}
+				if pending, exists := tx.pendingEdges[edge.ID]; exists {
+					seen[edge.ID] = struct{}{}
 					if matches(pending) {
-						return invokeVisit(copyEdge(pending))
+						return false, invokeVisit(copyEdge(pending))
 					}
-					return nil
+					return false, nil
 				}
 			}
-			return invokeVisit(deliverEdge(image))
-		}, nil)
+			return true, nil
+		}, invokeVisit, nil)
 	} else {
 		err = tx.engine.streamEdgesByTypeAtSnapshotWithView(ctx, scope, edgeType, tx.readTS, tx.withSnapshotViewLocked, v, emitCommitted)
 	}

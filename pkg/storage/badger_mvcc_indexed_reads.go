@@ -486,8 +486,8 @@ func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error 
 		return err
 	}
 
-	// Delivered one at a time: a yield that stops leaves nothing copied.
-	nodes, err := b.allNodeImages()
+	// Delivered one at a time: a yield that stops copies no buffered node.
+	nodes, overlay, err := b.allNodeImages()
 	if err != nil {
 		return err
 	}
@@ -496,7 +496,7 @@ func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error 
 			return err
 		}
 	}
-	return nil
+	return overlay.visitNodes(nil, nil, false, yield)
 }
 
 func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error {
@@ -505,7 +505,7 @@ func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error 
 	}
 
 	// Delivered one at a time: a yield that stops leaves nothing copied.
-	edges, err := b.allEdgeImages(visibleRead)
+	edges, overlay, err := b.allEdgeImages(visibleRead)
 	if err != nil {
 		return err
 	}
@@ -514,5 +514,5 @@ func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error 
 			return err
 		}
 	}
-	return nil
+	return overlay.visitEdges(nil, yield)
 }
