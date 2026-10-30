@@ -86,7 +86,9 @@ func (l *transactionLifecycle) begin(
 	// Every failure returned here is a BEGIN failure, classified here.
 	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, retErr) }()
 	if parent == nil {
-		parent = context.Background()
+		// The session always supplies its connection context; a nil parent
+		// would make the rollback base a context nobody owns.
+		return errors.New("an explicit transaction needs its session's context")
 	}
 
 	l.mu.Lock()

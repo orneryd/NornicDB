@@ -92,6 +92,12 @@ func transientTransactionStatus(err error) (string, bool) {
 	if err == nil {
 		return "", false
 	}
+	// Author: NOR-288 lane (Codex), 2026-10-26. A native conflict inside an
+	// accepted command is no longer a retryable transaction rejection.
+	var accepted *storage.AcceptedCommitError
+	if stderrors.As(err, &accepted) {
+		return "", false
+	}
 	if stderrors.Is(err, ErrTransactionDeadlock) {
 		return TransientDeadlockDetected, true
 	}

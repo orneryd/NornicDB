@@ -31,7 +31,7 @@ func TestSol1482R4ReplicatedEventConsumption(t *testing.T) {
 			require.NotNil(t, db.replicationAdapter)
 			apply := func(kind replication.CommandType, payload any) {
 				data := searchConsumerCommandData(t, kind, payload)
-				require.NoError(t, db.replicationAdapter.ApplyCommand(&replication.Command{Type: kind, Data: data}))
+				require.NoError(t, db.replicationAdapter.ApplyCommand(context.Background(), &replication.Command{Type: kind, Data: data}))
 			}
 			apply(replication.CmdCreateNode, &storage.Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")

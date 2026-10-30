@@ -61,7 +61,7 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 							_, err = engine.GetEdge("e")
 						}
 						require.ErrorIs(t, err, storage.ErrNotFound, "the prior entity must really be hidden")
-						total, _, _ := manager.GetStorageSize(db)
+						total, _, _ := manager.GetStorageSize(context.Background(), db)
 						nodes, err := engine.NodeCount()
 						require.NoError(t, err)
 						edges, err := engine.EdgeCount()
@@ -94,9 +94,9 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 						}
 						require.NoError(t, err)
 						require.NoError(t, tracker.CommitTransaction(context.Background(), tx), "update or deletion does not insert the hidden entity")
-						wantNodes, wantEdges, err := tracker.manager.calculateStorageSizeFromEngine(tracker.Engine)
+						wantNodes, wantEdges, err := tracker.manager.calculateStorageSizeFromEngine(context.Background(), tracker.Engine)
 						require.NoError(t, err)
-						got, gotNodes, gotEdges := manager.GetStorageSize(db)
+						got, gotNodes, gotEdges := manager.GetStorageSize(context.Background(), db)
 						require.Equal(t, wantNodes, gotNodes, "node byte delta must include the hidden prior body")
 						require.Equal(t, wantEdges, gotEdges, "edge byte delta must include the hidden prior body")
 						require.Equal(t, wantNodes+wantEdges, got)

@@ -43,17 +43,22 @@ func TestPendingReplicationRetainsByteReservation(t *testing.T) {
 	require.NoError(t, err)
 	growth := storage.CopyNode(prior)
 	growth.Properties = map[string]any{"payload": strings.Repeat("x", 4096)}
-	before, _, _ := manager.GetStorageSize(db)
+	before, _, _ := manager.GetStorageSize(context.Background(), db)
 	require.NoError(t, view.UpdateNode(growth))
-	ceiling, _, _ := manager.GetStorageSize(db)
+	ceiling, _, _ := manager.GetStorageSize(context.Background(), db)
 	require.Greater(t, ceiling, before)
 	require.NoError(t, view.UpdateNode(prior))
-	restored, _, _ := manager.GetStorageSize(db)
+	restored, _, _ := manager.GetStorageSize(context.Background(), db)
 	require.Equal(t, before, restored)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: ceiling}}))
 	route.delay = true
 	err = view.UpdateNode(growth)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	// Author: NOR-288 lane, 2026-10-29. The accepted allowance survives a
+	// stopped wait; only explicit diagnostic inspection exposes the deadline.
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, err, &accepted)
+	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+	requireAcceptedDiagnosticCause(t, err, context.DeadlineExceeded)
 	pending := route.pending
 	require.NotNil(t, pending)
 	route.delay = false
@@ -64,6 +69,6 @@ func TestPendingReplicationRetainsByteReservation(t *testing.T) {
 	require.NoError(t, route.applyPending(adapter, pending))
 	recount, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	exact, _, _ := recount.GetStorageSize(db)
+	exact, _, _ := recount.GetStorageSize(context.Background(), db)
 	assert.LessOrEqual(t, exact, ceiling, "a late commit and a competing admitted write must not exceed the byte quota")
 }

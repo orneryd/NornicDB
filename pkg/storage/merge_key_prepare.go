@@ -103,6 +103,9 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 	if !found && !complete {
 		return nil
 	}
+	if ctx == nil {
+		ctx = tx.engine.work.Context() // a caller without a context waits under the engine's lifetime
+	}
 	release, err := schema.acquireUniqueConstraintCommitLocks(ctx, tx.ID, []uniqueConstraintLockKey{key.lock})
 	if err != nil {
 		return err

@@ -139,7 +139,7 @@ func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) 
 	require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 	prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "accepted-repair"})
 	require.NoError(t, err)
-	releaseAccepted, err := prepared.RetainAcceptedAuthority()
+	releaseAccepted, err := prepared.RetainAcceptedAuthority(context.Background())
 	require.NoError(t, err)
 	enrolled := make(chan struct{})
 	var once sync.Once

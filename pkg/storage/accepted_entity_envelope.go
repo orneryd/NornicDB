@@ -20,9 +20,6 @@ const (
 	EntityUpdateEdge
 )
 
-// EntityTransactionVersion identifies the current semantic transaction format.
-const EntityTransactionVersion uint16 = 2
-
 // EntityTransactionEnvelope identifies a decoded semantic transaction.
 type EntityTransactionEnvelope struct {
 	Mode        EntityCommitMode
@@ -137,53 +134,113 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransa
 		}
 		engine = wrapper.GetInnerEngine()
 	}
-	return nil, errors.New("entity transaction needs a native transactional engine")
+	return nil, errNoNativeEntityEngine
+}
+
+var errNoNativeEntityEngine = errors.New("entity transaction needs a native transactional engine")
+
+// acceptedWorkOwner is the native engine whose lifecycle owner bounds the
+// accepted work applied to it.
+type acceptedWorkOwner interface{ acceptedWorkContext() context.Context }
+
+func (b *BadgerEngine) acceptedWorkContext() context.Context { return b.work.Context() }
+
+// AcceptedWorkContext returns the work context of the native engine behind
+// engine's wrappers: that engine's Close cancels it, so accepted work applied
+// for a caller without a context of its own stays bounded by the engine that
+// applies it. A chain without a native engine cannot apply accepted work and
+// returns the same error as BeginEntityTransaction; there is no substitute.
+// Author: NOR-288 lane (Claude), 2026-10-30.
+func AcceptedWorkContext(engine Engine) (context.Context, error) {
+	visited := map[Engine]bool{}
+	for engine != nil && !visited[engine] {
+		visited[engine] = true
+		if owner, ok := engine.(acceptedWorkOwner); ok {
+			return owner.acceptedWorkContext(), nil
+		}
+		wrapper, ok := engine.(EngineUnwrapper)
+		if !ok {
+			break
+		}
+		engine = wrapper.GetInnerEngine()
+	}
+	return nil, errNoNativeEntityEngine
 }
 
 // ApplyAcceptedEntityTransaction waits for the full accepted apply, including
 // notifications. State-machine drivers use Submit and its physical boundary.
+// The application takes the applying engine's work context (replay has no
+// caller context), so that engine's Close bounds it.
 func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
 	envelope, operations, err := DecodeEntityTransaction(data)
 	if err != nil {
 		return err
 	}
-	receipt, err := SubmitAcceptedEntityTransaction(context.Background(), engine, envelope, operations, nil)
+	ctx, err := AcceptedWorkContext(engine)
 	if err != nil {
 		return err
 	}
-	return receipt.Wait(context.Background())
+	receipt, err := SubmitAcceptedEntityTransaction(ctx, engine, envelope, operations, nil)
+	if err != nil {
+		return err
+	}
+	return receipt.WaitOutcome(ctx).Err
 }
 
-// SubmitAcceptedEntityTransaction applies an already-decoded transaction and
-// returns the commit receipt. DecodeEntityTransaction validates the wire image
-// before callers publish it to replication or recovery logs.
+// SubmitAcceptedEntityTransaction applies an already-decoded durable command.
+// The existing native owner settles it without accepting another log entry.
+// Author: NOR-288 lane (Codex), 2026-10-29; preserves the merged decoded API.
 func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
+	prepared, existing, err := prepareAcceptedEntityApplication(ctx, engine, envelope, ops, "")
+	if err != nil {
+		return nil, AcceptedOutcome(CommitRecoveryPending, envelope.LogicalTxID, err)
+	}
+	if existing != nil {
+		existing.OnSettled(settle)
+		return existing, nil
+	}
+	return prepared.engine.SubmitEntityCommit(ctx, prepared, settle)
+}
+
+// prepareAcceptedEntityApplication materializes the existing semantic command
+// through the native staging owner, borrowing retained entity authority during
+// an in-process retry. Empty authority means a cold replica/recovery application.
+func prepareAcceptedEntityApplication(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, authority string) (*PreparedEntityCommit, *CommitReceipt, error) {
 	tx, err := BeginEntityTransaction(engine, envelope.Mode)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer tx.Rollback()
+	if authority == "" {
+		tx.engine.mu.RLock()
+		application := tx.engine.acceptedApplications[acceptedApplicationKey{envelope.Namespace, envelope.LogicalTxID}]
+		tx.engine.mu.RUnlock()
+		if application != nil {
+			application.start()
+			return nil, application.receipt, nil
+		}
+	} else {
+		tx.ID = authority
+	}
+	tx.acceptedApplication = true
 	if err = tx.SetNamespace(envelope.Namespace); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err = tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{
 		LogicalID:  envelope.LogicalTxID,
 		Operations: ops,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	route, found := EntityCommitSubmitterFor(engine)
-	if !found {
-		prepared.Abort()
-		return nil, ErrInvalidData
+	if authority == "" && len(prepared.operations) != 0 {
+		if _, err := prepared.RetainAcceptedAuthority(ctx); err != nil {
+			prepared.Abort()
+			return nil, nil, err
+		}
 	}
-	receipt, err := route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
-	if err != nil {
-		prepared.Abort()
-	}
-	return receipt, err
+	return prepared, nil, nil
 }

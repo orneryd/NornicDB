@@ -79,7 +79,12 @@ func (t *sizeTrackingEngine) managedCapabilityError() error {
 // without submitting or waiting. Preaccept failures close the original snapshot.
 func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.BadgerTransaction, owner managedEntityOwner) (prepared *storage.PreparedEntityCommit, settle func(storage.CommitOutcome), prepareErr error) {
 	if ctx == nil {
-		ctx = context.Background()
+		// A caller without a context gets the applying engine's lifetime.
+		owned, err := storage.AcceptedWorkContext(t.Engine)
+		if err != nil {
+			return nil, nil, err
+		}
+		ctx = owned
 	}
 	var info *DatabaseInfo
 	reserved := false
@@ -198,7 +203,12 @@ func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.Badg
 // while accepted entity work survives caller cancellation on its own receipt.
 func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) (commitErr error) {
 	if ctx == nil {
-		ctx = context.Background()
+		// A caller without a context gets the applying engine's lifetime.
+		owned, err := storage.AcceptedWorkContext(t.Engine)
+		if err != nil {
+			return err
+		}
+		ctx = owned
 	}
 	accepted, ordinaryAttempted := false, false
 	defer func() {

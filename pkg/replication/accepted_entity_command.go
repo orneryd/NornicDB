@@ -3,10 +3,10 @@ package replication
 import (
 	"context"
 	"errors"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"sync"
-	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // AcceptedCommandSubmitter returns after definite queue/log ownership transfer.
@@ -15,67 +15,6 @@ type AcceptedCommandSubmitter interface {
 	SubmitAcceptedCommand(context.Context, *Command, func(storage.CommitOutcome)) (*storage.CommitReceipt, error)
 }
 
-// acceptedEntityCommand is local ownership, absent from serialized commands.
-// Its physical and full native boundaries use the same storage receipt owner.
-type acceptedEntityCommand struct {
-	owner         storage.Engine
-	prepared      *storage.AcceptedEntityCommitHandle
-	inner         storage.EntityCommitSubmitter
-	once          sync.Once
-	started       atomic.Bool
-	physical      storage.CommitOutcome
-	native        *storage.CommitReceipt
-	nativeDone    chan struct{}
-	nativeOutcome storage.CommitOutcome
-}
-
-func (c *acceptedEntityCommand) apply() error {
-	c.once.Do(func() {
-		c.started.Store(true)
-		native, err := c.prepared.Submit(context.Background(), c.inner)
-		if err != nil {
-			c.prepared.CloseNative()
-			c.physical = storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: err}
-			c.nativeOutcome = c.physical
-			close(c.nativeDone)
-			return
-		}
-		c.native = native
-		c.physical = native.WaitPhysicalOutcome(context.Background())
-		if c.physical.State == storage.CommitRecoveryPending && c.physical.Err != nil {
-			c.prepared.MarkRecoveryPending()
-		}
-		if c.physical.State == storage.CommitDiscarded {
-			c.physical.State = storage.CommitRecoveryPending
-		}
-		go func() {
-			c.nativeOutcome = native.WaitOutcome(context.Background())
-			if c.nativeOutcome.State == storage.CommitDiscarded {
-				c.nativeOutcome.State = storage.CommitRecoveryPending
-			}
-			close(c.nativeDone)
-		}()
-	})
-	return c.physical.Err
-}
-
-// acceptedCommandOutcome joins transport acknowledgement and native listeners.
-// A recorded command with a failed inner apply always remains recovery-pending.
-func acceptedCommandOutcome(cmd *Command, transportErr error) storage.CommitOutcome {
-	local := cmd.accepted
-	if local == nil {
-		return storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: transportErr}
-	}
-	if !local.started.Load() {
-		return storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: transportErr}
-	}
-	<-local.nativeDone
-	outcome := local.nativeOutcome
-	if outcome.State == storage.CommitApplied {
-		outcome.Err = transportErr
-	}
-	return outcome
-}
 func (e *ReplicatedEngine) CheckEntityCommitAdmission() error {
 	if !e.IsLeader() {
 		return ErrNotLeader
@@ -93,44 +32,30 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	if !ok {
 		return nil, ErrNotReady
 	}
-	inner, found := storage.EntityCommitSubmitterFor(e.Engine)
-	if !found {
-		return nil, storage.ErrInvalidData
-	}
-	// The prepared commit owns an immutable private snapshot; encoding reads it
-	// rather than duplicating a detached public Operations copy.
-	payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Prepared: prepared})
+	// The storage accepted owner encodes the prepared snapshot once and
+	// retains its authority; every transport settles through that owner.
+	accepted, payload, err := storage.AcceptEntityCommit(ctx, e.Engine, prepared)
 	if err != nil {
 		return nil, err
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthority()
-	if err != nil {
-		return nil, err
-	}
-
-	cmd := &Command{Type: CmdCommitTransaction, Data: payload, Timestamp: time.Now(), RequestID: prepared.LogicalID()}
-	cmd.accepted = &acceptedEntityCommand{owner: e.Engine, prepared: storage.NewAcceptedEntityCommitHandle(prepared), inner: inner.Submitter, nativeDone: make(chan struct{})}
+	cmd := &Command{Type: CmdCommitTransaction, Data: payload, Timestamp: time.Now(), RequestID: prepared.LogicalID(), accepted: accepted}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	queueCtx, cancelQueue := context.WithTimeout(ctx, e.timeout)
 	defer cancelQueue()
-	receipt, err := submitter.SubmitAcceptedCommand(queueCtx, cmd, func(outcome storage.CommitOutcome) {
-		if outcome.State != storage.CommitRecoveryPending {
-			cmd.accepted.prepared.Retire()
-			releaseAuthority()
-		}
-		if settle != nil {
-			settle(outcome)
-		}
-	})
+	receipt, err := submitter.SubmitAcceptedCommand(queueCtx, cmd, accepted.Terminal(settle))
 	if err != nil {
-		releaseAuthority()
+		accepted.Discard(nil, err)
 	}
 	return receipt, err
 }
 
-func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome), validate func() error, apply func(*Command, time.Duration) error, timeout time.Duration) (*storage.CommitReceipt, error) {
+// submitAcceptedByApply runs apply as accepted work of the replicator's
+// lifecycle owner: enrolled before the goroutine exists, joined by Shutdown,
+// with that work's context for the application and its join. A sealed owner
+// rejects the command before it is recorded. Author: NOR-288 lane (Claude), 2026-10-30.
+func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome), validate func() error, work *lifecycle.WorkLifetime, apply func(context.Context, *Command, time.Duration) error, timeout time.Duration) (*storage.CommitReceipt, error) {
 	if err := validate(); err != nil {
 		return nil, err
 	}
@@ -138,14 +63,21 @@ func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storag
 		return nil, ctx.Err()
 	}
 	receipt, resolve := storage.NewCommitReceipt(settle)
+	workCtx, release, admitted := work.Acquire(work.Context())
+	if !admitted {
+		cmd.accepted.Reject(resolve, ErrClosed)
+		return receipt, nil
+	}
 	go func() {
-		err := apply(cmd, timeout)
-		if cmd.accepted != nil && !cmd.accepted.started.Load() && (errors.Is(err, ErrClosed) || errors.Is(err, ErrNotReady) || errors.Is(err, ErrNotLeader) || errors.Is(err, ErrStandbyMode)) {
-			cmd.accepted.prepared.AbortNative()
-			_ = resolve.Resolve(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
+		defer release()
+		err := apply(workCtx, cmd, timeout)
+		// An admission error before the command was recorded is a definite
+		// rejection; the accepted owner still settles a started command.
+		if errors.Is(err, ErrClosed) || errors.Is(err, ErrNotReady) || errors.Is(err, ErrNotLeader) || errors.Is(err, ErrStandbyMode) {
+			cmd.accepted.Reject(resolve, err)
 			return
 		}
-		_ = resolve.Resolve(acceptedCommandOutcome(cmd, err))
+		cmd.accepted.JoinContext(workCtx, resolve, err)
 	}()
 	return receipt, nil
 }
@@ -154,7 +86,7 @@ func (r *StandaloneReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *C
 		r.mu.RLock()
 		defer r.mu.RUnlock()
 		return checkApplyReadiness(r.work.Closing(), r.started)
-	}, r.Apply, 0)
+	}, &r.work, r.applyEnrolled, 0)
 }
 func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
 	return submitAcceptedByApply(ctx, cmd, settle, func() error {
@@ -165,7 +97,7 @@ func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Co
 			return ErrNotLeader
 		}
 		return nil
-	}, r.Apply, 0)
+	}, &r.work, r.applyEnrolled, 0)
 }
 
 func (r *MultiRegionReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {

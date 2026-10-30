@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -22,7 +23,7 @@ func BenchmarkStorageAdapter_GetWALEntries(b *testing.B) {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i))}
 		data, _ := storage.EncodeNodePayload(node)
 		cmd := &Command{Type: CmdCreateNode, Data: data, Timestamp: time.Now()}
-		if err := adapter.ApplyCommand(cmd); err != nil {
+		if err := adapter.ApplyCommand(context.Background(), cmd); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -59,7 +60,7 @@ func BenchmarkStorageAdapter_ApplyCommand_CreateNode(b *testing.B) {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i))}
 		data, _ := storage.EncodeNodePayload(node)
 		cmd := &Command{Type: CmdCreateNode, Data: data, Timestamp: time.Now()}
-		if err := adapter.ApplyCommand(cmd); err != nil {
+		if err := adapter.ApplyCommand(context.Background(), cmd); err != nil {
 			b.Fatal(err)
 		}
 	}

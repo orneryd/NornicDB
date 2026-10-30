@@ -273,7 +273,7 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 			prepared, err := edgeTx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "edge-held"})
 			require.NoError(t, err)
 			defer prepared.Abort()
-			retain, err := prepared.RetainAcceptedAuthority()
+			retain, err := prepared.RetainAcceptedAuthority(context.Background())
 			require.NoError(t, err)
 			defer retain()
 			ctx, cancel := context.WithCancel(context.Background())

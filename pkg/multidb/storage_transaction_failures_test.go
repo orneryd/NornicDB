@@ -129,14 +129,14 @@ func TestTransactionQuotaSizeInitializationWithConcurrentUnlimitedCommits(t *tes
 		}(tx)
 	}
 	close(start)
-	manager.GetStorageSize(db)
+	manager.GetStorageSize(context.Background(), db)
 	wg.Wait()
 	close(results)
 	for err := range results {
 		require.NoError(t, err)
 	}
-	cached, _, _ := manager.GetStorageSize(db)
-	nodes, edges, err := manager.calculateStorageSizeFromEngine(engine)
+	cached, _, _ := manager.GetStorageSize(context.Background(), db)
+	nodes, edges, err := manager.calculateStorageSizeFromEngine(context.Background(), engine)
 	require.NoError(t, err)
 	require.Equal(t, nodes+edges, cached, "lazy initialization must not miss or double-count concurrent publications")
 	count, err := engine.NodeCount()

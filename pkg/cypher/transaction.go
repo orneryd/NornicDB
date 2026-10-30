@@ -403,6 +403,12 @@ func commitFailureWroteNothing(localTx bool, err error) bool {
 	if !localTx {
 		return false
 	}
+	// Author: NOR-288 lane (Codex), 2026-10-26. A physical staging error
+	// cannot establish rollback of an already accepted durable command.
+	var accepted *storage.AcceptedCommitError
+	if errors.As(err, &accepted) {
+		return false
+	}
 	var violation *storage.ConstraintViolationError
 	return errors.As(err, &violation) || storage.IsTransactionTooBig(err)
 }

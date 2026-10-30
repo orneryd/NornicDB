@@ -328,6 +328,7 @@ func (b *BadgerEngine) retire() error {
 //
 // b.mu must be held and the engine owner must have sealed admission.
 func (b *BadgerEngine) releaseClosedStateLocked() {
+	b.acceptedApplications = nil
 	b.transitionPending(namespaceDropRelease, "", nil)
 	b.db = nil
 	b.nodeCache = nil
@@ -362,6 +363,9 @@ func (b *BadgerEngine) releaseClosedStateLocked() {
 func (b *BadgerEngine) Sync() error {
 	if err := b.ensureOpen(false); err != nil {
 		return err
+	}
+	if b.nativeSyncHook != nil {
+		b.nativeSyncHook()
 	}
 	return b.db.Sync()
 }
@@ -559,7 +563,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 // PendingEmbeddingsCount returns the number of nodes waiting for embedding.
 // Note: This requires a scan of the pending index, so use sparingly.
 func (b *BadgerEngine) PendingEmbeddingsCount() int {
-	return b.CountPendingEmbeddingIDs(nil)
+	return b.CountPendingEmbeddingIDs(b.work.Context(), nil)
 }
 
 // InvalidatePendingEmbeddingsIndex discards only the derived candidate catalog.

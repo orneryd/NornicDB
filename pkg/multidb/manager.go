@@ -7,6 +7,7 @@ package multidb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -494,8 +495,15 @@ func (m *DatabaseManager) DropDatabase(ctx context.Context, name string) error {
 		return err
 	}
 	defer release()
+	return m.dropAdmitted(ctx, name)
+}
+
+// dropAdmitted is the DROP owner's body; the caller holds exclusive DROP
+// admission. It decides absent, pending completion or existing for name.
+func (m *DatabaseManager) dropAdmitted(ctx context.Context, name string) error {
 	policy := catalogTransitionPolicy{durability: catalogDurableDrop, dropName: name}
 	completionOnly := false
+	var intentErr error
 	if err := m.transitionCatalog(ctx, policy, func(candidate *DatabaseManager) error {
 		info := candidate.databases[name]
 		if info == nil {
@@ -517,26 +525,60 @@ func (m *DatabaseManager) DropDatabase(ctx context.Context, name string) error {
 		candidate.transitionPendingDrop(name, true)
 		return nil
 	}); err != nil {
-		return err
+		// Author: NOR-288 lane (Claude), 2026-10-30. An applied intent whose
+		// acknowledgement failed is still this owner's drop: its fence is held,
+		// so finish it here. The outcome stays non-retryable; no client retry
+		// is invited, because a name-only retry could reach a newer database.
+		var accepted *storage.AcceptedCommitError
+		if completionOnly || !errors.As(err, &accepted) || accepted.State != storage.CommitApplied {
+			return err
+		}
+		intentErr = err
 	}
 	if completionOnly {
 		return nil
 	}
 	// Receipt publication and durable intent completed before irreversible work.
+	// Failures after acceptance are accepted outcomes, never retryable
+	// rejections a name-only retry could carry to a newer database.
 	if err := ctx.Err(); err != nil {
-		return &storage.AcceptedCommitError{State: storage.CommitRecoveryPending, Err: err}
+		// The caller stopped waiting after its intent applied; the owner's
+		// completion finishes the drop once this call releases admission.
+		m.scheduleDropCompletion(name)
+		return acceptedDropOutcome(err)
 	}
 	if _, _, err := m.inner.DeleteByPrefix(name + ":"); err != nil {
-		return localizedError(localization.MultidbManagerDeleteDatabaseDataFailed(err), err)
+		return acceptedDropOutcome(localizedError(localization.MultidbManagerDeleteDatabaseDataFailed(err), err))
 	}
 	if err := m.transitionCatalog(ctx, policy, func(candidate *DatabaseManager) error {
 		delete(candidate.databases, name)
 		candidate.transitionPendingDrop(name, false)
 		return nil
 	}); err != nil {
-		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
+		return acceptedDropOutcome(localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err))
 	}
-	return nil
+	return intentErr
+}
+
+// acceptedDropOutcome reports a failure after this owner accepted a DROP,
+// through the one accepted-outcome constructor. Its state is the one the
+// failing catalog transition reported (applied with a failed acknowledgement,
+// or pending); a failure outside a catalog transition (purge, cancellation)
+// is pending. The fence stays held until the drop is finished.
+func acceptedDropOutcome(err error) error {
+	state := storage.CommitRecoveryPending
+	var transition *storage.AcceptedCommitError
+	if errors.As(err, &transition) {
+		state = transition.State
+	}
+	return storage.AcceptedOutcome(state, "", err)
+}
+
+// dropFenceHeld reports whether name's unavailable-name DROP fence is held.
+func (m *DatabaseManager) dropFenceHeld(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.pendingDrops[name]
 }
 
 // GetStorage returns a namespaced storage engine for the specified database.
@@ -1160,8 +1202,8 @@ func (m *DatabaseManager) DecrementStorageSize(databaseName string, nodeSize, ed
 //		totalSize, nodeSize, edgeSize)
 //
 // Thread-safe: This method is safe to call from multiple goroutines.
-func (m *DatabaseManager) GetStorageSize(databaseName string) (int64, int64, int64) {
-	total, nodes, edges, _ := m.readStorageSize(databaseName, nil, sizeForReporting)
+func (m *DatabaseManager) GetStorageSize(ctx context.Context, databaseName string) (int64, int64, int64) {
+	total, nodes, edges, _ := m.readStorageSize(ctx, databaseName, nil, sizeForReporting)
 	return total, nodes, edges
 }
 
@@ -1175,7 +1217,7 @@ const (
 	sizeForAdmission
 )
 
-func (m *DatabaseManager) readStorageSize(databaseName string, engine storage.Engine, mode storageSizeReadMode) (int64, int64, int64, error) {
+func (m *DatabaseManager) readStorageSize(ctx context.Context, databaseName string, engine storage.Engine, mode storageSizeReadMode) (int64, int64, int64, error) {
 	m.mu.RLock()
 	info := m.databases[databaseName]
 	if info != nil && engine == nil {
@@ -1189,7 +1231,7 @@ func (m *DatabaseManager) readStorageSize(databaseName string, engine storage.En
 	if info == nil {
 		return 0, 0, 0, ErrDatabaseNotFound
 	}
-	err := m.ensureStorageSizeInitialized(databaseName, engine)
+	err := m.ensureStorageSizeInitialized(ctx, databaseName, engine)
 	if mode == sizeForAdmission {
 		if err != nil {
 			return 0, 0, 0, err

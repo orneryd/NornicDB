@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -40,9 +41,9 @@ func TestFollowerCreateMeetsHiddenPredecessor(t *testing.T) {
 		require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, string(hiddenNode), true))
 		require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(hiddenEdge), true))
 
-		err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: hiddenNode, Labels: []string{"Replicated"}})})
+		err = adapter.ApplyCommand(context.Background(), &Command{Type: CmdCreateNode, Data: runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: hiddenNode, Labels: []string{"Replicated"}})})
 		require.ErrorIs(t, err, storage.ErrAlreadyExists, "write-behind=%v", buffered)
-		err = adapter.ApplyCommand(&Command{Type: CmdCreateEdge, Data: runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "new"}})})
+		err = adapter.ApplyCommand(context.Background(), &Command{Type: CmdCreateEdge, Data: runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "new"}})})
 		var conflict *storage.HiddenEdgeIdentityConflictError
 		require.True(t, errors.Is(err, storage.ErrAlreadyExists) || errors.As(err, &conflict), "write-behind=%v: %v", buffered, err)
 

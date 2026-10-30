@@ -13,7 +13,7 @@ type walEntityCommitData struct {
 }
 
 type walAcceptedEntityCommit struct {
-	prepared        *AcceptedEntityCommitHandle
+	handle          *AcceptedEntityCommitHandle
 	receipt         *CommitReceipt
 	resolve         CommitReceiptOwner
 	releaseMutation func()
@@ -37,18 +37,12 @@ func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if len(ops) == 0 {
 		return prepared.engine.SubmitEntityCommit(ctx, prepared, settle)
 	}
-	inner, found := EntityCommitSubmitterFor(w.engine)
-	if !found {
-		return nil, ErrInvalidData
-	}
-	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Prepared: prepared})
-	if err != nil {
-		return nil, err
-	}
 	if ctx != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthority()
+	// The accepted owner encodes the prepared snapshot once and retains its
+	// authority; every outcome below settles through that owner.
+	handle, payload, err := AcceptEntityCommit(ctx, w.engine, prepared)
 	if err != nil {
 		return nil, err
 	}
@@ -56,68 +50,38 @@ func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEn
 	var mutationOnce sync.Once
 	releaseMutation := func() { mutationOnce.Do(w.mutationMu.RUnlock) }
 	logicalID := prepared.LogicalID()
-	handle := NewAcceptedEntityCommitHandle(prepared)
 	// The existing WAL mutex joins registration to its closed admission cut.
 	w.wal.mu.Lock()
 	if w.wal.closed.Load() {
 		w.wal.mu.Unlock()
 		releaseMutation()
-		releaseAuthority()
+		handle.Discard(nil, ErrWALClosed)
 		return nil, ErrWALClosed
 	}
 	receipt, resolve := NewCommitReceipt(func(outcome CommitOutcome) {
-		releaseAuthority()
-		handle.Retire()
+		handle.Settled()
 		w.pendingEntityCommits.Delete(logicalID)
 		releaseMutation()
 		if settle != nil {
 			settle(outcome)
 		}
 	})
-	accepted := &walAcceptedEntityCommit{prepared: handle, receipt: receipt, resolve: resolve, releaseMutation: releaseMutation}
+	accepted := &walAcceptedEntityCommit{handle: handle, receipt: receipt, resolve: resolve, releaseMutation: releaseMutation}
 	existing, loaded := w.pendingEntityCommits.LoadOrStore(logicalID, accepted)
 	w.wal.mu.Unlock()
 	if loaded {
-		releaseAuthority()
 		releaseMutation()
-		prepared.Abort()
+		handle.Discard(nil, nil)
 		return existing.(*walAcceptedEntityCommit).receipt, nil
 	}
 	if err = w.wal.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, prepared.Namespace()); err != nil {
-		handle.MarkRecoveryPending()
-		prepared.Abort()
-		_ = resolve.Resolve(CommitOutcome{State: CommitRecoveryPending, Err: err})
+		handle.Settle(resolve, err)
 		return receipt, nil
 	}
-	go func() {
-		applied, err := handle.Submit(context.Background(), inner.Submitter)
-		if err != nil {
-			_ = resolve.Resolve(CommitOutcome{State: CommitRecoveryPending, Err: err})
-			return
-		}
-		physical := applied.WaitPhysicalOutcome(w.entityWaitCtx)
-		if physical.State == CommitDiscarded {
-			physical.State = CommitRecoveryPending
-		}
-		if physical.State == CommitRecoveryPending && physical.Err != nil {
-			handle.MarkRecoveryPending()
-		}
-		resolve.PublishPhysical(physical)
-		outcome := applied.WaitOutcome(w.entityWaitCtx)
-		if outcome.State == CommitRecoveryPending {
-			_ = resolve.Resolve(outcome)
-			select {
-			case <-applied.Done():
-			case <-w.entityWaitCtx.Done():
-				return
-			}
-			outcome = applied.Outcome()
-		}
-		if outcome.State == CommitDiscarded {
-			outcome.State = CommitRecoveryPending
-		}
-		_ = resolve.Resolve(outcome)
-	}()
-
+	// The native application and its join are accepted work of the engine's
+	// lifecycle owner; a closing engine leaves the record to recovery.
+	if !prepared.engine.RunAcceptedContinuation(func(ctx context.Context) { handle.JoinContext(ctx, resolve, handle.ApplyContext(ctx, payload)) }) {
+		handle.Settle(resolve, ErrStorageClosed)
+	}
 	return receipt, nil
 }

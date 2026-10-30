@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -34,7 +35,7 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 				err = view.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": "small"}})
 			}
 			require.NoError(t, err)
-			before, _, _ := manager.GetStorageSize(db)
+			before, _, _ := manager.GetStorageSize(context.Background(), db)
 			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxBytes: before}}))
 			if entity == "node" {
 				err = view.UpdateNode(&storage.Node{ID: "n", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}})

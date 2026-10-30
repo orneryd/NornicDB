@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -23,7 +24,7 @@ func TestReplicationRejectsPathologicalPropertyNesting(t *testing.T) {
 	adapter, err := NewStorageAdapterWithWAL(engine, t.TempDir())
 	require.NoError(t, err)
 	fixtureowner.OwnChecked(t, adapter)
-	err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: nestedNodePayload(1025)})
+	err = adapter.ApplyCommand(context.Background(), &Command{Type: CmdCreateNode, Data: nestedNodePayload(1025)})
 	require.ErrorContains(t, err, "nesting depth")
 	_, err = engine.GetNode("test:n")
 	require.ErrorIs(t, err, storage.ErrNotFound)

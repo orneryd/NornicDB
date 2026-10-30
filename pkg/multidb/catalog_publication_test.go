@@ -59,14 +59,17 @@ func (e *f25CatalogReceiptProbe) SubmitEntityCommit(ctx context.Context, prepare
 	}
 	e.prepared = prepared
 	e.receipt, e.receiptOwner = storage.NewCommitReceipt(settle)
+	// The test may change mode once submitted is closed; this submission keeps
+	// the mode it was admitted under.
+	mode := e.mode
 	if e.submitted != nil {
 		close(e.submitted)
 	}
-	if e.mode == "applied-ack-error" {
+	if mode == "applied-ack-error" {
 		if err := storagefault.FinishPreparedReceipt(e.prepared, e.receiptOwner, storage.CommitOutcome{State: storage.CommitApplied, Err: storage.ErrConflict}); err != nil {
 			return nil, err
 		}
-	} else if e.mode != "accepted-wait" {
+	} else if mode != "accepted-wait" {
 		if err := e.receiptOwner.Resolve(storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: storage.ErrConflict}); err != nil {
 			return nil, err
 		}
@@ -124,8 +127,14 @@ func TestF25CompositeCatalogPublicationPrototype(t *testing.T) {
 				require.Error(t, err)
 				if phase == "preaccept-cancelled" {
 					require.ErrorIs(t, err, context.Canceled)
-				} else {
+				} else if phase == "rejected" {
 					require.ErrorIs(t, err, storage.ErrConflict)
+				} else {
+					// Author: NOR-288 lane (Codex), 2026-10-27. Accepted
+					// diagnostics cannot classify as a fresh retryable conflict.
+					var accepted *storage.AcceptedCommitError
+					require.ErrorAs(t, err, &accepted)
+					requireCatalogAcceptedDiagnostic(t, accepted, storage.ErrConflict)
 				}
 				pending := phase == "pending-applied" || phase == "pending-discarded"
 				applied := phase == "applied-ack-error"
@@ -292,8 +301,12 @@ func TestF25OtherCatalogPublicationPrototype(t *testing.T) {
 				require.Error(t, err)
 				if phase == "preaccept-cancelled" {
 					require.ErrorIs(t, err, context.Canceled)
-				} else {
+				} else if phase == "rejected" {
 					require.ErrorIs(t, err, storage.ErrConflict)
+				} else {
+					var accepted *storage.AcceptedCommitError
+					require.ErrorAs(t, err, &accepted)
+					requireCatalogAcceptedDiagnostic(t, accepted, storage.ErrConflict)
 				}
 				applied := phase == "applied-ack-error"
 				inspect("live return", applied, manager)
@@ -396,6 +409,39 @@ func TestF25StandardDropCompletionPrototype(t *testing.T) {
 	}
 }
 
+// Author: NOR-288 lane (Codex), 2026-10-29. Accepted catalog composition
+// can add more than one opaque boundary; inspect diagnostics explicitly while
+// preserving the public prohibition on retryable/rejected cause identity.
+func catalogAcceptedDiagnosticContains(root error, target error) bool {
+	pending := []error{root}
+	for len(pending) > 0 {
+		err := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if err == nil {
+			continue
+		}
+		if accepted, ok := err.(*storage.AcceptedCommitError); ok {
+			pending = append(pending, accepted.Cause())
+			continue
+		}
+		if errors.Is(err, target) {
+			return true
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			pending = append(pending, joined.Unwrap()...)
+		} else if cause := errors.Unwrap(err); cause != nil {
+			pending = append(pending, cause)
+		}
+	}
+	return false
+}
+
+func requireCatalogAcceptedDiagnostic(t *testing.T, accepted *storage.AcceptedCommitError, target error, message ...any) {
+	t.Helper()
+	require.NotErrorIs(t, accepted, target)
+	require.True(t, catalogAcceptedDiagnosticContains(accepted, target), "accepted diagnostic must retain %v: %v", target, message)
+}
+
 func TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority(t *testing.T) {
 	for _, terminal := range []storage.CommitOutcomeState{storage.CommitApplied, storage.CommitDiscarded} {
 		t.Run(fmt.Sprint(terminal), func(t *testing.T) {
@@ -414,7 +460,7 @@ func TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority(t *testing.T
 			err := <-result
 			var accepted *storage.AcceptedCommitError
 			require.ErrorAs(t, err, &accepted)
-			require.ErrorIs(t, err, context.Canceled)
+			requireCatalogAcceptedDiagnostic(t, accepted, context.Canceled)
 			require.Equal(t, storage.CommitRecoveryPending, accepted.State)
 			require.NotEmpty(t, accepted.LogicalID)
 			assert.Zero(t, len(manager.catalogGate), "wait cancellation cannot release accepted authority")

@@ -172,6 +172,11 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
+	// Author: NOR-288 lane (Codex), 2026-10-26. One native application owner
+	// per live accepted logical command; terminal publication retires the entry.
+	acceptedApplications map[acceptedApplicationKey]*acceptedEntityApplication // guarded by mu
+	// nativeSyncHook is nil in production; tests fence the real Sync boundary.
+	nativeSyncHook func()
 	// dropPrefixTailHook is nil in production and held under the lifecycle barrier.
 	dropPrefixTailHook    func(string) error
 	storedEntityObservers atomic.Pointer[storedEntityObserverRegistry]

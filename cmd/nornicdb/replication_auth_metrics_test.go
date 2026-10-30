@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -154,7 +155,7 @@ func TestInitReplicationAuth_ReplicatorMetricsAware(t *testing.T) {
 // the cmd-package wiring tests.
 type cmdNullStorage struct{}
 
-func (cmdNullStorage) ApplyCommand(*replication.Command) error { return nil }
+func (cmdNullStorage) ApplyCommand(context.Context, *replication.Command) error { return nil }
 func (cmdNullStorage) GetWALPosition() (uint64, error)         { return 0, nil }
 func (cmdNullStorage) GetWALEntries(uint64, int) ([]*replication.WALEntry, error) {
 	return nil, nil

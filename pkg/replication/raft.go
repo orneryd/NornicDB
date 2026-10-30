@@ -1009,7 +1009,9 @@ func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture)
 			}
 		}
 		if future.accepted != nil {
-			_ = future.accepted.owner.Resolve(storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: err})
+			// Author: NOR-288 lane (Codex), 2026-10-26. Preserve accepted uncertainty;
+			// the committed entry's application still settles through its owner.
+			future.cmd.accepted.ObservePending(future.accepted.owner, err)
 		} else {
 			if remove {
 				r.futuresMu.Lock()
@@ -1096,7 +1098,7 @@ func (r *RaftReplicator) advanceCommitIndex(known ...raftCommittedFrontier) {
 		var err error
 		if entry.Command != nil {
 			r.logMu.Unlock()
-			err = r.storage.ApplyCommand(entry.Command)
+			err = r.storage.ApplyCommand(r.work.Context(), entry.Command)
 			if err != nil {
 				r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
 			}
@@ -1511,7 +1513,7 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		if r.transport == nil {
 			return ErrNotLeader
 		}
-		fwdCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		fwdCtx, cancel := context.WithTimeout(r.work.Context(), timeout)
 		defer cancel()
 		conn, err := r.transport.Connect(fwdCtx, leaderAddr)
 		if err != nil {
@@ -1524,7 +1526,7 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 			}
 			// Once sent, a failed reply cannot establish that the leader did
 			// not accept it. Preserve that uncertainty through the Go API.
-			return &storage.AcceptedCommitError{State: storage.CommitRecoveryPending, LogicalID: cmd.RequestID, Err: err}
+			return storage.AcceptedOutcome(storage.CommitRecoveryPending, cmd.RequestID, err)
 		}
 		return ErrNotLeader
 	}
@@ -1534,7 +1536,7 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 	}
 
 	future := &applyFuture{cmd: cmd, errCh: make(chan error, 1)}
-	return r.processApply(context.Background(), future, raftApplyQueue{timeout: timeout})
+	return r.processApply(r.work.Context(), future, raftApplyQueue{timeout: timeout})
 }
 
 // ApplyBatch applies multiple commands atomically.
@@ -1732,10 +1734,9 @@ queueDrained:
 			future.discardBeforeCommit(ErrClosed)
 			continue
 		}
-		if local := future.cmd.accepted; local != nil && !local.started.Load() {
-			local.prepared.CloseNative() // release only physical staging, not logical ownership
-		}
-		closeErr = compose.Outcomes(closeErr, future.accepted.owner.Resolve(storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: ErrClosed}))
+		// A committed entry stays accepted: its owner releases staging and
+		// keeps the record pending for recovery.
+		future.cmd.accepted.Close(future.accepted.owner, ErrClosed)
 	}
 	return closeErr
 }

@@ -209,7 +209,7 @@ func normalizeAPOCImportRelativePath(localPath string) string {
 	return strings.TrimPrefix(cleaned, "/")
 }
 
-func (e *StorageExecutor) validateAPOCRemoteURL(rawURL string, allowlist []string) (*url.URL, error) {
+func (e *StorageExecutor) validateAPOCRemoteURL(ctx context.Context, rawURL string, allowlist []string) (*url.URL, error) {
 	if err := securitypkg.ValidateURL(rawURL, securitypkg.URLPolicy{}); err != nil {
 		return nil, fmt.Errorf("invalid APOC remote URL: %w", err)
 	}
@@ -236,7 +236,7 @@ func (e *StorageExecutor) validateAPOCRemoteURL(rawURL string, allowlist []strin
 	if !apocRemoteHostAllowed(hostname, allowlist) {
 		return nil, errAPOCRemoteURLHostNotAllowed
 	}
-	ipList, err := e.resolveAPOCHost(context.Background(), hostname)
+	ipList, err := e.resolveAPOCHost(ctx, hostname)
 	if err != nil {
 		return nil, fmt.Errorf("resolve APOC remote host: %w", err)
 	}
@@ -254,7 +254,7 @@ func (e *StorageExecutor) newAPOCRemoteRequest(ctx context.Context, rawURL strin
 	if err := e.ensureRemoteAPOCURLAccessAllowed(); err != nil {
 		return nil, err
 	}
-	parsed, err := e.validateAPOCRemoteURL(rawURL, e.apocRemoteURLAllowlist)
+	parsed, err := e.validateAPOCRemoteURL(ctx, rawURL, e.apocRemoteURLAllowlist)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface
 
 	// Check if it's a URL or file path
 	if isHTTPSource(urlOrFile) {
-		data, err = e.loadJsonFromURL(urlOrFile)
+		data, err = e.loadJsonFromURL(ctx, urlOrFile)
 	} else {
 		data, err = e.loadJsonFromFile(urlOrFile)
 	}
@@ -309,8 +309,8 @@ func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface
 	}, nil
 }
 
-func (e *StorageExecutor) loadJsonFromURL(url string) (interface{}, error) {
-	req, err := e.newAPOCRemoteRequest(context.Background(), url)
+func (e *StorageExecutor) loadJsonFromURL(ctx context.Context, url string) (interface{}, error) {
+	req, err := e.newAPOCRemoteRequest(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -773,7 +773,7 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 	var data interface{}
 
 	if isHTTPSource(urlOrFile) {
-		data, err = e.loadJsonFromURL(urlOrFile)
+		data, err = e.loadJsonFromURL(ctx, urlOrFile)
 	} else {
 		data, err = e.loadJsonFromFile(urlOrFile)
 	}
@@ -845,7 +845,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 	var data interface{}
 
 	if isHTTPSource(urlOrFile) {
-		data, err = e.loadJsonFromURL(urlOrFile)
+		data, err = e.loadJsonFromURL(ctx, urlOrFile)
 	} else {
 		data, err = e.loadJsonFromFile(urlOrFile)
 	}

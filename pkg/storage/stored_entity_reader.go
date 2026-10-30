@@ -130,7 +130,7 @@ func StreamStoredNodesByLabelProjected(engine Engine, label string, properties [
 // (ApplyDecayFilter false), so it only rules the visibility out.
 func StreamStoredNodes(ctx context.Context, engine Engine, opts StreamNodesOptions, visit func(*Node) error) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return ErrInvalidData // every caller passes its own context; none substitutes one
 	}
 	opts.ApplyDecayFilter = false
 	return engine.StreamNodesWithOptions(ctx, opts, visit)

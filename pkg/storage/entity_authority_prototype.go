@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"sort"
 	"sync"
 )
@@ -96,7 +95,7 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 			}
 			for _, ns := range namespaces {
 				entities := batches[ns]
-				release, err := b.GetSchemaForNamespace(ns).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(entities.nodes, entities.edges, nil))
+				release, err := b.GetSchemaForNamespace(ns).acquireUniqueConstraintCommitLocks(b.work.Context(), owner, entityCommitKeys(entities.nodes, entities.edges, nil))
 				if err != nil {
 					releaseAll()
 					return nil, err
@@ -136,7 +135,7 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 		} else {
 			nodes = append(nodes, NodeID(id))
 		}
-		return b.GetSchemaForNamespace(namespace).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, nil))
+		return b.GetSchemaForNamespace(namespace).acquireUniqueConstraintCommitLocks(b.work.Context(), owner, entityCommitKeys(nodes, edges, nil))
 	}
 	if inherited != nil {
 		if inherited.engine != b {
@@ -164,12 +163,12 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 		}
 		sort.Strings(namespaces)
 		for _, ns := range namespaces {
-			if err := b.initializeManagedEntityNamespace(context.Background(), ns); err != nil {
+			if err := b.initializeManagedEntityNamespace(b.work.Context(), ns); err != nil {
 				return nil, nil, err
 			}
 		}
 	} else if ns, _, valid := ParseDatabasePrefix(id); valid {
-		if err := b.initializeManagedEntityNamespace(context.Background(), ns); err != nil {
+		if err := b.initializeManagedEntityNamespace(b.work.Context(), ns); err != nil {
 			return nil, nil, err
 		}
 	}

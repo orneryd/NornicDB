@@ -29,7 +29,7 @@ type hiddenNoOpFanoutStorage struct {
 	fanout *hiddenNoOpFanout
 }
 
-func (s *hiddenNoOpFanoutStorage) ApplyCommand(cmd *replication.Command) error {
+func (s *hiddenNoOpFanoutStorage) ApplyCommand(_ context.Context, cmd *replication.Command) error {
 	return s.fanout.Apply(cmd, 0)
 }
 func (r *hiddenNoOpFanout) SubmitAcceptedCommand(ctx context.Context, cmd *replication.Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
@@ -51,7 +51,7 @@ func (r *hiddenNoOpFanout) Apply(command *replication.Command, _ time.Duration) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, target := range r.targets {
-		if err := target.ApplyCommand(command); err != nil {
+		if err := target.ApplyCommand(context.Background(), command); err != nil {
 			return err
 		}
 	}

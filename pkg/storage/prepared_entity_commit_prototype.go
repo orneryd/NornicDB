@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 )
 
 // EntityCommitSubmitter is discovered before unwrapping a storage wrapper.
@@ -19,11 +20,16 @@ type EntityCommitSubmitter interface {
 // command chooses physical commit or definite discard. Caller wait cancellation
 // is not a discard decision.
 type PreparedEntityCommit struct {
+	// Author: NOR-288 lane (Codex), 2026-10-26. The retained authority owner
+	// is reused by applications of this same accepted logical command.
+	accepted             atomic.Bool
+	application          acceptedEntityApplication
+	authorityOwner       string
 	mode                 EntityCommitMode
 	markRecoveryPending  func()
 	hooksMu              sync.Mutex
 	appliedHooks         []func()
-	retainAuthority      func() (func(), error)
+	retainAuthority      func(context.Context) (func(), error)
 	engine               *BadgerEngine
 	terminal             CommitOutcome
 	afterPublication     func()
@@ -199,10 +205,10 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			}
 			nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
-			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
+			prepared = &PreparedEntityCommit{engine: tx.engine, authorityOwner: tx.ID, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
-			prepared.retainAuthority = func() (func(), error) {
-				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, endpoints))
+			prepared.retainAuthority = func(ctx context.Context) (func(), error) {
+				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(ctx, owner, entityCommitKeys(nodes, edges, endpoints))
 				if err != nil {
 					return nil, err
 				}
@@ -222,7 +228,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 						edgeImages = append(edgeImages, op.OldEdge)
 					}
 				}
-				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
+				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(ctx, owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
 				if err != nil {
 					releaseEntities()
 					return nil, err
@@ -243,6 +249,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			}
 			// Accepted work belongs to its terminal owner, no longer the waiter.
 			tx.commitCtx = nil
+			tx.acceptedApplication = tx.acceptedApplication || prepared.accepted.Load()
 			return nil
 		}})
 		if prepared != nil {
@@ -272,11 +279,13 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 // command owner. Applied publication releases it before native listeners;
 // recovery-pending commands retain it after an inner native rollback.
 // The returned release is only for definite pre-record/log discard.
-func (p *PreparedEntityCommit) RetainAcceptedAuthority() (func(), error) {
+// ctx is the caller's work or request context: a contended authority wait
+// observes it (Author: NOR-288 lane (Claude), 2026-10-30).
+func (p *PreparedEntityCommit) RetainAcceptedAuthority(ctx context.Context) (func(), error) {
 	if p.retainAuthority == nil {
 		return func() {}, nil
 	}
-	release, err := p.retainAuthority()
+	release, err := p.retainAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -285,6 +294,7 @@ func (p *PreparedEntityCommit) RetainAcceptedAuthority() (func(), error) {
 	p.hooksMu.Lock()
 	p.appliedHooks = append(p.appliedHooks, releaseOnce)
 	p.hooksMu.Unlock()
+	p.accepted.Store(true)
 	return releaseOnce, nil
 }
 

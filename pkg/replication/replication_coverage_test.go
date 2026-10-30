@@ -370,7 +370,7 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 		Type:       "KNOWS",
 		Properties: map[string]any{"weight": float64(2)},
 	}
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, adapter.ApplyCommand(context.Background(), &Command{
 		Type:      CmdUpdateEdge,
 		Data:      runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, updatedEdge),
 		Timestamp: time.Now(),
@@ -382,7 +382,7 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 	nodeBytes1 := runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: "n3", Labels: []string{"L"}})
 	nodeBytes2 := runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: "n4", Labels: []string{"L"}})
 	bulkNodesPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{nodeBytes1, nodeBytes2})
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, adapter.ApplyCommand(context.Background(), &Command{
 		Type:      CmdBulkCreateNodes,
 		Data:      bulkNodesPayload,
 		Timestamp: time.Now(),
@@ -394,7 +394,7 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 
 	edgeBytes := runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: "e2", StartNode: "n3", EndNode: "n4", Type: "REL"})
 	bulkEdgesPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{edgeBytes})
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, adapter.ApplyCommand(context.Background(), &Command{
 		Type:      CmdBulkCreateEdges,
 		Data:      bulkEdgesPayload,
 		Timestamp: time.Now(),
@@ -402,7 +402,7 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 	_, err = adapter.engine.GetEdge("e2")
 	require.NoError(t, err)
 
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, adapter.ApplyCommand(context.Background(), &Command{
 		Type:      CmdBulkDeleteNodes,
 		Data:      runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, []storage.NodeID{"n4"}),
 		Timestamp: time.Now(),
@@ -410,7 +410,7 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 	_, err = adapter.engine.GetNode("n4")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, adapter.ApplyCommand(context.Background(), &Command{
 		Type:      CmdBulkDeleteEdges,
 		Data:      runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, []storage.EdgeID{"e2"}),
 		Timestamp: time.Now(),
@@ -418,7 +418,7 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 	_, err = adapter.engine.GetEdge("e2")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	err = adapter.ApplyCommand(&Command{Type: CmdBulkDeleteEdges, Data: []byte("bad"), Timestamp: time.Now()})
+	err = adapter.ApplyCommand(context.Background(), &Command{Type: CmdBulkDeleteEdges, Data: []byte("bad"), Timestamp: time.Now()})
 	require.ErrorContains(t, err, "decode bulk delete edges")
 }
 
@@ -898,7 +898,13 @@ func TestRaftReplicator_ApplyBranchCoverage(t *testing.T) {
 
 	fwdConn.forwardErr = errors.New("leader rejected")
 	err = r.Apply(cmd, 10*time.Millisecond)
-	require.ErrorContains(t, err, "leader rejected")
+	// Author: NOR-288 lane (Claude), 2026-10-30. Once forwarded, a failed reply
+	// cannot establish that the leader did not apply the command: the outcome is
+	// committed-pending or unknown, and the reply error stays its cause.
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, err, &accepted)
+	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+	require.ErrorContains(t, accepted.Cause(), "leader rejected")
 
 	r.state = StateLeader
 	r.applyCh = make(chan *applyFuture)
@@ -940,7 +946,7 @@ func TestStorageAdapter_TypedMixedTransactionReplacesLegacyBatch(t *testing.T) {
 		_, err := adapter.engine.CreateNode(&storage.Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
-	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredBatchWrite, Data: []byte("bad")}), ErrRetiredCommand)
+	require.ErrorIs(t, adapter.ApplyCommand(context.Background(), &Command{Type: cmdRetiredBatchWrite, Data: []byte("bad")}), ErrRetiredCommand)
 	ops := []storage.Operation{{Type: storage.OpCreateNode, Node: &storage.Node{ID: "test:n-batch", Labels: []string{"L"}}}, {Type: storage.OpCreateEdge, Edge: &storage.Edge{ID: "test:e-batch", StartNode: "test:a", EndNode: "test:b", Type: "REL"}}}
 	payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Namespace: "test", LogicalID: "mixed-replacement", Operations: ops})
 	require.NoError(t, err)
@@ -1094,7 +1100,7 @@ func TestStorageAdapter_ApplyCommand_SyncWALFallback(t *testing.T) {
 				id = "fallback-fail"
 			}
 			command := &Command{Type: CmdCreateNode, Data: runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: id, Labels: []string{"L"}}), Timestamp: time.Now()}
-			err := adapter.ApplyCommand(command)
+			err := adapter.ApplyCommand(context.Background(), command)
 			if closed && err != nil {
 				require.ErrorContains(t, err, "failed to append to WAL")
 				return
@@ -1259,32 +1265,32 @@ func TestStorageAdapter_ApplyHelpers_ErrorAndFallbackBranches(t *testing.T) {
 	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte("bad")}), "decode node")
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdUpdateNode, Data: []byte("bad")}), "decode node")
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdCreateEdge, Data: []byte("bad")}), "decode edge")
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdUpdateEdge, Data: []byte("bad")}), "decode edge")
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdDeleteEdge, Data: []byte("bad")}), "decode delete edge request")
-	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredSetProperty, Data: []byte("bad")}), ErrRetiredCommand)
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdDeleteByPrefix, Data: []byte("bad")}), "decode delete by prefix request")
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdBulkCreateNodes, Data: []byte("bad")}), "decode bulk create nodes")
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdBulkCreateEdges, Data: []byte("bad")}), "decode bulk create edges")
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdBulkDeleteNodes, Data: []byte("bad")}), "decode bulk delete nodes")
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdBulkDeleteEdges, Data: []byte("bad")}), "decode bulk delete edges")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdCreateNode, Data: []byte("bad")}), "decode node")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdUpdateNode, Data: []byte("bad")}), "decode node")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdCreateEdge, Data: []byte("bad")}), "decode edge")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdUpdateEdge, Data: []byte("bad")}), "decode edge")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdDeleteEdge, Data: []byte("bad")}), "decode delete edge request")
+	require.ErrorIs(t, adapter.ApplyCommand(context.Background(), &Command{Type: cmdRetiredSetProperty, Data: []byte("bad")}), ErrRetiredCommand)
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdDeleteByPrefix, Data: []byte("bad")}), "decode delete by prefix request")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdBulkCreateNodes, Data: []byte("bad")}), "decode bulk create nodes")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdBulkCreateEdges, Data: []byte("bad")}), "decode bulk create edges")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdBulkDeleteNodes, Data: []byte("bad")}), "decode bulk delete nodes")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdBulkDeleteEdges, Data: []byte("bad")}), "decode bulk delete edges")
 
 	_, err := adapter.engine.CreateNode(&storage.Node{ID: "raw-fallback-node", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, adapter.ApplyCommand(&Command{Type: CmdDeleteNode, Data: []byte("raw-fallback-node")}))
+	require.NoError(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdDeleteNode, Data: []byte("raw-fallback-node")}))
 	_, err = adapter.engine.GetNode("raw-fallback-node")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	emptyPrefixPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, struct{ Prefix string }{Prefix: ""})
-	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdDeleteByPrefix, Data: emptyPrefixPayload}), "prefix is required")
+	require.ErrorContains(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdDeleteByPrefix, Data: emptyPrefixPayload}), "prefix is required")
 
 	badNodePayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{[]byte("bad-node")})
-	require.Error(t, adapter.ApplyCommand(&Command{Type: CmdBulkCreateNodes, Data: badNodePayload}))
+	require.Error(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdBulkCreateNodes, Data: badNodePayload}))
 
 	badEdgePayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{[]byte("bad-edge")})
-	require.Error(t, adapter.ApplyCommand(&Command{Type: CmdBulkCreateEdges, Data: badEdgePayload}))
+	require.Error(t, adapter.ApplyCommand(context.Background(), &Command{Type: CmdBulkCreateEdges, Data: badEdgePayload}))
 
 	// Edge create should fail when endpoints don't exist.
 	validEdgeBytes := runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: "edge-missing-nodes", StartNode: "no-a", EndNode: "no-b", Type: "REL"})
@@ -1294,13 +1300,13 @@ func TestStorageAdapter_ApplyHelpers_ErrorAndFallbackBranches(t *testing.T) {
 	}{
 		Edges: [][]byte{validEdgeBytes},
 	})
-	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredBatchWrite, Data: edgeOnlyBatch}), ErrRetiredCommand)
+	require.ErrorIs(t, adapter.ApplyCommand(context.Background(), &Command{Type: cmdRetiredBatchWrite, Data: edgeOnlyBatch}), ErrRetiredCommand)
 
 	emptyCypherPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, struct {
 		Query  string
 		Params map[string]interface{}
 	}{})
-	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredCypher, Data: emptyCypherPayload}), ErrRetiredCommand)
+	require.ErrorIs(t, adapter.ApplyCommand(context.Background(), &Command{Type: cmdRetiredCypher, Data: emptyCypherPayload}), ErrRetiredCommand)
 }
 
 func TestStorageAdapter_GetWALEntries_ReadErrorPath(t *testing.T) {

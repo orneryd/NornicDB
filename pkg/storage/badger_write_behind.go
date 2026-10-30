@@ -688,7 +688,7 @@ func (b *BadgerEngine) FlushWriteBehind() error {
 	}
 	b.writeBarrier.RLock()
 	b.mu.RLock()
-	closed := b.work.Closing()
+	closed := b.ensureOpenLocked(false) != nil
 	b.mu.RUnlock()
 	if closed {
 		b.writeBarrier.RUnlock()

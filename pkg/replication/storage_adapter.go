@@ -27,6 +27,9 @@ type StorageAdapter struct {
 	walDir      string
 	walMu       sync.RWMutex // Protects wal and walPosition
 	walPosition atomic.Uint64
+	// Author: NOR-288 lane (Codex), 2026-10-27. Nil in production; tests
+	// fail acknowledgement after a real synchronous append and durable Sync.
+	walAppendAckHook func() error // guarded by walMu
 
 	// In-memory WAL for fast streaming (avoids re-reading wal.log continuously).
 	memWALMu sync.RWMutex
@@ -119,7 +122,9 @@ func (a *StorageAdapter) loadWALPosition() error {
 	return nil
 }
 
-func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
+// ApplyCommand applies cmd; ctx is the caller's work or request context, which
+// an accepted command's native submission observes.
+func (a *StorageAdapter) ApplyCommand(ctx context.Context, cmd *Command) error {
 	if cmd == nil {
 		return localizedError(localization.ReplicationStorageCommandRequired(), nil)
 	}
@@ -136,7 +141,7 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 	var err error
 	switch cmd.Type {
 	case CmdCommitTransaction:
-		if cmd.accepted == nil || cmd.accepted.owner != a.engine {
+		if !cmd.accepted.AppliesTo(a.engine) {
 			envelope, operations, err = storage.DecodeEntityTransaction(cmd.Data)
 		}
 	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
@@ -171,7 +176,11 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		// Channel full - fall back to synchronous write to avoid blocking
 		// This should be rare with a 1000-item buffer
 		a.walMu.Lock()
-		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
+		err := a.wal.Append(storage.OperationType("replication_command"), record)
+		if err == nil && a.walAppendAckHook != nil {
+			err = a.walAppendAckHook()
+		}
+		if err != nil {
 			a.walMu.Unlock()
 			return localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
 		}
@@ -186,15 +195,25 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 	var execErr error
 	switch cmd.Type {
 	case CmdCommitTransaction:
-		if cmd.accepted != nil && cmd.accepted.owner == a.engine {
-			execErr = cmd.accepted.apply()
+		if cmd.accepted.AppliesTo(a.engine) {
+			execErr = cmd.accepted.ApplyContext(ctx, cmd.Data)
 			break
 		}
-		receipt, err := storage.SubmitAcceptedEntityTransaction(context.Background(), a.engine, envelope, operations, nil)
+		receipt, err := storage.SubmitAcceptedEntityTransaction(ctx, a.engine, envelope, operations, nil)
 		if err != nil {
 			execErr = err
 		} else {
-			execErr = receipt.WaitPhysicalOutcome(context.Background()).Err
+			// Author: NOR-288 lane (Codex), 2026-10-27. Foreign command
+			// callers observe inline search enqueue and broker publication at
+			// return. Join the existing full receipt, including native listeners.
+			// Local accepted handles above have their own outer full join.
+			// The wait outlives this request: it takes the applying engine's
+			// lifetime, whose Close ends it as recovery-pending.
+			if workCtx, ctxErr := storage.AcceptedWorkContext(a.engine); ctxErr != nil {
+				execErr = ctxErr
+			} else {
+				execErr = receipt.WaitOutcome(workCtx).Err
+			}
 		}
 	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
 		CmdDeleteEdge, CmdBulkCreateNodes, CmdBulkCreateEdges, CmdBulkDeleteNodes, CmdBulkDeleteEdges:

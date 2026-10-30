@@ -8,6 +8,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Replicator is the unified interface for all replication modes.
@@ -81,7 +82,7 @@ type Replicator interface {
 
 // Command represents a write operation to be replicated.
 type Command struct {
-	accepted *acceptedEntityCommand
+	accepted *storage.AcceptedEntityCommitHandle
 	// Type identifies the operation type.
 	Type CommandType
 
@@ -233,8 +234,10 @@ type PeerStatus struct {
 // to work with replication. This is a subset of the full storage.Engine
 // interface, containing only what replication needs.
 type Storage interface {
-	// ApplyCommand applies a replicated command to storage.
-	ApplyCommand(cmd *Command) error
+	// ApplyCommand applies a replicated command to storage. ctx is the
+	// caller's work or request context; an accepted command's native
+	// submission observes it (Author: NOR-288 lane (Claude), 2026-10-30).
+	ApplyCommand(ctx context.Context, cmd *Command) error
 
 	// GetWALPosition returns the current WAL position.
 	GetWALPosition() (uint64, error)
@@ -357,11 +360,17 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
 	// The application is accepted work: Shutdown waits for it to return.
-	_, release, accepted := r.work.Acquire(r.work.Context())
+	ctx, release, accepted := r.work.Acquire(r.work.Context())
 	if !accepted {
 		return ErrClosed
 	}
 	defer release()
+	return r.applyEnrolled(ctx, cmd, timeout)
+}
+
+// applyEnrolled is Apply for work already enrolled with this owner; ctx is
+// that work's context.
+func (r *StandaloneReplicator) applyEnrolled(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	r.mu.RLock()
 	if err := checkApplyReadiness(r.work.Closing(), r.started); err != nil {
 		r.mu.RUnlock()
@@ -374,7 +383,7 @@ func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error 
 			return err
 		}
 	}
-	return r.storage.ApplyCommand(cmd)
+	return r.storage.ApplyCommand(ctx, cmd)
 }
 
 // ApplyBatch applies multiple commands directly to storage.

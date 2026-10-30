@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
@@ -80,7 +81,7 @@ func TestReplicationLocalizedStorageAdapterCause(t *testing.T) {
 		require.NoError(t, engine.Close())
 	})
 
-	err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte{0x81, 0xa1, 'x'}, Timestamp: time.Now()})
+	err = adapter.ApplyCommand(context.Background(), &Command{Type: CmdCreateNode, Data: []byte{0x81, 0xa1, 'x'}, Timestamp: time.Now()})
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	requireReplicationLocalizedError(t, err, localization.MessageReplicationStorageDecodeNodeFailed, "decode node: invalid replication payload: unexpected EOF")
 }

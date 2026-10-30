@@ -45,7 +45,7 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 				}
 				require.NoError(t, err)
 				require.NoError(t, tracker.CommitTransaction(context.Background(), tx))
-				manager.GetStorageSize("nornic")
+				manager.GetStorageSize(context.Background(), "nornic")
 
 				later := map[string]any{"v": "later"}
 				switch {
@@ -61,9 +61,9 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, engine.FlushWriteBehind())
 
-				wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(tracker.Engine)
+				wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(context.Background(), tracker.Engine)
 				require.NoError(t, err)
-				total, nodes, edges := manager.GetStorageSize("nornic")
+				total, nodes, edges := manager.GetStorageSize(context.Background(), "nornic")
 				require.Equal(t, []int64{wantNodes + wantEdges, wantNodes, wantEdges}, []int64{total, nodes, edges},
 					"cached usage after the flush equals a recount")
 			})

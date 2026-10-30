@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
@@ -37,7 +38,7 @@ func TestManagedBulkPreservesReplacementContract(t *testing.T) {
 								require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(db+":e"), true))
 							}
 						}
-						before, _, _ := manager.GetStorageSize(db)
+						before, _, _ := manager.GetStorageSize(context.Background(), db)
 						limits := &Limits{Storage: StorageLimits{MaxNodes: 3, MaxEdges: 1}}
 						if quota == "bytes" {
 							limits = &Limits{Storage: StorageLimits{MaxBytes: before}}
@@ -60,9 +61,9 @@ func TestManagedBulkPreservesReplacementContract(t *testing.T) {
 							if replay == 1 {
 								require.NoError(t, base.FlushWriteBehind())
 							}
-							nodes, edges, err := manager.calculateStorageSizeFromEngine(engine)
+							nodes, edges, err := manager.calculateStorageSizeFromEngine(context.Background(), engine)
 							require.NoError(t, err)
-							after, _, _ := manager.GetStorageSize(db)
+							after, _, _ := manager.GetStorageSize(context.Background(), db)
 							require.Equal(t, nodes+edges, after)
 							nc, err := engine.NodeCount()
 							require.NoError(t, err)

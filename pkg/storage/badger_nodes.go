@@ -54,7 +54,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 
 	// The constraint keys' commit locks cover the check, the write and the
 	// publication to the constraint cache, as for a transaction's commit.
-	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node, write.owner)
+	releaseUniqueLocks, lockErr := lockEngineWriteKeys(b.work.Context(), schema, node, write.owner)
 	if lockErr != nil {
 		return "", lockErr
 	}
@@ -499,7 +499,7 @@ func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityW
 
 	// The constraint keys' commit locks cover the check, the write and the
 	// publication to the constraint cache, as for a transaction's commit.
-	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node, write.owner)
+	releaseUniqueLocks, lockErr := lockEngineWriteKeys(b.work.Context(), schema, node, write.owner)
 	if lockErr != nil {
 		return lockErr
 	}
@@ -838,7 +838,8 @@ func (b *BadgerEngine) removeNodeRecordKeys(w kvWriter, node *Node) error {
 // ============================================================================
 
 // lockEngineWriteKeys takes node's constraint key locks for a direct engine
-// write, under an owner of its own (a variable so tests can make it fail).
-var lockEngineWriteKeys = func(schema *SchemaManager, node *Node, owner string) (func(), error) {
-	return schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, schema.appendConstraintValueKeys(nil, []*Node{node}, nil))
+// write, under an owner of its own (a variable so tests can make it fail). The
+// wait takes the engine owner's work context, as the edge writes do.
+var lockEngineWriteKeys = func(ctx context.Context, schema *SchemaManager, node *Node, owner string) (func(), error) {
+	return schema.acquireUniqueConstraintCommitLocks(ctx, owner, schema.appendConstraintValueKeys(nil, []*Node{node}, nil))
 }

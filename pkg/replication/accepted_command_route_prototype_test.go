@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -22,9 +23,9 @@ type acceptedMirrorStorage struct {
 func (s *acceptedMirrorStorage) PrepareEntityCommand(ctx context.Context, cmd *Command) (*Command, func(storage.CommitOutcome), bool, error) {
 	return s.Storage.(*StorageAdapter).PrepareEntityCommand(ctx, cmd)
 }
-func (s *acceptedMirrorStorage) ApplyCommand(cmd *Command) error {
+func (s *acceptedMirrorStorage) ApplyCommand(_ context.Context, cmd *Command) error {
 	s.calls.Add(1)
-	if err := s.Storage.ApplyCommand(cmd); err != nil {
+	if err := s.Storage.ApplyCommand(context.Background(), cmd); err != nil {
 		return err
 	}
 	if s.peer != nil {
@@ -37,7 +38,7 @@ func (s *acceptedMirrorStorage) ApplyCommand(cmd *Command) error {
 		if err = storage.DecodeCommandPayload(bytes, &peer); err != nil {
 			return err
 		}
-		if err = s.peer.ApplyCommand(&peer); err != nil {
+		if err = s.peer.ApplyCommand(context.Background(), &peer); err != nil {
 			return err
 		}
 	}
@@ -134,17 +135,18 @@ func TestDatabaseDropPreservesAcceptedCatalogAcknowledgementError(t *testing.T) 
 	sentinel := errors.New("catalog applied but acknowledgement failed")
 	mirror.ackError = sentinel
 	err = manager.DropDatabase(t.Context(), "victim")
-	require.ErrorIs(t, err, sentinel)
 	var accepted *storage.AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
-	require.Equal(t, storage.CommitApplied, accepted.State)
-	require.NotEmpty(t, accepted.LogicalID)
+	// Author: NOR-288 lane (Claude), 2026-10-30. The DROP intent was accepted,
+	// then a later acknowledgement failed: the drop is pending completion by its
+	// owner, and the outcome is not retryable. The cause stays diagnostic.
+	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+	requireAcceptedDiagnosticCause(t, err, sentinel)
+	retryable := nornicerrors.IsTransientTransactionError(err)
+	require.False(t, retryable)
 	require.True(t, manager.Exists("victim"))
 	_, err = manager.GetStorage("victim")
 	require.ErrorIs(t, err, multidb.ErrDatabaseOffline)
-	node, err := base.GetStoredNode("victim:keep")
-	require.NoError(t, err)
-	require.Equal(t, "before", node.Properties["value"])
 	mirror.ackError = nil
 	require.NoError(t, manager.DropDatabase(t.Context(), "victim"))
 	require.False(t, manager.Exists("victim"))

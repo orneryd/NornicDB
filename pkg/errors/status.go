@@ -25,6 +25,10 @@ const (
 	// TransactionStartFailed is the status of a BEGIN that failed for a reason
 	// with no more specific classification.
 	TransactionStartFailed = "Neo.DatabaseError.Transaction.TransactionStartFailed"
+	// Author: NOR-288 lane (Codex), 2026-10-26. An accepted log command's
+	// uncertain/application failure must not invite a fresh transaction retry.
+	// It is reported with the commit-failure status (one value owner).
+	TransactionOutcomeUnknown = TransactionCommitFailed
 	// TransactionTimedOut is the status of a statement stopped by a timeout
 	// the server configures (Neo4j's db.transaction.timeout; NornicDB's query
 	// time limit and Bolt statement timeout).
@@ -166,6 +170,10 @@ func neo4jStatusPlain(err error) (code, message string, classified bool) {
 		return StatementSyntaxError, "", false
 	}
 	message = err.Error()
+	var accepted *storage.AcceptedCommitError
+	if stderrors.As(err, &accepted) {
+		return TransactionOutcomeUnknown, accepted.Error(), true
+	}
 	var coded statusCoder
 	if stderrors.As(err, &coded) {
 		if code = coded.BoltErrorCode(); code != "" {

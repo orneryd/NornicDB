@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -55,7 +56,7 @@ func TestMultidbStorageErrorsPreserveCauses(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 
 	nodesErr := errors.New("nodes unavailable")
-	_, _, err := manager.calculateStorageSizeFromEngine(&storageSizingErrorEngine{Engine: base, nodesErr: nodesErr})
+	_, _, err := manager.calculateStorageSizeFromEngine(context.Background(), &storageSizingErrorEngine{Engine: base, nodesErr: nodesErr})
 	localizedErr := requireMultidbOperationLocalizedError(t, err, "multidb.storage.get_all_nodes_for_size_calculation_failed", "failed to get all nodes for size calculation: nodes unavailable")
 	require.ErrorIs(t, err, nodesErr)
 	require.Equal(t, nodesErr.Error(), localizedErr.Message.Data["Cause"])

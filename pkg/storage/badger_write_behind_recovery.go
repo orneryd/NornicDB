@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
@@ -106,11 +105,11 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			// existing buffered replay does; it must not emit a fresh ACK or
 			// append another buffered record while visiting this WAL.
 			envelope.Mode = CommitModeDirect
-			accepted, err := SubmitAcceptedEntityTransaction(context.Background(), b, envelope, ops, nil)
+			accepted, err := SubmitAcceptedEntityTransaction(b.work.Context(), b, envelope, ops, nil)
 			if err != nil {
 				return err
 			}
-			if outcome := accepted.WaitOutcome(context.Background()); outcome.Err != nil {
+			if outcome := accepted.WaitOutcome(b.work.Context()); outcome.Err != nil {
 				return outcome.Err
 			}
 			replayed++

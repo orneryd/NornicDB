@@ -542,7 +542,7 @@ func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*
 }
 
 func (c *ClusterConnection) readLoop(release func()) {
-	c.readLoopWithContext(context.Background(), release)
+	c.readLoopWithContext(c.work.Context(), release)
 }
 
 // admitReader enrolls the connection's read loop before it is launched.

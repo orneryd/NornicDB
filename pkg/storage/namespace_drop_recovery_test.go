@@ -119,7 +119,13 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 						err = receipt.Wait(ctx)
 						cancel()
 					}
-					require.ErrorIs(t, err, ErrConflict)
+					// Author: NOR-288 lane (Claude), 2026-10-30. A durably accepted command
+					// fenced by the pending drop is committed-pending, never a rejection;
+					// the fence conflict is its cause.
+					var accepted *AcceptedCommitError
+					require.ErrorAs(t, err, &accepted)
+					require.Equal(t, CommitRecoveryPending, accepted.State)
+					require.ErrorIs(t, accepted.Cause(), ErrConflict)
 					_, err = b.CreateNode(&Node{ID: "peer:after"})
 					require.NoError(t, err)
 					b.dropPrefixTailHook = nil

@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -84,7 +85,7 @@ func BenchmarkStartupStorageSizeReconciliation(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
-		if _, _, err := manager.calculateStorageSizeFromEngine(namespaced); err != nil {
+		if _, _, err := manager.calculateStorageSizeFromEngine(context.Background(), namespaced); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -1935,7 +1935,7 @@ func (b *BadgerEngine) bootstrapEdgeMVCCFromCurrentStateInTxn(txn *badger.Txn) e
 
 func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = b.work.Context() // a caller without a context gets the engine's lifetime
 	}
 	b.mvccPruneMu.Lock()
 	defer b.mvccPruneMu.Unlock()

@@ -83,7 +83,7 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			return db, func(t *testing.T, cmd replication.CommandType, payload any) {
 				t.Helper()
 				data := searchConsumerCommandData(t, cmd, payload)
-				require.NoError(t, db.replicationAdapter.ApplyCommand(&replication.Command{Type: cmd, Data: data}))
+				require.NoError(t, db.replicationAdapter.ApplyCommand(context.Background(), &replication.Command{Type: cmd, Data: data}))
 			}
 		}
 	}
