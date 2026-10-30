@@ -979,8 +979,9 @@ func (s *fnState) val(v ssa.Value) org {
 
 type analysis struct {
 	reach      map[*ssa.Function]map[ssa.Value]bool // values that reach a public read exit
-	candidates []string                             // every function found deciding between a value and its copy
-	owners     map[*ssa.Function]owner              // the single owner of each entity type
+	scope      *readScope
+	candidates []string                // every function found deciding between a value and its copy
+	owners     map[*ssa.Function]owner // the single owner of each entity type
 	slots      map[*ssa.Function]map[*ssa.Alloc]bool
 	cellRoot   bool // mayDrop is following callback-filled variables
 	p          *workcensus.Program
@@ -3822,6 +3823,7 @@ func (a *analysis) computeReadScope() {
 		}
 	}
 	a.reach = sets
+	a.scope = rs
 }
 
 // inReadScope: a member at pos in fn concerns a value that reaches a reader.
@@ -3848,6 +3850,26 @@ func (a *analysis) inReadScope(fn *ssa.Function, pos token.Pos) bool {
 				roots = append(roots, x)
 			case ssa.CallInstruction:
 				roots = append(roots, callArgs(x.Common())...)
+			}
+			// A callback passed here: it reaches a reader through its own
+			// parameters, or through the variables it fills.
+			if call, ok := ins.(ssa.CallInstruction); ok && a.scope != nil {
+				for _, arg := range callArgs(call.Common()) {
+					if h := a.funcOf(arg); h != nil {
+						for _, pr := range a.scope.param[h] {
+							if pr {
+								return true
+							}
+						}
+					}
+					if mc := closureOf(arg); mc != nil {
+						for _, bnd := range mc.Bindings {
+							if r[bnd] {
+								return true
+							}
+						}
+					}
+				}
 			}
 			if len(roots) == 0 {
 				return true
