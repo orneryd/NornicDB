@@ -3462,6 +3462,20 @@ func (a *analysis) ownerGate(fn *ssa.Function, unchanged, copied ssa.Value) gate
 	return gate{}
 }
 
+// plantedFile: fn is declared in one of the census's planted control files.
+func plantedFile(fn *ssa.Function) bool {
+	file, _ := pos(fn, fn.Pos())
+	return strings.HasSuffix(file, "nor160_census_control.go")
+}
+
+// plantedType: the named type is declared in a planted control file.
+func plantedType(fn *ssa.Function, n *types.Named) bool {
+	if n == nil || n.Obj() == nil || !n.Obj().Pos().IsValid() {
+		return false
+	}
+	return strings.HasSuffix(filepath.ToSlash(fn.Prog.Fset.Position(n.Obj().Pos()).Filename), "nor160_census_control.go")
+}
+
 // findOwners: per entity type, the one function that returns a value of it or
 // a copy of that value. A type with two such functions has no owner.
 func (a *analysis) findOwners() map[*ssa.Function]owner {
@@ -3474,6 +3488,12 @@ func (a *analysis) findOwners() map[*ssa.Function]owner {
 		}
 		j, n, x, y, ok := a.mergeOf(fn, s)
 		if !ok {
+			continue
+		}
+		// Planted control code takes no part in owner candidacy for a product
+		// type: the census's own plants must not decide whether the product
+		// has a single owner. Plant-only types keep their planted owners.
+		if plantedFile(fn) && !plantedType(fn, n) {
 			continue
 		}
 		o := owner{entity: n, value: j, gate: a.ownerGate(fn, x, y)}
