@@ -192,6 +192,7 @@ func (s *Service) persistSearchBuildSettings(fulltextPath, vectorPath, hnswPath 
 		return
 	}
 	if err := saveSearchBuildSettings(path, s.currentSearchBuildSettings()); err != nil {
+		s.recordLifetimeOutcome("search build settings save", err)
 		logSearchPrintf("⚠️ Background persist: failed to save build settings metadata to %s: %v", path, err)
 	}
 }

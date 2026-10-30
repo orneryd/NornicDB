@@ -995,12 +995,11 @@ func (db *DB) Search(ctx context.Context, query string, labels []string, limit i
 // SearchDatabase is Search over one database: database names it and engine
 // is its storage (the caller has resolved and authorized both).
 func (db *DB) SearchDatabase(ctx context.Context, database string, engine storage.Engine, query string, labels []string, limit int) ([]*SearchResult, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer finish()
 
 	svc, err := db.GetOrCreateSearchService(database, engine)
 	if err != nil || svc == nil {
@@ -1042,12 +1041,11 @@ func (db *DB) HybridSearch(ctx context.Context, query string, queryEmbedding []f
 // It is intended for callers that need reproducible retrieval settings, such as
 // offline benchmark runners.
 func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEmbedding []float32, opts *search.SearchOptions) ([]*SearchResult, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer finish()
 
 	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
 	if err != nil || svc == nil {
@@ -1077,12 +1075,11 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 // FindSimilarInDatabase is FindSimilar over one database's storage, engine
 // (the caller has resolved and authorized it).
 func (db *DB) FindSimilarInDatabase(ctx context.Context, engine storage.Engine, nodeID string, limit int) ([]*SearchResult, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer finish()
 	if limit <= 0 {
 		return nil, localizedError(localization.NornicDBCoreFindSimilarLimitInvalid(), nil)
 	}
