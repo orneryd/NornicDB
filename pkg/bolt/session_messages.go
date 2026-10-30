@@ -99,16 +99,7 @@ func (s *Session) handleRun(data []byte) error {
 	// client disconnected. Now: handleConnection's defer connCancel()
 	// propagates here, the Cypher executor sees ctx.Err() at the next
 	// traversal/match boundary, and the RUN goroutine returns.
-	parentCtx := s.connCtx
-	if parentCtx == nil {
-		// Defensive fallback for tests that construct a Session by hand
-		// without going through handleConnection. Production always sets
-		// connCtx in handleConnection.
-		parentCtx = s.spanCtx
-		if parentCtx == nil {
-			parentCtx = context.Background()
-		}
-	}
+	parentCtx := s.parentContext()
 	// Pick the effective timeout: client tx_timeout wins over
 	// server-side BoltStatementTimeout (Neo4j semantics — the driver's
 	// per-call cap is authoritative; the server cap is the fallback
@@ -1151,7 +1142,7 @@ func (s *Session) handleCommit(data []byte) error {
 	// executor, so a COMMIT that starts before the deadline remains the sole
 	// terminal owner even if storage work crosses the deadline.
 	if txExec != nil {
-		ctx := s.txLifecycle.commitContext()
+		ctx := s.txLifecycle.commitContext(s.parentContext())
 		commitCallStarted = true
 		commitCallErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, nornicerrors.NormalizeTerminalOutcome(txExec.CommitTransaction(ctx)))
 		commitCallReturned = true

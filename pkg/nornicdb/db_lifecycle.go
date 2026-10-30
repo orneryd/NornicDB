@@ -11,38 +11,34 @@ import (
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// Close closes the database.
+// Close closes the database. It is the DB owner's one stop: the first caller
+// signals every producer while holding a ticket, so retirement cannot overtake
+// the signal; every caller, first or repeated, joins the same retirement and
+// receives the same outcome.
 func (db *DB) Close() error {
-	db.mu.Lock()
-	if db.closeDone != nil {
-		done := db.closeDone
-		db.mu.Unlock()
-		<-done
-		db.mu.RLock()
-		err := db.closeErr
-		db.mu.RUnlock()
-		return err
+	if db.work.Enter() {
+		if db.work.CloseAdmission() {
+			db.signalStop()
+		}
+		db.work.Leave()
 	}
-	db.closed = true
-	db.closeDone = make(chan struct{})
-	db.mu.Unlock()
-
-	err := db.closeInternal()
-	db.mu.Lock()
-	db.closeErr = err
-	close(db.closeDone)
-	db.mu.Unlock()
-	return err
+	return db.work.Shutdown(context.Background(), db.retire)
 }
 
 // LifetimeContext returns a context that is cancelled when the database
-// closes, for background work that must stop with it.
+// closes, for background work that must stop with it: buildCtx once Open set
+// it, otherwise the DB owner's own context (buildCtx's parent). A nil DB has
+// no lifetime; it is the caller's boundary default.
 func (db *DB) LifetimeContext() context.Context {
-	if db == nil || db.buildCtx == nil {
+	if db == nil {
 		return context.Background()
+	}
+	if db.buildCtx == nil {
+		return db.work.Context()
 	}
 	return db.buildCtx
 }
@@ -87,39 +83,60 @@ func (db *DB) retentionPoliciesPath() string {
 	return filepath.Join(dataDir, "retention-policies.json")
 }
 
-// closeInternal performs cleanup without requiring the lock.
-// Used during initialization failures and normal close.
-func (db *DB) closeInternal() error {
-	// SetEmbedder refuses once closed is set, so embedQueue is final here.
+// signalStop stops the producers so accepted work can return. Admission is
+// sealed: SetEmbedder refuses, so embedQueue is final here.
+func (db *DB) signalStop() {
 	db.mu.Lock()
-	db.closed = true
 	embedQueue := db.embedQueue
 	db.mu.Unlock()
 
-	db.stopClusteringTimer()
 	if db.buildCancel != nil {
 		db.buildCancel()
 	}
+	// A retained DB consumer can be waiting on the native owner's admission
+	// or leader state. Start that owner's stop before joining those consumers;
+	// its existing Shutdown still owns native signal, join and physical close.
+	if replicator := db.replicator; replicator != nil {
+		db.replicationStop.Go(replicator.Shutdown)
+	}
+	db.searchServicesMu.Lock()
+	servicesToStop := make([]*search.Service, 0, len(db.searchServices))
+	for _, entry := range db.searchServices {
+		if entry != nil && entry.svc != nil {
+			servicesToStop = append(servicesToStop, entry.svc)
+		}
+	}
+	db.searchServicesMu.Unlock()
+	for _, svc := range servicesToStop {
+		svc.BeginShutdown()
+	}
+	db.stopClusteringTimer()
 	if embedQueue != nil {
 		embedQueue.Close()
 	}
-	db.bgWg.Wait()
-	db.foregroundWg.Wait()
+}
+
+// retire is the owner's dispose: it runs once, after queue workers,
+// initializers, constructors and foreground provider users actually returned.
+func (db *DB) retire() error {
 	if db.cypherExecutor != nil {
 		db.cypherExecutor.StatementCaches().Dispose()
 	}
 
 	// Queue workers, initializers and foreground calls are now quiescent. Release all provider
 	// resources through their one owner, including cached/replaced providers.
-	errs := db.closeOwnedEmbedders()
+	errs := db.closeOwnedProviders()
 	// Stop every component that can still mutate graph storage before recording
 	// the durable storage boundary. Search snapshots are derived artifacts and
 	// may take much longer to save; they must not delay this marker.
 	if db.accessFlusher != nil {
-		db.accessFlusher.Stop()
+		if err := db.accessFlusher.Stop(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if db.replicator != nil {
-		if err := db.replicator.Shutdown(); err != nil {
+		<-db.replicationStop.Done()
+		if err := db.replicationStop.Err(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -136,43 +153,46 @@ func (db *DB) closeInternal() error {
 	if db.retentionManager != nil && db.config != nil {
 		if err := db.retentionManager.SavePolicies(db.retentionPoliciesPath()); err != nil {
 			log.Printf("⚠️  Failed to save retention policies: %v", err)
+			errs = append(errs, fmt.Errorf("save retention policies: %w", err))
 		}
 	}
 	var markerEngine storage.Engine
-	if len(errs) == 0 {
+	if len(errs) == 0 && db.opened {
 		markerEngine = db.baseStorage
 	}
-	markErr := persistDerivedAfterStorageBoundary(markerEngine, db.derivedIndexesHealthy, func() {
+	db.searchServicesMu.RLock()
+	services := make([]*search.Service, 0, len(db.searchServices))
+	for _, entry := range db.searchServices {
+		if entry != nil && entry.svc != nil {
+			services = append(services, entry.svc)
+		}
+	}
+	db.searchServicesMu.RUnlock()
+	// The marker is part of the DB stop after cancellation: it runs under the
+	// owner's values without its cancellation, so the stop does not abort it.
+	markErr := persistDerivedAfterStorageBoundary(context.WithoutCancel(db.work.Context()), markerEngine, db.derivedIndexesHealthy, func() {
 		if db.config == nil || !db.config.Database.PersistSearchIndexes || db.config.Database.DataDir == "" {
 			return
 		}
-		db.searchServicesMu.RLock()
-		defer db.searchServicesMu.RUnlock()
-		for _, entry := range db.searchServices {
-			if entry != nil && entry.svc != nil {
-				entry.svc.PersistIndexesToDisk()
-			}
+		for _, svc := range services {
+			svc.PersistIndexesToDisk()
 		}
 	})
 	if markErr != nil {
 		errs = append(errs, markErr)
 	}
-
-	db.searchServicesMu.RLock()
-	for _, entry := range db.searchServices {
-		if entry != nil && entry.svc != nil {
-			if err := entry.svc.Close(); err != nil {
-				errs = append(errs, err)
-			}
+	for _, svc := range services {
+		if err := svc.Close(); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	db.searchServicesMu.RUnlock()
 	db.searchContinuationMu.Lock()
-	if db.searchContinuation != nil {
-		db.searchContinuation.Close()
-		db.searchContinuation = nil
-	}
+	continuation := db.searchContinuation
+	db.searchContinuation = nil
 	db.searchContinuationMu.Unlock()
+	if continuation != nil {
+		continuation.Close()
+	}
 
 	if db.baseStorage != nil {
 		if err := db.baseStorage.Close(); err != nil {
@@ -189,8 +209,8 @@ func (db *DB) closeInternal() error {
 // before starting potentially slow derived-index persistence. The marker does
 // not claim search snapshots are current; each search snapshot validates and
 // rebuilds independently when absent or incompatible.
-func persistDerivedAfterStorageBoundary(engine storage.Engine, derivedIndexesHealthy bool, persist func()) error {
-	err := markStorageCleanShutdown(engine, derivedIndexesHealthy)
+func persistDerivedAfterStorageBoundary(ctx context.Context, engine storage.Engine, derivedIndexesHealthy bool, persist func()) error {
+	err := markStorageCleanShutdown(ctx, engine, derivedIndexesHealthy)
 	if persist != nil {
 		persist()
 	}
@@ -230,7 +250,7 @@ func prepareDerivedIndexes(ctx context.Context, engine storage.Engine) bool {
 
 // markStorageCleanShutdown flushes acknowledged asynchronous writes before
 // recording the durable marker.
-func markStorageCleanShutdown(engine storage.Engine, derivedIndexesHealthy bool) error {
+func markStorageCleanShutdown(ctx context.Context, engine storage.Engine, derivedIndexesHealthy bool) error {
 	if !derivedIndexesHealthy {
 		return nil
 	}
@@ -243,7 +263,7 @@ func markStorageCleanShutdown(engine storage.Engine, derivedIndexesHealthy bool)
 			return fmt.Errorf("flush storage before clean shutdown: %w", err)
 		}
 	}
-	if err := state.MarkCleanShutdown(context.Background()); err != nil {
+	if err := state.MarkCleanShutdown(ctx); err != nil {
 		if errors.Is(err, storage.ErrNotImplemented) {
 			return nil
 		}

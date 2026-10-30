@@ -154,8 +154,8 @@ func TestHNSWBackgroundBuildCancelledByOwner(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("owner did not join construction")
 			}
-			<-job.done
-			require.ErrorIs(t, job.err, context.Canceled)
+			<-job.built.Done()
+			require.ErrorIs(t, job.built.Err(), context.Canceled)
 			require.Nil(t, svc.hnswIndex)
 			require.False(t, svc.hnswRebuildInFlight.Load())
 			hnswBeforeInstallHook = nil

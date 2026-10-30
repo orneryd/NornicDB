@@ -46,7 +46,7 @@ func TestRelationshipEmbedsTheIndexedVersionOverAStaleRead(t *testing.T) {
 		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	}
 	svc := startRelationshipService(t, engine, embed, nil)
-	<-svc.relationshipSearch().ready
+	<-svc.relationshipSearch().loaded.Done()
 
 	original, err := engine.Engine.GetEdge("r1")
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestRelationshipEmbeddingSupersededByALaterWrite(t *testing.T) {
 	}
 	svc := startRelationshipService(t, engine, embed, nil)
 	rs := svc.relationshipSearch()
-	<-rs.ready
+	<-rs.loaded.Done()
 
 	edge, err := engine.GetEdge("r1")
 	require.NoError(t, err)

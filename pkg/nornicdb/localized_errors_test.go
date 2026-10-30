@@ -23,7 +23,8 @@ func requireNornicDBLocalizedError(t *testing.T, err error, messageID localizati
 func TestNornicDBLocalizedErrorsPreserveIdentityAndArguments(t *testing.T) {
 	t.Run("sentinel has typed identity", func(t *testing.T) {
 		requireNornicDBLocalizedError(t, ErrClosed, localization.MessageNornicDBCoreDatabaseClosed, "database is closed")
-		db := &DB{closed: true}
+		db := &DB{}
+		db.work.CloseAdmission()
 		_, err := db.GetOrCreateSearchService("tenant-a", nil)
 		require.ErrorIs(t, err, ErrClosed)
 	})

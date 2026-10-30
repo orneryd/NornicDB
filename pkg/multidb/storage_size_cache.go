@@ -1,8 +1,6 @@
 package multidb
 
 import (
-	"context"
-
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -120,7 +118,7 @@ func (m *DatabaseManager) calculateStorageSizeFromEngine(engine storage.Engine) 
 	var nodeSize int64
 	var edgeSize int64
 
-	err := storage.StreamStoredNodes(context.Background(), engine, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
+	err := storage.StreamStoredNodes(m.lifetime().Context(), engine, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 		size, sizeErr := calculateNodeSize(node)
 		if sizeErr != nil {
 			return localizedError(localization.MultidbStorageCalculateNodeSizeFailed(sizeErr), sizeErr)
@@ -131,7 +129,7 @@ func (m *DatabaseManager) calculateStorageSizeFromEngine(engine storage.Engine) 
 	if err != nil {
 		return 0, 0, localizedError(localization.MultidbStorageGetAllNodesForSizeCalculationFailed(err), err)
 	}
-	err = storage.StreamStoredEdgesByType(context.Background(), engine, "", func(edge *storage.Edge) error {
+	err = storage.StreamStoredEdgesByType(m.lifetime().Context(), engine, "", func(edge *storage.Edge) error {
 		size, sizeErr := calculateEdgeSize(edge)
 		if sizeErr != nil {
 			return localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(sizeErr), sizeErr)

@@ -388,7 +388,7 @@ type StorageExecutor struct {
 	searchDatabase string
 
 	// inferenceManager optionally provides LLM inference for db.infer.
-	inferenceManager InferenceManager
+	inferenceManager *inferenceManagerBinding
 
 	// localizationRenderer renders descriptor-backed metadata using request context.
 	localizationRenderer ProcedureMetadataRenderer
@@ -811,6 +811,7 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 		vectorIndexSpaces:              make(map[string]vectorspace.VectorSpaceKey),
 		hotPathTraceState:              &hotPathTraceState{},
 		queryEmbedder:                  &QueryEmbedderBinding{},
+		inferenceManager:               &inferenceManagerBinding{},
 		unwindMergeChainPlanCache:      &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
 		inlineEmbeddingTextOptions:     embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
 		inlineEmbeddingChunkSize:       maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
@@ -1253,12 +1254,17 @@ func (e *StorageExecutor) shareSearchFor(target *StorageExecutor, database strin
 
 // SetInferenceManager sets the inference manager used by db.infer.
 func (e *StorageExecutor) SetInferenceManager(mgr InferenceManager) {
-	e.inferenceManager = mgr
+	e.inferenceManager.current.Store(&inferenceManagerState{manager: mgr})
 }
 
 // GetInferenceManager returns the configured inference manager.
 func (e *StorageExecutor) GetInferenceManager() InferenceManager {
-	return e.inferenceManager
+	if e.inferenceManager != nil {
+		if state := e.inferenceManager.current.Load(); state != nil {
+			return state.manager
+		}
+	}
+	return nil
 }
 
 // SetVectorRegistry allows wiring a shared index registry (e.g., per database).
@@ -1318,7 +1324,7 @@ func (e *StorageExecutor) GetDefaultEmbeddingDimensions() int {
 // Search reads the node itself after reserving the refresh, so a later write or
 // delete that commits first is not overwritten by this notification.
 func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
-	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(nodeID)})
+	e.refreshSearch(search.RefreshRequest{Node: storage.NodeID(nodeID)})
 	if e.onNodeMutated != nil {
 		e.onNodeMutated(nodeID)
 	}
@@ -1329,7 +1335,7 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 // a full search warmup/build has run. Call it after deleting one too, so its
 // vectors leave search.
 func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
-	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
+	e.refreshSearch(search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
 }
 
 // refreshSearchAfterCommit refreshes what the committed transaction changed.
@@ -1338,12 +1344,11 @@ func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
 func (e *StorageExecutor) refreshSearchAfterCommit(tx *transactionStorageWrapper) {
 	nodes, edges := tx.takeSearchRefreshes()
 	service := e.search()
-	scope := cypherRefreshScope{executor: e}
 	for id := range nodes {
-		_ = search.RefreshIndexes(context.Background(), scope, search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
+		e.refreshSearch(search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
 	}
 	for id := range edges {
-		_ = search.RefreshIndexes(context.Background(), scope, search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
+		e.refreshSearch(search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
 	}
 }
 
@@ -1356,7 +1361,7 @@ func (e *StorageExecutor) removeNodeFromSearch(nodeID string) {
 	if _, unprefixed, ok := storage.ParseDatabasePrefix(nodeID); ok {
 		localID = unprefixed
 	}
-	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(localID)})
+	e.refreshSearch(search.RefreshRequest{Node: storage.NodeID(localID)})
 }
 
 // Flush persists all pending writes to storage.
