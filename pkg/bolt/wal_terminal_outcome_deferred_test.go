@@ -1,4 +1,5 @@
-// Author: Codex,NOR-180 compiled deferred-consumer classes,29October2026.
+// Author: Codex,NOR-180 compiled deferred-consumer classes,29October2026;
+// memory_commit order by Claude, 30 October 2026.
 package bolt
 
 import (
@@ -20,6 +21,7 @@ func TestBoltWALTerminalDeferredOutcomeValue(t *testing.T) {
 		{Name: "rollback", Kinds: []string{"rollback"}},
 		walterminal.ContractProfiles[0], // distinct abort primaries
 		walterminal.ContractProfiles[2], // committed child plus aborted child
+		walterminal.ContractProfiles[4], // aborted retriable child, then committed child
 	}
 	for _, profile := range profiles {
 		for _, mode := range []string{"pull_completion", "discard", "reset_abandons", "pull_then_reset", "next_run_abandons"} {

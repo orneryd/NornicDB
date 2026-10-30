@@ -1,7 +1,9 @@
-// Author: Codex,NOR-180 consumer-class regressions,29October2026.
+// Author: Codex,NOR-180 consumer-class regressions,29October2026; the
+// driver retry-decision oracle and memory_commit order by Claude, 30 October 2026.
 package walterminal
 
 import (
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/db"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -19,6 +21,23 @@ var ContractProfiles = []ContractProfile{
 	{"memory_timeout", []string{"abort_memory", "abort_timeout"}},
 	{"commit_memory", []string{"commit", "abort_memory"}},
 	{"memory_memory", []string{"abort_memory", "abort_memory"}},
+	// The reverse of commit_memory: a retriable aborted child comes first.
+	{"memory_commit", []string{"abort_memory", "commit"}},
+}
+
+// DriverRetries is the managed-client retry decision for a failure with code,
+// taken from the pinned neo4j-go-driver itself (ExecuteWrite retries exactly
+// the errors for which Neo4jError.IsRetriable holds).
+func DriverRetries(code string) bool { return (&db.Neo4jError{Code: code}).IsRetriable() }
+
+// OutcomeStatus is the overall status a client may receive for an outcome
+// whose child statuses are codes: a committed outcome never asks a driver to
+// retry, so a retriable child status becomes TransactionCommitFailed.
+func OutcomeStatus(code string, committed bool) string {
+	if committed && DriverRetries(code) {
+		return nornicerrors.TransactionCommitFailed
+	}
+	return code
 }
 
 type OutcomeContract struct {
@@ -89,12 +108,18 @@ func (c *OutcomeContract) RequireView(t testing.TB, code, message string) {
 		}
 	}
 	if code != "" {
+		committed := commits != 0
+		// The client's retry decision: work that is stored is never retried.
+		require.False(t, committed && DriverRetries(code), "a driver would retry committed work on %s", code)
 		if c.Parallel {
-			_, found := codes[code]
+			found := false
+			for own := range codes {
+				found = found || OutcomeStatus(own, committed) == code
+			}
 			require.True(t, found, "primary classification belongs to an actual child: %s", code)
 		} else {
 			want, _ := ContractStatus(c.Profile.Kinds[0])
-			require.Equal(t, want, code)
+			require.Equal(t, OutcomeStatus(want, committed), code)
 		}
 	}
 	// A single protocol status cannot represent several distinct child statuses.
