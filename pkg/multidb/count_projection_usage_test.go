@@ -7,7 +7,10 @@ import (
 )
 
 func TestStoredCountProjectionMatchesFullUsageFold(t *testing.T) {
-	changes := []storage.StoredEntityChange{{BeforeNode: &storage.Node{ID: "test:old", VisibilitySuppressed: true}}, {AfterNode: &storage.Node{ID: "test:new", VisibilitySuppressed: true}}, {BeforeEdge: &storage.Edge{ID: "test:gone", StartNode: "test:old", EndNode: "test:end"}}, {AfterNode: &storage.Node{ID: "test-other:foreign"}}, {AfterEdge: &storage.Edge{ID: "foreign:edge"}}}
+	before, after := &storage.Node{ID: "test:old"}, &storage.Node{ID: "test:new"}
+	before.SetRuntimeMetadata(storage.NodeRuntimeMetadata{VisibilitySuppressed: true})
+	after.SetRuntimeMetadata(storage.NodeRuntimeMetadata{VisibilitySuppressed: true})
+	changes := []storage.StoredEntityChange{{BeforeNode: before}, {AfterNode: after}, {BeforeEdge: &storage.Edge{ID: "test:gone", StartNode: "test:old", EndNode: "test:end"}}, {AfterNode: &storage.Node{ID: "test-other:foreign"}}, {AfterEdge: &storage.Edge{ID: "foreign:edge"}}}
 	nodes, edges := storage.StoredEntityCountDelta("test", changes)
 	require.Zero(t, nodes)
 	require.EqualValues(t, -1, edges)

@@ -23,7 +23,7 @@ func TestNamespacedEntityProvenance(t *testing.T) {
 		require.NoError(t, err)
 		edge, err := store.GetEdge("rel")
 		require.NoError(t, err)
-		require.Equal(t, database, node.Database)
+		require.Equal(t, database, node.RuntimeMetadata().Database)
 		require.Equal(t, database, edge.Database)
 		require.Equal(t, "4:"+database+":same", CopyNode(node).ElementID("comp"))
 		require.Equal(t, "5:"+database+":rel", CopyEdge(edge).ElementID("comp"))
@@ -31,10 +31,10 @@ func TestNamespacedEntityProvenance(t *testing.T) {
 		require.Equal(t, "4:"+database+":target", edge.EndElementID("comp"))
 		batch, err := store.BatchGetNodes([]NodeID{"same"})
 		require.NoError(t, err)
-		require.Equal(t, database, batch["same"].Database)
+		require.Equal(t, database, batch["same"].RuntimeMetadata().Database)
 		physical, err := base.GetNode(NodeID(database + ":same"))
 		require.NoError(t, err)
-		require.Empty(t, physical.Database, "query provenance must not mutate the underlying snapshot")
+		require.Empty(t, physical.RuntimeMetadata().Database, "query provenance must not mutate the underlying snapshot")
 	}
 }
 
@@ -81,17 +81,17 @@ func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
 		ids = append(ids, id)
 		node, err := composite.GetNode(id)
 		require.NoError(t, err)
-		require.NotEmpty(t, node.Database)
+		require.NotEmpty(t, node.RuntimeMetadata().Database)
 		return true
 	}))
 	require.ElementsMatch(t, []NodeID{"4:one:same", "4:one:target", "4:two:same", "4:two:target"}, ids)
 	for _, database := range []string{"one", "two"} {
 		node, err := composite.GetNode(NodeID("4:" + database + ":same"))
 		require.NoError(t, err)
-		require.Equal(t, database, node.Database)
+		require.Equal(t, database, node.RuntimeMetadata().Database)
 		node, err = composite.GetNodeProjected(NodeID("4:"+database+":same"), nil)
 		require.NoError(t, err)
-		require.Equal(t, database, node.Database)
+		require.Equal(t, database, node.RuntimeMetadata().Database)
 		edge, err := composite.GetEdge(EdgeID("5:" + database + ":rel"))
 		require.NoError(t, err)
 		require.Equal(t, database, edge.Database)
@@ -155,7 +155,7 @@ func TestCompositeIdentityStreamKeepsBoundedMemory(t *testing.T) {
 
 func TestEntityProvenanceDoesNotChangeStoredFormat(t *testing.T) {
 	for _, value := range []interface{}{
-		&Node{ID: "test:n", Database: "source"},
+		&Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{Database: "source"}}, ID: "test:n"},
 		&Edge{ID: "test:r", Database: "source", StartNode: "test:n", EndNode: "test:m"},
 	} {
 		encoded, err := encodeValue(value)
@@ -164,7 +164,7 @@ func TestEntityProvenanceDoesNotChangeStoredFormat(t *testing.T) {
 		case *Node:
 			var decoded Node
 			require.NoError(t, decodeValue(encoded, &decoded))
-			require.Empty(t, decoded.Database)
+			require.Empty(t, decoded.RuntimeMetadata().Database)
 		case *Edge:
 			var decoded Edge
 			require.NoError(t, decodeValue(encoded, &decoded))

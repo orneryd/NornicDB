@@ -91,7 +91,7 @@ func TestDecay_ScoreMatchesDecayScore(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
 	statement := time.Now().UTC()
-	ctx := context.WithValue(context.Background(), temporalStatementTimeKey{}, statement)
+	ctx := context.WithValue(context.Background(), temporalStatementTimeKey{}, &statement)
 
 	dsResult, policyHandled := exec.evaluateKnowledgePolicyFunction(ctx, "decayScore(n)", "", nodes, rels)
 	if !policyHandled {

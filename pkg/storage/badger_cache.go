@@ -58,12 +58,15 @@ func (b *BadgerEngine) cacheStoreNode(node *Node) {
 	if node == nil {
 		return
 	}
+	// Prepare immutable state before publication. Ordinary cache-hit copies
+	// inherit this same owner record without allocating another one.
+	cached := copyNode(node)
+	state := cached.runtimeState()
+	state.embeddingOwner, state.embeddingOwnerID = b, node.ID
+	state.embeddingRevision, state.embeddingAttempt = EmbeddingBodyRevision{}, nil
+	cached.setRuntimeState(state)
 	b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
-	b.putNodeLocked(copyNode(node), nodeReadCacheFull)
-	// Only the cache copy is modified; buffered ACK bodies remain immutable.
-	entry := b.nodeCache[node.ID]
-	entry.embeddingRevision = EmbeddingBodyRevision{}
-	entry.embeddingAttempt = nil
+	b.putNodeLocked(cached, nodeReadCacheFull)
 	b.nodeCacheMu.Unlock()
 	b.cacheDeleteNode(node.ID, nodeCacheBodyOnly)
 }
@@ -164,7 +167,7 @@ func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *N
 	}
 	// Inline vectors cannot be reconstructed from separate keys. Avoid caching
 	// a lossy projection; large separately stored vectors are rehydrated on hit.
-	if !node.EmbeddingsStoredSeparately && (len(node.ChunkEmbeddings) > 0 || len(node.NamedEmbeddings) > 0) {
+	if !node.RuntimeMetadata().EmbeddingsStoredSeparately && (len(node.ChunkEmbeddings) > 0 || len(node.NamedEmbeddings) > 0) {
 		return
 	}
 	cached := copyNodeWithoutEmbeddings(node)

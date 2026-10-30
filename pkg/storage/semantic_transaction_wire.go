@@ -156,7 +156,7 @@ func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
 				ID: string(n.ID), Labels: n.Labels, Properties: semanticPropertyValues{values: n.Properties},
 				NamedEmbeddings: n.NamedEmbeddings, ChunkEmbeddings: n.ChunkEmbeddings,
 				CreatedAtUnixNs: n.CreatedAt.UnixNano(), UpdatedAtUnixNs: n.UpdatedAt.UnixNano(),
-				EmbedMeta: semanticMetadataValues{semanticPropertyValues{values: n.EmbedMeta}}, VisibilitySuppressed: n.VisibilitySuppressed,
+				EmbedMeta: semanticMetadataValues{semanticPropertyValues{values: n.EmbedMeta}}, VisibilitySuppressed: n.RuntimeMetadata().VisibilitySuppressed,
 			}
 			changes[i].Node = &nodes[nextNode]
 			nextNode++
@@ -228,7 +228,8 @@ func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operatio
 				return envelope, nil, ErrCrossNamespaceTransaction
 			}
 			n := change.Node
-			node := &Node{ID: NodeID(n.ID), Labels: n.Labels, Properties: n.Properties.values, NamedEmbeddings: n.NamedEmbeddings, ChunkEmbeddings: n.ChunkEmbeddings, EmbedMeta: n.EmbedMeta.values, VisibilitySuppressed: n.VisibilitySuppressed}
+			node := &Node{ID: NodeID(n.ID), Labels: n.Labels, Properties: n.Properties.values, NamedEmbeddings: n.NamedEmbeddings, ChunkEmbeddings: n.ChunkEmbeddings, EmbedMeta: n.EmbedMeta.values}
+			node.SetRuntimeMetadata(NodeRuntimeMetadata{VisibilitySuppressed: n.VisibilitySuppressed})
 			if n.CreatedAtUnixNs != 0 {
 				node.CreatedAt = time.Unix(0, n.CreatedAtUnixNs)
 			}

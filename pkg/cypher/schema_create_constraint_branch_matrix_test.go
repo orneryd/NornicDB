@@ -451,9 +451,7 @@ func TestCreateConstraint_BranchMatrix_NodeAndRelationshipVariants(t *testing.T)
 }
 
 func TestCreateConstraint_BranchMatrix_DuplicateAndErrorPaths(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "schema_constraint_matrix_err")
-	exec := NewStorageExecutor(store)
+	exec, _ := newTestExecutor(t, "schema_constraint_matrix_err")
 	ctx := context.Background()
 
 	// Duplicate name with different shape must surface conflict.

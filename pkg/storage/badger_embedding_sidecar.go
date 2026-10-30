@@ -258,7 +258,7 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 	if !b.sameEmbeddingSource(embedded, stored) {
 		return ErrEmbeddingSourceChanged
 	}
-	attempt := embedded.embeddingAttempt
+	attempt := embedded.EmbeddingAttempt()
 	failed, _ := embedded.EmbedMeta["embedding_failed"].(bool)
 	if attempt != nil && (failed || len(embedded.EmbedMeta) == 0) {
 		var matches bool
@@ -278,13 +278,15 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 	vectors, meta := embedded.ChunkEmbeddings, embedded.EmbedMeta
 	*embedded = *stored
 	embedded.ChunkEmbeddings, embedded.EmbedMeta = vectors, meta
-	embedded.EmbeddingsStoredSeparately = false // Published vectors are already hydrated.
+	state := embedded.runtimeState()
+	state.metadata.EmbeddingsStoredSeparately = false // Published vectors are already hydrated.
 	if len(logicalSource) > 0 {
-		embedded.embeddingRevision = stored.embeddingRevision
+		state.embeddingRevision = stored.EmbeddingRevision()
 	} else {
-		embedded.embeddingRevision = EmbeddingBodyRevision{physical: physical}
+		state.embeddingRevision = EmbeddingBodyRevision{physical: physical}
 	}
-	embedded.embeddingAttempt = attempt
+	state.embeddingAttempt = attempt
+	embedded.setRuntimeState(state)
 	return nil
 }
 

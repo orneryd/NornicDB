@@ -59,7 +59,7 @@ func TestDecaySuppressionRescoresTheNewestBufferedBody(t *testing.T) {
 		stored, err := engine.GetStoredNode("test:n")
 		require.NoError(t, err)
 		require.Equal(t, []string{"Doc"}, stored.Labels)
-		return became, stored.VisibilitySuppressed
+		return became, stored.RuntimeMetadata().VisibilitySuppressed
 	}
 	becameAfterFlush, suppressedAfterFlush := run(true)
 	became, suppressed := run(false)

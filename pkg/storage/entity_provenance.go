@@ -24,7 +24,9 @@ func (id EntityIdentity) InDatabase(database string) string {
 	return id.LocalID
 }
 
-func (n *Node) Identity() EntityIdentity      { return EntityIdentity{n.Database, string(n.ID)} }
+func (n *Node) Identity() EntityIdentity {
+	return EntityIdentity{n.RuntimeMetadata().Database, string(n.ID)}
+}
 func (e *Edge) Identity() EntityIdentity      { return EntityIdentity{e.Database, string(e.ID)} }
 func (e *Edge) StartIdentity() EntityIdentity { return EntityIdentity{e.Database, string(e.StartNode)} }
 func (e *Edge) EndIdentity() EntityIdentity   { return EntityIdentity{e.Database, string(e.EndNode)} }
@@ -102,8 +104,8 @@ func (e *Edge) IdentityKey() string { return e.Identity().Key() }
 
 // ElementID uses source provenance, falling back only for unscoped values.
 func (n *Node) ElementID(fallback string) string {
-	if n.Database != "" {
-		return SourceNodeElementID(n.Database, n.ID)
+	if n.RuntimeMetadata().Database != "" {
+		return SourceNodeElementID(n.RuntimeMetadata().Database, n.ID)
 	}
 	return NodeElementID(fallback, n.ID)
 }
@@ -155,13 +157,13 @@ func DatabaseOf(engine Engine) string {
 // SetEndpoints binds an edge to native endpoint identities before storage can
 // discard their source. A stored relationship cannot span physical databases.
 func (edge *Edge) SetEndpoints(start, end *Node) error {
-	if start.Database != "" && end.Database != "" && start.Database != end.Database {
-		return fmt.Errorf("cannot create a relationship between databases %q and %q", start.Database, end.Database)
+	if start.RuntimeMetadata().Database != "" && end.RuntimeMetadata().Database != "" && start.RuntimeMetadata().Database != end.RuntimeMetadata().Database {
+		return fmt.Errorf("cannot create a relationship between databases %q and %q", start.RuntimeMetadata().Database, end.RuntimeMetadata().Database)
 	}
 	edge.StartNode, edge.EndNode = start.ID, end.ID
-	edge.Database = start.Database
+	edge.Database = start.RuntimeMetadata().Database
 	if edge.Database == "" {
-		edge.Database = end.Database
+		edge.Database = end.RuntimeMetadata().Database
 	}
 	return nil
 }

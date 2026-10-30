@@ -320,14 +320,14 @@ func TestSchemaErrorCases(t *testing.T) {
 		_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Node) ON EACH [n.content]")
 		require.NoError(t, err)
 
-		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
+		_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
 		if err != nil {
 			t.Fatalf("failed to create baseline vector index: %v", err)
 		}
-		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
+		_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
 		require.Error(t, err)
 		require.Contains(t, statusText(err), "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists")
-		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec IF NOT EXISTS FOR (n:Node) ON (n.embedding)")
+		_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX dup_vec IF NOT EXISTS FOR (n:Node) ON (n.embedding)")
 		require.NoError(t, err)
 	})
 
@@ -1258,41 +1258,39 @@ func TestCreateConstraint_DuplicateNamedDefinitionErrors(t *testing.T) {
 }
 
 func TestCreateRangeIndex_ErrorBranches(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	exec, _ := newTestExecutor(t)
 	ctx := context.Background()
 
-	_, err := exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.age)")
+	_, err := exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.age)")
 	if err != nil {
 		t.Fatalf("failed to create baseline range index: %v", err)
 	}
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.score)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.score)")
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.score)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.score)")
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.price)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.price)")
 	if err != nil {
 		t.Fatalf("failed to create unnamed range index: %v", err)
 	}
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.cost)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.cost)")
 	if err != nil {
 		t.Fatalf("expected second unnamed range index with different generated name to succeed, got: %v", err)
 	}
 
 	// A RANGE index is CREATE INDEX: composite and relationship forms too.
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_multi FOR (n:Person) ON (n.city, n.zip)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_multi FOR (n:Person) ON (n.city, n.zip)")
 	if err != nil {
 		t.Fatalf("composite range index: %v", err)
 	}
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_rel FOR ()-[r:KNOWS]-() ON (r.since)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_rel FOR ()-[r:KNOWS]-() ON (r.since)")
 	if err != nil {
 		t.Fatalf("relationship range index: %v", err)
 	}
 
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX")
 	if err == nil || !strings.Contains(err.Error(), "invalid CREATE") {
 		t.Fatalf("expected invalid syntax error, got: %v", err)
 	}
@@ -1301,9 +1299,7 @@ func TestCreateRangeIndex_ErrorBranches(t *testing.T) {
 func TestCreateFulltextIndex_SchemaAndDuplicateErrors(t *testing.T) {
 	ctx := context.Background()
 
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	exec, store := newTestExecutor(t)
 
 	_, err := exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Doc) ON EACH [n.title]")
 	if err != nil {
@@ -1330,14 +1326,14 @@ func TestCreateVectorIndex_DuplicateErrorBranch(t *testing.T) {
 	ctx := context.Background()
 
 	query := "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.embedding)"
-	_, err := exec.executeCreateVectorIndex(ctx, query)
+	_, err := exec.executeCreateIndex(ctx, query)
 	if err != nil {
 		t.Fatalf("failed to create baseline vector index: %v", err)
 	}
-	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.altEmbedding)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.altEmbedding)")
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
-	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_dup IF NOT EXISTS FOR (n:Doc) ON (n.altEmbedding)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX vec_dup IF NOT EXISTS FOR (n:Doc) ON (n.altEmbedding)")
 	require.NoError(t, err)
 }
 

@@ -35,7 +35,7 @@ func TestAcceptedWALRoutesAndRecoversAtomicSemanticImage(t *testing.T) {
 	for i := range vector {
 		vector[i] = float32(i) / 1000
 	}
-	_, err = tx.CreateNode(&Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"when": time.Date(2026, 7, 2, 3, 4, 5, 123, zone), "count": int64(123)}, ChunkEmbeddings: [][]float32{vector}, EmbedMeta: map[string]any{"embedding_model": "test-model", "chunk_count": 1}, VisibilitySuppressed: true})
+	_, err = tx.CreateNode(&Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"when": time.Date(2026, 7, 2, 3, 4, 5, 123, zone), "count": int64(123)}, ChunkEmbeddings: [][]float32{vector}, EmbedMeta: map[string]any{"embedding_model": "test-model", "chunk_count": 1}})
 	require.NoError(t, err)
 	_, err = tx.CreateNode(&Node{ID: "test:b", Properties: map[string]any{"text": "endpoint"}})
 	require.NoError(t, err)
@@ -93,6 +93,12 @@ func TestAcceptedWALRoutesAndRecoversAtomicSemanticImage(t *testing.T) {
 
 func assertAcceptedStoredImage(t *testing.T, want, got any) {
 	t.Helper()
+	if node, ok := want.(*Node); ok {
+		actual, valid := got.(*Node)
+		require.True(t, valid)
+		require.Equal(t, node.RuntimeMetadata().VisibilitySuppressed, actual.RuntimeMetadata().VisibilitySuppressed,
+			"persisted semantic field VisibilitySuppressed differs")
+	}
 	a, b := reflect.ValueOf(want).Elem(), reflect.ValueOf(got).Elem()
 	for i := 0; i < a.NumField(); i++ {
 		field := a.Type().Field(i)

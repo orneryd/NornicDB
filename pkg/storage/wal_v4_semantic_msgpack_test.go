@@ -75,7 +75,7 @@ func TestV4WALMigrationTranscodesHistoricalSemanticPayload(t *testing.T) {
 	require.Equal(t, map[string]any{"source": "fixture"}, ops[0].Node.EmbedMeta)
 	require.Equal(t, [][]float32{{3, 4}}, ops[0].Node.ChunkEmbeddings)
 	require.Equal(t, map[string][]float32{"vector": {1, 2}}, ops[0].Node.NamedEmbeddings)
-	require.True(t, ops[0].Node.VisibilitySuppressed)
+	require.True(t, ops[0].Node.RuntimeMetadata().VisibilitySuppressed)
 	require.True(t, stamp.Equal(ops[0].Node.CreatedAt))
 	require.True(t, stamp.Equal(ops[0].Node.UpdatedAt))
 }

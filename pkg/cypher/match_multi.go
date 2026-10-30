@@ -429,7 +429,9 @@ func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
 		if edge == nil {
 			continue
 		}
-		view[k] = &storage.Node{ID: storage.NodeID(edge.ID), Database: edge.Database, Properties: edge.Properties}
+		node := &storage.Node{ID: storage.NodeID(edge.ID), Properties: edge.Properties}
+		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: edge.Database})
+		view[k] = node
 	}
 	return view
 }

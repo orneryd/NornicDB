@@ -103,5 +103,12 @@ func trimSourceText(ctx context.Context, text string, policy sourceTrimPolicy) (
 	if policy == trimSourceTerminator {
 		trimmed = trimTrailingStatementDelimiters(trimmed)
 	}
+	// An unchanged extent already has the exact retained source mapping. Do
+	// not add another window and context layer for the same accepted text.
+	if start == 0 && len(trimmed) == len(text) {
+		if _, retained := cyphertext.RetainedSource(ctx, text, cyphertext.AcceptedSource); retained {
+			return ctx, trimmed
+		}
+	}
 	return cyphertext.WithSourceView(ctx, source.Window(start, start+len(trimmed))), trimmed
 }

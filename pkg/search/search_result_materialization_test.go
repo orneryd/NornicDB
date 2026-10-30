@@ -90,7 +90,7 @@ func assertMaterializedSearchNode(t *testing.T, want, got *storage.Node) {
 	require.True(t, want.CreatedAt.Equal(got.CreatedAt), "creation timestamp changed")
 	require.True(t, want.UpdatedAt.Equal(got.UpdatedAt), "update timestamp changed")
 	require.Equal(t, want.EmbedMeta, got.EmbedMeta)
-	require.Equal(t, want.VisibilitySuppressed, got.VisibilitySuppressed)
+	require.Equal(t, want.RuntimeMetadata().VisibilitySuppressed, got.RuntimeMetadata().VisibilitySuppressed)
 	require.Empty(t, got.ChunkEmbeddings)
 	require.Empty(t, got.NamedEmbeddings)
 }
@@ -114,15 +114,16 @@ func BenchmarkSearchResultMaterialization(b *testing.B) {
 }
 
 func TestSearchResultMaterializedNodeDatabaseContext(t *testing.T) {
-	source := &storage.Node{ID: "source", Database: "origin", Properties: map[string]any{"value": int64(42)}, CreatedAt: time.Now().Add(-time.Hour)}
+	source := &storage.Node{ID: "source", Properties: map[string]any{"value": int64(42)}, CreatedAt: time.Now().Add(-time.Hour)}
+	source.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: "origin"})
 	result := searchResultFromNode("source", source, newResultPropertyProjection(nil, nil))
 	node := result.MaterializedNode("session")
-	require.Equal(t, "origin", node.Database)
+	require.Equal(t, "origin", node.RuntimeMetadata().Database)
 	require.Equal(t, source.CreatedAt, node.CreatedAt)
 	require.Equal(t, source.Properties, node.Properties)
-	require.Equal(t, "origin", source.Database)
+	require.Equal(t, "origin", source.RuntimeMetadata().Database)
 	compact := compactContinuationResult(result)
 	require.Nil(t, compact.sourceNode)
-	require.Equal(t, "session", compact.MaterializedNode("session").Database)
-	require.Empty(t, compact.MaterializedNode().Database)
+	require.Equal(t, "session", compact.MaterializedNode("session").RuntimeMetadata().Database)
+	require.Empty(t, compact.MaterializedNode().RuntimeMetadata().Database)
 }

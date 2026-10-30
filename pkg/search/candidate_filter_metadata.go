@@ -6,6 +6,23 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// wantedTypesLower is the one construction of the search API's wanted-type
+// membership set. It is computed once per request or scan, never per
+// candidate, and holds exactly strings.ToLower of each requested type: the
+// canonical loaded-node predicate (nodeMatchesType) compares lower
+// forms, not EqualFold forms.
+// An empty types list yields nil, which no predicate matches.
+func wantedTypesLower(types []string) map[string]struct{} {
+	if len(types) == 0 {
+		return nil
+	}
+	wanted := make(map[string]struct{}, len(types))
+	for _, wantedType := range types {
+		wanted[strings.ToLower(wantedType)] = struct{}{}
+	}
+	return wanted
+}
+
 // filterByIndexedType applies the search API's label-or-type-property semantics
 // from compact metadata maintained alongside the search indexes. It deliberately
 // avoids loading nodes: document properties can be orders of magnitude larger
@@ -60,6 +77,10 @@ func (s *Service) indexedTypeAdmitter(types []string) func(id string) bool {
 	}
 }
 
+// nodeMatchesType is the label-or-type-property predicate shared by batch
+// candidate filtering and complete continuation scans. wanted must be
+// wantedTypesLower(types); a nil or empty set matches nothing, which callers
+// avoid by testing len(types) first.
 func nodeMatchesType(node *storage.Node, wanted map[string]struct{}) bool {
 	for _, label := range node.Labels {
 		if _, ok := wanted[strings.ToLower(label)]; ok {

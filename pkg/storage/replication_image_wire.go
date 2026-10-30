@@ -53,13 +53,14 @@ func (t *transportTime) DecodeMsgpack(dec *msgpack.Decoder) error {
 type transportNodeImage Node
 
 func (node *transportNodeImage) EncodeMsgpack(enc *msgpack.Encoder) error {
+	metadata := (*Node)(node).RuntimeMetadata()
 	if err := enc.EncodeMapLen(11); err != nil {
 		return err
 	}
 	if err := enc.EncodeString("Database"); err != nil {
 		return err
 	}
-	if err := enc.EncodeString(node.Database); err != nil {
+	if err := enc.EncodeString(metadata.Database); err != nil {
 		return err
 	}
 	if err := enc.EncodeString("ID"); err != nil {
@@ -113,13 +114,13 @@ func (node *transportNodeImage) EncodeMsgpack(enc *msgpack.Encoder) error {
 	if err := enc.EncodeString("EmbeddingsStoredSeparately"); err != nil {
 		return err
 	}
-	if err := enc.Encode(node.EmbeddingsStoredSeparately); err != nil {
+	if err := enc.Encode(metadata.EmbeddingsStoredSeparately); err != nil {
 		return err
 	}
 	if err := enc.EncodeString("VisibilitySuppressed"); err != nil {
 		return err
 	}
-	return enc.Encode(node.VisibilitySuppressed)
+	return enc.Encode(metadata.VisibilitySuppressed)
 }
 
 func (node *transportNodeImage) DecodeMsgpack(dec *msgpack.Decoder) error {
@@ -131,6 +132,8 @@ func (node *transportNodeImage) DecodeMsgpack(dec *msgpack.Decoder) error {
 		*node = transportNodeImage{}
 		return nil
 	}
+	metadata := (*Node)(node).RuntimeMetadata()
+	defer func() { (*Node)(node).SetRuntimeMetadata(metadata) }()
 	for i := 0; i < count; i++ {
 		key, err := dec.DecodeString()
 		if err != nil {
@@ -138,7 +141,7 @@ func (node *transportNodeImage) DecodeMsgpack(dec *msgpack.Decoder) error {
 		}
 		switch key {
 		case "Database":
-			err = dec.Decode(&node.Database)
+			err = dec.Decode(&metadata.Database)
 		case "ID":
 			err = dec.Decode((*NodeID)(&node.ID))
 		case "Labels":
@@ -156,9 +159,9 @@ func (node *transportNodeImage) DecodeMsgpack(dec *msgpack.Decoder) error {
 		case "EmbedMeta":
 			err = dec.Decode((*transportPropertyMap)(&node.EmbedMeta))
 		case "EmbeddingsStoredSeparately":
-			err = dec.Decode(&node.EmbeddingsStoredSeparately)
+			err = dec.Decode(&metadata.EmbeddingsStoredSeparately)
 		case "VisibilitySuppressed":
-			err = dec.Decode(&node.VisibilitySuppressed)
+			err = dec.Decode(&metadata.VisibilitySuppressed)
 		default:
 			err = dec.Skip()
 		}

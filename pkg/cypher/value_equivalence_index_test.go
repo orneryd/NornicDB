@@ -29,16 +29,23 @@ func TestCypherValueIndexCanonicalEquivalence(t *testing.T) {
 		storage.RemotePathValue{storage.RemoteEntityValue{"elementId": "remote-a"}},
 		storage.RemotePathValue{storage.RemoteEntityValue{"elementId": "remote-b"}},
 	}
+	scopedNodes := []*storage.Node{
+		{ID: "shared"}, {ID: "shared", Properties: map[string]interface{}{"changed": true}}, {ID: "shared"},
+		{ID: "shared"}, {ID: "shared"}, {ID: "shared"}, {ID: "shared"},
+	}
+	for i, database := range []string{"one", "one", "two", "one", "two", "one", "two"} {
+		scopedNodes[i].SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: database})
+	}
 	values = append(values,
-		&storage.Node{ID: "shared", Database: "one"},
-		&storage.Node{ID: "shared", Database: "one", Properties: map[string]interface{}{"changed": true}},
-		&storage.Node{ID: "shared", Database: "two"},
+		scopedNodes[0],
+		scopedNodes[1],
+		scopedNodes[2],
 		&storage.Edge{ID: "shared", Database: "one"},
 		&storage.Edge{ID: "shared", Database: "two"},
-		[]interface{}{&storage.Node{ID: "shared", Database: "one"}},
-		[]interface{}{&storage.Node{ID: "shared", Database: "two"}},
-		map[string]interface{}{"node": &storage.Node{ID: "shared", Database: "one"}},
-		map[string]interface{}{"node": &storage.Node{ID: "shared", Database: "two"}},
+		[]interface{}{scopedNodes[3]},
+		[]interface{}{scopedNodes[4]},
+		map[string]interface{}{"node": scopedNodes[5]},
+		map[string]interface{}{"node": scopedNodes[6]},
 	)
 	values = append(values, pathCarriers()...)
 	for _, path := range pathCarriers() {

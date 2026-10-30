@@ -76,13 +76,21 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 						nodes, err := storage.CollectStoredNodes(context.Background(), store)
 						require.NoError(t, err)
 						for _, node := range nodes {
-							node.Database = ""
+							{
+								metadata := node.RuntimeMetadata()
+								metadata.Database = ""
+								node.SetRuntimeMetadata(metadata)
+							}
 							if len(node.Properties) == 0 {
 								node.Properties = nil
 							}
 							size := measure(node)
 							nodeBytes += size
-							node.VisibilitySuppressed = false
+							{
+								metadata := node.RuntimeMetadata()
+								metadata.VisibilitySuppressed = false
+								node.SetRuntimeMetadata(metadata)
+							}
 							policyBytes += size - measure(node)
 						}
 						edges, err := storage.CollectStoredEdges(context.Background(), store)
@@ -298,7 +306,11 @@ func quotaStoredBodies(t *testing.T, store storage.Engine) storage.TransactionCh
 	require.NoError(t, err)
 	result := storage.TransactionChanges{Nodes: make(map[storage.NodeID]*storage.Node), Edges: make(map[storage.EdgeID]*storage.Edge)}
 	for _, node := range nodes {
-		node.VisibilitySuppressed = false
+		{
+			metadata := node.RuntimeMetadata()
+			metadata.VisibilitySuppressed = false
+			node.SetRuntimeMetadata(metadata)
+		}
 		result.Nodes[node.ID] = node
 	}
 	for _, edge := range edges {

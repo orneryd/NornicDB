@@ -12,12 +12,14 @@ import (
 )
 
 func TestQuotaSizeUsesCanonicalMessagePackImage(t *testing.T) {
-	node := &storage.Node{ID: "n", Database: "query-provenance", Labels: []string{"Item"}, Properties: map[string]any{
+	node := &storage.Node{ID: "n", Labels: []string{"Item"}, Properties: map[string]any{
 		"number": int64(9), "vector": []float32{1, 2}, "nested": map[string]any{"items": []string{"a", "b"}}, "time": time.Unix(12345, 67).UTC(),
 	}}
+	node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: "query-provenance"})
 	edge := &storage.Edge{ID: "e", Database: "query-provenance", StartNode: "n", EndNode: "m", Type: "LINK", Properties: map[string]any{"count": int64(3)}}
 	nodeCanonical, edgeCanonical := *node, *edge
-	nodeCanonical.Database, edgeCanonical.Database = "", ""
+	nodeCanonical.SetRuntimeMetadata(storage.NodeRuntimeMetadata{})
+	edgeCanonical.Database = ""
 	nodeBytes, err := msgpack.Marshal(&nodeCanonical)
 	require.NoError(t, err)
 	edgeBytes, err := msgpack.Marshal(&edgeCanonical)
@@ -30,7 +32,7 @@ func TestQuotaSizeUsesCanonicalMessagePackImage(t *testing.T) {
 		require.EqualValues(t, len(nodeBytes), nodeSize)
 		require.EqualValues(t, len(edgeBytes), edgeSize)
 	}
-	require.Equal(t, "query-provenance", node.Database)
+	require.Equal(t, "query-provenance", node.RuntimeMetadata().Database)
 	require.Equal(t, "query-provenance", edge.Database)
 }
 
@@ -42,7 +44,11 @@ func BenchmarkQuotaNodeSizeCodec(b *testing.B) {
 	}{
 		{"gob", func() error {
 			canonical := *node
-			canonical.Database = ""
+			{
+				metadata := canonical.RuntimeMetadata()
+				metadata.Database = ""
+				canonical.SetRuntimeMetadata(metadata)
+			}
 			if len(canonical.Properties) == 0 {
 				canonical.Properties = nil
 			}

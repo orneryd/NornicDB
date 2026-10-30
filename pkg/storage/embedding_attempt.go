@@ -4,20 +4,36 @@ import "sync/atomic"
 
 // EmbeddingRevision returns runtime snapshot identity without exposing it as
 // an exported Node field. Every serializer, including legacy gob, ignores it.
-func (node *Node) EmbeddingRevision() EmbeddingBodyRevision { return node.embeddingRevision }
+func (node *Node) EmbeddingRevision() EmbeddingBodyRevision {
+	return node.runtimeState().embeddingRevision
+}
 
 // EmbeddingAttempt returns the process-local acceptance/publication token.
-func (node *Node) EmbeddingAttempt() *EmbeddingAttempt { return node.embeddingAttempt }
+func (node *Node) EmbeddingAttempt() *EmbeddingAttempt { return node.runtimeState().embeddingAttempt }
 
 // SetEmbeddingAttempt binds selected work to this in-memory snapshot only.
-func (node *Node) SetEmbeddingAttempt(attempt *EmbeddingAttempt) { node.embeddingAttempt = attempt }
+// Unchanged identity keeps the attached record, so this does not allocate.
+func (node *Node) SetEmbeddingAttempt(attempt *EmbeddingAttempt) {
+	state := node.runtimeState()
+	if state.embeddingAttempt == attempt {
+		return
+	}
+	state.embeddingAttempt = attempt
+	node.setRuntimeState(state)
+}
 
 // CopyEmbeddingIdentityFrom preserves runtime provenance across detached worker
 // copies, just as storage's node copies do, without creating persisted fields.
+// Only the identity fields are replaced: this image's metadata stays its own.
 func (node *Node) CopyEmbeddingIdentityFrom(source *Node) {
-	node.embeddingOwner, node.embeddingOwnerID = source.embeddingOwner, source.embeddingOwnerID
-	node.embeddingRevision, node.embeddingAttempt = source.embeddingRevision, source.embeddingAttempt
-	node.embeddingPublication = source.embeddingPublication
+	identity := source.runtimeState()
+	state := node.runtimeState()
+	state.embeddingOwner = identity.embeddingOwner
+	state.embeddingOwnerID = identity.embeddingOwnerID
+	state.embeddingRevision = identity.embeddingRevision
+	state.embeddingAttempt = identity.embeddingAttempt
+	state.embeddingPublication = identity.embeddingPublication
+	node.setRuntimeState(state)
 }
 
 // EmbeddingAttempt is the immutable identity of one selected provider's work.
@@ -45,7 +61,7 @@ func NewEmbeddingAttempt(generation, epoch uint64, revision EmbeddingBodyRevisio
 // A bound caller lends this private snapshot until delivery completes; notify
 // transfers it to the ordered queue instead of cloning the accepted payload.
 func commitEmbeddingOutcome(node *Node, persist func() error, notify func(*Node)) error {
-	attempt := node.embeddingAttempt
+	attempt := node.EmbeddingAttempt()
 	if attempt != nil {
 		release, valid := attempt.begin()
 		if !valid {
@@ -91,10 +107,13 @@ func deliverEmbeddingOutcome(attempt *EmbeddingAttempt, node *Node) {
 // events. A body commit which already overtook this event suppresses it; a
 // mutation arriving during delivery queues its event after this one. Listener
 // reentrant writes remain safe: no storage/queue lock is held across callbacks.
+// A "never sample a replacement boundary after committing" review note: the
+// record is read once, so delivery sees the identity that barrier accepted.
 func (b *BadgerEngine) publishNodeOutcome(node *Node, outcome bool, publish func()) {
-	attempt := node.embeddingAttempt
+	state := node.runtimeState()
+	attempt := state.embeddingAttempt
 	if outcome {
-		same, err := b.embeddingRevisionIsCurrent(node.ID, node.embeddingRevision, node.embeddingPublication)
+		same, err := b.embeddingRevisionIsCurrent(node.ID, state.embeddingRevision, state.embeddingPublication)
 		if err != nil || !same {
 			deliverEmbeddingOutcome(attempt, nil)
 			return

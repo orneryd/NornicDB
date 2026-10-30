@@ -140,7 +140,7 @@ func (b *BadgerEngine) filterEntityByDecay(v readVisibility, entity any, nowNano
 	var createdAtNanos, versionAtNanos int64
 	switch {
 	case node != nil:
-		labels, entityProps, visibilitySuppressed = node.Labels, node.Properties, node.VisibilitySuppressed
+		labels, entityProps, visibilitySuppressed = node.Labels, node.Properties, node.RuntimeMetadata().VisibilitySuppressed
 		createdAtNanos, versionAtNanos = node.CreatedAt.UnixNano(), node.UpdatedAt.UnixNano()
 	case edge != nil:
 		entityType, entityProps, visibilitySuppressed, isEdge = edge.Type, edge.Properties, edge.VisibilitySuppressed, true

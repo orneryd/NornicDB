@@ -43,7 +43,7 @@ func TestWrittenImageKeepsRuntimeEmbeddingIdentity(t *testing.T) {
 					select {
 					case node := <-updated:
 						require.Same(t, attempt, node.EmbeddingAttempt())
-						require.Same(t, engine, node.embeddingOwner)
+						require.Same(t, engine, node.runtimeState().embeddingOwner)
 					case <-time.After(10 * time.Second):
 						t.Fatal("no update notification")
 					}

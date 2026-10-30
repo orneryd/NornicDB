@@ -104,7 +104,7 @@ func (e *StorageExecutor) resolveEntityForDecay(
 ) (resolvedEntity, bool) {
 	arg := strings.TrimSpace(argExpr)
 	if node, ok := nodes[arg]; ok {
-		engine, _, err := e.knowledgePolicyContext(node.Database)
+		engine, _, err := e.knowledgePolicyContext(node.RuntimeMetadata().Database)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return resolvedEntity{}, false

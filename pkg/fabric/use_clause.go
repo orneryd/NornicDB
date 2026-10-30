@@ -97,17 +97,28 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 	if err := ctx.Err(); err != nil {
 		return UseClauseReference{}, "", false, err
 	}
-	source := cyphertext.NewSource(ctx, query, stage)
-	if source.Err != nil {
-		return UseClauseReference{}, "", false, source.Err
+	// Accepted input needs no projection. Retain source coordinates only
+	// when this boundary actually consumes a USE clause. Raw input must
+	// still normalize before the shared lexical admission check.
+	text := query
+	var source *cyphertext.Source
+	if stage != cyphertext.AcceptedSource {
+		source = cyphertext.NewSource(ctx, query, stage)
+		if source.Err != nil {
+			return UseClauseReference{}, "", false, source.Err
+		}
+		text = source.Text
 	}
-	leading := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
-	trailing := max(leading, len(strings.TrimRightFunc(source.Text, cyphertext.IsWhitespace)))
-	view := source.Window(leading, trailing)
-	trimmed := view.Text
+	leading := len(text) - len(strings.TrimLeftFunc(text, cyphertext.IsWhitespace))
+	trailing := max(leading, len(strings.TrimRightFunc(text, cyphertext.IsWhitespace)))
+	trimmed := text[leading:trailing]
 	if !startsWithWordFold(trimmed, "USE") {
 		return UseClauseReference{}, query, false, nil
 	}
+	if source == nil {
+		source = cyphertext.NewSource(ctx, query, stage)
+	}
+	view := source.Window(leading, trailing)
 	reference, readErr := cypherantlr.ReadUseReference(ctx, view)
 	if readErr != nil {
 		if ctx.Err() != nil {
@@ -178,7 +189,8 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 // one, ALTER CURRENT USER); GRANT, DENY, REVOKE, RENAME, START, STOP,
 // ENABLE, DRYRUN, DEALLOCATE and REALLOCATE.
 func IsAdministrationCommand(statement string) bool {
-	words := leadingWords(statement, 4)
+	leading, count := leadingWords(statement)
+	words := leading[:count]
 	if len(words) == 0 {
 		return false
 	}
@@ -236,13 +248,12 @@ func inputToken(s string, i int) string {
 	return string(cyphertext.RuneAt(s, i))
 }
 
-// leadingWords returns up to n leading words of statement, upper-cased,
+// leadingWords returns up to four leading words of statement, upper-cased,
 // skipping spaces and comments between them; it stops at the first token
 // that is not a word.
-func leadingWords(statement string, n int) []string {
-	words := make([]string, 0, n)
+func leadingWords(statement string) (words [4]string, count int) {
 	i := skipSpacesAndComments(statement, 0)
-	for len(words) < n {
+	for count < len(words) {
 		word, next, ok := scanWord(statement, i)
 		if !ok {
 			break
@@ -251,13 +262,14 @@ func leadingWords(statement string, n int) []string {
 		// Unicode case folding must not turn a name into a reserved token.
 		for j := 0; j < len(word); j++ {
 			if word[j] >= 0x80 {
-				return words
+				return words, count
 			}
 		}
-		words = append(words, strings.ToUpper(word))
+		words[count] = strings.ToUpper(word)
+		count++
 		i = skipSpacesAndComments(statement, next)
 	}
-	return words
+	return words, count
 }
 
 // startsWithWordFold reports whether s starts with word (case-insensitive)

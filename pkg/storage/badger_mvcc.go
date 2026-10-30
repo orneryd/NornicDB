@@ -63,7 +63,11 @@ func mvccSnapshotNode(node *Node) *Node {
 	// embeddings using the existing separate-chunk path.
 	snapshot.ChunkEmbeddings = nil
 	snapshot.NamedEmbeddings = nil
-	snapshot.EmbeddingsStoredSeparately = false
+	{
+		metadata := snapshot.RuntimeMetadata()
+		metadata.EmbeddingsStoredSeparately = false
+		snapshot.SetRuntimeMetadata(metadata)
+	}
 	return snapshot
 }
 

@@ -33,7 +33,7 @@ func encodeV4GobEntityTransactionChange(op Operation) (v4GobEntityTransactionCha
 		if err != nil {
 			return change, err
 		}
-		change.VisibilitySuppressed = node.VisibilitySuppressed
+		change.VisibilitySuppressed = node.RuntimeMetadata().VisibilitySuppressed
 		node.Properties = nil
 		change.Data, err = encodeV4GobValue(&v4GobNodePayload{
 			ID: string(node.ID), Labels: node.Labels, Properties: node.Properties,

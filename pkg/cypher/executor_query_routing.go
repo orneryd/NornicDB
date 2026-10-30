@@ -350,15 +350,20 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	// Parameters are row values ($name), not text: a substituted value would
 	// read as a literal (RETURN $a / $b with a = 1.0, b = 0 would fold like
 	// RETURN 1.0 / 0).
-	params := getParamsFromContext(ctx)
-	row := make(pipelineRow, len(e.fabricRecordBindings)+len(params))
-	for name, value := range e.fabricRecordBindings {
-		row[name] = value
-	}
-	bindParameterRow(ctx, row)
-	// Bound child contexts (§6.2): UNION/CALL branches may reference values
-	// that travel in the value scope; the innermost bindings shadow params.
-	if bindings := valueBindingsFromContext(ctx); bindings != nil {
+	// RETURN consumes its input row without modifying it. Reuse the query's
+	// immutable parameter projection unless bound variable scopes need overlaying.
+	parameters := parameterRowValues(ctx)
+	bindings := valueBindingsFromContext(ctx)
+	row := pipelineRow(parameters)
+	if len(e.fabricRecordBindings) > 0 || len(bindings) > 0 {
+		row = make(pipelineRow, len(e.fabricRecordBindings)+len(parameters)+len(bindings))
+		for name, value := range e.fabricRecordBindings {
+			row[name] = value
+		}
+		for name, value := range parameters {
+			row[name] = value
+		}
+		// Innermost value bindings retain their precedence over parameters.
 		for name, value := range bindings {
 			row[name] = value
 		}
@@ -370,23 +375,25 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	}
 
 	body := strings.TrimSpace(cypher[returnIdx+len("RETURN"):])
-	items := body
-	if cut := firstTopLevelModifierIndex(items); cut >= 0 {
-		items = strings.TrimSpace(items[:cut])
+	// Validation and execution consume the same immutable clause plan. Parsing
+	// each item again duplicates grammar work and discards its retained products.
+	plan := returnProjectionPlanFor(ctx, cypher[returnIdx:])
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	items, _ = cutDistinct(items)
-	parts := splitTopLevelComma(items)
-	for index, part := range parts {
-		// Same alias parsing as every projection (readProjectionItemSource).
-		part = readProjectionItemSource(ctx, strings.TrimSpace(part), projectionAdmitted).expression
-		parts[index] = part
+	projections := plan.projections
+	if plan.star {
+		projections = plan.starProjections
+	}
+	for _, projection := range projections {
+		part := projection.expr
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
 		}
-		if err := e.validateRangeCalls(part, pipelineRow{}); err != nil {
+		if err := e.validateRangeCalls(part, nil); err != nil {
 			return nil, err
 		}
-		if err := e.validateRowSubscriptTypes(part, pipelineRow{}); err != nil {
+		if err := e.validateRowSubscriptTypes(part, nil); err != nil {
 			return nil, err
 		}
 
@@ -399,16 +406,17 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		}
 	}
 
-	if result, ok := e.pipelineApplyReturn(ctx, []pipelineRow{row}, "RETURN "+body); ok {
+	rows := []pipelineRow{row}
+	if result, ok := e.pipelineApplyReturnPlan(ctx, rows, plan, pipelineRowsSource(rows), false); ok {
 		return result, nil
 	}
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return nil, failure
 	}
 	unparsed := body
-	for _, part := range parts {
-		if _, defined := e.evaluateRowExpressionWithContext(ctx, part, row); !defined {
-			unparsed = part
+	for _, projection := range projections {
+		if _, defined := e.evaluateRowExpressionWithContext(ctx, projection.expr, row); !defined {
+			unparsed = projection.expr
 			break
 		}
 	}

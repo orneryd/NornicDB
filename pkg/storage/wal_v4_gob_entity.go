@@ -198,7 +198,11 @@ func decodeV4GobEntityTransaction(data []byte) (EntityTransactionEnvelope, []Ope
 				if err != nil {
 					return envelope, nil, err
 				}
-				op.Node.VisibilitySuppressed = change.VisibilitySuppressed
+				{
+					metadata := op.Node.RuntimeMetadata()
+					metadata.VisibilitySuppressed = change.VisibilitySuppressed
+					op.Node.SetRuntimeMetadata(metadata)
+				}
 			} else {
 				op.Edge.Properties = properties
 				if change.UpdatedAtUnixNs != 0 {

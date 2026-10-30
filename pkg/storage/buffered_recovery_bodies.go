@@ -167,11 +167,15 @@ func restoreBufferedNodeVectors(node *Node, id NodeID, read embeddingRecordReade
 			}
 		}
 	}
-	if fresh || node.EmbeddingsStoredSeparately {
+	if fresh || node.RuntimeMetadata().EmbeddingsStoredSeparately {
 		if err := loadEmbeddingChunksFrom(read, node, id, chunkCountFromMeta(node.EmbedMeta)); err != nil {
 			return err
 		}
-		node.EmbeddingsStoredSeparately = false
+		{
+			metadata := node.RuntimeMetadata()
+			metadata.EmbeddingsStoredSeparately = false
+			node.SetRuntimeMetadata(metadata)
+		}
 	}
 	return nil
 }

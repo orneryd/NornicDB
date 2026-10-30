@@ -92,6 +92,14 @@ func userRecordCompatibilitySnapshot(value any) ([]byte, error) {
 			fields["PropertyTypes"] = kinds
 		}
 	}
+	// Preserve the frozen logical-node oracle after the Go fields move behind
+	// typed accessors; the expected fixtures and property-type checks stay exact.
+	if node, ok := value.(*storage.Node); ok {
+		metadata := node.RuntimeMetadata()
+		fields["Database"] = metadata.Database
+		fields["EmbeddingsStoredSeparately"] = metadata.EmbeddingsStoredSeparately
+		fields["VisibilitySuppressed"] = metadata.VisibilitySuppressed
+	}
 	return jsontext.Marshal(fields)
 }
 

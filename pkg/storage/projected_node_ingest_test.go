@@ -20,14 +20,15 @@ func TestProjectedNodeCopyPreservesSelectionAndIsolation(t *testing.T) {
 		{"selected", []string{"name", "missing", "name"}, map[string]any{"name": "Ada"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			node := &Node{ID: "db:node", Labels: []string{"Person"}, Properties: map[string]any{"id": int64(1), "name": "Ada"},
+			node := &Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}},
+				ID: "db:node", Labels: []string{"Person"}, Properties: map[string]any{"id": int64(1), "name": "Ada"},
 				EmbedMeta: map[string]any{"source": "text"}, ChunkEmbeddings: [][]float32{{1}},
-				NamedEmbeddings: map[string][]float32{"v": {2}}, CreatedAt: now, UpdatedAt: now, VisibilitySuppressed: true}
+				NamedEmbeddings: map[string][]float32{"v": {2}}, CreatedAt: now, UpdatedAt: now}
 			got := projectCachedNodeForRead(node, test.properties, true)
 			require.Equal(t, test.want, got.Properties)
 			require.Equal(t, node.ID, got.ID)
 			require.Equal(t, node.CreatedAt, got.CreatedAt)
-			require.True(t, got.VisibilitySuppressed)
+			require.True(t, got.RuntimeMetadata().VisibilitySuppressed)
 			require.Nil(t, got.ChunkEmbeddings)
 			require.Nil(t, got.NamedEmbeddings)
 			got.Labels[0] = "Changed"

@@ -602,13 +602,17 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(ctx context.Context,
 				end = unionPosition
 			}
 		}
-		body := strings.TrimSpace(cypher[position+len("RETURN") : end])
+		plan := returnProjectionPlanFor(ctx, cypher[position:end])
 		if names != nil {
 			originalText, _ := names.OriginalText(cyphertext.Span{Start: position + len("RETURN"), End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
-			body = strings.TrimSpace(originalText)
+			plan = returnProjectionPlanFor(ctx, "RETURN "+strings.TrimSpace(originalText))
+		}
+		projections := plan.projections
+		if plan.star {
+			projections = plan.starProjections
 		}
 		seen := make(map[string]struct{})
-		for _, item := range e.parseReturnItems(ctx, body) {
+		for _, item := range projections {
 			name := item.alias
 			if name == "" {
 				name = strings.TrimSpace(item.expr)

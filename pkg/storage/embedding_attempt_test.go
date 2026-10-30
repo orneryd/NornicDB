@@ -15,11 +15,13 @@ import (
 
 func TestEmbeddingAttemptRuntimeIdentityNeverEncoded(t *testing.T) {
 	node := &Node{ID: "identity:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "body"}}
-	node.embeddingRevision = EmbeddingBodyRevision{physical: 91, bufferedSequence: 7}
-	node.embeddingAttempt = NewEmbeddingAttempt(3, 5, node.embeddingRevision, func() (func(), bool) {
+	state := node.runtimeState()
+	state.embeddingRevision = EmbeddingBodyRevision{physical: 91, bufferedSequence: 7}
+	state.embeddingAttempt = NewEmbeddingAttempt(3, 5, state.embeddingRevision, func() (func(), bool) {
 		t.Fatal("serialization must not call the attempt owner")
 		return nil, false
 	}, func(*Node) { t.Fatal("serialization must not publish") })
+	node.setRuntimeState(state)
 	for _, format := range []string{"gob", "msgpack", "json"} {
 		t.Run(format, func(t *testing.T) {
 			var decoded Node
@@ -39,13 +41,13 @@ func TestEmbeddingAttemptRuntimeIdentityNeverEncoded(t *testing.T) {
 			}
 			require.Equal(t, node.ID, decoded.ID)
 			require.Equal(t, node.Properties, decoded.Properties)
-			require.Zero(t, decoded.embeddingRevision)
-			require.Nil(t, decoded.embeddingAttempt)
+			require.Zero(t, decoded.runtimeState().embeddingRevision)
+			require.Nil(t, decoded.runtimeState().embeddingAttempt)
 		})
 	}
 	copy := CopyNode(node)
-	require.Equal(t, node.embeddingRevision, copy.embeddingRevision)
-	require.Same(t, node.embeddingAttempt, copy.embeddingAttempt, "in-memory decorators keep the live token")
+	require.Equal(t, node.runtimeState().embeddingRevision, copy.runtimeState().embeddingRevision)
+	require.Same(t, node.runtimeState().embeddingAttempt, copy.runtimeState().embeddingAttempt, "in-memory decorators keep the live token")
 }
 
 func TestEmbeddingAttemptCachedBodySnapshot(t *testing.T) {
@@ -68,7 +70,7 @@ func TestEmbeddingAttemptCachedBodySnapshot(t *testing.T) {
 	require.Equal(t, cached.ID, snapshot.ID, "namespace translation must survive the storage snapshot reader")
 	require.Equal(t, "before", cached.Properties["text"])
 	require.Equal(t, "after", snapshot.Properties["text"])
-	require.NotZero(t, snapshot.embeddingRevision)
+	require.NotZero(t, snapshot.runtimeState().embeddingRevision)
 }
 
 func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
@@ -80,7 +82,9 @@ func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 			require.NoError(t, err)
 			payload.EmbedMeta = map[string]any{"embedding_failed": true}
 			published := 0
-			payload.embeddingAttempt = NewEmbeddingAttempt(1, 1, payload.embeddingRevision, func() (func(), bool) { return func() {}, true }, func(*Node) { published++ })
+			state := payload.runtimeState()
+			state.embeddingAttempt = NewEmbeddingAttempt(1, 1, state.embeddingRevision, func() (func(), bool) { return func() {}, true }, func(*Node) { published++ })
+			payload.setRuntimeState(state)
 			if updated {
 				current, err := disk.GetNode("test:doc")
 				require.NoError(t, err)
@@ -118,7 +122,7 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 			require.NoError(t, err)
 			payload, err := store.GetNode("doc")
 			require.NoError(t, err)
-			require.NotZero(t, payload.embeddingRevision)
+			require.NotZero(t, payload.runtimeState().embeddingRevision)
 			payload.EmbedMeta = map[string]any{embeddingsource.MetaKey: (embeddingsource.Source{Properties: []string{"id"}}).Metadata()}
 			if terminal {
 				payload.EmbedMeta["embedding_failed"] = true
@@ -127,11 +131,13 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 				payload.EmbedMeta["chunk_count"] = 1
 			}
 			published := 0
-			payload.embeddingAttempt = NewEmbeddingAttempt(7, 11, payload.embeddingRevision, func() (func(), bool) { return func() {}, true }, func(node *Node) {
+			state := payload.runtimeState()
+			state.embeddingAttempt = NewEmbeddingAttempt(7, 11, state.embeddingRevision, func() (func(), bool) { return func() {}, true }, func(node *Node) {
 				published++
 				require.Equal(t, "current", node.Properties["text"])
 				require.NotEmpty(t, node.ChunkEmbeddings)
 			})
+			payload.setRuntimeState(state)
 			current, err := store.GetNode("doc")
 			require.NoError(t, err)
 			stamp := current.UpdatedAt
@@ -140,7 +146,7 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 			current, err = store.GetNode("doc")
 			require.NoError(t, err)
 			require.True(t, stamp.Equal(current.UpdatedAt))
-			require.NotEqual(t, payload.embeddingRevision, current.embeddingRevision)
+			require.NotEqual(t, payload.runtimeState().embeddingRevision, current.runtimeState().embeddingRevision)
 			err = store.UpdateNodeEmbeddingSidecar(payload)
 			if terminal {
 				require.ErrorIs(t, err, ErrEmbeddingSourceChanged)
@@ -152,7 +158,7 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 			saved, err := store.GetNode("doc")
 			require.NoError(t, err)
 			require.Equal(t, "current", saved.Properties["text"])
-			require.Nil(t, saved.embeddingAttempt, "attempt identity must never be encoded")
+			require.Nil(t, saved.runtimeState().embeddingAttempt, "attempt identity must never be encoded")
 			require.NotEqual(t, true, saved.EmbedMeta["embedding_failed"])
 		})
 	}

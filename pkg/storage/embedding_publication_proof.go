@@ -17,7 +17,9 @@ type embeddingPublicationProof struct {
 // mistaken for this commit, even when a commit-tail hook or listener reenters.
 func (cw *commitWriter) commitOutcome() error {
 	if node := cw.embeddingOutcome; node != nil {
-		node.embeddingPublication = embeddingPublicationProof{}
+		state := node.runtimeState()
+		state.embeddingPublication = embeddingPublicationProof{}
+		node.setRuntimeState(state)
 	}
 	readTs := cw.txn.ReadTs()
 	ts, err := cw.commitOutcomeBatch()
@@ -32,7 +34,9 @@ func (cw *commitWriter) commitOutcome() error {
 	// preceding this commit. An earlier in-flight commit, dictionary write or
 	// any other unobserved predecessor requires fresh validation after commit.
 	if node := cw.embeddingOutcome; node != nil && ts == readTs+1 {
-		node.embeddingPublication = embeddingPublicationProof{engine: cw.engine, oracle: cw.db.oracle, id: node.ID, revision: node.embeddingRevision, commitTs: ts}
+		state := node.runtimeState()
+		state.embeddingPublication = embeddingPublicationProof{engine: cw.engine, oracle: cw.db.oracle, id: node.ID, revision: state.embeddingRevision, commitTs: ts}
+		node.setRuntimeState(state)
 	}
 	return nil
 }

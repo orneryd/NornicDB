@@ -149,7 +149,9 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 }
 
 func (v *deletedEntityViews) node(node *storage.Node) *storage.Node {
-	return &storage.Node{ID: node.ID, Database: node.Database}
+	deleted := &storage.Node{ID: node.ID}
+	deleted.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: node.RuntimeMetadata().Database})
+	return deleted
 }
 
 func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {

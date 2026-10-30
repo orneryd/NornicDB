@@ -62,7 +62,9 @@ func TestAcceptedStandaloneExplicitTransactionReplicatesOriginalSnapshot(t *test
 	tx, err := base.BeginTransaction()
 	require.NoError(t, err)
 	defer tx.Rollback()
-	_, err = tx.CreateNode(&storage.Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"value": "prepared"}, EmbedMeta: map[string]any{"embedding_model": "source"}, VisibilitySuppressed: true})
+	node := &storage.Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"value": "prepared"}, EmbedMeta: map[string]any{"embedding_model": "source"}}
+	node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{VisibilitySuppressed: true})
+	_, err = tx.CreateNode(node)
 	require.NoError(t, err)
 	prepared, err := tx.PrepareEntityCommit(context.Background(), storage.EntityCommitRequest{LogicalID: "replicated-logical"})
 	require.NoError(t, err)

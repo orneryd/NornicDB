@@ -103,9 +103,9 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	} else if strings.Contains(upper, "CREATE FULLTEXT INDEX") {
 		run = e.executeCreateFulltextIndex
 	} else if strings.Contains(upper, "CREATE VECTOR INDEX") {
-		run = e.executeCreateVectorIndex
+		run = e.executeCreateIndex
 	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
-		run = e.executeCreateRangeIndex
+		run = e.executeCreateIndex
 	} else if startsWithKeywords(cypher, "CREATE", "TEXT INDEX") || startsWithKeywords(cypher, "CREATE", "POINT INDEX") {
 		run = e.executeCreateTypedPropertyIndex
 	} else if startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX") {
@@ -672,91 +672,6 @@ func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher stri
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
-// executeCreateIndex handles CREATE INDEX commands.
-//
-// Supported syntax:
-//
-//	CREATE INDEX index_name IF NOT EXISTS FOR (n:Label) ON (n.property)
-//	CREATE INDEX index_name IF NOT EXISTS FOR (n:Label) ON (n.prop1, n.prop2)
-//	CREATE INDEX IF NOT EXISTS FOR (n:Label) ON (n.prop1, n.prop2, n.prop3)
-//
-// Supports both single-property and composite (multi-property) indexes.
-func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if parsed, err := e.parseCreateIndexDDL(cypher, "CREATE INDEX"); err == nil {
-		indexName := parsed.indexName
-		if indexName == "" {
-			propsJoined := strings.Join(parsed.properties, "_")
-			entity := parsed.label
-			if parsed.isRelationship {
-				entity = parsed.relationshipType
-			}
-			indexName = fmt.Sprintf("index_%s_%s", entity, propsJoined)
-		}
-
-		entityType := storage.ConstraintEntityNode
-		label := parsed.label
-		if parsed.isRelationship {
-			entityType = storage.ConstraintEntityRelationship
-			label = parsed.relationshipType
-		}
-		create, err := e.admitIndexCreation(cypher, indexName, "RANGE", label, parsed.properties, entityType)
-		if err != nil {
-			return nil, err
-		}
-		if !create {
-			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-		}
-
-		if parsed.isRelationship {
-			// Relationship property indexes are persisted as relationship-scoped
-			// range metadata (Neo4j-compatible SHOW INDEXES shape).
-			if err := e.storage.GetSchema().AddRangeIndexForEntity(
-				indexName,
-				parsed.relationshipType,
-				parsed.properties,
-				storage.ConstraintEntityRelationship,
-			); err != nil {
-				return nil, err
-			}
-			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-		}
-
-		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
-			return nil, err
-		}
-
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	// Neo4j legacy syntax: CREATE INDEX [name] ON :Label(prop[, prop2])
-	if parsed, err := e.parseCreateIndexLegacyDDL(cypher); err == nil {
-		indexName := parsed.indexName
-		if indexName == "" {
-			propsJoined := strings.Join(parsed.properties, "_")
-			indexName = fmt.Sprintf("index_%s_%s", parsed.label, propsJoined)
-		}
-		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE INDEX"), nil)
-}
-
-// executeCreateRangeIndex handles CREATE RANGE INDEX. In Neo4j 5 a RANGE
-// index is the default index CREATE INDEX makes, so the statement runs as
-// CREATE INDEX: single or composite properties, node or relationship
-// patterns, as SHOW INDEXES' createStatement writes it (#531, #530).
-func (e *StorageExecutor) executeCreateRangeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	start := findMultiWordKeywordIndex(cypher, "CREATE", "RANGE INDEX")
-	end, ok := keywordSpanAt(cypher, start, "CREATE RANGE INDEX")
-	if start < 0 || !ok {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE RANGE INDEX"), nil)
-	}
-	return e.executeCreateIndex(ctx, "CREATE INDEX"+cypher[end:])
-}
-
 type parsedCreateIndexDDL struct {
 	indexName        string
 	label            string
@@ -970,17 +885,17 @@ func (e *StorageExecutor) parseCreateIndexDDL(cypher string, prefixKeyword strin
 	}, nil
 }
 
-func (e *StorageExecutor) parseCreateIndexLegacyDDL(cypher string) (parsedCreateIndexDDL, error) {
+func (e *StorageExecutor) parseCreateIndexLegacyDDL(cypher, prefix string) (parsedCreateIndexDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 
-	prefixPos := keywordIndexFrom(q, "CREATE INDEX", 0, defaultKeywordScanOpts())
+	prefixPos := keywordIndexFrom(q, prefix, 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
-	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE INDEX")
+	prefixEnd, ok := keywordSpanAt(q, 0, prefix)
 	if !ok {
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
@@ -2425,71 +2340,4 @@ func normalizeIdentifierToken(v string) string {
 		s = strings.ReplaceAll(s, "``", "`")
 	}
 	return strings.TrimSpace(s)
-}
-
-// executeCreateVectorIndex handles CREATE VECTOR INDEX commands.
-//
-// Supported syntax:
-//
-//	CREATE VECTOR INDEX index_name IF NOT EXISTS
-//	FOR (n:Label) ON (n.property)
-//	OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}
-func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	parsed, err := e.parseCreateIndexDDL(cypher, "CREATE VECTOR INDEX")
-	if err != nil {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE VECTOR INDEX"), nil)
-	}
-	if len(parsed.properties) != 1 || parsed.indexName == "" ||
-		(!parsed.isRelationship && parsed.label == "") ||
-		(parsed.isRelationship && parsed.relationshipType == "") {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE VECTOR INDEX"), nil)
-	}
-
-	indexName := parsed.indexName
-	label := parsed.label
-	if parsed.isRelationship {
-		label = parsed.relationshipType
-	}
-	property := parsed.properties[0]
-
-	// Parse OPTIONS if present - use configured default dimensions
-	dimensions := e.GetDefaultEmbeddingDimensions()
-	similarityFunc := "cosine" // Default
-
-	dimensions, similarityFunc = parseVectorOptions(parsed.optionsClause, dimensions, similarityFunc)
-
-	// Add vector index. The schema entry is recorded regardless of the
-	// vector master switch so SHOW INDEXES still reflects operator intent
-	// and DROP INDEX has something to remove. The actual in-memory vector
-	// space is only registered when vector search is enabled — otherwise
-	// the operator explicitly turned vector indexing off and we must not
-	// allocate or warm any vector backend on their behalf.
-	entityType := storage.ConstraintEntityNode
-	if parsed.isRelationship {
-		entityType = storage.ConstraintEntityRelationship
-	}
-	create, err := e.admitIndexCreation(cypher, indexName, "VECTOR", label, parsed.properties, entityType)
-	if err != nil {
-		return nil, err
-	}
-	if !create {
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-	if err := e.storage.GetSchema().AddVectorIndexForEntity(indexName, label, property, dimensions, similarityFunc, entityType); err != nil {
-		return nil, err
-	}
-
-	// Relationship vector indexes are consumed by relationship vector procedures
-	// directly from relationship properties and schema metadata.
-	// registerVectorSpace is node-vector specific; keep relationship indexes out.
-	if svc := e.search(); !parsed.isRelationship && (svc == nil || svc.VectorEnabled()) {
-		if err := e.afterCommit(ctx, func() error {
-			e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-	}
-
-	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
