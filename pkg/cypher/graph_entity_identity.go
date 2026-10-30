@@ -70,7 +70,11 @@ func (v *graphIdentityStorage) node(node *storage.Node) *storage.Node {
 	}
 	copy := *node
 	copy.ID = storage.NodeID(node.IdentityKey())
-	copy.Database = ""
+	{
+		metadata := copy.RuntimeMetadata()
+		metadata.Database = ""
+		copy.SetRuntimeMetadata(metadata)
+	}
 	return &copy
 }
 
@@ -80,7 +84,10 @@ func graphIdentityNodeValue(node *storage.Node) *storage.Node {
 	}
 	identity := storage.EntityIdentityFromKey(string(node.ID))
 	copy := *node
-	copy.ID, copy.Database = storage.NodeID(identity.LocalID), identity.Database
+	copy.ID = storage.NodeID(identity.LocalID)
+	metadata := copy.RuntimeMetadata()
+	metadata.Database = identity.Database
+	copy.SetRuntimeMetadata(metadata)
 	return &copy
 }
 

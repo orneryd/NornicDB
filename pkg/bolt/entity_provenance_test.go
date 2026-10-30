@@ -9,7 +9,8 @@ import (
 
 func TestBoltEntityProvenance(t *testing.T) {
 	for _, database := range []string{"one", "two"} {
-		node := &storage.Node{ID: "same", Database: database}
+		node := &storage.Node{ID: "same"}
+		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: database})
 		edge := &storage.Edge{ID: "rel", Database: database, StartNode: "same", EndNode: "target", Type: "R"}
 		nodeWire := encodeRecordValueInto(nil, node, true, true, "comp")
 		offset := 2

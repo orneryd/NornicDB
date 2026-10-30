@@ -272,7 +272,10 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 			}
 			node, err = decode(txn, item)
 			if node != nil {
-				node.embeddingRevision = EmbeddingBodyRevision{physical: item.Version()}
+				state := node.runtimeState()
+				state.embeddingRevision = EmbeddingBodyRevision{physical: item.Version()}
+				state.embeddingOwner, state.embeddingOwnerID = b, id
+				node.setRuntimeState(state)
 			}
 			return err
 		})
@@ -288,8 +291,12 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 		// capture so copying does not extend either read lock or its hot frame.
 		node = hitCopy(node)
 	}
-	if loaded || hitCopy != nil {
-		node.embeddingOwner, node.embeddingOwnerID = b, id
+	// Cache fills and durable reads already bind this immutable record. Inspect
+	// just the owner pair before copying/comparing the complete runtime state.
+	if (loaded || hitCopy != nil) && (node.runtime == nil || node.runtime.embeddingOwner != b || node.runtime.embeddingOwnerID != id) {
+		state := node.runtimeState()
+		state.embeddingOwner, state.embeddingOwnerID = b, id
+		node.setRuntimeState(state)
 	}
 	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound

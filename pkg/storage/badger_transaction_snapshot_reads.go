@@ -176,7 +176,7 @@ func (tx *BadgerTransaction) clearSnapshotLabelPrefixLocked(key snapshotLabelCac
 }
 
 func snapshotLabelPrefixNodeBytes(node *Node) (int, bool) {
-	if node == nil || node.EmbeddingsStoredSeparately || len(node.NamedEmbeddings) > 0 || len(node.ChunkEmbeddings) > 0 || len(node.EmbedMeta) > 0 {
+	if node == nil || node.RuntimeMetadata().EmbeddingsStoredSeparately || len(node.NamedEmbeddings) > 0 || len(node.ChunkEmbeddings) > 0 || len(node.EmbedMeta) > 0 {
 		return 0, false
 	}
 	bytes := 64 + len(node.ID)

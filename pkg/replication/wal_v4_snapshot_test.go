@@ -20,8 +20,7 @@ func TestV4ReplicationSnapshotConversionRestoresHistoricalData(t *testing.T) {
 		Edges:       []*storage.Edge{transportContractEdge(created, created.Add(time.Minute))},
 	}
 	want := gobSnapshotBaseline(t, fixture)
-	var historical bytes.Buffer
-	require.NoError(t, gob.NewEncoder(&historical).Encode(fixture))
+	historical := bytes.NewBuffer(historicalGobSnapshotBytes(t, fixture))
 	var converted bytes.Buffer
 	require.NoError(t, TranscodeV4ReplicationSnapshot(bytes.NewReader(historical.Bytes()), &converted))
 	ok, err, trailing := singleMessagePackValue(converted.Bytes())

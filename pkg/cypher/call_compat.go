@@ -18,31 +18,49 @@ import (
 
 // ===== Additional Neo4j Compatibility Procedures =====
 
-// callDbInfo returns database information - Neo4j db.info()
-func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
-	nodeCount, _ := e.storage.NodeCount()
-	edgeCount, _ := e.storage.EdgeCount()
-	name := e.databaseName()
-	if selected := GetUseDatabaseFromContext(ctx); selected != "" {
-		name = selected
+// infoScope selects the database or DBMS identity described by an info row.
+type infoScope uint8
+
+const (
+	infoScopeDatabase infoScope = iota
+	infoScopeDBMS
+)
+
+// callInfo owns identity projection for db.info and dbms.info. Database counts
+// belong only to db.info; both procedures retain their distinct column contracts.
+func (e *StorageExecutor) callInfo(ctx context.Context, scope infoScope) (*ExecuteResult, error) {
+	var name string
+	var columns []string
+	var row []interface{}
+	if scope == infoScopeDBMS {
+		name = "system"
+		if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
+			name = manager.SystemDatabaseName()
+		}
+		columns = []string{"id", "name", "creationDate"}
+		row = make([]interface{}, 3)
+	} else {
+		nodeCount, _ := e.storage.NodeCount()
+		edgeCount, _ := e.storage.EdgeCount()
+		name = e.databaseName()
+		if selected := GetUseDatabaseFromContext(ctx); selected != "" {
+			name = selected
+		}
+		columns = []string{"id", "name", "creationDate", "nodeCount", "relationshipCount"}
+		row = make([]interface{}, 5)
+		row[3], row[4] = nodeCount, edgeCount
 	}
-	var id, creationDate interface{}
+	row[1] = name
 	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
 		databaseID, createdAt := provider.DatabaseIdentity(name)
 		if databaseID != "" {
-			id = databaseID
+			row[0] = databaseID
 		}
 		if !createdAt.IsZero() {
-			creationDate = createdAt.UTC().Format(time.RFC3339Nano)
+			row[2] = createdAt.UTC().Format(time.RFC3339Nano)
 		}
 	}
-
-	return &ExecuteResult{
-		Columns: []string{"id", "name", "creationDate", "nodeCount", "relationshipCount"},
-		Rows: [][]interface{}{
-			{id, name, creationDate, nodeCount, edgeCount},
-		},
-	}, nil
+	return &ExecuteResult{Columns: columns, Rows: [][]interface{}{row}}, nil
 }
 
 // callDbPing checks database connectivity - Neo4j db.ping()
@@ -50,30 +68,6 @@ func (e *StorageExecutor) callDbPing() (*ExecuteResult, error) {
 	return &ExecuteResult{
 		Columns: []string{"success"},
 		Rows:    [][]interface{}{{true}},
-	}, nil
-}
-
-// callDbmsInfo returns DBMS information - Neo4j dbms.info()
-func (e *StorageExecutor) callDbmsInfo() (*ExecuteResult, error) {
-	name := "system"
-	if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
-		name = manager.SystemDatabaseName()
-	}
-	var id, creationDate interface{}
-	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
-		databaseID, createdAt := provider.DatabaseIdentity(name)
-		if databaseID != "" {
-			id = databaseID
-		}
-		if !createdAt.IsZero() {
-			creationDate = createdAt.UTC().Format(time.RFC3339Nano)
-		}
-	}
-	return &ExecuteResult{
-		Columns: []string{"id", "name", "creationDate"},
-		Rows: [][]interface{}{
-			{id, name, creationDate},
-		},
 	}, nil
 }
 

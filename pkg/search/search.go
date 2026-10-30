@@ -7825,10 +7825,7 @@ func (s *Service) filterByTypeAndProperties(
 	}
 	var typeSet map[string]struct{}
 	if !typesResolved {
-		typeSet = make(map[string]struct{}, len(types))
-		for _, nodeType := range types {
-			typeSet[strings.ToLower(nodeType)] = struct{}{}
-		}
+		typeSet = wantedTypesLower(types)
 	}
 
 	// Collect unique node IDs for a single batch fetch.
@@ -7879,10 +7876,7 @@ func (s *Service) filterByType(ctx context.Context, results []indexResult, types
 		return results
 	}
 
-	typeSet := make(map[string]struct{})
-	for _, t := range types {
-		typeSet[strings.ToLower(t)] = struct{}{}
-	}
+	typeSet := wantedTypesLower(types)
 
 	var filtered []indexResult
 	for _, r := range results {

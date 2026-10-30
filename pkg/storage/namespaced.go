@@ -177,7 +177,11 @@ func (n *NamespacedEngine) toUserNode(node *Node, view nodeUserView) *Node {
 		out.ID = view.id
 	}
 	out.ID = NodeID(strings.TrimPrefix(string(out.ID), n.scope))
-	out.Database = n.namespace
+	{
+		metadata := out.RuntimeMetadata()
+		metadata.Database = n.namespace
+		out.SetRuntimeMetadata(metadata)
+	}
 	return out
 }
 

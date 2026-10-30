@@ -22,7 +22,7 @@ type statementOutcome struct {
 // fresh outcomes even if their caller retained an earlier execution context.
 type statementExecutionContext struct {
 	context.Context
-	instant any // Box the clock once, rather than on each Value call.
+	instant time.Time // Value exposes its stable address without boxing the clock.
 	binding *QueryEmbedderBinding
 	state   *queryEmbedderState
 	outcome *statementOutcome
@@ -48,7 +48,7 @@ func (e *StorageExecutor) newStatementExecutionContext(ctx context.Context, inst
 func (c *statementExecutionContext) Value(key any) any {
 	switch key.(type) {
 	case temporalStatementTimeKey:
-		return c.instant
+		return &c.instant
 	case queryEmbeddingStatementKey:
 		return c
 	}

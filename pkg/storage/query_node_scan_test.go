@@ -28,7 +28,7 @@ func TestTransactionQueryNodeScansKeepMetadataAndFullReads(t *testing.T) {
 						require.True(t, node.HasChunkEmbeddings())
 						require.Equal(t, tc.chunks, chunkCountFromMeta(node.EmbedMeta))
 						require.Empty(t, node.ChunkEmbeddings)
-						require.False(t, node.EmbeddingsStoredSeparately)
+						require.False(t, node.RuntimeMetadata().EmbeddingsStoredSeparately)
 						rows++
 						if bounded {
 							return ErrIterationStopped

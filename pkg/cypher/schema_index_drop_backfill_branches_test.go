@@ -44,9 +44,7 @@ func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabelInScope(_, label strin
 }
 
 func TestSchema_CreateIndexBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "schema_index_cov")
-	exec := NewStorageExecutor(store)
+	exec, _ := newTestExecutor(t, "schema_index_cov")
 	ctx := context.Background()
 
 	_, err := exec.executeCreateIndex(ctx, "CREATE INDEX idx_named IF NOT EXISTS FOR (n:IdxNodeA) ON (n.p)")
@@ -91,9 +89,7 @@ func TestSchema_CreateIndexBranches_BackfillErrorsAcrossSyntaxes(t *testing.T) {
 }
 
 func TestSchema_DropIndexAndDropConstraintBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "schema_drop_cov")
-	exec := NewStorageExecutor(store)
+	exec, _ := newTestExecutor(t, "schema_drop_cov")
 	ctx := context.Background()
 
 	_, err := exec.executeDropIndex(ctx, "DROP INDEX")
@@ -121,7 +117,7 @@ func TestSchema_DropIndexAndDropConstraintBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Vector index drop path should execute special cleanup branch.
-	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_drop FOR (n:VecNode) ON (n.embedding)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX vec_drop FOR (n:VecNode) ON (n.embedding)")
 	require.NoError(t, err)
 	_, err = exec.executeDropIndex(ctx, "DROP INDEX vec_drop")
 	require.NoError(t, err)

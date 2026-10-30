@@ -33,9 +33,9 @@ func TestEmbeddingPublicationProofPublicDelivery(t *testing.T) {
 			var listeners, workers int
 			b.OnNodeUpdated(func(accepted *Node) {
 				listeners++
-				require.True(t, accepted.embeddingPublication.matches(b, accepted.ID, accepted.embeddingRevision))
+				require.True(t, accepted.runtimeState().embeddingPublication.matches(b, accepted.ID, accepted.runtimeState().embeddingRevision))
 				allocs := testing.AllocsPerRun(20, func() {
-					same, err := b.embeddingRevisionIsCurrent(accepted.ID, accepted.embeddingRevision, accepted.embeddingPublication)
+					same, err := b.embeddingRevisionIsCurrent(accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
 					if err != nil || !same {
 						panic("current accepted outcome was rejected")
 					}
@@ -68,7 +68,7 @@ func TestEmbeddingPublicationProofComesFromCommit(t *testing.T) {
 		if !once.CompareAndSwap(false, true) {
 			return
 		}
-		committed = node.embeddingPublication
+		committed = node.runtimeState().embeddingPublication
 		require.NotZero(t, committed.commitTs, "proof must exist before the post-commit tail")
 		require.NoError(t, b.db.Update(func(txn *badger.Txn) error {
 			return txn.Set([]byte("publication-proof-test"), []byte("later publication"))
@@ -78,9 +78,9 @@ func TestEmbeddingPublicationProofComesFromCommit(t *testing.T) {
 	var delivered bool
 	b.OnNodeUpdated(func(accepted *Node) {
 		delivered = true
-		require.Equal(t, committed, accepted.embeddingPublication, "never sample a replacement boundary after committing")
-		require.False(t, accepted.embeddingPublication.matches(b, accepted.ID, accepted.embeddingRevision))
-		same, err := b.embeddingRevisionIsCurrent(accepted.ID, accepted.embeddingRevision, accepted.embeddingPublication)
+		require.Equal(t, committed, accepted.runtimeState().embeddingPublication, "never sample a replacement boundary after committing")
+		require.False(t, accepted.runtimeState().embeddingPublication.matches(b, accepted.ID, accepted.runtimeState().embeddingRevision))
+		same, err := b.embeddingRevisionIsCurrent(accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
 		require.NoError(t, err)
 		require.True(t, same, "an intervening unrelated commit requires fresh validation, not rejection")
 	})
@@ -94,7 +94,7 @@ func TestEmbeddingPublicationProofFallsBackAfterBodyChanges(t *testing.T) {
 			b := newSidecarTestBadger(t)
 			node := publicationProofPayload(t, b)
 			require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
-			proof, revision := node.embeddingPublication, node.embeddingRevision
+			proof, revision := node.runtimeState().embeddingPublication, node.runtimeState().embeddingRevision
 			if remove {
 				require.NoError(t, b.DeleteNode(node.ID))
 			} else {
@@ -122,8 +122,8 @@ func TestEmbeddingPublicationProofRefreshesAfterReentrantWrite(t *testing.T) {
 	node := publicationProofPayload(t, b)
 	var proofs []embeddingPublicationProof
 	b.OnNodeUpdated(func(accepted *Node) {
-		proofs = append(proofs, accepted.embeddingPublication)
-		require.True(t, accepted.embeddingPublication.matches(b, accepted.ID, accepted.embeddingRevision))
+		proofs = append(proofs, accepted.runtimeState().embeddingPublication)
+		require.True(t, accepted.runtimeState().embeddingPublication.matches(b, accepted.ID, accepted.runtimeState().embeddingRevision))
 		if len(proofs) != 1 {
 			return
 		}
@@ -136,8 +136,8 @@ func TestEmbeddingPublicationProofRefreshesAfterReentrantWrite(t *testing.T) {
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
 	require.Len(t, proofs, 2)
 	require.Greater(t, proofs[1].commitTs, proofs[0].commitTs)
-	require.False(t, proofs[0].matches(b, node.ID, node.embeddingRevision))
-	require.True(t, proofs[1].matches(b, node.ID, node.embeddingRevision))
+	require.False(t, proofs[0].matches(b, node.ID, node.runtimeState().embeddingRevision))
+	require.True(t, proofs[1].matches(b, node.ID, node.runtimeState().embeddingRevision))
 }
 
 // An older assigned writer may finish after the sidecar's physical write.
@@ -171,8 +171,8 @@ func TestEmbeddingPublicationProofUnobservedPredecessor(t *testing.T) {
 	require.NoError(t, previous.CommitAt(prior, nil))
 	b.db.oracle.finish(prior)
 	require.NoError(t, <-done)
-	require.Zero(t, node.embeddingPublication.commitTs, "an unobserved predecessor prevents certification")
-	same, err := b.embeddingRevisionIsCurrent(node.ID, node.embeddingRevision, node.embeddingPublication)
+	require.Zero(t, node.runtimeState().embeddingPublication.commitTs, "an unobserved predecessor prevents certification")
+	same, err := b.embeddingRevisionIsCurrent(node.ID, node.runtimeState().embeddingRevision, node.runtimeState().embeddingPublication)
 	require.NoError(t, err)
 	require.True(t, same, "missing proof uses the fresh metadata path")
 }
@@ -188,8 +188,8 @@ func TestEmbeddingPublicationProofMaintenanceBoundary(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
-			proof := node.embeddingPublication
-			require.True(t, proof.matches(b, node.ID, node.embeddingRevision))
+			proof := node.runtimeState().embeddingPublication
+			require.True(t, proof.matches(b, node.ID, node.runtimeState().embeddingRevision))
 			switch operation {
 			case "drop_prefix":
 				require.NoError(t, b.db.DropPrefix(prefixDropOptions{}, nodeKey(node.ID)))
@@ -198,8 +198,8 @@ func TestEmbeddingPublicationProofMaintenanceBoundary(t *testing.T) {
 			case "load_older_versions":
 				require.NoError(t, b.db.Load(bytes.NewReader(backup.Bytes()), 1))
 			}
-			require.False(t, proof.matches(b, node.ID, node.embeddingRevision), "bulk mutation invalidates the publication interval")
-			same, err := b.embeddingRevisionIsCurrent(node.ID, node.embeddingRevision, proof)
+			require.False(t, proof.matches(b, node.ID, node.runtimeState().embeddingRevision), "bulk mutation invalidates the publication interval")
+			same, err := b.embeddingRevisionIsCurrent(node.ID, node.runtimeState().embeddingRevision, proof)
 			if operation == "load_older_versions" {
 				require.NoError(t, err)
 				require.True(t, same)

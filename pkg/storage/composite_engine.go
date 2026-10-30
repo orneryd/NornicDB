@@ -362,7 +362,11 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 	c.mu.Unlock()
 
 	// The caller retains the selected native identity; stored IDs stay local.
-	node.Database = c.constituentDatabase(targetConstituent, engine)
+	{
+		metadata := node.RuntimeMetadata()
+		metadata.Database = c.constituentDatabase(targetConstituent, engine)
+		node.SetRuntimeMetadata(metadata)
+	}
 	return nodeID, nil
 }
 
@@ -375,7 +379,7 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 func (c *CompositeEngine) ConstituentDatabaseForNode(id NodeID) string {
 	value, err := c.GetNode(id)
 	if err == nil && value != nil {
-		return value.Database
+		return value.RuntimeMetadata().Database
 	}
 	return ""
 }
@@ -418,7 +422,7 @@ func (c *CompositeEngine) GetNode(id NodeID) (*Node, error) {
 // UpdateNode updates a node. Routes to the constituent that contains it.
 func (c *CompositeEngine) UpdateNode(node *Node) error {
 	identity := string(node.ID)
-	if node.Database != "" {
+	if node.RuntimeMetadata().Database != "" {
 		identity = node.ElementID("")
 	}
 	readConstituents, local, _ := c.constituentsForEntity("4", identity)
@@ -1283,7 +1287,11 @@ func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
 			return localizedError(localization.StorageCompositeNodeBulkCreateFailed(constituent, err), err)
 		}
 		for _, node := range groupNodes {
-			node.Database = c.constituentDatabase(constituent, engine)
+			{
+				metadata := node.RuntimeMetadata()
+				metadata.Database = c.constituentDatabase(constituent, engine)
+				node.SetRuntimeMetadata(metadata)
+			}
 		}
 	}
 

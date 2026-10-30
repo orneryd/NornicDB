@@ -129,7 +129,9 @@ func TestPrototypeCommittedImageReplacesCommittedAndPendingSidecar(t *testing.T)
 			require.Contains(t, tx.pendingWrites, string(embeddingMetaKey(node.ID)), "ordinary retained-sidecar update must have staged the old metadata refresh")
 			accepted := CopyNode(current)
 			accepted.EmbedMeta = map[string]any{"embedding_model": "authoritative", "chunk_count": int8(1), "has_embedding": true}
-			accepted.VisibilitySuppressed = true
+			metadata := accepted.RuntimeMetadata()
+			metadata.VisibilitySuppressed = true
+			accepted.SetRuntimeMetadata(metadata)
 			require.NoError(t, tx.UpdateGraphNode(accepted, StoredNodeImages))
 			if rollback {
 				require.NoError(t, tx.Rollback())
@@ -145,7 +147,7 @@ func TestPrototypeCommittedImageReplacesCommittedAndPendingSidecar(t *testing.T)
 				model = "original"
 			}
 			require.Equal(t, model, got.EmbedMeta["embedding_model"])
-			require.Equal(t, !rollback, got.VisibilitySuppressed)
+			require.Equal(t, !rollback, got.RuntimeMetadata().VisibilitySuppressed)
 			require.NoError(t, b.withView(func(snapshot *badger.Txn) error {
 				_, err := snapshot.Get(embeddingMetaKey(node.ID))
 				if rollback {

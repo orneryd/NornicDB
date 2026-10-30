@@ -79,8 +79,10 @@
 #                           CPU on every node/edge access (decay scoring was
 #                           profiled at ~29% of seed wall time when enabled)
 #                           without affecting query results. Set GRAPH_ONLY=0 to
-#                           include search index build + decay scoring cost in the
-#                           comparison.
+#                           include search index build cost. Each run uses an
+#                           explicit benchmark config; decay scoring is included
+#                           only with NORNICDB_MEMORY_DECAY_ENABLED=true and
+#                           GRAPH_ONLY=0.
 #   NORNIC_ASYNC_WRITES=1   (default 1) Enable the adaptive write-behind commit
 #                           buffer for the NornicDB run
 #                           (NORNICDB_ASYNC_WRITES_ENABLED=true): committed
@@ -476,7 +478,8 @@ run_nornic() {
   # and memory-decay access scoring. The Northwind benchmark performs zero
   # text/vector search and no decay-aware reads, so these are pure overhead
   # on every node/edge access. Toggle via GRAPH_ONLY (default 1); set
-  # GRAPH_ONLY=0 to include the index-build + decay-scoring cost.
+  # GRAPH_ONLY=0 to include index-build cost. Decay is off by default; the
+  # existing NORNICDB_MEMORY_DECAY_ENABLED setting explicitly opts into it.
   local nornic_extra_flags=()
   local nornic_extra_env=()
   if [[ "${GRAPH_ONLY}" == "1" ]]; then
@@ -545,9 +548,16 @@ run_nornic() {
   # by expansion as an assignment prefix — it would run it as a command.
   # NORNICDB_PARSER is set explicitly for every run so an ambient value in the
   # caller's environment can never leak into the "default" mode.
+  # Isolate the benchmark from ~/.nornicdb/config.yaml. In particular, an
+  # operator's decay setting must not silently change the search-enabled run.
+  # Explicit environment overrides still select the requested workload.
+  local nornic_config="${REPORT_DIR}/${label}.config.yaml"
+  printf 'server:\n  bolt_port: %s\n  http_port: %s\n' \
+    "${NORNIC_BOLT_PORT}" "${NORNIC_HTTP_PORT}" >"${nornic_config}"
   NORNICDB_NO_AUTH=true NORNICDB_EMBEDDING_ENABLED=false \
     env NORNICDB_PARSER="${mode}" ${nornic_extra_env[@]+"${nornic_extra_env[@]}"} \
     "${NORNIC_BIN}" serve \
+      --config "${nornic_config}" \
       --bolt-port "${NORNIC_BOLT_PORT}" \
       --http-port "${NORNIC_HTTP_PORT}" \
       --data-dir "${NORNIC_DATA_DIR}" \

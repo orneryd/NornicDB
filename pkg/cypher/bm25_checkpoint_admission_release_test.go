@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -58,7 +59,7 @@ func nor283Source(t *testing.T, engine storage.Engine, traversal string) (storag
 
 func nor283OpenStore(t *testing.T, dir string) (*storage.BadgerEngine, func()) {
 	t.Helper()
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true})
+	engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
 	require.NoError(t, err)
 	var once sync.Once
 	closeStore := func() { once.Do(func() { require.NoError(t, engine.Close()) }) }
