@@ -40,24 +40,6 @@ var mixedMergeRetry = &mergeRetryStatements{mixed: true}
 
 // recordMergeRetry adds one statement to the record *retry.
 func recordMergeRetry(retry **mergeRetryStatements, analyzer *QueryAnalyzer, query string, params map[string]interface{}) {
-	if *retry == mixedMergeRetry {
-		return
-	}
-	if *retry == nil {
-		*retry = &mergeRetryStatements{}
-		(*retry).others = (*retry).firstOthers[:0]
-	}
-	record := *retry
-	if info := analyzer.Analyze(context.Background(), query); info != nil && !info.HasMerge && !info.HasCall {
-		if len(record.others) == mergeRetryOtherLimit || record.otherBytes+len(query) > mergeRetryOtherBytes {
-			*retry = mixedMergeRetry
-			return
-		}
-		record.others = append(record.others, query)
-		record.otherBytes += len(query)
-		return
-	}
-	record.statements = append(record.statements, CommitStatement{Query: query, Params: params})
 }
 
 // classifyMergeRetry is the one MERGE retry classification, for implicit and
