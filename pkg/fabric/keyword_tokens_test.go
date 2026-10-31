@@ -11,7 +11,7 @@ func TestPlannerKeywordTokens(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("comp", &LocationLocal{DBName: "comp"})
 	catalog.Register("comp.one", &LocationLocal{DBName: "one"})
-	planner := NewFabricPlanner(catalog)
+	planner := NewFabricPlanner(catalog, testStatementWrites)
 	for _, body := range []string{
 		"RETURN $union AS k", "RETURN $use AS k", "RETURN $create AS k",
 		"RETURN 'UNION USE CALL { } RETURN WITH SET' AS k",

@@ -996,7 +996,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			for _, name := range callMetadata.columns {
 				scope[name] = struct{}{}
 			}
-			if callSubqueryQueryIsWrite(clause.text) || callMetadata.batch != nil {
+			if statementChangesState(ctx, clause.text) || callMetadata.batch != nil {
 				wrote = true
 			}
 		case pipelineClauseForeach:

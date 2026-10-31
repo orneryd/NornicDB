@@ -43,7 +43,7 @@ func TestUseSourceCancellationAndPlannerIngress(t *testing.T) {
 		_, _, _, err = ParseUseClause(ctx, "USE cmp.a RETURN 1", false, stage)
 		require.ErrorIs(t, err, context.Canceled)
 	}
-	planner := NewFabricPlanner(plannerUseCatalog())
+	planner := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
 	for _, stage := range []SourceStage{RawSource, AcceptedSource} {
 		_, err := planner.Plan(ctx, "", "cmp", stage)
 		require.ErrorIs(t, err, context.Canceled)

@@ -1476,7 +1476,10 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		return statementExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	// Check if this is a write operation using cached analysis
-	info := e.analyzer.Analyze(ctx, cypher)
+	info, err := e.analyzer.Analyze(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
 	needsTransaction, err := statementNeedsTransaction(ctx, cypher)
 	if err != nil {
 		return nil, err
@@ -1741,7 +1744,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: err.Error()}, dbName)
 		}
-		if info := e.analyzer.Analyze(ctx, cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
+		if info, analyzeErr := e.analyzer.Analyze(ctx, cypher); analyzeErr == nil && IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
 			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 		}
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.

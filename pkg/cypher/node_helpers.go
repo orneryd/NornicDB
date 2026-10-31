@@ -92,7 +92,7 @@ func streamQueryNodes(ctx context.Context, store storage.Engine, labels []string
 // procedure (CALL), which may write without one; both keep full reads, as
 // does a store without the query-node read.
 func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
-	if info == nil || !info.IsReadOnly || !info.HasMatch || info.HasCall {
+	if info == nil || !info.ReadOnly() || !info.HasMatch || info.HasCall {
 		return false
 	}
 	_, ok := e.storage.(storage.QueryNodeReader)

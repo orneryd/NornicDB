@@ -9,19 +9,17 @@ func TestASTBuilder_Build(t *testing.T) {
 	builder := NewASTBuilder()
 
 	tests := []struct {
-		name         string
-		query        string
-		wantClauses  int
-		wantType     QueryType
-		wantReadOnly bool
-		checkFunc    func(t *testing.T, ast *AST)
+		name        string
+		query       string
+		wantClauses int
+		wantType    QueryType
+		checkFunc   func(t *testing.T, ast *AST)
 	}{
 		{
-			name:         "simple MATCH RETURN",
-			query:        "MATCH (n:Person) RETURN n.name",
-			wantClauses:  2,
-			wantType:     QueryMatch,
-			wantReadOnly: true,
+			name:        "simple MATCH RETURN",
+			query:       "MATCH (n:Person) RETURN n.name",
+			wantClauses: 2,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[0].Type != ASTClauseMatch {
 					t.Errorf("First clause should be MATCH, got %v", ast.Clauses[0].Type)
@@ -35,11 +33,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "MATCH with WHERE",
-			query:        "MATCH (n:Person) WHERE n.age > 21 RETURN n",
-			wantClauses:  3,
-			wantType:     QueryMatch,
-			wantReadOnly: true,
+			name:        "MATCH with WHERE",
+			query:       "MATCH (n:Person) WHERE n.age > 21 RETURN n",
+			wantClauses: 3,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[1].Type != ASTClauseWhere {
 					t.Errorf("Second clause should be WHERE, got %v", ast.Clauses[1].Type)
@@ -50,11 +47,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "CREATE node",
-			query:        "CREATE (n:Person {name: 'Alice', age: 30})",
-			wantClauses:  1,
-			wantType:     QueryCreate,
-			wantReadOnly: false,
+			name:        "CREATE node",
+			query:       "CREATE (n:Person {name: 'Alice', age: 30})",
+			wantClauses: 1,
+			wantType:    QueryCreate,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[0].Type != ASTClauseCreate {
 					t.Errorf("First clause should be CREATE, got %v", ast.Clauses[0].Type)
@@ -68,11 +64,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "MERGE with ON CREATE SET",
-			query:        "MERGE (n:Person {id: 1}) ON CREATE SET n.created = timestamp()",
-			wantClauses:  1,
-			wantType:     QueryMerge,
-			wantReadOnly: false,
+			name:        "MERGE with ON CREATE SET",
+			query:       "MERGE (n:Person {id: 1}) ON CREATE SET n.created = timestamp()",
+			wantClauses: 1,
+			wantType:    QueryMerge,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[0].Merge == nil {
 					t.Error("Merge clause should be populated")
@@ -83,11 +78,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "DELETE",
-			query:        "MATCH (n:Temp) DELETE n",
-			wantClauses:  2,
-			wantType:     QueryMatch,
-			wantReadOnly: false,
+			name:        "DELETE",
+			query:       "MATCH (n:Temp) DELETE n",
+			wantClauses: 2,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[1].Type != ASTClauseDelete {
 					t.Errorf("Second clause should be DELETE, got %v", ast.Clauses[1].Type)
@@ -101,11 +95,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "DETACH DELETE",
-			query:        "MATCH (n:Temp) DETACH DELETE n",
-			wantClauses:  2,
-			wantType:     QueryMatch,
-			wantReadOnly: false,
+			name:        "DETACH DELETE",
+			query:       "MATCH (n:Temp) DETACH DELETE n",
+			wantClauses: 2,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[1].Type != ASTClauseDetachDelete {
 					t.Errorf("Second clause should be DETACH DELETE, got %v", ast.Clauses[1].Type)
@@ -116,11 +109,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "SET",
-			query:        "MATCH (n:Person) SET n.updated = true, n.count = n.count + 1",
-			wantClauses:  2,
-			wantType:     QueryMatch,
-			wantReadOnly: false,
+			name:        "SET",
+			query:       "MATCH (n:Person) SET n.updated = true, n.count = n.count + 1",
+			wantClauses: 2,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[1].Set == nil {
 					t.Error("Set clause should be populated")
@@ -131,11 +123,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "WITH clause",
-			query:        "MATCH (n:Person) WITH n.name AS name, COUNT(*) AS cnt RETURN name, cnt",
-			wantClauses:  3,
-			wantType:     QueryMatch,
-			wantReadOnly: true,
+			name:        "WITH clause",
+			query:       "MATCH (n:Person) WITH n.name AS name, COUNT(*) AS cnt RETURN name, cnt",
+			wantClauses: 3,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[1].Type != ASTClauseWith {
 					t.Errorf("Second clause should be WITH, got %v", ast.Clauses[1].Type)
@@ -146,11 +137,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "UNWIND",
-			query:        "UNWIND [1, 2, 3] AS x RETURN x",
-			wantClauses:  2,
-			wantType:     QueryMatch, // Default when first clause isn't a write
-			wantReadOnly: true,
+			name:        "UNWIND",
+			query:       "UNWIND [1, 2, 3] AS x RETURN x",
+			wantClauses: 2,
+			wantType:    QueryMatch, // Default when first clause isn't a write
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[0].Type != ASTClauseUnwind {
 					t.Errorf("First clause should be UNWIND, got %v", ast.Clauses[0].Type)
@@ -164,11 +154,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "ORDER BY LIMIT SKIP",
-			query:        "MATCH (n:Person) RETURN n.name ORDER BY n.age DESC SKIP 10 LIMIT 5",
-			wantClauses:  5,
-			wantType:     QueryMatch,
-			wantReadOnly: true,
+			name:        "ORDER BY LIMIT SKIP",
+			query:       "MATCH (n:Person) RETURN n.name ORDER BY n.age DESC SKIP 10 LIMIT 5",
+			wantClauses: 5,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				// Find ORDER BY clause
 				var orderBy *ASTOrderBy
@@ -198,11 +187,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "CALL procedure",
-			query:        "CALL db.labels() YIELD label RETURN label",
-			wantClauses:  2,
-			wantType:     QueryMatch,
-			wantReadOnly: true,
+			name:        "CALL procedure",
+			query:       "CALL db.labels() YIELD label RETURN label",
+			wantClauses: 2,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[0].Type != ASTClauseCall {
 					t.Errorf("First clause should be CALL, got %v", ast.Clauses[0].Type)
@@ -219,11 +207,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "OPTIONAL MATCH",
-			query:        "MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(b) RETURN a, b",
-			wantClauses:  3,
-			wantType:     QueryMatch,
-			wantReadOnly: true,
+			name:        "OPTIONAL MATCH",
+			query:       "MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(b) RETURN a, b",
+			wantClauses: 3,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if ast.Clauses[1].Type != ASTClauseOptionalMatch {
 					t.Errorf("Second clause should be OPTIONAL MATCH, got %v", ast.Clauses[1].Type)
@@ -234,11 +221,10 @@ func TestASTBuilder_Build(t *testing.T) {
 			},
 		},
 		{
-			name:         "compound query",
-			query:        "MATCH (a:Person), (b:Person) WHERE a.id = 1 AND b.id = 2 CREATE (a)-[:KNOWS]->(b) RETURN a, b",
-			wantClauses:  4,
-			wantType:     QueryMatch,
-			wantReadOnly: false,
+			name:        "compound query",
+			query:       "MATCH (a:Person), (b:Person) WHERE a.id = 1 AND b.id = 2 CREATE (a)-[:KNOWS]->(b) RETURN a, b",
+			wantClauses: 4,
+			wantType:    QueryMatch,
 			checkFunc: func(t *testing.T, ast *AST) {
 				if !ast.IsCompound {
 					t.Error("Should be compound query")
@@ -263,10 +249,6 @@ func TestASTBuilder_Build(t *testing.T) {
 
 			if ast.QueryType != tt.wantType {
 				t.Errorf("QueryType = %v, want %v", ast.QueryType, tt.wantType)
-			}
-
-			if ast.IsReadOnly != tt.wantReadOnly {
-				t.Errorf("IsReadOnly = %v, want %v", ast.IsReadOnly, tt.wantReadOnly)
 			}
 
 			if tt.checkFunc != nil {
@@ -422,7 +404,7 @@ func TestQueryInfo_GetAST(t *testing.T) {
 	analyzer := NewQueryAnalyzer(100)
 
 	t.Run("lazy AST building", func(t *testing.T) {
-		info := analyzer.Analyze(t.Context(), "MATCH (n:Person) WHERE n.age > 21 RETURN n.name")
+		info := mustAnalyze(t, analyzer, t.Context(), "MATCH (n:Person) WHERE n.age > 21 RETURN n.name")
 
 		// AST should not be built yet
 		if info.HasAST() {
@@ -456,11 +438,11 @@ func TestQueryInfo_GetAST(t *testing.T) {
 		query := "MATCH (n:Test) RETURN n"
 
 		// First analysis
-		info1 := analyzer.Analyze(t.Context(), query)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query)
 		ast1 := info1.GetAST()
 
 		// Second analysis (should be cached)
-		info2 := analyzer.Analyze(t.Context(), query)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query)
 
 		// Same QueryInfo should be returned
 		if info1 != info2 {
@@ -501,15 +483,15 @@ func BenchmarkQueryInfo_GetAST(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					analyzer.ClearCache()
-					info := analyzer.Analyze(b.Context(), query)
+					info := mustAnalyze(b, analyzer, b.Context(), query)
 					_ = info.GetAST()
 				}
 			} else {
-				info := analyzer.Analyze(b.Context(), query)
+				info := mustAnalyze(b, analyzer, b.Context(), query)
 				_ = info.GetAST()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					info := analyzer.Analyze(b.Context(), query)
+					info := mustAnalyze(b, analyzer, b.Context(), query)
 					_ = info.GetAST()
 				}
 			}
@@ -523,8 +505,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 
 	t.Run("same query returns cached QueryInfo", func(t *testing.T) {
 		query := "MATCH (n:Test) RETURN n"
-		info1 := analyzer.Analyze(t.Context(), query)
-		info2 := analyzer.Analyze(t.Context(), query)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query)
 
 		// Should be same pointer
 		if info1 != info2 {
@@ -536,8 +518,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 		query1 := "MATCH (n:Test) RETURN n"
 		query2 := "MATCH  (n:Test)  RETURN  n" // Extra spaces
 
-		info1 := analyzer.Analyze(t.Context(), query1)
-		info2 := analyzer.Analyze(t.Context(), query2)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query1)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query2)
 
 		// Should be same after normalization
 		if info1 != info2 {
@@ -549,8 +531,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 		query1 := "MATCH (n:Person) RETURN n"
 		query2 := "MATCH (n:Company) RETURN n"
 
-		info1 := analyzer.Analyze(t.Context(), query1)
-		info2 := analyzer.Analyze(t.Context(), query2)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query1)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query2)
 
 		if info1 == info2 {
 			t.Error("Different queries should have different QueryInfo")
@@ -566,16 +548,16 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 		smallAnalyzer := NewQueryAnalyzer(3) // Very small cache
 
 		// Fill cache
-		smallAnalyzer.Analyze(t.Context(), "MATCH (a:A) RETURN a")
-		smallAnalyzer.Analyze(t.Context(), "MATCH (b:B) RETURN b")
-		smallAnalyzer.Analyze(t.Context(), "MATCH (c:C) RETURN c")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (a:A) RETURN a")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (b:B) RETURN b")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (c:C) RETURN c")
 
 		if smallAnalyzer.CacheSize() != 3 {
 			t.Errorf("Cache should have 3 entries, got %d", smallAnalyzer.CacheSize())
 		}
 
 		// Add one more, should evict
-		smallAnalyzer.Analyze(t.Context(), "MATCH (d:D) RETURN d")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (d:D) RETURN d")
 
 		if smallAnalyzer.CacheSize() != 3 {
 			t.Errorf("Cache should still have 3 entries after eviction, got %d", smallAnalyzer.CacheSize())
@@ -584,8 +566,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 
 	t.Run("ClearCache empties cache", func(t *testing.T) {
 		localAnalyzer := NewQueryAnalyzer(100)
-		localAnalyzer.Analyze(t.Context(), "MATCH (n) RETURN n")
-		localAnalyzer.Analyze(t.Context(), "CREATE (n:Node)")
+		mustAnalyze(t, localAnalyzer, t.Context(), "MATCH (n) RETURN n")
+		mustAnalyze(t, localAnalyzer, t.Context(), "CREATE (n:Node)")
 
 		if localAnalyzer.CacheSize() != 2 {
 			t.Errorf("Expected 2 cached entries, got %d", localAnalyzer.CacheSize())
@@ -605,7 +587,7 @@ func TestAST_ConcurrentAccess(t *testing.T) {
 	query := "MATCH (n:Person) WHERE n.age > 21 RETURN n.name"
 
 	// Pre-analyze to get cached QueryInfo
-	info := analyzer.Analyze(t.Context(), query)
+	info := mustAnalyze(t, analyzer, t.Context(), query)
 
 	// Concurrent GetAST calls
 	done := make(chan bool, 10)

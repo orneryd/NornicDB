@@ -73,8 +73,8 @@ import (
 // Adding a new op_type = enum update + ADR §2.3 amendment + new test case in
 // pkg/cypher/op_type_test.go::TestOpType_AllClauseShapes (D-04c table-driven).
 var AllowedCypherOpTypes = []string{
-	"read",        // QueryInfo.IsReadOnly
-	"write",       // QueryInfo.IsWriteQuery
+	"read",        // QueryInfo.ReadOnly
+	"write",       // QueryInfo.Writes
 	"schema",      // QueryInfo.IsSchemaQuery
 	"admin",       // admin-dispatch path (SHOW DATABASES, CREATE/DROP DATABASE) — Site 1
 	"fabric",      // USE-clause fabric routing

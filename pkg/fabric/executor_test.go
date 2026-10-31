@@ -1689,7 +1689,7 @@ func TestLocalFragmentExecutor_ExecuteError(t *testing.T) {
 
 func TestQueryGateway_PlanError(t *testing.T) {
 	catalog := NewCatalog()
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 	exec := NewFabricExecutor(catalog, nil, nil)
 	gw := NewQueryGateway(p, exec)
 
@@ -2073,7 +2073,7 @@ func TestE2E_SingleGraphQueryReturnsCorrectRows(t *testing.T) {
 		},
 	}
 	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
+		NewFabricPlanner(catalog, testStatementWrites),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 	res, err := gw.Execute(context.Background(), nil, "MATCH (n:Person) RETURN n.name AS name", "db", nil, "")
@@ -2105,7 +2105,7 @@ func TestE2E_UseClauseRoutesToCorrectGraph(t *testing.T) {
 		},
 	}
 	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
+		NewFabricPlanner(catalog, testStatementWrites),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 	res, err := gw.Execute(context.Background(), nil, "USE nornic.tr MATCH (t:Translation) RETURN t.id AS id", "nornic", nil, "")
@@ -2134,7 +2134,7 @@ func TestE2E_UnionCombinesResults(t *testing.T) {
 		},
 	}
 	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
+		NewFabricPlanner(catalog, testStatementWrites),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 	res, err := gw.Execute(context.Background(), nil,
@@ -2160,7 +2160,7 @@ func TestE2E_UnionDistinctDeduplicates(t *testing.T) {
 		},
 	}
 	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
+		NewFabricPlanner(catalog, testStatementWrites),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 	res, err := gw.Execute(context.Background(), nil,
@@ -2223,7 +2223,7 @@ func TestE2E_CallUseSubqueryRoutesCorrectly(t *testing.T) {
 		},
 	}
 	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
+		NewFabricPlanner(catalog, testStatementWrites),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 

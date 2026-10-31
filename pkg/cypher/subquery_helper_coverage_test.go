@@ -204,8 +204,8 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	require.Same(t, joined, crossJoinCallResults(joined, nil))
 	require.Same(t, joined, crossJoinCallResults(nil, joined))
 
-	require.True(t, callSubqueryQueryIsWrite("MATCH (n) CREATE (m)"))
-	require.False(t, callSubqueryQueryIsWrite("MATCH (n) RETURN n"))
+	require.True(t, statementChangesState(t.Context(), "MATCH (n) CREATE (m)"))
+	require.False(t, statementChangesState(t.Context(), "MATCH (n) RETURN n"))
 }
 
 func TestCallSubqueryHelpers_PropertyExtractionAndOrdering(t *testing.T) {

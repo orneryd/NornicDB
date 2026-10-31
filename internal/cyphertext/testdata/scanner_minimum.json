@@ -1004,7 +1004,6 @@
     "findMatchingBrace",
     "hasTopLevelReturnClause",
     "keywordAt",
-    "queryIsWrite",
     "splitTopLevelUnion",
     "trailingWithAliases"
   ],

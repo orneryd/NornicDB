@@ -29,25 +29,25 @@ func TestQueryNormalizationSettingKeepsClassification(t *testing.T) {
 	} {
 		canonical, _ := canonicalizeQueryText(statement)
 		want := QueryPermissionRequirements(t.Context(), canonical, RawSource)
-		wantWrite := looksLikeWriteQuery(canonical)
+		wantWrite := statementChangesState(t.Context(), canonical)
 		wantCacheable := isCacheableReadQuery(canonical)
-		wantInfo := *analyzer.Analyze(t.Context(), canonical)
+		wantInfo := *mustAnalyze(t, analyzer, t.Context(), canonical)
 		for _, enabled := range []bool{true, false} {
 			restore := config.WithCypherQueryNormalizationDisabled()
 			config.SetCypherQueryNormalizationEnabled(enabled)
 			analyzer.ClearCache()
 			require.Equal(t, want, QueryPermissionRequirements(t.Context(), statement, RawSource), "%q enabled=%v", statement, enabled)
-			require.Equal(t, wantWrite, looksLikeWriteQuery(statement), "%q enabled=%v", statement, enabled)
+			require.Equal(t, wantWrite, statementChangesState(t.Context(), statement), "%q enabled=%v", statement, enabled)
 			require.Equal(t, wantCacheable, isCacheableReadQuery(statement), "%q enabled=%v", statement, enabled)
-			info := analyzer.Analyze(t.Context(), statement)
-			require.Equal(t, wantInfo.IsWriteQuery, info.IsWriteQuery, "%q enabled=%v", statement, enabled)
-			require.Equal(t, wantInfo.IsReadOnly, info.IsReadOnly, "%q enabled=%v", statement, enabled)
+			info := mustAnalyze(t, analyzer, t.Context(), statement)
+			require.Equal(t, wantInfo.Writes(), info.Writes(), "%q enabled=%v", statement, enabled)
+			require.Equal(t, wantInfo.ReadOnly(), info.ReadOnly(), "%q enabled=%v", statement, enabled)
 			restore()
 		}
 	}
 	require.True(t, QueryPermissionRequirements(t.Context(), "/* c */ CREATE (n:X)", RawSource).Write)
 	require.False(t, QueryPermissionRequirements(t.Context(), "MATCH (n) // delete later\nRETURN n", RawSource).Write)
-	require.True(t, looksLikeWriteQuery("MATCH (n)\n\tSET\tn.x = 1"))
+	require.True(t, statementChangesState(t.Context(), "MATCH (n)\n\tSET\tn.x = 1"))
 
 	canonical := "MATCH (n:Person {name: $name}) WHERE n.age > 30 RETURN n.name AS name"
 	require.Zero(t, testing.AllocsPerRun(100, func() { _ = classificationText(canonical) }))

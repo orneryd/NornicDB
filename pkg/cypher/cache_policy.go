@@ -10,7 +10,7 @@ import (
 // These conservative hints can over-invalidate caches. Execution admission and
 // resolved statement modes use readStatementExecutionContract instead.
 func (e *StorageExecutor) invalidateResultCacheForQuery(info *QueryInfo) {
-	if info.IsWriteQuery && e.cache != nil {
+	if info.Writes() && e.cache != nil {
 		if len(info.Labels) > 0 {
 			e.cache.InvalidateLabels(info.Labels)
 		} else {
@@ -20,7 +20,7 @@ func (e *StorageExecutor) invalidateResultCacheForQuery(info *QueryInfo) {
 }
 
 func (e *StorageExecutor) invalidateCachesForQuery(info *QueryInfo, query string) {
-	if info.IsWriteQuery && info.HasDelete && queryDeletesNodes(query) {
+	if info.Writes() && info.HasDelete && queryDeletesNodes(query) {
 		e.invalidateNodeLookupCache()
 	}
 	e.invalidateResultCacheForQuery(info)
@@ -30,7 +30,7 @@ func (e *StorageExecutor) invalidateCachesForQuery(info *QueryInfo, query string
 // transaction and visibility boundaries. Keys retain their typed parameters,
 // database/principal scope, graph/search revisions and embedding generation.
 func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo, cypher string) bool {
-	return !e.inTransaction(ctx) && info.IsReadOnly && e.StatementCacheSelectionValid() && e.cache != nil &&
+	return !e.inTransaction(ctx) && info.ReadOnly() && e.StatementCacheSelectionValid() && e.cache != nil &&
 		info.deterministicExecution(ctx, cypher) && !profileExecutionBypassesCache(ctx) && !e.queryPropertyDecayEnabled() &&
 		e.statementSelectionsAuthorized(ctx, cypher)
 }

@@ -53,12 +53,14 @@ func (p *QueryAnalyzer) SetPropertyDefault(propertyName string, constituent stri
 
 // AnalyzeQuery extracts routing information from a Cypher query string.
 // This is a simplified analyzer - a full implementation would parse the AST.
-func (a *QueryAnalyzer) AnalyzeQuery(cypher string) *QueryInfo {
+// writes is the statement-effect owner's answer, which storage cannot compute
+// itself: cypher.QueryPermissionRequirements(ctx, query, stage).ChangesState.
+func (a *QueryAnalyzer) AnalyzeQuery(cypher string, writes bool) *QueryInfo {
 	upper := strings.ToUpper(cypher)
 	info := &QueryInfo{
 		Labels:     []string{},
 		Properties: make(map[string]interface{}),
-		IsWrite:    strings.Contains(upper, "CREATE") || strings.Contains(upper, "MERGE") || strings.Contains(upper, "SET") || strings.Contains(upper, "DELETE"),
+		IsWrite:    writes,
 		IsFullScan: false,
 	}
 
