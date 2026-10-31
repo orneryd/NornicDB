@@ -13,6 +13,7 @@ type leaderEntityCommandPreparer interface {
 // PrepareEntityCommand normalizes client leaf/bulk input only at its leader.
 // Managed namespace admission comes from the existing stored-image registry.
 func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command) (*Command, func(storage.CommitOutcome), bool, error) {
+	ctx, _ = storage.AdmitVectorWork(commandVectorContext(ctx, cmd))
 	ops, handled, err := decodeEntityCommandOperations(cmd.Type, cmd.Data)
 	if !handled || err != nil {
 		return nil, nil, handled, err
@@ -29,6 +30,8 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 	case CmdBulkCreateNodes, CmdBulkCreateEdges, CmdBulkDeleteNodes, CmdBulkDeleteEdges:
 		mode = storage.CommitModeImplicit
 	}
+	// The context carries the command's admission (AdmitVectorWork above);
+	// PrepareEntityChanges binds it into the prepared commit.
 	prepared, settle, err := storage.PrepareEntityChanges(ctx, a.engine, namespace, ops, mode)
 	if err != nil {
 		return nil, nil, true, err
@@ -123,7 +126,7 @@ func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command
 	if !ok {
 		return false, nil
 	}
-	ctx := context.Background()
+	ctx := commandVectorContext(context.Background(), cmd)
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)

@@ -625,6 +625,7 @@ func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 
 // Apply applies a command to storage.
 func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	cmd = admittedVectorCommand(cmd)
 	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
 		return err
 	}

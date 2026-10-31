@@ -11,6 +11,9 @@ func (node *Node) EmbeddingRevision() EmbeddingBodyRevision {
 // EmbeddingAttempt returns the process-local acceptance/publication token.
 func (node *Node) EmbeddingAttempt() *EmbeddingAttempt { return node.runtimeState().embeddingAttempt }
 
+// VectorWorkOrigin transports this immutable attempt's admission on requeue.
+func (attempt *EmbeddingAttempt) VectorWorkOrigin() uint64 { return attempt.vectorWorkOrigin }
+
 // SetEmbeddingAttempt binds selected work to this in-memory snapshot only.
 // Unchanged identity keeps the attached record, so this does not allocate.
 func (node *Node) SetEmbeddingAttempt(attempt *EmbeddingAttempt) {
@@ -33,6 +36,7 @@ func (node *Node) CopyEmbeddingIdentityFrom(source *Node) {
 	state.embeddingRevision = identity.embeddingRevision
 	state.embeddingAttempt = identity.embeddingAttempt
 	state.embeddingPublication = identity.embeddingPublication
+	state.embeddingWorkOrigin, state.embeddingOriginBound = identity.embeddingWorkOrigin, identity.embeddingOriginBound
 	node.setRuntimeState(state)
 }
 
@@ -41,6 +45,7 @@ func (node *Node) CopyEmbeddingIdentityFrom(source *Node) {
 // the queue identity through the storage commit; body/source acceptance belongs
 // to that same commit. All outcome publication uses its authoritative body.
 type EmbeddingAttempt struct {
+	vectorWorkOrigin   uint64
 	ProviderGeneration uint64
 	ClaimEpoch         uint64
 	BodyRevision       EmbeddingBodyRevision
@@ -51,8 +56,10 @@ type EmbeddingAttempt struct {
 	delivered          chan struct{}
 }
 
-func NewEmbeddingAttempt(generation, epoch uint64, revision EmbeddingBodyRevision, begin func() (func(), bool), publish func(*Node)) *EmbeddingAttempt {
-	return &EmbeddingAttempt{ProviderGeneration: generation, ClaimEpoch: epoch, BodyRevision: revision, begin: begin, publish: publish, delivered: make(chan struct{})}
+// NewEmbeddingAttempt binds one claim to the admission its worker selected;
+// the origin is required and is transported unchanged.
+func NewEmbeddingAttempt(origin, generation, epoch uint64, revision EmbeddingBodyRevision, begin func() (func(), bool), publish func(*Node)) *EmbeddingAttempt {
+	return &EmbeddingAttempt{vectorWorkOrigin: origin, ProviderGeneration: generation, ClaimEpoch: epoch, BodyRevision: revision, begin: begin, publish: publish, delivered: make(chan struct{})}
 }
 
 // commitEmbeddingOutcome is the single acceptance/publication boundary for

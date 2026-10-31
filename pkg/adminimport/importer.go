@@ -98,6 +98,7 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Err }
 
 func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Report, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	opts = opts.withDefaults()
 	report := Report{DatabaseName: opts.DatabaseName, StartedAt: time.Now(), Status: "failed"}
 	if opts.DatabaseName == "" {
@@ -974,7 +975,7 @@ func applySchemaDefinition(engine storage.Engine, path string) error {
 		return err
 	}
 	var def storage.SchemaDefinition
-	if err := json.Unmarshal(contents, &def); err != nil {
+	if err := storage.DecodeSchemaDefinition(contents, &def); err != nil {
 		return err
 	}
 	schema := engine.GetSchema()

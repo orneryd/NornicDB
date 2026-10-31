@@ -30,7 +30,7 @@ func TestPendingCandidatesStaleMarkerCleanupSpansBatches(t *testing.T) {
 				for start := 0; start < stale; start += 5000 {
 					require.NoError(t, e.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 						for i := start; i < start+5000; i++ {
-							if err := e.setPendingEmbeddingInTxn(txn, staleID(i)); err != nil {
+							if err := e.recoverPendingEmbeddingInTxn(txn, staleID(i)); err != nil {
 								return err
 							}
 						}

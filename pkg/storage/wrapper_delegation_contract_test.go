@@ -106,9 +106,9 @@ func (s *delegationSpyEngine) UpdateNode(updateRequest NodeUpdateRequest) error 
 	return s.MemoryEngine.UpdateNode(updateRequest)
 }
 
-func (s *delegationSpyEngine) DeleteNode(id NodeID) error {
+func (s *delegationSpyEngine) DeleteNode(id NodeID, origins ...uint64) error {
 	s.record("DeleteNode")
-	return s.MemoryEngine.DeleteNode(id)
+	return s.MemoryEngine.DeleteNode(id, origins...)
 }
 
 func (s *delegationSpyEngine) CreateEdge(edge *Edge) error {
@@ -126,9 +126,9 @@ func (s *delegationSpyEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error 
 	return s.MemoryEngine.UpdateEdge(updateRequest)
 }
 
-func (s *delegationSpyEngine) DeleteEdge(id EdgeID) error {
+func (s *delegationSpyEngine) DeleteEdge(id EdgeID, origins ...uint64) error {
 	s.record("DeleteEdge")
-	return s.MemoryEngine.DeleteEdge(id)
+	return s.MemoryEngine.DeleteEdge(id, origins...)
 }
 
 func (s *delegationSpyEngine) GetNodesByLabel(label string) ([]*Node, error) {
@@ -236,14 +236,14 @@ func (s *delegationSpyEngine) BulkCreateEdges(edges []*Edge) error {
 	return s.MemoryEngine.BulkCreateEdges(edges)
 }
 
-func (s *delegationSpyEngine) BulkDeleteNodes(ids []NodeID) error {
+func (s *delegationSpyEngine) BulkDeleteNodes(ids []NodeID, origins ...uint64) error {
 	s.record("BulkDeleteNodes")
-	return s.MemoryEngine.BulkDeleteNodes(ids)
+	return s.MemoryEngine.BulkDeleteNodes(ids, origins...)
 }
 
-func (s *delegationSpyEngine) BulkDeleteEdges(ids []EdgeID) error {
+func (s *delegationSpyEngine) BulkDeleteEdges(ids []EdgeID, origins ...uint64) error {
 	s.record("BulkDeleteEdges")
-	return s.MemoryEngine.BulkDeleteEdges(ids)
+	return s.MemoryEngine.BulkDeleteEdges(ids, origins...)
 }
 
 func (s *delegationSpyEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {

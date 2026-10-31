@@ -167,4 +167,4 @@ type panickingEngine struct {
 	Engine
 }
 
-func (panickingEngine) DeleteNode(NodeID) error { panic("backing engine panic") }
+func (panickingEngine) DeleteNode(NodeID, ...uint64) error { panic("backing engine panic") }

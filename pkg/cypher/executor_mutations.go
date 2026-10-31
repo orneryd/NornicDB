@@ -129,7 +129,7 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 			result.Stats.NodesDeleted++
 			result.Stats.RelationshipsDeleted += edgesCount
 			deletedNodeIDs[nodeID] = struct{}{}
-			e.removeNodeFromSearch(nodeID)
+			e.removeNodeFromSearch(ctx, nodeID)
 		}
 	}
 

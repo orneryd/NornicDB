@@ -89,11 +89,11 @@ func (e *procedureIdentityFaultEngine) CreateNode(node *storage.Node) (storage.N
 	}
 	return e.Engine.CreateNode(node)
 }
-func (e *procedureIdentityFaultEngine) DeleteNode(id storage.NodeID) error {
+func (e *procedureIdentityFaultEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	if e.deleteErr != nil {
 		return e.deleteErr
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(id, origins...)
 }
 
 func TestProcedureCatalogMigrationFailuresPreserveRecord(t *testing.T) {
