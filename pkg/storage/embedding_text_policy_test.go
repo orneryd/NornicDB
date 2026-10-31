@@ -173,7 +173,7 @@ func TestTransactionUpdateEmbeddingStoragePolicy(t *testing.T) {
 				got, err = b.GetNode(node.ID)
 				require.NoError(t, err)
 				require.Equal(t, [][]float32{{3, 4}}, got.ChunkEmbeddings)
-				require.Nil(t, copyNodeForCaller(nil))
+				require.Nil(t, copyNode(nil))
 			}
 		})
 	}

@@ -377,7 +377,8 @@ func (b *BadgerEngine) loadEdgeForAdjacencyTombstoneInTxn(txn *badger.Txn, id Ed
 	if record.Tombstoned || record.Edge == nil {
 		return nil, ErrNotFound
 	}
-	return copyEdge(record.Edge), nil
+	// The record was decoded for this read: transfer it, no second copy.
+	return record.Edge, nil
 }
 
 // getEdgeAtInTxn resolves the edge's state at version in txn, through the
@@ -425,7 +426,8 @@ func (b *BadgerEngine) getEdgeAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVe
 	if record.Tombstoned || record.Edge == nil {
 		return nil, ErrNotFound
 	}
-	edge := copyEdge(record.Edge)
+	// The record was decoded for this read: transfer it, no second copy.
+	edge := record.Edge
 	if b.filterEntityByDecay(v, edge, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -1140,7 +1142,8 @@ func (b *BadgerEngine) readLatestEntity(id string, isEdge bool, v readVisibility
 			if record.Tombstoned || record.Edge == nil {
 				return ErrNotFound
 			}
-			edge = copyEdge(record.Edge)
+			// The record was decoded for this read: transfer it, no second copy.
+			edge = record.Edge
 			entity = edge
 		} else {
 			record, _, err := b.loadNodeMVCCRecordAtOrBeforeInTxn(txn, NodeID(id), head.Version)
@@ -1150,7 +1153,8 @@ func (b *BadgerEngine) readLatestEntity(id string, isEdge bool, v readVisibility
 			if record.Tombstoned || record.Node == nil {
 				return ErrNotFound
 			}
-			node = copyNode(record.Node)
+			// The record was decoded for this read: transfer it, no second copy.
+			node = record.Node
 			entity = node
 		}
 		if b.filterEntityByDecay(v, entity, DecayScoringTime()) {
@@ -1269,11 +1273,8 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 			if record.Tombstoned || record.Node == nil {
 				continue
 			}
-			if opts.QueryNodes && !opts.WithEmbeddings {
-				body = copyNodeForCaller(record.Node)
-			} else {
-				body = copyNode(record.Node)
-			}
+			// The record was decoded for this read: transfer it, no second copy.
+			body = record.Node
 		}
 		if body == nil {
 			continue
@@ -1371,7 +1372,8 @@ func (b *BadgerEngine) iterateEdgesAtInTxn(txn *badger.Txn, version MVCCVersion,
 			if record.Tombstoned || record.Edge == nil {
 				continue
 			}
-			body = copyEdge(record.Edge)
+			// The record was decoded for this read: transfer it, no second copy.
+			body = record.Edge
 		}
 		if body == nil {
 			continue

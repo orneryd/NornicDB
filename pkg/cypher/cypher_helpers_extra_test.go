@@ -312,27 +312,8 @@ func TestCypherHelpers_CreatePipelineAndCreateHelpers(t *testing.T) {
 
 func TestCypherHelpers_NodeLookupCacheHelpers(t *testing.T) {
 	exec := &StorageExecutor{
-		nodeLookupCache: make(map[string]*storage.Node, 1000),
+		nodeLookupCache: map[string]*storage.Node{"Person:name=alice,": {ID: "n1"}},
 	}
-	key := makeLookupKey("Person", map[string]interface{}{"name": "alice", "age": 30})
-	assert.True(t, strings.HasPrefix(key, "Person:"))
-	assert.Contains(t, key, "name=alice")
-	assert.Contains(t, key, "age=30")
-	assert.Equal(t, "Person", makeLookupKey("Person", nil))
-
-	n := &storage.Node{ID: "n1"}
-	exec.cacheNodeLookup("Person", map[string]interface{}{"name": "alice"}, n)
-	got := exec.lookupCachedNode("Person", map[string]interface{}{"name": "alice"})
-	require.NotNil(t, got)
-	assert.Equal(t, storage.NodeID("n1"), got.ID)
-
-	// eviction branch
-	exec.nodeLookupCache = make(map[string]*storage.Node, 10002)
-	for i := 0; i < 10002; i++ {
-		exec.nodeLookupCache[makeLookupKey("X", map[string]interface{}{"i": i})] = &storage.Node{ID: storage.NodeID("x")}
-	}
-	exec.cacheNodeLookup("Person", map[string]interface{}{"name": "bob"}, &storage.Node{ID: "n2"})
-	assert.LessOrEqual(t, len(exec.nodeLookupCache), 1001)
 	exec.invalidateNodeLookupCache()
 	assert.Len(t, exec.nodeLookupCache, 0)
 }

@@ -138,6 +138,18 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 	if visit == nil {
 		return ErrInvalidData
 	}
+	return b.streamEdgeImagesByTypeInScope(ctx, scope, edgeType, v, func(image edgeImage) error {
+		return visit(deliverEdge(image))
+	}, body)
+}
+
+// streamEdgeImagesByTypeInScope is the edge type stream over images: committed
+// rows decoded for this read, buffered edges borrowed. It copies nothing; the
+// consumer delivers each edge it keeps, once (NOR-160).
+func (b *BadgerEngine) streamEdgeImagesByTypeInScope(ctx context.Context, scope, edgeType string, v readVisibility, visit func(edgeImage) error, body storedEdgeBodyVisitor) error {
+	if visit == nil {
+		return ErrInvalidData
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -151,7 +163,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 	// shadow committed rows for their IDs and are visited after the scan.
 	// An empty edgeType streams every edge, so it uses the whole-buffer
 	// edge overlay.
-	var overlay []*Edge
+	var overlay []edgeImage
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		if edgeType != "" {
@@ -171,7 +183,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 		if len(touched) > 0 && touched[edge.ID] {
 			return nil // the overlay shadows committed rows for this ID
 		}
-		return visit(edge)
+		return visit(decodedEdge(edge))
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		if edgeType == "" {
@@ -223,7 +235,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 		if !edgeIDInScope(e.ID, scope) {
 			continue
 		}
-		if err := visit(copyEdge(e)); err != nil {
+		if err := visit(e); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}

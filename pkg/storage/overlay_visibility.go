@@ -60,8 +60,8 @@ const (
 )
 
 type bufferedEntityResult struct {
-	nodes                        []*Node
-	edges                        []*Edge
+	nodes                        []nodeImage
+	edges                        []edgeImage
 	nodesTouched                 map[NodeID]bool
 	edgesTouched                 map[EdgeID]bool
 	suppressed                   map[EdgeID]struct{}
@@ -71,30 +71,33 @@ type bufferedEntityResult struct {
 // readBufferedEntities is the sole indexed-overlay capture/filter owner. The
 // caller holds w's read lock; touched IDs and deletion masks remain unfiltered
 // so hidden buffered bodies cannot reveal their older committed predecessors.
+// The visible images it returns are borrowed, never copied: published buffer
+// images are replaced, never changed in place, so a read may look at them
+// after the lock is released, and copies exactly what it delivers through the
+// read delivery owner (read_delivery.go, NOR-160).
 func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult) {
+	var nodes []*Node
+	var edges []*Edge
 	switch request.kind {
 	case bufferedNodes:
-		result.nodes, result.nodesTouched = w.allNodesOverlayLocked(request.prefix)
+		nodes, result.nodesTouched = w.allNodesOverlayLocked(request.prefix)
 	case bufferedLabel:
-		result.nodes, result.nodesTouched = w.labelOverlayLocked(request.label, request.prefix)
+		nodes, result.nodesTouched = w.labelOverlayLocked(request.label, request.prefix)
 	case bufferedKey:
-		result.nodes = w.keyCandidatesLocked(request.label, request.property, request.valueKey)
+		nodes = w.keyCandidatesLocked(request.label, request.property, request.valueKey)
 	case bufferedEdges:
-		result.edges, result.edgesTouched = w.allEdgesOverlayLocked(request.prefix)
+		edges, result.edgesTouched = w.allEdgesOverlayLocked(request.prefix)
 	case bufferedType:
-		result.edges, result.edgesTouched = w.typeOverlayLocked(request.edgeType, request.prefix)
+		edges, result.edgesTouched = w.typeOverlayLocked(request.edgeType, request.prefix)
 	case bufferedAdjacency:
-		result.edges, result.suppressed, result.sourceDeleted = w.edgeAdjacencyOverlayLocked(request.source, request.outgoing)
+		edges, result.suppressed, result.sourceDeleted = w.edgeAdjacencyOverlayLocked(request.source, request.outgoing)
 	case bufferedLiveAdjacency:
-		result.edges = w.liveAdjacencyLocked(request.source, request.outgoing)
+		edges = w.liveAdjacencyLocked(request.source, request.outgoing)
 	case bufferedBetween:
-		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted = w.edgesBetweenOverlayLocked(request.source, request.target)
+		edges, result.suppressed, result.sourceDeleted, result.targetDeleted = w.edgesBetweenOverlayLocked(request.source, request.target)
 	}
-	if request.kind <= bufferedKey {
-		result.nodes = visibleBufferedEntities(b, v, result.nodes)
-	} else {
-		result.edges = visibleBufferedEntities(b, v, result.edges)
-	}
+	result.nodes = borrowedNodes(visibleBufferedEntities(b, v, nodes))
+	result.edges = borrowedEdges(visibleBufferedEntities(b, v, edges))
 	return result
 }
 

@@ -58,16 +58,20 @@ func (tx *BadgerTransaction) removePendingEdgeLocked(id EdgeID) {
 	delete(tx.pendingEdges, id)
 }
 
-func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, id NodeID, include func(*Edge) bool) []*Edge {
+// mergePendingAdjacentEdgesLocked resolves the transaction's own writes over
+// the committed adjacency images before anything is delivered, then delivers
+// the chosen result once: superseded committed edges are never copied
+// (NOR-160).
+func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []edgeImage, id NodeID, include func(*Edge) bool) []*Edge {
 	if len(tx.pendingEdges) == 0 && len(tx.deletedEdges) == 0 {
-		return committed
+		return deliverEdges(committed)
 	}
 	pending := tx.pendingAdjacencyLocked(id)
-	// Committed adjacency is caller-owned. A rewrite shadows its former
-	// endpoints even when its new endpoints aren't in this node's index.
+	// A rewrite shadows its former endpoints even when its new endpoints
+	// aren't in this node's index.
 	result := committed[:0]
 	for _, edge := range committed {
-		if edge == nil {
+		if edge.Edge == nil {
 			continue
 		}
 		if _, gone := tx.deletedEdges[edge.ID]; gone {
@@ -76,14 +80,15 @@ func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, 
 		if _, rewritten := tx.pendingEdges[edge.ID]; rewritten {
 			continue
 		}
-		if include(edge) {
+		if include(edge.Edge) {
 			result = append(result, edge)
 		}
 	}
 	for _, edge := range pending {
 		if _, gone := tx.deletedEdges[edge.ID]; !gone && include(edge) {
-			result = append(result, copyEdge(edge))
+			// Retained by the transaction: delivered (copied) once.
+			result = append(result, borrowedEdge(edge))
 		}
 	}
-	return result
+	return deliverEdges(result)
 }

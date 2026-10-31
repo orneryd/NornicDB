@@ -64,12 +64,8 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	var node *Node
-	if vectors {
-		node = copyNode(record.Node)
-	} else {
-		node = copyNodeForCaller(record.Node)
-	}
+	// The record was decoded for this read: transfer it, no second copy.
+	node := record.Node
 	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -140,7 +136,8 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	node := projectCachedNodeForRead(record.Node, properties, true)
+	// The record was decoded for this read: transfer it, no second copy.
+	node := shapeNode(record.Node, properties, true, true)
 	if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -269,7 +266,8 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 				}
 			}
 			if matched {
-				if err := visit(projectCachedNodeForRead(node, properties, false, queryNodes)); err != nil {
+				// getNodeAtInTxn returned this read's own node: reshape in place.
+				if err := visit(shapeNode(node, properties, false, true)); err != nil {
 					return err
 				}
 			}
@@ -329,7 +327,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if queryNodes {
 				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterEntityByDecay(v, node, nowNanos) || !hasLabel(node.Labels, label) {
@@ -488,12 +486,13 @@ func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error 
 		return err
 	}
 
-	nodes, err := b.AllNodes()
+	// Delivered one at a time: a yield that stops leaves nothing copied.
+	nodes, err := b.allNodeImages()
 	if err != nil {
 		return err
 	}
 	for _, node := range nodes {
-		if err := yield(node); err != nil {
+		if err := yield(deliverNode(node, nil, false)); err != nil {
 			return err
 		}
 	}
@@ -505,12 +504,13 @@ func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error 
 		return err
 	}
 
-	edges, err := b.AllEdges()
+	// Delivered one at a time: a yield that stops leaves nothing copied.
+	edges, err := b.allEdgeImages(visibleRead)
 	if err != nil {
 		return err
 	}
 	for _, edge := range edges {
-		if err := yield(edge); err != nil {
+		if err := yield(deliverEdge(edge)); err != nil {
 			return err
 		}
 	}

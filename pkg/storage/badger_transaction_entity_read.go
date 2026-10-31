@@ -55,9 +55,6 @@ func cloneTransactionNode(node *Node, policy transactionNodeRead) *Node {
 	if policy.projected {
 		return projectCachedNodeForRead(node, policy.properties, true)
 	}
-	if !policy.vectors {
-		return copyNodeForCaller(node)
-	}
 	return copyNode(node)
 }
 func loadTransactionNode(tx *BadgerTransaction, id NodeID, policy transactionNodeRead) (*Node, error) {
