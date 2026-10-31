@@ -780,20 +780,29 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if fn == nil {
 		return ErrInvalidData
 	}
+	return b.streamNodeImagesWithOptions(ctx, opts, func(image nodeImage) error {
+		return fn(deliverNode(image, opts.Projection, opts.StripEmbeddings))
+	})
+}
+
+// streamNodeImagesWithOptions is StreamNodesWithOptions over images: committed
+// rows decoded (and shaped) for this read, cache and buffered nodes borrowed.
+// It copies nothing; the consumer delivers each node it keeps, once.
+func (b *BadgerEngine) streamNodeImagesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(nodeImage) error) error {
+	if fn == nil {
+		return ErrInvalidData
+	}
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
-		visit := func(node *Node) error {
+		visit := func(image nodeImage) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if opts.StripEmbeddings {
-				node = copyNodeWithoutEmbeddings(node)
-			}
-			return fn(node)
+			return fn(image)
 		}
-		err := b.streamNodesByLabelProjectedInScope(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamLabelNodeImages(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -801,7 +810,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	}
 	// Write-behind overlay: acknowledged-but-unflushed nodes shadow
 	// committed rows for their IDs and are visited after the scan.
-	var overlay []*Node
+	var overlay []nodeImage
 	var touched map[NodeID]bool
 	v := storedRead
 	if opts.ApplyDecayFilter {
@@ -824,7 +833,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if len(touched) > 0 && touched[node.ID] {
 			return nil // the write-behind overlay shadows this committed row
 		}
-		err := fn(node)
+		err := fn(decodedNode(node))
 		if err == ErrIterationStopped {
 			stopped = true
 		}
@@ -843,8 +852,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if !inScope(node.ID) {
 			continue
 		}
-		projected := opts.copyResidentNode(node)
-		if err := fn(projected); err != nil {
+		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}
@@ -904,7 +912,8 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 			return nil
 		}
 		if opts.StripEmbeddings {
-			node = copyNodeWithoutEmbeddings(node)
+			// The decoded or cache-copied node is already the caller's.
+			node = shapeNode(node, nil, true, true)
 		}
 		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
@@ -986,7 +995,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	}
 	// Write-behind overlay: acknowledged-but-unflushed edges shadow
 	// committed rows for their IDs and are visited after the scan.
-	var overlay []*Edge
+	var overlay []edgeImage
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
@@ -1054,7 +1063,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		return nil
 	}
 	for _, edge := range overlay {
-		if err := fn(copyEdge(edge)); err != nil {
+		if err := fn(deliverEdge(edge)); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}
@@ -1078,7 +1087,8 @@ func (b *BadgerEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn f
 			return nil
 		}
 		err := fn(chunk)
-		chunk = chunk[:0]
+		// A delivered chunk is the caller's; start the next one in new memory.
+		chunk = make([]*Node, 0, chunkSize)
 		stopped = err == ErrIterationStopped
 		return err
 	})

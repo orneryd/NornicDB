@@ -8,7 +8,8 @@ import (
 
 // Publication gives the cache its own result wrapper and visible outer row
 // window (#1511). A first-execution pointer is therefore not a hit oracle.
-// Check actual lookups and retain identity assertions for successive warm hits.
+// Check actual lookups. Every hit is a caller-owned copy (NOR-160), so warm
+// hits are equal but never the same result.
 func requireOwnedResultCacheHit(t *testing.T, exec *StorageExecutor, first *ExecuteResult, run func() (*ExecuteResult, error)) *ExecuteResult {
 	t.Helper()
 	hits, misses, _, _, _ := exec.cache.Stats()
@@ -28,6 +29,7 @@ func requireOwnedResultCacheHit(t *testing.T, exec *StorageExecutor, first *Exec
 	warmHits, warmMisses, _, _, _ := exec.cache.Stats()
 	require.Equal(t, afterHits+1, warmHits)
 	require.Equal(t, afterMisses, warmMisses)
-	require.Same(t, second, third, "successive warm hits reuse the published result")
+	require.Equal(t, second.Rows, third.Rows)
+	require.NotSame(t, second, third, "each warm hit is the caller's own copy")
 	return second
 }

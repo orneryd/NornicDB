@@ -75,17 +75,12 @@ func (b *BadgerEngine) cacheStoreNode(node *Node, source uint64) {
 }
 
 // cacheFillNode caches node as read by a read that captured gen before it
-// read; a write since then means node may be stale, and it isn't cached.
-// The read owns node, so it copies before taking either cache admission lock.
+// read; a write since then means node may be stale, and it isn't cached. The
+// durable floor rejects a fill older than a write's revocation; admission is
+// decided before the image is copied.
 func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheMode, source uint64) {
 	if node == nil {
 		return
-	}
-	var cached *Node
-	if mode == nodeReadCacheQuery {
-		cached = copyNodeForCaller(node)
-	} else {
-		cached = copyNode(node)
 	}
 	b.durableCaches.mu.Lock()
 	defer b.durableCaches.mu.Unlock()
@@ -99,12 +94,13 @@ func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheM
 	}
 	if mode == nodeReadCacheQuery {
 		if _, full := b.nodeCache[node.ID]; !full {
-			b.putNodeLocked(cached, nodeReadCacheQuery)
+			// The cache keeps its own image; every exit copies it again.
+			b.putNodeLocked(copyNode(node), nodeReadCacheQuery)
 		}
 		b.nodeCacheMu.Unlock()
 		return
 	}
-	b.putNodeLocked(cached, nodeReadCacheFull)
+	b.putNodeLocked(copyNode(node), nodeReadCacheFull)
 	b.nodeCacheMu.Unlock()
 	b.cacheDeleteNode(node.ID, nodeCacheBodyOnly)
 }
@@ -139,10 +135,13 @@ func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
 	if !ok {
 		return nil, false
 	}
-	return copyNodeForCaller(cached), true
+	return copyNode(cached), true
 }
 
-func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properties []string, access nodeBodyAccess) (*Node, bool) {
+// cacheLoadNodeBody materializes a cached body in the requested shape. keep,
+// when set, decides on the borrowed body first: a body it rejects is a hit
+// that returns nil without any copy (NOR-160).
+func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properties []string, keep ...func(*Node) bool) (*Node, bool) {
 	if id == "" {
 		return nil, false
 	}
@@ -160,10 +159,11 @@ func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properti
 		return nil, false
 	}
 	entry.referenced.Store(true)
-	node := entry.node
-	if access != nodeBodyBorrowed {
-		node = projectCachedNodeForRead(node, properties, true)
+	if len(keep) > 0 && keep[0] != nil && !keep[0](entry.node) {
+		b.nodeBodyCacheMu.RUnlock()
+		return nil, true
 	}
+	node := shapeNode(entry.node, properties, true, false)
 	b.nodeBodyCacheMu.RUnlock()
 	return node, true
 }
@@ -250,42 +250,57 @@ func estimateEntityPropertyBytes(properties map[string]interface{}) int64 {
 	return bytes
 }
 
-// cacheLoadEdge returns the cached edge pointer if present.
-//
-// The pointer is shared with the cache and any other caller that took a
-// hit since the last write. Callers MUST treat the returned edge as
-// immutable; any mutation must clone via CopyEdge first. The cached body
-// is replaced wholesale on UpdateEdge / CreateEdge and dropped on
-// DeleteEdge, so a stable read keeps observing the value at the moment
-// of the cache hit even if a concurrent writer races.
-//
-// This is the hot path for BFS traversals (shortestPath, variable-length
-// MATCH). Profiling showed a per-hit copyEdge was ~33% of the warm
-// shortestPath benchmark. None of the current Get*Edges callers mutate
-// the returned edges, so sharing is correct.
-func (b *BadgerEngine) cacheLoadEdge(id EdgeID) (*Edge, bool) {
-	b.edgeCacheMu.RLock()
-	cached, ok := b.edgeCache[id]
-	b.edgeCacheMu.RUnlock()
-	if !ok || cached == nil {
-		return nil, false
-	}
-	return cached, true
+// edgeCacheRead describes what a reader asks of the edge body cache.
+type edgeCacheRead struct {
+	// readTs, when set, accepts only a body whose source is inside that view.
+	readTs uint64
+	// version, when set, accepts only the body cached for that record
+	// version, so a pinned read never sees a later body.
+	version *uint64
+	// bufferExcluded: the caller holds the write-behind buffer and has left
+	// out every edge it buffers.
+	bufferExcluded bool
+	// match, when set, inspects the retained image; a hit it rejects returns
+	// a nil image and true.
+	match func(*Edge) bool
 }
 
-// cacheLoadEdgeForRead keeps the cache shortcut inside its source view. A
-// newer final image must never replace a body in an older captured transaction.
-func (b *BadgerEngine) cacheLoadEdgeForRead(id EdgeID, readTs uint64) (*Edge, bool) {
-	b.durableCaches.mu.Lock()
-	defer b.durableCaches.mu.Unlock()
+// cacheLoadEdge is the edge body cache's only exit and owns its one hit rule.
+// A hit is a borrowed image of the cached edge: the read copies it only when
+// it delivers it (read_delivery.go), so no adjacency, type, between or point
+// read copies a hit it then drops (NOR-160). Under write-behind the flusher
+// can cache a body newer than a reader's committed view, so an unpinned read
+// is answered only when it has excluded the buffered edges. match, when set,
+// decides on the image first; a hit it rejects returns a nil image and true.
+// Cached bodies are replaced wholesale and never changed in place, so the
+// image may be read after the lock is released.
+func (b *BadgerEngine) cacheLoadEdge(id EdgeID, read edgeCacheRead) (edgeImage, bool) {
+	if read.version == nil && !read.bufferExcluded && b.writeBehind != nil {
+		return edgeImage{}, false
+	}
+	if read.readTs != 0 {
+		b.durableCaches.mu.Lock()
+	}
 	b.edgeCacheMu.RLock()
-	defer b.edgeCacheMu.RUnlock()
-	version := b.edgeCacheSources[id]
-	edge := b.edgeCache[id]
-	// Every installed image already passed its source floor, and durability
-	// removes affected entries before publication. A coarsened fill floor
-	// must not reject an unrelated entry that remains valid in this view.
-	return edge, edge != nil && version != 0 && version <= readTs
+	cached, ok := b.edgeCache[id]
+	if ok && read.version != nil && b.edgeCacheVersions[id] != *read.version {
+		ok = false
+	}
+	if ok && read.readTs != 0 {
+		source := b.edgeCacheSources[id]
+		ok = source != 0 && source <= read.readTs
+	}
+	b.edgeCacheMu.RUnlock()
+	if read.readTs != 0 {
+		b.durableCaches.mu.Unlock()
+	}
+	if !ok || cached == nil {
+		return edgeImage{}, false
+	}
+	if read.match != nil && !read.match(cached) {
+		return edgeImage{}, true
+	}
+	return borrowedEdge(cached), true
 }
 
 // cacheStoreEdge inserts edge into the per-engine edge body cache as written

@@ -1,3 +1,4 @@
+// Author: Codex, NOR-160 snapshot read ownership correction, 2026-10-26.
 package cypher
 
 import (

@@ -7,6 +7,8 @@ package trigger
 import (
 	"fmt"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 )
 
 // Trigger represents a database trigger.
@@ -36,7 +38,7 @@ func Add(name, statement string, selector map[string]interface{}) error {
 	triggers[name] = &Trigger{
 		Name:      name,
 		Statement: statement,
-		Selector:  selector,
+		Selector:  callerowned.Map(selector),
 		Enabled:   true,
 		Phase:     "after",
 	}
@@ -77,7 +79,8 @@ func RemoveAll() error {
 	return nil
 }
 
-// List lists all triggers.
+// List lists caller-owned copies of all triggers (pkg/callerowned); the
+// registry keeps its own images, so a caller cannot change a definition.
 //
 // Example:
 //
@@ -86,12 +89,11 @@ func List() []*Trigger {
 	mu.RLock()
 	defer mu.RUnlock()
 
-	result := make([]*Trigger, 0, len(triggers))
+	registered := make([]*Trigger, 0, len(triggers))
 	for _, trigger := range triggers {
-		result = append(result, trigger)
+		registered = append(registered, trigger)
 	}
-
-	return result
+	return callerowned.Each(registered, callerowned.Of[*Trigger])
 }
 
 // Show shows a specific trigger.
@@ -108,7 +110,7 @@ func Show(name string) (*Trigger, error) {
 		return nil, fmt.Errorf("trigger not found: %s", name)
 	}
 
-	return trigger, nil
+	return callerowned.Of(trigger), nil
 }
 
 // Pause pauses a trigger.
@@ -381,7 +383,8 @@ func Import(triggerDefs []*Trigger) error {
 	defer mu.Unlock()
 
 	for _, trigger := range triggerDefs {
-		triggers[trigger.Name] = trigger
+		// The registry keeps its own image of each imported definition.
+		triggers[trigger.Name] = callerowned.Of(trigger)
 	}
 
 	return nil

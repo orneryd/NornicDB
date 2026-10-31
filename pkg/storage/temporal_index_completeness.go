@@ -264,7 +264,7 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	if !ok {
 		return nil, false, nil
 	}
-	var overlay []*Node
+	var overlay []nodeImage
 	var touched map[NodeID]bool
 	err = b.withReadView(func(w *WriteBehindBuffer) {
 		pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
@@ -275,7 +275,7 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	})
 	for _, n := range overlay {
 		if namespace == "" || nodeIDInScope(n.ID, namespace+":") {
-			nodes = append(nodes, copyNode(n))
+			nodes = append(nodes, deliverNode(n, nil, false))
 		}
 	}
 	return nodes, true, err

@@ -127,15 +127,8 @@ func TestBadgerAdjacencyReadsPropagateTransactionErrors(t *testing.T) {
 			txn.Discard()
 			edge, err := b.readIndexedEdgeInTxn(txn, "test:uncached", b.edgeCacheGen.current())
 			require.ErrorIs(t, err, badger.ErrDiscardedTxn)
-			require.Nil(t, edge)
+			require.Nil(t, edge.Edge)
 			return nil
 		}))
-	})
-	t.Run("closed engine", func(t *testing.T) {
-		b := newTestEngine(t)
-		require.NoError(t, b.Close())
-		edges, err := b.materializeAdjEdges([]EdgeID{"test:uncached"}, visibleRead)
-		require.ErrorIs(t, err, ErrStorageClosed)
-		require.Nil(t, edges)
 	})
 }

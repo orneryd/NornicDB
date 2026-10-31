@@ -184,6 +184,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatch, including dynamic graph selections and execution without a grant
   resolver; preserve read-only alias reads and writable-alias writes.
 
+- Reduce repeated relationship-read work in explicit transactions by reusing
+  their bounded committed-snapshot images and avoiding a second copy of private
+  relationship properties during namespace conversion. Preserve canonical
+  visibility misses when considering legacy node fallback. Give callers independent
+  nested properties, metadata and resident vectors on every retained-image read;
+  preserve full embeddings for a nil projection. (Author: Codex; NOR-160.)
+
 - Keep typed relationship counts scoped through WAL, tracing, replication and
   managed database views. Journal catalog DROP intent before deleting data;
   retry or reopen completes interrupted cleanup without reopening an empty

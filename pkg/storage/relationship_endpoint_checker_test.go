@@ -1,3 +1,4 @@
+// Author: Codex, NOR-160 snapshot image quality adaptation, 2026-10-26.
 package storage
 
 import (
@@ -136,7 +137,7 @@ func TestBadgerTransactionRelationshipEndpointVisible(t *testing.T) {
 	check("", false, false)
 
 	// The snapshot's prefix-scan cache answers for the nodes it holds.
-	tx.snapshotPrefixNodeByID = map[NodeID]*Node{"ns:cached": {ID: "ns:cached"}}
+	tx.snapshotPrefixNodeByID = map[NodeID]snapshotNodeImage{"ns:cached": {node: &Node{ID: "ns:cached"}, hydration: nodeItemFullEmbeddings}}
 	check("ns:cached", true, true)
 	tx.snapshotPrefixNodeByID = nil
 
