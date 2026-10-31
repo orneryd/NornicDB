@@ -9,12 +9,13 @@ import (
 )
 
 func (b *BadgerEngine) migrateV2ToV3() error {
-	start := []byte{prefixEdge}
-	for {
+	if err := drivePages([]byte{prefixEdge}, func(start []byte) ([]*Edge, []byte, bool, error) {
 		edges, lastScanned, reachedEnd, err := collectMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](b, context.Background(), start, mvccRebuildScanBatchSize)
 		if err != nil {
-			return fmt.Errorf("scan edges: %w", err)
+			return nil, nil, false, fmt.Errorf("scan edges: %w", err)
 		}
+		return edges, lastScanned, reachedEnd, nil
+	}, func(edges []*Edge) error {
 		if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for _, edge := range edges {
 				head, err := b.loadEdgeMVCCHeadInTxn(txn, edge.ID)
@@ -35,10 +36,9 @@ func (b *BadgerEngine) migrateV2ToV3() error {
 		}); err != nil {
 			return fmt.Errorf("repair edge adjacency: %w", err)
 		}
-		if reachedEnd {
-			break
-		}
-		start = nextScanStart(lastScanned)
+		return nil
+	}); err != nil {
+		return err
 	}
 	if err := b.repairArchivedEdgeAdjacency(); err != nil {
 		return fmt.Errorf("repair archived edge adjacency: %w", err)
@@ -55,8 +55,7 @@ type archivedEdgeAdjacency struct {
 }
 
 func (b *BadgerEngine) repairArchivedEdgeAdjacency() error {
-	start := []byte{prefixMVCCEdge}
-	for {
+	return drivePages([]byte{prefixMVCCEdge}, func(start []byte) ([]archivedEdgeAdjacency, []byte, bool, error) {
 		batch := make([]archivedEdgeAdjacency, 0, mvccRebuildScanBatchSize)
 		var lastKey []byte
 		reachedEnd := true
@@ -99,26 +98,17 @@ func (b *BadgerEngine) repairArchivedEdgeAdjacency() error {
 			}
 			return nil
 		})
-		if err != nil {
-			return err
-		}
-		if len(batch) > 0 {
-			if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
-				for _, record := range batch {
-					if err := b.ensureEdgeAdjacencyAtHeadInTxn(txn, record.edge, record.version); err != nil {
-						return err
-					}
+		return batch, lastKey, reachedEnd, err
+	}, func(batch []archivedEdgeAdjacency) error {
+		return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+			for _, record := range batch {
+				if err := b.ensureEdgeAdjacencyAtHeadInTxn(txn, record.edge, record.version); err != nil {
+					return err
 				}
-				return nil
-			}); err != nil {
-				return err
 			}
-		}
-		if reachedEnd {
 			return nil
-		}
-		start = nextScanStart(lastKey)
-	}
+		})
+	})
 }
 
 func (b *BadgerEngine) ensureEdgeAdjacencyAtHeadInTxn(txn *badger.Txn, edge *Edge, version MVCCVersion) error {

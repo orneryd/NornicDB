@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -437,7 +438,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 			ids = append(ids, entry.id)
 			positions[entry.id] = index
 		}
-		if err := readNodeRecordsInOnePass(txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
+		if err := b.readNodeRecordsInOnePass(txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
 			index := positions[nodeID]
 			pending[index].node, pending[index].err = readItem(nodeID, item)
 			// Report record errors in visit order, so an early stop does not
@@ -544,55 +545,34 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 		pendingNodes := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedNodes})
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
-	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		sourceTs = txn.ReadTs()
 		nodes = nil
 		loaded = nil
-		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			// Extract nodeID from key (skip prefix byte)
-			key := it.Item().Key()
-			if len(key) <= 1 {
-				continue
-			}
-			nodeID := NodeID(key[1:])
-			if len(touched) > 0 && touched[nodeID] {
-				continue // the write-behind overlay shadows committed rows
-			}
-
-			b.nodeCacheMu.RLock()
-			if cached, ok := b.nodeCache[nodeID]; ok && current {
-				b.nodeCacheMu.RUnlock()
-				nodeCopy := copyNode(cached)
-				if b.filterEntityByDecay(visibleRead, nodeCopy, nowNanos) {
-					continue
+		rows := nodeRowScan{
+			scope:      allRows(),
+			overlay:    overlayReplaces(touched),
+			decode:     decodeErrorsFail,
+			visibility: scanVisible,
+			fullItem:   true,
+			cachedNode: func(id NodeID) *Node {
+				if !current {
+					return nil
 				}
-				nodes = append(nodes, nodeCopy)
-				continue
-			}
-			b.nodeCacheMu.RUnlock()
-
-			var node *Node
-			var readErr error
-			node, readErr = b.readNodeItemInTxn(txn, it.Item(), nodeID, nodeItemFullEmbeddings)
-			if readErr != nil {
-				return readErr
-			}
-
-			if b.filterEntityByDecay(visibleRead, node, nowNanos) {
-				continue
-			}
-
-			loaded = append(loaded, node)
-			nodes = append(nodes, node)
+				b.nodeCacheMu.RLock()
+				defer b.nodeCacheMu.RUnlock()
+				if cached, ok := b.nodeCache[id]; ok {
+					return copyNode(cached)
+				}
+				return nil
+			},
+			decoded: func(node *Node) { loaded = append(loaded, node) },
 		}
-
-		return nil
+		return b.streamNodesWithOptionsInTxn(context.Background(), txn, rows, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+			nodes = append(nodes, node)
+			return nil
+		})
 	}, readViewOptions{current: &current})
 
 	if err != nil {
@@ -624,38 +604,13 @@ func (b *BadgerEngine) allEdges(v readVisibility) ([]*Edge, error) {
 		pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges})
 		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
-	nowNanos := DecayScoringTime()
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
-		prefix := []byte{prefixEdge}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().Key()
-			var edgeID EdgeID
-			if len(key) > 1 {
-				edgeID = EdgeID(key[1:])
-			}
-			if len(touched) > 0 && touched[edgeID] {
-				continue // the write-behind overlay shadows committed rows
-			}
-			var edge *Edge
-			if err := it.Item().Value(func(val []byte) error {
-				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
-				return decodeErr
-			}); err != nil {
-				return err
-			}
-
-			if b.filterEntityByDecay(v, edge, nowNanos) {
-				continue
-			}
-
+		edges = edges[:0]
+		_, err := b.scanEdgeRows(context.Background(), txn, edgeRowScan{scope: allRows(), overlay: overlayReplaces(touched), decode: decodeErrorsFail, visibility: visibilityOf(v)}, func(edge *Edge) error {
 			edges = append(edges, edge)
-		}
-
-		return nil
+			return nil
+		})
+		return err
 	})
 
 	if err != nil {

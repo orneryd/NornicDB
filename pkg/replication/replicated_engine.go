@@ -1,3 +1,4 @@
+// Author: Codex implementation lane, 2026-10-27 (NOR-148 snapshot reader contract).
 package replication
 
 import (
@@ -169,6 +170,8 @@ func (r *ReplicatedEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSn
 	return storage.OpenReadSnapshot(ctx, r.Engine)
 }
 
+func (r *ReplicatedEngine) OwnsSnapshotReader(issued storage.Engine) bool { return issued == r }
+
 var _ storage.ReadSnapshotter = (*ReplicatedEngine)(nil)
 var _ storage.EventSubscriber = (*ReplicatedEngine)(nil)
 
@@ -179,6 +182,17 @@ func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error
 		return storage.ErrStorageClosed
 	}
 	return storage.SubscribeEvents(e.Engine, handlers)
+}
+
+// EventViewInner returns the local storage chain: reads are served from it
+// and it publishes the events of leader and follower writes alike.
+func (e *ReplicatedEngine) EventViewInner() storage.Engine { return e.Engine }
+
+var _ storage.EventViewForwarder = (*ReplicatedEngine)(nil)
+
+// EventNotificationsSettled forwards the local storage chain's report.
+func (e *ReplicatedEngine) EventNotificationsSettled() bool {
+	return storage.EventNotificationsSettled(e.Engine)
 }
 
 // applyEntityCommand keeps native direct/bulk wire kinds and their producer policy.

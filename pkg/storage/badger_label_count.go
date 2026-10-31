@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -131,7 +132,13 @@ func decodeDerivedCount(val []byte) (int64, error) {
 // applyCountDeltas applies one batch of derived count deltas in a single
 // metadata update, so the batch's count changes commit together.
 func applyCountDeltas[K comparable](b *BadgerEngine, deltas map[K]int64, adjust func(txn *badger.Txn, key K, delta int64) error) error {
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return applyCountDeltasIn(b, nil, deltas, adjust)
+}
+
+// applyCountDeltasIn is applyCountDeltas as a follow-up commit of the write
+// whose reader publication is parent.
+func applyCountDeltasIn[K comparable](b *BadgerEngine, parent *readerPublication, deltas map[K]int64, adjust func(txn *badger.Txn, key K, delta int64) error) error {
+	return b.withUpdate(updateRequest{parent: parent, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for key, delta := range deltas {
 			if err := adjust(txn, key, delta); err != nil {
 				return err
@@ -394,32 +401,21 @@ func (b *BadgerEngine) loadPersistedLabelCounts() (map[string]int64, error) {
 func (b *BadgerEngine) collectAuthoritativeLabelCounts() (map[string]int64, error) {
 	counts := make(map[string]int64)
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			if len(key) <= 1 {
-				continue
+		// Rows outside a database namespace are not counted and not decoded.
+		rows := nodeRowScan{scope: allRows(), overlay: noOverlay[NodeID](), decode: decodeErrorsFail, visibility: scanStored,
+			hooks: rowHooks[NodeID]{
+				before: skipOutsideNamespace[NodeID],
+				decodeFailure: func(id NodeID, err error) error {
+					return fmt.Errorf("decode node %q for label counts: %w", id, err)
+				},
+			}}
+		return b.streamNodesWithOptionsInTxn(context.Background(), txn, rows, StreamNodesOptions{}, func(node *Node) error {
+			namespace := namespaceForNodeID(node.ID)
+			for _, label := range uniqueLabels(node.Labels) {
+				counts[namespace+"\x00"+label]++
 			}
-			nodeID := NodeID(key[1:])
-			namespace, _, ok := ParseDatabasePrefix(string(nodeID))
-			if !ok {
-				continue
-			}
-			if err := it.Item().Value(func(val []byte) error {
-				node, decodeErr := b.decodeNode(namespace, val)
-				if decodeErr != nil {
-					return fmt.Errorf("decode node %q for label counts: %w", nodeID, decodeErr)
-				}
-				for _, label := range uniqueLabels(node.Labels) {
-					counts[namespace+"\x00"+label]++
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-		}
-		return nil
+			return nil
+		})
 	})
 	return counts, err
 }

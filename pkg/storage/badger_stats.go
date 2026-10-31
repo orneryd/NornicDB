@@ -1,4 +1,5 @@
 // Package storage provides storage engine implementations for NornicDB.
+// Author of pending-marker reader proof: Codex implementation lane, 2026-10-27.
 package storage
 
 import (
@@ -669,48 +670,34 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 
 	// Second pass: Add missing nodes to the index
 	_ = b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
-		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			// Extract nodeID from key (skip prefix byte)
-			key := item.Key()
-			if len(key) <= 1 {
-				continue
-			}
-			nodeID := NodeID(key[1:])
-			if isSystemNamespaceID(string(nodeID)) {
-				continue
-			}
-
-			item.Value(func(val []byte) error {
-				node, err := b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				if err != nil {
+		rows := nodeRowScan{
+			scope:      allRows(),
+			overlay:    noOverlay[NodeID](),
+			decode:     decodeErrorsSkip,
+			visibility: scanStored,
+			hooks: rowHooks[NodeID]{before: func(id NodeID) (bool, error) {
+				return isSystemNamespaceID(string(id)), nil
+			}},
+		}
+		return b.streamNodesWithOptionsInTxn(context.Background(), txn, rows, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+			// Skip internal nodes
+			for _, label := range node.Labels {
+				if len(label) > 0 && label[0] == '_' {
 					return nil
 				}
+			}
 
-				// Skip internal nodes
-				for _, label := range node.Labels {
-					if len(label) > 0 && label[0] == '_' {
-						return nil
-					}
+			// Check if needs embedding and not already in index
+			if b.shouldIndexPendingEmbed(node) {
+				// Check if already in pending index
+				_, err := txn.Get(pendingEmbedKey(node.ID))
+				if err == badger.ErrKeyNotFound {
+					b.setPendingEmbeddingInTxn(txn, node.ID)
+					added++
 				}
-
-				// Check if needs embedding and not already in index
-				if b.shouldIndexPendingEmbed(node) {
-					// Check if already in pending index
-					_, err := txn.Get(pendingEmbedKey(node.ID))
-					if err == badger.ErrKeyNotFound {
-						b.setPendingEmbeddingInTxn(txn, node.ID)
-						added++
-					}
-				}
-				return nil
-			})
-		}
-		return nil
+			}
+			return nil
+		})
 	})
 
 	// Always log if there were changes, or if we're cleaning up stale entries.
@@ -803,10 +790,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	// committed rows for their IDs and are visited after the scan.
 	var overlay []*Node
 	var touched map[NodeID]bool
-	v := storedRead
-	if opts.ApplyDecayFilter {
-		v = visibleRead
-	}
+	v := opts.readVisibility()
 	capture := func(w *WriteBehindBuffer) {
 		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
@@ -814,15 +798,12 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
 	}
-	// streamNodesWithOptionsInTxn already applies the projection, decay and
-	// strip filters; this wrapper only shadows rows the overlay replaces.
+	// streamNodesWithOptionsInTxn applies the overlay, projection, decay and
+	// strip settings; this wrapper only records a caller's stop.
 	stopped := false
 	emit := func(node *Node) error {
 		if node == nil {
 			return nil
-		}
-		if len(touched) > 0 && touched[node.ID] {
-			return nil // the write-behind overlay shadows this committed row
 		}
 		err := fn(node)
 		if err == ErrIterationStopped {
@@ -831,7 +812,8 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		return err
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
-		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
+		rows := nodeRowsOfOptions(opts, overlayReplaces(touched))
+		return b.streamNodesWithOptionsInTxn(ctx, txn, rows, opts, emit)
 	}, readViewOptions{scope: opts.Prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return err
@@ -856,9 +838,19 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 
 // streamNodesWithOptionsInTxn is StreamNodesWithOptions over one read
 // transaction: the engine's current view, or a transaction's pinned physical
-// snapshot (BadgerTransaction.StreamNodesWithOptions, #824). ErrIterationStopped
-// from fn ends the scan and is not returned.
-func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, opts StreamNodesOptions, fn func(node *Node) error) error {
+// snapshot (BadgerTransaction.StreamNodesWithOptions, #824). It is the one
+// committed node-row scan: rows carries its required settings, opts the
+// decode shape. ErrIterationStopped from fn ends the scan and is not returned.
+func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, rows nodeRowScan, opts StreamNodesOptions, fn func(node *Node) error) error {
+	return b.streamNodeRowsFrom(ctx, txn, nil, rows, opts, fn)
+}
+
+// streamNodeRowsFrom is streamNodesWithOptionsInTxn resumed at the full row
+// key start (a batched scan); a nil start scans from the first row.
+func (b *BadgerEngine) streamNodeRowsFrom(ctx context.Context, txn *badger.Txn, start []byte, rows nodeRowScan, opts StreamNodesOptions, fn func(node *Node) error) error {
+	if err := requireRowSettings(rows.scope, rows.overlay, rows.decode, rows.visibility); err != nil {
+		return err
+	}
 	nowNanos := DecayScoringTime()
 	// A projected scan decodes through one scan-scoped decoder (#857).
 	var projected *projectedNodeDecoder
@@ -866,20 +858,48 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 		projected = newProjectedNodeDecoder(b, opts)
 	}
 
-	visit := func(txn *badger.Txn, item *badger.Item) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
+	prefix := append([]byte{prefixNode}, rows.scope.prefix...)
+	_, err := scanRows(ctx, txn, prefix, start, func(item *badger.Item) error {
+		key := item.Key()
 		var node *Node
 		var err error
-		if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
+		fromCache := false
+		// The bare prefix row has no ID to choose it by. A scan that chooses no
+		// row by ID does not build one: it would reach the heap once per row.
+		if rows.choosesByID() && rowHasID(key) {
+			id := NodeID(key[1:])
+			if skip, err := skipRow(rows.overlay, rows.hooks, id); err != nil || skip {
+				return err
+			}
+			if rows.body != nil {
+				if handled, err := rowBodyHook(item, id, rows.body); err != nil || handled {
+					return err // ErrIterationStopped ends the scan
+				}
+			}
+			if rows.item != nil {
+				if handled, err := rows.item(id, item); err != nil || handled {
+					return err
+				}
+			}
+			if rows.cachedNode != nil {
+				if cached := rows.cachedNode(id); cached != nil {
+					node, fromCache = cached, true
+				}
+			}
+		}
+		if node != nil {
+			// A cached node needs no decode.
+		} else if rows.fullItem {
+			if !rowHasID(key) {
+				return nil
+			}
+			node, err = b.readNodeItemInTxn(txn, item, NodeID(key[1:]), nodeItemFullEmbeddings)
+		} else if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
 			node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata)
 		} else {
 			err = item.Value(func(val []byte) error {
 				key := item.Key()
-				if len(key) <= 1 {
+				if !rowHasID(key) {
 					return nil
 				}
 				if projected != nil {
@@ -898,10 +918,16 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 			})
 		}
 		if err != nil || node == nil {
+			if err != nil {
+				return rowDecodeFailure(rows.decode, rows.hooks, NodeID(key[1:]), err)
+			}
 			return nil // Skip invalid nodes
 		}
-		if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, node, nowNanos) {
+		if b.filterEntityByDecay(rows.visibility.read, node, nowNanos) {
 			return nil
+		}
+		if !fromCache && rows.decoded != nil {
+			rows.decoded(node)
 		}
 		if opts.StripEmbeddings {
 			node = copyNodeWithoutEmbeddings(node)
@@ -913,33 +939,8 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 			return err
 		}
 		return nil
-	}
-
-	if opts.Prefix == "" {
-		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			if err := visit(txn, it.Item()); err != nil {
-				if err == ErrIterationStopped {
-					return nil // Normal stop
-				}
-				return err
-			}
-		}
-		return nil
-	}
-	seekPrefix := append([]byte{prefixNode}, []byte(opts.Prefix)...)
-	it := txn.NewIterator(badgerPrefixIteratorOptions(seekPrefix))
-	defer it.Close()
-	for it.Seek(seekPrefix); it.ValidForPrefix(seekPrefix); it.Next() {
-		if err := visit(txn, it.Item()); err != nil {
-			if err == ErrIterationStopped {
-				return nil // Normal stop
-			}
-			return err
-		}
-	}
-	return nil
+	})
+	return err
 }
 
 // StreamNodes implements StreamingEngine.StreamNodes for memory-efficient iteration.
@@ -992,60 +993,11 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
 		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
-	nowNanos := DecayScoringTime()
 	stopped := false
-	emit := func(edge *Edge) error {
-		if edge == nil {
-			return nil
-		}
-		if len(touched) > 0 && touched[edge.ID] {
-			return nil // the write-behind overlay shadows this committed row
-		}
-		if b.filterEntityByDecay(visibleRead, edge, nowNanos) {
-			return nil
-		}
-		err := fn(edge)
-		if err == ErrIterationStopped {
-			stopped = true
-		}
-		return err
-	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
-		prefix := []byte{prefixEdge}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			// Check context cancellation
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			item := it.Item()
-			key := item.Key()
-			var edgeID EdgeID
-			if len(key) > 1 {
-				edgeID = EdgeID(key[1:])
-			}
-			var edge *Edge
-			err := item.Value(func(val []byte) error {
-				var decErr error
-				edge, decErr = b.decodeEdgeBodyByID(val, edgeID)
-				return decErr
-			})
-			if err != nil {
-				continue // Skip invalid edges
-			}
-			if err := emit(edge); err != nil {
-				if err == ErrIterationStopped {
-					return nil // Normal stop
-				}
-				return err
-			}
-		}
-		return nil
+		var err error
+		stopped, err = b.scanEdgeRows(ctx, txn, edgeRowScan{scope: allRows(), overlay: overlayReplaces(touched), decode: decodeErrorsSkip, visibility: scanVisible}, fn)
+		return err
 	})
 	if err != nil {
 		return err
@@ -1122,37 +1074,14 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 	// First, collect all node IDs that have embeddings
 	var nodeIDs []NodeID
 	err := b.withView(func(txn *badger.Txn) error {
-		keyPrefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			// Extract nodeID from key (skip prefix byte)
-			key := item.Key()
-			if len(key) <= 1 {
-				continue
+		// Invalid nodes are skipped; hidden ones are read too.
+		rows := nodeRowScan{scope: rowsWithPrefix(idPrefix), overlay: noOverlay[NodeID](), decode: decodeErrorsSkip, visibility: scanStored}
+		return b.streamNodesWithOptionsInTxn(context.Background(), txn, rows, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+			if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
+				nodeIDs = append(nodeIDs, node.ID)
 			}
-			nodeID := NodeID(key[1:])
-			if idPrefix != "" && !strings.HasPrefix(string(nodeID), idPrefix) {
-				continue
-			}
-
-			err := item.Value(func(val []byte) error {
-				node, err := b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				if err != nil {
-					return nil // Skip invalid nodes
-				}
-				if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
-					nodeIDs = append(nodeIDs, node.ID)
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+			return nil
+		})
 	})
 	if err != nil {
 		return 0, fmt.Errorf("error scanning nodes: %w", err)

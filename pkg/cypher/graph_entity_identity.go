@@ -435,3 +435,10 @@ func graphEntityLookupID(engine storage.Engine, value interface{}, domains ...gr
 func (v *graphIdentityStorage) SubscribeEvents(handlers storage.EventHandlers) error {
 	return storage.SubscribeEvents(v.Engine, handlers)
 }
+
+// EventNotificationsSettled forwards the underlying engine's report.
+func (v *graphIdentityStorage) EventNotificationsSettled() bool {
+	return storage.EventNotificationsSettled(v.Engine)
+}
+
+var _ storage.EventSubscriber = (*graphIdentityStorage)(nil)

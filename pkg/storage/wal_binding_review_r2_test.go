@@ -72,7 +72,7 @@ func TestReviewR2ConcurrentAllocation(t *testing.T) {
 		require.NoError(t, e)
 	}
 	for d := range drains {
-		require.NoError(t, dest.propKeyDict.persistTxnCounters(metadataBatches{db: dest.db, ctx: context.Background()}, d))
+		require.NoError(t, dest.propKeyDict.persistTxnCounters(metadataBatches{db: dest.db, ctx: context.Background(), p: standalonePublication}, d))
 	}
 	assertPropertyDictionaryBijection(t, dest)
 	for i := 0; i < 160; i++ {

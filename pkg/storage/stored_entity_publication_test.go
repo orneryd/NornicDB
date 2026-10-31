@@ -185,7 +185,7 @@ func TestStoredEntityInitializationDrainsEarlierPublication(t *testing.T) {
 	require.NoError(t, txn.Set(nodeKey(node.ID), data))
 	cw := b.newCommitWriter(context.Background(), b.db, txn)
 	cw.publishKeys = []any{node.ID}
-	ts, err := b.db.commitShared(context.Background(), txn, cw.publication())
+	ts, err := b.db.commitShared(context.Background(), txn, cw.pub, cw.publication())
 	require.NoError(t, err)
 	require.Equal(t, 0, count, "physical commit has not run its registered publication")
 	require.NoError(t, b.InitializeStoredEntityObserver("test", initialize, nil))

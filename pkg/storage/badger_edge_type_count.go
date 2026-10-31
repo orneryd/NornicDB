@@ -3,6 +3,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -266,48 +267,14 @@ func (b *BadgerEngine) collectAuthoritativeEdgeTypeCountsSnapshot() (*edgeTypeCo
 		endLabels:   make(map[namespaceEdgeTypeLabel]int64),
 	}
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEdge}))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			if len(key) <= 1 {
-				continue
-			}
-			edgeID := EdgeID(key[1:])
-			namespace, _, ok := ParseDatabasePrefix(string(edgeID))
-			if !ok {
-				continue
-			}
-			if err := it.Item().Value(func(value []byte) error {
-				edge, decodeErr := b.decodeEdgeBodyByID(value, edgeID)
-				if decodeErr != nil {
-					return nil // skip undecodable bodies (same as EdgeCount semantics)
-				}
-				edgeType := edge.Type
-				if edgeType == "" {
-					return nil
-				}
-				snap.types[namespaceEdgeType{namespace: namespace, edgeType: edgeType}]++
-				startLabels, startErr := b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
-				if startErr != nil {
-					return startErr
-				}
-				endLabels, endErr := b.readNodeLabelsIfPresentInTxn(txn, edge.EndNode)
-				if endErr != nil {
-					return endErr
-				}
-				for _, label := range uniqueLabels(startLabels) {
-					snap.startLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType}]++
-				}
-				for _, label := range uniqueLabels(endLabels) {
-					snap.endLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType}]++
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-		}
-		return nil
+		// Undecodable bodies are skipped (same as EdgeCount semantics); rows
+		// outside a database namespace are not counted and not decoded.
+		scan := edgeRowScan{scope: allRows(), overlay: noOverlay[EdgeID](), decode: decodeErrorsSkip, visibility: scanStored,
+			hooks: rowHooks[EdgeID]{before: skipOutsideNamespace[EdgeID]}}
+		_, err := b.scanEdgeRows(context.Background(), txn, scan, func(edge *Edge) error {
+			return b.countEdgeInSnapshot(txn, snap, edge)
+		})
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -491,6 +458,31 @@ func (b *BadgerEngine) rebuildAuthoritativeEdgeTypeCountsLocked() error {
 	return b.rebuildEdgeTypeCountsSnapshot(snap)
 }
 
+// countEdgeInSnapshot adds one relationship to the type tier and the positional
+// (label, type) tiers; a relationship without a type counts in none.
+func (b *BadgerEngine) countEdgeInSnapshot(txn *badger.Txn, snap *edgeTypeCountSnapshot, edge *Edge) error {
+	namespace := namespaceForEdgeID(edge.ID)
+	if edge.Type == "" {
+		return nil
+	}
+	snap.types[namespaceEdgeType{namespace: namespace, edgeType: edge.Type}]++
+	startLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
+	if err != nil {
+		return err
+	}
+	endLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edge.EndNode)
+	if err != nil {
+		return err
+	}
+	for _, label := range uniqueLabels(startLabels) {
+		snap.startLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edge.Type}]++
+	}
+	for _, label := range uniqueLabels(endLabels) {
+		snap.endLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edge.Type}]++
+	}
+	return nil
+}
+
 // collectEdgeTypeCountsByPrefix derives per-(namespace, type) counts for edges
 // whose IDs carry the given prefix, by decoding only the type field of each
 // edge body.
@@ -502,53 +494,23 @@ func (b *BadgerEngine) collectEdgeTypeCountsByPrefix(keyPrefix []byte) (map[name
 // collectEdgeTypeCountsByPrefixSnapshot derives the type tier plus the
 // positional (label, type) tiers for edges whose IDs carry the given prefix.
 func (b *BadgerEngine) collectEdgeTypeCountsByPrefixSnapshot(keyPrefix []byte) (map[namespaceEdgeType]int64, map[namespaceEdgeTypeLabel]int64, map[namespaceEdgeTypeLabel]int64, error) {
-	counts := make(map[namespaceEdgeType]int64)
-	startLabels := make(map[namespaceEdgeTypeLabel]int64)
-	endLabels := make(map[namespaceEdgeTypeLabel]int64)
+	snap := &edgeTypeCountSnapshot{
+		types:       make(map[namespaceEdgeType]int64),
+		startLabels: make(map[namespaceEdgeTypeLabel]int64),
+		endLabels:   make(map[namespaceEdgeTypeLabel]int64),
+	}
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
-		defer it.Close()
-		for it.Rewind(); it.ValidForPrefix(keyPrefix); it.Next() {
-			key := it.Item().Key()
-			if len(key) <= 1 {
-				continue
-			}
-			edgeID := EdgeID(key[1:])
-			namespace, _, ok := ParseDatabasePrefix(string(edgeID))
-			if !ok {
-				continue
-			}
-			if err := it.Item().Value(func(value []byte) error {
-				edge, decodeErr := b.decodeEdgeBodyByID(value, edgeID)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				if edge.Type == "" {
-					return nil
-				}
-				counts[namespaceEdgeType{namespace: namespace, edgeType: edge.Type}]++
-				startNodeLabels, labelErr := b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
-				if labelErr != nil {
-					return labelErr
-				}
-				endNodeLabels, labelErr := b.readNodeLabelsIfPresentInTxn(txn, edge.EndNode)
-				if labelErr != nil {
-					return labelErr
-				}
-				for _, label := range uniqueLabels(startNodeLabels) {
-					startLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edge.Type}]++
-				}
-				for _, label := range uniqueLabels(endNodeLabels) {
-					endLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edge.Type}]++
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-		}
-		return nil
+		// keyPrefix is a full row-key prefix: the relationship prefix byte, then
+		// the ID prefix. A decode error fails the count; rows outside a database
+		// namespace are not counted and not decoded.
+		scan := edgeRowScan{scope: rowsWithPrefix(string(keyPrefix[1:])), overlay: noOverlay[EdgeID](), decode: decodeErrorsFail, visibility: scanStored,
+			hooks: rowHooks[EdgeID]{before: skipOutsideNamespace[EdgeID]}}
+		_, err := b.scanEdgeRows(context.Background(), txn, scan, func(edge *Edge) error {
+			return b.countEdgeInSnapshot(txn, snap, edge)
+		})
+		return err
 	})
-	return counts, startLabels, endLabels, err
+	return snap.types, snap.startLabels, snap.endLabels, err
 }
 
 // ============================================================================
@@ -986,13 +948,14 @@ func (tx *BadgerTransaction) bufferNodeLabelChangeEdgeTypeDeltasLocked(nodeID No
 }
 
 // applyEdgeTypeLabelCountDeltasLocked persists transaction-local positional
-// counter deltas. The caller must hold edgeTypeCountWriteMu across both the
-// user-data commit and this metadata update.
-func (b *BadgerEngine) applyEdgeTypeLabelCountDeltasLocked(deltas map[edgeTypeLabelDelta]int64) error {
+// counter deltas in reader publication p, the write they belong to. The
+// caller must hold edgeTypeCountWriteMu across both the user-data commit and
+// this metadata update.
+func (b *BadgerEngine) applyEdgeTypeLabelCountDeltasLocked(p *readerPublication, deltas map[edgeTypeLabelDelta]int64) error {
 	if len(deltas) == 0 {
 		return nil
 	}
-	return applyCountDeltas(b, deltas, func(txn *badger.Txn, key edgeTypeLabelDelta, delta int64) error {
+	return applyCountDeltasIn(b, p, deltas, func(txn *badger.Txn, key edgeTypeLabelDelta, delta int64) error {
 		return b.adjustEdgeTypeLabelCountInTxn(txn, key.sub, key.namespace, key.label, key.edgeType, delta)
 	})
 }

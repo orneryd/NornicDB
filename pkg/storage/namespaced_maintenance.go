@@ -76,23 +76,16 @@ func (n *NamespacedEngine) NodeCountByLabelInNamespace(namespace, label string) 
 // Engines without IterateNodes fall back to a filtered AllNodes scan so the
 // capability still works over simpler inner engines.
 func (n *NamespacedEngine) IterateNodes(fn func(*Node) bool) error {
+	visit := n.userNodes(fn)
 	if iterator, ok := n.inner.(interface{ IterateNodes(func(*Node) bool) error }); ok {
-		return iterator.IterateNodes(func(node *Node) bool {
-			if node == nil || !n.hasNodePrefix(node.ID) {
-				return true
-			}
-			return fn(n.toUserNode(node, nodeUserView{}))
-		})
+		return iterator.IterateNodes(visit)
 	}
 	nodes, err := n.inner.AllNodes()
 	if err != nil {
 		return err
 	}
 	for _, node := range nodes {
-		if node == nil || !n.hasNodePrefix(node.ID) {
-			continue
-		}
-		if !fn(n.toUserNode(node, nodeUserView{})) {
+		if !visit(node) {
 			break
 		}
 	}

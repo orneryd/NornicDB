@@ -57,5 +57,5 @@ func (proof embeddingPublicationProof) matches(b *BadgerEngine, id NodeID, revis
 	o := proof.oracle
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return !o.readsHeld && o.failed == nil && o.published.Load() == proof.commitTs
+	return o.readableLocked() && o.published.Load() == proof.commitTs
 }

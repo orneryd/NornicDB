@@ -1496,7 +1496,11 @@ func rebuildMVCCHeadsFromVersionsOf[ID ~string, M mvccHeadRebuildKind[ID]](b *Ba
 		firstVersion = MVCCVersion{}
 	}
 
-	for {
+	apply := func(heads []mvccHeadWrite[ID]) error {
+		batch = batch[:0]
+		return applyMVCCHeadBatch[ID, M](b, ctx, heads)
+	}
+	if err := drivePages(start, func(start []byte) ([]mvccHeadWrite[ID], []byte, bool, error) {
 		lastScanned, reachedEnd, err := withViewMVCCVersionsFromKey[ID, M](b, start, mvccRebuildScanBatchSize, func(entityID ID, version MVCCVersion, tombstoned bool) error {
 			select {
 			case <-ctx.Done():
@@ -1514,26 +1518,16 @@ func rebuildMVCCHeadsFromVersionsOf[ID ~string, M mvccHeadRebuildKind[ID]](b *Ba
 			haveLast = true
 			return nil
 		})
-		if err != nil {
-			return err
-		}
-		if len(batch) > 0 {
-			if err := applyMVCCHeadBatch[ID, M](b, ctx, batch); err != nil {
-				return err
-			}
-			batch = batch[:0]
-		}
-		if reachedEnd {
-			flush()
-			if len(batch) > 0 {
-				if err := applyMVCCHeadBatch[ID, M](b, ctx, batch); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		start = nextScanStart(lastScanned)
+		return batch, lastScanned, reachedEnd, err
+	}, apply); err != nil {
+		return err
 	}
+	// The last entity's head has no following version to flush it.
+	flush()
+	if len(batch) > 0 {
+		return apply(batch)
+	}
+	return nil
 }
 
 func applyMVCCHeadBatch[ID ~string, M mvccHeadRebuildKind[ID]](b *BadgerEngine, ctx context.Context, batch []mvccHeadWrite[ID]) error {
@@ -1687,68 +1681,43 @@ func (edgeMVCCBootstrapKind) writeHead(b *BadgerEngine, txn *badger.Txn, id Edge
 
 func bootstrapMVCCFromCurrentState[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, ctx context.Context) error {
 	var kind M
-	start := []byte{kind.entityKeyspacePrefix()}
-	for {
-		batch, lastScanned, reachedEnd, err := collectMVCCBootstrapBatch[E, ID, M](b, ctx, start, mvccRebuildScanBatchSize)
-		if err != nil {
-			return err
-		}
-		if len(batch) > 0 {
-			if err := applyMVCCBootstrapBatch[E, ID, M](b, ctx, batch); err != nil {
-				return err
-			}
-		}
-		if reachedEnd {
-			return nil
-		}
-		start = nextScanStart(lastScanned)
-	}
+	return drivePages([]byte{kind.entityKeyspacePrefix()}, func(start []byte) ([]E, []byte, bool, error) {
+		return collectMVCCBootstrapBatch[E, ID, M](b, ctx, start, mvccRebuildScanBatchSize)
+	}, func(batch []E) error {
+		return applyMVCCBootstrapBatch[E, ID, M](b, ctx, batch)
+	})
 }
 
 func collectMVCCBootstrapBatch[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, ctx context.Context, start []byte, limit int) ([]E, []byte, bool, error) {
 	var kind M
-	prefix := []byte{kind.entityKeyspacePrefix()}
-	entities := make([]E, 0, util.SafePreallocCap(limit))
-	var lastScanned []byte
-	reachedEnd := true
+	page := newScanPage[E](limit)
 	err := b.withView(func(txn *badger.Txn) error {
-		opts := badgerIteratorOptions()
-		opts.Prefix = prefix
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Seek(start); it.ValidForPrefix(opts.Prefix); it.Next() {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+		_, err := scanRows(ctx, txn, []byte{kind.entityKeyspacePrefix()}, start, func(item *badger.Item) error {
+			key := item.KeyCopy(nil)
+			if !rowHasID(key) {
+				return nil
 			}
-			key := append([]byte(nil), it.Item().Key()...)
-			if len(key) <= 1 {
-				continue
-			}
-			id := ID(key[1:])
-			var entity E
-			var skip bool
-			if err := it.Item().Value(func(val []byte) error {
-				var decodeErr error
-				entity, skip, decodeErr = kind.decodeBody(b, txn, val, id)
-				return decodeErr
-			}); err != nil {
+			entity, skip, err := decodeMVCCBootstrapRow[E, ID, M](b, txn, item, ID(key[1:]))
+			if err != nil || skip {
 				return err
 			}
-			if skip {
-				continue
-			}
-			entities = append(entities, entity)
-			lastScanned = key
-			if len(entities) >= limit {
-				reachedEnd = false
-				break
-			}
-		}
-		return nil
+			return page.add(entity, key)
+		})
+		return err
 	})
-	return entities, lastScanned, reachedEnd, err
+	return page.items, page.last, page.reachedEnd, err
+}
+
+// decodeMVCCBootstrapRow is the one decode of a bootstrap row: the kind decodes
+// its stored body and may skip it.
+func decodeMVCCBootstrapRow[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, txn *badger.Txn, item *badger.Item, id ID) (entity E, skip bool, err error) {
+	var kind M
+	err = item.Value(func(val []byte) error {
+		var decodeErr error
+		entity, skip, decodeErr = kind.decodeBody(b, txn, val, id)
+		return decodeErr
+	})
+	return entity, skip, err
 }
 
 func applyMVCCBootstrapBatch[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, ctx context.Context, entities []E) error {
@@ -1791,38 +1760,24 @@ func writeMVCCBootstrapHead[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *Ba
 // without opening a second transaction.
 func bootstrapMVCCFromCurrentStateInTxn[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, txn *badger.Txn) error {
 	var kind M
-	opts := badgerIteratorOptions()
-	opts.Prefix = []byte{kind.entityKeyspacePrefix()}
-	it := txn.NewIterator(opts)
-	defer it.Close()
-	for it.Rewind(); it.Valid(); it.Next() {
-		key := append([]byte(nil), it.Item().Key()...)
-		if len(key) <= 1 {
-			continue
+	_, err := scanRows(context.Background(), txn, []byte{kind.entityKeyspacePrefix()}, nil, func(item *badger.Item) error {
+		key := item.KeyCopy(nil)
+		if !rowHasID(key) {
+			return nil
 		}
 		id := ID(key[1:])
 		if _, err := kind.loadHead(b, txn, id); err == nil {
-			continue
+			return nil
 		} else if err != ErrNotFound {
 			return err
 		}
-		var entity E
-		var skip bool
-		if err := it.Item().Value(func(val []byte) error {
-			var decodeErr error
-			entity, skip, decodeErr = kind.decodeBody(b, txn, val, id)
-			return decodeErr
-		}); err != nil {
+		entity, skip, err := decodeMVCCBootstrapRow[E, ID, M](b, txn, item, id)
+		if err != nil || skip {
 			return err
 		}
-		if skip {
-			continue
-		}
-		if err := writeMVCCBootstrapHead[E, ID, M](b, txn, id, entity); err != nil {
-			return err
-		}
-	}
-	return nil
+		return writeMVCCBootstrapHead[E, ID, M](b, txn, id, entity)
+	})
+	return err
 }
 
 func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {

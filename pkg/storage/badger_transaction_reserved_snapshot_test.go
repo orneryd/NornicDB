@@ -36,7 +36,7 @@ func TestTransactionSnapshotExcludesReservedUnpublishedDelete(t *testing.T) {
 	require.Equal(t, edgeID, candidates[0].ID)
 	t.Logf("reserved=%s reader=%s enumerated=%s", version, reader.readTS, edgeID)
 
-	require.NoError(t, peer.engine.db.commit(context.Background(), peer.badgerTx, nil))
+	require.NoError(t, peer.engine.db.commit(context.Background(), peer.badgerTx, standalonePublication, nil))
 	peer.mu.Lock()
 	peer.closeLocked(TxStatusCommitted, false, nil)
 	peer.mu.Unlock()
