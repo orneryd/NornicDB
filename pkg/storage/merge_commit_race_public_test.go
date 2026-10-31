@@ -116,6 +116,10 @@ func TestMergeCommitRaceDecidesOnExecutedEffects(t *testing.T) {
 			{name: "show_continuation_write", first: keep, companion: "CYPHER 25 SHOW FUNCTIONS YIELD name WITH name WHERE name = 'abs' CREATE (:RaceDoc {id: 'claimed'}) RETURN name", want: nornicerrors.ConstraintValidationFailed},
 			{name: "show_continuation_read_declared_body_writes", first: keep, companion: fmt.Sprintf("CYPHER 25 SHOW FUNCTIONS YIELD name WITH name WHERE name = 'abs' CALL review.run(%q) YIELD value RETURN name", claim), want: nornicerrors.ConstraintValidationFailed},
 			{name: "read_declared_body_updates_the_merged_node", first: fmt.Sprintf(merge, "loser"), companion: "CALL review.run(\"MATCH (n {id: 'claimed'}) SET n.note = 1 RETURN 1 AS n\")", want: nornicerrors.ConstraintValidationFailed},
+			{name: "read_declared_body_changes_knowledge_policy", first: fmt.Sprintf(merge, "loser"), companion: "CALL review.run('CREATE PROMOTION PROFILE review_retry OPTIONS {multiplier: 2.0}')", want: nornicerrors.ConstraintValidationFailed},
+			{name: "dynamic_body_changes_knowledge_policy", first: fmt.Sprintf(merge, "loser"), companion: "CALL apoc.cypher.run('CREATE PROMOTION PROFILE review_retry OPTIONS {multiplier: 2.0}', {}) YIELD value RETURN value", want: nornicerrors.ConstraintValidationFailed},
+			{name: "show_continuation_changes_knowledge_policy", first: fmt.Sprintf(merge, "loser"), companion: "CYPHER 25 SHOW FUNCTIONS YIELD name WITH name WHERE name = 'abs' CALL review.run('CREATE PROMOTION PROFILE review_retry OPTIONS {multiplier: 2.0}') YIELD value RETURN name", want: nornicerrors.ConstraintValidationFailed},
+			{name: "metadata_set_by_a_statement", first: fmt.Sprintf(merge, "loser"), companion: "CALL tx.setMetaData({k: 'v'})", want: nornicerrors.ConstraintValidationFailed},
 			{name: "read_declared_body_reads", first: fmt.Sprintf(merge, "loser"), companion: "CALL review.run('RETURN 1 AS n')", want: nornicerrors.TransientOutdated},
 		} {
 			t.Run(route+"/"+tc.name, func(t *testing.T) {
