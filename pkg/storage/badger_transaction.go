@@ -2412,7 +2412,7 @@ func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		committed, overlay, err := tx.engine.edgeTypeImages(edgeType, visibleRead)
+		committed, overlay, err := tx.engine.edgeTypeImages(edgeType, visibleRead, tx.committedEdgeKeptLocked)
 		if err != nil {
 			return nil, err
 		}

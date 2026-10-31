@@ -808,18 +808,19 @@ func (b *BadgerEngine) GetStoredEdgesByType(edgeType string) ([]*Edge, error) {
 }
 
 func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edge, error) {
-	images, overlay, err := b.edgeTypeImages(edgeType, v)
+	images, overlay, err := b.edgeTypeImages(edgeType, v, nil)
 	if err != nil {
 		return nil, err
 	}
 	return append(deliverEdges(images), overlay.ownedEdges(nil)...), nil
 }
 
-// edgeTypeImages selects the committed edges of one type as images
-// (type-cache hits borrowed, committed rows decoded for this read; the cache
-// admits its own copy) and captures the buffered ones that follow them, still
-// borrowed (see allEdgeImages).
-func (b *BadgerEngine) edgeTypeImages(edgeType string, v readVisibility) ([]edgeImage, bufferedEntityResult, error) {
+// edgeTypeImages selects the committed edges of one type as images, each this
+// read's own (a type-cache hit copies what keep selects, nil keeping all;
+// committed rows are decoded for this read and the cache admits its own copy),
+// and captures the buffered ones that follow them, still borrowed (see
+// allEdgeImages).
+func (b *BadgerEngine) edgeTypeImages(edgeType string, v readVisibility, keep func(*Edge) bool) ([]edgeImage, bufferedEntityResult, error) {
 	if edgeType == "" {
 		return b.allEdgeImages(v) // No type filter = all edges
 	}
@@ -833,7 +834,7 @@ func (b *BadgerEngine) edgeTypeImages(edgeType string, v readVisibility) ([]edge
 		cached, ok := b.edgeTypeCache[edgeType]
 		b.edgeTypeCacheMu.RUnlock()
 		if ok {
-			return borrowedEdges(cached), bufferedEntityResult{}, nil
+			return selectCachedEdges(cached, keep), bufferedEntityResult{}, nil
 		}
 	}
 
@@ -917,6 +918,21 @@ func (b *BadgerEngine) edgeTypeImages(edgeType string, v readVisibility) ([]edge
 		b.edgeTypeCacheFill(gen, edgeType, edges)
 	}
 	return decodedEdges(edges), bufferedEntityResult{}, nil
+}
+
+// selectCachedEdges is the type cache's exit: only the cached edges keep
+// selects (nil selects all) are copied, once (nil stays nil).
+func selectCachedEdges(cached []*Edge, keep func(*Edge) bool) []edgeImage {
+	if cached == nil {
+		return nil
+	}
+	out := make([]edgeImage, 0, len(cached))
+	for _, edge := range cached {
+		if keep == nil || keep(edge) {
+			out = append(out, decodedEdge(copyEdge(edge)))
+		}
+	}
+	return out
 }
 
 // edgeTypeCacheFill caches the edges of edgeType a read captured gen before

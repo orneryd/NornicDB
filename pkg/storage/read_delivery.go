@@ -30,7 +30,6 @@ type nodeImage struct {
 	retained bool
 }
 
-func borrowedEdge(edge *Edge) edgeImage { return edgeImage{Edge: edge, retained: true} }
 func decodedEdge(edge *Edge) edgeImage  { return edgeImage{Edge: edge} }
 func borrowedNode(node *Node) nodeImage { return nodeImage{Node: node, retained: true} }
 func decodedNode(node *Node) nodeImage  { return nodeImage{Node: node} }
@@ -74,7 +73,7 @@ func deliverNodes(images []nodeImage, properties []string, strip bool) []*Node {
 	return out
 }
 
-// decodedEdges and borrowedEdges mark a whole population.
+// decodedEdges marks a whole population.
 func decodedEdges(edges []*Edge) []edgeImage {
 	if edges == nil {
 		return nil
@@ -82,17 +81,6 @@ func decodedEdges(edges []*Edge) []edgeImage {
 	out := make([]edgeImage, len(edges))
 	for i, edge := range edges {
 		out[i] = decodedEdge(edge)
-	}
-	return out
-}
-
-func borrowedEdges(edges []*Edge) []edgeImage {
-	if edges == nil {
-		return nil
-	}
-	out := make([]edgeImage, len(edges))
-	for i, edge := range edges {
-		out[i] = borrowedEdge(edge)
 	}
 	return out
 }
