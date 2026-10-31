@@ -996,6 +996,33 @@ func (c *NOR160ControlCache) GetHandoffMixed(id NodeID) *Node {
 	return n
 }
 
+func nor160ControlHandoffReturns(n *Node) *Node { return n }
+
+func nor160ControlHandoffSends(ch chan *Node, n *Node) { ch <- n }
+
+func (c *NOR160ControlCache) GetHandoffReturned(id NodeID) *Node {
+	n := copyNode(c.nodes[id])
+	kept := nor160ControlHandoffReturns(n)
+	nor160ControlHandoffOverwrites(kept)
+	return kept
+}
+
+func (c *NOR160ControlCache) GetHandoffSent(id NodeID, ch chan *Node) *Node {
+	n := copyNode(c.nodes[id])
+	nor160ControlHandoffSends(ch, n)
+	nor160ControlHandoffOverwrites(n)
+	return n
+}
+
+func (c *NOR160ControlCache) GetHandoffCaptured(id NodeID) *Node {
+	var out *Node
+	keep := func(n *Node) { out = n }
+	n := copyNode(c.nodes[id])
+	keep(n)
+	nor160ControlHandoffOverwrites(n)
+	return out
+}
+
 func (c *NOR160ControlCache) GetHandoffKept(id NodeID) *Node {
 	n := copyNode(c.nodes[id])
 	c.nor160ControlHandoffKeeps(n)
@@ -1125,9 +1152,21 @@ var handoffControls = []handoffControl{
 	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffMixed", storagePkg + ".nor160ControlHandoffReads", "overwrites", false},
 	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffMixed", storagePkg + ".nor160ControlHandoffReads", "escapes", false},
 	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffKept", "(*" + storagePkg + ".NOR160ControlCache).nor160ControlHandoffKeeps", "escapes", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffKept", "(*" + storagePkg + ".NOR160ControlCache).nor160ControlHandoffKeeps", "held", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffKept", "(*" + storagePkg + ".NOR160ControlCache).nor160ControlHandoffKeeps", "captured", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffMixed", storagePkg + ".nor160ControlHandoffReads", "held", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffCaptured", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffCaptured$1", "captured", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffCaptured", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffCaptured$1", "held", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffReturned", storagePkg + ".nor160ControlHandoffReturns", "returns", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffReturned", storagePkg + ".nor160ControlHandoffReturns", "held", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffSent", storagePkg + ".nor160ControlHandoffSends", "sends", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffSent", storagePkg + ".nor160ControlHandoffSends", "held", false},
 }
 
 var controls = []control{
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffReturned", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffCaptured", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffSent", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffMixed", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffKept", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLent", false},
@@ -4625,6 +4664,113 @@ type handoff struct {
 	Returns    bool   `json:"returns"`
 	Escapes    bool   `json:"escapes"`
 	Unresolved bool   `json:"unresolved,omitempty"`
+	handoffRoutes
+}
+
+// handoffRoutes: the routes by which a callee, or a callee of it, passes the
+// value on. Held: stored into memory neither local nor captured, so an object
+// keeps it. Captured: stored into a closure's captured variable, handing it to
+// the enclosing function. Sends: sent on a channel. UnknownCall: passed to a
+// call with no resolved callee, so this fact is incomplete for this callee.
+type handoffRoutes struct {
+	Held        bool `json:"held"`
+	Captured    bool `json:"captured"`
+	Sends       bool `json:"sends"`
+	UnknownCall bool `json:"unknown_call"`
+}
+
+func (r handoffRoutes) or(x handoffRoutes) handoffRoutes {
+	return handoffRoutes{r.Held || x.Held, r.Captured || x.Captured, r.Sends || x.Sends, r.UnknownCall || x.UnknownCall}
+}
+
+// capturedRoot: the captured variable memory at v is reached through.
+func capturedRoot(v ssa.Value) *ssa.FreeVar {
+	for {
+		switch x := v.(type) {
+		case *ssa.FreeVar:
+			return x
+		case *ssa.FieldAddr:
+			v = x.X
+		case *ssa.IndexAddr:
+			v = x.X
+		case *ssa.UnOp:
+			if x.Op != token.MUL {
+				return nil
+			}
+			v = x.X
+		default:
+			return nil
+		}
+	}
+}
+
+// routesOf: the routes of parameter m of g, through its callees.
+func (a *analysis) routesOf(g *ssa.Function, m int, memo map[string]*handoffRoutes) handoffRoutes {
+	key := fullName(g) + "#" + fmt.Sprint(m)
+	if r, ok := memo[key]; ok {
+		return *r // in progress on a call cycle: what is known so far
+	}
+	result := &handoffRoutes{}
+	memo[key] = result
+	s := a.states[g]
+	if s == nil {
+		result.UnknownCall = true
+		return *result
+	}
+	has := func(v ssa.Value) bool { return s.val(v).Params&bit(m) != 0 }
+	for _, b := range g.Blocks {
+		for _, ins := range b.Instrs {
+			switch x := ins.(type) {
+			case *ssa.Store:
+				if al, ok := x.Addr.(*ssa.Alloc); ok && a.resultSlots(g)[al] {
+					continue
+				}
+				if !has(x.Val) || local(storeBase(x.Addr)) {
+					continue
+				}
+				if capturedRoot(x.Addr) != nil {
+					result.Captured = true
+				} else {
+					result.Held = true
+				}
+			case *ssa.MapUpdate:
+				if !has(x.Value) || localBase(x.Map) != nil {
+					continue
+				}
+				if capturedRoot(x.Map) != nil {
+					result.Captured = true
+				} else {
+					result.Held = true
+				}
+			case *ssa.Send:
+				if has(x.X) {
+					result.Sends = true
+				}
+			case ssa.CallInstruction:
+				c := x.Common()
+				if _, ok := c.Value.(*ssa.Builtin); ok {
+					continue
+				}
+				args := callArgs(c)
+				callees := a.calleesOf(x)
+				for j, arg := range args {
+					if !has(arg) {
+						continue
+					}
+					if len(callees) == 0 {
+						if c.IsInvoke() || !isBoolResult(c.Signature()) {
+							result.UnknownCall = true
+						}
+						continue
+					}
+					for _, h := range callees {
+						*result = result.or(a.routesOf(h, j, memo))
+					}
+				}
+			}
+		}
+	}
+	return *result
 }
 
 func (h handoff) effect(name string) bool {
@@ -4637,6 +4783,12 @@ func (h handoff) effect(name string) bool {
 		return h.Returns
 	case "escapes":
 		return h.Escapes
+	case "held":
+		return h.Held
+	case "captured":
+		return h.Captured
+	case "sends":
+		return h.Sends
 	}
 	return false
 }
@@ -4644,6 +4796,7 @@ func (h handoff) effect(name string) bool {
 // handoffsOf: every resolved callee in fn that receives a value of d.
 func (a *analysis) handoffsOf(fn *ssa.Function, d map[ssa.Value]bool, drops, overwrite map[*ssa.Function][]bool) []handoff {
 	seen := map[string]bool{}
+	memo := map[string]*handoffRoutes{}
 	var out []handoff
 	record := func(h handoff) {
 		key := fmt.Sprint(h)
@@ -4676,6 +4829,7 @@ func (a *analysis) handoffsOf(fn *ssa.Function, d map[ssa.Value]bool, drops, ove
 						h.Unresolved = true
 					} else {
 						h.Escapes = m < len(sg.Escapes) && sg.Escapes[m]
+						h.handoffRoutes = a.routesOf(g, m, memo)
 						for _, ret := range sg.Ret {
 							if ret.Params&bit(m) != 0 {
 								h.Returns = true
