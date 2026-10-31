@@ -27,12 +27,13 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 			if vectors {
 				hydration = nodeItemFullEmbeddings
 			}
-			node, err := b.readNodeItemInTxn(txn, item, id, hydration)
+			now := DecayScoringTime()
+			node, err := b.readKeptNodeItemInTxn(txn, item, id, hydration, b.decayKeepAt(v, now))
 			if err != nil {
 				return nil, err
 			}
-			if b.filterEntityByDecay(v, node, DecayScoringTime()) {
-				return nil, ErrNotFound
+			if node == nil {
+				return nil, ErrNotFound // rejected before any copy
 			}
 			return node, nil
 		}
@@ -64,12 +65,8 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	var node *Node
-	if vectors {
-		node = copyNode(record.Node)
-	} else {
-		node = copyNodeForCaller(record.Node)
-	}
+	// The record was decoded for this read: transfer it, no second copy.
+	node := record.Node
 	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -140,7 +137,8 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	node := projectCachedNodeForRead(record.Node, properties, true)
+	// The record was decoded for this read: transfer it, no second copy.
+	node := shapeOwned(record.Node, properties, true)
 	if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -269,7 +267,8 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 				}
 			}
 			if matched {
-				if err := visit(projectCachedNodeForRead(node, properties, false, queryNodes)); err != nil {
+				// getNodeAtInTxn returned this read's own node: reshape in place.
+				if err := visit(shapeOwned(node, properties, false)); err != nil {
 					return err
 				}
 			}
@@ -326,10 +325,14 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 		// readItem reads one node from its stored record; item.Version keys
 		// the decoded-body cache.
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
+			// The scan's own selection is decided before a cached body is
+			// copied (NOR-160).
+			visible := b.decayKeepAt(v, nowNanos)
+			keep := func(node *Node) bool { return visible(node) && hasLabel(node.Labels, label) }
 			if queryNodes {
-				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
+				return b.readKeptNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, keep)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, keep)
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterEntityByDecay(v, node, nowNanos) || !hasLabel(node.Labels, label) {
@@ -395,7 +398,14 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 		// in label-index order.
 		nodes := make(map[NodeID]*Node, len(pending))
 		readErrors := make(map[NodeID]error)
+		// A body the body cache holds is read at its visit, not in the pass:
+		// reading it copies it, and a visitor may stop first (NOR-160).
+		atVisit := make(map[NodeID]bool)
 		if err := readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
+			if b.cacheHasNodeBody(nodeID, item.Version()) {
+				atVisit[nodeID] = true
+				return nil
+			}
 			node, err := readItem(nodeID, item)
 			nodes[nodeID] = node
 			if err != nil {
@@ -410,6 +420,12 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			// record must not override an earlier callback's stop error.
 			if err := readErrors[nodeID]; err != nil {
 				return err
+			}
+			if atVisit[nodeID] {
+				if err := readPoint(nodeID); err != nil {
+					return err
+				}
+				continue
 			}
 			if err := emit(nodes[nodeID]); err != nil {
 				return err
@@ -488,16 +504,18 @@ func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error 
 		return err
 	}
 
-	nodes, err := b.AllNodes()
+	// Cache hits are copied once the read stands, as for AllNodes; a yield that
+	// stops leaves those copies behind, as it did the list AllNodes returned.
+	nodes, overlay, err := b.allNodeImages(true)
 	if err != nil {
 		return err
 	}
 	for _, node := range nodes {
-		if err := yield(node); err != nil {
+		if err := yield(deliverNode(node, nil, false)); err != nil {
 			return err
 		}
 	}
-	return nil
+	return overlay.visitNodes(nil, nil, false, yield)
 }
 
 func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error {
@@ -505,7 +523,8 @@ func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error 
 		return err
 	}
 
-	edges, err := b.AllEdges()
+	// Delivered one at a time: a yield that stops leaves nothing copied.
+	edges, overlay, err := b.allEdgeImages(visibleRead)
 	if err != nil {
 		return err
 	}
@@ -514,5 +533,5 @@ func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error 
 			return err
 		}
 	}
-	return nil
+	return overlay.visitEdges(nil, yield)
 }

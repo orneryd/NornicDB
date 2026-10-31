@@ -98,11 +98,8 @@ func (e *StorageExecutor) findMergeNodeInCache(store storage.Engine, labels []st
 	}
 	cacheMu.RUnlock()
 
-	if cachedNode == nil {
+	if cachedNode == nil || store == nil {
 		return nil
-	}
-	if store == nil {
-		return cachedNode
 	}
 
 	liveNode, err := e.getQueryNode(store, cachedNode.ID)
@@ -121,6 +118,9 @@ func (e *StorageExecutor) cacheMergeNode(labels []string, props map[string]inter
 	cacheMu := e.nodeLookupCacheLock()
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
+	// The cache only proposes a candidate ID: findMergeNodeInCache re-reads
+	// it from storage and checks it before use, and never hands the cached
+	// node out, so no caller can change a later MERGE through this entry.
 	for prop, val := range props {
 		e.nodeLookupCache[mergeLookupCacheKey(labels, prop, val)] = node
 	}

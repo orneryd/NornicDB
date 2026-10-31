@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 )
 
 // Change data capture (#937). In a database whose txLogEnrichment is DIFF or
@@ -655,11 +657,11 @@ func labelChanges(before, after []string) (removed, added []string) {
 }
 
 func copyChangeProperties(properties map[string]any) map[string]any {
-	copied := make(map[string]any, len(properties))
-	for key, value := range properties {
-		copied[key] = value
+	if properties == nil {
+		return make(map[string]any)
 	}
-	return copied
+	// Change events are handed to every subscriber: each gets its own values.
+	return callerowned.Map(properties)
 }
 
 func copyChangeMetadata(metadata map[string]interface{}) map[string]any {

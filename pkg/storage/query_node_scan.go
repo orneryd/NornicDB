@@ -11,7 +11,6 @@ import (
 type queryNodeScanVisitor struct {
 	ctx      context.Context
 	prefix   string
-	strip    bool
 	fn       func(*Node) error
 	callback func(*Node) error
 }
@@ -24,7 +23,7 @@ var queryNodeScanVisitors = sync.Pool{New: func() any {
 
 func borrowQueryNodeScanVisitor(ctx context.Context, opts StreamNodesOptions, fn func(*Node) error) *queryNodeScanVisitor {
 	visitor := queryNodeScanVisitors.Get().(*queryNodeScanVisitor)
-	visitor.ctx, visitor.prefix, visitor.strip, visitor.fn = ctx, opts.Prefix, opts.StripEmbeddings, fn
+	visitor.ctx, visitor.prefix, visitor.fn = ctx, opts.Prefix, fn
 	return visitor
 }
 
@@ -35,14 +34,13 @@ func (visitor *queryNodeScanVisitor) visit(node *Node) error {
 	if !nodeIDInScope(node.ID, visitor.prefix) {
 		return nil
 	}
-	if visitor.strip {
-		node = copyNodeWithoutEmbeddings(node)
-	}
+	// The transaction label stream delivers caller-owned nodes, already
+	// stripped in their delivery shape.
 	return visitor.fn(node)
 }
 
 func (visitor *queryNodeScanVisitor) release() {
-	visitor.ctx, visitor.prefix, visitor.strip, visitor.fn = nil, "", false, nil
+	visitor.ctx, visitor.prefix, visitor.fn = nil, "", nil
 	queryNodeScanVisitors.Put(visitor)
 }
 
@@ -63,5 +61,5 @@ func (opts StreamNodesOptions) readVisibility() readVisibility {
 }
 
 func (opts StreamNodesOptions) copyResidentNode(node *Node) *Node {
-	return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings, opts.QueryNodes && !opts.WithEmbeddings)
+	return copyShaped(node, opts.Projection, opts.StripEmbeddings)
 }

@@ -69,7 +69,7 @@ func TestBadgerTransaction_GetNodesByLabelLocked_ReadTSBranches(t *testing.T) {
 
 	txNoPin, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	nodes, err := txNoPin.getNodesByLabelLocked("Person")
+	nodes, err := deliveredNodes(txNoPin.getNodesByLabelLocked("Person"))
 	require.NoError(t, err)
 	require.NotEmpty(t, nodes)
 	require.NoError(t, txNoPin.Rollback())
@@ -77,7 +77,7 @@ func TestBadgerTransaction_GetNodesByLabelLocked_ReadTSBranches(t *testing.T) {
 	txPinned, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, txPinned.SetNamespace("test"))
-	nodes, err = txPinned.getNodesByLabelLocked("Person")
+	nodes, err = deliveredNodes(txPinned.getNodesByLabelLocked("Person"))
 	require.NoError(t, err)
 	require.NotEmpty(t, nodes)
 	require.NoError(t, txPinned.Rollback())

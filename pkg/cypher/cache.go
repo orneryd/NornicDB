@@ -4,14 +4,14 @@ package cypher
 import (
 	"container/list"
 	"context"
-	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
-	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
-	"slices"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/callerowned"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -222,7 +222,7 @@ func (qc *QueryCache) Get(cypher string, params map[string]interface{}) (*Execut
 	qc.hits++
 	qc.mu.Unlock()
 
-	return cached.result, true
+	return callerOwnedResult(cached.result), true
 }
 
 // Put stores a query result in the cache with the specified TTL (Time To Live).
@@ -279,7 +279,7 @@ func (qc *QueryCache) Get(cypher string, params map[string]interface{}) (*Execut
 //	Safe to call concurrently from multiple goroutines.
 func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration) {
 	key := qc.cacheKey(cypher, params)
-	result = cacheOwnedResult(result)
+	result = callerOwnedResult(result)
 
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
@@ -298,15 +298,44 @@ func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *
 	qc.moveToFront(key)
 }
 
-// cacheOwnedResult gives a persistent cache its own visible outer row window.
-// The caller may still own a larger allocation, so neither its hidden row
-// headers nor the shared row contents may be cleared during publication.
-func cacheOwnedResult(result *ExecuteResult) *ExecuteResult {
+// callerOwnedResult is the query-result shell of the single ownership
+// implementation (pkg/callerowned): a result cache admits its own copy and
+// hands every hit its own copy, so no caller shares rows, cells, columns,
+// stats or metadata with the cache or with another caller (NOR-160). Map key
+// orders recorded for evaluated maps follow their maps to the copies.
+func callerOwnedResult(result *ExecuteResult) *ExecuteResult {
 	if result == nil {
 		return nil
 	}
 	owned := *result
-	owned.Rows = slices.Clone(result.Rows)
+	owned.Columns = callerowned.Strings(result.Columns)
+	var copiedMaps map[uintptr]uintptr
+	var observe func(original, copied map[string]any)
+	if len(result.MapKeyOrders) > 0 {
+		copiedMaps = make(map[uintptr]uintptr)
+		observe = func(original, copied map[string]any) {
+			copiedMaps[uintptr(reflect.ValueOf(original).UnsafePointer())] = uintptr(reflect.ValueOf(copied).UnsafePointer())
+		}
+	}
+	owned.Rows = callerowned.RowsObservingMaps(result.Rows, observe)
+	if result.Stats != nil {
+		stats := *result.Stats
+		owned.Stats = &stats
+	}
+	owned.Metadata = callerowned.Map(result.Metadata)
+	if result.Administration != nil {
+		administration := *result.Administration
+		owned.Administration = &administration
+	}
+	if result.MapKeyOrders != nil {
+		owned.MapKeyOrders = make(map[uintptr][]string, len(result.MapKeyOrders))
+		for pointer, keys := range result.MapKeyOrders {
+			if copied, ok := copiedMaps[pointer]; ok {
+				pointer = copied
+			}
+			owned.MapKeyOrders[pointer] = callerowned.Strings(keys)
+		}
+	}
 	return &owned
 }
 
@@ -623,7 +652,7 @@ func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint6
 
 	// Plan 04-03 D-12a: cross-cutting cache_hits_total{cache="query_result"}.
 	sc.observeHit()
-	return cached.result, cached.trace, cached.entities, true
+	return callerOwnedResult(cached.result), cached.trace, cached.entities, true
 }
 
 // PutWithLabels stores a result with associated labels for smart invalidation.
@@ -640,7 +669,7 @@ func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResu
 }
 
 func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
-	result = cacheOwnedResult(result)
+	result = callerOwnedResult(result)
 	entities := resultHasMaterializedEntities(result)
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -1127,84 +1156,6 @@ func normalizeQueryWithPresentation(cypher string, protected []statementPresenta
 // ========================================
 // Node Lookup Cache
 // ========================================
-
-// makeLookupKey creates a cache key from label and properties.
-//
-// Used for fast node lookups during query execution. The key combines
-// the label with sorted property values to ensure consistent cache hits.
-//
-// # Parameters
-//
-//   - label: The node label
-//   - props: Property map for filtering
-//
-// # Returns
-//
-//   - A string key suitable for cache lookup
-//
-// # Example
-//
-//	key := makeLookupKey("Person", map[string]interface{}{"name": "Alice"})
-//	// key = "Person:name=Alice,"
-func makeLookupKey(label string, props map[string]interface{}) string {
-	if len(props) == 0 {
-		return label
-	}
-	// Simple key: label + sorted props
-	key := label + ":"
-	for k, v := range props {
-		key += fmt.Sprintf("%s=%v,", k, v)
-	}
-	return key
-}
-
-// lookupCachedNode looks up a node by label+properties from cache.
-//
-// This provides a fast path for repeated node lookups during MATCH operations.
-// Thread-safe for concurrent access.
-//
-// # Parameters
-//
-//   - label: The node label to match
-//   - props: Property filters
-//
-// # Returns
-//
-//   - The cached node, or nil if not in cache
-func (e *StorageExecutor) lookupCachedNode(label string, props map[string]interface{}) *storage.Node {
-	e.ensureNodeLookupCache()
-
-	key := makeLookupKey(label, props)
-	cacheMu := e.nodeLookupCacheLock()
-	cacheMu.RLock()
-	node := e.nodeLookupCache[key]
-	cacheMu.RUnlock()
-	return node
-}
-
-// cacheNodeLookup caches a node lookup result.
-//
-// Includes simple eviction when cache grows too large (>10000 entries).
-// Thread-safe for concurrent access.
-//
-// # Parameters
-//
-//   - label: The node label
-//   - props: Property filters used for lookup
-//   - node: The node to cache
-func (e *StorageExecutor) cacheNodeLookup(label string, props map[string]interface{}, node *storage.Node) {
-	e.ensureNodeLookupCache()
-
-	key := makeLookupKey(label, props)
-	cacheMu := e.nodeLookupCacheLock()
-	cacheMu.Lock()
-	// Simple eviction: if too large, clear
-	if len(e.nodeLookupCache) > 10000 {
-		e.nodeLookupCache = make(map[string]*storage.Node, 1000)
-	}
-	e.nodeLookupCache[key] = node
-	cacheMu.Unlock()
-}
 
 // invalidateNodeLookupCache clears the node lookup cache.
 //

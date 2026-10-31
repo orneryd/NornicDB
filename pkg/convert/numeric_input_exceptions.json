@@ -111,6 +111,10 @@
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
     "sha256": "650795d261ecd8c80850e34ef4ad4ece39daa7f40ae133ef7f0826d1ec8d0325"
   },
+  "pkg/cypher/pipeline_executor.go:readOnlyCandidateCanShare": {
+    "reason": "Classifies a stored property value as immutable or not, to decide whether a read-only scan candidate needs a copy; it reads no numeric or list input and does not narrow runtime coordinates.",
+    "sha256": "7da6c9af261902d3d094ee6e196c5112949254afba3a601796a32bc09175beb1"
+  },
   "pkg/cypher/pipeline_executor.go:pipelineRelationshipList": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
     "sha256": "056292f917fc42e561bb77eaaa159e85c0a61dd6350e94a3a72c2ff465c2a693"

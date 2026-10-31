@@ -38,10 +38,10 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 
 	item, err := view.txn.Get(nodeKey("test:a"))
 	require.NoError(t, err)
-	old, err := b.readNodeItemInTxn(view.txn, item, "test:a", nodeItemFullEmbeddings)
+	old, err := b.readKeptNodeItemInTxn(view.txn, item, "test:a", nodeItemFullEmbeddings, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), old.Properties["v"])
-	edge, err := b.readIndexedEdgeInTxn(view.txn, "test:r", edgeGen)
+	edge, err := b.readIndexedEdgeInTxn(view.txn, "test:r", edgeGen, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), edge.Properties["v"])
 	// The older read must not refill the current unversioned cache with old data.
@@ -67,7 +67,7 @@ func TestSnapshotOverlayBodyCacheHydratesSidecarsAtReadPoint(t *testing.T) {
 	require.Equal(t, "new", current.EmbedMeta["status"])
 	item, err := view.txn.Get(nodeKey("test:a"))
 	require.NoError(t, err)
-	old, err := b.readNodeItemInTxn(view.txn, item, "test:a", nodeItemFullEmbeddings)
+	old, err := b.readKeptNodeItemInTxn(view.txn, item, "test:a", nodeItemFullEmbeddings, nil)
 	require.NoError(t, err)
 	require.Empty(t, old.ChunkEmbeddings)
 	require.Empty(t, old.EmbedMeta)

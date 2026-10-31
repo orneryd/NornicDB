@@ -119,7 +119,7 @@ func TestTransaction_LabelScanRepeatabilityWithinSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	defer txScan.Rollback()
 
-	before, err := txScan.getNodesByLabelLocked("User")
+	before, err := deliveredNodes(txScan.getNodesByLabelLocked("User"))
 	require.NoError(t, err)
 	beforeIDs := sortedNodeIDs(before)
 
@@ -133,7 +133,7 @@ func TestTransaction_LabelScanRepeatabilityWithinSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, txInsert.Commit())
 
-	after, err := txScan.getNodesByLabelLocked("User")
+	after, err := deliveredNodes(txScan.getNodesByLabelLocked("User"))
 	require.NoError(t, err)
 	afterIDs := sortedNodeIDs(after)
 	require.Equal(t, beforeIDs, afterIDs)
@@ -141,7 +141,7 @@ func TestTransaction_LabelScanRepeatabilityWithinSnapshot(t *testing.T) {
 	txFresh, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	defer txFresh.Rollback()
-	fresh, err := txFresh.getNodesByLabelLocked("User")
+	fresh, err := deliveredNodes(txFresh.getNodesByLabelLocked("User"))
 	require.NoError(t, err)
 	require.Len(t, fresh, 4)
 }
@@ -461,7 +461,7 @@ func BenchmarkTransaction_HighContentionAbortRate(b *testing.B) {
 
 func countNodesWithBoolProperty(t *testing.T, tx *BadgerTransaction, label, property string) int {
 	t.Helper()
-	nodes, err := tx.getNodesByLabelLocked(label)
+	nodes, err := deliveredNodes(tx.getNodesByLabelLocked(label))
 	require.NoError(t, err)
 	count := 0
 	for _, node := range nodes {

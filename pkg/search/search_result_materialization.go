@@ -2,9 +2,11 @@ package search
 
 import (
 	"context"
+	"unsafe"
+
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
-	"unsafe"
 )
 
 // enrichResults converts RRF results to SearchResult with full node data.
@@ -195,27 +197,44 @@ func searchResultFromNode(id string, node *storage.Node, projection resultProper
 // A database context supplies provenance only when the result has no source
 // database, as with compact continuation results. Existing provenance wins.
 func (result SearchResult) MaterializedNode(database ...string) *storage.Node {
-	var node storage.Node
+	var shell storage.Node
 	if result.sourceNode != nil {
-		node = *result.sourceNode
+		shell = *result.sourceNode
 	}
-	if node.RuntimeMetadata().Database == "" && len(database) > 0 {
-		{
-			metadata := node.RuntimeMetadata()
-			metadata.Database = database[0]
-			node.SetRuntimeMetadata(metadata)
-		}
+	// One copy through the ownership implementation: the retained hit keeps
+	// its labels, properties and source metadata.
+	shell.Labels, shell.Properties, shell.ChunkEmbeddings, shell.NamedEmbeddings = nil, nil, nil, nil
+	node := storage.CopyNode(&shell)
+	if metadata := node.RuntimeMetadata(); metadata.Database == "" && len(database) > 0 {
+		metadata.Database = database[0]
+		node.SetRuntimeMetadata(metadata)
 	}
 	node.ID = result.NodeID
 	if node.ID == "" {
 		node.ID = storage.NodeID(result.ID)
 	}
-	node.Labels = result.Labels
-	node.Properties = result.Properties
-	node.ChunkEmbeddings = nil
-	node.NamedEmbeddings = nil
-	return &node
+	node.Labels = callerowned.Strings(result.Labels)
+	node.Properties = callerowned.Map(result.Properties)
+	return node
 }
+
+// callerOwned is the search-hit shell of the single ownership implementation
+// (pkg/callerowned): it copies every exported reference field (labels,
+// properties, matches, the relationship and passages) through the owner. The
+// unexported read-time source is never handed out; only MaterializedNode
+// reads it, and it copies what it delivers.
+func (result SearchResult) callerOwned() SearchResult {
+	result.Labels = callerowned.Strings(result.Labels)
+	result.Properties = callerowned.Map(result.Properties)
+	result.Matches = callerowned.Each(result.Matches, callerowned.Of[SearchMatch])
+	result.Relationship = storage.CopyEdge(result.Relationship)
+	result.Passages = callerowned.Each(result.Passages, SearchPassage.callerOwned)
+	return result
+}
+
+// CallerCopy lets rows and pages that carry hits detach them through the same
+// traversal as their other values.
+func (result SearchResult) CallerCopy() any { return result.callerOwned() }
 
 func (result SearchResult) nodeMetadataBytes() int64 {
 	if result.sourceNode == nil {

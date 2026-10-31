@@ -1134,10 +1134,11 @@ func (r *RemoteEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		}
 		out := node
 		switch {
+		// Nodes materialized from the wire for this read: reshape in place.
 		case opts.Projection != nil:
-			out = projectCachedNodeForRead(node, opts.Projection, true)
+			out = shapeOwned(node, opts.Projection, true)
 		case opts.StripEmbeddings || (!opts.WithEmbeddings && !opts.ApplyDecayFilter):
-			out = copyNodeWithoutEmbeddings(node)
+			out = shapeOwned(node, nil, true)
 		}
 		if err := fn(out); err != nil {
 			if err == ErrIterationStopped {

@@ -1,6 +1,9 @@
+// Author: Codex, NOR-160 snapshot read ownership correction, 2026-10-26.
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 // StreamEdgesByType visits the relationships of edgeType visible to the
 // transaction one at a time (EdgeTypeStreamer): the committed edges of its
@@ -24,10 +27,16 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
+	// A visitor's ErrIterationStopped ends the whole stream, committed part
+	// and pending tail, and the stream reports success (NOR-160).
+	stopped := false
 	invokeVisit := func(edge *Edge) error {
 		tx.mu.Unlock()
 		err := visit(edge)
 		tx.mu.Lock()
+		if err == ErrIterationStopped {
+			stopped = true
+		}
 		return err
 	}
 	matches := func(edge *Edge) bool {
@@ -39,6 +48,8 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 	if hasPending {
 		seen = make(map[EdgeID]struct{}, len(tx.pendingEdges))
 	}
+	// Both the pinned MVCC stream and the live engine stream emit
+	// caller-owned edges; only this transaction's pending edges are copied.
 	emitCommitted := func(edge *Edge) error {
 		if edge == nil {
 			return nil
@@ -55,7 +66,7 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 				return nil
 			}
 		}
-		return invokeVisit(copyEdge(edge))
+		return invokeVisit(edge)
 	}
 
 	scope := tx.labelScanScopeLocked()
@@ -64,9 +75,28 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 		// Write-behind reads are read-committed: the engine's latest
 		// (overlaid) stream includes flushes that landed after the pinned
 		// snapshot.
-		err = tx.engine.streamEdgesByTypeInScope(ctx, scope, edgeType, v, emitCommitted)
+		// The engine's images: an edge this transaction deleted or rewrote
+		// is replaced before anything is delivered (NOR-160).
+		err = tx.engine.streamEdgesByTypeDecided(ctx, scope, edgeType, v, func(edge *Edge) (bool, error) {
+			if hasPending {
+				if _, deleted := tx.deletedEdges[edge.ID]; deleted {
+					return false, nil
+				}
+				if pending, exists := tx.pendingEdges[edge.ID]; exists {
+					seen[edge.ID] = struct{}{}
+					if matches(pending) {
+						return false, invokeVisit(copyEdge(pending))
+					}
+					return false, nil
+				}
+			}
+			return true, nil
+		}, invokeVisit, nil)
 	} else {
 		err = tx.engine.streamEdgesByTypeAtSnapshotWithView(ctx, scope, edgeType, tx.readTS, tx.withSnapshotViewLocked, v, emitCommitted)
+	}
+	if stopped || err == ErrIterationStopped {
+		return nil
 	}
 	if err != nil {
 		return err
@@ -82,13 +112,18 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 		if _, emitted := seen[id]; emitted || !matches(edge) {
 			continue
 		}
-		created = append(created, copyEdge(edge))
+		created = append(created, edge)
 	}
+	// Each pending edge is copied when it is delivered: a visitor that stops
+	// leaves the rest uncopied (NOR-160).
 	for _, edge := range created {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := invokeVisit(edge); err != nil {
+		if err := invokeVisit(copyEdge(edge)); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
 			return err
 		}
 	}

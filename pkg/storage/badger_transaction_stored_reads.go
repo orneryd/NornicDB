@@ -24,17 +24,9 @@ func (tx *BadgerTransaction) GetStoredIncomingEdges(id NodeID) ([]*Edge, error) 
 }
 
 func (tx *BadgerTransaction) getStoredAdjacentEdges(id NodeID, direction EdgeDirection) ([]*Edge, error) {
-	edges, err := tx.IncidentEdges(id)
-	if err != nil {
-		return nil, err
-	}
-	result := edges[:0]
-	for _, edge := range edges {
-		if (direction == Outgoing && edge.StartNode == id) || (direction == Incoming && edge.EndNode == id) {
-			result = append(result, edge)
-		}
-	}
-	return result, nil
+	// Only the requested direction is read: an edge of the other direction is
+	// never copied to be dropped (NOR-160).
+	return tx.incidentEdgesIn(id, direction == Outgoing, direction == Incoming)
 }
 
 // GetStoredNodesByLabel collects the transaction's unfiltered label stream.

@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -1372,7 +1373,12 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 	}
 	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
-	err = reader.StreamNodesByLabelProjected(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
+	// A count only reads its candidates and keeps none.
+	stream := reader.StreamNodesByLabelProjected
+	if readOnly, ok := store.(storage.ReadOnlyLabelNodeReader); ok {
+		stream = readOnly.VisitReadOnlyNodesByLabel
+	}
+	err = stream(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
 		return countNode(node, false)
 	})
 	if err != nil {
@@ -1702,6 +1708,29 @@ func pipelineBindingValuesEqual(left, right interface{}) bool {
 	}
 }
 
+// pipelineReadOnlyCandidatesKey asks a label scan for read-only candidates
+// (storage.ReadOnlyLabelNodeReader); the scan sets the *bool when it uses them.
+type pipelineReadOnlyCandidatesKey struct{}
+
+// readOnlyCandidateCanShare reports whether a read-only candidate that passed
+// the predicate could hand its caller a value shared with storage. Candidates
+// are read-only only when the rest of the statement reads the variable through
+// property access alone (pipelineLabelScanProjection), so the node itself
+// never reaches the caller; a property value does. An immutable value is the
+// same shared or copied, so only a value that can be changed in place (a list,
+// a map, or any type not known to be immutable) needs the row's own copy
+// (NOR-160).
+func readOnlyCandidateCanShare(node *storage.Node) bool {
+	for _, value := range node.Properties {
+		switch value.(type) {
+		case nil, string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, time.Time, time.Duration:
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
 	if len(rows) == 0 {
 		return rows, true, nil
@@ -1729,6 +1758,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	type initialCandidates struct {
 		nodes        []*storage.Node
 		whereApplied bool
+		readOnly     bool
 	}
 	candidateCache := make(map[string]initialCandidates)
 	template := e.pipelineNodeMatchTemplateFor(clause)
@@ -1785,7 +1815,15 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		candidates, cached := candidateCache[cacheKey]
 		if cacheKey == "" || !cached {
 			var err error
-			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, row), nodePattern, candidateWhere, candidateHint)
+			scanCtx := withValueBindings(ctx, row)
+			// The predicate below reads the scan's candidates as they are; a
+			// row that passes takes its copy. A path binds the node itself,
+			// so it reads ordinary results.
+			candidates.readOnly = false
+			if pathVariable == "" {
+				scanCtx = context.WithValue(scanCtx, pipelineReadOnlyCandidatesKey{}, &candidates.readOnly)
+			}
+			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(scanCtx, nodePattern, candidateWhere, candidateHint)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1829,6 +1867,9 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 				} else if !e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(probe)) {
 					continue
 				}
+			}
+			if candidates.readOnly && readOnlyCandidateCanShare(node) {
+				node = storage.CopyNode(node)
 			}
 			joined := make(pipelineRow, len(row)+2)
 			for name, value := range row {

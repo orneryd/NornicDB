@@ -374,7 +374,8 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 			if state.deleted {
 				return ErrNotFound
 			}
-			meta = copyNode(state.node).EmbedMeta
+			// Only the metadata is delivered: copy it, not the whole node.
+			meta = copyPropertyValue(state.node.EmbedMeta).(map[string]any)
 			return nil
 		}
 		item, err := txn.Get(nodeKey(id))

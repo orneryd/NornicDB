@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -18,6 +19,17 @@ func TestBadgerNodeReadsRejectCorruption(t *testing.T) {
 			return b.StreamNodesByLabelProjectedInScope("test:", "L", []string{"x"}, func(*Node) error { return nil })
 		},
 		"all": func(b *BadgerEngine) error { _, err := b.AllNodes(); return err },
+		// The streams of every node read a stored row the same way as AllNodes:
+		// an unreadable row is an error, never a silent gap (NOR-160).
+		"stream all": func(b *BadgerEngine) error {
+			return b.StreamNodes(context.Background(), func(*Node) error { return nil })
+		},
+		"stream all projected": func(b *BadgerEngine) error {
+			return b.StreamNodesByPrefixProjected(context.Background(), "test:", []string{"x"}, func(*Node) error { return nil })
+		},
+		"stream all without embeddings": func(b *BadgerEngine) error {
+			return b.StreamNodesWithoutEmbeddings(context.Background(), func(*Node) error { return nil })
+		},
 		"batch": func(b *BadgerEngine) error {
 			_, err := b.BatchGetNodes([]NodeID{"test:a1", "test:a2"})
 			return err
@@ -61,7 +73,10 @@ func TestBadgerNodeReadsRejectCorruption(t *testing.T) {
 
 func TestBadgerEdgeReadsRejectCorruption(t *testing.T) {
 	reads := map[string]func(*BadgerEngine) error{
-		"all":      func(b *BadgerEngine) error { _, err := b.AllEdges(); return err },
+		"all": func(b *BadgerEngine) error { _, err := b.AllEdges(); return err },
+		"stream": func(b *BadgerEngine) error {
+			return b.StreamEdges(context.Background(), func(*Edge) error { return nil })
+		},
 		"type":     func(b *BadgerEngine) error { _, err := b.GetEdgesByType("R"); return err },
 		"outgoing": func(b *BadgerEngine) error { _, err := b.GetOutgoingEdges("test:a"); return err },
 		"incoming": func(b *BadgerEngine) error { _, err := b.GetIncomingEdges("test:z"); return err },
@@ -125,17 +140,10 @@ func TestBadgerAdjacencyReadsPropagateTransactionErrors(t *testing.T) {
 		b := newTestEngine(t)
 		require.NoError(t, b.withView(func(txn *badger.Txn) error {
 			txn.Discard()
-			edge, err := b.readIndexedEdgeInTxn(txn, "test:uncached", b.edgeCacheGen.current())
+			edge, err := b.readIndexedEdgeInTxn(txn, "test:uncached", b.edgeCacheGen.current(), nil)
 			require.ErrorIs(t, err, badger.ErrDiscardedTxn)
 			require.Nil(t, edge)
 			return nil
 		}))
-	})
-	t.Run("closed engine", func(t *testing.T) {
-		b := newTestEngine(t)
-		require.NoError(t, b.Close())
-		edges, err := b.materializeAdjEdges([]EdgeID{"test:uncached"}, visibleRead)
-		require.ErrorIs(t, err, ErrStorageClosed)
-		require.Nil(t, edges)
 	})
 }

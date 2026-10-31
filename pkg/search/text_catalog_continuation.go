@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -535,10 +536,12 @@ func (s *catalogContinuationStream) Pull(ctx context.Context, position uint64, n
 	metadataSource := s.metadata
 	s.mu.RUnlock()
 
-	compact := append([]SearchResult(nil), window...)
+	// The stream keeps its window for replay; each page owns its hits.
+	compact := callerowned.Each(window, SearchResult.callerOwned)
 	metadata := make(map[string]any, len(metadataSource)+2)
 	for key, value := range metadataSource {
-		metadata[key] = value
+		// The stream keeps its metadata for replay; each page owns its values.
+		metadata[key] = callerowned.Value(value)
 	}
 
 	results, err := hydrateContinuationResultsContext(ctx, s.engine, compact, s.authorizeNode, s.projection)

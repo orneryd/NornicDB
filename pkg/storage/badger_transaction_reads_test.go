@@ -1,3 +1,4 @@
+// Author: Codex, NOR-160 snapshot image quality adaptation, 2026-10-26.
 package storage
 
 import (
@@ -280,7 +281,7 @@ func TestTxReads_StreamNodesByLabel_UnprojectedPrefixAndLargePayloadGuard(t *tes
 
 func TestTxReads_CommittedNodeCanUseCachedLabelPrefix(t *testing.T) {
 	cached := &Node{ID: "test:cached", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}}
-	tx := &BadgerTransaction{snapshotPrefixNodeByID: map[NodeID]*Node{cached.ID: cached}}
+	tx := &BadgerTransaction{snapshotPrefixNodeByID: map[NodeID]snapshotNodeImage{cached.ID: {node: cached, hydration: nodeItemFullEmbeddings}}}
 
 	got, err := tx.getCommittedNodeLocked(cached.ID)
 	require.NoError(t, err)
@@ -784,7 +785,7 @@ func TestTxReads_MergePendingNodesLocked(t *testing.T) {
 		},
 	}
 
-	merged := tx.mergePendingNodesLocked([]*Node{nil, committedNode, deletedNode, otherNode}, func(node *Node) bool {
+	merged := tx.mergePendingNodesLocked(decodedNodes([]*Node{nil, committedNode, deletedNode, otherNode}), func(node *Node) bool {
 		if node == nil {
 			return false
 		}
@@ -854,7 +855,7 @@ func BenchmarkTxReads_MergePendingNodesLocked_NoOverlay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := tx.mergePendingNodesLocked(committed, include); len(got) != 512 {
+		if got := tx.mergePendingNodesLocked(decodedNodes(committed), include); len(got) != 512 {
 			b.Fatalf("expected 512 nodes, got %d", len(got))
 		}
 	}
@@ -875,7 +876,7 @@ func BenchmarkTxReads_MergePendingNodesLocked_WithOverlay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := tx.mergePendingNodesLocked(committed, include); len(got) != 512 {
+		if got := tx.mergePendingNodesLocked(decodedNodes(committed), include); len(got) != 512 {
 			b.Fatalf("expected 512 nodes, got %d", len(got))
 		}
 	}

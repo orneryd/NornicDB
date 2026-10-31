@@ -39,21 +39,38 @@ func TestLabelScanLargeTailStaysStreaming(t *testing.T) {
 	for _, properties := range [][]string{nil, {"i"}} {
 		t.Run(fmt.Sprintf("engine/projected=%t", properties != nil), func(t *testing.T) {
 			eng, ids := labelScanFixture(t, count)
+			// The stream reads each body when it reaches it: a scan stopped past
+			// the point-lookup prefix has read at most that prefix and one
+			// buffered batch, and never the final node (NOR-160: observed reads,
+			// not a cache value planted during the scan).
+			var reads []NodeID
+			observe := func(id NodeID) { reads = append(reads, id) }
+			labelScanBodyReadObserver.Store(&observe)
+			t.Cleanup(func() { labelScanBodyReadObserver.Store(nil) })
+			stop := errors.New("stop")
 			visited := 0
 			scan := labelTailScan(t, eng, properties, false)
-			require.NoError(t, scan(func(node *Node) error {
+			require.ErrorIs(t, scan(func(node *Node) error {
 				require.Equal(t, ids[visited], node.ID)
 				visited++
 				if visited == labelScanPointLookups+1 {
-					// A streaming scan must not have decoded the final node yet.
-					eng.cacheStoreNode(&Node{ID: ids[count-1], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}}, eng.db.oracle.published.Load())
+					return stop
 				}
-				if visited == count {
-					require.Equal(t, int64(-1), node.Properties["i"])
-				}
+				return nil
+			}), stop)
+			require.Equal(t, labelScanPointLookups+1, visited)
+			require.NotContains(t, reads, ids[count-1], "a stopped stream must not read its final node")
+			require.LessOrEqual(t, len(reads), labelScanPointLookups+labelScanMaxBuffered, "a stopped stream reads at most the point-lookup prefix and one buffered batch")
+
+			// Run to the end: every node is visited once, in index order.
+			reads, visited = nil, 0
+			require.NoError(t, scan(func(node *Node) error {
+				require.Equal(t, ids[visited], node.ID)
+				visited++
 				return nil
 			}))
 			require.Equal(t, count, visited)
+			require.Len(t, reads, count)
 		})
 	}
 	t.Run("snapshot", func(t *testing.T) {
