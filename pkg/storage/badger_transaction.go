@@ -5154,7 +5154,8 @@ func (tx *BadgerTransaction) getNodeLabels(nodeID NodeID) ([]string, error) {
 	if pending, exists := tx.pendingNodes[nodeID]; exists {
 		return pending.Labels, nil
 	}
-	node, err := tx.getCommittedNodeLocked(nodeID)
+	// Labels need no embedding vectors.
+	node, err := tx.getCommittedNodeReadLocked(nodeID, false, storedRead)
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
 	}
