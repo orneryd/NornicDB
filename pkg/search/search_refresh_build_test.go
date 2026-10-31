@@ -15,7 +15,7 @@ func TestRefreshesDuringBuildInstallOnlyTheNewest(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	_, err := engine.CreateNode(buildWriteNode("nornic:a", "oldterm", []float32{1, 0, 0}))
 	require.NoError(t, err)
 	_, err = engine.CreateNode(buildWriteNode("nornic:b", "endterm", []float32{0, 1, 0}))
@@ -39,7 +39,7 @@ func TestRefreshesDuringBuildInstallOnlyTheNewest(t *testing.T) {
 	require.NoError(t, engine.DeleteEdge("nornic:r"))
 	requireReturnsDuringBuild(t, "a newer relationship refresh", func() error { return svc.RefreshEdge("nornic:r") })
 
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:a"}, buildWriteSearchIDs(t, svc, "newterm"), "the newest refresh is not installed")
 	require.Empty(t, buildWriteSearchIDs(t, svc, "midterm"), "a superseded refresh was installed")

@@ -28,7 +28,11 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					disk, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 					fixtureowner.Own(t, disk)
 					require.NoError(t, err)
-					defer func() { _ = disk.Close() }()
+					defer func() {
+						if err := disk.Close(); err != nil {
+							t.Errorf("close disk: %v", err)
+						}
+					}()
 					disk.SetEmbeddingsEnabled(true)
 					store := storage.NewNamespacedEngine(disk, "contract")
 					for _, id := range ids {

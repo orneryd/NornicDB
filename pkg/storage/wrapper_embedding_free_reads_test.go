@@ -285,7 +285,6 @@ type engineWithoutEmbeddingFreeReads struct{ Engine }
 func newEngineWithoutEmbeddingFreeReads(t *testing.T) Engine {
 	t.Helper()
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	return &engineWithoutEmbeddingFreeReads{Engine: base}
 }
 

@@ -67,7 +67,12 @@ func TestVectorEntryUpgradeFromRelease143Store(t *testing.T) {
 		writeVectorRollbackFixture(t, dir)
 	}
 	base, engine, svc = open()
-	t.Cleanup(func() { _ = svc.Close(); _ = base.Close() })
+	t.Cleanup(func() {
+		_ = svc.Close()
+		if err := base.Close(); err != nil {
+			t.Errorf("close base: %v", err)
+		}
+	})
 	require.Equal(t, 5, svc.EmbeddingCount())
 	assertVectorOwners(t, svc, []vectorOwnerQuery{{axis: 1, owner: "x"}, {axis: 3, owner: "x-chunk-1"}})
 	require.NoError(t, engine.DeleteNode("x"))

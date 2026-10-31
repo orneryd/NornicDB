@@ -51,7 +51,7 @@ func TestLifetimeAuditChecksActualStateAndDisposesLeaks(t *testing.T) {
 		{"unsupported", false, true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var owner checkedBoundary
+			var owner Boundary
 			state := &lifetimeState{closed: tc.closed}
 			if tc.closeFailure {
 				state.closeErr = errors.New("disposal failed")
@@ -74,13 +74,13 @@ func TestLifetimeAuditChecksActualStateAndDisposesLeaks(t *testing.T) {
 			if len(owner.failures) != 1 {
 				t.Fatalf("expected one lifetime error, got %v", owner.failures)
 			}
-			if !strings.Contains(owner.failures[0], "constructor.go:37") {
+			if !strings.Contains(owner.failures[0].Error(), "constructor.go:37") {
 				t.Fatal("construction site missing")
 			}
-			if tc.unsupported && !strings.Contains(owner.failures[0], "no closed-state probe") {
+			if tc.unsupported && !strings.Contains(owner.failures[0].Error(), "no closed-state probe") {
 				t.Fatal("unsupported probe was silently accepted")
 			}
-			if tc.closeFailure && !strings.Contains(owner.failures[0], "disposal failed") {
+			if tc.closeFailure && !strings.Contains(owner.failures[0].Error(), "disposal failed") {
 				t.Fatal("close error was lost")
 			}
 			if closed, known := entry.isClosed(); known && !closed {
@@ -150,6 +150,28 @@ func TestLifetimeRejectsSyntheticAndNilOwners(t *testing.T) {
 	}
 }
 
+func TestLifetimeRefusalKeepsDisposalCloseError(t *testing.T) {
+	for _, refuse := range []struct {
+		name string
+		call func(Closer)
+	}{
+		{"synthetic_owner", func(resource Closer) { Track(&Boundary{}, resource, nil) }},
+		{"nil_process_boundary", func(resource Closer) { TrackProcess[Closer](nil, resource, nil) }},
+	} {
+		t.Run(refuse.name, func(t *testing.T) {
+			state := &lifetimeState{closeErr: errors.New("planted disposal failure")}
+			var caught any
+			func() { defer func() { caught = recover() }(); refuse.call(state) }()
+			if state.closes != 1 {
+				t.Fatalf("refused resource closed %d times", state.closes)
+			}
+			if !strings.Contains(fmt.Sprint(caught), "; disposal failed: planted disposal failure") {
+				t.Fatalf("refusal lost the disposal close error: %v", caught)
+			}
+		})
+	}
+}
+
 func TestLifetimeProcessBoundaryAndNilResources(t *testing.T) {
 	var owner Boundary
 	var absent *lifetimeState
@@ -159,19 +181,21 @@ func TestLifetimeProcessBoundaryAndNilResources(t *testing.T) {
 	if TrackProcess(&owner, absent, nil) != nil {
 		t.Fatal("nil process result changed")
 	}
-	owner.Close()
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
 	resource := TrackProcess(&owner, &lifetimeState{}, nil)
-	var caught any
-	func() { defer func() { caught = recover() }(); owner.Close() }()
-	if caught == nil || !strings.Contains(fmt.Sprint(caught), "still open") {
-		t.Fatal("process leak was not rejected")
+	if err := owner.Close(); err == nil || !strings.Contains(err.Error(), "still open") {
+		t.Fatalf("process leak was not rejected: %v", err)
 	}
 	if !resource.closed {
 		t.Fatal("process leak not disposed")
 	}
-	owner.Close()
+	if err := owner.Close(); err != nil {
+		t.Fatalf("boundary reported a drained failure again: %v", err)
+	}
 	var nilOwner *Boundary
-	caught = nil
+	var caught any
 	resource = &lifetimeState{}
 	func() { defer func() { caught = recover() }(); TrackProcess(nilOwner, resource, nil) }()
 	if caught == nil || !resource.closed {

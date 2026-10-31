@@ -1,10 +1,10 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,7 +51,6 @@ func TestManualSuppression(t *testing.T) {
 	require.NoError(t, engine.Close())
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	hidden(t, engine)
 
 	// Visible in a reveal scope.

@@ -1,10 +1,10 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -20,7 +20,6 @@ func newTestEngine(t *testing.T) *BadgerEngine {
 	if err != nil {
 		t.Fatalf("NewBadgerEngineInMemory: %v", err)
 	}
-	t.Cleanup(func() { engine.Close() })
 	return engine
 }
 

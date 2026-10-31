@@ -27,10 +27,10 @@ func TestReplicationSnapshotRoundTripsStoredImages(t *testing.T) {
 	require.NoError(t, source.CreateEdge(edge))
 	first, err := NewStorageAdapterWithWAL(source, t.TempDir())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, first)
+	fixtureowner.Own(t, first)
 	second, err := NewStorageAdapterWithWAL(target, t.TempDir())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, second)
+	fixtureowner.Own(t, second)
 	var snapshot bytes.Buffer
 	require.NoError(t, first.WriteSnapshot(&snapshot))
 	require.NoError(t, second.RestoreSnapshot(bytes.NewReader(snapshot.Bytes())))

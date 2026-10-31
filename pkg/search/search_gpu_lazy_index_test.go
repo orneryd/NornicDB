@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -136,7 +137,7 @@ func newGPUCompressedPipelineService(t *testing.T) *Service {
 	}
 	svc := NewService(engine, 4, nil)
 	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	fixtureowner.Own(t, svc)
 	svc.SetPersistenceEnabled(true)
 	svc.SetGPUManager(manager)
 	return svc

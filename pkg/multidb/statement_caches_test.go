@@ -16,7 +16,7 @@ func TestStatementCacheFamilyManagerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	if err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "cache_target"}); err != nil {
 		t.Fatal(err)
 	}

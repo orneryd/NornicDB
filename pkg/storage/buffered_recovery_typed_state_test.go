@@ -103,7 +103,6 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				t.Cleanup(func() {
 					if !closed {
 						_ = wal2.Close()
-						_ = recovered.Close()
 					}
 				})
 				if startup {
@@ -220,7 +219,12 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 			require.NoError(t, err)
 			crashClose(t, b, w)
 			b, w = open()
-			t.Cleanup(func() { _ = w.Close(); _ = b.Close() })
+			t.Cleanup(func() {
+				_ = w.Close()
+				if err := b.Close(); err != nil {
+					t.Errorf("close b: %v", err)
+				}
+			})
 			if startup {
 				_, err = RecoverBufferedCommits(b, w)
 				require.NoError(t, err)

@@ -33,7 +33,7 @@ func TestRemoteRuntimeCredentials(t *testing.T) {
 			}
 			manager, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
 			require.NoError(t, err)
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			ref := ConstituentRef{Alias: "remote", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: test.uri, User: test.user, Password: test.password, AuthMode: test.mode}
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "runtime", []ConstituentRef{ref}))
 			stored, err := manager.GetCompositeConstituents("runtime")

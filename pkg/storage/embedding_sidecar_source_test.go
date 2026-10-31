@@ -144,7 +144,6 @@ func TestEmbeddingSidecar_SourceReadAndWriteFailures(t *testing.T) {
 	})
 	t.Run("chunk write fails", func(t *testing.T) {
 		b, _ := createTestBadgerEngineOnDisk(t)
-		t.Cleanup(func() { _ = b.Close() })
 		// The node key fits Badger's key limit; its embedding chunk keys,
 		// five bytes longer, don't.
 		node := &Node{ID: NodeID("test:" + strings.Repeat("k", 65000-len("test:")-2)), Labels: []string{"Doc"}, Properties: map[string]any{"title": "v1"}}

@@ -101,13 +101,13 @@ func New(t *testing.T) (*multidb.DatabaseManager, *Peer) {
 	cfg.RemoteEngineFactory = func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
 		engine, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, User: ref.User, Password: ref.Password, AuthToken: token})
 		if engine != nil {
-			fixtureowner.OwnChecked(t, engine)
+			fixtureowner.Own(t, engine)
 		}
 		return engine, err
 	}
 	manager, err := multidb.NewDatabaseManager(t.Context(), base, cfg)
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, manager)
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), CatalogName, []multidb.ConstituentRef{{Alias: "r", DatabaseName: "peer", Type: "remote", AccessMode: "read", URI: peer.URL, AuthMode: "user_password", User: "adapter-user", Password: Password}}))
 	refs, err := manager.GetCompositeConstituents(CatalogName)
 	require.NoError(t, err)

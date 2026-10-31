@@ -123,7 +123,7 @@ func pr1655NewCommitReadFaultEngine(t *testing.T, writeBehind bool) (*BadgerEngi
 	}))
 	require.NoError(t, err)
 	require.NotNil(t, engine)
-	t.Cleanup(func() { _ = engine.Close() })
+	fixtureowner.Own(t, engine)
 	return engine, fault
 }
 
@@ -195,11 +195,12 @@ func pr1655CorruptMVCCHead(t *testing.T, b *BadgerEngine, id NodeID) (decodeErr 
 	if restore == nil {
 		return decodeErr
 	}
-	t.Cleanup(func() {
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error {
 		if err := restore(); err != nil {
-			t.Errorf("restoring the MVCC head of %q: %v", id, err)
+			return fmt.Errorf("restoring the MVCC head of %q: %w", id, err)
 		}
-	})
+		return nil
+	}))
 	return decodeErr
 }
 

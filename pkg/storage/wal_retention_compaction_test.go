@@ -41,7 +41,7 @@ func newRetentionWALEngine(t *testing.T, root string, maxAge time.Duration, maxS
 	require.NoError(t, err)
 	walEngine := NewWALEngine(newTestMemoryEngine(t), wal)
 	walEngine.snapshotDir = filepath.Join(root, "snapshots")
-	t.Cleanup(func() { require.NoError(t, walEngine.Close()) })
+	fixtureowner.Own(t, walEngine)
 	return walEngine, wal
 }
 

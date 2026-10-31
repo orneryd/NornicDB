@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -15,7 +16,7 @@ func newDynamicModeExecutor(t *testing.T, composite bool) (*StorageExecutor, sto
 	t.Helper()
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	for _, name := range []string{"mode_one", "mode_two"} {
 		require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}

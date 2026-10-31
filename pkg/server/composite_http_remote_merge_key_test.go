@@ -55,7 +55,7 @@ func TestCompositeExplicitTx_ExpiredFailureRollsBackHTTPParticipant(t *testing.T
 		},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_h", []multidb.ConstituentRef{
 		{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: httpRemote.URL, AuthMode: "oidc_forwarding"},
 	}))

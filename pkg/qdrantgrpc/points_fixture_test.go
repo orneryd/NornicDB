@@ -25,7 +25,7 @@ func newPointsServiceFixture(t *testing.T, purpose pointsFixturePurpose) (*Point
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = dbm.Close() })
+	fixtureowner.Own(t, dbm)
 	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
 	cfg := DefaultConfig()

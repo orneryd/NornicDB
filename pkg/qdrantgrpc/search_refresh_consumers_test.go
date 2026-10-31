@@ -36,8 +36,7 @@ func consumerUpsert(id *qpb.PointId, vector []float32) *qpb.UpsertPoints {
 func setupConsumerPoints(t *testing.T) (*PointsService, *consumerBarrierCollections, *search.Service, storage.Engine) {
 	t.Helper()
 	ctx := context.Background()
-	points, collections, base := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
-	t.Cleanup(func() { _ = base.Close() })
+	points, collections, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 	store, _, err := collections.Open(ctx, "test_vectors")
 	require.NoError(t, err)
 	svc := search.NewService(store, 4, nil)

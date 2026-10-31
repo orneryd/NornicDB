@@ -60,7 +60,7 @@ func runtimeNewEngine(t *testing.T) *BadgerEngine {
 	t.Helper()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	fixtureowner.Own(t, engine)
 	engine.SetEmbeddingsEnabled(false)
 	return engine
 }

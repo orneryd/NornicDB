@@ -72,7 +72,12 @@ func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T)
 	crashClose(t, engine, wal)
 	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal2 := recovered.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
+	t.Cleanup(func() {
+		_ = wal2.Close()
+		if err := recovered.Close(); err != nil {
+			t.Errorf("close recovered: %v", err)
+		}
+	})
 	_, err = RecoverBufferedCommits(recovered, wal2)
 	require.NoError(t, err)
 	recovered.invalidateCachesAfterRestore()

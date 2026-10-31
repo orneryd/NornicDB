@@ -204,7 +204,7 @@ func TestDatabaseManagerDropClearsLimitChecker(t *testing.T) {
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant"}))
 
 	_, err = manager.GetStorage("tenant")
@@ -224,7 +224,7 @@ func TestResolveConnectionLimitOwner(t *testing.T) {
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant"}))
 	require.NoError(t, manager.CreateAlias(t.Context(), "tenant-alias", "tenant"))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "fabric", []ConstituentRef{{
@@ -573,7 +573,7 @@ func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
 			inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			seed, err := NewDatabaseManager(t.Context(), inner, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = seed.Close() })
+			fixtureowner.Own(t, seed)
 			database := tc.database
 			if database == "" {
 				database = seed.DefaultDatabaseName()
@@ -594,7 +594,7 @@ func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
 			if tc.restart {
 				manager, err = NewDatabaseManager(t.Context(), inner, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = manager.Close() })
+				fixtureowner.Own(t, manager)
 				restartedStorage, err := manager.GetStorage(database)
 				require.NoError(t, err)
 				storedNode, err := restartedStorage.GetNode("persisted")
@@ -794,7 +794,7 @@ func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
 		cfg.DefaultDatabase = cfg.SystemDatabase
 		manager2, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), cfg)
 		require.NoError(t, err)
-		defer manager2.Close()
+		fixtureowner.Own(t, manager2)
 		assert.Equal(t, "nornic", manager2.DefaultDatabaseName())
 
 		require.ErrorIs(t, manager.validateAliasName(""), ErrInvalidAliasName)

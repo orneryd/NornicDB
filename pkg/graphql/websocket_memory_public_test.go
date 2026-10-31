@@ -17,7 +17,6 @@ func TestGraphQLWebsocketApplicationAdmissionBeforeDecode(t *testing.T) {
 	config.Memory.ApplicationSoftMax = 1 // physical pressure on every lab worker
 	db, err := nornicdb.Open("", config)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
 	manager := testutil.DatabaseManager(t, db)
 	server := httptest.NewServer(NewHandler(db, manager))
 	t.Cleanup(server.Close)

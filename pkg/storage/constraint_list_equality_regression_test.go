@@ -137,7 +137,11 @@ func TestUniqueListPreservesLargeIntegerIdentityAfterRestart(t *testing.T) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	defer func() { engine.Close() }()
+	defer func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close engine: %v", err)
+		}
+	}()
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "large_list", Type: ConstraintUnique, Label: "LongList", Properties: []string{"id"}}))
 	_, err = engine.CreateNode(&Node{ID: "test:first", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []int64{1 << 53}}})
 	require.NoError(t, err)

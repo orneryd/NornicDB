@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +18,7 @@ func TestCompositeUseRouteLabelTestScopes(t *testing.T) {
 	ctx := context.Background()
 	manager, err := multidb.NewDatabaseManager(ctx, newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: "lbl_shard"}))
 	require.NoError(t, manager.CreateCompositeDatabase(ctx, "lbl_cmp", []multidb.ConstituentRef{{Alias: "sh", DatabaseName: "lbl_shard", Type: "local", AccessMode: "read_write"}}))
 	composite, err := manager.GetStorage("lbl_cmp")

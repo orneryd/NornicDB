@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"net/http"
 	"strings"
@@ -23,7 +24,9 @@ import (
 type pr1655PublicClient struct {
 	run           func(string) ([][]interface{}, error)
 	begin, commit func() error
-	rollback      func()
+	// abort is the owner's release of the open transaction, set by begin. It
+	// reports a failed rollback to the test and runs once.
+	abort func()
 }
 
 type pr1655HTTPFailure struct{ code, message string }
@@ -60,8 +63,29 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 			}
 			return result.Rows, nil
 		}
-		client := &pr1655PublicClient{run: run, begin: func() error { _, err := run("BEGIN"); return err }, commit: func() error { _, err := run("COMMIT"); return err }, rollback: func() { _, _ = run("ROLLBACK") }}
-		t.Cleanup(client.rollback)
+		open := false
+		client := &pr1655PublicClient{run: run}
+		rollback := func() error {
+			if !open {
+				return nil
+			}
+			open = false
+			_, err := run("ROLLBACK")
+			return err
+		}
+		client.begin = func() error {
+			_, err := run("BEGIN")
+			open = err == nil
+			if open {
+				_, client.abort = testfixture.OwnWithClose(t, testfixture.CloseFunc(rollback))
+			}
+			return err
+		}
+		client.commit = func() error {
+			open = false
+			_, err := run("COMMIT")
+			return err
+		}
 		return client
 	case "Bolt":
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -69,23 +93,38 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 		peer := bolt.NewWithDatabaseManager(&bolt.Config{ReadBufferSize: 8192, WriteBufferSize: 8192}, nil, srv.GetDatabaseManager())
 		done := make(chan error, 1)
 		go func() { done <- peer.Serve(listener) }()
-		t.Cleanup(func() {
-			require.NoError(t, peer.Close())
+		testfixture.Own(t, testfixture.CloseFunc(func() error {
+			closeErr := peer.Close()
 			select {
 			case err := <-done:
-				require.NoError(t, err)
+				return errors.Join(closeErr, err)
 			case <-time.After(10 * time.Second):
-				t.Error("Bolt Serve did not terminate")
+				return errors.Join(closeErr, errors.New("Bolt Serve did not terminate"))
 			}
-		})
+		}))
 		driver, err := neo4j.NewDriverWithContext("bolt://"+listener.Addr().String(), neo4j.NoAuth())
 		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, driver.Close(ctx)) })
+		testfixture.Own(t, testfixture.CloseFunc(func() error { return driver.Close(ctx) }))
 		session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "nornic"})
-		t.Cleanup(func() { require.NoError(t, session.Close(ctx)) })
+		testfixture.Own(t, testfixture.CloseFunc(func() error { return session.Close(ctx) }))
 		var tx neo4j.ExplicitTransaction
 		client := &pr1655PublicClient{}
-		client.begin = func() error { var err error; tx, err = session.BeginTransaction(ctx); return err }
+		rollback := func() error {
+			current := tx
+			tx = nil
+			if current == nil {
+				return nil
+			}
+			return errors.Join(current.Rollback(ctx), current.Close(ctx))
+		}
+		client.begin = func() error {
+			var err error
+			tx, err = session.BeginTransaction(ctx)
+			if err == nil {
+				_, client.abort = testfixture.OwnWithClose(t, testfixture.CloseFunc(rollback))
+			}
+			return err
+		}
 		client.run = func(query string) ([][]interface{}, error) {
 			var result neo4j.ResultWithContext
 			var err error
@@ -116,14 +155,6 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 			defer current.Close(ctx)
 			return current.Commit(ctx)
 		}
-		client.rollback = func() {
-			if tx != nil {
-				_ = tx.Rollback(ctx)
-				_ = tx.Close(ctx)
-				tx = nil
-			}
-		}
-		t.Cleanup(client.rollback)
 		return client
 	case "HTTP":
 		client := &http.Client{Timeout: 15 * time.Second}
@@ -158,6 +189,22 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 			return decoded, nil
 		}
 		public := &pr1655PublicClient{}
+		rollback := func() error {
+			url := openURL
+			openURL = ""
+			if url == "" {
+				return nil
+			}
+			request, err := http.NewRequest(http.MethodDelete, url, nil)
+			if err != nil {
+				return err
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				return err
+			}
+			return response.Body.Close()
+		}
 		public.begin = func() error {
 			response, err := post(root, "")
 			if err == nil {
@@ -165,6 +212,7 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 				if openURL == "" {
 					return errors.New("HTTP BEGIN omitted commit URL")
 				}
+				_, public.abort = testfixture.OwnWithClose(t, testfixture.CloseFunc(rollback))
 			}
 			return err
 		}
@@ -194,17 +242,6 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 			_, err := post(url+"/commit", "")
 			return err
 		}
-		public.rollback = func() {
-			if openURL != "" {
-				request, _ := http.NewRequest(http.MethodDelete, openURL, nil)
-				response, err := client.Do(request)
-				if err == nil {
-					response.Body.Close()
-				}
-				openURL = ""
-			}
-		}
-		t.Cleanup(public.rollback)
 		return public
 	}
 	t.Fatalf("unknown route %s", route)
@@ -222,7 +259,9 @@ func (pr *pr1655PublicClient) statement(query string, explicit bool) ([][]interf
 		if err == nil {
 			err = pr.commit()
 		} else {
-			pr.rollback()
+			// The failed statement's error is the outcome under test. The
+			// owner reports a failed rollback separately.
+			pr.abort()
 		}
 	}
 	return rows, err

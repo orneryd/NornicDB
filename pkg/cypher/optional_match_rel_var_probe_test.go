@@ -52,7 +52,7 @@ import (
 func setupOptionalMatchRelVarFixture(t *testing.T) (*StorageExecutor, storage.Engine) {
 	t.Helper()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

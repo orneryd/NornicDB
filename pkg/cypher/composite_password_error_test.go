@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 )
@@ -17,7 +18,7 @@ func TestCompositeRemotePasswordErrorOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal("manager setup failed")
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	for _, create := range []bool{true, false} {

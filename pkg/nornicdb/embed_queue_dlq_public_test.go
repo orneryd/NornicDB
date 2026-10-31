@@ -123,7 +123,6 @@ func dlqPublicFixture(t *testing.T, p *dlqPublicProvider, configure ...func(*nor
 	t.Helper()
 	path := t.TempDir()
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
-	fixtureowner.Own(t, base)
 	require.NoError(t, err)
 	s := &dlqPublicStore{Engine: storage.NewNamespacedEngine(base, "dlq"), disk: base, path: path, reject: make(map[storage.NodeID]bool)}
 	cfg := nornicdb.DefaultEmbedWorkerConfig()
@@ -140,7 +139,10 @@ func dlqPublicFixture(t *testing.T, p *dlqPublicProvider, configure ...func(*nor
 		fn(cfg)
 	}
 	w := nornicdb.NewEmbedWorker(p, s, cfg)
-	t.Cleanup(func() { w.Close(); require.NoError(t, s.disk.Close()) })
+	// Cleanups run last-in, first-out: the worker stops before Own closes
+	// the disk engine it writes to.
+	fixtureowner.Own(t, base)
+	t.Cleanup(w.Close)
 	return w, s
 }
 func dlqPublicAdd(t *testing.T, s *dlqPublicStore, id string) {

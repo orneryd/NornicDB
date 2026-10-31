@@ -26,7 +26,7 @@ func requireCollectionHNSWReady(t *testing.T, ctx context.Context, dbm *multidb.
 	require.NoError(t, err)
 	svc, err := provider(name, store)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	fixtureowner.Own(t, svc)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	require.EventuallyWithT(t, func(c *assert.CollectT) {

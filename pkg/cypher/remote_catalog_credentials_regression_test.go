@@ -52,7 +52,7 @@ func TestRemoteQueryCredentialPublic(t *testing.T) {
 	}
 	manager, err := multidb.NewDatabaseManager(t.Context(), inner, config)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "probe", []multidb.ConstituentRef{{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read", URI: "http://example.test/?" + query.String()}}))
 	system, err := manager.GetStorage("system")
 	require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestManagedRemoteCatalogWinnerPublic(t *testing.T) {
 	})
 	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "probe", []multidb.ConstituentRef{
 		{Alias: "R", DatabaseName: "loser", Type: "remote", AccessMode: "read", URI: remote.URL, AuthMode: "user_password", User: "loser", Password: "synthetic-loser-password-291753"},
 		{Alias: "r", DatabaseName: "winner", Type: "remote", AccessMode: "read", URI: remote.URL, AuthMode: "user_password", User: "winner", Password: "synthetic-winner-password-749361"},

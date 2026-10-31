@@ -9,8 +9,7 @@ import (
 )
 
 func TestPointsService_NumericAndIDQueriesDoNotBindEmbedding(t *testing.T) {
-	service, _, base := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
-	t.Cleanup(func() { _ = base.Close() })
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 	ctx := context.Background()
 	id := &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "snapshot-point"}}
 	dense := []float32{1, 0, 0, 0}

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"os/exec"
@@ -23,7 +24,10 @@ func TestMain(m *testing.M) {
 	boundary := fixtureowner.BeginStoreBoundary()
 	code := m.Run()
 	code = boundary.Check(code, os.Stderr, "cypher")
-	processFixtures.Close()
+	if err := processFixtures.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "cypher: process fixtures: %v\n", err)
+		code = 1
+	}
 	os.Exit(code)
 }
 

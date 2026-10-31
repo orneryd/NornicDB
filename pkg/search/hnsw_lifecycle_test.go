@@ -19,7 +19,7 @@ import (
 // construction paused and exercise the exact fallback instead.
 func requireHNSWReady(t testing.TB, svc *Service) {
 	t.Helper()
-	t.Cleanup(func() { _ = svc.Close() })
+	fixtureowner.Own(t, svc)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, err := svc.getOrCreateHNSWIndex(ctx, svc.VectorIndexDimensions())
@@ -245,7 +245,6 @@ func TestHNSWCancelledPreparationDoesNotStartCPUFallback(t *testing.T) {
 
 func TestHNSWBuildDefersSnapshotWhileVectorsAreReplaced(t *testing.T) {
 	svc := NewService(newNamespacedEngine(t), 3, nil)
-	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "old", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 	svc.hnswVectorsChanging.Store(true)
 	pipeline, err := svc.getOrCreateVectorPipeline(context.Background())

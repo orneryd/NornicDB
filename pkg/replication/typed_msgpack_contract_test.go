@@ -45,10 +45,10 @@ func TestMessagePackReplicationPreservesCypherTypedProperties(t *testing.T) {
 		require.NoError(t, err)
 		from, err := NewStorageAdapterWithWAL(source, t.TempDir())
 		require.NoError(t, err)
-		fixtureowner.OwnChecked(t, from)
+		fixtureowner.Own(t, from)
 		to, err := NewStorageAdapterWithWAL(target, t.TempDir())
 		require.NoError(t, err)
-		fixtureowner.OwnChecked(t, to)
+		fixtureowner.Own(t, to)
 		var data bytes.Buffer
 		require.NoError(t, from.WriteSnapshot(&data))
 		require.NoError(t, to.RestoreSnapshot(&data))

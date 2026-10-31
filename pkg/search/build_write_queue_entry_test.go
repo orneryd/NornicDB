@@ -34,13 +34,13 @@ func TestBuildRemoveLastVectorThenNewDimensions(t *testing.T) {
 			require.NoError(t, err)
 			svc := NewService(engine, 3, nil)
 			t.Cleanup(func() { _ = svc.Close() })
-			t.Cleanup(engine.open)
+			t.Cleanup(engine.ReleaseWrites)
 			require.NoError(t, svc.IndexNode(seed))
 			var built chan error
 			if gated {
 				built = startGatedBuild(t, engine, svc)
 			} else {
-				engine.open()
+				engine.ReleaseWrites()
 				require.NoError(t, svc.BuildIndexes(context.Background()))
 			}
 			next := buildWriteNode("nornic:next", "nextterm", []float32{0, 1})
@@ -66,7 +66,7 @@ func TestBuildRemoveLastVectorThenNewDimensions(t *testing.T) {
 					t.Fatalf("the write with new dimensions was decided before the removal ahead of it was installed: %v", err)
 				case <-time.After(200 * time.Millisecond):
 				}
-				engine.open()
+				engine.ReleaseWrites()
 				require.NoError(t, <-built)
 			}
 			require.NoError(t, <-done)
@@ -88,12 +88,12 @@ func TestBuildQueuedIndexFlagsDecideInOrder(t *testing.T) {
 		require.NoError(t, err)
 		svc := buildWriteService(t, engine, "", "v2", nil)
 		t.Cleanup(func() { _ = svc.Close() })
-		t.Cleanup(engine.open)
+		t.Cleanup(engine.ReleaseWrites)
 		var built chan error
 		if gated {
 			built = startGatedBuild(t, engine, svc)
 		} else {
-			engine.open()
+			engine.ReleaseWrites()
 			require.NoError(t, svc.BuildIndexes(context.Background()))
 		}
 		node := &storage.Node{ID: "nornic:f", Labels: []string{"Doc"}, Properties: map[string]any{"text": "flagterm"}}
@@ -103,7 +103,7 @@ func TestBuildQueuedIndexFlagsDecideInOrder(t *testing.T) {
 		changed[1] = svc.SetIndexFlags(false, true)
 		require.NoError(t, svc.IndexNode(node))
 		if gated {
-			engine.open()
+			engine.ReleaseWrites()
 			require.NoError(t, <-built)
 		}
 		_, indexed = svc.fulltext().GetDocument("nornic:f")
@@ -137,7 +137,7 @@ func TestBuildWriteBeyondMemoryLimitWaitsInOrder(t *testing.T) {
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	svc.EnableRelationshipSearch(nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	// The reservation: 12 MiB above the live heap when the queue opens.
 	runtime.GC()
 	previous := debug.SetMemoryLimit(int64(liveHeapBytes()) + 12<<20)
@@ -168,7 +168,7 @@ func TestBuildWriteBeyondMemoryLimitWaitsInOrder(t *testing.T) {
 		t.Fatal("a relationship-search update past the reservation was queued")
 	case <-time.After(200 * time.Millisecond):
 	}
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.NoError(t, <-nodeDone)
 	<-relDone
@@ -195,13 +195,13 @@ func TestBuildSupersededWriteIsSkippedAtInstall(t *testing.T) {
 	require.NoError(t, err)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	built := startGatedBuild(t, engine, svc)
 	stale := buildWriteNode("nornic:r", "staleterm", []float32{0, 1, 0})
 	queued, err := svc.readLockOrQueue(deferredIndexWrite{node: stale, valid: func() bool { return false }})
 	require.NoError(t, err)
 	require.True(t, queued)
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:r"}, buildWriteSearchIDs(t, svc, "storedterm"))
 	require.Empty(t, buildWriteSearchIDs(t, svc, "staleterm"))
@@ -221,12 +221,12 @@ func TestBuildRelationshipPhaseReadsWithTheNodeSnapshot(t *testing.T) {
 		require.NoError(t, engine.CreateEdge(storage.CopyEdge(stored)))
 		svc := buildWriteService(t, engine, "", "v2", nil)
 		t.Cleanup(func() { _ = svc.Close() })
-		t.Cleanup(engine.open)
+		t.Cleanup(engine.ReleaseWrites)
 		var built chan error
 		if gated {
 			built = startGatedBuild(t, engine, svc)
 		} else {
-			engine.open()
+			engine.ReleaseWrites()
 			require.NoError(t, svc.BuildIndexes(context.Background()))
 		}
 		svc.SetIndexFlags(true, false)
@@ -234,7 +234,7 @@ func TestBuildRelationshipPhaseReadsWithTheNodeSnapshot(t *testing.T) {
 		require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: storage.CopyEdge(updated)}))
 		require.NoError(t, svc.IndexEdge(updated))
 		if gated {
-			engine.open()
+			engine.ReleaseWrites()
 			require.NoError(t, <-built)
 		}
 		svc.mu.RLock()
@@ -251,19 +251,19 @@ func TestBuildRelationshipPhaseReadsWithTheNodeSnapshot(t *testing.T) {
 // after the build's read point only if the snapshot already holds it.
 type nodeReadParkEngine struct {
 	*storage.MemoryEngine
-	entered, release chan struct{}
-	once, opened     sync.Once
+	*fixtureowner.PauseGate
 }
 
 func newNodeReadParkEngine(t *testing.T) *nodeReadParkEngine {
 	t.Helper()
-	e := &nodeReadParkEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
-	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
+	e := &nodeReadParkEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), PauseGate: fixtureowner.NewPauseGate()}
+	e.Armed.Store(true)
+	t.Cleanup(e.ReleaseWrites)
 	return e
 }
 
-func (e *nodeReadParkEngine) open() { e.opened.Do(func() { close(e.release) }) }
-func (e *nodeReadParkEngine) park() { e.once.Do(func() { close(e.entered); <-e.release }) }
+// park pauses only the first read.
+func (e *nodeReadParkEngine) park() { e.Pause(e.Armed, e.Entered) }
 
 func (e *nodeReadParkEngine) IterateNodes(fn func(*storage.Node) bool) error {
 	e.park()
@@ -293,11 +293,11 @@ func TestBuildBaselineIsOneStoragePoint(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}))
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	built := make(chan error, 1)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {
-	case <-engine.entered:
+	case <-engine.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the build did not read its nodes")
 	}
@@ -312,7 +312,7 @@ func TestBuildBaselineIsOneStoragePoint(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.NoError(t, svc.IndexNode(node))
 	require.NoError(t, svc.IndexEdge(edge))
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	text, _ := svc.fulltext().GetDocument("nornic:doc")
 	svc.mu.RLock()
@@ -367,11 +367,11 @@ func TestBuildWithoutReadSnapshotsMakesWritesWait(t *testing.T) {
 	require.False(t, storage.SupportsReadSnapshot(context.Background(), engine))
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(gate.open)
+	t.Cleanup(gate.ReleaseWrites)
 	built := make(chan error, 1)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {
-	case <-gate.entered:
+	case <-gate.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the build did not read its nodes")
 	}
@@ -385,7 +385,7 @@ func TestBuildWithoutReadSnapshotsMakesWritesWait(t *testing.T) {
 		t.Fatalf("a write was queued on a build without a read snapshot: %v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
-	gate.open()
+	gate.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.NoError(t, <-done)
 	require.Equal(t, []string{"nornic:w"}, buildWriteSearchIDs(t, svc, "waitterm"))
@@ -402,7 +402,7 @@ func TestBuildConcurrentIndexFlagsReportTheirOwnChange(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	built := startGatedBuild(t, engine, svc)
 	initial := [2]bool{svc.bm25Enabled.Load(), svc.vectorEnabled.Load()}
 	const rounds, callers = 20, 8
@@ -431,7 +431,7 @@ func TestBuildConcurrentIndexFlagsReportTheirOwnChange(t *testing.T) {
 	svc.buildWrites.mu.Unlock()
 	require.Equal(t, rounds*callers, queued, "every call is queued on the build")
 	require.Equal(t, initial != final, changes.Load()%2 == 1, "the reported changes are not the transitions of the queued order")
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Equal(t, final, [2]bool{svc.bm25Enabled.Load(), svc.vectorEnabled.Load()})
 }
@@ -468,7 +468,7 @@ func TestBuildQueuedCopiesCountTheirHeap(t *testing.T) {
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	svc.EnableRelationshipSearch(nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	built := startGatedBuild(t, engine, svc)
 	edge := &storage.Edge{ID: "nornic:counted", Type: "REL", Properties: map[string]any{"v": make([]float32, 1024)}}
 	const copies = 4000
@@ -500,6 +500,6 @@ func TestBuildQueuedCopiesCountTheirHeap(t *testing.T) {
 		require.GreaterOrEqual(t, perCopy, held, "%s: the queue counts less than the copy holds", c.name)
 		require.LessOrEqual(t, perCopy, 1.25*held, "%s: the queue counts far more than the copy holds", c.name)
 	}
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 }

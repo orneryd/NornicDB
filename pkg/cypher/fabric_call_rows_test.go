@@ -30,7 +30,7 @@ func newFabricCallRowsExecutor(t testing.TB, narrow ...bool) *StorageExecutor {
 	}
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, config)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
+	runtimeFixtureOwner.Own(t, mgr)
 	for _, db := range []string{"one", "two"} {
 		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db}))
 		store, err := mgr.GetStorage(db)
@@ -75,7 +75,7 @@ func fabricCallRowsReference(t *testing.T) neo4j.DriverWithContext {
 		var err error
 		driver, err = neo4j.NewDriverWithContext(uri, neo4j.NoAuth())
 		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, driver.Close(ctx)) })
+		runtimeFixtureOwner.Own(t, runtimeFixtureOwner.CloseFunc(func() error { return driver.Close(ctx) }))
 		version, err := neo4j.ExecuteQuery(ctx, driver, "CALL dbms.components() YIELD versions RETURN versions[0] AS version", nil, neo4j.EagerResultTransformer)
 		require.NoError(t, err)
 		require.Equal(t, "5.26.30", version.Records[0].Values[0])

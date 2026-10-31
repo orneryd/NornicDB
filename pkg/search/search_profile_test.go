@@ -150,9 +150,6 @@ func loadSearchProfileDiskFixture(tb testing.TB) (*Service, []float32) {
 	if err != nil {
 		tb.Skipf("disk fixture storage unavailable (possibly already open/locked): %v", err)
 	}
-	tb.Cleanup(func() {
-		_ = baseEngine.Close()
-	})
 
 	engine := storage.NewNamespacedEngine(baseEngine, dbName)
 	svc := NewService(engine, dims, nil)

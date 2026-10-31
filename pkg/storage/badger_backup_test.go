@@ -99,7 +99,9 @@ func TestBadgerEngine_Backup(t *testing.T) {
 			fixtureowner.Own(t, engine)
 		}
 		require.NoError(t, err)
-		engine.Close()
+		if err := engine.Close(); err != nil {
+			t.Fatalf("close engine: %v", err)
+		}
 
 		// Try to backup closed engine
 		err = engine.Backup(backupPath)

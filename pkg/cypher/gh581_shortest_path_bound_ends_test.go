@@ -22,9 +22,7 @@ func newGh581Executor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "gh581")
 	return NewStorageExecutor(store)
 }

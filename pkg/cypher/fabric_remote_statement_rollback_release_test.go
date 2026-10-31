@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -61,8 +62,7 @@ func newCompositeFailureExecutor(t *testing.T, remote *failingCompositeRemote) (
 	remote.Engine = newTestMemoryEngine(t)
 	cfg := multidb.DefaultConfig()
 	cfg.RemoteEngineFactory = func(multidb.ConstituentRef, string) (storage.Engine, error) { return remote, nil }
-	manager := newCompositeNativeManager(t, cfg)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	manager := fixtureowner.Own(t, newCompositeNativeManager(t, cfg))
 	ctx := context.Background()
 	require.NoError(t, manager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: "one"}))
 	require.NoError(t, manager.CreateCompositeDatabase(ctx, "comp", []multidb.ConstituentRef{

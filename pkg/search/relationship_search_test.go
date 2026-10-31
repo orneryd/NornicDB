@@ -66,8 +66,7 @@ func relationshipTestEngine(t *testing.T) storage.Engine {
 
 func startRelationshipService(t *testing.T, engine storage.Engine, embed RelationshipEmbedFunc, configure func(*Service)) *Service {
 	t.Helper()
-	svc := NewService(engine, 3, nil)
-	t.Cleanup(func() { _ = svc.Close() })
+	svc := fixtureowner.Own(t, NewService(engine, 3, nil))
 	if configure != nil {
 		configure(svc)
 	}

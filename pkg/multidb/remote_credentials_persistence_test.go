@@ -200,7 +200,7 @@ func TestRemoteCredentialPersistenceEveryWriter(t *testing.T) {
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(t.Context(), inner, config)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	const password = "synthetic-writer-password-619382"
 	// An unrelated metadata write must never perform an implicit upgrade.
 	manager.databases["legacy"] = &DatabaseInfo{Name: "legacy", Type: "composite", Status: "online", Constituents: []ConstituentRef{{Alias: "r", Type: "remote", URI: "http://admin:" + password + "@127.0.0.1:1"}}}

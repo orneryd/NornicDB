@@ -18,7 +18,7 @@ func TestRule73HeimdallPublicColdAdmission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "gate_heimdall_leaf"}); err != nil {
 				t.Fatal(err)
 			}

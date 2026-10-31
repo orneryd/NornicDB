@@ -13,6 +13,5 @@ func newRebuildHeadsFixture(t *testing.T, retainedVersions int) *BadgerEngine {
 		EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: retainedVersions}},
 	}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	return engine
 }

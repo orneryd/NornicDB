@@ -86,7 +86,6 @@ func (t *lockHoldTracker) forget(mark int) {
 // write-order stripe, and none once it released it.
 func TestLockHoldTrackerRecordsDeliveryUnderAStripe(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-	t.Cleanup(func() { _ = engine.Close() })
 	delivered := 0
 	engine.OnNodeUpdated(func(*Node) { delivered++ })
 	mark := lockHolds.mark()

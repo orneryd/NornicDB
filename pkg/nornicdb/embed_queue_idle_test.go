@@ -49,7 +49,7 @@ func (e *idleCountingEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) erro
 func idleTestWorker(t *testing.T, workers int) (*EmbedWorker, *idleCountingEngine) {
 	t.Helper()
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	fixtureowner.Own(t, base)
 	base.SetEmbeddingsEnabled(true)
 	store := &idleCountingEngine{Engine: storage.NewNamespacedEngine(base, "idle")}
 	config := DefaultEmbedWorkerConfig()

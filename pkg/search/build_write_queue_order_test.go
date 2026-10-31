@@ -30,7 +30,7 @@ func startGatedBuild(t *testing.T, engine *nodeSnapshotGateEngine, svc *Service)
 	built := make(chan error, 1)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {
-	case <-engine.entered:
+	case <-engine.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the build did not read its node snapshot")
 	}
@@ -59,14 +59,14 @@ func TestBuildTemporalCurrencyIsDecidedAtTheCall(t *testing.T) {
 	engine := &temporalWindowEngine{nodeSnapshotGateEngine: gate}
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(gate.open)
+	t.Cleanup(gate.ReleaseWrites)
 	built := startGatedBuild(t, gate, svc)
 	node := &storage.Node{ID: "nornic:w", Labels: []string{"Doc"}, Properties: map[string]any{"text": "windowterm", "window": "closing"}}
 	_, err := gate.CreateNode(storage.CopyNode(node))
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write while current", func() error { return svc.IndexNode(node) })
 	engine.expired.Store(true)
-	gate.open()
+	gate.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:w"}, buildWriteSearchIDs(t, svc, "windowterm"), "currency was decided at apply, not at the call")
 }
@@ -107,7 +107,7 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 					engine := newNodeSnapshotGateEngine(t)
 					svc := NewService(engine, 4, nil)
 					t.Cleanup(func() { _ = svc.Close() })
-					t.Cleanup(engine.open)
+					t.Cleanup(engine.ReleaseWrites)
 					buildWriteEdgeEndpoints(t, engine)
 					stored := &storage.Edge{ID: "nornic:stored", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
 					require.NoError(t, engine.CreateEdge(stored))
@@ -115,7 +115,7 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 					if gated {
 						built = startGatedBuild(t, engine, svc)
 					} else {
-						engine.open()
+						engine.ReleaseWrites()
 						require.NoError(t, svc.BuildIndexes(context.Background()))
 					}
 					done := make(chan error, 1)
@@ -130,7 +130,7 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 						go func() { done <- svc.IndexNode(node) }()
 					}
 					if gated {
-						engine.open()
+						engine.ReleaseWrites()
 						require.NoError(t, <-built)
 					}
 					require.NoError(t, <-done)
@@ -151,19 +151,19 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 		engine := newNodeSnapshotGateEngine(t)
 		svc := NewService(engine, 3, nil)
 		t.Cleanup(func() { _ = svc.Close() })
-		t.Cleanup(engine.open)
+		t.Cleanup(engine.ReleaseWrites)
 		_, err := engine.CreateNode(buildWriteNode("nornic:stored", "storedterm", []float32{1, 0, 0, 0}))
 		require.NoError(t, err)
 		built := make(chan error, 1)
 		go func() { built <- svc.BuildIndexes(context.Background()) }()
 		select {
-		case <-engine.entered:
+		case <-engine.Entered:
 		case <-time.After(10 * time.Second):
 			t.Fatal("the build did not read its node snapshot")
 		}
 		written := make(chan error, 1)
 		go func() { written <- svc.IndexNode(buildWriteNode("nornic:live", "liveterm", []float32{0, 1, 0})) }()
-		engine.open()
+		engine.ReleaseWrites()
 		require.NoError(t, <-built)
 		select {
 		case err := <-written:
@@ -188,12 +188,12 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 			require.NoError(t, err)
 			svc := NewService(engine, 3, nil)
 			t.Cleanup(func() { _ = svc.Close() })
-			t.Cleanup(engine.open)
+			t.Cleanup(engine.ReleaseWrites)
 			var built chan error
 			if gated {
 				built = startGatedBuild(t, engine, svc)
 			} else {
-				engine.open()
+				engine.ReleaseWrites()
 				require.NoError(t, svc.BuildIndexes(context.Background()))
 			}
 			done := make(chan []error, 1)
@@ -202,7 +202,7 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 				done <- []error{first, svc.IndexNode(buildWriteNode("nornic:keep", "badterm", []float32{1, 0}))}
 			}()
 			if gated {
-				engine.open()
+				engine.ReleaseWrites()
 				require.NoError(t, <-built)
 			}
 			errs := <-done
@@ -225,7 +225,7 @@ func TestBuildRemovalThenRecreationDuringABuild(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	_, err := engine.CreateNode(buildWriteNode("nornic:o", "oterm", []float32{1, 0, 0}))
 	require.NoError(t, err)
 	built := startGatedBuild(t, engine, svc)
@@ -233,7 +233,7 @@ func TestBuildRemovalThenRecreationDuringABuild(t *testing.T) {
 	again := buildWriteNode("nornic:o", "againterm", []float32{0, 1, 0})
 	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: again}))
 	requireReturnsDuringBuild(t, "a re-creation", func() error { return svc.IndexNode(again) })
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:o"}, buildWriteSearchIDs(t, svc, "againterm"))
 	require.Empty(t, buildWriteSearchIDs(t, svc, "oterm"))
@@ -301,12 +301,12 @@ func TestBuildPropertyIndexRemovalCoversTheBuildsStoredNodes(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:stored", Labels: []string{"Doc"}, Properties: map[string]any{"text": "storedterm", "p": []float32{1, 0, 0}}})
 	require.NoError(t, err)
 	built := startGatedBuild(t, engine, svc)
 	svc.RemovePropertyVectorIndex("p")
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Zero(t, svc.CountPropertyVectorEntries("p"), "the build re-added a property-vector index removed during it")
 	require.Equal(t, []string{"nornic:stored"}, buildWriteSearchIDs(t, svc, "storedterm"))
@@ -321,12 +321,12 @@ func TestBuildIndexingSettingAppliesAfterTheBuild(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "titleterm", "other": "otherterm"}})
 	require.NoError(t, err)
 	built := startGatedBuild(t, engine, svc)
 	svc.SetFulltextProperties([]string{"other"})
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:stored"}, buildWriteSearchIDs(t, svc, "titleterm"), "the build indexed its stored nodes under a setting changed during it")
 	require.Equal(t, []string{"other"}, svc.FulltextProperties())
@@ -337,7 +337,6 @@ func TestBuildIndexingSettingAppliesAfterTheBuild(t *testing.T) {
 func startGatedBuildWithWrite(t *testing.T, dir string) (*nodeSnapshotGateEngine, *Service, chan error) {
 	t.Helper()
 	engine := newNodeSnapshotGateEngine(t)
-	t.Cleanup(engine.open)
 	svc := buildWriteService(t, engine, dir, "v2", nil)
 	built := startGatedBuild(t, engine, svc)
 	node := buildWriteNode("nornic:a", "aterm", []float32{1, 0, 0})
@@ -356,7 +355,7 @@ func TestBuildCloseClearAndPersistenceToggleKeepTheOrder(t *testing.T) {
 		t.Cleanup(func() { _ = svc.Close() })
 		cleared := make(chan struct{})
 		go func() { svc.ClearVectorIndex(); close(cleared) }()
-		engine.open()
+		engine.ReleaseWrites()
 		<-built
 		<-cleared
 		_, ok := svc.getVectorLookup()(nodeNamedVectorKey("nornic:a", "v"))
@@ -367,7 +366,7 @@ func TestBuildCloseClearAndPersistenceToggleKeepTheOrder(t *testing.T) {
 		t.Cleanup(func() { _ = svc.Close() })
 		toggled := make(chan struct{})
 		go func() { svc.SetPersistenceEnabled(false); close(toggled) }()
-		engine.open()
+		engine.ReleaseWrites()
 		require.NoError(t, <-built)
 		<-toggled
 		require.Equal(t, []string{"nornic:a"}, buildWriteSearchIDs(t, svc, "aterm"))
@@ -377,7 +376,7 @@ func TestBuildCloseClearAndPersistenceToggleKeepTheOrder(t *testing.T) {
 		engine, svc, built := startGatedBuildWithWrite(t, dir)
 		closed := make(chan error, 1)
 		go func() { closed <- svc.Close() }()
-		engine.open()
+		engine.ReleaseWrites()
 		<-built
 		require.NoError(t, <-closed)
 		restarted := buildWriteService(t, engine.MemoryEngine, dir, "v2", nil)
@@ -395,14 +394,14 @@ func TestBuildWriteIsVisibleWhenTheBuildInstallsIt(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	built := startGatedBuild(t, engine, svc)
 	a := buildWriteNode("nornic:a", "aterm", []float32{1, 0, 0})
 	_, err := engine.CreateNode(storage.CopyNode(a))
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(a) })
 	_, visibleDuring := svc.getVectorLookup()(nodeNamedVectorKey("nornic:a", "v"))
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	_, visibleAfter := svc.getVectorLookup()(nodeNamedVectorKey("nornic:a", "v"))
 	require.False(t, visibleDuring)
@@ -598,12 +597,12 @@ func TestBuildSequenceReplaysAsTheSerialOrder(t *testing.T) {
 				}
 				svc.EnableRelationshipSearch(nil)
 				t.Cleanup(func() { _ = svc.Close() })
-				t.Cleanup(engine.open)
+				t.Cleanup(engine.ReleaseWrites)
 				var built chan error
 				if gated {
 					built = startGatedBuild(t, engine, svc)
 				} else {
-					engine.open()
+					engine.ReleaseWrites()
 					require.NoError(t, svc.BuildIndexes(context.Background()))
 				}
 				// The calls are made one after another by one caller. A call
@@ -630,7 +629,7 @@ func TestBuildSequenceReplaysAsTheSerialOrder(t *testing.T) {
 							break waiting
 						}
 					}
-					engine.open()
+					engine.ReleaseWrites()
 					require.NoError(t, <-built)
 				}
 				<-finished
@@ -727,14 +726,14 @@ func TestBuildRelationshipUpdateFollowsAQueuedSetting(t *testing.T) {
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	svc.EnableRelationshipSearch(nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	buildWriteEdgeEndpoints(t, engine)
 	built := startGatedBuild(t, engine, svc)
 	svc.SetFulltextProperties([]string{"title"})
 	edge := &storage.Edge{ID: "nornic:r", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"title": "reltitleterm", "note": "relnoteterm"}}
 	require.NoError(t, engine.CreateEdge(storage.CopyEdge(edge)))
 	svc.IndexRelationship(edge)
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	rs := svc.relationshipSearch()
 	rs.mu.Lock()

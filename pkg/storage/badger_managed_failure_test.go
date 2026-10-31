@@ -125,7 +125,6 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	require.NoError(t, engine.Close())
 
 	engine = openLargeCommitTestEngine(t, dir)
-	defer engine.Close()
 	requireNoLargeCommitIntent(t, engine)
 	require.Zero(t, countBigNodes(t, engine))
 	base, err = engine.GetNode("test:base")
@@ -192,7 +191,6 @@ func TestLargeCommit_FailureAtAnyBatchRollsBack(t *testing.T) {
 // when the store refuses their writes: the next commit stages them again.
 func TestPropertyKeyDict_ManyNamesRefusedStayUnpersisted(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
 	txn, readTs, err := engine.db.beginTxn(true)
 	require.NoError(t, err)
 	defer engine.db.endRead(readTs)
@@ -336,7 +334,6 @@ func TestManagedBadger_LoadRejectsInvalidBackup(t *testing.T) {
 // commit turns large, and not for a commit that fits one batch.
 func TestCommitWriter_BeforeLargeRunsOnceWhenTheCommitTurnsLarge(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
 	write := func(n int, prefix string) int {
 		txn, readTs, err := engine.db.beginTxn(true)
 		require.NoError(t, err)

@@ -50,17 +50,17 @@ func newAcceptedReplicationFixture(t *testing.T, base, peer storage.Engine, conf
 	t.Helper()
 	local, err := NewStorageAdapterWithWAL(base, t.TempDir())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, local.Close()) })
+	fixtureowner.Own(t, local)
 	mirror := &acceptedMirrorStorage{Storage: local}
 	if peer != nil {
 		remote, err := NewStorageAdapterWithWAL(peer, t.TempDir())
 		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, remote.Close()) })
+		fixtureowner.Own(t, remote)
 		mirror.peer = remote
 	}
 	r := NewStandaloneReplicator(config, mirror)
 	require.NoError(t, r.Start(context.Background()))
-	t.Cleanup(func() { require.NoError(t, r.Shutdown()) })
+	fixtureowner.Own(t, fixtureowner.CloseFunc(r.Shutdown))
 	return r, mirror
 }
 

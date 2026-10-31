@@ -60,11 +60,9 @@ func startSharedIndexServer(t *testing.T, dbm *multidb.DatabaseManager, base sto
 	require.NoError(t, srv.Start())
 	conn, err := grpc.NewClient(srv.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	stop := func() {
-		_ = conn.Close()
-		srv.Stop()
-	}
-	t.Cleanup(stop)
+	// Own closes the client connection, then stops the server. A test can
+	// stop both earlier through stop, which is the same owner close.
+	_, stop := fixtureowner.OwnWithClose(t, fixtureowner.CloseFunc(func() error { srv.Stop(); return nil }), conn)
 	return sharedIndexServer{points: qpb.NewPointsClient(conn), collections: qpb.NewCollectionsClient(conn), stop: stop}
 }
 

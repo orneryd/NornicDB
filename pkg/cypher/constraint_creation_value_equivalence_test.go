@@ -49,7 +49,6 @@ func TestConstraintCreationValueEquivalence(t *testing.T) {
 								}
 								require.NoError(t, err)
 								base = b
-								t.Cleanup(func() { _ = b.Close() })
 							} else {
 								base = newTestMemoryEngine(t)
 							}

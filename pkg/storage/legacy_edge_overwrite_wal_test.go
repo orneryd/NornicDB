@@ -64,7 +64,12 @@ func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	crashClose(t, engine, wal)
 	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal = engine.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal.Close(); _ = engine.Close() })
+	t.Cleanup(func() {
+		_ = wal.Close()
+		if err := engine.Close(); err != nil {
+			t.Errorf("close engine: %v", err)
+		}
+	})
 	_, err = RecoverBufferedCommits(engine, wal)
 	require.NoError(t, err)
 

@@ -38,18 +38,11 @@ func startBoltIntegrationServerWithExplicitTx(t *testing.T, store storage.Engine
 	server.listener = listener
 
 	errCh := make(chan error, 1)
-	t.Cleanup(func() {
-		if err := server.Close(); err != nil {
-			t.Fatalf("close server: %v", err)
-		}
-		if err := <-errCh; err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	})
-
 	go func() {
 		errCh <- server.serve()
 	}()
+	// Own closes the server, then reports serve's result.
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { return <-errCh }), server)
 	return server, addr.Port
 }
 

@@ -1,11 +1,11 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,7 +19,6 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
-			_ = engine.Close()
 		}
 	})
 
@@ -121,7 +120,6 @@ func TestV3MigrationPreservesLegacyEdgeHistory(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				if engine != nil {
-					_ = engine.Close()
 				}
 			})
 			startID, endID := tc.start, tc.end

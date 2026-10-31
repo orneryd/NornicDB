@@ -15,8 +15,7 @@ import (
 // accounting outcome counters used by bulk compensation.
 func BenchmarkSizeTrackingFreshCreate(b *testing.B) {
 	b.Run("node", func(b *testing.B) {
-		manager, engine := benchmarkSizeTrackingEngine(b)
-		defer manager.Close()
+		_, engine := benchmarkSizeTrackingEngine(b)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -28,8 +27,7 @@ func BenchmarkSizeTrackingFreshCreate(b *testing.B) {
 	})
 
 	b.Run("relationship", func(b *testing.B) {
-		manager, engine := benchmarkSizeTrackingEngine(b)
-		defer manager.Close()
+		_, engine := benchmarkSizeTrackingEngine(b)
 		for _, id := range []storage.NodeID{"start", "end"} {
 			if _, err := engine.CreateNode(&storage.Node{ID: id}); err != nil {
 				b.Fatal(err)
@@ -57,9 +55,9 @@ func benchmarkSizeTrackingEngine(b *testing.B) (*DatabaseManager, storage.Engine
 	if err != nil {
 		b.Fatal(err)
 	}
+	runtimeFixtureOwner.Own(b, manager)
 	engine, err := manager.GetStorage("nornic")
 	if err != nil {
-		_ = manager.Close()
 		b.Fatal(err)
 	}
 	return manager, engine

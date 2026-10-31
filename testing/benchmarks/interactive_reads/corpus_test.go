@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 )
@@ -111,7 +112,7 @@ func openSavedCorpus(t *testing.T, expectedCorpusSHA256 string) (*cypher.Storage
 	config.Memory.EmbeddingDimensions = 2048
 	db, err := nornicdb.Open(storePath, config)
 	must(t, err)
-	t.Cleanup(func() { must(t, db.Close()) })
+	fixtureowner.Own(t, db)
 	_, err = db.EnsureSearchIndexes(context.Background(), "library", db.GetStorage(), nornicdb.SearchIndexBuildWait)
 	must(t, err)
 	emit(t, "database-path", map[string]interface{}{"owner": "nornicdb.Open/GetCypherExecutor", "namespace": "library", "strict_durability": true, "wal_sync": "immediate", "async_writes": false, "embeddings": false, "decay": false, "auto_links": false, "search_indexes_ready": true})

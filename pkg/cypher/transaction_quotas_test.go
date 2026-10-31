@@ -17,7 +17,7 @@ func quotaExecutor(t testing.TB, limits *multidb.Limits) (*StorageExecutor, stor
 	base := newTestMemoryEngine(t)
 	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", limits))
 	engine, err := manager.GetStorage("quota")
@@ -160,7 +160,12 @@ func TestTransactionQuotasPersistedUsage(t *testing.T) {
 	require.NoError(t, manager.Close())
 	require.NoError(t, base.Close())
 	base, manager = open()
-	t.Cleanup(func() { _ = manager.Close(); _ = base.Close() })
+	t.Cleanup(func() {
+		_ = manager.Close()
+		if err := base.Close(); err != nil {
+			t.Errorf("close base: %v", err)
+		}
+	})
 	engine, err = manager.GetStorage("quota")
 	require.NoError(t, err)
 	_, err = NewStorageExecutor(engine).Execute(context.Background(), "CREATE (:Quota)", nil)

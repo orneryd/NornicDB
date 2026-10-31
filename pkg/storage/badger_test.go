@@ -37,7 +37,6 @@ func createTestBadgerEngineOnDisk(t *testing.T) (*BadgerEngine, string) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	return engine, dir
 }
 
@@ -1469,7 +1468,6 @@ func TestBadgerEngine_ClosedOperations(t *testing.T) {
 
 func TestBadgerEngine_Size(t *testing.T) {
 	engine, dir := createTestBadgerEngineOnDisk(t)
-	defer engine.Close()
 
 	// Add some data
 	for i := 0; i < 100; i++ {
@@ -1497,7 +1495,6 @@ func TestBadgerEngine_Size(t *testing.T) {
 
 func TestBadgerEngine_Sync(t *testing.T) {
 	engine, _ := createTestBadgerEngineOnDisk(t)
-	defer engine.Close()
 
 	// Add data
 	_, err := engine.CreateNode(testNode("sync-test"))
@@ -1510,7 +1507,6 @@ func TestBadgerEngine_Sync(t *testing.T) {
 
 func TestBadgerEngine_RunGC(t *testing.T) {
 	engine, _ := createTestBadgerEngineOnDisk(t)
-	defer engine.Close()
 
 	// Add and delete some data to create garbage
 	for i := 0; i < 100; i++ {

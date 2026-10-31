@@ -14,10 +14,10 @@ package storage
 // paths is what prevents batch-related divergences.
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +42,7 @@ func mutationEquivalenceStacks(t *testing.T) map[string]func(*testing.T) Engine 
 			require.NoError(t, err)
 			walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = walLog.Close(); _ = engine.Close() })
+			t.Cleanup(func() { _ = walLog.Close() })
 			return NewWALEngine(engine, walLog)
 		},
 		"namespaced+wal": func(t *testing.T) Engine {
@@ -54,7 +54,7 @@ func mutationEquivalenceStacks(t *testing.T) map[string]func(*testing.T) Engine 
 			walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 			require.NoError(t, err)
 			wal := NewWALEngine(engine, walLog)
-			t.Cleanup(func() { _ = walLog.Close(); _ = engine.Close() })
+			t.Cleanup(func() { _ = walLog.Close() })
 			return NewNamespacedEngine(wal, "tenant")
 		},
 	}

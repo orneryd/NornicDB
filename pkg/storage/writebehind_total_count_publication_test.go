@@ -1,10 +1,10 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -112,7 +112,6 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"test:a", "test:b", "other:z"} {
 		_, err = engine.CreateNode(&Node{ID: id})
 		require.NoError(t, err)
@@ -246,7 +245,12 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 	crashClose(t, engine, wal)
 	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal2 := recovered.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
+	t.Cleanup(func() {
+		_ = wal2.Close()
+		if err := recovered.Close(); err != nil {
+			t.Errorf("close recovered: %v", err)
+		}
+	})
 	observed := make(chan []int64, 2)
 	read := func() {
 		nodes, err1 := recovered.NodeCount()

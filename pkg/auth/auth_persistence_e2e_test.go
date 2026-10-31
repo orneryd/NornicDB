@@ -37,7 +37,9 @@ func TestAdminPasswordChangeSurvivesBootstrapRestart(t *testing.T) {
 		systemStorage := storage.NewNamespacedEngine(engine, "system")
 		authenticator, err := NewAuthenticator(authConfig, systemStorage)
 		if err != nil {
-			_ = engine.Close()
+			if err := engine.Close(); err != nil {
+				t.Fatalf("close engine: %v", err)
+			}
 			return nil, nil, nil, err
 		}
 		_, bootstrapErr := authenticator.CreateUser(username, initialPassword, []Role{RoleAdmin})
@@ -79,8 +81,7 @@ func TestAdminPasswordChangeSurvivesBootstrapRestart(t *testing.T) {
 	// the unique changed credential can be checked reliably at raw-byte level.
 	assertDirectoryExcludesPlaintext(t, dataDir, changedPassword)
 
-	reloadedAuth, reloadedEngine, reloadedStorage, bootstrapErr := openAndBootstrap()
-	t.Cleanup(func() { _ = reloadedEngine.Close() })
+	reloadedAuth, _, reloadedStorage, bootstrapErr := openAndBootstrap()
 	require.ErrorIs(t, bootstrapErr, ErrUserExists,
 		"bootstrap must not overwrite an existing admin user")
 

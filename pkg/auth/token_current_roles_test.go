@@ -12,8 +12,7 @@ import (
 
 func currentRolesAuthenticator(t testing.TB) (*Authenticator, *RoleStore) {
 	t.Helper()
-	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "system")
 	config := DefaultAuthConfig()
 	config.DefaultAdminUsername = ""

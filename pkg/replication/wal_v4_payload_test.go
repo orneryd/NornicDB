@@ -79,7 +79,7 @@ func TestV4ReplicationWALUpgradePreservesSemanticCommand(t *testing.T) {
 
 	adapter, err := NewStorageAdapterWithWAL(engine, dir)
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, adapter)
+	fixtureowner.Own(t, adapter)
 	entries, err := adapter.GetWALEntries(0, 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)

@@ -1,11 +1,11 @@
 package bolt
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -16,9 +16,7 @@ func TestBoltDatabaseManagerAdapter_ValidAndInvalidConversions(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = mgr.Close()
-	})
+	fixtureowner.Own(t, mgr)
 
 	for _, dbName := range []string{"db1", "db2", "db3", "db4"} {
 		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: dbName}))

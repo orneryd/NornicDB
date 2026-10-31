@@ -27,7 +27,7 @@ func wireFixture(t *testing.T, buffered bool, dataDirs ...string) (*storage.Badg
 	require.NoError(t, err)
 	a, err := NewStorageAdapterWithWAL(b, t.TempDir())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, a)
+	fixtureowner.Own(t, a)
 	return b, a
 }
 
@@ -156,7 +156,7 @@ func wireDictionaryIdentity(t *testing.T, b *storage.BadgerEngine, key string) s
 	dir := t.TempDir()
 	w, err := storage.NewWAL(dir, storage.DefaultWALConfig())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, w)
+	fixtureowner.Own(t, w)
 	b.SetBufferedCommitWAL(w)
 	tx, err := b.BeginTransaction()
 	require.NoError(t, err)
@@ -237,7 +237,7 @@ func TestPrototypeTransactionReceiptSurvivesReopen(t *testing.T) {
 		require.NoError(t, err)
 		a, err := NewStorageAdapterWithWAL(b, t.TempDir())
 		require.NoError(t, err)
-		fixtureowner.OwnChecked(t, a)
+		fixtureowner.Own(t, a)
 		return b, a
 	}
 	b, a := open()

@@ -42,7 +42,7 @@ func TestV4ReplicationSnapshotConversionRestoresHistoricalData(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, t.TempDir())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, adapter)
+	fixtureowner.Own(t, adapter)
 	require.NoError(t, adapter.RestoreSnapshot(bytes.NewReader(converted.Bytes())))
 	position, err := adapter.GetWALPosition()
 	require.NoError(t, err)

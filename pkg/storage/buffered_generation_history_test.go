@@ -66,7 +66,12 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	require.Len(t, versions, 3)
 	crashClose(t, b, w)
 	b, w = open()
-	t.Cleanup(func() { _ = w.Close(); _ = b.Close() })
+	t.Cleanup(func() {
+		_ = w.Close()
+		if err := b.Close(); err != nil {
+			t.Errorf("close b: %v", err)
+		}
+	})
 	count, err := RecoverBufferedCommits(b, w)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)

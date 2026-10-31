@@ -27,7 +27,7 @@ func TestReview1477R2PublicBearerTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	config := DefaultConfig()
 	config.Authenticator = review1477BearerAuthenticator{}
 	server := NewWithDatabaseManager(config, nil, manager)

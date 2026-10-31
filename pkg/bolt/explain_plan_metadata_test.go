@@ -21,9 +21,7 @@ import (
 func newStatementFramingSession(t *testing.T, modes ...neo4jdriver.AccessMode) neo4jdriver.SessionWithContext {
 	t.Helper()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	runtimeFixtureOwner.Own(t, base)
 	mgr := &mockDBManager{
 		stores: map[string]storage.Engine{
 			"nornic": storage.NewNamespacedEngine(base, "nornic"),
@@ -44,9 +42,7 @@ func newStatementFramingSession(t *testing.T, modes ...neo4jdriver.AccessMode) n
 		neo4jdriver.NoAuth(),
 	)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, driver.Close(context.Background()))
-	})
+	runtimeFixtureOwner.Own(t, runtimeFixtureOwner.CloseFunc(func() error { return driver.Close(context.Background()) }))
 	require.NoError(t, driver.VerifyConnectivity(ctx))
 
 	mode := neo4jdriver.AccessModeWrite
@@ -57,9 +53,7 @@ func newStatementFramingSession(t *testing.T, modes ...neo4jdriver.AccessMode) n
 		AccessMode:   mode,
 		DatabaseName: "nornic",
 	})
-	t.Cleanup(func() {
-		require.NoError(t, session.Close(ctx))
-	})
+	runtimeFixtureOwner.Own(t, runtimeFixtureOwner.CloseFunc(func() error { return session.Close(ctx) }))
 	return session
 }
 

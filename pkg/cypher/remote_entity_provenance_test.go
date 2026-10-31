@@ -40,7 +40,7 @@ func TestFabricRemoteEntityGraphFunctions(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "remote_graph", []multidb.ConstituentRef{{Alias: "source", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: server.URL, AuthMode: "oidc_forwarding"}}))
 	store, err := mgr.GetStorage(mgr.DefaultDatabaseName())
 	require.NoError(t, err)

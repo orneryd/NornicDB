@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 )
 
@@ -155,13 +156,11 @@ func startTestHTTPServer(t *testing.T, server *Server) {
 	if err := server.Start(); err != nil {
 		t.Fatalf("start NornicDB HTTP server: %v", err)
 	}
-	t.Cleanup(func() {
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := server.Stop(ctx); err != nil {
-			t.Errorf("stop NornicDB HTTP server: %v", err)
-		}
-	})
+		return server.Stop(ctx)
+	}))
 }
 
 // newCookieClient returns a client with a cookie jar. Without a transport it

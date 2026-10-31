@@ -12,10 +12,6 @@ import (
 func newTestMemoryEngine(t testing.TB) *storage.MemoryEngine {
 	t.Helper()
 	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() {
-		if err := engine.Close(); err != nil {
-			t.Errorf("close test store: %v", err)
-		}
-	})
+	runtimeFixtureOwner.Own(t, engine)
 	return engine
 }

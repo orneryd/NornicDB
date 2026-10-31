@@ -19,7 +19,9 @@ type typedCountScopeFixture struct {
 	engine  storage.Engine
 	manager *multidb.DatabaseManager
 	admin   *StorageExecutor
-	closed  bool
+	// close flushes buffered writes and closes the manager, through the
+	// owner; a test calls it early to reopen the same directory.
+	close func()
 }
 
 func openTypedCountScope(t *testing.T, dir string, buffered bool) *typedCountScopeFixture {
@@ -37,18 +39,9 @@ func openTypedCountScope(t *testing.T, dir string, buffered bool) *typedCountSco
 	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	f := &typedCountScopeFixture{base: base, engine: engine, manager: manager}
+	_, f.close = fixtureowner.OwnWithClose(t, manager, fixtureowner.CloseFunc(func() error { return base.FlushWriteBehind(nil) }))
 	f.admin = f.executor(t, manager.DefaultDatabaseName())
-	t.Cleanup(func() { f.close(t) })
 	return f
-}
-
-func (f *typedCountScopeFixture) close(t *testing.T) {
-	t.Helper()
-	if !f.closed {
-		require.NoError(t, f.base.FlushWriteBehind(nil))
-		require.NoError(t, f.manager.Close())
-		f.closed = true
-	}
 }
 
 func (f *typedCountScopeFixture) executor(t *testing.T, name string) *StorageExecutor {
@@ -161,7 +154,7 @@ func TestTypedCountNamespaceLifecycle(t *testing.T) {
 				typedCountWant(t, dropView, "MATCH (a:ScopeProbe) WITH a LIMIT 10 MATCH (a)-[r:SCOPE]->() RETURN count(r) AS n", 0)
 				typedCountShapes(t, f.executor(t, "scope_b"), 2)
 			}
-			f.close(t)
+			f.close()
 			f = openTypedCountScope(t, dir, buffered)
 			for name, want := range map[string]int64{"scope_a": 1, "scope_b": 2, "scope_c": 5} {
 				typedCountShapes(t, f.executor(t, name), want)

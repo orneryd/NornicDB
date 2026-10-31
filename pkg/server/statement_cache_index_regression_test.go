@@ -12,7 +12,7 @@ func TestRule73CachedHeimdallViewsDropCycles64(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	router := newHeimdallDBRouter(nil, manager, nil)
 	fixtureowner.RunCatalogDropCycles(t, 64, "gate_cached_",
 		func(name string) error {
