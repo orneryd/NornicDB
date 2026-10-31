@@ -1,10 +1,46 @@
+// Author: Codex, NOR-160 snapshot read ownership correction, 2026-10-26.
 package storage
 
 import (
+	"slices"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 )
+
+// snapshotNodeImage records exactly what the pinned reader hydrated. One
+// bounded cache serves complete, query-metadata and projected point reads;
+// incomplete properties or vectors can never satisfy a richer read.
+type snapshotNodeImage struct {
+	node       *Node
+	hydration  nodeItemHydration
+	properties []string // nil: all properties; non-nil: only these are known
+}
+
+func (image snapshotNodeImage) supports(hydration nodeItemHydration, properties []string) bool {
+	if image.node == nil || image.hydration < hydration {
+		return false
+	}
+	if hydration == nodeItemBodyOnly && image.hydration != nodeItemBodyOnly {
+		// Projected reads retain body metadata rather than hydrating a worker
+		// sidecar. A settled metadata image must not change that contract.
+		if len(image.node.EmbedMeta) > 0 || image.node.RuntimeMetadata().EmbeddingsStoredSeparately || len(image.node.ChunkEmbeddings) > 0 || len(image.node.NamedEmbeddings) > 0 {
+			return false
+		}
+	}
+	if image.properties == nil {
+		return true
+	}
+	if properties == nil {
+		return false
+	}
+	for _, property := range properties {
+		if !slices.Contains(image.properties, property) {
+			return false
+		}
+	}
+	return true
+}
 
 const (
 	maxSnapshotLabelPrefixStreams   = 8
@@ -67,11 +103,11 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 	tx.snapshotLabelPrefixBytes += bytes - previousBytes
 	if indexNodesByID {
 		if tx.snapshotPrefixNodeByID == nil {
-			tx.snapshotPrefixNodeByID = make(map[NodeID]*Node, len(nodes))
+			tx.snapshotPrefixNodeByID = make(map[NodeID]snapshotNodeImage, len(nodes))
 			tx.snapshotPrefixNodeBytesByID = make(map[NodeID]int, len(nodes))
 		}
 		for index, node := range nodes {
-			tx.cacheValidatedSnapshotPrefixNodeByIDLocked(node, sizes[index])
+			tx.cacheValidatedSnapshotPrefixNodeByIDLocked(snapshotNodeImage{node: node, hydration: nodeItemFullEmbeddings}, sizes[index])
 		}
 	}
 }
@@ -127,24 +163,101 @@ func (tx *BadgerTransaction) nodeHasEmbeddingSidecar(txn *badger.Txn, nodeID Nod
 	return err == nil
 }
 
-func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(txn *badger.Txn, node *Node) {
+func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(txn *badger.Txn, node *Node) bool {
 	nodeBytes, ok := snapshotLabelPrefixNodeBytes(node)
 	if !ok || nodeBytes > maxSnapshotPrefixNodeCacheBytes {
-		return
+		return false
 	}
-	// Sidecar-bearing nodes must be re-read so embedding hydration runs.
+	// A label prefix has not proved sidecar hydration. Only the canonical
+	// point reader can admit that settled image with its actual read quality.
 	if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
-		return
+		return false
 	}
-	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(node, nodeBytes)
+	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(snapshotNodeImage{node: node, hydration: nodeItemFullEmbeddings}, nodeBytes)
+	return true
 }
 
-func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(node *Node, nodeBytes int) {
-	if _, exists := tx.snapshotPrefixNodeByID[node.ID]; exists {
+// cacheSnapshotReadNodeLocked admits only a successful canonical snapshot read.
+// Its hydration/projection travels with the image in the existing cache; this
+// does not fill or publish an engine cache. The caller retains the immutable
+// decoded image here and returns its own copy after admission.
+func (tx *BadgerTransaction) cacheSnapshotReadNodeLocked(node *Node, hydration nodeItemHydration, properties []string, decoded bool) bool {
+	if tx.snapshotDeregister == nil || node == nil {
+		return false
+	}
+	image := snapshotNodeImage{node: node, hydration: hydration, properties: properties}
+	// A metadata read without embedding state is already complete. No second
+	// sidecar probe is needed: the canonical reader settled it in this view.
+	if hydration == nodeItemQueryMetadata && len(node.EmbedMeta) == 0 && !node.RuntimeMetadata().EmbeddingsStoredSeparately && len(node.ChunkEmbeddings) == 0 && len(node.NamedEmbeddings) == 0 {
+		image.hydration = nodeItemFullEmbeddings
+	}
+	body := *node
+	metadata := body.RuntimeMetadata()
+	metadata.EmbeddingsStoredSeparately = false
+	body.SetRuntimeMetadata(metadata)
+	body.EmbedMeta, body.ChunkEmbeddings, body.NamedEmbeddings = nil, nil, nil
+	nodeBytes, ok := snapshotLabelPrefixNodeBytes(&body)
+	if !ok {
+		return false
+	}
+	add := func(value any) bool {
+		bytes, ok := snapshotLabelPrefixValueBytes(value, 0)
+		if !ok || bytes > maxSnapshotLabelPrefixNodeBytes-nodeBytes {
+			return false
+		}
+		nodeBytes += bytes
+		return true
+	}
+	if len(node.EmbedMeta) > 0 && !add(node.EmbedMeta) {
+		return false
+	}
+	for _, vector := range node.ChunkEmbeddings {
+		if !add(vector) {
+			return false
+		}
+	}
+	for name, vector := range node.NamedEmbeddings {
+		if !add(name) || !add(vector) {
+			return false
+		}
+	}
+	for _, property := range properties {
+		if !add(property) {
+			return false
+		}
+	}
+	if properties != nil {
+		image.properties = slices.Clone(properties)
+	}
+	if decoded {
+		// The reader hands its decoded node to its caller; the cache keeps
+		// its own copy, made only once admission has decided (NOR-160).
+		image.node = copyNode(node)
+	}
+	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(image, nodeBytes)
+	return true
+}
+
+func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(image snapshotNodeImage, nodeBytes int) {
+	node := image.node
+	if previous, exists := tx.snapshotPrefixNodeByID[node.ID]; exists {
+		if previous.supports(image.hydration, image.properties) {
+			return
+		}
+		// Upgrade/replace the same entry; its previous budget and FIFO position
+		// must disappear before admitting the new read quality.
+		tx.snapshotPrefixNodeBytes -= tx.snapshotPrefixNodeBytesByID[node.ID]
+		delete(tx.snapshotPrefixNodeByID, node.ID)
+		delete(tx.snapshotPrefixNodeBytesByID, node.ID)
+		if index := slices.Index(tx.snapshotPrefixNodeOrder, node.ID); index >= 0 {
+			tx.snapshotPrefixNodeOrder = slices.Delete(tx.snapshotPrefixNodeOrder, index, index+1)
+		}
+	}
+	if nodeBytes > maxSnapshotPrefixNodeCacheBytes {
 		return
 	}
 	if tx.snapshotPrefixNodeByID == nil {
-		tx.snapshotPrefixNodeByID = make(map[NodeID]*Node, maxSnapshotPrefixNodeCacheNodes)
+		tx.snapshotPrefixNodeByID = make(map[NodeID]snapshotNodeImage, maxSnapshotPrefixNodeCacheNodes)
 		tx.snapshotPrefixNodeBytesByID = make(map[NodeID]int, maxSnapshotPrefixNodeCacheNodes)
 	}
 	for len(tx.snapshotPrefixNodeOrder) >= maxSnapshotPrefixNodeCacheNodes ||
@@ -159,7 +272,7 @@ func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(node *No
 	tx.snapshotPrefixNodeOrder = append(tx.snapshotPrefixNodeOrder, node.ID)
 	tx.snapshotPrefixNodeBytesByID[node.ID] = nodeBytes
 	tx.snapshotPrefixNodeBytes += nodeBytes
-	tx.snapshotPrefixNodeByID[node.ID] = node
+	tx.snapshotPrefixNodeByID[node.ID] = image
 }
 
 func (tx *BadgerTransaction) clearSnapshotLabelPrefixLocked(key snapshotLabelCacheKey) {
@@ -299,14 +412,19 @@ func snapshotEdgeBytes(edge *Edge) (int, bool) {
 	return bytes, true
 }
 
-func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
+// getAllCommittedNodesLocked returns the committed nodes as images and the
+// buffered ones that follow them, still borrowed: each caller copies only the
+// buffered nodes it keeps, through the overlay's exits (NOR-160). useCache is
+// allNodeImages': collections set it, streams do not.
+func (tx *BadgerTransaction) getAllCommittedNodesLocked(useCache bool) ([]nodeImage, bufferedEntityResult, error) {
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.AllNodes()
+		return tx.engine.allNodeImages(useCache)
 	}
-	return tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
+	nodes, err := tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
+	return decodedNodes(nodes), bufferedEntityResult{}, err
 }
 
 // EdgeDirection selects which adjacency side an adjacency read resolves. It is
@@ -368,25 +486,43 @@ func (cache *snapshotAdjacencyCache) clear() {
 // scanned every visible edge in the graph and filtered by endpoint in memory,
 // which degraded linearly with the total edge count on large graphs. Pending
 // transaction writes are merged by the caller.
-func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection) ([]*Edge, error) {
+// keep, when set, is the transaction's selection (its own writes superseding
+// committed edges, the read's direction), decided before any retained body is
+// copied (NOR-160).
+func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, keep func(*Edge) bool) ([]edgeImage, error) {
 	// Write-behind reads are read-committed: the flusher may land a buffered
 	// commit after the pinned snapshot, and buffered-but-unflushed edges are
 	// invisible to the pinned view. Read the latest overlaid engine view
 	// instead (PR #1043 read-overlay parity).
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		switch direction {
-		case Outgoing:
-			return tx.engine.GetOutgoingEdges(nodeID)
-		case Incoming:
-			return tx.engine.GetIncomingEdges(nodeID)
-		default:
+		if direction != Outgoing && direction != Incoming {
 			return nil, ErrInvalidData
 		}
+		// The engine's adjacency images: the transaction merges its own
+		// writes before anything is delivered (NOR-160).
+		reader, err := tx.engine.captureAdjacencyReader(nodeID, direction == Outgoing, direction == Incoming, visibleRead, keep)
+		if err != nil {
+			return nil, err
+		}
+		if reader.view != nil {
+			defer reader.view.Close()
+		}
+		return reader.read(direction == Outgoing)
 	}
 	if tx.snapshotDeregister != nil {
-		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false)
+		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false, keep)
 	}
-	return tx.engine.readAdjacentEdgesAtWithView(nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
+	edges, err := tx.engine.readAdjacentEdgesAtWithView(nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
+	if keep != nil {
+		kept := edges[:0]
+		for _, edge := range edges {
+			if keep(edge) {
+				kept = append(kept, edge)
+			}
+		}
+		edges = kept
+	}
+	return decodedEdges(edges), err
 }
 
 // readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships visible at
@@ -398,7 +534,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 // snapshot record is read. The adjacency cache is filled only after the whole
 // view succeeds: a partial edge ID list would make a later read of the same
 // node report a truncated adjacency as complete.
-func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]*Edge, error) {
+func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool, keep func(*Edge) bool) ([]edgeImage, error) {
 	var cache *snapshotAdjacencyCache
 	switch direction {
 	case Outgoing:
@@ -409,7 +545,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 		return nil, ErrInvalidData
 	}
 	edgeIDs, cached := cache.load(nodeID)
-	edges := make([]*Edge, 0, len(edgeIDs))
+	edges := make([]edgeImage, 0, len(edgeIDs))
 	err := tx.withSnapshotViewLocked(func(snapshot *badger.Txn) error {
 		var err error
 		if !cached {
@@ -424,33 +560,40 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 			if err != nil {
 				return err
 			}
-			edges = make([]*Edge, 0, len(edgeIDs))
+			edges = make([]edgeImage, 0, len(edgeIDs))
 		}
 		var headers map[EdgeID]*Edge
 		if headersOnly {
 			headers = tx.engine.adjacencyHeadersInTxn(snapshot, nodeID, direction)
 		}
 		for _, edgeID := range edgeIDs {
-			var edge *Edge
-			decayStable := !tx.engine.visibilityFiltered()
-			if cachedEdge, ok := tx.snapshotEdgeByID[edgeID]; ok && decayStable {
-				edge = copyEdge(cachedEdge)
+			var edge edgeImage
+			if cachedEdge, ok := tx.snapshotEdgeByID[edgeID]; ok {
+				// The body is immutable in this view; visibility is not. Reuse
+				// the body and run the same live policy owner on every read.
+				// Check its no-policy shortcut before evaluating the clock.
+				if tx.engine.visibilityFiltered() && tx.engine.filterEntityByDecay(visibleRead, cachedEdge, DecayScoringTime()) {
+					continue
+				}
+				if !attachedAt(cachedEdge, nodeID, direction == Outgoing) || keep != nil && !keep(cachedEdge) {
+					continue
+				}
+				// Selected: the read's one copy of the snapshot body.
+				edge = decodedEdge(copyEdge(cachedEdge))
 			} else if header := tx.snapshotHeaderLocked(snapshot, headers, edgeID); header != nil {
-				edge = header
+				edge = decodedEdge(header)
 			} else {
-				var edgeErr error
-				edge, edgeErr = tx.engine.getEdgeAtInTxn(snapshot, edgeID, tx.readTS, mvccEntityRead{visibility: visibleRead})
+				decoded, edgeErr := tx.engine.getEdgeAtInTxn(snapshot, edgeID, tx.readTS, mvccEntityRead{visibility: visibleRead})
 				if edgeErr == ErrNotFound || edgeErr == ErrNotVisibleAtSnapshot {
 					continue
 				}
 				if edgeErr != nil {
 					return edgeErr
 				}
-				if decayStable {
-					tx.cacheSnapshotEdgeByIDLocked(edge)
-				}
+				tx.cacheSnapshotEdgeByIDLocked(decoded)
+				edge = decodedEdge(decoded)
 			}
-			if edge == nil {
+			if edge.Edge == nil || keep != nil && !keep(edge.Edge) {
 				continue
 			}
 			if direction == Outgoing && edge.StartNode == nodeID || direction == Incoming && edge.EndNode == nodeID {
@@ -500,13 +643,7 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 		// Read-committed: buffered edges are invisible to the pinned snapshot,
 		// so answer from the engine's overlaid header read instead
 		// (PR #1043 read-overlay parity).
-		var committed []*Edge
-		var err error
-		if direction == Outgoing {
-			committed, _, err = tx.engine.OutgoingEdgeHeaders(nodeID)
-		} else {
-			committed, _, err = tx.engine.IncomingEdgeHeaders(nodeID)
-		}
+		committed, _, err := tx.engine.edgeHeaderImages(nodeID, direction == Outgoing, tx.committedEdgeKeptLocked)
 		if err != nil {
 			return nil, true, err
 		}
@@ -517,7 +654,7 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 			return edge.EndNode == nodeID
 		}), true, nil
 	}
-	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, true)
+	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, true, tx.committedEdgeKeptLocked)
 	if err != nil {
 		return nil, true, err
 	}

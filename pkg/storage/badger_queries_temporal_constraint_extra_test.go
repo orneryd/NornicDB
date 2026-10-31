@@ -31,43 +31,6 @@ func TestCompareValues_MixedAndFallbackBranches(t *testing.T) {
 	}
 }
 
-func TestBadgerEngine_MaterializeAdjEdges_CacheMissAndDecodeError(t *testing.T) {
-	engine := newTestEngine(t)
-
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
-	require.NoError(t, err)
-
-	e1 := &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "R"}
-	e2 := &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "R"}
-	require.NoError(t, engine.CreateEdge(e1))
-	require.NoError(t, engine.CreateEdge(e2))
-
-	// Force one cache hit path.
-	engine.cacheStoreEdge(e1, engine.db.oracle.published.Load())
-
-	// Corrupt records fail the read; missing records are still skipped.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
-		return txn.Set(edgeKey("test:e-corrupt"), []byte("bad-edge-bytes"))
-	}))
-
-	got, err := engine.materializeAdjEdges([]EdgeID{"test:e1", "test:e2", "test:e-missing", "test:e-corrupt"}, visibleRead)
-	require.Error(t, err)
-	require.Nil(t, got)
-	got, err = engine.materializeAdjEdges([]EdgeID{"test:e1", "test:e2", "test:e-missing"}, visibleRead)
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-	ids := map[EdgeID]struct{}{}
-	for _, e := range got {
-		ids[e.ID] = struct{}{}
-	}
-	_, ok1 := ids["test:e1"]
-	_, ok2 := ids["test:e2"]
-	require.True(t, ok1)
-	require.True(t, ok2)
-}
-
 func TestBadgerEngine_TemporalIndexHelpers_ExtraBranches(t *testing.T) {
 	engine := newTestEngine(t)
 	ns := "test"
@@ -134,4 +97,55 @@ func TestBadgerEngine_RebuildTemporalIndexes_ClosedAndCanceled(t *testing.T) {
 	cancel()
 	err = engine2.RebuildTemporalIndexes(ctx)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+// The adjacency read's indexed edge lookup: a cached body inside the read's
+// view answers; one from a later source does not; a missing record is skipped;
+// a corrupt record fails the read and is not admitted to the cache.
+func TestBadgerEngine_ReadIndexedEdge_SourceViewMissAndDecodeError(t *testing.T) {
+	engine := newTestEngine(t)
+	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
+	require.NoError(t, err)
+	stored := &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{"from": "store"}}
+	require.NoError(t, engine.CreateEdge(stored))
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		return txn.Set(edgeKey("test:e-corrupt"), []byte("bad-edge-bytes"))
+	}))
+
+	cachedBody := copyEdge(stored)
+	cachedBody.Properties = map[string]any{"from": "cache"}
+	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+		gen := engine.edgeCacheGen.current()
+		readTs := txn.ReadTs()
+
+		// A body from a source after this view must not answer the read.
+		engine.cacheDeleteEdge("test:e1")
+		engine.cacheStoreEdge(cachedBody, readTs+1)
+		later, err := engine.readIndexedEdgeInTxn(txn, "test:e1", gen, nil)
+		require.NoError(t, err)
+		require.Equal(t, "store", later.Properties["from"], "a later source must fall back to this view's record")
+
+		// A body from inside this view answers, as the caller's own copy.
+		engine.cacheDeleteEdge("test:e1")
+		engine.cacheStoreEdge(cachedBody, readTs)
+		hit, err := engine.readIndexedEdgeInTxn(txn, "test:e1", engine.edgeCacheGen.current(), nil)
+		require.NoError(t, err)
+		require.Equal(t, "cache", hit.Properties["from"])
+		hit.Properties["from"] = "changed"
+		again, err := engine.readIndexedEdgeInTxn(txn, "test:e1", engine.edgeCacheGen.current(), nil)
+		require.NoError(t, err)
+		require.Equal(t, "cache", again.Properties["from"], "a hit must not share the cached body")
+
+		missing, err := engine.readIndexedEdgeInTxn(txn, "test:e-missing", engine.edgeCacheGen.current(), nil)
+		require.NoError(t, err)
+		require.Nil(t, missing.Edge)
+
+		_, err = engine.readIndexedEdgeInTxn(txn, "test:e-corrupt", engine.edgeCacheGen.current(), nil)
+		require.Error(t, err)
+		_, admitted := engine.cacheLoadEdge("test:e-corrupt", edgeCacheRead{readTs: readTs})
+		require.False(t, admitted)
+		return nil
+	}))
 }

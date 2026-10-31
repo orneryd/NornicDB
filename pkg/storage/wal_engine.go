@@ -896,7 +896,8 @@ func (w *WALEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return copyNodeWithoutEmbeddings(node), nil
+	// The engine's ownership of what it returns is not established here: copy.
+	return copyShaped(node, nil, true), nil
 }
 
 // GetEdge delegates to underlying engine.
