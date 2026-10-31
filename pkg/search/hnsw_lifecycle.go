@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -14,9 +15,10 @@ import (
 type hnswBuildJob struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	done   chan struct{}
-	index  *HNSWIndex
-	err    error
+	// built is the job's one completion; its result is the build outcome.
+	// index is written inside it, so it is visible once built is done.
+	built lifecycle.OnceCompletion
+	index *HNSWIndex
 }
 
 // startHNSWBuild is the single-flight owner for initial construction and runtime
@@ -44,7 +46,7 @@ func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, err
 	}
 	if job := s.hnswBuild; job != nil {
 		select {
-		case <-job.done:
+		case <-job.built.Done():
 			// A drop cancelled this generation. A later generation can build.
 			job.cancel() // Release a completed failed job before replacing it.
 			s.hnswBuild = nil
@@ -56,19 +58,21 @@ func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, err
 		return nil, nil, sourceErr
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	job := &hnswBuildJob{ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	job := &hnswBuildJob{ctx: ctx, cancel: cancel}
 	s.hnswBuild = job
 	if !s.RunBackgroundTask(func() {
-		job.index, job.err = s.buildInitialHNSWIndex(ctx, dimensions)
-		s.recordLifetimeOutcome("HNSW build", job.err)
-		if job.err != nil && ctx.Err() == nil {
-			s.logPrintf("[HNSW] background build failed: %v", job.err)
-		}
-		close(job.done)
+		job.built.Do(func() error {
+			index, err := s.buildInitialHNSWIndex(ctx, dimensions)
+			job.index = index
+			s.recordLifetimeOutcome("HNSW build", err)
+			if err != nil && ctx.Err() == nil {
+				s.logPrintf("[HNSW] background build failed: %v", err)
+			}
+			return err
+		})
 	}) {
-		job.err = context.Canceled
 		cancel()
-		close(job.done)
+		job.built.Do(func() error { return context.Canceled })
 	}
 	return nil, job, nil
 }
@@ -119,8 +123,8 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-job.done:
-		return job.index, job.err
+	case <-job.built.Done():
+		return job.index, job.built.Err()
 	}
 }
 
@@ -134,7 +138,7 @@ func (s *Service) pauseHNSWBuild() func() {
 	job := s.hnswBuild
 	s.hnswMu.Unlock()
 	if job != nil {
-		<-job.done
+		<-job.built.Done()
 	}
 	return func() {
 		s.hnswMu.Lock()
@@ -180,15 +184,15 @@ func (s *Service) reserveHNSWRebuild(ctx context.Context, old *HNSWIndex) (conte
 	}
 	if job := s.hnswBuild; job != nil {
 		select {
-		case <-job.done:
+		case <-job.built.Done():
 		default:
 			return ctx, nil, false
 		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	job := &hnswBuildJob{ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	job := &hnswBuildJob{ctx: ctx, cancel: cancel}
 	s.hnswBuild = job
-	return ctx, func() { cancel(); close(job.done) }, true
+	return ctx, func() { cancel(); job.built.Do(func() error { return nil }) }, true
 }
 
 // buildHNSWSnapshot is the sole snapshot/lease owner for initial builds,
