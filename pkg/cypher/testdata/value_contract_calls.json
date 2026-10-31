@@ -324,6 +324,15 @@
     "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
   },
   {
+    "id": "call_cdc.go:cdcSelectorValuesEqual:cypherEquality:1",
+    "file": "call_cdc.go",
+    "caller": "cdcSelectorValuesEqual",
+    "callee": "cypherEquality",
+    "contract": "three-valued equality adapter",
+    "line": 0,
+    "reason": "A change-data-capture selector matches an event value with Cypher equality, so numerically equal values (1 and 1.0) select the same events; where Cypher equality is undefined (null), exact value equality decides."
+  },
+  {
     "id": "case_evaluation.go:runCaseExpression:cypherEquality:1",
     "file": "case_evaluation.go",
     "caller": "runCaseExpression",

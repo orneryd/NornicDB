@@ -64,7 +64,7 @@ func TestNestedUseRunsThroughDatabaseRouter(t *testing.T) {
 				ctx := context.Background()
 				exec, stores := nestedUseRouterExecutor(t, c.session)
 				if c.tx {
-					_, err := exec.handleBegin(nil)
+					_, err := exec.handleBegin(admittedTestContext())
 					require.NoError(t, err)
 				}
 				_, err := exec.Execute(ctx, fmt.Sprintf(statement, c.target), nil)

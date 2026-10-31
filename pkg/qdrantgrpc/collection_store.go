@@ -118,7 +118,13 @@ func (s *databaseCollectionStore) CreateWithQuantization(ctx context.Context, na
 	if len(encoded) > 0 {
 		properties["quantization_config"] = string(encoded)
 	}
-	_, err = engine.CreateNode(&storage.Node{
+	ctx, origin := storage.AdmitVectorWork(ctx)
+	writer, err := storage.EngineWithVectorWorkOrigin(engine, origin)
+	if err != nil {
+		_ = s.dropDatabase(ctx, name)
+		return err
+	}
+	_, err = writer.CreateNode(&storage.Node{
 		ID:         collectionMetaNodeID,
 		Labels:     []string{collectionMetaNodeLabel},
 		Properties: properties,

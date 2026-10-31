@@ -43,6 +43,10 @@ func decodeProcedureCatalogRecord(node *storage.Node) (persistedProcedureRecord,
 // normalization for both mutation-time lookup and a record already being loaded.
 // Existing exact records win; create-before-delete keeps failed moves retryable.
 func (e *StorageExecutor) resolveProcedureCatalogIdentity(ctx context.Context, store storage.Engine, name string, supplied ...*storage.Node) (*storage.Node, bool, error) {
+	store, err := admittedStatementWriter(ctx, store)
+	if err != nil {
+		return nil, false, err
+	}
 	canonical := procedureCatalogNodeID(name)
 	nodes := supplied
 	if len(supplied) == 0 {
@@ -125,4 +129,11 @@ func (e *StorageExecutor) resolveProcedureCatalogIdentity(ctx context.Context, s
 		return nil, false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
 	}
 	return node, superseded, nil
+}
+
+// admittedStatementWriter binds a statement's direct writes (outside the
+// statement transaction) to the admission its request context carries.
+func admittedStatementWriter(ctx context.Context, store storage.Engine) (storage.Engine, error) {
+	_, origin := storage.ContinueVectorWork(ctx, "cypher.statement-writer")
+	return storage.EngineWithVectorWorkOrigin(store, origin)
 }

@@ -9,5 +9,8 @@ func capturePublicationOperations(n *commitNotification, ops []Operation) {
 	n.ops = append([]Operation(nil), ops...)
 	for i := range n.ops {
 		n.ops[i].snapshotForNotification()
+		if n.originBound {
+			n.ops[i].bindVectorWorkOrigin(n.origin)
+		}
 	}
 }

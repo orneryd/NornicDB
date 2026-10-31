@@ -1817,7 +1817,7 @@ func (e *queueBranchEngine) RefreshPendingEmbeddingsIndex() int {
 	return e.refreshCount
 }
 
-func (e *queueBranchEngine) AddToPendingEmbeddings(id storage.NodeID) {
+func (e *queueBranchEngine) AddToPendingEmbeddingsWithOrigin(id storage.NodeID, _ uint64) {
 	e.added = append(e.added, id)
 }
 
@@ -2006,7 +2006,7 @@ func (d *deterministicChunkEmbedder) ChunkText(text string, maxTokens, overlap i
 	return append([]string(nil), d.chunks...), nil
 }
 
-func (p *pendingAdderEngine) AddToPendingEmbeddings(id storage.NodeID) {
+func (p *pendingAdderEngine) AddToPendingEmbeddingsWithOrigin(id storage.NodeID, _ uint64) {
 	p.added = append(p.added, id)
 }
 
@@ -2081,7 +2081,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		adder := &pendingAdderEngine{Engine: storage.NewNamespacedEngine(base, "test")}
 		ew := &EmbedWorker{storage: adder}
-		ew.addNodeToPendingEmbeddings(storage.NodeID("n-1"))
+		ew.addNodeToPendingEmbeddings(storage.NodeID("n-1"), storage.CaptureVectorWorkOrigin())
 		require.Equal(t, []storage.NodeID{"n-1"}, adder.added)
 	})
 

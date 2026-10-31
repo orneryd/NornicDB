@@ -134,10 +134,10 @@ func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
 	entry.pendingFlushDelay = time.Millisecond
 	require.Equal(t, time.Millisecond, entry.flushDelay())
 
-	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1")})
-	newest := entry.svc.ReserveNodeMutation("n1")
+	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1", storage.CaptureVectorWorkOrigin())})
+	newest := entry.svc.ReserveNodeMutation("n1", storage.CaptureVectorWorkOrigin())
 	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: newest})
-	seedReservedSearchRefresh(entry, "e1", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("e1")})
+	seedReservedSearchRefresh(entry, "e1", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("e1", storage.CaptureVectorWorkOrigin())})
 	require.True(t, entry.hasPending())
 	nodes, edges = entry.drainPending()
 	require.Equal(t, map[string]search.NodeMutation{"n1": newest}, nodes, "a node keeps only its newest refresh")

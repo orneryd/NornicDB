@@ -258,3 +258,29 @@ func (tx *BadgerTransaction) abortCommitLocked(err error) error {
 	tx.closeLocked(TxStatusRolledBack, true, nil)
 	return err
 }
+
+// operationOrigin is the origin of one write, fixed when the write is accepted.
+// A later change to the caller's arguments cannot reach it.
+type operationOrigin struct {
+	value uint64
+	bound bool
+}
+
+// operationOriginLocked is the one decision of a write's origin in this
+// transaction: the one its caller supplied (system-store work joined to a
+// request's transaction keeps the system-store admission), otherwise the
+// transaction's own. A write before admission bound the transaction has none.
+func (tx *BadgerTransaction) operationOriginLocked(origins []uint64) operationOrigin {
+	if len(origins) > 0 {
+		return operationOrigin{value: origins[0], bound: true}
+	}
+	return operationOrigin{value: tx.vectorWorkOrigin, bound: tx.vectorOriginBound}
+}
+
+// recordOperationLocked is the staged operation admission into publication.
+func (tx *BadgerTransaction) recordOperationLocked(operation Operation, origin operationOrigin) {
+	if origin.bound {
+		operation.bindVectorWorkOrigin(origin.value)
+	}
+	tx.operations = append(tx.operations, operation)
+}

@@ -23,9 +23,9 @@ func (e *trackingDecayEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest
 	return e.MemoryEngine.UpdateEdge(updateRequest)
 }
 
-func (e *trackingDecayEngine) DeleteEdge(id storage.EdgeID) error {
+func (e *trackingDecayEngine) DeleteEdge(id storage.EdgeID, origins ...uint64) error {
 	e.deleted = append(e.deleted, id)
-	return e.MemoryEngine.DeleteEdge(id)
+	return e.MemoryEngine.DeleteEdge(id, origins...)
 }
 
 func createDecayFixtureEdge(t *testing.T, engine storage.Engine, edge *storage.Edge) {

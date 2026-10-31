@@ -272,7 +272,7 @@ func (e *StorageExecutor) generateUUID() string {
 // clause (setEntityState.before and beforeEdge): the label policy check reads
 // that state's labels, and storage receives that observation instead of
 // reconstructing it from the entity the clause already changed.
-func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
+func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
 	for index := range states {
 		state := &states[index]
 		if stats != nil {
@@ -299,11 +299,11 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			if stats != nil {
 				stats.LabelsAdded += labelsAdded
 			}
-			if err := mutateNodeWithObservation(store, state.before, node); err != nil {
+			if err := mutateNodeWithObservation(e.writeStorage(ctx), state.before, node); err != nil {
 				restore()
 				return wrap(*state, err)
 			}
-			e.notifyNodeMutated(string(node.ID))
+			e.notifyNodeMutated(ctx, string(node.ID))
 			continue
 		}
 		relationship := state.relationship
@@ -312,11 +312,11 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 		}
 		state.beforeEdge = observeEdge(relationship)
 		state.beforeEdge.Properties = state.properties
-		if err := mutateEdgeWithObservation(store, state.beforeEdge, relationship); err != nil {
+		if err := mutateEdgeWithObservation(e.writeStorage(ctx), state.beforeEdge, relationship); err != nil {
 			relationship.Properties = state.properties
 			return wrap(*state, err)
 		}
-		e.notifyEdgeMutated(string(relationship.ID))
+		e.notifyEdgeMutated(ctx, string(relationship.ID))
 	}
 	return nil
 }

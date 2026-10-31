@@ -1,0 +1,670 @@
+{
+  "cmd/eval/main.go:createSampleData": {
+    "reason": "Offline evaluation queries and suite/report fixtures; not application property round trips.",
+    "sha256": "ad2805ee3d45aed5b7ad79f3367d62f95642d2931840159160abe94e756c560c"
+  },
+  "cmd/eval/main.go:HTTPHarness.LoadSuite": {
+    "reason": "Offline evaluation queries and suite/report fixtures; not application property round trips.",
+    "sha256": "996e31f6825d896d553253a56384000f6f4aee429424d04277e7fa696640a0b4"
+  },
+  "cmd/eval/main.go:HTTPSearcher.Search": {
+    "reason": "Author: #1665 implementation lane (Codex). Offline evaluation request/score response, not a persisted graph property round trip; unchanged TJ body, including its existing credential owner.",
+    "sha256": "60691ed0d1f8d655bc03d9d35f0a2b0efa410f4055f272d24e07c825f9c3faaf"
+  },
+  "cmd/kmeans-test-data/main.go:saveEmbeddings": {
+    "reason": "Offline synthetic dataset generator; not a runtime graph property import/result boundary.",
+    "sha256": "dfe00ead4b43ec34f38d7ee304b29078ce4db979ae5eabebfb6f0c95360f936a"
+  },
+  "cmd/kmeans-test-data/main.go:saveTextData": {
+    "reason": "Offline synthetic dataset generator; not a runtime graph property import/result boundary.",
+    "sha256": "ce234eaf91eaee758f7afcd83484aacf18be0d747d1ddd213e2cd6d2685baddc"
+  },
+  "cmd/nornicdb-snowball/package.go:packageSnowball": {
+    "reason": "Typed packaging manifest, containing artifact metadata rather than graph properties.",
+    "sha256": "04b28e59b1844b8af7e6588efdffa3f12b930560e4dd22c9be25914d6572dc68"
+  },
+  "cmd/oauth-provider/main.go:OAuthProvider.handleDiscovery": {
+    "reason": "OAuth test provider token/request protocol and authentication strings; not graph property data.",
+    "sha256": "ad22c4fd4145b4c23cbdf52976af290ce4f25e38aec4691ce515c1bd7ee7dd51"
+  },
+  "cmd/oauth-provider/main.go:OAuthProvider.handleHealth": {
+    "reason": "OAuth test provider token/request protocol and authentication strings; not graph property data.",
+    "sha256": "3ef3958ef3f914f84d7bc753fbeb783f38b906c800c1f9cacde310c890891b6c"
+  },
+  "cmd/oauth-provider/main.go:OAuthProvider.handleToken": {
+    "reason": "OAuth test provider token/request protocol and authentication strings; not graph property data.",
+    "sha256": "78898c1b157739534685d4071f8822d43e77e4150a44e9b28f69349542259a5c"
+  },
+  "cmd/oauth-provider/main.go:OAuthProvider.handleUserinfo": {
+    "reason": "OAuth test provider token/request protocol and authentication strings; not graph property data.",
+    "sha256": "9212bf369cf65b560e09c6adaa81d5dbbb0fcc0081e2ddd5a6b8a47f8cf50fe2"
+  },
+  "cmd/recall-bench/main.go:main": {
+    "reason": "Offline retrieval benchmark manifests/checkpoints/reports; not a runtime property boundary.",
+    "sha256": "ac28e17aa0a311bf0a12b650a598d06c72c218b9de2f4466e183ef154e01ceff"
+  },
+  "cmd/recall-bench/main.go:readIngestCheckpoint": {
+    "reason": "Offline retrieval benchmark manifests/checkpoints/reports; not a runtime property boundary.",
+    "sha256": "315314e7e741a5c677719bf90554ceaee69376ef0f4c63b74cfcfea7a0488979"
+  },
+  "cmd/recall-bench/main.go:readManifest": {
+    "reason": "Offline retrieval benchmark manifests/checkpoints/reports; not a runtime property boundary.",
+    "sha256": "246d08367d3c4dd150f666dd340f1cc89dddacfa3ee462b7b80e918ed6ade889"
+  },
+  "cmd/recall-bench/main.go:writeIngestCheckpoint": {
+    "reason": "Offline retrieval benchmark manifests/checkpoints/reports; not a runtime property boundary.",
+    "sha256": "e734d2183fbf8735af3b859bb8719812b2f9d1d599492eace1636e135beba678"
+  },
+  "cmd/recall-bench/main.go:writeJSON": {
+    "reason": "Offline retrieval benchmark manifests/checkpoints/reports; not a runtime property boundary.",
+    "sha256": "9ab26cb7b662472ec4d3efc083b3bd6fe7dea844825f8706144161f098aba83e"
+  },
+  "cmd/swagger-ui/main.go:serveSwaggerUI": {
+    "reason": "Static schema/UI URL JSON string escaping; no numeric property values.",
+    "sha256": "12107ea704dc4ae4cc50edd372fe81cde98709700ba98eb29dbb021c6c54d865"
+  },
+  "internal/rerankwire/decode.go:decodeBoundJSON": {
+    "reason": "Reranker model protocol parsing: typed document IDs, score fields and opaque model response envelopes. Not graph-property JSON.",
+    "sha256": "a12ee9b2dadc36e5820e721791105e9366c87436019b2d341b69ea1fad97eeb9"
+  },
+  "internal/rerankwire/decode.go:decodeExactJSON": {
+    "reason": "Reranker model protocol parsing: typed document IDs, score fields and opaque model response envelopes. Not graph-property JSON.",
+    "sha256": "8d7887669a2c464e37c0cf5ec6a9bbed032e4993e09cce8ff4cb8f32631d19b7"
+  },
+  "internal/rerankwire/decode.go:decodeLeadingJSONValue": {
+    "reason": "Reranker model protocol parsing: typed document IDs, score fields and opaque model response envelopes. Not graph-property JSON.",
+    "sha256": "dd13ee23386102d9e5870ab92e09033a2daa2bac01c79a61aa42078a0bfdde29"
+  },
+  "internal/rerankwire/decode.go:UnmarshalJSON": {
+    "reason": "Reranker model protocol parsing: typed document IDs, score fields and opaque model response envelopes. Not graph-property JSON.",
+    "sha256": "db187038ae1ed7e00c6ac90e4f821d41112995126519b43e155e1399f3efc659"
+  },
+  "internal/rerankwire/decode.go:validateEnvelopeProse": {
+    "reason": "Reranker model protocol parsing: typed document IDs, score fields and opaque model response envelopes. Not graph-property JSON.",
+    "sha256": "2e5ef6f2755d174ed87ba6178570d05a2622381edd1a11a70a9f17f16114ae5a"
+  },
+  "internal/stemmertest/stemmertest.go:Build": {
+    "reason": "Offline typed stemmer corpus/test fixture construction.",
+    "sha256": "ae4b7b0a4cb8a4d0813b38295d8f9553e2156b8bd9cef7756a21c88447285c30"
+  },
+  "pkg/adminimport/importer.go:writeReport": {
+    "reason": "Typed schema definition or import diagnostic report; entity property records use their declared CSV/GraphML types.",
+    "sha256": "80fa9e269b60cf18d32d9676affbc22b0426b22564c9596ac5f3b47480343e65"
+  },
+  "pkg/audit/audit.go:Logger.Log": {
+    "reason": "Audit event/log protocol, not a graph property import or query result round trip.",
+    "sha256": "b58c3241f2b5d29589737adbd9d5e884432a9ac485e0a9243d4b5637d2552451"
+  },
+  "pkg/audit/audit.go:Reader.Query": {
+    "reason": "Audit event/log protocol, not a graph property import or query result round trip.",
+    "sha256": "f1787d8e8924fed5da3b05d0e5c40055ed0b4f2503fa3e90ae6d656bdfa833a6"
+  },
+  "pkg/auth/allowlist.go:AllowlistStore.SaveMappings": {
+    "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
+    "sha256": "201a83318b8d9dfaeccfe036b9849a8da9eb6385cc6908d8ded793c508e1496c"
+  },
+  "pkg/auth/allowlist.go:databasesFromProperties": {
+    "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
+    "sha256": "50b6e0a761730db5224b200fe510bc48c3205308469869c720ccc1ab3b9b5c8d"
+  },
+  "pkg/auth/oauth.go:OAuthManager.ExchangeCode": {
+    "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
+    "sha256": "cce7f07abda19e0f356f34ac95802d73e0e2a861065416ef2a5e17b555cf2d99"
+  },
+  "pkg/auth/oauth.go:OAuthManager.GetUserInfo": {
+    "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
+    "sha256": "42e2dd59438c58d52f4b795094fb685de99a87c234097dadd66d19aea94123dd"
+  },
+  "pkg/auth/oauth.go:OAuthManager.RefreshOAuthToken": {
+    "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
+    "sha256": "8aad286a7cb49a6545f3d9f43574f621854cef349ad7b2f4fccd55101e0b8384"
+  },
+  "pkg/auth/role_entitlements.go:entitlementIDsFromProperties": {
+    "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
+    "sha256": "030fd84612f8ca56a8bf53c450a2fcf37c3d069fcf81adc874008cb16aabd369"
+  },
+  "pkg/auth/role_entitlements.go:RoleEntitlementsStore.SetMappings": {
+    "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
+    "sha256": "9de1a8115fba8404c3f70e9ec06f1fb3ac96d27e31dbc3fbfbd798cfc0c5f0e9"
+  },
+  "pkg/bolt/discovery.go:buildDiscoveryResponse": {
+    "reason": "Discovery URL and version strings; no query result values.",
+    "sha256": "9f00a37627a851abc214b47e20a2fed65cc1ec006e92a3f1d15951a9662676c7"
+  },
+  "pkg/compliance/report.go:ComplianceReporter.readSummary": {
+    "reason": "Typed audit-summary report; no imported graph property payload.",
+    "sha256": "3007479eb8d50de061abf2fff38fc5382c9553ce6c3e7a70c7a09d28410e87d8"
+  },
+  "pkg/config/dbconfig/store.go:overridesFromProperties": {
+    "reason": "Typed runtime configuration overrides, not graph property values.",
+    "sha256": "17817ecb1a93086721cf4c7e62ca3905174703f8868f2d9c31bf12b4e52a4dfb"
+  },
+  "pkg/config/dbconfig/store.go:Store.SetOverrides": {
+    "reason": "Typed runtime configuration overrides, not graph property values.",
+    "sha256": "86c047c411823e1dcc0bb3e0d3ffcc580dd1670d5a1e87b790eb1eefc76fa463"
+  },
+  "pkg/cypher/clauses.go:unwindMergeKey": {
+    "reason": "Stable UNWIND merge identity key, not a JSON transport or property round trip.",
+    "sha256": "781fe625f32ca00fe038c7b6e55d98e65ca1f5d8f7b260cdbfeacdc41955f0f0"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanAdaptiveInit": {
+    "reason": "Intentional typed Kalman FLOAT state; readers request floating arithmetic, not untyped graph properties.",
+    "sha256": "b1976b2073c18694e78f156850bb505a748b6c3bd64b2fc0085cf3176fefac46"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanAdaptiveProcess": {
+    "reason": "Intentional typed Kalman FLOAT state; readers request floating arithmetic, not untyped graph properties.",
+    "sha256": "43a8127c09cf00c89bafb16b686acca82ed984d893365e3427ba04db7eab28e0"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanInit": {
+    "reason": "Intentional typed Kalman FLOAT state; readers request floating arithmetic, not untyped graph properties.",
+    "sha256": "c0b7c136b383bb4c481f2474393dcb4a25460045c626406ea5edd64dc9472307"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanPredict": {
+    "reason": "Intentional typed Kalman FLOAT state; its consumers request floating arithmetic.",
+    "sha256": "8964d04c9308c8ac0708bfb945db93d5ed33002c0ced7f7410a61309379d9e07"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanProcess": {
+    "reason": "Intentional typed Kalman FLOAT state; readers request floating arithmetic, not untyped graph properties.",
+    "sha256": "6a7977895a96adb069e8e230f51a653272f8bef538729eb7a88e49be4c11d929"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanReset": {
+    "reason": "Intentional typed Kalman FLOAT state; its consumers request floating arithmetic.",
+    "sha256": "7bcd134f2743b4990139f2f1dbdb8948fab85474db0d07869f75a79b2c80ce65"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanStateValue": {
+    "reason": "Intentional typed Kalman FLOAT state; its consumers request floating arithmetic.",
+    "sha256": "c477068496f7afbe46d96f3f1347714e5aa7ef1e4fda90caf89e8b991ca18b32"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanVelocityInit": {
+    "reason": "Intentional typed Kalman FLOAT state; readers request floating arithmetic, not untyped graph properties.",
+    "sha256": "de4b10765c102223c79cc2c556f76f084663fe0ec5306775825c849ddcf39013"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanVelocityPredict": {
+    "reason": "Intentional typed Kalman FLOAT state; its consumers request floating arithmetic.",
+    "sha256": "f13945fc14c6fdfa6585cb588c1d3420512e0a3ecb4df83262781b0f3041004a"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanVelocityProcess": {
+    "reason": "Intentional typed Kalman FLOAT state; readers request floating arithmetic, not untyped graph properties.",
+    "sha256": "ef14c7d700de236733092ef9b20209c8df68d083591110ed76458043e731744d"
+  },
+  "pkg/cypher/kalman_functions.go:kalmanVelocityValue": {
+    "reason": "Intentional typed Kalman FLOAT state; its consumers request floating arithmetic.",
+    "sha256": "5efbb9acd145caa310ab9a5c9af9c601dbd21163dfc878c52c1953e4f9fb76a2"
+  },
+  "pkg/cypher/relationship_merge_identity_cache.go:relationshipMergeIdentityEntryKey": {
+    "reason": "Stable internal merge-cache identity key, not a transport payload.",
+    "sha256": "fcccdcb385d72be01187a06a12c14a09aadf8f77cf92c972e54bd4c1348f0e8b"
+  },
+  "pkg/cypher/relationship_merge_identity_cache.go:relationshipMergeIdentityValuesKey": {
+    "reason": "Stable internal merge-cache identity key, not a transport payload.",
+    "sha256": "a12d48b367f0574a24a951fc975ff615722520814bb4316155ef00bb526709df"
+  },
+  "pkg/cypher/testdata/generate_temporal_contracts.go:main": {
+    "reason": "Offline typed test-fixture generator, not a production property writer.",
+    "sha256": "1795064192639a81674972d477642c58b3f0b537e707906d553f59a9b3465d41"
+  },
+  "pkg/embed/embed.go:OllamaEmbedder.Embed": {
+    "reason": "Typed embedding model request/response protocol; vectors intentionally decode as declared floats.",
+    "sha256": "82d8bbe9929cbd3867b13736e23024459cc23950bb1dca35d62debd700715ec6"
+  },
+  "pkg/embed/embed.go:OllamaEmbedder.EmbedBatch": {
+    "reason": "Typed embedding model request/response protocol; vectors intentionally decode as declared floats.",
+    "sha256": "6d5417fca3b2747a782815b5ce122a1c92cb03d94371d13491c121fa4427d3f1"
+  },
+  "pkg/embed/embed.go:OpenAIEmbedder.embedBatchRequest": {
+    "reason": "Typed embedding model request/response protocol; vectors intentionally decode as declared floats.",
+    "sha256": "63ee54be84b41bd798e96e24a6742b07f004dddfacb0773bf78639b936ee9a6a"
+  },
+  "pkg/embeddingutil/helpers.go:BuildEmbedText": {
+    "reason": "Narrative embedding text generation, not a property JSON round trip.",
+    "sha256": "9d775b94d0d43514a2a7076f4de84faa30e3bb750879fb0e6d35d2706e33d7eb"
+  },
+  "pkg/encryption/envelope.go:EnvelopeEncryptor.Decrypt": {
+    "reason": "Typed encrypted byte-envelope framing; property payloads remain opaque bytes.",
+    "sha256": "6e7fe105e36a5a065efd30e73881322b89289610bb166a539811c72d3e02b532"
+  },
+  "pkg/encryption/envelope.go:EnvelopeEncryptor.Encrypt": {
+    "reason": "Typed encrypted byte-envelope framing; property payloads remain opaque bytes.",
+    "sha256": "fe13e3dd719160d3d8b2dc89ecf455931a374d588664b72ca37209818c0b9a2a"
+  },
+  "pkg/eval/harness.go:Harness.LoadSuite": {
+    "reason": "Offline evaluation fixtures, corpus readers and reports, not a runtime graph property boundary.",
+    "sha256": "5faefadf6a37c5bc33be426695c48299533394aaaba53a1e968d639b83986a25"
+  },
+  "pkg/eval/ir/beir.go:ReadDocuments": {
+    "reason": "Offline evaluation fixtures, corpus readers and reports, not a runtime graph property boundary.",
+    "sha256": "17e8e0fa14a22c2c34ca9426982c04220030b29909c348de753d79ed0084f1bb"
+  },
+  "pkg/eval/ir/beir.go:ReadQueries": {
+    "reason": "Offline evaluation fixtures, corpus readers and reports, not a runtime graph property boundary.",
+    "sha256": "b8d4d23e79b2bbeb262d5209919b670d40b432f61ba9aa478601e00918a1b0b5"
+  },
+  "pkg/eval/reporter.go:Reporter.PrintJSON": {
+    "reason": "Offline evaluation fixtures, corpus readers and reports, not a runtime graph property boundary.",
+    "sha256": "b72676722428fffdac14333edb391b38366be4d8c8f661491498fd344796de9f"
+  },
+  "pkg/eval/reporter.go:Reporter.SaveJSON": {
+    "reason": "Offline evaluation fixtures, corpus readers and reports, not a runtime graph property boundary.",
+    "sha256": "249a0467828d99943564fe1c4b322cfbc7d11b46d8759d858c5112a748c49c7a"
+  },
+  "pkg/graphql/handler.go:writeGraphQLAdmissionError": {
+    "reason": "Admission error response contains fixed code/message strings.",
+    "sha256": "45737371057a750897a8318744f9dd17eafddc688e15374220c44f3c6951d998"
+  },
+  "pkg/heimdall/generator_ollama.go:ollamaGenerator.completeChat": {
+    "reason": "Typed model protocol; generated tool arguments are opaque strings and separately decoded through CypherInputJSON.",
+    "sha256": "1c667f2fc5e7e25c121045a3f9957ccc944cd42417f54826421bce1bf2a9bb84"
+  },
+  "pkg/heimdall/generator_ollama.go:ollamaGenerator.GenerateStream": {
+    "reason": "Typed model protocol; generated tool arguments are opaque strings and separately decoded through CypherInputJSON.",
+    "sha256": "4080d52ac15f35c9c2315961594926021d40a69b90b1cb924af3904001e0f215"
+  },
+  "pkg/heimdall/generator_openai.go:openAIGenerator.completeChat": {
+    "reason": "Typed model protocol; generated tool arguments are opaque strings and separately decoded through CypherInputJSON.",
+    "sha256": "7b89da79adb02d30e2d9d0397e02fb09b17ab76846da96bd7106819d8867e9e8"
+  },
+  "pkg/heimdall/generator_openai.go:openAIGenerator.GenerateStream": {
+    "reason": "Typed model protocol; generated tool arguments are opaque strings and separately decoded through CypherInputJSON.",
+    "sha256": "427a00bef85bb2e9aeb85aeea8de7a07c808fa718c8f1eaab22dd7a344dd447a"
+  },
+  "pkg/heimdall/generator_openai.go:requestProviderChat": {
+    "reason": "Typed model protocol; generated tool arguments are opaque strings and separately decoded through CypherInputJSON.",
+    "sha256": "5f387abbb012e3b281a53bffda6ddcaeb817410753d6e6d734d911d51886834a"
+  },
+  "pkg/heimdall/handler.go:Handler.handleAutocomplete": {
+    "reason": "Typed chat/autocomplete model request envelope; graph/tool argument maps are decoded separately through CypherInputJSON.",
+    "sha256": "00d5975f90a3ad89130a85c6f5ee12d9ce3c475884fcde2ba211aa19bb732f1c"
+  },
+  "pkg/heimdall/handler.go:Handler.handleChatCompletions": {
+    "reason": "Typed chat/autocomplete model request envelope; graph/tool argument maps are decoded separately through CypherInputJSON.",
+    "sha256": "20d194a5b23061347dc2922226bddef8b8c4f7ca29a306350342092e4248d30a"
+  },
+  "pkg/heimdall/handler.go:Handler.runAgenticLoopWithTools": {
+    "reason": "Author: #1665 implementation lane (Claude Opus 5.5). In-process (MCP-style) tool path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2 decision after audit #30, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON / PropertyJSON) once the 1.5.0 MCP process adopts it.",
+    "sha256": "4d22bec96e885d3d60da1697350b947b0cc42c432df518d9b818221562a67908"
+  },
+  "pkg/heimdall/plugin.go:FormatInMemoryToolResult": {
+    "reason": "Author: #1665 implementation lane (Claude Opus 5.5). In-process (MCP-style) tool path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2 decision after audit #30, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON / PropertyJSON) once the 1.5.0 MCP process adopts it.",
+    "sha256": "9ce972d25f27b9a52d7269c80ebfc9aed2509cf27ab91659506c3db302ed813f"
+  },
+  "pkg/inference/heimdall_qc.go:HeimdallQC.parseBatchResponse": {
+    "reason": "Typed model quality-control result and scores; no graph property payload.",
+    "sha256": "fe1e4ba9d47aac755716e2f4758f728e2ad571834e910ac18971d2b10eddf8a6"
+  },
+  "pkg/kms/adapters_wrapping.go:decodeBlob": {
+    "reason": "Typed signed key/audit byte envelope, preserving its protocol/hash bytes; not graph property JSON.",
+    "sha256": "f417c4fcbcfa8805d9bab8a1115b40d6e2d8e68136dc826a6d3719bbf0492451"
+  },
+  "pkg/kms/adapters_wrapping.go:encodeBlob": {
+    "reason": "Typed signed key/audit byte envelope, preserving its protocol/hash bytes; not graph property JSON.",
+    "sha256": "1fa4a745a305f6dfef64bcf9b5766fc528a65babb9a5c2dd2e188f7c636f5f4f"
+  },
+  "pkg/kms/audit_archiver.go:AuditArchiver.Archive": {
+    "reason": "Typed signed key/audit byte envelope, preserving its protocol/hash bytes; not graph property JSON.",
+    "sha256": "7ed3ac8c87fbd07d77ec6b929b77f63fd036476402ac7c10c992b3338a6371b4"
+  },
+  "pkg/kms/audit.go:AuditSigner.Sign": {
+    "reason": "Typed signed key/audit byte envelope, preserving its protocol/hash bytes; not graph property JSON.",
+    "sha256": "daad3167b2d118bb65a661c02c82f37fc7926150772226454f0fc9eb180a245c"
+  },
+  "pkg/kms/audit.go:AuditSigner.Verify": {
+    "reason": "Typed signed key/audit byte envelope, preserving its protocol/hash bytes; not graph property JSON.",
+    "sha256": "77b2743fdc5e964a7f9aaf8ed9aa5a0b4fdd8b0dd5761c1a8c1aee36e32e82d4"
+  },
+  "pkg/mcp/server.go:Server.handleCallTool": {
+    "reason": "Author: #1665 implementation lane (Claude Opus 5.5). MCP JSON-RPC and tool-call path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2: anything MCP leaves #1665, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON for arguments, PropertyJSON for results) once the 1.5.0 MCP process adopts it.",
+    "sha256": "c047717851c999c5ac6bf5093275f687a2276b7360226cbe9b63c8ab4334f85c"
+  },
+  "pkg/mcp/server.go:Server.handleInitialize": {
+    "reason": "Author: #1665 implementation lane (Codex; release body restored by Claude Opus 5.5). MCP initialization decodes the typed protocol/version envelope; no graph-property input decoder is used here. Release behaviour (MCP routed to the 1.5.0 process).",
+    "sha256": "d3d8f6ce1b9311c28da415aae199611e7fa4f168f1c008418f5e717ac1c117c6"
+  },
+  "pkg/mcp/server.go:Server.handleMCP": {
+    "reason": "Author: #1665 implementation lane (Claude Opus 5.5). MCP JSON-RPC and tool-call path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2: anything MCP leaves #1665, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON for arguments, PropertyJSON for results) once the 1.5.0 MCP process adopts it.",
+    "sha256": "5ff5d015ff5bbd97d92145b069793fb7e17c1928a5abc46f32d77a3f6b1544be"
+  },
+  "pkg/mcp/tools.go:getDiscoverTool": {
+    "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",
+    "sha256": "bfa185cc066314cd30e8d278a662aa4471b9b14bbcb2bce6789566ed8513d9de"
+  },
+  "pkg/mcp/tools.go:getLinkTool": {
+    "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",
+    "sha256": "d0836b0e62b148e177c83792158812c140407d4bedd8da101fb86d51f8dce119"
+  },
+  "pkg/mcp/tools.go:getRecallTool": {
+    "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",
+    "sha256": "cfc2f3e6072bbb2425129d165295072c53e8d22d8c5b535eb7b24003a749a419"
+  },
+  "pkg/mcp/tools.go:getStoreTool": {
+    "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",
+    "sha256": "c40c37e60493ff8eb1ee55e2e541321bb9d0b8c8fd3738fc2c925862d2b32c67"
+  },
+  "pkg/mcp/tools.go:getTasksTool": {
+    "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",
+    "sha256": "45bc935e6ac7bb8078073304bac9b15adc25f23d0ff5626279abb48329da5d60"
+  },
+  "pkg/nornicdb/db_encryption_provider.go:persistProviderDEK": {
+    "reason": "Typed encryption key envelope persistence; no graph property values.",
+    "sha256": "b8254bb5de30b3ba952efabd2a14d197541c19a2ae7e6365fbbc595ce6437795"
+  },
+  "pkg/nornicdb/db_encryption_provider.go:resolveProviderManagedDBKey": {
+    "reason": "Typed encryption key envelope; no graph property payload.",
+    "sha256": "a31b5b17e59e479ae8c3130e0a317141da27006be5e4940cb9697afc6acd42e5"
+  },
+  "pkg/nornicdb/embed_queue.go:WorkerStats.MarshalJSON": {
+    "reason": "WorkerStats custom JSON contains booleans and typed integer counters only.",
+    "sha256": "2d009edcc6cf729f3f47160c514e3ec71eed6029e5b29ca2bea8fe361d6224f6"
+  },
+  "pkg/nornicdb/storage_recovery.go:readRecoveryManifest": {
+    "reason": "Typed recovery status manifest, not entity backup data.",
+    "sha256": "a3f6fdd9c16e5f569268fd12050e31c821b4d331eca49f7946b9d1ad499ca54d"
+  },
+  "pkg/nornicdb/storage_recovery.go:writeRecoveryManifest": {
+    "reason": "Typed recovery status manifest, not entity backup data.",
+    "sha256": "8109d44a2afa4546203c7c4b89e7d7e98d0fd0d70d0574a8f7b6d19dc779fbba"
+  },
+  "pkg/observability/credential_text.go:redactOwnedCredentials": {
+    "reason": "JSON-escapes a credential string to match its quoted spelling in diagnostic text; no numeric data.",
+    "sha256": "c834834a31905a681f53a5435f34b9fb12b4e28643cc2e03a231c15a0088d7c7"
+  },
+  "pkg/observability/health.go:handleVersion": {
+    "reason": "Health/version payloads and captured diagnostic log records, not property imports/results.",
+    "sha256": "5135ffa6af0184c3dca6324bea0b2b417189e24977b747881a3c92a8a616d6d8"
+  },
+  "pkg/observability/health.go:Health.handleReadyz": {
+    "reason": "Health/version payloads and captured diagnostic log records, not property imports/results.",
+    "sha256": "8876520003e8a59dcb5f66d490d3fb597f244d095cc501c82cf1780f57f74038"
+  },
+  "pkg/observability/redaction_display.go:ContextCredentials": {
+    "reason": "Decodes diagnostic context only to collect URL credential strings; the decoded value is discarded and never forwarded.",
+    "sha256": "00fc44408ade6f7e01739944e1f2278c4c0576a4acdb513934beddc068865964"
+  },
+  "pkg/observability/testenv.go:TestEnv.LoggedRecords": {
+    "reason": "Health/version payloads and captured diagnostic log records, not property imports/results.",
+    "sha256": "183bfa186dcda8f8280bb88a197331c6593fd7390076f4897a21786987c82aea"
+  },
+  "pkg/replication/raft.go:RaftReplicator.handleRPC": {
+    "reason": "Typed Raft vote/append envelopes; entry data is opaque binary bytes. Property fallback decoding remains domain-bound in codec.go.",
+    "sha256": "5859b8e4c760b43013827c44742e9b02c9044282520c4f0cf21a931808f6fcee"
+  },
+  "pkg/retention/retention.go:Manager.LoadPolicies": {
+    "reason": "Typed retention policy configuration, not retained entity property JSON.",
+    "sha256": "2d18b3f235683fd2e3d1596a30001dd8b15177a2cd99778c888d918d0fb13dd8"
+  },
+  "pkg/retention/retention.go:Manager.SavePolicies": {
+    "reason": "Typed retention policy configuration, not retained entity property JSON.",
+    "sha256": "fa330b841f3ac6dc6ebecec798cbc27f42eb77175e9180a2a033ee37e50b7cdb"
+  },
+  "pkg/search/hnsw_index.go:readIVFHNSWManifest": {
+    "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
+    "sha256": "819733cf9c7d96bf287381f66bf3ee978f6403867810f7e2abee1089234ee71b"
+  },
+  "pkg/search/hnsw_index.go:writeIVFHNSWManifest": {
+    "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
+    "sha256": "953d41f078e05020d69601f1acc5ca1ca8e190da14e9d4b9678ab9563d7b6f4c"
+  },
+  "pkg/search/rerank.go:CrossEncoder.Rerank": {
+    "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
+    "sha256": "8e9a540c3d987d904999ea3301da94d6d81edbe8cf1e7429be2cf8952e9a1d23"
+  },
+  "pkg/search/stemmer/stemmer.go:CheckResultLine": {
+    "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
+    "sha256": "89e01ba9ecbd67462380408644f96cade9705d0f136d93bb582eefeb25e3b697"
+  },
+  "pkg/search/stemmer/stemmer.go:ParseCheckResult": {
+    "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
+    "sha256": "383bb851928f2e77fbe8c231b3228e7c22c0a201c1334f174e4b7614c7c9c4d6"
+  },
+  "pkg/search/stemmer/stemmer.go:ReadManifest": {
+    "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
+    "sha256": "785a9ce4603567cd9a92ff8cd21f0aa5d1ec2006b60085a0d754feed097bfdca"
+  },
+  "pkg/server/server_dbconfig.go:Server.handleDbLifecyclePrefix": {
+    "reason": "Author: #1665 implementation lane (Codex). Typed lifecycle scheduler/debt control input retains its integer/time fields. The delta only binds property output before the existing HTTP response owner.",
+    "sha256": "86875cd9ab36a104021bdfc67394af70c39e046fe89f341ce2384c590d27fffc"
+  },
+  "pkg/storage/badger_relationship_unique_index.go:relationshipPropertyKey": {
+    "reason": "Schema property-name list encoded as a stable string key; no property values.",
+    "sha256": "801e3111fc7088abd649f6caa859c56c316b042a8a04528ff38d49efb4eb0c35"
+  },
+  "pkg/storage/receipt.go:computeReceiptHash": {
+    "reason": "Stable receipt hash over typed sequence counters and strings; changing bytes changes the hash contract.",
+    "sha256": "8a6bee212022ea17fec7e5794622d4801e86b3386f1f7e292d7ba2d0df7d819e"
+  },
+  "pkg/storage/snapshot_stream.go:readSnapshot": {
+    "reason": "Typed snapshot footer/checksum framing; entity payloads use the binary/property recovery owner.",
+    "sha256": "c2b391e1b253f0829fb6cbc3223a948ebf4b94300cdcaec47ed44f8fc39d7cb9"
+  },
+  "pkg/storage/wal_diagnostics.go:WAL.reportCorruption": {
+    "reason": "Typed corruption diagnostic report; no property payload.",
+    "sha256": "4e196d323cd39aa8c0ab405450de76fa279d236a243635a8b80f3584b40f3712"
+  },
+  "pkg/storage/wal_repair.go:truncateWALFile": {
+    "reason": "Typed repair diagnostic report; no recovered property payload.",
+    "sha256": "f4f571883bc9e35b2b5ecbe9f212557a41e50b87fef1e34b0886d9a2f0493bfa"
+  },
+  "pkg/storage/wal_segments.go:accessWALManifest": {
+    "reason": "Typed WAL segment manifest read and write (one release owner, accessWALManifest, replacing loadWALManifest/writeWALManifest); segment metadata, not WAL entity data or graph properties. Reviewed by the L6 / #1665 lane (Claude Opus 5.5).",
+    "sha256": "6a4d08bc40000ec8d8db58b9644d108eb425317f4db5c3bd389239dfb3274f00"
+  },
+  "pkg/voyage/client.go:Client.postJSON": {
+    "reason": "Embedding/multimodal model request protocol; media metadata and declared model values are not graph property JSON.",
+    "sha256": "9929d970d2edd4336b8352ac6e06f710fbb905c08fe20fc5f62b72673f45882e"
+  },
+  "pkg/voyage/multimodal.go:ParseMultimodalContent": {
+    "reason": "Embedding/multimodal model request protocol; media metadata and declared model values are not graph property JSON.",
+    "sha256": "184175feb0c66c81cdd8f68c93a7dcc9e062ee3320e66a947483980e68384cf2"
+  },
+  "pkg/voyage/multimodal.go:validateMultimodalInputs": {
+    "reason": "Embedding/multimodal model request protocol; media metadata and declared model values are not graph property JSON.",
+    "sha256": "d0c62afc937b3152a7daed3d86ace16bb90a69b4e94ff5d9f9d3778689f170d8"
+  },
+  "plugins/heimdall/plugin.go:WatcherPlugin.buildSynthesisPrompt": {
+    "reason": "Narrative synthesis prompt rendering, not graph property import/result transport.",
+    "sha256": "be3f418d4a8a199d73bb329974097e4113293fd61ec0914fe17e5176010a281c"
+  },
+  "scripts/localization_inventory/main.go:scanner.scanEmbeddedJSON": {
+    "reason": "Offline operational/corpus/schema helper; runtime migration property rows have separate classified domain calls.",
+    "sha256": "46aec4f319c74610891d01105ff7ded3ade0b89ac8479fd22ca8fc166feb6cf7"
+  },
+  "scripts/migrate_neo4j_to_nornic.go:insertNodesIntoNornic": {
+    "reason": "Offline operational/corpus/schema helper; runtime migration property rows have separate classified domain calls.",
+    "sha256": "1c948a522a4b7d355a79bb0f23299f800c208a30c7a300e8c0496a848e8f2209"
+  },
+  "testing/benchmarks/grpc_vs_bolt/main.go:loadDataset": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "d4dc1624687d00749d1779dd1ff6830ba363ffa44f2d6a48beff22245ca34d87"
+  },
+  "testing/benchmarks/http_write_latency/main.go:createWriteRequest": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "6411ae05011307d1299a9cdcfe3dcc16ed4a461e2690b64001add3f62be4d50a"
+  },
+  "testing/benchmarks/http_write_latency/main.go:getJWTToken": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "55a206c2d41cb68f70128a0b02daf7544b13a954bd5cf83e11da8cc86538165f"
+  },
+  "testing/benchmarks/http_write_latency/main.go:main": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "1087e88386c12577dba22419854186810f38776318d874f1840383110af55a6b"
+  },
+  "testing/benchmarks/nornic_vs_qdrant/main.go:loadDatasetIntoTarget": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "8fe5b5e94570b0c924721947aedd452edef1b64c4cc2792e571fdd6552c303d9"
+  },
+  "testing/benchmarks/northwind_power/falkor_driver.go:runFalkorReport": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "29e2f4eeaa3f965a50db61d4dd6374a436483624f4c17be340ddd7c78d37ec98"
+  },
+  "testing/benchmarks/northwind_power/ladybug_driver.go:runLadybugReport": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "4c93c38602ee99a8d7da27defbaffe641794e6b89e7b148a8104307a52985997"
+  },
+  "testing/benchmarks/northwind_power/main.go:approxBytes": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "44bf3b3ca702aa124f25ab67782c0b897d31b1a840be4220fa49442b9574075f"
+  },
+  "testing/benchmarks/northwind_power/main.go:main": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "73567370f6037efa5479320a56b09b3055ec62ec09f26858dc6967fc56355e29"
+  },
+  "testing/cypher/differential/corpus.go:LoadIssues": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "cae98b354ceb617fb95fa48bf6e6e52c847992a48e72a227c93356584a4cbc4a"
+  },
+  "testing/cypher/differential/corpus.go:LoadSweep": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "aebc380a38ec34a912b76bf2d337afd61d1de037324ae19acb94e47108f84758"
+  },
+  "testing/cypher/differential/ratchet.go:appendReport": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "0e24d3ee86e66337007e7baafb53e157df7558bfa4d3ed0723de059044274c7f"
+  },
+  "testing/cypher/differential/ratchet.go:LoadRatchet": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "836d4dee12c228137c359ea269f93a39844e450ec0ed651c2b0906be2315244a"
+  },
+  "testing/cypher/differential/ratchet.go:mustJSON": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "f7151013ee2c9f8837fa0c1d8f280b587ecb1b3d40a1bc48ff5d245ba9a5344d"
+  },
+  "testing/cypher/differential/ratchet.go:Ratchet.Update": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "2d3774652e8713897f1f40a85b553400bebdba3a3578f6d21711414eccc25cf4"
+  },
+  "testing/cypher/tck/cmd/inventory/main.go:main": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "13d506c878cc88c493a1e86938a8c03e3856be67d8f1adaa3229f8ac929c2f1b"
+  },
+  "testing/cypher/tck/compare.go:canonicalRows": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "cf9c9d95da06dbc209ef81038ed45195084490a6740ae0254bfa66dcf78974d7"
+  },
+  "testing/cypher/tck/compare.go:canonicalSnapshot": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "2ad73646dd6a6ae835c7a049b45be0c7eee36c60a2bebdf7f9a5834cdaa9f180"
+  },
+  "testing/cypher/tck/compare.go:propertySet": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "acb5b342e1667461f608777d6da305a3cd39b50070d948ededec12021f9b7156"
+  },
+  "testing/cypher/tck/ratchet.go:loadRatchetBaseline": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "4dd17956ed66a9bc7236329e71cce1375bbc910903f780d60df3567953a6ead6"
+  },
+  "testing/cypher/tck/ratchet.go:writeRatchetBaseline": {
+    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
+    "sha256": "60e2596dcb69d297e65028c54f9a03e44028a82ec8dada58141667fc2949b864"
+  },
+  "internal/transactionalcalltest/matrix.go:SyntaxConstructors": {
+    "reason": "Typed string-only grammar-constructor inventory for source guards and test census; no numeric property values.",
+    "sha256": "f24ccc357f779168651f9801e0d7b363acb415404f389348301a4a5105617bfe"
+  },
+  "experiments/uuid-index-memory/main.go:main": {
+    "reason": "Offline UUID representation research prints timing/memory report fields; it is never imported by the database runtime and does not transport graph properties.",
+    "sha256": "cd8cc0d69f8771b06dcb254278ee4145c07664344fbf39099ea175b780a52a9a"
+  },
+  "testing/storagecensus/census.go:Report.JSON": {
+    "reason": "Offline static storage census report containing source locations, rule text, and counts; no runtime property or input values.",
+    "sha256": "00948d4888e557fff45900a10f6782b229dbda5f035d8e79a8e6bbeaee9f011e"
+  },
+  "testing/gpu-qualification/llama-smoke/main.go:qualify": {
+    "reason": "Offline GPU qualification emits a typed embedding fixture for CPU/GPU comparison; not runtime graph property serialization.",
+    "sha256": "db6c4dff9d09390d74333afe78965d3d4d030fb5dcfaaa48d885d715abb51407"
+  },
+  "internal/transactionalcalltest/matrix.go:Check": {
+    "reason": "Test-only embedded Neo4j oracle fixture decoder and assertion rendering shared by Execute/Bolt/HTTP tests; not an application property reader or writer.",
+    "sha256": "fa6fd2a00c3dc437943335fda51b375d49780fc5fa2c422e276697954826d7b6"
+  },
+  "apoc/util/digest.go:writeJavaString": {
+    "reason": "Java-compatible digest input text including signed byte-array text; not property JSON or Cypher parameters.",
+    "sha256": "678ed241098c34bfe285dda9cb836397fb46844e71ed4cf7c8aeebdff4a95a14"
+  },
+  "pkg/convert/equivalence.go:AppendIntegerEquivalenceKey": {
+    "reason": "Tagged Cypher equivalence key for hashing/indexing; not JSON numeric data.",
+    "sha256": "a37e50d396043e80f0df5efd9416519b7f15fab3dea96ee706f05ef32175f401"
+  },
+  "pkg/convert/equivalence.go:AppendUnsignedEquivalenceKey": {
+    "reason": "Tagged unsigned Cypher equivalence key for hashing/indexing; not JSON numeric data.",
+    "sha256": "6ab29d6c616bbe6c48e69b06f0dc09259af335704d54f0b5193da8de291e9b99"
+  },
+  "pkg/convert/equivalence.go:AppendFloatEquivalenceKey": {
+    "reason": "Tagged FLOAT/NaN equivalence keys for hashing/indexing; not JSON numeric data.",
+    "sha256": "8be6060a3ab821fcaf0d15681ff51e46c14315b9ac32ab1b5756a333acef64b3"
+  },
+  "pkg/observability/logging.go:appendValue": {
+    "reason": "Structured slog diagnostics, including duration and nonfinite log conventions; not persisted graph properties or external Cypher parameters.",
+    "sha256": "e5a684cda4864cce02383b521156541925ed8cf756d55505239c96f190e2dad3"
+  },
+  "pkg/observability/redaction_display.go:RedactText": {
+    "reason": "Author: #1665 implementation lane (Codex). Diagnostic credential projection reads lexemes with the lossless owner, redacts values, then serializes a safe display copy. It never writes the result back into entity properties.",
+    "sha256": "bc49c52a615cf161bc817953142730a4d68ade6873c80fe49921ecf484a8b948"
+  },
+  "internal/httpresponse/rejection.go:WriteLocalizedRejection": {
+    "reason": "Author: #1665 implementation lane (Codex). Localized rejection serializes a map of strings only; language/status framing stays with TJ, no property numeric admission.",
+    "sha256": "e22eee325e9ba0b7b3a6bcafd931f40e218a2db1e3dced8c317bca68f5e7967f"
+  },
+  "internal/jsontext/codec.go:NewDecoder": {
+    "reason": "Author: #1665 implementation lane (Codex). Canonical string/framing owner constructs a standard frame decoder. Numeric domains use NumberDecoder for numeric interpretation; this frame reader does not normalize stored properties.",
+    "sha256": "db7ebc26bcf7c4a2596a3bba7513a568d086a176609c31078913bc32fc58e89e"
+  },
+  "internal/jsontext/codec.go:RawMessage.MarshalJSON": {
+    "reason": "Author: #1665 implementation lane (Codex). Canonical raw-fragment owner validates syntax and returns the existing bytes; the standard unmarshal is only the invalid-input error path.",
+    "sha256": "dadb212d96a61885ed687afc26cbe7507c7628fdb531efe4cfbb4c5187bd979b"
+  },
+  "internal/jsontext/codec.go:UnmarshalValue": {
+    "reason": "Author: #1665 implementation lane (Codex). Canonical token/string reader uses standard JSON only for invalid-syntax diagnostics before its lossless reader; numbers remain lexemes.",
+    "sha256": "51a05c4c8c7de0105b76844cfa34edfecbff9818172abfbd3dfee3b70a7d64b6"
+  },
+  "internal/jsontext/codec.go:decodeValue": {
+    "reason": "Author: #1665 implementation lane (Codex). Canonical raw token reader explicitly uses UseNumber and rejects a trailing value. This is TJ string/lexeme infrastructure, not a second numeric-kind policy.",
+    "sha256": "c73a8cbaaa112250ddd2951a044de2d6d575a506872e7d72b6fc67a5e01967ee"
+  },
+  "internal/jsontext/codec.go:unmarshal": {
+    "reason": "Author: #1665 implementation lane (Codex). Retained typed/string binder: standard JSON validates syntax and locates type errors; the fork preserves projected strings. The added immutable numbers mode selects UseNumber before binding, then the numeric domain normalizes kinds.",
+    "sha256": "d3c9eb5c8c905bfcb4c54291273844584c267a1d9847345679695b8b728d71e8"
+  },
+  "internal/testutil/remotegraph/remote_graph.go:New": {
+    "reason": "Author: #1665 implementation lane (Codex). Internal remote-graph fixture server reads typed control requests and writes fixed test graph envelopes, not a production property admission path; unchanged TJ body.",
+    "sha256": "cc6fab590eebea3cdf7f1fd0d61d370b9369e207596fe78f41b3ebb9480e9464"
+  },
+  "pkg/replication/storage_adapter.go:StorageAdapter.GetWALEntries": {
+    "reason": "Author: #1665 implementation lane (Codex). Decodes a typed historical replication wrapper; its entity payload remains opaque bytes and is transcoded through the retained payload owner. TJ body unchanged.",
+    "sha256": "9bd2134a3c8e7505696fbf33b32203548960885f7cc13c8bab25c2a744bfe316"
+  },
+  "pkg/replication/wal_v4_payload.go:TranscodeV4WALPayload": {
+    "reason": "Author: #1665 implementation lane (Codex). Version-4 migration reads typed/raw-message envelope fields and delegates entity conversion to the historical transcoder. Re-encoding wraps converted bytes; current property decoding is not bypassed.",
+    "sha256": "dd3936289dc986d1db25bbec090472cb5d337e0750526614e05dc8da60eca7a8"
+  },
+  "pkg/replication/wal_v4_payload.go:decodeV4ReplicationValue": {
+    "reason": "Author: #1665 implementation lane (Codex). Historical version-4 compatibility fallback after strict Gob framing. Its old JSON meaning is retained, rather than changing a historical format to the new property policy.",
+    "sha256": "e0adf009a9250d8f048ce546e7944fe5e5929bec17d01ab7c09ad47bc85b90fc"
+  },
+  "pkg/server/server_dbconfig.go:Server.handleDbConfig": {
+    "reason": "Author: #1665 implementation lane (Codex). Typed database configuration/settings input retains TJ normalization and override owner; it is not graph-property import. TJ function body unchanged.",
+    "sha256": "d59c5877e42858f9014f7a2a8f356f8aebd531dafd973dd6daba87879b5b9900"
+  },
+  "pkg/server/server_nornicdb.go:Server.handleEmbeddingFailures": {
+    "reason": "Author: #1665 implementation lane (Codex). Typed retry/control input is administrative metadata. The delta changes only the shared response adapter; retry authorization and request parsing are unchanged.",
+    "sha256": "37d7e0cd69fa01fdfda682f394ea463a6efe253ba350710f7ea59f73491717f3"
+  },
+  "pkg/storage/wal_v4_file_migration.go:scanV4MigrationWAL": {
+    "reason": "Author: #1665 implementation lane (Codex). Historical WAL scanner reads typed WALEntry wrappers and retains version-specific checksums/framing; Data remains opaque bytes handled by the migration owner.",
+    "sha256": "ddbe2343425b89a8aa187e3e076e580152ab1465c8a6e79a2f97d2560a8776cc"
+  },
+  "pkg/storage/wal_v4_gob_entity.go:decodeV4EntityChange": {
+    "reason": "Author: #1665 implementation lane (Codex). Version-4-only fallback retains historical untagged JSON property meaning; current typed MessagePack paths do not enter it. Reject-trailing rules are retained.",
+    "sha256": "2df2ba95ac9e528ef35fd14fd1f53e6dfb7020a3b3fbf2f91d13eec7f242272a"
+  },
+  "pkg/storage/wal_v4_gob_entity.go:decodeV4Value": {
+    "reason": "Author: #1665 implementation lane (Codex). Explicit historical Gob-or-JSON fallback, gated by allowJSON and strict trailing rejection; current format admission is separate.",
+    "sha256": "151eb2c5908e723125d276757d00dcde7a08db40d13345373cad982f0a71132d"
+  },
+  "scripts/wal-read/main.go:writeEntries": {
+    "reason": "Author: #1665 implementation lane (Codex). Offline inspection serializes rendered WAL report rows after the retained reader validates records; it is not a storage write or recovery decoder.",
+    "sha256": "c2e1690b891a2b9f15b8d622e9f00f58c1281504e1e1093a91cb175acb760c3b"
+  },
+  "scripts/go_owner_bindings/main.go:run": {
+    "reason": "Release developer tool: reads one JSON request of root and file paths and writes go/types binding evidence; no graph properties, Cypher parameters or persisted state. Reviewed by the L6 / #1665 lane (Claude Opus 5.5).",
+    "sha256": "515137de830c0f4266a1c167966a9d1596f65cca3a72cd8b6c196f85d64bac55"
+  }
+}

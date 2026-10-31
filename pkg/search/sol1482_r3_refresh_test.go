@@ -89,9 +89,9 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 							done := make(chan error, 1)
 							go func() {
 								if edge {
-									done <- svc.RefreshEdge("r")
+									done <- svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin())
 								} else {
-									done <- svc.RefreshNode("source")
+									done <- svc.RefreshNode("source", storage.CaptureVectorWorkOrigin())
 								}
 							}()
 							select {
@@ -127,10 +127,10 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 							}
 							var newer func() error
 							if edge {
-								m := svc.ReserveEdgeMutation("r")
+								m := svc.ReserveEdgeMutation("r", storage.CaptureVectorWorkOrigin())
 								newer = func() error { return svc.RefreshEdgeWithMutation(m) }
 							} else {
-								m := svc.ReserveNodeMutation("source")
+								m := svc.ReserveNodeMutation("source", storage.CaptureVectorWorkOrigin())
 								newer = func() error { return svc.RefreshNodeWithMutation(m) }
 							}
 							if !pending {
@@ -220,7 +220,7 @@ func TestSol1482R3RelationshipStartupCannotOverwriteRefresh(t *testing.T) {
 				edge.Properties["reason"] = "newword"
 				require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 			}
-			require.NoError(t, svc.RefreshEdge("r"))
+			require.NoError(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 			b.open()
 			select {
 			case <-svc.relationshipSearch().ready:

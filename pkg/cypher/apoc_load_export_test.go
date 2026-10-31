@@ -41,7 +41,7 @@ func TestApocLoadJson(t *testing.T) {
 		// Verify the loaded data
 		valueMap := result.Rows[0][0].(map[string]interface{})
 		assert.Equal(t, "Test", valueMap["name"])
-		assert.Equal(t, float64(42), valueMap["value"]) // JSON numbers are float64
+		assert.Equal(t, int64(42), valueMap["value"])
 	})
 
 	t.Run("load_json_array", func(t *testing.T) {

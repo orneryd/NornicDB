@@ -113,8 +113,8 @@ func (e *ReplicatedEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) e
 	return e.applyEntityCommand(CmdUpdateNodeRequest, updateRequest)
 }
 
-func (e *ReplicatedEngine) DeleteNode(id storage.NodeID) error {
-	return e.applyEntityCommand(CmdDeleteNode, id)
+func (e *ReplicatedEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
+	return e.applyDeletionCommand(CmdDeleteNode, id, origins)
 }
 
 func (e *ReplicatedEngine) CreateEdge(edge *storage.Edge) error {
@@ -130,8 +130,8 @@ func (e *ReplicatedEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) e
 	return e.applyEntityCommand(CmdUpdateEdgeRequest, updateRequest)
 }
 
-func (e *ReplicatedEngine) DeleteEdge(id storage.EdgeID) error {
-	return e.applyEntityCommand(CmdDeleteEdge, id)
+func (e *ReplicatedEngine) DeleteEdge(id storage.EdgeID, origins ...uint64) error {
+	return e.applyDeletionCommand(CmdDeleteEdge, id, origins)
 }
 
 func (e *ReplicatedEngine) BulkCreateNodes(nodes []*storage.Node) error {
@@ -142,12 +142,12 @@ func (e *ReplicatedEngine) BulkCreateEdges(edges []*storage.Edge) error {
 	return e.applyEntityCommand(CmdBulkCreateEdges, edges)
 }
 
-func (e *ReplicatedEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	return e.applyEntityCommand(CmdBulkDeleteNodes, ids)
+func (e *ReplicatedEngine) BulkDeleteNodes(ids []storage.NodeID, origins ...uint64) error {
+	return e.applyDeletionCommand(CmdBulkDeleteNodes, ids, origins)
 }
 
-func (e *ReplicatedEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	return e.applyEntityCommand(CmdBulkDeleteEdges, ids)
+func (e *ReplicatedEngine) BulkDeleteEdges(ids []storage.EdgeID, origins ...uint64) error {
+	return e.applyDeletionCommand(CmdBulkDeleteEdges, ids, origins)
 }
 
 func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
@@ -181,11 +181,30 @@ func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error
 	return storage.SubscribeEvents(e.Engine, handlers)
 }
 
-// applyEntityCommand keeps native direct/bulk wire kinds and their producer policy.
+// applyEntityCommand keeps native direct/bulk wire kinds and their producer
+// policy. It is the admission of a public replicated write: an admission the
+// arguments already carry is kept, otherwise the write is admitted here.
+// applyDeletionCommand replicates a deletion under the caller's admission if it
+// supplied one, otherwise as applyEntityCommand does.
+func (e *ReplicatedEngine) applyDeletionCommand(kind CommandType, value any, origins []uint64) error {
+	if len(origins) > 0 {
+		return e.applyAdmittedEntityCommand(kind, value, origins[0])
+	}
+	return e.applyEntityCommand(kind, value)
+}
+
 func (e *ReplicatedEngine) applyEntityCommand(kind CommandType, value any) error {
+	origin, admitted := storage.VectorWorkOriginFromArguments(context.Background(), value)
+	if !admitted {
+		origin = storage.AdmitUnrequestedVectorWork("replication.replicated-write")
+	}
+	return e.applyAdmittedEntityCommand(kind, value, origin)
+}
+
+func (e *ReplicatedEngine) applyAdmittedEntityCommand(kind CommandType, value any, origin uint64) error {
 	data, err := encodeEntityCommandPayload(kind, value)
 	if err != nil {
 		return err
 	}
-	return e.replicator.Apply(&Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
+	return e.replicator.Apply(&Command{Type: kind, Data: data, Timestamp: time.Now(), vectorWorkOrigin: origin, vectorOriginBound: true}, e.timeout)
 }

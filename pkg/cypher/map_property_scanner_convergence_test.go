@@ -114,8 +114,6 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/adminimport/importer.go:withDefaults":                "sets a CSV quote option; does not read Cypher source",
 		"pkg/adminimport/importer.go:openCSVSource":               "validates a CSV quote option before encoding/csv parsing; does not read Cypher source",
 		"pkg/adminimport/neo4j_csv.go:ExportNeo4jCSV":             "sets and validates the CSV output quote option; does not read Cypher source",
-		"pkg/observability/logging.go:appendEscapedJSONString":    "encodes log attribute values as JSON, not Cypher source",
-		"pkg/observability/logging.go:safeASCII":                  "classifies JSON output escaping, not Cypher source",
 		"internal/rerankwire/decode.go:validateEnvelopeProse":     "validates JSON response-envelope prose, not Cypher source",
 		"internal/rerankwire/decode.go:possibleJSONScalarStart":   "classifies JSON response-envelope scalar starts, not Cypher source",
 		"testing/cypher/tck/value.go:parseValue":                  "parses TCK expected-result table notation, not executable Cypher text",
@@ -148,7 +146,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/cypher/functions_text_locate.go:textLocatePattern":   "builds a regex from decoded function argument text, not Cypher source",
 		"cmd/nornicdb-admin/main.go:runImportFull":                "reads a CSV quote command-line option, not Cypher text",
 		"cmd/nornicdb-admin/main.go:runExportNeo4jCSV":            "reads a CSV quote command-line option, not Cypher text",
-		"internal/jsontext/append_string.go:AppendString":         "canonical JSON string emitter, not Cypher quotation; TestJSONAppendStringExactUnits verifies exact UTF16 units and zero-allocation ASCII",
+		"internal/jsontext/append_string.go:appendString":         "canonical JSON string emitter for the source, HTML-escaped and log policies, not Cypher quotation; TestJSONAppendStringExactUnits verifies exact UTF16 units and zero-allocation ASCII",
 		"internal/jsontext/strings.go:projectJSONStrings":         "canonical JSON string lexical projection for raw, binding, opaque and wire stages, not Cypher quotation; codec tests preserve literal escapes, lone units, pairs and opaque RawMessage",
 	}
 	// These production helpers exist only on one maintained branch. They are
