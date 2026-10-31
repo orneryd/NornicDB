@@ -81,7 +81,9 @@ github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint
 github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint -> github.com/orneryd/nornicdb/pkg/server.*Server.handleImplicitTransaction calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint -> github.com/orneryd/nornicdb/pkg/server.*Server.handleOpenTransaction calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction
-github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenRequestForOwner calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.registerAdminRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerAdminRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes
 github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=2
 github.com/orneryd/nornicdb/pkg/server.*Server.registerGraphQLRoutes
@@ -132,7 +134,11 @@ github.com/orneryd/nornicdb/pkg/storage.openManagedBadger -> github.com/dgraph-i
 github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open
 github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner calls=1
 github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner
-github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner -> github.com/orneryd/nornicdb/pkg/txsession.newExecutorFactory calls=1
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.openForOwner calls=1
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenRequestForOwner
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenRequestForOwner -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.openForOwner calls=1
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.openForOwner
+github.com/orneryd/nornicdb/pkg/txsession.*Manager.openForOwner -> github.com/orneryd/nornicdb/pkg/txsession.newExecutorFactory calls=1
 github.com/orneryd/nornicdb/scripts/migrate_storage_serializer.main
 github.com/orneryd/nornicdb/scripts/migrate_storage_serializer.main -> github.com/orneryd/nornicdb/pkg/storage.MigrateBadgerToMsgpack calls=1
 github.com/orneryd/nornicdb/scripts/perf_direct.main

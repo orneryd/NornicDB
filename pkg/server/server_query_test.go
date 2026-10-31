@@ -1568,15 +1568,16 @@ func TestExecuteTxStatements_NoAuth_SkipsRBACWriteCheck(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Stop(context.Background()) })
 
 	dbName := srv.dbManager.DefaultDatabaseName()
-	tx, err := srv.txSessions.Open(context.Background(), dbName)
+	lease, err := srv.txSessions.OpenRequestForOwner(context.Background(), dbName, "")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = srv.txSessions.RollbackAndDelete(context.Background(), tx) })
+	// End the request before the deferred DB.Close joins its retained work.
+	defer func() { _ = lease.RollbackAndDelete(context.Background()); lease.Release() }()
 
 	resp := &TransactionResponse{
 		Results: make([]QueryResult, 0, 1),
 		Errors:  make([]QueryError, 0, 1),
 	}
-	srv.executeTxStatements(context.Background(), "", nil, dbName, tx, []StatementRequest{
+	srv.executeTxStatements(context.Background(), "", nil, dbName, lease, []StatementRequest{
 		{Statement: "CREATE (n:Doc {name:'tx-open'}) RETURN n.name"},
 	}, resp)
 

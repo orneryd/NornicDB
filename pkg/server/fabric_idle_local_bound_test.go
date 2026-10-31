@@ -91,8 +91,7 @@ func newFabricLocalSnapshotFixture(
 // router construction (once per fixture), then returns the original HTTP
 // request closure bound to the fixture server and token.
 func (f *fabricLocalSnapshotFixture) requestFor(ttl time.Duration) func(path, body string) *httptest.ResponseRecorder {
-	f.server.txSessions = txsession.NewManager(ttl, f.server.newExecutorForDatabase)
-	f.server.txSessions.SetLifetimeContext(f.server.requestsCtx)
+	f.server.txSessions = txsession.NewManager(ttl, f.server.newExecutorForDatabase, f.server.shutdown.work.Context())
 	router := f.server.buildRouter()
 	return func(path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
