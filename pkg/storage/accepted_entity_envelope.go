@@ -35,7 +35,7 @@ type entityWriter interface {
 	CreateNode(*Node) (NodeID, error)
 	CreateEdge(*Edge) error
 	UpdateEdge(updateRequest EdgeUpdateRequest) error
-	DeleteEdge(EdgeID) error
+	DeleteEdge(EdgeID, ...uint64) error
 }
 
 // DecodeEntityChange decodes one current direct replication command. It never
@@ -111,14 +111,21 @@ const (
 )
 
 // BeginEntityTransaction obtains one native frame through the actual wrapper
-// chain and binds its durability mode before exposing it to a caller.
-func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
+// chain and binds its durability mode before exposing it to a caller. A
+// selected command may also transport its already-bound admission across that
+// opening, and an admission carried by a write handle in the chain
+// (EngineWithVectorWorkOrigin, SystemStoreEngine) binds the transaction the
+// same way. An empty transaction retains first-mutation admission by default.
+func BeginEntityTransaction(engine Engine, mode EntityCommitMode, origins ...uint64) (*BadgerTransaction, error) {
 	if !mode.valid() {
 		return nil, ErrInvalidData
 	}
 	visited := map[Engine]bool{}
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
+		if _, origin, ok := vectorWorkCarrier(engine); ok && len(origins) == 0 {
+			origins = []uint64{origin}
+		}
 		if starter, ok := engine.(interface {
 			BeginTransaction() (*BadgerTransaction, error)
 		}); ok {
@@ -128,6 +135,9 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransa
 			}
 			tx.mu.Lock()
 			tx.commitMode = mode
+			if len(origins) > 0 {
+				tx.bindVectorWorkOriginLocked(origins[0])
+			}
 			tx.mu.Unlock()
 			return tx, nil
 		}
@@ -143,11 +153,12 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransa
 // ApplyAcceptedEntityTransaction waits for the full accepted apply, including
 // notifications. State-machine drivers use Submit and its physical boundary.
 func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
+	origin := fallbackVectorWorkOrigin("storage.accepted-entity-apply")
 	envelope, operations, err := DecodeEntityTransaction(data)
 	if err != nil {
 		return err
 	}
-	receipt, err := SubmitAcceptedEntityTransaction(context.Background(), engine, envelope, operations, nil)
+	receipt, err := SubmitAcceptedEntityTransaction(WithVectorWorkOrigin(context.Background(), origin), engine, envelope, operations, nil)
 	if err != nil {
 		return err
 	}
@@ -158,7 +169,8 @@ func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
 // returns the commit receipt. DecodeEntityTransaction validates the wire image
 // before callers publish it to replication or recovery logs.
 func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
-	tx, err := BeginEntityTransaction(engine, envelope.Mode)
+	_, origin := ContinueVectorWork(ctx, "storage.accepted-entity-transaction")
+	tx, err := BeginEntityTransaction(engine, envelope.Mode, origin)
 	if err != nil {
 		return nil, err
 	}

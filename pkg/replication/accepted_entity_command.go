@@ -209,6 +209,12 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 			}
 		}
 	}
+	// The forwarded write keeps the admission its request (or its operations)
+	// carries; only a forward that carries none is admitted (and counted) here.
+	origin, admitted := storage.VectorWorkOriginFromArguments(ctx, ops)
+	if !admitted {
+		origin = storage.AdmitUnrequestedVectorWork("replication.forwarded-write")
+	}
 	if mode == storage.CommitModeDirect {
 		if len(ops) != 1 {
 			return storage.ErrInvalidData
@@ -216,18 +222,25 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 		op := ops[0]
 		switch op.Type {
 		case storage.OpCreateNode:
-			_, err := forward.CreateNode(op.Node)
-			return err
+			return forward.applyAdmittedEntityCommand(CmdCreateNode, op.Node, origin)
 		case storage.OpUpdateNode:
-			return forward.UpdateNode(op.NodeUpdate())
+			// The forwarded update keeps release's routing (a blind image or
+			// an observed request) under the forward's admission.
+			if request := op.NodeUpdate(); request.Before != nil || request.Policy != storage.ClientNodeEdits {
+				return forward.applyAdmittedEntityCommand(CmdUpdateNodeRequest, request, origin)
+			}
+			return forward.applyAdmittedEntityCommand(CmdUpdateNode, op.Node, origin)
 		case storage.OpDeleteNode:
-			return forward.DeleteNode(op.NodeID)
+			return forward.applyAdmittedEntityCommand(CmdDeleteNode, op.NodeID, origin)
 		case storage.OpCreateEdge:
-			return forward.CreateEdge(op.Edge)
+			return forward.applyAdmittedEntityCommand(CmdCreateEdge, op.Edge, origin)
 		case storage.OpUpdateEdge:
-			return forward.UpdateEdge(op.EdgeUpdate())
+			if request := op.EdgeUpdate(); request.Before != nil {
+				return forward.applyAdmittedEntityCommand(CmdUpdateEdgeRequest, request, origin)
+			}
+			return forward.applyAdmittedEntityCommand(CmdUpdateEdge, op.Edge, origin)
 		case storage.OpDeleteEdge:
-			return forward.DeleteEdge(op.EdgeID)
+			return forward.applyAdmittedEntityCommand(CmdDeleteEdge, op.EdgeID, origin)
 		}
 	}
 	if mode != storage.CommitModeImplicit {
@@ -245,25 +258,25 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 		for i := range ops {
 			nodes[i] = ops[i].Node
 		}
-		return forward.BulkCreateNodes(nodes)
+		return forward.applyAdmittedEntityCommand(CmdBulkCreateNodes, nodes, origin)
 	case storage.OpCreateEdge:
 		edges := make([]*storage.Edge, len(ops))
 		for i := range ops {
 			edges[i] = ops[i].Edge
 		}
-		return forward.BulkCreateEdges(edges)
+		return forward.applyAdmittedEntityCommand(CmdBulkCreateEdges, edges, origin)
 	case storage.OpDeleteNode:
 		ids := make([]storage.NodeID, len(ops))
 		for i := range ops {
 			ids[i] = ops[i].NodeID
 		}
-		return forward.BulkDeleteNodes(ids)
+		return forward.applyAdmittedEntityCommand(CmdBulkDeleteNodes, ids, origin)
 	case storage.OpDeleteEdge:
 		ids := make([]storage.EdgeID, len(ops))
 		for i := range ops {
 			ids[i] = ops[i].EdgeID
 		}
-		return forward.BulkDeleteEdges(ids)
+		return forward.applyAdmittedEntityCommand(CmdBulkDeleteEdges, ids, origin)
 	}
 	return storage.ErrInvalidData
 }

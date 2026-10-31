@@ -20,9 +20,9 @@ func TestReservationOwnerOutstandingWorkIsBounded(t *testing.T) {
 			require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": []float32{1, 0}}}))
 			reserve := func() RefreshRetry {
 				if kind == "node" {
-					return RefreshRetry{Node: svc.ReserveNodeMutation("a")}
+					return RefreshRetry{Node: svc.ReserveNodeMutation("a", storage.CaptureVectorWorkOrigin())}
 				}
-				return RefreshRetry{Edge: svc.ReserveEdgeMutation("r")}
+				return RefreshRetry{Edge: svc.ReserveEdgeMutation("r", storage.CaptureVectorWorkOrigin())}
 			}
 			refresh := func(work RefreshRetry) error {
 				if kind == "node" {
@@ -80,9 +80,9 @@ func TestReservationOwnerLegacyRetryNotification(t *testing.T) {
 			require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": []float32{1, 0}}}))
 			var older RefreshRetry
 			if kind == "node" {
-				older = RefreshRetry{Node: svc.ReserveNodeMutation("a")}
+				older = RefreshRetry{Node: svc.ReserveNodeMutation("a", storage.CaptureVectorWorkOrigin())}
 			} else {
-				older = RefreshRetry{Edge: svc.ReserveEdgeMutation("r")}
+				older = RefreshRetry{Edge: svc.ReserveEdgeMutation("r", storage.CaptureVectorWorkOrigin())}
 			}
 			calls := 0
 			svc.SetRefreshRetry(func(node storage.NodeID, edge storage.EdgeID, err error) {
@@ -99,9 +99,9 @@ func TestReservationOwnerLegacyRetryNotification(t *testing.T) {
 			fault.nodes.Store(kind == "node")
 			fault.edges.Store(kind == "relationship")
 			if kind == "node" {
-				require.ErrorIs(t, svc.RefreshNode("a"), xhighNestedReadFailure)
+				require.ErrorIs(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()), xhighNestedReadFailure)
 			} else {
-				require.ErrorIs(t, svc.RefreshEdge("r"), xhighNestedReadFailure)
+				require.ErrorIs(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()), xhighNestedReadFailure)
 			}
 			require.Equal(t, 1, calls)
 			require.True(t, older.Current(), "notification changed the original discard contract")
@@ -131,9 +131,9 @@ func TestReservationRegistryDomainsAndComparableTokens(t *testing.T) {
 
 	svc := &Service{}
 	other := &Service{}
-	node := svc.ReserveNodeMutation("same")
-	edge := svc.ReserveEdgeMutation("same")
-	foreign := other.ReserveNodeMutation("same")
+	node := svc.ReserveNodeMutation("same", storage.CaptureVectorWorkOrigin())
+	edge := svc.ReserveEdgeMutation("same", storage.CaptureVectorWorkOrigin())
+	foreign := other.ReserveNodeMutation("same", storage.CaptureVectorWorkOrigin())
 	require.True(t, node == node)
 	require.True(t, edge == edge)
 	require.False(t, node == foreign)

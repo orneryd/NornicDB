@@ -45,7 +45,7 @@ func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if lookup.missing {
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{
 			"available": false,
 			"enabled":   false,
 			"message":   s.localizedText(w, r, localization.GPUManagerNotInitialized()),
@@ -78,7 +78,7 @@ func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 type gpuControlAction uint8
@@ -120,7 +120,7 @@ func (s *Server) handleGPUControl(w http.ResponseWriter, r *http.Request, action
 		s.writeBoundaryError(w, r, http.StatusInternalServerError, errors.New("invalid GPU control action"), ErrInternalError)
 		return
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  status,
 		"message": s.localizedText(w, r, message),
 	})
@@ -203,7 +203,7 @@ func (s *Server) handleGPUTest(w http.ResponseWriter, r *http.Request) {
 		usedMode = "gpu"
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{
 		"results": results,
 		"performance": map[string]interface{}{
 			"elapsed_ms":     elapsedMs,

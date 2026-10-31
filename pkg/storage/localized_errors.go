@@ -75,7 +75,7 @@ func (err *NodeStillConnectedError) BoltErrorDetail() string { return "DeleteCon
 // still connect, failing the commit unless they are deleted first
 // (BadgerTransaction.DeleteGraphNode with RejectConnected).
 type ConnectedNodeDeleter interface {
-	DeleteGraphNode(id NodeID, mode NodeDeletionMode) error
+	DeleteGraphNode(id NodeID, mode NodeDeletionMode, origins ...uint64) error
 }
 
 // IncidentEdgeLister is a store that lists every relationship connecting a

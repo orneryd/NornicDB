@@ -105,6 +105,12 @@ func (q *orderedEmbeddingQueue) MarkNodeEmbedded(id storage.NodeID) {
 	}
 }
 
+// AddToPendingEmbeddingsWithOrigin is the storage requeue capability; the
+// fixture records the ID and ignores the admission.
+func (q *orderedEmbeddingQueue) AddToPendingEmbeddingsWithOrigin(id storage.NodeID, _ uint64) {
+	q.AddToPendingEmbeddings(id)
+}
+
 func (q *orderedEmbeddingQueue) AddToPendingEmbeddings(id storage.NodeID) {
 	q.mu.Lock()
 	defer q.mu.Unlock()

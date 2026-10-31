@@ -306,7 +306,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	case 0:
 	case 1:
 		node := plan.nodes[0]
-		actualID, err := createMintedNode(store, node)
+		actualID, err := createMintedNode(e.writeStorage(ctx), node)
 		if err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
@@ -314,7 +314,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			node.ID = actualID
 		}
 	default:
-		if err := bulkCreateMintedNodes(store, plan.nodes); err != nil {
+		if err := bulkCreateMintedNodes(e.writeStorage(ctx), plan.nodes); err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
 	}
@@ -322,9 +322,9 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	switch len(plan.edges) {
 	case 0:
 	case 1:
-		edgeErr = createMintedEdge(store, plan.edges[0])
+		edgeErr = createMintedEdge(e.writeStorage(ctx), plan.edges[0])
 	default:
-		edgeErr = bulkCreateMintedEdges(store, plan.edges)
+		edgeErr = bulkCreateMintedEdges(e.writeStorage(ctx), plan.edges)
 	}
 	if edgeErr != nil {
 		// The clause's nodes are already written; remove them so the clause
@@ -334,18 +334,18 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			for i, node := range plan.nodes {
 				ids[i] = node.ID
 			}
-			_ = store.BulkDeleteNodes(ids)
+			_ = e.writeStorage(ctx).BulkDeleteNodes(ids)
 		}
 		return localizedError(localization.CypherMutationsCreateRelationshipFailed(edgeErr), edgeErr)
 	}
 	for _, node := range plan.nodes {
-		e.notifyNodeMutated(string(node.ID))
+		e.notifyNodeMutated(ctx, string(node.ID))
 		addOptimisticNodeID(result, node.ID)
 		countCreatedEntity(result.Stats, node.Labels, node.Properties)
 	}
 	result.Stats.NodesCreated += len(plan.nodes)
 	for _, edge := range plan.edges {
-		e.notifyEdgeMutated(string(edge.ID))
+		e.notifyEdgeMutated(ctx, string(edge.ID))
 		addOptimisticRelationshipID(result, edge.ID)
 		countCreatedEntity(result.Stats, nil, edge.Properties)
 	}

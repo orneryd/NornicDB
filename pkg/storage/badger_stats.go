@@ -536,9 +536,18 @@ func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
 	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
 }
 
-// AddToPendingEmbeddings adds a node to the pending embeddings index.
-// Call this when creating a node that needs embedding.
-func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
+// RecoverPendingEmbedding records that a scanned node needs embedding, without
+// an admission of its own: an existing marker is kept, otherwise the claiming
+// worker admits the work.
+func (b *BadgerEngine) RecoverPendingEmbedding(nodeID NodeID) {
+	_ = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
+		return b.recoverPendingEmbeddingInTxn(txn, nodeID)
+	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
+}
+
+// AddToPendingEmbeddingsWithOrigin returns admitted work to the existing
+// pending index. A newer body's marker is authoritative over this requeue.
+func (b *BadgerEngine) AddToPendingEmbeddingsWithOrigin(nodeID NodeID, origin uint64) {
 	_ = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(nodeID))
 		if err == nil {
@@ -556,7 +565,21 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 		} else if err != badger.ErrKeyNotFound {
 			return err
 		}
-		return b.setPendingEmbeddingInTxn(txn, nodeID)
+		if item, err := txn.Get(pendingEmbedKey(nodeID)); err == nil {
+			var admitted bool
+			if err := item.Value(func(value []byte) error {
+				_, admitted = decodePendingEmbeddingOrigin(value)
+				return nil
+			}); err != nil {
+				return err
+			}
+			if admitted {
+				return b.recoverPendingEmbeddingInTxn(txn, nodeID)
+			}
+		} else if err != badger.ErrKeyNotFound {
+			return err
+		}
+		return b.setPendingEmbeddingInTxn(txn, nodeID, origin)
 	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
 }
 
@@ -703,7 +726,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 					// Check if already in pending index
 					_, err := txn.Get(pendingEmbedKey(node.ID))
 					if err == badger.ErrKeyNotFound {
-						b.setPendingEmbeddingInTxn(txn, node.ID)
+						b.recoverPendingEmbeddingInTxn(txn, node.ID)
 						added++
 					}
 				}
@@ -1104,15 +1127,16 @@ func hasPrefix(s, prefix []byte) bool {
 
 // ClearAllEmbeddings removes embeddings from all nodes, allowing them to be regenerated.
 // Returns the number of nodes that had their embeddings cleared.
-func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
-	return b.ClearAllEmbeddingsForPrefix("")
+func (b *BadgerEngine) ClearAllEmbeddings(origin uint64) (int, error) {
+	return b.ClearAllEmbeddingsForPrefix("", origin)
 }
 
 // ClearAllEmbeddingsForPrefix removes embeddings from nodes whose IDs start with the given prefix.
 // This is used to clear embeddings for a single logical database namespace (e.g., "nornic:").
 //
 // If idPrefix is empty, clears embeddings for all nodes.
-func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error) {
+// The re-embedding it queues carries origin, the caller's vector-work admission.
+func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string, origin uint64) (int, error) {
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
@@ -1167,7 +1191,7 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 		}
 		before := *node
 		node.ChunkEmbeddings = nil
-		if err := b.UpdateNode(NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages}); err != nil {
+		if err := b.updateNodeWithOrigin(NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages}, origin); err != nil {
 			b.log.Warn("failed to clear embedding for node",
 				"subsystem", "embeddings_index",
 				"node_id", string(id),

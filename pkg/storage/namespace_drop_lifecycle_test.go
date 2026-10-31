@@ -154,7 +154,7 @@ func TestNamespaceDropPendingMetadataWritersUseActualTarget(t *testing.T) {
 	require.NoError(t, b.PutDeindexWorkItem(&DeindexWorkItem{WorkItemID: "victim:opaque", TargetID: "peer:n"}))
 	require.NoError(t, b.DeleteDeindexWorkItem("victim:opaque"))
 	require.NoError(t, b.PutAccessMeta("peer:n", &knowledgepolicy.AccessMetaEntry{TargetID: "peer:n"}))
-	b.AddToPendingEmbeddings("victim:new")
+	b.AddToPendingEmbeddingsWithOrigin("victim:new", CaptureVectorWorkOrigin())
 	err = b.withView(func(txn *badger.Txn) error { _, err := txn.Get(pendingEmbedKey("victim:new")); return err })
 	require.ErrorIs(t, err, badger.ErrKeyNotFound, "void pending producer must not leave durable work in an unfinished DROP")
 	b.dropPrefixTailHook = nil

@@ -103,14 +103,16 @@ func (b *BadgerEngine) embeddingRevisionIsCurrent(id NodeID, revision EmbeddingB
 
 // SnapshotNodeForEmbedding binds a body and its revision in one read. Ordinary
 // reads keep their existing write-cache fast path; only an embedding claim
-// needs to acquire a revision when that cache came from a body write. Copies
+// needs body and pending admission in the same native snapshot. A physical
+// cached body cannot prove its marker is unchanged: claims and recovery can
+// change pending admission without changing the body revision. Copies
 // and namespace decorators preserve the private reader provenance.
 func SnapshotNodeForEmbedding(node *Node) (*Node, error) {
 	if node == nil {
 		return node, nil
 	}
 	state := node.runtimeState()
-	if !state.embeddingRevision.isZero() || state.embeddingOwner == nil {
+	if state.embeddingOwner == nil || state.embeddingRevision.bufferedSequence != 0 {
 		return node, nil
 	}
 	b, id := state.embeddingOwner, state.embeddingOwnerID

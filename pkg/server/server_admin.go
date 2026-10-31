@@ -66,7 +66,7 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +79,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		"tls_enabled":  s.config.TLSCertFile != "",
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, config)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, config)
 }
 
 type backupOperation uint8
@@ -128,5 +128,5 @@ func (s *Server) handleBackupOperation(w http.ResponseWriter, r *http.Request, o
 		s.writeBoundaryError(w, r, http.StatusInternalServerError, operationErr, ErrInternalError)
 		return
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": status, "path": req.Path})
+	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": status, "path": req.Path})
 }

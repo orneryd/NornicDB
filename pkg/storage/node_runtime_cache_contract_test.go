@@ -540,7 +540,7 @@ func TestNodeRuntimeMetadataChangeKeepsPublicationAcknowledgement(t *testing.T) 
 	require.NoError(t, err)
 	payload.ChunkEmbeddings = [][]float32{{1, 0}}
 	payload.EmbedMeta = map[string]any{"chunk_count": 1}
-	attempt := NewEmbeddingAttempt(1, 1, payload.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) {})
+	attempt := NewEmbeddingAttempt(CaptureVectorWorkOrigin(), 1, 1, payload.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) {})
 	payload.SetEmbeddingAttempt(attempt)
 
 	var accepted *Node
