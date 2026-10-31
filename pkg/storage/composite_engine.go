@@ -474,7 +474,7 @@ func (c *CompositeEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 }
 
 // DeleteNode deletes a node from the constituent that contains it.
-func (c *CompositeEngine) DeleteNode(id NodeID) error {
+func (c *CompositeEngine) DeleteNode(id NodeID, origins ...uint64) error {
 	readConstituents, local, _ := c.constituentsForEntity("4", string(id))
 	id = NodeID(local)
 
@@ -491,7 +491,7 @@ func (c *CompositeEngine) DeleteNode(id NodeID) error {
 			if err != nil {
 				return err
 			}
-			return writer.DeleteNode(id)
+			return writer.DeleteNode(id, origins...)
 		}
 		if err != ErrNotFound {
 			return err
@@ -748,7 +748,7 @@ func (c *CompositeEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 }
 
 // DeleteEdge deletes an edge from the constituent containing it.
-func (c *CompositeEngine) DeleteEdge(id EdgeID) error {
+func (c *CompositeEngine) DeleteEdge(id EdgeID, origins ...uint64) error {
 	readConstituents, local, _ := c.constituentsForEntity("5", string(id))
 	id = EdgeID(local)
 
@@ -764,7 +764,7 @@ func (c *CompositeEngine) DeleteEdge(id EdgeID) error {
 			if err != nil {
 				return err
 			}
-			return writer.DeleteEdge(id)
+			return writer.DeleteEdge(id, origins...)
 		}
 		if err != ErrNotFound {
 			return err
@@ -1408,7 +1408,7 @@ func (c *CompositeEngine) BulkCreateEdges(edges []*Edge) error {
 }
 
 // BulkDeleteNodes deletes nodes in bulk from all constituents.
-func (c *CompositeEngine) BulkDeleteNodes(ids []NodeID) error {
+func (c *CompositeEngine) BulkDeleteNodes(ids []NodeID, origins ...uint64) error {
 	readConstituents := c.getConstituentsForRead()
 
 	for _, alias := range readConstituents {
@@ -1418,14 +1418,14 @@ func (c *CompositeEngine) BulkDeleteNodes(ids []NodeID) error {
 		}
 
 		// Try to delete - ignore errors for nodes not in this constituent
-		_ = engine.BulkDeleteNodes(ids)
+		_ = engine.BulkDeleteNodes(ids, origins...)
 	}
 
 	return nil
 }
 
 // BulkDeleteEdges deletes edges in bulk from all constituents.
-func (c *CompositeEngine) BulkDeleteEdges(ids []EdgeID) error {
+func (c *CompositeEngine) BulkDeleteEdges(ids []EdgeID, origins ...uint64) error {
 	readConstituents := c.getConstituentsForRead()
 
 	for _, alias := range readConstituents {
@@ -1435,7 +1435,7 @@ func (c *CompositeEngine) BulkDeleteEdges(ids []EdgeID) error {
 		}
 
 		// Try to delete - ignore errors for edges not in this constituent
-		_ = engine.BulkDeleteEdges(ids)
+		_ = engine.BulkDeleteEdges(ids, origins...)
 	}
 
 	return nil

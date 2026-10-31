@@ -220,7 +220,7 @@ func TestSearchOriginLegacyReplicationApplyDrop(t *testing.T) {
 						} else if tc.bulk {
 							done <- commandWriter.BulkCreateNodes([]*storage.Node{walOperation.Node})
 						} else {
-							done <- storage.ApplyEntityChange(commandWriter, walOperation, commandWriter.UpdateNode, commandWriter.DeleteNode)
+							done <- storage.ApplyEntityChange(commandWriter, walOperation, commandWriter.UpdateNode, func(id storage.NodeID) error { return commandWriter.DeleteNode(id) }, func(id storage.EdgeID) error { return commandWriter.DeleteEdge(id) })
 						}
 						return
 					}
@@ -230,7 +230,7 @@ func TestSearchOriginLegacyReplicationApplyDrop(t *testing.T) {
 						} else if tc.bulk {
 							done <- walWriter.BulkCreateNodes([]*storage.Node{walOperation.Node})
 						} else {
-							done <- storage.ApplyEntityChange(walWriter, walOperation, walWriter.UpdateNode, walWriter.DeleteNode)
+							done <- storage.ApplyEntityChange(walWriter, walOperation, walWriter.UpdateNode, func(id storage.NodeID) error { return walWriter.DeleteNode(id) }, func(id storage.EdgeID) error { return walWriter.DeleteEdge(id) })
 						}
 						return
 					}

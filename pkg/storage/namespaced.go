@@ -301,27 +301,11 @@ func (n *NamespacedEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	return n.inner.UpdateNode(updateRequest)
 }
 
-func (n *NamespacedEngine) DeleteNode(id NodeID) error {
-	return n.deleteNode(id, 0, false)
-}
-
-// DeleteNodeWithVectorWorkOrigin deletes under the caller's admission.
-func (n *NamespacedEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
-	return n.deleteNode(id, origin, true)
-}
-
-func (n *NamespacedEngine) deleteNode(id NodeID, origin uint64, admitted bool) error {
+func (n *NamespacedEngine) DeleteNode(id NodeID, origins ...uint64) error {
 	prefixedID := n.PrefixNodeID(id)
 
 	// Delete the node (this will remove it from pending embeddings index)
-	var err error
-	handled := false
-	if admitted {
-		handled, err = deleteNodeAdmitted(n.inner, prefixedID, origin)
-	}
-	if !handled {
-		err = n.inner.DeleteNode(prefixedID)
-	}
+	err := n.inner.DeleteNode(prefixedID, origins...)
 
 	// Remove from pending embeddings index (with namespace prefix)
 	// ALL node IDs in the index must be prefixed
@@ -358,16 +342,8 @@ func (n *NamespacedEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	return n.inner.UpdateEdge(updateRequest)
 }
 
-func (n *NamespacedEngine) DeleteEdge(id EdgeID) error {
-	return n.inner.DeleteEdge(n.PrefixEdgeID(id))
-}
-
-// DeleteEdgeWithVectorWorkOrigin deletes under the caller's admission.
-func (n *NamespacedEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
-	if handled, err := deleteEdgeAdmitted(n.inner, n.PrefixEdgeID(id), origin); handled {
-		return err
-	}
-	return n.inner.DeleteEdge(n.PrefixEdgeID(id))
+func (n *NamespacedEngine) DeleteEdge(id EdgeID, origins ...uint64) error {
+	return n.inner.DeleteEdge(n.PrefixEdgeID(id), origins...)
 }
 
 // ============================================================================
@@ -723,32 +699,12 @@ func (n *NamespacedEngine) BulkCreateEdges(edges []*Edge) error {
 	return n.inner.BulkCreateEdges(namespacedEdges)
 }
 
-func (n *NamespacedEngine) BulkDeleteNodes(ids []NodeID) error {
+func (n *NamespacedEngine) BulkDeleteNodes(ids []NodeID, origins ...uint64) error {
 	return n.inner.BulkDeleteNodes(materializedIDs(ids, func(id NodeID) NodeID { return n.PrefixNodeID(id) }))
 }
 
-// BulkDeleteNodesWithVectorWorkOrigin forwards an admitted bulk deletion to
-// the inner engine's own bulk deletion.
-func (n *NamespacedEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []NodeID, origin uint64) error {
-	prefixed := materializedIDs(ids, func(id NodeID) NodeID { return n.PrefixNodeID(id) })
-	if handled, err := bulkDeleteNodesAdmitted(n.inner, prefixed, origin); handled {
-		return err
-	}
-	return n.inner.BulkDeleteNodes(prefixed)
-}
-
-func (n *NamespacedEngine) BulkDeleteEdges(ids []EdgeID) error {
+func (n *NamespacedEngine) BulkDeleteEdges(ids []EdgeID, origins ...uint64) error {
 	return n.inner.BulkDeleteEdges(materializedIDs(ids, func(id EdgeID) EdgeID { return n.PrefixEdgeID(id) }))
-}
-
-// BulkDeleteEdgesWithVectorWorkOrigin forwards an admitted bulk deletion to
-// the inner engine's own bulk deletion.
-func (n *NamespacedEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []EdgeID, origin uint64) error {
-	prefixed := materializedIDs(ids, func(id EdgeID) EdgeID { return n.PrefixEdgeID(id) })
-	if handled, err := bulkDeleteEdgesAdmitted(n.inner, prefixed, origin); handled {
-		return err
-	}
-	return n.inner.BulkDeleteEdges(prefixed)
 }
 
 // ============================================================================

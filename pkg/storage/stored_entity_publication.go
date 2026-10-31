@@ -499,7 +499,7 @@ func PrepareEntityChanges(ctx context.Context, engine Engine, namespace string, 
 		return nil, nil, err
 	}
 	for _, op := range operations {
-		if err = ApplyEntityChange(tx, op, func(request NodeUpdateRequest) error { return ApplyNodeUpdate(tx, request) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+		if err = ApplyEntityChange(tx, op, func(request NodeUpdateRequest) error { return ApplyNodeUpdate(tx, request) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }, tx.DeleteEdge); err != nil {
 			return nil, nil, err
 		}
 	}

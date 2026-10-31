@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -17,8 +19,6 @@ import (
 // subscription through the shared helper, and (streaming variant only) reads.
 var carrierOwnMethods = map[string]bool{
 	"GetInnerEngine": true, "SubscribeEvents": true,
-	"DeleteNodeWithVectorWorkOrigin": true, "DeleteEdgeWithVectorWorkOrigin": true,
-	"BulkDeleteNodesWithVectorWorkOrigin": true, "BulkDeleteEdgesWithVectorWorkOrigin": true,
 	"StreamNodes": true, "StreamEdges": true, "StreamNodeChunks": true,
 }
 
@@ -82,11 +82,10 @@ func TestAdmissionCarrierMethodsOnlyDelegate(t *testing.T) {
 	fset := token.NewFileSet()
 	allowedFuncs := map[string]bool{
 		"admittedNodeArgument": true, "admittedEdgeArgument": true, "admittedNodeArguments": true, "admittedEdgeArguments": true,
-		"deleteNodeAdmitted": true, "deleteEdgeAdmitted": true, "bulkDeleteNodesAdmitted": true, "bulkDeleteEdgesAdmitted": true,
-		"SubscribeEvents": true, "admittedDeleter": true,
+		"SubscribeEvents": true,
 	}
 	checked := 0
-	for _, file := range []string{"entity_work_origin_engine.go", "vector_work_admission.go"} {
+	for _, file := range []string{"entity_work_origin_engine.go"} {
 		parsed, err := parser.ParseFile(fset, file, nil, 0)
 		require.NoError(t, err)
 		for _, decl := range parsed.Decls {
@@ -103,18 +102,11 @@ func TestAdmissionCarrierMethodsOnlyDelegate(t *testing.T) {
 				}
 			}
 			carrierMethod := receiver == "vectorWorkOriginEngine" || receiver == "streamingVectorWorkOriginEngine"
-			helper := receiver == "" && strings.HasSuffix(fn.Name.Name, "Admitted") && strings.Contains(fn.Name.Name, "elete")
-			if !carrierMethod && !helper {
+			if !carrierMethod {
 				continue
 			}
 			checked++
-			// The operation a body may delegate to: its own name without the
-			// admitted suffix; for a dispatch helper (deleteNodeAdmitted) the
-			// operation it dispatches (DeleteNode).
-			operation := strings.TrimSuffix(fn.Name.Name, "WithVectorWorkOrigin")
-			if helper {
-				operation = strings.ToUpper(operation[:1]) + strings.TrimSuffix(operation[1:], "Admitted")
-			}
+			operation := fn.Name.Name
 			ast.Inspect(fn.Body, func(node ast.Node) bool {
 				switch n := node.(type) {
 				case *ast.ForStmt, *ast.RangeStmt, *ast.GoStmt, *ast.SelectStmt, *ast.FuncLit:
@@ -129,8 +121,8 @@ func TestAdmissionCarrierMethodsOnlyDelegate(t *testing.T) {
 						case *ast.SelectorExpr: // e.Engine.X / e.streamer.X
 							require.Contains(t, []string{"Engine", "streamer"}, holder.Sel.Name, "%s: %s", fset.Position(n.Pos()), fn.Name.Name)
 							require.Equal(t, operation, name, "%s: %s delegates to a different operation %s", fset.Position(n.Pos()), fn.Name.Name, name)
-						case *ast.Ident: // e.X (its own admitted form) or deleter.X (dispatch)
-							require.Equal(t, operation+"WithVectorWorkOrigin", name, "%s: %s calls %s.%s", fset.Position(n.Pos()), fn.Name.Name, holder.Name, name)
+						case *ast.Ident: // e.admission: the origin a deletion passes on
+							require.Equal(t, "admission", name, "%s: %s calls %s.%s", fset.Position(n.Pos()), fn.Name.Name, holder.Name, name)
 						default:
 							t.Errorf("%s: %s calls %s through an expression", fset.Position(n.Pos()), fn.Name.Name, name)
 						}
@@ -182,191 +174,58 @@ func TestAdmissionCarrierRewrapKeepsCapabilitySetAndOrigin(t *testing.T) {
 	}
 }
 
-// overridingDeleteEngine embeds a concrete engine and overrides every deletion
-// the carrier offers in an admitted form, without declaring that form: it only
-// inherits the admitted deletions (and their owner) from the embedded engine.
+// overridingDeleteEngine overrides every deletion and inherits the rest from its
+// embedded engine; it records each call and the origin it received.
 type overridingDeleteEngine struct {
-	*BadgerEngine
-	calls []string
-}
-
-func (e *overridingDeleteEngine) DeleteNode(id NodeID) error {
-	e.calls = append(e.calls, "DeleteNode")
-	return e.BadgerEngine.DeleteNode(id)
-}
-
-func (e *overridingDeleteEngine) DeleteEdge(id EdgeID) error {
-	e.calls = append(e.calls, "DeleteEdge")
-	return e.BadgerEngine.DeleteEdge(id)
-}
-
-func (e *overridingDeleteEngine) BulkDeleteNodes(ids []NodeID) error {
-	e.calls = append(e.calls, "BulkDeleteNodes")
-	return e.BadgerEngine.BulkDeleteNodes(ids)
-}
-
-func (e *overridingDeleteEngine) BulkDeleteEdges(ids []EdgeID) error {
-	e.calls = append(e.calls, "BulkDeleteEdges")
-	return e.BadgerEngine.BulkDeleteEdges(ids)
-}
-
-// TestAdmittedDeletionHonoursOuterOverride: through the admission carrier,
-// every deletion reaches the behaviour the wrapped engine itself exposes. An
-// override on the outer engine is not skipped by an admitted deletion promoted
-// from its embedded engine; an engine that declares the admitted form gets it.
-func TestAdmittedDeletionHonoursOuterOverride(t *testing.T) {
-	outer := &overridingDeleteEngine{BadgerEngine: newTestEngine(t)}
-	_, inherited := admittedDeleter(outer, "DeleteNode")
-	require.False(t, inherited, "the admitted form sits below the outer engine's own DeleteNode")
-	_, declared := admittedDeleter(outer.BadgerEngine, "DeleteNode")
-	require.True(t, declared, "BadgerEngine declares both forms at the same depth")
-
-	nodes := bulkTestNodes(4, "override")
-	require.NoError(t, outer.BadgerEngine.BulkCreateNodes(nodes))
-	edges := bulkTestEdges(3, "override-e", nodes)
-	require.NoError(t, outer.BadgerEngine.BulkCreateEdges(edges))
-	carrier, err := EngineWithVectorWorkOrigin(outer, CaptureVectorWorkOrigin())
-	require.NoError(t, err)
-	require.NoError(t, carrier.DeleteEdge(edges[0].ID))
-	require.NoError(t, carrier.BulkDeleteEdges([]EdgeID{edges[1].ID}))
-	require.NoError(t, carrier.DeleteNode(nodes[0].ID))
-	require.NoError(t, carrier.BulkDeleteNodes([]NodeID{nodes[1].ID}))
-	require.Equal(t, []string{"DeleteEdge", "BulkDeleteEdges", "DeleteNode", "BulkDeleteNodes"}, outer.calls, "every override is reached through the carrier")
-	requireBulkCounts(t, outer.BadgerEngine, 2, 1)
-
-	// Through the namespaced wrapper too, which forwards admitted deletions.
-	outer.calls = nil
-	namespaced := NewNamespacedEngine(outer, "test")
-	carrier, err = EngineWithVectorWorkOrigin(namespaced, CaptureVectorWorkOrigin())
-	require.NoError(t, err)
-	require.NoError(t, carrier.DeleteNode(NodeID(strings.TrimPrefix(string(nodes[2].ID), "test:"))))
-	require.Equal(t, []string{"DeleteNode"}, outer.calls, "an inner override is reached through an outer wrapper")
-}
-
-// passThroughDeleteEngine overrides no deletion: both forms come from Badger.
-type passThroughDeleteEngine struct{ *BadgerEngine }
-
-// admittedOnlyDeleteEngine declares the admitted deletions and inherits the
-// plain ones; it records the origins it receives.
-type admittedOnlyDeleteEngine struct {
-	*BadgerEngine
+	Engine
+	calls   []string
 	origins []uint64
 }
 
-func (e *admittedOnlyDeleteEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
-	e.origins = append(e.origins, origin)
-	return e.BadgerEngine.DeleteNodeWithVectorWorkOrigin(id, origin)
+func (e *overridingDeleteEngine) record(call string, origins []uint64) {
+	e.calls = append(e.calls, call)
+	e.origins = append(e.origins, origins...)
 }
 
-func (e *admittedOnlyDeleteEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
-	e.origins = append(e.origins, origin)
-	return e.BadgerEngine.DeleteEdgeWithVectorWorkOrigin(id, origin)
+func (e *overridingDeleteEngine) DeleteNode(id NodeID, origins ...uint64) error {
+	e.record("DeleteNode", origins)
+	return e.Engine.DeleteNode(id, origins...)
 }
 
-func (e *admittedOnlyDeleteEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []NodeID, origin uint64) error {
-	e.origins = append(e.origins, origin)
-	return e.BadgerEngine.BulkDeleteNodesWithVectorWorkOrigin(ids, origin)
+func (e *overridingDeleteEngine) DeleteEdge(id EdgeID, origins ...uint64) error {
+	e.record("DeleteEdge", origins)
+	return e.Engine.DeleteEdge(id, origins...)
 }
 
-func (e *admittedOnlyDeleteEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []EdgeID, origin uint64) error {
-	e.origins = append(e.origins, origin)
-	return e.BadgerEngine.BulkDeleteEdgesWithVectorWorkOrigin(ids, origin)
+func (e *overridingDeleteEngine) BulkDeleteNodes(ids []NodeID, origins ...uint64) error {
+	e.record("BulkDeleteNodes", origins)
+	return e.Engine.BulkDeleteNodes(ids, origins...)
 }
 
-// valueAdmittedDeleteEngine is a value engine: it embeds an interface and
-// declares the admitted deletions with value receivers.
-type valueAdmittedDeleteEngine struct {
-	Engine
-	origins *[]uint64
+func (e *overridingDeleteEngine) BulkDeleteEdges(ids []EdgeID, origins ...uint64) error {
+	e.record("BulkDeleteEdges", origins)
+	return e.Engine.BulkDeleteEdges(ids, origins...)
 }
 
-func (e valueAdmittedDeleteEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
-	*e.origins = append(*e.origins, origin)
-	return e.Engine.(VectorWorkOriginDeleter).DeleteNodeWithVectorWorkOrigin(id, origin)
-}
+// The engine shapes a deletion passes through: pointer and value, embedded
+// struct and embedded interface, more than one level, generic.
+type (
+	pointerPassThroughEngine        struct{ *BadgerEngine }
+	interfacePassThroughEngine      struct{ Engine }
+	valuePassThroughEngine          struct{ Engine }
+	twoLevelPassThroughEngine       struct{ pointerPassThroughEngine }
+	twoLevelOverrideEngine          struct{ *overridingDeleteEngine }
+	genericPassThroughEngine[T any] struct{ *BadgerEngine }
+)
 
-func (e valueAdmittedDeleteEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
-	*e.origins = append(*e.origins, origin)
-	return e.Engine.(VectorWorkOriginDeleter).DeleteEdgeWithVectorWorkOrigin(id, origin)
-}
-
-func (e valueAdmittedDeleteEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []NodeID, origin uint64) error {
-	*e.origins = append(*e.origins, origin)
-	return e.Engine.(VectorWorkOriginDeleter).BulkDeleteNodesWithVectorWorkOrigin(ids, origin)
-}
-
-func (e valueAdmittedDeleteEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []EdgeID, origin uint64) error {
-	*e.origins = append(*e.origins, origin)
-	return e.Engine.(VectorWorkOriginDeleter).BulkDeleteEdgesWithVectorWorkOrigin(ids, origin)
-}
-
-// leafAdmittedDeleteEngine declares leaf deletions the compiler can inline into
-// the promotion wrappers of an engine that embeds it; leafOverrideEngine
-// overrides the plain deletions above them.
-type leafAdmittedDeleteEngine struct {
-	*BadgerEngine
-	admitted int
-}
-
-func (e *leafAdmittedDeleteEngine) DeleteNodeWithVectorWorkOrigin(NodeID, uint64) error {
-	e.admitted++
-	return nil
-}
-
-func (e *leafAdmittedDeleteEngine) DeleteEdgeWithVectorWorkOrigin(EdgeID, uint64) error {
-	e.admitted++
-	return nil
-}
-
-func (e *leafAdmittedDeleteEngine) BulkDeleteNodesWithVectorWorkOrigin([]NodeID, uint64) error {
-	e.admitted++
-	return nil
-}
-
-func (e *leafAdmittedDeleteEngine) BulkDeleteEdgesWithVectorWorkOrigin([]EdgeID, uint64) error {
-	e.admitted++
-	return nil
-}
-
-type leafOverrideEngine struct {
-	*leafAdmittedDeleteEngine
-	plain int
-}
-
-func (e *leafOverrideEngine) DeleteNode(NodeID) error {
-	e.plain++
-	return nil
-}
-
-func (e *leafOverrideEngine) DeleteEdge(EdgeID) error {
-	e.plain++
-	return nil
-}
-
-func (e *leafOverrideEngine) BulkDeleteNodes([]NodeID) error {
-	e.plain++
-	return nil
-}
-
-func (e *leafOverrideEngine) BulkDeleteEdges([]EdgeID) error {
-	e.plain++
-	return nil
-}
-
-// genericOverrideEngine is a generic instantiation of the plain-only override.
+// genericOverrideEngine is a generic instantiation of an override.
 type genericOverrideEngine[T any] struct {
-	*BadgerEngine
-	calls []string
+	*overridingDeleteEngine
 }
 
-func (e *genericOverrideEngine[T]) DeleteNode(id NodeID) error {
-	e.calls = append(e.calls, "DeleteNode")
-	return e.BadgerEngine.DeleteNode(id)
+func (e *genericOverrideEngine[T]) DeleteNode(id NodeID, origins ...uint64) error {
+	return e.overridingDeleteEngine.DeleteNode(id, origins...)
 }
-
-// deeperOverrideEngine and deeperPassThroughEngine put the shapes one level down.
-type deeperOverrideEngine struct{ *overridingDeleteEngine }
-type deeperPassThroughEngine struct{ passThroughDeleteEngine }
 
 func vectorWorkFallbackTotal() int64 {
 	var total int64
@@ -376,125 +235,187 @@ func vectorWorkFallbackTotal() int64 {
 	return total
 }
 
-// TestAdmittedDeletionReachesTheRightOwnerForEveryShape: through the carrier,
-// an override of a deletion on the wrapped engine is always reached, and when
-// there is none the admitted origin is still forwarded (no counted
-// self-admission), for every engine shape: both forms inherited, plain-only
-// override, admitted-only declaration, a value engine, and two embedding levels.
-func TestAdmittedDeletionReachesTheRightOwnerForEveryShape(t *testing.T) {
-	origin := CaptureVectorWorkOrigin()
-	seed := func(t *testing.T, base *BadgerEngine) ([]*Node, []*Edge) {
+// TestDeletionThroughCarrierReachesOverrideAndForwardsOrigin: a deletion through
+// the carrier calls the method the engine exposes, whatever its shape, so every
+// override runs; and it reaches the storage owner under the admitted origin, with
+// no counted self-admission. Each operation is checked on a value of the same
+// outer type with and without an override behind it.
+func TestDeletionThroughCarrierReachesOverrideAndForwardsOrigin(t *testing.T) {
+	allOperations := []string{"DeleteEdge", "BulkDeleteEdges", "DeleteNode", "BulkDeleteNodes"}
+	run := func(t *testing.T, base *BadgerEngine, engine Engine) {
+		t.Helper()
 		nodes := bulkTestNodes(4, "shape")
 		require.NoError(t, base.BulkCreateNodes(nodes))
 		edges := bulkTestEdges(3, "shape-e", nodes)
 		require.NoError(t, base.BulkCreateEdges(edges))
-		return nodes, edges
-	}
-	deleteAll := func(t *testing.T, engine Engine, nodes []*Node, edges []*Edge) {
-		carrier, err := EngineWithVectorWorkOrigin(engine, origin)
+		before := vectorWorkFallbackTotal()
+		carrier, err := EngineWithVectorWorkOrigin(engine, CaptureVectorWorkOrigin())
 		require.NoError(t, err)
 		require.NoError(t, carrier.DeleteEdge(edges[0].ID))
 		require.NoError(t, carrier.BulkDeleteEdges([]EdgeID{edges[1].ID}))
 		require.NoError(t, carrier.DeleteNode(nodes[0].ID))
 		require.NoError(t, carrier.BulkDeleteNodes([]NodeID{nodes[1].ID}))
-	}
-	forwarded := func(t *testing.T, engine Engine, base *BadgerEngine) {
-		nodes, edges := seed(t, base)
-		before := vectorWorkFallbackTotal()
-		deleteAll(t, engine, nodes, edges)
 		require.Equal(t, before, vectorWorkFallbackTotal(), "the admitted origin reached the owner: no counted self-admission")
 		requireBulkCounts(t, base, 2, 1)
 	}
-	t.Run("both forms inherited (pass-through)", func(t *testing.T) {
-		base := newTestEngine(t)
-		forwarded(t, &passThroughDeleteEngine{BadgerEngine: base}, base)
-	})
-	t.Run("both forms inherited (adjacencyOverrideDecorator)", func(t *testing.T) {
-		base := newTestEngine(t)
-		forwarded(t, &adjacencyOverrideDecorator{BadgerEngine: base}, base)
-	})
-	t.Run("two levels, both forms inherited", func(t *testing.T) {
-		base := newTestEngine(t)
-		forwarded(t, &deeperPassThroughEngine{passThroughDeleteEngine{BadgerEngine: base}}, base)
-	})
-	t.Run("admitted-only declaration", func(t *testing.T) {
-		base := newTestEngine(t)
-		engine := &admittedOnlyDeleteEngine{BadgerEngine: base}
-		forwarded(t, engine, base)
-		require.Equal(t, []uint64{origin, origin, origin, origin}, engine.origins)
-	})
-	t.Run("value engine", func(t *testing.T) {
-		base := newTestEngine(t)
-		var origins []uint64
-		forwarded(t, valueAdmittedDeleteEngine{Engine: base, origins: &origins}, base)
-		require.Equal(t, []uint64{origin, origin, origin, origin}, origins)
-	})
-	t.Run("plain-only override", func(t *testing.T) {
-		base := newTestEngine(t)
-		engine := &overridingDeleteEngine{BadgerEngine: base}
-		nodes, edges := seed(t, base)
-		deleteAll(t, engine, nodes, edges)
-		require.Equal(t, []string{"DeleteEdge", "BulkDeleteEdges", "DeleteNode", "BulkDeleteNodes"}, engine.calls)
-	})
-	t.Run("two levels, plain-only override", func(t *testing.T) {
-		base := newTestEngine(t)
-		inner := &overridingDeleteEngine{BadgerEngine: base}
-		nodes, edges := seed(t, base)
-		deleteAll(t, &deeperOverrideEngine{inner}, nodes, edges)
-		require.Equal(t, []string{"DeleteEdge", "BulkDeleteEdges", "DeleteNode", "BulkDeleteNodes"}, inner.calls)
-	})
+	for name, shape := range map[string]func(*BadgerEngine) Engine{
+		"pointer embedding":             func(b *BadgerEngine) Engine { return &pointerPassThroughEngine{b} },
+		"value with embedded struct":    func(b *BadgerEngine) Engine { return pointerPassThroughEngine{b} },
+		"embedded interface":            func(b *BadgerEngine) Engine { return &interfacePassThroughEngine{b} },
+		"value with embedded interface": func(b *BadgerEngine) Engine { return valuePassThroughEngine{b} },
+		"two levels":                    func(b *BadgerEngine) Engine { return &twoLevelPassThroughEngine{pointerPassThroughEngine{b}} },
+		"generic":                       func(b *BadgerEngine) Engine { return &genericPassThroughEngine[int]{b} },
+		"adjacencyOverrideDecorator":    func(b *BadgerEngine) Engine { return &adjacencyOverrideDecorator{BadgerEngine: b} },
+		"traced":                        func(b *BadgerEngine) Engine { return NewTracedEngine(b) },
+	} {
+		t.Run("pass-through/"+name, func(t *testing.T) {
+			base := newTestEngine(t)
+			run(t, base, shape(base))
+		})
+	}
+	for name, shape := range map[string]func(*overridingDeleteEngine) Engine{
+		"direct":                        func(o *overridingDeleteEngine) Engine { return o },
+		"embedded interface":            func(o *overridingDeleteEngine) Engine { return &interfacePassThroughEngine{o} },
+		"value with embedded interface": func(o *overridingDeleteEngine) Engine { return valuePassThroughEngine{o} },
+		"two levels":                    func(o *overridingDeleteEngine) Engine { return &twoLevelOverrideEngine{o} },
+		"generic":                       func(o *overridingDeleteEngine) Engine { return &genericOverrideEngine[int]{o} },
+		"traced":                        func(o *overridingDeleteEngine) Engine { return NewTracedEngine(o) },
+	} {
+		t.Run("override/"+name, func(t *testing.T) {
+			base := newTestEngine(t)
+			override := &overridingDeleteEngine{Engine: base}
+			run(t, base, shape(override))
+			require.Equal(t, allOperations, override.calls, "every override is reached")
+			require.Len(t, override.origins, len(allOperations), "every override received the origin")
+		})
+	}
 }
 
-// TestAdmittedDeletionShapesWithInlinedOrGenericMethods: the shapes whose
-// runtime position can mislead the dispatch still reach the override.
-func TestAdmittedDeletionShapesWithInlinedOrGenericMethods(t *testing.T) {
-	require.True(t, promotionDetectionWorks(), "this toolchain reports promotion wrappers as declaresMethod expects")
-	t.Run("plain override above an inlinable admitted form", func(t *testing.T) {
-		leaf := &leafAdmittedDeleteEngine{BadgerEngine: newTestEngine(t)}
-		engine := &leafOverrideEngine{leafAdmittedDeleteEngine: leaf}
-		carrier, err := EngineWithVectorWorkOrigin(engine, CaptureVectorWorkOrigin())
-		require.NoError(t, err)
-		require.NoError(t, carrier.DeleteNode("n"))
-		require.NoError(t, carrier.DeleteEdge("e"))
-		require.NoError(t, carrier.BulkDeleteNodes([]NodeID{"n"}))
-		require.NoError(t, carrier.BulkDeleteEdges([]EdgeID{"e"}))
-		require.Equal(t, 4, engine.plain, "every override is reached")
-		require.Zero(t, leaf.admitted)
-	})
-	t.Run("generic plain-only override", func(t *testing.T) {
-		engine := &genericOverrideEngine[int]{BadgerEngine: newTestEngine(t)}
-		_, usable := admittedDeleter(engine, "DeleteNode")
-		require.False(t, usable, "the admitted form sits below the override")
-	})
-}
-
-// TestAdmittedDeletionFailsToThePlainMethodWithoutPromotionDetection: on a
-// toolchain whose wrappers can no longer be recognized, the carrier uses every
-// engine's plain deletions. Overrides are reached, and the lost origin is a
-// counted self-admission.
-func TestAdmittedDeletionFailsToThePlainMethodWithoutPromotionDetection(t *testing.T) {
-	restore := promotionDetectionWorks
-	promotionDetectionWorks = func() bool { return false }
-	admittedDeletionDecisions.Clear()
-	t.Cleanup(func() {
-		promotionDetectionWorks = restore
-		admittedDeletionDecisions.Clear()
-	})
-
+// TestNamespacedAndWALDeletionForwardOriginToAnOverrideBehindThem: the wrappers
+// that do work of their own keep the override and the origin behind them.
+func TestNamespacedAndWALDeletionForwardOriginToAnOverrideBehindThem(t *testing.T) {
 	base := newTestEngine(t)
-	override := &overridingDeleteEngine{BadgerEngine: base}
-	nodes := bulkTestNodes(4, "nodetect")
+	override := &overridingDeleteEngine{Engine: base}
+	nodes := bulkTestNodes(4, "wrapped")
 	require.NoError(t, base.BulkCreateNodes(nodes))
-	carrier, err := EngineWithVectorWorkOrigin(override, CaptureVectorWorkOrigin())
-	require.NoError(t, err)
-	require.NoError(t, carrier.DeleteNode(nodes[0].ID))
-	require.Equal(t, []string{"DeleteNode"}, override.calls, "the override is reached")
-
+	edges := bulkTestEdges(3, "wrapped-e", nodes)
+	require.NoError(t, base.BulkCreateEdges(edges))
+	origin := CaptureVectorWorkOrigin()
 	before := vectorWorkFallbackTotal()
-	carrier, err = EngineWithVectorWorkOrigin(base, CaptureVectorWorkOrigin())
+	carrier, err := EngineWithVectorWorkOrigin(NewNamespacedEngine(override, "test"), origin)
 	require.NoError(t, err)
-	require.NoError(t, carrier.DeleteNode(nodes[1].ID))
-	require.Greater(t, vectorWorkFallbackTotal(), before, "the lost origin is counted")
-	_, usable := admittedDeleter(base, "DeleteNode")
-	require.False(t, usable)
+	local := func(id string) string { return strings.TrimPrefix(id, "test:") }
+	require.NoError(t, carrier.DeleteEdge(EdgeID(local(string(edges[0].ID)))))
+	require.NoError(t, carrier.BulkDeleteEdges([]EdgeID{EdgeID(local(string(edges[1].ID)))}))
+	require.NoError(t, carrier.DeleteNode(NodeID(local(string(nodes[0].ID)))))
+	require.NoError(t, carrier.BulkDeleteNodes([]NodeID{NodeID(local(string(nodes[1].ID)))}))
+	require.Equal(t, []string{"DeleteEdge", "BulkDeleteEdges", "DeleteNode", "BulkDeleteNodes"}, override.calls)
+	require.Equal(t, []uint64{origin, origin, origin, origin}, override.origins)
+	require.Equal(t, before, vectorWorkFallbackTotal(), "no counted self-admission")
+	requireBulkCounts(t, base, 2, 1)
+}
+
+// TestDeletionWithoutAdmissionStillSelfAdmits: a caller outside a request supplies
+// no origin, and the storage owner counts its own admission, as before.
+func TestDeletionWithoutAdmissionStillSelfAdmits(t *testing.T) {
+	base := newTestEngine(t)
+	nodes := bulkTestNodes(1, "plain")
+	require.NoError(t, base.BulkCreateNodes(nodes))
+	before := vectorWorkFallbackTotal()
+	require.NoError(t, (&interfacePassThroughEngine{base}).DeleteNode(nodes[0].ID))
+	require.Greater(t, vectorWorkFallbackTotal(), before)
+}
+
+// deletionOriginNotForwarded lists the production deletions that do not pass
+// origins on, each for a reason the origin has no use there.
+var deletionOriginNotForwarded = map[string]string{
+	"RemoteEngine":              "the deletion runs on another server, which admits its own work",
+	"storeTransaction":          "the transaction it stages in carries its own admission",
+	"transactionStorageWrapper": "the transaction it stages in carries its own admission",
+}
+
+// TestEveryDeletionForwardsItsOrigin reads every deletion method in the module. A
+// method that passes a deletion on must pass origins with it; a production method
+// must use origins at all, or be listed above. The compiler makes every
+// implementation take origins; this makes every one in the module forward it.
+func TestEveryDeletionForwardsItsOrigin(t *testing.T) {
+	operations := map[string]bool{"DeleteNode": true, "DeleteEdge": true, "BulkDeleteNodes": true, "BulkDeleteEdges": true}
+	root := filepath.Join("..", "..")
+	fset := token.NewFileSet()
+	checked := 0
+	require.NoError(t, filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == "node_modules" || entry.Name() == "vendor" || entry.Name() == "_l6census") {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		parsed, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return nil // generated or build-tagged sources outside this contract
+		}
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || fn.Body == nil || !operations[fn.Name.Name] || !takesDeletionOrigins(fn) {
+				continue
+			}
+			checked++
+			position := fset.Position(fn.Pos())
+			usesOrigins := false
+			ast.Inspect(fn.Body, func(node ast.Node) bool {
+				switch n := node.(type) {
+				case *ast.Ident:
+					usesOrigins = usesOrigins || n.Name == "origins"
+				case *ast.CallExpr:
+					selector, ok := n.Fun.(*ast.SelectorExpr)
+					if !ok || !operations[selector.Sel.Name] {
+						return true
+					}
+					if holder, ok := selector.X.(*ast.Ident); ok && (holder.Name == "tx" || holder.Name == "transaction") {
+						return true
+					}
+					forwards := n.Ellipsis.IsValid() && len(n.Args) == 2
+					if forwards {
+						last, ok := n.Args[1].(*ast.Ident)
+						forwards = ok && last.Name == "origins"
+					}
+					require.True(t, forwards, "%s: %s passes a deletion on without its origin", position, fn.Name.Name)
+				}
+				return true
+			})
+			if !strings.HasSuffix(path, "_test.go") && !usesOrigins {
+				_, listed := deletionOriginNotForwarded[deletionReceiver(fn)]
+				require.True(t, listed, "%s: %s.%s drops its origin", position, deletionReceiver(fn), fn.Name.Name)
+			}
+		}
+		return nil
+	}))
+	require.Greater(t, checked, 60, "the check found the module's deletion methods")
+}
+
+func takesDeletionOrigins(fn *ast.FuncDecl) bool {
+	params := fn.Type.Params.List
+	if len(params) != 2 {
+		return false
+	}
+	variadic, ok := params[1].Type.(*ast.Ellipsis)
+	if !ok {
+		return false
+	}
+	element, ok := variadic.Elt.(*ast.Ident)
+	return ok && element.Name == "uint64"
+}
+
+func deletionReceiver(fn *ast.FuncDecl) string {
+	receiver := fn.Recv.List[0].Type
+	if star, ok := receiver.(*ast.StarExpr); ok {
+		receiver = star.X
+	}
+	if ident, ok := receiver.(*ast.Ident); ok {
+		return ident.Name
+	}
+	return ""
 }

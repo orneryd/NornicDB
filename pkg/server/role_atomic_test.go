@@ -39,12 +39,12 @@ func (e *roleRenameFailureEngine) WithStoreTransaction(ctx context.Context, muta
 	})
 }
 
-func (e *roleRenameFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *roleRenameFailureEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	if id == "role_entitlement:ops" {
 		*e.fired = true
 		return errors.New("injected role rename failure")
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(id, origins...)
 }
 
 func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
@@ -195,7 +195,7 @@ func (e *roleDeleteFailureEngine) WithStoreTransaction(ctx context.Context, muta
 	})
 }
 
-func (e *roleDeleteFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *roleDeleteFailureEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	if strings.HasPrefix(string(id), "proc_priv:") {
 		e.deletes++
 		if !e.failRole && e.deletes == 2 {
@@ -208,7 +208,7 @@ func (e *roleDeleteFailureEngine) DeleteNode(id storage.NodeID) error {
 		}
 		return errors.New("injected role deletion failure")
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(id, origins...)
 }
 
 func TestDeleteRoleFailureChangesNothingOverHTTP(t *testing.T) {

@@ -395,13 +395,17 @@ type Engine interface {
 	CreateNode(node *Node) (NodeID, error) // Returns the actual stored ID (may be prefixed for namespaced engines)
 	GetNode(id NodeID) (*Node, error)
 	UpdateNode(updateRequest NodeUpdateRequest) error
-	DeleteNode(id NodeID) error
+	// A deletion has no entity argument to carry a vector-work admission, so every
+	// deletion takes it as origins: at most one admitted origin. An engine layer
+	// that forwards a deletion forwards origins with it. None means the caller holds
+	// no admission, and the storage owner admits the work itself.
+	DeleteNode(id NodeID, origins ...uint64) error
 
 	// Edge operations
 	CreateEdge(edge *Edge) error
 	GetEdge(id EdgeID) (*Edge, error)
 	UpdateEdge(updateRequest EdgeUpdateRequest) error
-	DeleteEdge(id EdgeID) error
+	DeleteEdge(id EdgeID, origins ...uint64) error
 
 	// Query operations
 	GetNodesByLabel(label string) ([]*Node, error)
@@ -434,8 +438,8 @@ type Engine interface {
 	BulkCreateEdges(edges []*Edge) error
 
 	// Bulk delete operations (for async flush performance)
-	BulkDeleteNodes(ids []NodeID) error
-	BulkDeleteEdges(ids []EdgeID) error
+	BulkDeleteNodes(ids []NodeID, origins ...uint64) error
+	BulkDeleteEdges(ids []EdgeID, origins ...uint64) error
 
 	// Batch read operations (for traversal performance)
 	// BatchGetNodes fetches multiple nodes in a single operation

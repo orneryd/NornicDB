@@ -98,7 +98,7 @@ func applyDirectEntityCommand(engine storage.Engine, kind CommandType, ops []sto
 	if len(ops) != 1 {
 		return storage.ErrInvalidData
 	}
-	return storage.ApplyEntityChange(engine, ops[0], engine.UpdateNode, engine.DeleteNode)
+	return storage.ApplyEntityChange(engine, ops[0], engine.UpdateNode, func(id storage.NodeID) error { return engine.DeleteNode(id) }, func(id storage.EdgeID) error { return engine.DeleteEdge(id) })
 }
 
 // encodeEntityCommandPayload is the legacy entity wire construction owner.

@@ -600,24 +600,6 @@ func (w *WALEngine) admittedEntityWriter(arguments ...any) (Engine, error) {
 	return EngineWithVectorWorkOrigin(w.engine, fallbackVectorWorkOrigin("storage.wal-entity-write"))
 }
 
-// DeleteNodeWithVectorWorkOrigin logs then deletes under the caller's admission.
-func (w *WALEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
-	inner, err := EngineWithVectorWorkOrigin(w.engine, origin)
-	if err != nil {
-		return err
-	}
-	return w.deleteNodeOn(inner, id)
-}
-
-// DeleteEdgeWithVectorWorkOrigin logs then deletes under the caller's admission.
-func (w *WALEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
-	inner, err := EngineWithVectorWorkOrigin(w.engine, origin)
-	if err != nil {
-		return err
-	}
-	return w.deleteEdgeOn(inner, id)
-}
-
 // CreateNode logs then executes node creation.
 func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 	inner, err := w.admittedEntityWriter(node)
@@ -709,8 +691,17 @@ func (w *WALEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit fun
 }
 
 // DeleteNode logs then executes node deletion.
-func (w *WALEngine) DeleteNode(id NodeID) error {
-	inner, err := w.admittedEntityWriter()
+// deletionWriter is the engine a deletion is applied to: under the caller's
+// admission if it supplied one, otherwise under the WAL's own.
+func (w *WALEngine) deletionWriter(origins []uint64) (Engine, error) {
+	if len(origins) > 0 {
+		return EngineWithVectorWorkOrigin(w.engine, origins[0])
+	}
+	return w.admittedEntityWriter()
+}
+
+func (w *WALEngine) DeleteNode(id NodeID, origins ...uint64) error {
+	inner, err := w.deletionWriter(origins)
 	if err != nil {
 		return err
 	}
@@ -796,8 +787,8 @@ func (w *WALEngine) updateEdgeOn(inner Engine, updateRequest EdgeUpdateRequest) 
 }
 
 // DeleteEdge logs then executes edge deletion.
-func (w *WALEngine) DeleteEdge(id EdgeID) error {
-	inner, err := w.admittedEntityWriter()
+func (w *WALEngine) DeleteEdge(id EdgeID, origins ...uint64) error {
+	inner, err := w.deletionWriter(origins)
 	if err != nil {
 		return err
 	}
@@ -909,18 +900,8 @@ func (w *WALEngine) bulkCreateEdgesOn(inner Engine, edges []*Edge) error {
 }
 
 // BulkDeleteNodes logs then executes bulk node deletion.
-func (w *WALEngine) BulkDeleteNodes(ids []NodeID) error {
-	inner, err := w.admittedEntityWriter()
-	if err != nil {
-		return err
-	}
-	return w.bulkDeleteNodesOn(inner, ids)
-}
-
-// BulkDeleteNodesWithVectorWorkOrigin logs then bulk-deletes under the
-// caller's admission.
-func (w *WALEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []NodeID, origin uint64) error {
-	inner, err := EngineWithVectorWorkOrigin(w.engine, origin)
+func (w *WALEngine) BulkDeleteNodes(ids []NodeID, origins ...uint64) error {
+	inner, err := w.deletionWriter(origins)
 	if err != nil {
 		return err
 	}
@@ -955,18 +936,8 @@ func (w *WALEngine) bulkDeleteNodesOn(inner Engine, ids []NodeID) error {
 }
 
 // BulkDeleteEdges logs then executes bulk edge deletion.
-func (w *WALEngine) BulkDeleteEdges(ids []EdgeID) error {
-	inner, err := w.admittedEntityWriter()
-	if err != nil {
-		return err
-	}
-	return w.bulkDeleteEdgesOn(inner, ids)
-}
-
-// BulkDeleteEdgesWithVectorWorkOrigin logs then bulk-deletes under the
-// caller's admission.
-func (w *WALEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []EdgeID, origin uint64) error {
-	inner, err := EngineWithVectorWorkOrigin(w.engine, origin)
+func (w *WALEngine) BulkDeleteEdges(ids []EdgeID, origins ...uint64) error {
+	inner, err := w.deletionWriter(origins)
 	if err != nil {
 		return err
 	}

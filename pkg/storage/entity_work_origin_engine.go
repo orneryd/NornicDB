@@ -27,6 +27,9 @@ func EngineWithVectorWorkOrigin(engine Engine, origin uint64) (Engine, error) {
 type vectorWorkOriginEngine struct {
 	Engine
 	origin uint64
+	// origins is origin as a deletion argument, built once so that a deletion
+	// through the carrier allocates nothing for it.
+	origins []uint64
 }
 
 // streamingVectorWorkOriginEngine is the carrier of an engine that streams:
@@ -41,7 +44,7 @@ type streamingVectorWorkOriginEngine struct {
 // an admission is returned as it is by both public constructors, never
 // rewrapped, so it keeps its own capability set and origin.
 func newVectorWorkOriginEngine(engine Engine, origin uint64) Engine {
-	carrier := &vectorWorkOriginEngine{Engine: engine, origin: origin}
+	carrier := &vectorWorkOriginEngine{Engine: engine, origin: origin, origins: []uint64{origin}}
 	if streamer, ok := engine.(StreamingEngine); ok {
 		return &streamingVectorWorkOriginEngine{vectorWorkOriginEngine: carrier, streamer: streamer}
 	}
@@ -96,15 +99,8 @@ func (e *vectorWorkOriginEngine) UpdateNode(updateRequest NodeUpdateRequest) err
 	return e.Engine.UpdateNode(updateRequest)
 }
 
-func (e *vectorWorkOriginEngine) DeleteNode(id NodeID) error {
-	return e.DeleteNodeWithVectorWorkOrigin(id, e.origin)
-}
-
-func (e *vectorWorkOriginEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
-	if handled, err := deleteNodeAdmitted(e.Engine, id, origin); handled {
-		return err
-	}
-	return e.Engine.DeleteNode(id)
+func (e *vectorWorkOriginEngine) DeleteNode(id NodeID, origins ...uint64) error {
+	return e.Engine.DeleteNode(id, e.admission(origins)...)
 }
 
 func (e *vectorWorkOriginEngine) CreateEdge(edge *Edge) error {
@@ -116,15 +112,8 @@ func (e *vectorWorkOriginEngine) UpdateEdge(updateRequest EdgeUpdateRequest) err
 	return e.Engine.UpdateEdge(updateRequest)
 }
 
-func (e *vectorWorkOriginEngine) DeleteEdge(id EdgeID) error {
-	return e.DeleteEdgeWithVectorWorkOrigin(id, e.origin)
-}
-
-func (e *vectorWorkOriginEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
-	if handled, err := deleteEdgeAdmitted(e.Engine, id, origin); handled {
-		return err
-	}
-	return e.Engine.DeleteEdge(id)
+func (e *vectorWorkOriginEngine) DeleteEdge(id EdgeID, origins ...uint64) error {
+	return e.Engine.DeleteEdge(id, e.admission(origins)...)
 }
 
 func (e *vectorWorkOriginEngine) BulkCreateNodes(nodes []*Node) error {
@@ -137,29 +126,14 @@ func (e *vectorWorkOriginEngine) BulkCreateEdges(edges []*Edge) error {
 
 // BulkDeleteNodes keeps the wrapped engine's one bulk deletion (one
 // transaction; missing, repeated and empty IDs skipped as that owner decides).
-func (e *vectorWorkOriginEngine) BulkDeleteNodes(ids []NodeID) error {
-	return e.BulkDeleteNodesWithVectorWorkOrigin(ids, e.origin)
+func (e *vectorWorkOriginEngine) BulkDeleteNodes(ids []NodeID, origins ...uint64) error {
+	return e.Engine.BulkDeleteNodes(ids, e.admission(origins)...)
 }
 
-func (e *vectorWorkOriginEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []NodeID, origin uint64) error {
-	if handled, err := bulkDeleteNodesAdmitted(e.Engine, ids, origin); handled {
-		return err
-	}
-	return e.Engine.BulkDeleteNodes(ids)
+func (e *vectorWorkOriginEngine) BulkDeleteEdges(ids []EdgeID, origins ...uint64) error {
+	return e.Engine.BulkDeleteEdges(ids, e.admission(origins)...)
 }
 
-func (e *vectorWorkOriginEngine) BulkDeleteEdges(ids []EdgeID) error {
-	return e.BulkDeleteEdgesWithVectorWorkOrigin(ids, e.origin)
-}
-
-func (e *vectorWorkOriginEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []EdgeID, origin uint64) error {
-	if handled, err := bulkDeleteEdgesAdmitted(e.Engine, ids, origin); handled {
-		return err
-	}
-	return e.Engine.BulkDeleteEdges(ids)
-}
-
-var _ VectorWorkOriginDeleter = (*vectorWorkOriginEngine)(nil)
 
 // admittedNodeArguments binds the admission on a bulk argument; caller-owned
 // images are not mutated.
@@ -294,4 +268,13 @@ func WithEntityOperationOrigins(ctx context.Context, ops []Operation) (context.C
 		bound[i].Edge, _ = takeEdgeArgument(bound[i].Edge, []uint64{origin})
 	}
 	return WithVectorWorkOrigin(ctx, origin), bound, origin
+}
+
+// admission is what a deletion through the carrier passes on: the caller's own
+// origin if it supplied one, otherwise the carrier's.
+func (e *vectorWorkOriginEngine) admission(origins []uint64) []uint64 {
+	if len(origins) > 0 {
+		return origins
+	}
+	return e.origins
 }

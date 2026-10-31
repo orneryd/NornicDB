@@ -362,8 +362,17 @@ func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, err
 func (t *sizeTrackingEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	return t.applyEntityOperations([]storage.Operation{updateRequest.Operation()}, nil, storage.CommitModeDirect)
 }
-func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpDeleteNode, NodeID: id}}, nil, storage.CommitModeDirect)
+// applyDeletion applies deletions under the caller's admission if it supplied
+// one, otherwise as applyEntityOperations does.
+func (t *sizeTrackingEngine) applyDeletion(ops []storage.Operation, mode storage.EntityCommitMode, origins []uint64) error {
+	if len(origins) > 0 {
+		return t.applyAdmittedEntityOperations(storage.WithVectorWorkOrigin(context.Background(), origins[0]), ops, nil, mode)
+	}
+	return t.applyEntityOperations(ops, nil, mode)
+}
+
+func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
+	return t.applyDeletion([]storage.Operation{{Type: storage.OpDeleteNode, NodeID: id}}, storage.CommitModeDirect, origins)
 }
 func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
 	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpCreateEdge, Edge: edge}}, nil, storage.CommitModeDirect)
@@ -371,8 +380,8 @@ func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
 func (t *sizeTrackingEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
 	return t.applyEntityOperations([]storage.Operation{updateRequest.Operation()}, nil, storage.CommitModeDirect)
 }
-func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpDeleteEdge, EdgeID: id}}, nil, storage.CommitModeDirect)
+func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID, origins ...uint64) error {
+	return t.applyDeletion([]storage.Operation{{Type: storage.OpDeleteEdge, EdgeID: id}}, storage.CommitModeDirect, origins)
 }
 
 // Bulk entity operations stage one native transaction and share the ordinary
@@ -391,14 +400,8 @@ func (t *sizeTrackingEngine) BulkCreateEdges(edges []*storage.Edge) error {
 	}
 	return t.applyEntityOperations(ops, nil, storage.CommitModeImplicit)
 }
-func (t *sizeTrackingEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	return t.applyEntityOperations(bulkDeleteNodeOperations(ids), nil, storage.CommitModeImplicit)
-}
-
-// BulkDeleteNodesWithVectorWorkOrigin is BulkDeleteNodes under the caller's
-// admission.
-func (t *sizeTrackingEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []storage.NodeID, origin uint64) error {
-	return t.applyAdmittedEntityOperations(storage.WithVectorWorkOrigin(context.Background(), origin), bulkDeleteNodeOperations(ids), nil, storage.CommitModeImplicit)
+func (t *sizeTrackingEngine) BulkDeleteNodes(ids []storage.NodeID, origins ...uint64) error {
+	return t.applyDeletion(bulkDeleteNodeOperations(ids), storage.CommitModeImplicit, origins)
 }
 
 func bulkDeleteNodeOperations(ids []storage.NodeID) []storage.Operation {
@@ -408,14 +411,8 @@ func bulkDeleteNodeOperations(ids []storage.NodeID) []storage.Operation {
 	}
 	return ops
 }
-func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	return t.applyEntityOperations(bulkDeleteEdgeOperations(ids), nil, storage.CommitModeImplicit)
-}
-
-// BulkDeleteEdgesWithVectorWorkOrigin is BulkDeleteEdges under the caller's
-// admission.
-func (t *sizeTrackingEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []storage.EdgeID, origin uint64) error {
-	return t.applyAdmittedEntityOperations(storage.WithVectorWorkOrigin(context.Background(), origin), bulkDeleteEdgeOperations(ids), nil, storage.CommitModeImplicit)
+func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID, origins ...uint64) error {
+	return t.applyDeletion(bulkDeleteEdgeOperations(ids), storage.CommitModeImplicit, origins)
 }
 
 func bulkDeleteEdgeOperations(ids []storage.EdgeID) []storage.Operation {
@@ -428,16 +425,6 @@ func bulkDeleteEdgeOperations(ids []storage.EdgeID) []storage.Operation {
 
 func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, createResult *storage.NodeID, mode storage.EntityCommitMode) error {
 	return t.applyAdmittedEntityOperations(context.Background(), ops, createResult, mode)
-}
-
-// DeleteNodeWithVectorWorkOrigin deletes under the caller's admission.
-func (t *sizeTrackingEngine) DeleteNodeWithVectorWorkOrigin(id storage.NodeID, origin uint64) error {
-	return t.applyAdmittedEntityOperations(storage.WithVectorWorkOrigin(context.Background(), origin), []storage.Operation{{Type: storage.OpDeleteNode, NodeID: id}}, nil, storage.CommitModeDirect)
-}
-
-// DeleteEdgeWithVectorWorkOrigin deletes under the caller's admission.
-func (t *sizeTrackingEngine) DeleteEdgeWithVectorWorkOrigin(id storage.EdgeID, origin uint64) error {
-	return t.applyAdmittedEntityOperations(storage.WithVectorWorkOrigin(context.Background(), origin), []storage.Operation{{Type: storage.OpDeleteEdge, EdgeID: id}}, nil, storage.CommitModeDirect)
 }
 
 // applyAdmittedEntityOperations carries an admission transported by ctx to
@@ -489,7 +476,7 @@ func (t *sizeTrackingEngine) applyAdmittedEntityOperations(ctx context.Context, 
 				*createResult = id
 				return err
 			}
-			return storage.ApplyEntityChange(engine, ops[0], engine.UpdateNode, engine.DeleteNode)
+			return storage.ApplyEntityChange(engine, ops[0], engine.UpdateNode, func(id storage.NodeID) error { return engine.DeleteNode(id) }, func(id storage.EdgeID) error { return engine.DeleteEdge(id) })
 		}
 		switch ops[0].Type {
 		case storage.OpCreateNode:
@@ -621,7 +608,7 @@ func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []sto
 		apply := func() error {
 			return storage.ApplyEntityChange(tx, op, func(updateRequest storage.NodeUpdateRequest) error {
 				return storage.ApplyNodeUpdate(tx, updateRequest)
-			}, func(id storage.NodeID) error { return tx.DeleteGraphNode(id, storage.CascadeEdges) })
+			}, func(id storage.NodeID) error { return tx.DeleteGraphNode(id, storage.CascadeEdges) }, tx.DeleteEdge)
 		}
 		for i := len(owner.writeBoundaries) - 1; i >= 0; i-- {
 			policy, next := owner.writeBoundaries[i], apply

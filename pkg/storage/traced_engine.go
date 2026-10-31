@@ -73,10 +73,10 @@ func (t *TracedEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	return t.Engine.UpdateNode(updateRequest)
 }
 
-func (t *TracedEngine) DeleteNode(id NodeID) error {
+func (t *TracedEngine) DeleteNode(id NodeID, origins ...uint64) error {
 	span := t.startOperation("nornicdb.storage.DeleteNode", "node")
 	defer span.End()
-	return t.Engine.DeleteNode(id)
+	return t.Engine.DeleteNode(id, origins...)
 }
 
 func (t *TracedEngine) CreateEdge(edge *Edge) error {
@@ -97,54 +97,10 @@ func (t *TracedEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	return t.Engine.UpdateEdge(updateRequest)
 }
 
-// DeleteNodeWithVectorWorkOrigin traces an admitted deletion.
-func (t *TracedEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.DeleteNode",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "node")),
-	)
-	defer span.End()
-	if handled, err := deleteNodeAdmitted(t.Engine, id, origin); handled {
-		return err
-	}
-	return t.Engine.DeleteNode(id)
-}
-
-// DeleteEdgeWithVectorWorkOrigin traces an admitted deletion.
-func (t *TracedEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.DeleteEdge",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "edge")),
-	)
-	defer span.End()
-	if handled, err := deleteEdgeAdmitted(t.Engine, id, origin); handled {
-		return err
-	}
-	return t.Engine.DeleteEdge(id)
-}
-
-// BulkDeleteNodesWithVectorWorkOrigin forwards an admitted bulk deletion to
-// the traced engine's own bulk deletion (bulk deletions are not traced).
-func (t *TracedEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []NodeID, origin uint64) error {
-	if handled, err := bulkDeleteNodesAdmitted(t.Engine, ids, origin); handled {
-		return err
-	}
-	return t.Engine.BulkDeleteNodes(ids)
-}
-
-// BulkDeleteEdgesWithVectorWorkOrigin forwards an admitted bulk deletion to
-// the traced engine's own bulk deletion.
-func (t *TracedEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []EdgeID, origin uint64) error {
-	if handled, err := bulkDeleteEdgesAdmitted(t.Engine, ids, origin); handled {
-		return err
-	}
-	return t.Engine.BulkDeleteEdges(ids)
-}
-
-func (t *TracedEngine) DeleteEdge(id EdgeID) error {
+func (t *TracedEngine) DeleteEdge(id EdgeID, origins ...uint64) error {
 	span := t.startOperation("nornicdb.storage.DeleteEdge", "edge")
 	defer span.End()
-	return t.Engine.DeleteEdge(id)
+	return t.Engine.DeleteEdge(id, origins...)
 }
 
 func (t *TracedEngine) GetNodesByLabel(label string) ([]*Node, error) {

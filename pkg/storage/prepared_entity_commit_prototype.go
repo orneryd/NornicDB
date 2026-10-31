@@ -168,7 +168,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		if err := ApplyEntityChange(tx, op, func(updateRequest NodeUpdateRequest) error {
 			updateRequest.Policy = StoredNodeImages
 			return tx.UpdateGraphNode(updateRequest)
-		}, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+		}, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }, tx.DeleteEdge); err != nil {
 			return nil, err
 		}
 	}

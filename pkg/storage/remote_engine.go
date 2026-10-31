@@ -981,7 +981,7 @@ func (r *RemoteEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	return err
 }
 
-func (r *RemoteEngine) DeleteNode(id NodeID) error {
+func (r *RemoteEngine) DeleteNode(id NodeID, _ ...uint64) error {
 	return r.mutateRemoteEntity("MATCH (n) WHERE n.id = $id DETACH DELETE n", string(id), nil, false)
 }
 
@@ -1038,7 +1038,7 @@ func (r *RemoteEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	return err
 }
 
-func (r *RemoteEngine) DeleteEdge(id EdgeID) error {
+func (r *RemoteEngine) DeleteEdge(id EdgeID, _ ...uint64) error {
 	return r.mutateRemoteEntity("MATCH ()-[r]->() WHERE r.id = $id DELETE r", string(id), nil, false)
 }
 
@@ -1248,7 +1248,7 @@ func (r *RemoteEngine) BulkCreateEdges(edges []*Edge) error {
 	return nil
 }
 
-func (r *RemoteEngine) BulkDeleteNodes(ids []NodeID) error {
+func (r *RemoteEngine) BulkDeleteNodes(ids []NodeID, _ ...uint64) error {
 	ctx, cancel := defaultCtx()
 	defer cancel()
 	for i := 0; i < len(ids); i += remoteBulkChunkSize {
@@ -1270,7 +1270,7 @@ func (r *RemoteEngine) BulkDeleteNodes(ids []NodeID) error {
 	return nil
 }
 
-func (r *RemoteEngine) BulkDeleteEdges(ids []EdgeID) error {
+func (r *RemoteEngine) BulkDeleteEdges(ids []EdgeID, _ ...uint64) error {
 	ctx, cancel := defaultCtx()
 	defer cancel()
 	for i := 0; i < len(ids); i += remoteBulkChunkSize {

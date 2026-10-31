@@ -277,7 +277,7 @@ func (w *transactionStorageWrapper) UpdateNode(updateRequest storage.NodeUpdateR
 	return err
 }
 
-func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID) error {
+func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID, _ ...uint64) error {
 	return w.tx.DeleteGraphNode(w.prefixNodeID(id), storage.CascadeEdges)
 }
 
@@ -319,7 +319,7 @@ func (w *transactionStorageWrapper) EdgeCreateWasNoOp(id storage.EdgeID) bool {
 	return w.tx.EdgeCreateWasNoOp(w.prefixEdgeID(id))
 }
 
-func (w *transactionStorageWrapper) DeleteEdge(id storage.EdgeID) error {
+func (w *transactionStorageWrapper) DeleteEdge(id storage.EdgeID, _ ...uint64) error {
 	return w.tx.DeleteEdge(w.prefixEdgeID(id))
 }
 
@@ -865,7 +865,7 @@ func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bo
 	return w.tx.BulkCreateEdges(namespaced)
 }
 
-func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error {
+func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID, _ ...uint64) error {
 	for _, id := range ids {
 		if err := w.tx.DeleteGraphNode(w.prefixNodeID(id), storage.CascadeEdges); err != nil {
 			return err
@@ -877,7 +877,7 @@ func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error 
 // BulkDeleteEdges deletes ids in the transaction. Like the engines'
 // BulkDeleteEdges, it skips IDs that do not exist, those the transaction
 // already deleted included (#827).
-func (w *transactionStorageWrapper) BulkDeleteEdges(ids []storage.EdgeID) error {
+func (w *transactionStorageWrapper) BulkDeleteEdges(ids []storage.EdgeID, _ ...uint64) error {
 	for _, id := range ids {
 		if err := w.tx.DeleteEdge(w.prefixEdgeID(id)); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err

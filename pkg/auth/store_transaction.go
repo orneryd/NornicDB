@@ -110,7 +110,7 @@ func (s *storeTransaction) CreateNode(node *storage.Node) (storage.NodeID, error
 func (s *storeTransaction) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	return s.tx.UpdateGraphNode(updateRequest)
 }
-func (s *storeTransaction) DeleteNode(id storage.NodeID) error {
+func (s *storeTransaction) DeleteNode(id storage.NodeID, _ ...uint64) error {
 	return s.tx.DeleteGraphNode(id, storage.CascadeEdges)
 }
 func (s *storeTransaction) GetNode(id storage.NodeID) (*storage.Node, error) {

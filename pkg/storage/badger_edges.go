@@ -591,14 +591,8 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(updateRequest EdgeUpdateReques
 	return err
 }
 
-// DeleteEdge removes an edge.
-// DeleteEdgeWithVectorWorkOrigin deletes under the caller's admission.
-func (b *BadgerEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
-	return b.deleteEdgeWithOrigin(id, origin)
-}
-
-func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
-	return b.deleteEdgeWithOrigin(id)
+func (b *BadgerEngine) DeleteEdge(id EdgeID, origins ...uint64) error {
+	return b.deleteEdgeWithOrigin(id, origins...)
 }
 
 func (b *BadgerEngine) deleteEdgeWithOrigin(id EdgeID, origins ...uint64) error {
@@ -776,14 +770,8 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 // BulkDeleteNodes deletes nodes, with their relationships, as one
 // transaction of any size (#703). IDs that do not exist, or repeat within
 // the call, are skipped.
-func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
-	return b.bulkDeleteNodesWithOrigin(ids)
-}
-
-// BulkDeleteNodesWithVectorWorkOrigin is BulkDeleteNodes under the caller's
-// admission: the same one transaction and the same ID handling.
-func (b *BadgerEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []NodeID, origin uint64) error {
-	return b.bulkDeleteNodesWithOrigin(ids, origin)
+func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID, origins ...uint64) error {
+	return b.bulkDeleteNodesWithOrigin(ids, origins...)
 }
 
 func (b *BadgerEngine) bulkDeleteNodesWithOrigin(ids []NodeID, origins ...uint64) error {
@@ -792,14 +780,8 @@ func (b *BadgerEngine) bulkDeleteNodesWithOrigin(ids []NodeID, origins ...uint64
 
 // BulkDeleteEdges deletes relationships as one transaction of any size
 // (#703). IDs that do not exist, or repeat within the call, are skipped.
-func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
-	return b.bulkDeleteEdgesWithOrigin(ids)
-}
-
-// BulkDeleteEdgesWithVectorWorkOrigin is BulkDeleteEdges under the caller's
-// admission.
-func (b *BadgerEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []EdgeID, origin uint64) error {
-	return b.bulkDeleteEdgesWithOrigin(ids, origin)
+func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID, origins ...uint64) error {
+	return b.bulkDeleteEdgesWithOrigin(ids, origins...)
 }
 
 func (b *BadgerEngine) bulkDeleteEdgesWithOrigin(ids []EdgeID, origins ...uint64) error {

@@ -35,7 +35,6 @@ type entityWriter interface {
 	CreateNode(*Node) (NodeID, error)
 	CreateEdge(*Edge) error
 	UpdateEdge(updateRequest EdgeUpdateRequest) error
-	DeleteEdge(EdgeID) error
 }
 
 // DecodeEntityChange decodes one current direct replication command. It never
@@ -80,7 +79,7 @@ func DecodeEntityChange(kind EntityCommandKind, data []byte) (Operation, error) 
 	}
 	return op, nil
 }
-func ApplyEntityChange(target entityWriter, op Operation, updateNode func(NodeUpdateRequest) error, deleteNode func(NodeID) error) error {
+func ApplyEntityChange(target entityWriter, op Operation, updateNode func(NodeUpdateRequest) error, deleteNode func(NodeID) error, deleteEdge func(EdgeID) error) error {
 	switch op.Type {
 	case OpCreateNode:
 		_, err := target.CreateNode(op.Node)
@@ -94,7 +93,7 @@ func ApplyEntityChange(target entityWriter, op Operation, updateNode func(NodeUp
 	case OpUpdateEdge:
 		return target.UpdateEdge(op.EdgeUpdate())
 	case OpDeleteEdge:
-		return target.DeleteEdge(op.EdgeID)
+		return deleteEdge(op.EdgeID)
 	default:
 		return fmt.Errorf("not an entity operation: %s", op.Type)
 	}
