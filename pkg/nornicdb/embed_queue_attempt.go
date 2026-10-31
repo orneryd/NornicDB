@@ -7,12 +7,15 @@ import (
 	"time"
 )
 
-// A selection binds the provider/resolver and generation together BEFORE any
-// capability query, claim or provider call. Setters cannot relabel old work.
+// A selection binds provider configuration before capability queries or claims.
+// Body admission comes from MAIN/DLQ; an explicit operation can instead carry
+// its admission here. Provider selection never relabels already-admitted work.
 type embeddingSelection struct {
-	provider   embed.Embedder
-	resolver   func(storage.NodeID) (embed.Embedder, error)
-	generation uint64
+	vectorWorkOrigin  uint64
+	vectorOriginBound bool
+	provider          embed.Embedder
+	resolver          func(storage.NodeID) (embed.Embedder, error)
+	generation        uint64
 }
 
 type recentNodeEmbedding struct {
@@ -29,7 +32,7 @@ type nodeEmbeddingAttempt struct {
 func (ew *EmbedWorker) selectEmbeddingProvider() embeddingSelection {
 	ew.mu.Lock()
 	defer ew.mu.Unlock()
-	return embeddingSelection{ew.embedder, ew.embedderResolver, ew.embeddingEpoch.Load()}
+	return embeddingSelection{provider: ew.embedder, resolver: ew.embedderResolver, generation: ew.embeddingEpoch.Load()}
 }
 
 func (ew *EmbedWorker) embeddingSelection(selections []embeddingSelection) embeddingSelection {
@@ -52,6 +55,17 @@ func (ew *EmbedWorker) resolveAttemptEmbedder(node *storage.Node) (embed.Embedde
 // bindNodeAttemptLocked is the sole writer of claim identity. The token is
 // private to this body snapshot and is preserved by all storage decorators.
 func (ew *EmbedWorker) bindNodeAttemptLocked(node *storage.Node, selection embeddingSelection) {
+	if !selection.vectorOriginBound {
+		if retry := ew.nodeRetries[node.ID]; retry != nil {
+			selection.vectorWorkOrigin = retry.vectorWorkOrigin
+		} else if origin, bound := node.EmbeddingWorkOrigin(); bound {
+			selection.vectorWorkOrigin = origin
+		} else {
+			// A claimed body whose pending marker is gone carries no
+			// admission: the attempt is admitted here, and counted.
+			selection.vectorWorkOrigin = storage.AdmitUnrequestedVectorWork("nornicdb.embedding-attempt")
+		}
+	}
 	if ew.claimedNodes == nil {
 		ew.claimedNodes = make(map[string]*nodeEmbeddingAttempt)
 	}
@@ -59,7 +73,7 @@ func (ew *EmbedWorker) bindNodeAttemptLocked(node *storage.Node, selection embed
 	ew.inFlight.Add(1)
 	ew.claimSequence++
 	attempt := &nodeEmbeddingAttempt{selection: selection}
-	attempt.token = storage.NewEmbeddingAttempt(selection.generation, ew.claimSequence, node.EmbeddingRevision(), func() (func(), bool) {
+	attempt.token = storage.NewEmbeddingAttempt(selection.vectorWorkOrigin, selection.generation, ew.claimSequence, node.EmbeddingRevision(), func() (func(), bool) {
 		ew.claimMu.Lock()
 		if ew.claimedNodes[string(node.ID)] != attempt || !ew.validNodeClaimLocked(node.ID) || ew.ctx.Err() != nil {
 			ew.claimMu.Unlock()
@@ -139,8 +153,9 @@ func (ew *EmbedWorker) PendingEmbeddingsCount() int {
 	return count
 }
 
-func (ew *EmbedWorker) commitNodeReset(node *storage.Node) error {
+func (ew *EmbedWorker) commitNodeReset(node *storage.Node, origin uint64) error {
 	selection := ew.selectEmbeddingProvider()
+	selection.vectorWorkOrigin, selection.vectorOriginBound = origin, true
 	ew.claimMu.Lock()
 	if _, claimed := ew.claimedNodes[string(node.ID)]; claimed {
 		ew.claimMu.Unlock()

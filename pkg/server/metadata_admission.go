@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // metadataAdmissionMiddleware precedes every application middleware decoder.
@@ -15,6 +16,8 @@ func (s *Server) metadataAdmissionMiddleware(next http.Handler) http.Handler {
 		base = "/" + base
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		admitted, _ := storage.AdmitVectorWork(r.Context())
+		r = r.WithContext(admitted)
 		if s.memoryPolicy == nil || bodylessControlRequest(r, base) {
 			next.ServeHTTP(w, r)
 			return

@@ -399,12 +399,12 @@ type BadgerEngine struct {
 	// Event callbacks for external coordination (search indexes, caches, etc.)
 	// These are fired AFTER storage operations succeed, every registered one
 	// in registration order
-	onNodeCreated         []NodeEventCallback
-	onNodeUpdated         []NodeEventCallback
-	onNodeDeleted         []NodeDeleteCallback
-	onEdgeCreated         []EdgeEventCallback
-	onEdgeUpdated         []EdgeEventCallback
-	onEdgeDeleted         []EdgeDeleteCallback
+	onNodeCreated         []commitEventCallback[*Node]
+	onNodeUpdated         []commitEventCallback[*Node]
+	onNodeDeleted         []commitEventCallback[NodeID]
+	onEdgeCreated         []commitEventCallback[*Edge]
+	onEdgeUpdated         []commitEventCallback[*Edge]
+	onEdgeDeleted         []commitEventCallback[EdgeID]
 	onNamespaceReset      []NamespaceResetCallback
 	callbackMu            sync.RWMutex
 	graphMutationVersions graphMutationVersions
@@ -506,7 +506,7 @@ func (b *BadgerEngine) OnNodeCreated(callback NodeEventCallback) {
 	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onNodeCreated = append(b.onNodeCreated, callback)
+	b.onNodeCreated = append(b.onNodeCreated, func(value *Node, _ uint64) { callback(value) })
 }
 
 // OnNodeUpdated adds a callback to be invoked when nodes are updated.
@@ -517,7 +517,7 @@ func (b *BadgerEngine) OnNodeUpdated(callback NodeEventCallback) {
 	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onNodeUpdated = append(b.onNodeUpdated, callback)
+	b.onNodeUpdated = append(b.onNodeUpdated, func(value *Node, _ uint64) { callback(value) })
 }
 
 // OnNodeDeleted adds a callback to be invoked when nodes are deleted.
@@ -528,7 +528,7 @@ func (b *BadgerEngine) OnNodeDeleted(callback NodeDeleteCallback) {
 	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onNodeDeleted = append(b.onNodeDeleted, callback)
+	b.onNodeDeleted = append(b.onNodeDeleted, func(value NodeID, _ uint64) { callback(value) })
 }
 
 // OnEdgeCreated adds a callback to be invoked when edges are created.
@@ -539,7 +539,7 @@ func (b *BadgerEngine) OnEdgeCreated(callback EdgeEventCallback) {
 	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onEdgeCreated = append(b.onEdgeCreated, callback)
+	b.onEdgeCreated = append(b.onEdgeCreated, func(value *Edge, _ uint64) { callback(value) })
 }
 
 // OnEdgeUpdated adds a callback to be invoked when edges are updated.
@@ -550,7 +550,7 @@ func (b *BadgerEngine) OnEdgeUpdated(callback EdgeEventCallback) {
 	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onEdgeUpdated = append(b.onEdgeUpdated, callback)
+	b.onEdgeUpdated = append(b.onEdgeUpdated, func(value *Edge, _ uint64) { callback(value) })
 }
 
 // OnEdgeDeleted adds a callback to be invoked when edges are deleted.
@@ -561,7 +561,7 @@ func (b *BadgerEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
 	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onEdgeDeleted = append(b.onEdgeDeleted, callback)
+	b.onEdgeDeleted = append(b.onEdgeDeleted, func(value EdgeID, _ uint64) { callback(value) })
 }
 
 // NamespaceResetCallback reports that every node and relationship whose ID
@@ -597,72 +597,72 @@ func (b *BadgerEngine) dispatchNamespaceReset(prefix string) {
 }
 
 // dispatchNodeCreated publishes callbacks for an already visible graph mutation.
-func (b *BadgerEngine) dispatchNodeCreated(node *Node) {
+func (b *BadgerEngine) dispatchNodeCreated(node *Node, origin uint64) {
 	b.callbackMu.RLock()
 	callbacks := b.onNodeCreated
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(node)
+		callback(node, origin)
 	}
 }
 
 // dispatchNodeUpdated publishes callbacks for an already visible graph mutation.
-func (b *BadgerEngine) dispatchNodeUpdated(node *Node) {
-	b.dispatchNodeUpdatedOutcome(node, false)
+func (b *BadgerEngine) dispatchNodeUpdated(node *Node, origin uint64) {
+	b.dispatchNodeUpdatedOutcome(node, false, origin)
 }
 
-func (b *BadgerEngine) dispatchNodeUpdatedOutcome(node *Node, outcome bool) {
+func (b *BadgerEngine) dispatchNodeUpdatedOutcome(node *Node, outcome bool, origin uint64) {
 	b.publishNodeOutcome(node, outcome, func() {
 		b.callbackMu.RLock()
 		callbacks := b.onNodeUpdated
 		b.callbackMu.RUnlock()
 		for _, callback := range callbacks {
-			callback(node)
+			callback(node, origin)
 		}
 	})
 }
 
-func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
+func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID, origin uint64) {
 	b.callbackMu.RLock()
 	callbacks := b.onNodeDeleted
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(nodeID)
+		callback(nodeID, origin)
 	}
 }
 
 // dispatchEdgeCreated publishes callbacks for an already visible graph mutation.
-func (b *BadgerEngine) dispatchEdgeCreated(edge *Edge) {
+func (b *BadgerEngine) dispatchEdgeCreated(edge *Edge, origin uint64) {
 	b.callbackMu.RLock()
 	callbacks := b.onEdgeCreated
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(edge)
+		callback(edge, origin)
 	}
 }
 
 // dispatchEdgeUpdated publishes callbacks for an already visible graph mutation.
-func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge) {
+func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge, origin uint64) {
 	b.callbackMu.RLock()
 	callbacks := b.onEdgeUpdated
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(edge)
+		callback(edge, origin)
 	}
 }
 
 // dispatchEdgeDeleted publishes callbacks for an already visible graph mutation.
-func (b *BadgerEngine) dispatchEdgeDeleted(edgeID EdgeID) {
+func (b *BadgerEngine) dispatchEdgeDeleted(edgeID EdgeID, origin uint64) {
 	b.callbackMu.RLock()
 	callbacks := b.onEdgeDeleted
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(edgeID)
+		callback(edgeID, origin)
 	}
 }
 

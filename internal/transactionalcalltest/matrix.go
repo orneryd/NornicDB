@@ -8,9 +8,9 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
-	"strconv"
 	"testing"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -96,14 +96,12 @@ func Check(t *testing.T, run func(*testing.T, Case) Outcome) {
 func normalize(value any) any {
 	switch v := value.(type) {
 	case json.Number:
-		if integer, err := v.Int64(); err == nil {
-			return integer
-		}
-		floating, err := strconv.ParseFloat(string(v), 64)
+		// The oracle's numbers are read by the one external-number policy.
+		number, err := valueconvert.CypherInputJSON.Numbers(v)
 		if err != nil {
 			panic(err)
 		}
-		return floating
+		return number
 	case map[string]any:
 		for key, item := range v {
 			v[key] = normalize(item)

@@ -5,7 +5,6 @@ import (
 
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -505,7 +504,7 @@ func exportNornicSchemaDefinition(path string, schema *storage.SchemaManager) er
 	if !hasSchemaDefinitionContent(def) {
 		return nil
 	}
-	data, err := json.MarshalIndent(def, "", "  ")
+	data, err := storage.EncodeSchemaDefinition(def)
 	if err != nil {
 		return err
 	}

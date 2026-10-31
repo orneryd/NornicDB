@@ -27,16 +27,16 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 				svc := NewService(engine, 2, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				old := &storage.Node{ID: "source", Properties: map[string]any{"content": "obsolete"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-				reservation := svc.ReserveNodeMutation(old.ID)
+				reservation := svc.ReserveNodeMutation(old.ID, storage.CaptureVectorWorkOrigin())
 				newer := storage.CopyNode(old)
 				newer.Properties["content"] = "current"
 				newer.ChunkEmbeddings = [][]float32{{0, 1}}
 				_, err := engine.CreateNode(newer)
 				require.NoError(t, err)
-				require.NoError(t, svc.RefreshNode(newer.ID))
+				require.NoError(t, svc.RefreshNode(newer.ID, storage.CaptureVectorWorkOrigin()))
 				if remove {
 					require.NoError(t, engine.DeleteNode(old.ID))
-					require.NoError(t, svc.RefreshNode(old.ID))
+					require.NoError(t, svc.RefreshNode(old.ID, storage.CaptureVectorWorkOrigin()))
 				}
 				// A reserved write can arrive after the latest generation was applied
 				// and its bookkeeping retired. It must still remain obsolete.
@@ -75,13 +75,13 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 				defer writers.Done()
 				for i := range 64 {
 					node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i%8)), ChunkEmbeddings: [][]float32{{1, 0}}}
-					reservation := svc.ReserveNodeMutation(node.ID)
+					reservation := svc.ReserveNodeMutation(node.ID, storage.CaptureVectorWorkOrigin())
 					if (writer+i)%2 == 0 {
 						_ = engine.DeleteNode(node.ID)
 					} else if err := engine.UpdateNode(storage.NodeUpdateRequest{After: node}); err != nil {
 						_, _ = engine.CreateNode(node)
 					}
-					_ = svc.RefreshNode(node.ID)
+					_ = svc.RefreshNode(node.ID, storage.CaptureVectorWorkOrigin())
 					if stored, err := engine.GetNode(node.ID); err == nil {
 						_ = svc.applyReservedNodeIndex(stored, reservation)
 					} else {
@@ -93,9 +93,9 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 		writers.Wait()
 		for i := range 8 {
 			id := storage.NodeID(fmt.Sprintf("n%d", i))
-			stale := svc.ReserveNodeMutation(id)
+			stale := svc.ReserveNodeMutation(id, storage.CaptureVectorWorkOrigin())
 			_ = engine.DeleteNode(id)
-			require.NoError(t, svc.RefreshNode(id))
+			require.NoError(t, svc.RefreshNode(id, storage.CaptureVectorWorkOrigin()))
 			// The older reservation is obsolete: handing it a payload must not
 			// restore the deleted vector.
 			require.NoError(t, svc.applyReservedNodeIndex(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0}}}, stale))
@@ -112,8 +112,8 @@ func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 	engine := storage.NewNamespacedEngine(base, "test")
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	older := svc.ReserveNodeMutation("source")
-	rejected := svc.ReserveNodeMutation("source")
+	older := svc.ReserveNodeMutation("source", storage.CaptureVectorWorkOrigin())
+	rejected := svc.ReserveNodeMutation("source", storage.CaptureVectorWorkOrigin())
 	svc.DiscardNodeMutation(rejected)
 	require.NoError(t, svc.applyReservedNodeIndex(&storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}}, older))
 	require.Equal(t, 1, svc.EmbeddingCount(), "a rejected reservation superseded the older write")
@@ -130,11 +130,11 @@ func TestRefreshNodeFollowsStorage(t *testing.T) {
 	node := &storage.Node{ID: "source", Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 	_, err := engine.CreateNode(node)
 	require.NoError(t, err)
-	stale := svc.ReserveNodeMutation("source")
-	require.NoError(t, svc.RefreshNode("source"))
+	stale := svc.ReserveNodeMutation("source", storage.CaptureVectorWorkOrigin())
+	require.NoError(t, svc.RefreshNode("source", storage.CaptureVectorWorkOrigin()))
 	require.Equal(t, 1, svc.EmbeddingCount())
 	require.NoError(t, engine.DeleteNode("source"))
-	require.NoError(t, svc.RefreshNode("source"))
+	require.NoError(t, svc.RefreshNode("source", storage.CaptureVectorWorkOrigin()))
 	require.Zero(t, svc.EmbeddingCount())
 	_, err = engine.CreateNode(node)
 	require.NoError(t, err)
@@ -177,16 +177,16 @@ func TestRefreshEdgeReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
 	barrier := &edgeReadBarrier{Engine: engine, armed: true, entered: make(chan struct{}), release: make(chan struct{})}
 	svc := NewService(barrier, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	older := svc.ReserveEdgeMutation("r")
+	older := svc.ReserveEdgeMutation("r", storage.CaptureVectorWorkOrigin())
 	done := make(chan error, 1)
 	go func() { done <- svc.RefreshEdgeWithMutation(older) }()
 	<-barrier.entered
 	require.NoError(t, engine.DeleteEdge("r"))
-	require.NoError(t, svc.RefreshEdge("r"))
+	require.NoError(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 	close(barrier.release)
 	require.NoError(t, <-done)
 	require.False(t, svc.HasRelationshipVectorEntries("CITES", "vec"), "an older relationship refresh resurrected a deleted vector")
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0}}}))
-	require.NoError(t, svc.RefreshEdge("r"))
+	require.NoError(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 	require.True(t, svc.HasRelationshipVectorEntries("CITES", "vec"), "a refreshed relationship is indexed")
 }

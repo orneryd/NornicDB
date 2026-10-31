@@ -57,6 +57,7 @@ func WithRoleRecords(ctx context.Context, system storage.Engine, roles []string,
 // one is no change). The stored node read is the immutable Before image the
 // update reports, so it is retained unchanged and only node becomes After.
 func putRoleRecord(view storage.Engine, node *storage.Node, remove bool) error {
+	view = storage.SystemStoreEngine(view)
 	existing, err := view.GetNode(node.ID)
 	if err == storage.ErrNotFound {
 		if remove {

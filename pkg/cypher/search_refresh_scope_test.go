@@ -35,7 +35,7 @@ func TestCypherRefreshAfterCommitResolvesServiceOnce(t *testing.T) {
 		return nil
 	})
 	var tx transactionStorageWrapper
-	tx.deferSearchRefresh("node", "edge")
+	tx.deferSearchRefresh("node", "edge", storage.CaptureVectorWorkOrigin())
 	executor.refreshSearchAfterCommit(&tx)
 	require.Equal(t, 1, calls, "the committed batch must use its captured service")
 }
@@ -51,13 +51,17 @@ func TestCypherRefreshDefersTransactionMutations(t *testing.T) {
 	executor.SetSearchService(&search.Service{})
 	var notifications []string
 	executor.onNodeMutated = func(id string) { notifications = append(notifications, id) }
-	executor.notifyNodeMutated("node")
-	executor.notifyNodeMutated("node")
-	executor.notifyEdgeMutated("edge")
+	// A value no owner can capture for itself.
+	origin := storage.CaptureVectorWorkOrigin() + 1<<40
+	ctx := storage.WithVectorWorkOrigin(context.Background(), origin)
+	executor.notifyNodeMutated(ctx, "node")
+	executor.notifyNodeMutated(ctx, "node")
+	executor.notifyEdgeMutated(ctx, "edge")
 
+	// Each deferred refresh keeps the origin admitted for its mutation.
 	nodes, edges := tx.takeSearchRefreshes()
-	require.Equal(t, map[storage.NodeID]struct{}{"node": {}}, nodes)
-	require.Equal(t, map[storage.EdgeID]struct{}{"edge": {}}, edges)
+	require.Equal(t, map[storage.NodeID]uint64{"node": origin}, nodes)
+	require.Equal(t, map[storage.EdgeID]uint64{"edge": origin}, edges)
 	require.Equal(t, []string{"node", "node"}, notifications)
 }
 

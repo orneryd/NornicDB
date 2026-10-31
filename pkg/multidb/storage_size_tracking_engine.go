@@ -362,8 +362,18 @@ func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, err
 func (t *sizeTrackingEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	return t.applyEntityOperations([]storage.Operation{updateRequest.Operation()}, nil, storage.CommitModeDirect)
 }
-func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpDeleteNode, NodeID: id}}, nil, storage.CommitModeDirect)
+
+// applyDeletion applies deletions under the caller's admission if it supplied
+// one, otherwise as applyEntityOperations does.
+func (t *sizeTrackingEngine) applyDeletion(ops []storage.Operation, mode storage.EntityCommitMode, origins []uint64) error {
+	if len(origins) > 0 {
+		return t.applyAdmittedEntityOperations(storage.WithVectorWorkOrigin(context.Background(), origins[0]), ops, nil, mode)
+	}
+	return t.applyEntityOperations(ops, nil, mode)
+}
+
+func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
+	return t.applyDeletion([]storage.Operation{{Type: storage.OpDeleteNode, NodeID: id}}, storage.CommitModeDirect, origins)
 }
 func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
 	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpCreateEdge, Edge: edge}}, nil, storage.CommitModeDirect)
@@ -371,8 +381,8 @@ func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
 func (t *sizeTrackingEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
 	return t.applyEntityOperations([]storage.Operation{updateRequest.Operation()}, nil, storage.CommitModeDirect)
 }
-func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpDeleteEdge, EdgeID: id}}, nil, storage.CommitModeDirect)
+func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID, origins ...uint64) error {
+	return t.applyDeletion([]storage.Operation{{Type: storage.OpDeleteEdge, EdgeID: id}}, storage.CommitModeDirect, origins)
 }
 
 // Bulk entity operations stage one native transaction and share the ordinary
@@ -391,22 +401,36 @@ func (t *sizeTrackingEngine) BulkCreateEdges(edges []*storage.Edge) error {
 	}
 	return t.applyEntityOperations(ops, nil, storage.CommitModeImplicit)
 }
-func (t *sizeTrackingEngine) BulkDeleteNodes(ids []storage.NodeID) error {
+func (t *sizeTrackingEngine) BulkDeleteNodes(ids []storage.NodeID, origins ...uint64) error {
+	return t.applyDeletion(bulkDeleteNodeOperations(ids), storage.CommitModeImplicit, origins)
+}
+
+func bulkDeleteNodeOperations(ids []storage.NodeID) []storage.Operation {
 	ops := make([]storage.Operation, len(ids))
 	for i, id := range ids {
 		ops[i] = storage.Operation{Type: storage.OpDeleteNode, NodeID: id}
 	}
-	return t.applyEntityOperations(ops, nil, storage.CommitModeImplicit)
+	return ops
 }
-func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
+func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID, origins ...uint64) error {
+	return t.applyDeletion(bulkDeleteEdgeOperations(ids), storage.CommitModeImplicit, origins)
+}
+
+func bulkDeleteEdgeOperations(ids []storage.EdgeID) []storage.Operation {
 	ops := make([]storage.Operation, len(ids))
 	for i, id := range ids {
 		ops[i] = storage.Operation{Type: storage.OpDeleteEdge, EdgeID: id}
 	}
-	return t.applyEntityOperations(ops, nil, storage.CommitModeImplicit)
+	return ops
 }
 
 func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, createResult *storage.NodeID, mode storage.EntityCommitMode) error {
+	return t.applyAdmittedEntityOperations(context.Background(), ops, createResult, mode)
+}
+
+// applyAdmittedEntityOperations carries an admission transported by ctx to
+// every write route; entity arguments may carry their own.
+func (t *sizeTrackingEngine) applyAdmittedEntityOperations(ctx context.Context, ops []storage.Operation, createResult *storage.NodeID, mode storage.EntityCommitMode) error {
 	if len(ops) == 0 {
 		return nil
 	}
@@ -424,7 +448,7 @@ func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, crea
 			if err != nil {
 				return err
 			}
-			if err := owner.route.ForwardDirect(context.Background(), qualified, mode); err != nil {
+			if err := owner.route.ForwardDirect(ctx, qualified, mode); err != nil {
 				return err
 			}
 			if createResult != nil {
@@ -436,14 +460,24 @@ func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, crea
 			return nil
 		}
 	}
+	// Direct writes go through the admitted handle: the request's admission,
+	// else the one the operations carry, else one admitted (and counted) here.
+	origin, admitted := storage.VectorWorkOriginFromArguments(ctx, ops)
+	if !admitted {
+		origin = storage.AdmitUnrequestedVectorWork("multidb.size-tracking-write")
+	}
+	engine, bindErr := storage.EngineWithVectorWorkOrigin(t.Engine, origin)
+	if bindErr != nil {
+		return bindErr
+	}
 	if !t.runtime.requiresManaged(limits) && (!owner.found || !owner.route.RequiresSubmission) && (len(owner.writeBoundaries) == 0 || mode == storage.CommitModeDirect) && (mode == storage.CommitModeDirect || (ops[0].Type != storage.OpDeleteNode && ops[0].Type != storage.OpDeleteEdge)) {
 		if mode == storage.CommitModeDirect {
 			if createResult != nil {
-				id, err := t.Engine.CreateNode(ops[0].Node)
+				id, err := engine.CreateNode(ops[0].Node)
 				*createResult = id
 				return err
 			}
-			return storage.ApplyEntityChange(t.Engine, ops[0], t.Engine.UpdateNode, t.Engine.DeleteNode)
+			return storage.ApplyEntityChange(engine, ops[0], engine.UpdateNode, func(id storage.NodeID) error { return engine.DeleteNode(id) })
 		}
 		switch ops[0].Type {
 		case storage.OpCreateNode:
@@ -451,40 +485,40 @@ func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, crea
 			for i, op := range ops {
 				nodes[i] = op.Node
 			}
-			return t.Engine.BulkCreateNodes(nodes)
+			return engine.BulkCreateNodes(nodes)
 		case storage.OpCreateEdge:
 			edges := make([]*storage.Edge, len(ops))
 			for i, op := range ops {
 				edges[i] = op.Edge
 			}
-			return t.Engine.BulkCreateEdges(edges)
+			return engine.BulkCreateEdges(edges)
 		case storage.OpDeleteNode:
 			ids := make([]storage.NodeID, len(ops))
 			for i, op := range ops {
 				ids[i] = op.NodeID
 			}
-			return t.Engine.BulkDeleteNodes(ids)
+			return engine.BulkDeleteNodes(ids)
 		case storage.OpDeleteEdge:
 			ids := make([]storage.EdgeID, len(ops))
 			for i, op := range ops {
 				ids[i] = op.EdgeID
 			}
-			return t.Engine.BulkDeleteEdges(ids)
+			return engine.BulkDeleteEdges(ids)
 		}
 	}
 
-	prepared, settle, err := t.prepareManagedDirect(context.Background(), ops, mode)
+	prepared, settle, err := t.prepareManagedDirect(ctx, ops, mode)
 	if err != nil {
 		return err
 	}
 	if prepared != nil {
-		receipt, err := owner.route.Submitter.SubmitEntityCommit(context.Background(), prepared, settle)
+		receipt, err := owner.route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
 		if err != nil {
 			prepared.Abort()
 			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
 			return nornicerrors.MarkCommitRolledBack(err)
 		}
-		outcome := receipt.WaitOutcome(context.Background())
+		outcome := receipt.WaitOutcome(ctx)
 		if outcome.State == storage.CommitDiscarded {
 			return nornicerrors.MarkCommitRolledBack(outcome.Err)
 		}
@@ -536,6 +570,7 @@ func (t *sizeTrackingEngine) qualifyEntityOperations(ops []storage.Operation, ow
 // prepareManagedDirect is also registered for leader raw-command admission.
 // It stages and admits once; its caller owns submission and terminal settlement.
 func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []storage.Operation, mode storage.EntityCommitMode) (prepared *storage.PreparedEntityCommit, settle func(storage.CommitOutcome), prepareErr error) {
+	ctx, ops, origin := storage.WithEntityOperationOrigins(ctx, ops)
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -555,7 +590,7 @@ func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []sto
 	if err != nil {
 		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
 	}
-	tx, err := storage.BeginEntityTransaction(t.Engine, mode)
+	tx, err := storage.BeginEntityTransaction(t.Engine, mode, origin)
 	if err != nil {
 		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
 	}

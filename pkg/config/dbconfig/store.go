@@ -148,7 +148,7 @@ func (s *Store) SetOverrides(ctx context.Context, dbName string, overrides map[s
 	}
 	nodeID := storage.NodeID(dbConfigPrefix + dbName)
 	if len(overrides) == 0 {
-		if err := s.storage.DeleteNode(nodeID); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		if err := storage.SystemStoreEngine(s.storage).DeleteNode(nodeID); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
 		s.mu.Lock()
@@ -171,7 +171,7 @@ func (s *Store) SetOverrides(ctx context.Context, dbName string, overrides map[s
 	}
 	existing, err := s.storage.GetNode(nodeID)
 	if errors.Is(err, storage.ErrNotFound) {
-		_, err = s.storage.CreateNode(node)
+		_, err = storage.SystemStoreEngine(s.storage).CreateNode(node)
 		if err != nil {
 			return err
 		}
@@ -179,7 +179,7 @@ func (s *Store) SetOverrides(ctx context.Context, dbName string, overrides map[s
 		return err
 	} else {
 		node.CreatedAt = existing.CreatedAt
-		err = s.storage.UpdateNode(storage.NodeUpdateRequest{Before: existing, After: node})
+		err = storage.SystemStoreEngine(s.storage).UpdateNode(storage.NodeUpdateRequest{Before: existing, After: node})
 		if err != nil {
 			return err
 		}

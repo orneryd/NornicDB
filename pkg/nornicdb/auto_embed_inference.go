@@ -68,6 +68,20 @@ func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) {
 	if err != nil {
 		return
 	}
+	// Inferred relationships are work caused by this embedding: they carry its
+	// admission. A node without one is admitted here, at this background job.
+	var origin uint64
+	if attempt := node.EmbeddingAttempt(); attempt != nil {
+		origin = attempt.VectorWorkOrigin()
+	} else if carried, ok := node.EmbeddingWorkOrigin(); ok {
+		origin = carried
+	} else {
+		_, origin = storage.AdmitVectorWork(context.Background())
+	}
+	writer, err := storage.EngineWithVectorWorkOrigin(storageEngine, origin)
+	if err != nil {
+		return
+	}
 
 	now := time.Now()
 	for _, suggestion := range suggestions {
@@ -84,6 +98,6 @@ func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) {
 				"method": suggestion.Method,
 			},
 		}
-		_ = storageEngine.CreateEdge(edge) // Best effort
+		_ = writer.CreateEdge(edge) // Best effort
 	}
 }

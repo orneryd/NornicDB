@@ -210,7 +210,7 @@ type nodeVectorEntry struct {
 // skipped; any other dimension check is the caller's. It stops when fn
 // returns false. IndexNode, its unchanged-state check and the capacity
 // estimate all enumerate entries here, so they agree on every key.
-func (s *Service) forEachNodeVectorEntry(node *storage.Node, dims int, fn func(nodeVectorEntry) bool) {
+func (s *Service) forEachNodeVectorEntry(node *storage.Node, dims int, fn func(nodeVectorEntry) bool, generation uint64) {
 	nodeID := string(node.ID)
 	for name, vector := range node.NamedEmbeddings {
 		if len(vector) == 0 {

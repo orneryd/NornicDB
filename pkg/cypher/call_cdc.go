@@ -5,6 +5,7 @@ package cypher
 import (
 	"encoding/base64"
 	"encoding/binary"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"hash/fnv"
 	"math"
 	"reflect"
@@ -317,30 +318,16 @@ func nonNilStrings(values []string) []interface{} {
 // decodes integers into their smallest Go type and floats into float32 when
 // they fit; Cypher has INTEGER and FLOAT.
 func cdcValue(value interface{}) interface{} {
-	switch number := value.(type) {
-	case int8:
-		return int64(number)
-	case int16:
-		return int64(number)
-	case int32:
-		return int64(number)
-	case int:
-		return int64(number)
-	case uint8:
-		return int64(number)
-	case uint16:
-		return int64(number)
-	case uint32:
-		return int64(number)
-	case uint64:
-		if number <= math.MaxInt64 {
-			return int64(number)
+	if number, ok := valueconvert.ReadNumber(value); ok {
+		if integer, ok := valueconvert.IntegerValue(value); ok {
+			return integer
 		}
-		return float64(number)
-	case uint:
-		return int64(number)
-	case float32:
-		return float64(number)
+		if unsigned, ok := number.Unsigned(); ok {
+			return unsigned // Accepted native uint64 values must remain exact.
+		}
+		return number.Float64()
+	}
+	switch number := value.(type) {
 	case []interface{}:
 		out := make([]interface{}, len(number))
 		for index, item := range number {
@@ -547,7 +534,7 @@ func (s *changeSelector) matches(database string, event *storage.ChangeEvent) bo
 		return false
 	}
 	for key, want := range s.txMetadata {
-		if got, ok := event.TxMetadata[key]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
+		if got, ok := event.TxMetadata[key]; !ok || !cdcSelectorValuesEqual(got, want) {
 			return false
 		}
 	}
@@ -622,9 +609,21 @@ func keyMatches(event *storage.ChangeEvent, key map[string]interface{}) bool {
 // holdsValues reports whether properties hold every one of values.
 func holdsValues(properties map[string]any, values map[string]interface{}) bool {
 	for name, want := range values {
-		if got, ok := properties[name]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
+		if got, ok := properties[name]; !ok || !cdcSelectorValuesEqual(got, want) {
 			return false
 		}
 	}
 	return true
+}
+
+// CDC selectors are two-valued filters. Delegate numeric and structural
+// equality to Cypher, retaining the existing match for identical nullable
+// metadata when Cypher's three-valued equality is unknown.
+func cdcSelectorValuesEqual(stored, selected interface{}) bool {
+	actual := cdcValue(stored)
+	equal := cypherEquality(actual, selected)
+	if equal == nil {
+		return reflect.DeepEqual(actual, selected)
+	}
+	return equal == true
 }

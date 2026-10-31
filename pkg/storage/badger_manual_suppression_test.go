@@ -195,7 +195,7 @@ type manualSuppressionRecorder struct {
 	calls      int
 }
 
-func (r *manualSuppressionRecorder) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error {
+func (r *manualSuppressionRecorder) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool, origins ...uint64) error {
 	r.kind, r.id, r.suppressed = kind, id, suppressed
 	r.calls++
 	return nil

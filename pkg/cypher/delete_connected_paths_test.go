@@ -56,7 +56,7 @@ func (f adjacencyFailingEngine) GetIncomingEdges(storage.NodeID) ([]*storage.Edg
 	return nil, errAdjacencyRead
 }
 
-func (f adjacencyFailingEngine) DeleteGraphNode(storage.NodeID, storage.NodeDeletionMode) error {
+func (f adjacencyFailingEngine) DeleteGraphNode(storage.NodeID, storage.NodeDeletionMode, ...uint64) error {
 	return nil
 }
 

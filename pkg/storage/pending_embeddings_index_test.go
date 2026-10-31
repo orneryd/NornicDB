@@ -132,7 +132,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
 
 		// Clear all embeddings
-		cleared, err := engine.ClearAllEmbeddings()
+		cleared, err := engine.ClearAllEmbeddings(CaptureVectorWorkOrigin())
 		require.NoError(t, err)
 		assert.Equal(t, 3, cleared)
 
@@ -437,7 +437,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		}
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)
-		engine.AddToPendingEmbeddings(node.ID)
+		engine.AddToPendingEmbeddingsWithOrigin(node.ID, CaptureVectorWorkOrigin())
 		assert.Equal(t, 1, engine.PendingEmbeddingsCount())
 		found := engine.FindNodeNeedingEmbedding()
 		assert.Nil(t, found)
@@ -623,7 +623,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cleared, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:")
+		cleared, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:", CaptureVectorWorkOrigin())
 		require.NoError(t, err)
 		assert.Equal(t, 1, cleared)
 		assert.Equal(t, 1, engine.PendingEmbeddingsCount())
@@ -652,7 +652,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, int64(0), lsm)
 		assert.Equal(t, int64(0), vlog)
 
-		_, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:")
+		_, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:", CaptureVectorWorkOrigin())
 		require.Error(t, err)
 
 		err = engine.StreamNodeChunks(context.Background(), 2, func(nodes []*Node) error { return nil })
@@ -687,7 +687,7 @@ func TestPendingEmbeddingsRespectDatabaseLabelPolicy(t *testing.T) {
 	engine.SetEmbeddingLabelPolicy("a", []string{"Document"}, []string{"AuditLog", "Job"})
 	engine.RefreshPendingEmbeddingsIndex()
 	require.Equal(t, 2, engine.PendingEmbeddingsCount())
-	engine.AddToPendingEmbeddings("a:chunk")
+	engine.AddToPendingEmbeddingsWithOrigin("a:chunk", CaptureVectorWorkOrigin())
 	require.Equal(t, 2, engine.PendingEmbeddingsCount())
 	engine.SetEmbeddingLabelPolicy("", []string{"Document"}, []string{"Job"})
 	_, err := engine.CreateNode(&Node{ID: "new:job", Labels: []string{"Document", "Job"}, Properties: map[string]interface{}{"text": "value"}})

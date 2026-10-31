@@ -16,12 +16,12 @@ type failFirstDeleteNodeEngine struct {
 	failuresRemaining int
 }
 
-func (e *failFirstDeleteNodeEngine) DeleteNode(id storage.NodeID) error {
+func (e *failFirstDeleteNodeEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	if e.failuresRemaining > 0 {
 		e.failuresRemaining--
 		return fmt.Errorf("forced delete failure for %s", id)
 	}
-	return e.MemoryEngine.DeleteNode(id)
+	return e.MemoryEngine.DeleteNode(id, origins...)
 }
 
 func TestExecuteDeleteStreaming_UnsupportedMatchShapeReturnsEmpty(t *testing.T) {

@@ -55,9 +55,20 @@ func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	require.NoError(t, err)
 	encoded, err := json.Marshal(data)
 	require.NoError(t, err)
-	var payload map[string]any
+	// Change only the historical flag. Decoding into map[string]any would
+	// turn integer metadata (including commit_sequence:0) into float64 and
+	// make the current FLOAT-preserving writer emit 0.0 instead of the old
+	// writer's integer token. RawMessage preserves the actual legacy bytes.
+	var payload map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(encoded, &payload))
-	payload["ops"].([]any)[0].(map[string]any)["replaces_existing"] = true
+	var ops []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(payload["ops"], &ops))
+	ops[0]["replaces_existing"] = json.RawMessage(`true`)
+	payload["ops"], err = json.Marshal(ops)
+	require.NoError(t, err)
+	var version map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(payload["version"], &version))
+	require.Equal(t, "0", string(version["commit_sequence"]))
 	require.NoError(t, wal.AppendWithDatabase(OpBufferedCommit, payload, "test"))
 	require.NoError(t, wal.Sync())
 
