@@ -36,7 +36,7 @@ func TestReview1406FailedDropTailRetainsNamespaceFence(t *testing.T) {
 			require.NoError(t, tenant.CreateEdge(&storage.Edge{ID: "old-edge", StartNode: "old-a", EndNode: "old-b", Type: "REL"}))
 			_, err = peer.CreateNode(&storage.Node{ID: "keep"})
 			require.NoError(t, err)
-			require.NoError(t, base.FlushWriteBehind())
+			require.NoError(t, base.FlushWriteBehind(nil))
 			injected := errors.New("intrinsic DROP cleanup unavailable")
 			calls := 0
 			storage.ReviewSetDropTailFailure(base, func(prefix string) error {

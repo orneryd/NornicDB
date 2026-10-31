@@ -72,7 +72,7 @@ func TestSeedProfileInProcess(t *testing.T) {
 			}
 		}
 	}
-	if err := engine.FlushWriteBehind(); err != nil {
+	if err := engine.FlushWriteBehind(nil); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
 	nodes, rels := planSeedNodesAndRelationships(plan)

@@ -168,6 +168,29 @@ func (h *hiddenDeleteServer) shutdown(t *testing.T) {
 	require.NoError(t, h.db.Close())
 }
 
+// requireSuccess executes the public protocol request and asserts its status.
+func (h *hiddenDeleteServer) requireSuccess(t *testing.T, statement string) hiddenDeleteOutcome {
+	t.Helper()
+	outcome := h.run(t, statement)
+	require.Empty(t, outcome.code, statement)
+	return outcome
+}
+
+// flush drains the fixture's physical write-behind owner, regardless of wrappers.
+func (h *hiddenDeleteServer) flush(t *testing.T) {
+	t.Helper()
+	engine := h.db.GetBaseStorageForManager()
+	for {
+		if badger, ok := engine.(*storage.BadgerEngine); ok {
+			require.NoError(t, badger.FlushWriteBehind(nil))
+			return
+		}
+		wrapper, ok := engine.(storage.EngineUnwrapper)
+		require.True(t, ok, "database must expose its physical engine")
+		engine = wrapper.GetInnerEngine()
+	}
+}
+
 // Deleting a node removes the relationships the visibility layer hides from
 // reads (on-demand suppression, knowledge-policy decay) with it, through Bolt
 // and HTTP, with write-behind on and off, and nothing of them survives a
@@ -189,24 +212,18 @@ func TestDeleteNodeWithHiddenRelationships(t *testing.T) {
 						h.shutdown(t)
 					}
 				})
-				ok := func(t *testing.T, statement string) hiddenDeleteOutcome {
-					t.Helper()
-					outcome := h.run(t, statement)
-					require.Empty(t, outcome.code, statement)
-					return outcome
-				}
 				column := func(t *testing.T, statement string) []interface{} {
 					t.Helper()
 					var values []interface{}
-					for _, row := range ok(t, statement).rows {
+					for _, row := range h.requireSuccess(t, statement).rows {
 						values = append(values, row[0])
 					}
 					return values
 				}
 
-				ok(t, "CREATE DECAY PROFILE stale OPTIONS {halfLifeSeconds: 1, function: 'exponential', scope: 'EDGE', scoreFrom: 'CREATED', visibilityThreshold: 1.0}")
-				ok(t, "CREATE DECAY PROFILE stale_edges FOR ()-[r:STALE]-() APPLY {DECAY PROFILE 'stale'}")
-				ok(t, "CREATE (h:Hub {id: 'h'}), (o:Hub {id: 'o'}), (p:Peer {id: 'p'}), (q:Peer {id: 'q'}), "+
+				h.requireSuccess(t, "CREATE DECAY PROFILE stale OPTIONS {halfLifeSeconds: 1, function: 'exponential', scope: 'EDGE', scoreFrom: 'CREATED', visibilityThreshold: 1.0}")
+				h.requireSuccess(t, "CREATE DECAY PROFILE stale_edges FOR ()-[r:STALE]-() APPLY {DECAY PROFILE 'stale'}")
+				h.requireSuccess(t, "CREATE (h:Hub {id: 'h'}), (o:Hub {id: 'o'}), (p:Peer {id: 'p'}), (q:Peer {id: 'q'}), "+
 					"(h)-[:HIDDEN {id: 's'}]->(p), (q)-[:STALE {id: 'd'}]->(h), (h)-[:SEEN {id: 'v'}]->(q), (o)-[:HIDDEN {id: 's2'}]->(p)")
 				// kp.suppress marks the stored record, which write-behind lands
 				// at its next flush.
@@ -222,7 +239,7 @@ func TestDeleteNodeWithHiddenRelationships(t *testing.T) {
 				assert.Equal(t, "Neo.ClientError.Schema.ConstraintValidationFailed", h.run(t, "MATCH (o:Hub {id: 'o'}) DELETE o").code,
 					"o's only relationship is hidden, and it still connects o")
 
-				deleted := ok(t, "MATCH (h:Hub {id: 'h'}) DETACH DELETE h")
+				deleted := h.requireSuccess(t, "MATCH (h:Hub {id: 'h'}) DETACH DELETE h")
 				assert.Equal(t, 1, deleted.nodesDeleted)
 				assert.Equal(t, 3, deleted.relationshipsDeleted, "s, d and v went with h")
 
@@ -264,25 +281,6 @@ func TestSuppressedRelationshipReMergeKeepsCounts(t *testing.T) {
 						h.shutdown(t)
 					}
 				})
-				run := func(query string) hiddenDeleteOutcome {
-					t.Helper()
-					outcome := h.run(t, query)
-					require.Empty(t, outcome.code, query)
-					return outcome
-				}
-				flush := func() {
-					t.Helper()
-					engine := h.db.GetBaseStorageForManager()
-					for {
-						if badger, ok := engine.(*storage.BadgerEngine); ok {
-							require.NoError(t, badger.FlushWriteBehind())
-							return
-						}
-						wrapper, ok := engine.(storage.EngineUnwrapper)
-						require.True(t, ok, "database must expose its physical engine")
-						engine = wrapper.GetInnerEngine()
-					}
-				}
 				var physicalID storage.EdgeID
 				counts := func() {
 					t.Helper()
@@ -306,17 +304,17 @@ func TestSuppressedRelationshipReMergeKeepsCounts(t *testing.T) {
 						require.NoError(t, err)
 						assert.EqualValues(t, 1, count, "stored counters must match the single physical record")
 					}
-					assert.Equal(t, [][]interface{}{{int64(0)}}, run("MATCH ()-[r:INGEST]->() RETURN count(r)").rows)
+					assert.Equal(t, [][]interface{}{{int64(0)}}, h.requireSuccess(t, "MATCH ()-[r:INGEST]->() RETURN count(r)").rows)
 				}
-				run("CREATE (:Source {id: 'a'}), (:Target {id: 'b'})")
+				h.requireSuccess(t, "CREATE (:Source {id: 'a'}), (:Target {id: 'b'})")
 				const merge = "MATCH (a:Source {id: 'a'}), (b:Target {id: 'b'}) MERGE (a)-[r:INGEST {id: 'same'}]->(b)"
-				run(merge)
-				flush()
-				run("MATCH ()-[r:INGEST]->() CALL kp.suppress(r)")
+				h.requireSuccess(t, merge)
+				h.flush(t)
+				h.requireSuccess(t, "MATCH ()-[r:INGEST]->() CALL kp.suppress(r)")
 				counts()
-				run(merge)
+				h.requireSuccess(t, merge)
 				counts()
-				flush()
+				h.flush(t)
 				counts()
 				h.shutdown(t)
 				h = nil

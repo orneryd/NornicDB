@@ -44,7 +44,7 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 					if buffered {
 						require.Positive(t, b.writeBehind.PendingOps())
 						if source == "engine-retired" {
-							require.NoError(t, b.FlushWriteBehind())
+							require.NoError(t, b.FlushWriteBehind(nil))
 							require.Zero(t, b.writeBehind.PendingOps())
 						}
 					}

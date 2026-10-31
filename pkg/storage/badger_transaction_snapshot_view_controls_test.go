@@ -74,7 +74,7 @@ func TestTransactionSnapshotHeadAbsentMetadataDoesNotInventConflict(t *testing.T
 	// Allocate a valid dictionary-backed head key without publishing an edge.
 	// This is an absent metadata read, not a malformed/empty-key error probe.
 	var key []byte
-	require.NoError(t, engine.withUpdate(func(view *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(view *badger.Txn) error {
 		var err error
 		key, err = engine.mvccEdgeHeadKeyString(view, EdgeID("test:unpublished-edge"))
 		return err

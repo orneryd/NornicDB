@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -128,7 +129,7 @@ func TestStoredEntityPublicationBufferedAckOnce(t *testing.T) {
 	second, err := b.GetNode("test:a")
 	require.NoError(t, err)
 	assertStoredNodeImage(t, second, events[1].Changes[0].AfterNode)
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	require.Len(t, events, 2, "physical replay does not charge acknowledged commits again")
 }
 
@@ -182,9 +183,9 @@ func TestStoredEntityInitializationDrainsEarlierPublication(t *testing.T) {
 	data, _, err := b.encodeNode(txn, node)
 	require.NoError(t, err)
 	require.NoError(t, txn.Set(nodeKey(node.ID), data))
-	cw := b.newCommitWriter(b.db, txn)
+	cw := b.newCommitWriter(context.Background(), b.db, txn)
 	cw.publishKeys = []any{node.ID}
-	ts, err := b.db.commitShared(txn, cw.publication())
+	ts, err := b.db.commitShared(context.Background(), txn, cw.publication())
 	require.NoError(t, err)
 	require.Equal(t, 0, count, "physical commit has not run its registered publication")
 	require.NoError(t, b.InitializeStoredEntityObserver("test", initialize, nil))
@@ -408,7 +409,7 @@ func TestStoredEntitySnapshotIdentityDefersVectorRead(t *testing.T) {
 	b := newTestEngine(t)
 	_, err := b.CreateNode(&Node{ID: "test:lazy", ChunkEmbeddings: [][]float32{make([]float32, 16384)}})
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Set(embeddingKey("test:lazy", 0), []byte{0xff}) }))
+	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(embeddingKey("test:lazy", 0), []byte{0xff}) }))
 	require.NoError(t, b.InitializeStoredEntityObserver("test", func(snapshot StoredEntitySnapshot) (StoredEntityObserver, error) {
 		var entries []StoredEntitySnapshotEntry
 		require.NoError(t, snapshot.ForEach(func(entry StoredEntitySnapshotEntry) error { entries = append(entries, entry); return nil }))

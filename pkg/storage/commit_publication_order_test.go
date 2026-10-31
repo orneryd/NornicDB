@@ -82,7 +82,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 						}
 						require.NoError(t, b.CreateEdge(edge("A")))
 					}
-					require.NoError(t, b.FlushWriteBehind())
+					require.NoError(t, b.FlushWriteBehind(nil))
 					if entity == "node" {
 						_, err = b.GetNode("db:n")
 					} else {
@@ -183,7 +183,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 					older.join(t)
 					require.NoError(t, older.err)
 					require.NoError(t, newer.err)
-					require.NoError(t, b.FlushWriteBehind())
+					require.NoError(t, b.FlushWriteBehind(nil))
 					if entity == "node" {
 						var physical *Node
 						require.NoError(t, b.withView(func(txn *badger.Txn) error {

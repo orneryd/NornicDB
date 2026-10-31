@@ -105,7 +105,6 @@ func (c *stubLifecycleController) TopLifecycleDebtKeys(limit int) []MVCCLifecycl
 
 func TestBadgerEngine_Lifecycle_NilControllerBehavior(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	// No controller installed.
 
 	// RegisterSnapshotReader returns a no-op deregister function — must
@@ -166,7 +165,6 @@ func TestBadgerEngine_CloseReleasesRetainedState(t *testing.T) {
 
 func TestBadgerEngine_Lifecycle_ControllerDelegation(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	stub := newStubLifecycleController()
 	e.SetLifecycleController(stub)
@@ -215,7 +213,6 @@ func TestBadgerEngine_Lifecycle_ControllerDelegation(t *testing.T) {
 
 func TestBadgerEngine_AcquireAndEvaluateSnapshotReader_NoController(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	// With no controller, acquireSnapshotReader bumps the simple
 	// activeMVCCSnapshotReaders counter and returns a deregister fn
@@ -279,7 +276,6 @@ func TestBadgerEngine_MVCCVersionKeyForLogicalKey_NodeAndEdge(t *testing.T) {
 
 func TestBadgerEngine_IterateMVCCHeads_AndVersions_ReadWrite(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	// Bootstrap a node and an edge so the head index has rows.
 	_, err := e.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{}})
@@ -358,7 +354,6 @@ func TestBadgerEngine_IterateMVCCHeads_AndVersions_ReadWrite(t *testing.T) {
 
 func TestBadgerEngine_IterateMVCCHeads_RespectsContextCancel(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	// Stage some heads.
 	for i := 0; i < 5; i++ {

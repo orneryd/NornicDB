@@ -187,7 +187,7 @@ func TestPR1655StagedTargetRevalidatedAfterMetadataCallback(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("writer did not finish after the callback")
 				}
-				require.NoError(t, b.FlushWriteBehind())
+				require.NoError(t, b.FlushWriteBehind(nil))
 				assertPR1655AcceptanceGraph(t, b, scenario, marker, "after metadata interposed deletion")
 			})
 		}
@@ -346,7 +346,7 @@ func TestPR1655StagedTargetVanishedBeforeCommit(t *testing.T) {
 						seedPR1655AcceptanceGraph(t, b, scenario.nodes)
 						if !writeBehind {
 							// The writer's begin snapshot is the seeded graph.
-							require.NoError(t, b.FlushWriteBehind())
+							require.NoError(t, b.FlushWriteBehind(nil))
 						}
 
 						writer := beginPR1655AcceptanceWriter(t, b)
@@ -358,7 +358,7 @@ func TestPR1655StagedTargetVanishedBeforeCommit(t *testing.T) {
 						require.NoError(t, peerPR1655Acceptance(t, b, scenario, peer),
 							"the peer's deletion must be acknowledged")
 						if flush {
-							require.NoError(t, b.FlushWriteBehind())
+							require.NoError(t, b.FlushWriteBehind(nil))
 						}
 
 						err = writer.Commit()
@@ -374,7 +374,7 @@ func TestPR1655StagedTargetVanishedBeforeCommit(t *testing.T) {
 						require.ErrorIs(t, err, ErrNotFound, "the failed commit created a relationship")
 
 						// Draining the buffer replays the peer's deletion alone.
-						require.NoError(t, b.FlushWriteBehind())
+						require.NoError(t, b.FlushWriteBehind(nil))
 						assertPR1655AcceptanceGraph(t, b, scenario, marker,
 							"after draining the write-behind buffer")
 					})
@@ -443,7 +443,7 @@ func TestPR1655StagedTargetDeletePublishedAfterCommitAllocation(t *testing.T) {
 				_, err = b.GetEdge("test:pr1655-new")
 				require.ErrorIs(t, err, ErrNotFound, "the failed commit created a relationship")
 
-				require.NoError(t, b.FlushWriteBehind())
+				require.NoError(t, b.FlushWriteBehind(nil))
 				assertPR1655AcceptanceGraph(t, b, scenario, marker,
 					"after the peer's deletion publishes first")
 			})
@@ -460,7 +460,7 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 			b := openPR1655AcceptanceEngine(t, writeBehind)
 			seedPR1655AcceptanceGraph(t, b, [2]NodeID{"test:pr1655-a", "test:pr1655-b"})
 			require.NoError(t, b.DeleteEdge("test:pr1655-r"))
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 
 			writer := beginPR1655AcceptanceWriter(t, b)
 			err := writer.UpdateEdge(EdgeUpdateRequest{After: &Edge{
@@ -473,7 +473,7 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 			require.NoError(t, writer.Rollback())
 
 			require.NoError(t, b.DeleteNode("test:pr1655-b"))
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			nodeWriter := beginPR1655AcceptanceWriter(t, b)
 			err = nodeWriter.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:pr1655-b", Labels: []string{"Node"}}, Policy: ClientNodeEdits})
 			require.ErrorIs(t, err, ErrNotFound, "staging against a node deleted before begin")
@@ -538,7 +538,7 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 			}}))
 			require.NoError(t, writer.DeleteEdge("test:pr1655-r"), "a transaction may delete a relationship it updated")
 			require.NoError(t, writer.Commit(), "its own deletion is not a concurrent modification")
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			_, err := b.GetEdge("test:pr1655-r")
 			require.ErrorIs(t, err, ErrNotFound, "the writer's own deletion keeps its effect")
 
@@ -549,7 +549,7 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 			require.ErrorIs(t, deleter.DeleteGraphNode("test:pr1655-b", CascadeEdges), ErrNotFound,
 				"a second delete of the same node reports ErrNotFound")
 			require.NoError(t, deleter.Commit())
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			_, err = b.GetNode("test:pr1655-b")
 			require.ErrorIs(t, err, ErrNotFound)
 			_, err = b.GetEdge("test:pr1655-r")
@@ -594,7 +594,7 @@ func TestPR1655VanishedTargetAtStaging(t *testing.T) {
 						}
 						require.NoError(t, peerPR1655Acceptance(t, b, scenario, pr1655AcceptancePeer{implicit: true}))
 						if flush {
-							require.NoError(t, b.FlushWriteBehind())
+							require.NoError(t, b.FlushWriteBehind(nil))
 						}
 						switch scenario.name {
 						case "node-update/node-deleted":

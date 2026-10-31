@@ -32,14 +32,14 @@ func TestPR1655StaleCachedBodyIsReadAgainAtCommit(t *testing.T) {
 			_, err = seed.CreateNode(doc("a"))
 			require.NoError(t, err)
 			require.NoError(t, seed.Commit())
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 
 			rename, err := b.BeginTransaction()
 			require.NoError(t, err)
 			require.NoError(t, rename.SetNamespace("test"))
 			require.NoError(t, rename.UpdateGraphNode(NodeUpdateRequest{After: doc("b"), Policy: ClientNodeEdits}))
 			require.NoError(t, rename.Commit())
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			// The cache still holds the body from before the rename, as between
 			// the rename's publication and its cache update.
 			b.nodeCacheMu.Lock()
@@ -56,7 +56,7 @@ func TestPR1655StaleCachedBodyIsReadAgainAtCommit(t *testing.T) {
 			} else {
 				require.ErrorIs(t, blind.Commit(), ErrConflict, "the rename was published before the blind write")
 			}
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			// Drop the planted entry so the check reads what storage holds.
 			b.nodeCacheMu.Lock()
 			delete(b.nodeCache, "test:x")

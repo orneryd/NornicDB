@@ -187,13 +187,13 @@ func TestSchemaManager(t *testing.T) {
 
 	t.Run("AddFulltextIndex", func(t *testing.T) {
 		sm := NewSchemaManager()
-		err := sm.AddFulltextIndex("search_idx", []string{"User", "Post"}, []string{"content", "title"})
+		err := sm.AddFulltextIndex("search_idx", []string{"User", "Post"}, []string{"content", "title"}, ConstraintEntityNode)
 		if err != nil {
 			t.Fatalf("Failed to add fulltext index: %v", err)
 		}
 
 		// Idempotent
-		err = sm.AddFulltextIndex("search_idx", []string{"User", "Post"}, []string{"content", "title"})
+		err = sm.AddFulltextIndex("search_idx", []string{"User", "Post"}, []string{"content", "title"}, ConstraintEntityNode)
 		if err != nil {
 			t.Fatalf("Failed to add fulltext index again: %v", err)
 		}
@@ -218,13 +218,13 @@ func TestSchemaManager(t *testing.T) {
 
 	t.Run("AddVectorIndex", func(t *testing.T) {
 		sm := NewSchemaManager()
-		err := sm.AddVectorIndex("embedding_idx", "Document", "embedding", 1536, "cosine")
+		err := sm.AddVectorIndex("embedding_idx", "Document", "embedding", 1536, "cosine", ConstraintEntityNode)
 		if err != nil {
 			t.Fatalf("Failed to add vector index: %v", err)
 		}
 
 		// Idempotent
-		err = sm.AddVectorIndex("embedding_idx", "Document", "embedding", 1536, "cosine")
+		err = sm.AddVectorIndex("embedding_idx", "Document", "embedding", 1536, "cosine", ConstraintEntityNode)
 		if err != nil {
 			t.Fatalf("Failed to add vector index again: %v", err)
 		}
@@ -251,8 +251,8 @@ func TestSchemaManager(t *testing.T) {
 		sm := NewSchemaManager()
 
 		sm.AddPropertyIndex("prop_idx", "User", []string{"name"})
-		sm.AddFulltextIndex("ft_idx", []string{"User"}, []string{"bio"})
-		sm.AddVectorIndex("vec_idx", "User", "embedding", 768, "euclidean")
+		sm.AddFulltextIndex("ft_idx", []string{"User"}, []string{"bio"}, ConstraintEntityNode)
+		sm.AddVectorIndex("vec_idx", "User", "embedding", 768, "euclidean", ConstraintEntityNode)
 
 		indexes := nonLookupIndexes(sm.GetIndexes())
 		if len(indexes) != 3 {
@@ -295,7 +295,7 @@ func TestSchemaManager_DropConstraintAndIndexHelpers(t *testing.T) {
 		if err := sm.AddUniqueConstraint("user_email_unique", "User", "email"); err != nil {
 			t.Fatalf("AddUniqueConstraint failed: %v", err)
 		}
-		if err := sm.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger); err != nil {
+		if err := sm.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}); err != nil {
 			t.Fatalf("AddPropertyTypeConstraint failed: %v", err)
 		}
 
@@ -323,7 +323,7 @@ func TestSchemaManager_DropConstraintAndIndexHelpers(t *testing.T) {
 		if err := sm.AddUniqueConstraint("user_email_unique", "User", "email"); err != nil {
 			t.Fatalf("AddUniqueConstraint failed: %v", err)
 		}
-		if err := sm.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger); err != nil {
+		if err := sm.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}); err != nil {
 			t.Fatalf("AddPropertyTypeConstraint failed: %v", err)
 		}
 		sm.persist = func(def *SchemaDefinition) error {
@@ -370,10 +370,10 @@ func TestSchemaManager_DropConstraintAndIndexHelpers(t *testing.T) {
 		} else {
 			t.Fatal("expected composite index to be registered")
 		}
-		if err := sm.AddFulltextIndex("user_text_idx", []string{"User"}, []string{"bio"}); err != nil {
+		if err := sm.AddFulltextIndex("user_text_idx", []string{"User"}, []string{"bio"}, ConstraintEntityNode); err != nil {
 			t.Fatalf("AddFulltextIndex failed: %v", err)
 		}
-		if err := sm.AddVectorIndex("user_vec_idx", "User", "embedding", 3, "cosine"); err != nil {
+		if err := sm.AddVectorIndex("user_vec_idx", "User", "embedding", 3, "cosine", ConstraintEntityNode); err != nil {
 			t.Fatalf("AddVectorIndex failed: %v", err)
 		}
 
@@ -445,7 +445,7 @@ func TestSchemaManager_PersistRollbackAndRangeDeleteBranches(t *testing.T) {
 			t.Fatal("range index should be rolled back on persist failure")
 		}
 
-		if err := sm.AddVectorIndex("vidx", "User", "embedding", 3, "cosine"); err == nil {
+		if err := sm.AddVectorIndex("vidx", "User", "embedding", 3, "cosine", ConstraintEntityNode); err == nil {
 			t.Fatal("expected vector index persist failure")
 		}
 		if _, ok := sm.GetVectorIndex("vidx"); ok {
@@ -989,8 +989,8 @@ func TestCompositeIndexInGetIndexes(t *testing.T) {
 
 	sm.AddPropertyIndex("prop_idx", "User", []string{"name"})
 	sm.AddCompositeIndex("comp_idx", "User", []string{"country", "city"})
-	sm.AddFulltextIndex("ft_idx", []string{"User"}, []string{"bio"})
-	sm.AddVectorIndex("vec_idx", "User", "embedding", 768, "cosine")
+	sm.AddFulltextIndex("ft_idx", []string{"User"}, []string{"bio"}, ConstraintEntityNode)
+	sm.AddVectorIndex("vec_idx", "User", "embedding", 768, "cosine", ConstraintEntityNode)
 
 	indexes := nonLookupIndexes(sm.GetIndexes())
 	if len(indexes) != 4 {
@@ -1190,7 +1190,7 @@ func TestSchemaManager_PersistenceErrorRollback(t *testing.T) {
 		sm := NewSchemaManager()
 		sm.SetPersister(func(def *SchemaDefinition) error { return persistErr })
 
-		err := sm.AddPropertyTypeConstraint("ptc1", "Person", "age", PropertyTypeInteger)
+		err := sm.AddPropertyTypeConstraint("ptc1", "Person", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{})
 		require.ErrorIs(t, err, persistErr)
 
 		// Should NOT be registered
@@ -1224,16 +1224,16 @@ func TestSchemaManager_PersistenceErrorRollback(t *testing.T) {
 
 	t.Run("AddPropertyTypeConstraint duplicate errors without IF NOT EXISTS", func(t *testing.T) {
 		sm := NewSchemaManager()
-		err := sm.AddPropertyTypeConstraint("ptc1", "Person", "age", PropertyTypeInteger)
+		err := sm.AddPropertyTypeConstraint("ptc1", "Person", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{})
 		require.NoError(t, err)
 
 		// Adding same name again without IF NOT EXISTS should error
-		err = sm.AddPropertyTypeConstraint("ptc1", "Person", "age", PropertyTypeInteger)
+		err = sm.AddPropertyTypeConstraint("ptc1", "Person", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
 
 		// Adding same name with IF NOT EXISTS should be no-op
-		err = sm.AddPropertyTypeConstraintWithOptions("ptc1", "Person", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{IfNotExists: true})
+		err = sm.AddPropertyTypeConstraint("ptc1", "Person", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{IfNotExists: true})
 		assert.NoError(t, err)
 	})
 }
@@ -1456,7 +1456,7 @@ func TestSchemaManager_AddFulltextIndex_PersistError(t *testing.T) {
 	sm := NewSchemaManager()
 	sm.SetPersister(func(def *SchemaDefinition) error { return errors.New("fail") })
 
-	err := sm.AddFulltextIndex("ft1", []string{"Person"}, []string{"bio"})
+	err := sm.AddFulltextIndex("ft1", []string{"Person"}, []string{"bio"}, ConstraintEntityNode)
 	require.Error(t, err)
 
 	// Should be rolled back
@@ -1468,7 +1468,7 @@ func TestSchemaManager_AddVectorIndex_PersistError(t *testing.T) {
 	sm := NewSchemaManager()
 	sm.SetPersister(func(def *SchemaDefinition) error { return errors.New("fail") })
 
-	err := sm.AddVectorIndex("vi1", "Document", "embedding", 128, "cosine")
+	err := sm.AddVectorIndex("vi1", "Document", "embedding", 128, "cosine", ConstraintEntityNode)
 	require.Error(t, err)
 
 	// Should be rolled back
@@ -1490,8 +1490,8 @@ func TestSchemaManager_AddRangeIndex_PersistError(t *testing.T) {
 
 func TestSchemaManager_AddVectorIndex_Idempotent(t *testing.T) {
 	sm := NewSchemaManager()
-	require.NoError(t, sm.AddVectorIndex("vi1", "Document", "embedding", 128, "cosine"))
-	require.NoError(t, sm.AddVectorIndex("vi1", "Document", "embedding", 128, "cosine")) // no-op
+	require.NoError(t, sm.AddVectorIndex("vi1", "Document", "embedding", 128, "cosine", ConstraintEntityNode))
+	require.NoError(t, sm.AddVectorIndex("vi1", "Document", "embedding", 128, "cosine", ConstraintEntityNode)) // no-op
 }
 
 func TestSchemaManager_AddRangeIndex_Idempotent(t *testing.T) {
@@ -1502,8 +1502,8 @@ func TestSchemaManager_AddRangeIndex_Idempotent(t *testing.T) {
 
 func TestSchemaManager_AddFulltextIndex_Idempotent(t *testing.T) {
 	sm := NewSchemaManager()
-	require.NoError(t, sm.AddFulltextIndex("ft1", []string{"Person"}, []string{"bio"}))
-	require.NoError(t, sm.AddFulltextIndex("ft1", []string{"Person"}, []string{"bio"})) // no-op
+	require.NoError(t, sm.AddFulltextIndex("ft1", []string{"Person"}, []string{"bio"}, ConstraintEntityNode))
+	require.NoError(t, sm.AddFulltextIndex("ft1", []string{"Person"}, []string{"bio"}, ConstraintEntityNode)) // no-op
 }
 
 func TestCompositeIndex_LookupWithFilter(t *testing.T) {

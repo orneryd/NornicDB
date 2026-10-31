@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -198,7 +199,7 @@ func (b *BadgerEngine) persistSidecarBeforeManifest(node *Node) error {
 		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
 	}
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
-	err = b.commitEngineWrite(func(cw *commitWriter) error {
+	err = b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 		var writes []func(txn *badger.Txn) error
 		if err := cw.writeOnce(func(txn *badger.Txn) error {
 			if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {

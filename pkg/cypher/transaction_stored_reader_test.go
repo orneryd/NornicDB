@@ -37,7 +37,7 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 					require.NoError(t, ns.CreateEdge(edge))
 				}
 			}
-			require.NoError(t, base.FlushWriteBehind())
+			require.NoError(t, base.FlushWriteBehind(nil))
 			require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, "a:x", true))
 			require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, "a:hidden", true))
 			tx, err := base.BeginTransaction()

@@ -87,7 +87,7 @@ func testWALPropertyEpochCleanStop(t *testing.T, walFirst bool) {
 	source := reviewBindingEngine(t, dir)
 	_, err := source.CreateNode(&Node{ID: "close:a", Properties: map[string]any{"alpha": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, source.FlushWriteBehind())
+	require.NoError(t, source.FlushWriteBehind(nil))
 	w, err := NewWAL(logDir, DefaultWALConfig())
 	require.NoError(t, err)
 	source.SetBufferedCommitWAL(w)

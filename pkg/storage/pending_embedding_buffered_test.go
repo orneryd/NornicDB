@@ -21,7 +21,7 @@ func TestPendingCandidatesBufferedFlush(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.Nil(t, e.FindNodeNeedingEmbedding(), "unflushed marker is not durable work yet")
-	require.NoError(t, e.FlushWriteBehind())
+	require.NoError(t, e.FlushWriteBehind(nil))
 	require.Equal(t, 1, e.PendingEmbeddingsCount())
 	node := e.FindNodeNeedingEmbedding()
 	require.NotNil(t, node, "flush must publish into the loaded candidate cache")

@@ -14,7 +14,6 @@ import (
 func constraintContractsEngineFixture(t *testing.T) *MemoryEngine {
 	t.Helper()
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	return engine
 }
 

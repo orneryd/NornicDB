@@ -38,12 +38,8 @@ func (m systemRoutingManager) GetStorageForUse(name, token string) (interface{},
 // database it was opened on, as in Neo4j: COMMIT keeps the grant.
 func TestAdministrationTransactionOpenedOnUserDatabase(t *testing.T) {
 	ctx := context.Background()
-	exec, system := administrationReviewExecutor(t, "nornic")
-	_, err := exec.handleBegin()
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
-	require.NoError(t, err)
-	_, err = exec.handleCommit(context.Background())
+	exec, system := administrationTransactionWithGrant(t, "nornic", "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer")
+	_, err := exec.handleCommit(context.Background())
 	require.NoError(t, err)
 	grants, err := auth.NewProcedurePrivilegeStore(system).List(ctx)
 	require.NoError(t, err)
@@ -70,14 +66,14 @@ func TestAdministrationRoutingFailures(t *testing.T) {
 		t.Cleanup(func() { _ = base.Close() })
 		// nonTransactionalEngine (executor_misc_test.go) opens no transaction.
 		exec := routed(t, nonTransactionalEngine{Engine: storage.NewNamespacedEngine(base, "system")}, nil)
-		_, err := exec.handleBegin()
+		_, err := exec.handleBegin(nil)
 		require.NoError(t, err)
 		_, err = exec.Execute(ctx, grant, nil)
 		require.Error(t, err)
 	})
 	t.Run("initial snapshot can't be released", func(t *testing.T) {
 		exec, system := administrationReviewExecutor(t, "nornic")
-		_, err := exec.handleBegin()
+		_, err := exec.handleBegin(nil)
 		require.NoError(t, err)
 		require.NoError(t, exec.txContext.tx.(*storage.BadgerTransaction).Rollback())
 		_, err = exec.Execute(ctx, grant, nil)
@@ -101,7 +97,7 @@ func TestExecuteInternalAdmissionRoutingAndPolicy(t *testing.T) {
 	require.Len(t, grants, 1)
 
 	failed, _ := administrationReviewExecutor(t, "nornic")
-	_, err = failed.handleBegin()
+	_, err = failed.handleBegin(nil)
 	require.NoError(t, err)
 	failed.txContext.failed = errors.New("an earlier statement failed")
 	_, err = failed.executeInternal(ctx, "RETURN 1 AS one", nil)
@@ -114,7 +110,7 @@ func TestExecuteInternalAdmissionRoutingAndPolicy(t *testing.T) {
 	// A procedure's administration command in an explicit transaction whose
 	// statement carries no storage wrapper (called directly).
 	tx, _ := administrationReviewExecutor(t, "nornic")
-	_, err = tx.handleBegin()
+	_, err = tx.handleBegin(nil)
 	require.NoError(t, err)
 	_, err = tx.executeUserStatement(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType")
@@ -160,7 +156,7 @@ func TestSystemProceduresSeeNoSystemRecords(t *testing.T) {
 	}
 	// In an explicit transaction too: the statement's transaction storage
 	// is left out of the procedure's context.
-	_, err = exec.handleBegin()
+	_, err = exec.handleBegin(nil)
 	require.NoError(t, err)
 	result, err := exec.Execute(ctx, "CALL db.labels() YIELD label RETURN label", nil)
 	require.NoError(t, err)
@@ -230,7 +226,7 @@ func TestAdministrationTransactionTakeover(t *testing.T) {
 	grant := "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer"
 
 	exec, _ := administrationReviewExecutor(t, "nornic")
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(nil)
 	require.NoError(t, err)
 	exec.txContext.tx.(*storage.BadgerTransaction).Metadata = map[string]interface{}{"oversized": strings.Repeat("x", 4096)}
 	_, err = exec.Execute(ctx, grant, nil)
@@ -242,7 +238,7 @@ func TestAdministrationTransactionTakeover(t *testing.T) {
 	require.ErrorIs(t, err, errSystemUnavailable)
 
 	admin, _ := administrationReviewExecutor(t, "nornic")
-	_, err = admin.handleBegin()
+	_, err = admin.handleBegin(nil)
 	require.NoError(t, err)
 	_, err = admin.Execute(ctx, grant, nil)
 	require.NoError(t, err)

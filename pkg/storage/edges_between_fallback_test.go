@@ -3,7 +3,6 @@ package storage
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/assert"
@@ -32,7 +31,7 @@ func TestEdgesBetweenFallback_FindsEdgeFromEitherSide(t *testing.T) {
 	// hub -> leaf: the hub has 51 outgoing edges and the leaf 51 incoming ones.
 	edge := testEdge("fb-target", hub.ID, leaf.ID, "HAS")
 	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(hub.ID, leaf.ID, "HAS")); err != nil {
 			return err
 		}
@@ -51,13 +50,13 @@ func TestEdgesBetweenFallback_FindsEdgeFromEitherSide(t *testing.T) {
 	assert.Empty(t, other, "type matters")
 }
 
-// A miss from a high-degree hub to a fresh node costs the fresh node's degree,
-// not the hub's: MERGE of new relationships out of a hub was quadratic.
+// A miss from a high-degree hub to a fresh node must not materialize the hub's
+// adjacency: MERGE of new relationships out of a hub was quadratic. Measure
+// allocated work rather than elapsed time so concurrent package tests and GC
+// cannot turn scheduler contention into a complexity regression. The old hub
+// scan copies every outgoing key and therefore fails this bound.
 func TestEdgesBetweenFallback_CostIsTheSmallerDegree(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing test")
-	}
-	run := func(degree int) func(int) time.Duration {
+	run := func(degree int) float64 {
 		engine := createTestBadgerEngine(t)
 		hub := testNode("deg-hub")
 		_, err := engine.CreateNode(hub)
@@ -73,25 +72,15 @@ func TestEdgesBetweenFallback_CostIsTheSmallerDegree(t *testing.T) {
 		fresh := testNode("deg-fresh")
 		_, err = engine.CreateNode(fresh)
 		require.NoError(t, err)
-		return func(iterations int) time.Duration {
-			start := time.Now()
-			for i := 0; i < iterations; i++ {
-				got, err := engine.edgesBetweenFromLegacyOutgoingIndex(hub.ID, fresh.ID, "HAS")
-				require.NoError(t, err)
-				require.Empty(t, got)
-			}
-			return time.Since(start)
-		}
+		return testing.AllocsPerRun(20, func() {
+			got, err := engine.edgesBetweenFromLegacyOutgoingIndex(hub.ID, fresh.ID, "HAS")
+			require.NoError(t, err)
+			require.Empty(t, got)
+		})
 	}
-	smallRun, largeRun := run(1000), run(16000)
-	// Use equal work above clock resolution; a 200-operation sample can
-	// round to zero on Windows and cannot establish the scaling ratio.
-	iterations := 200
-	for smallRun(iterations) < 20*time.Millisecond {
-		iterations *= 2
-	}
-	small, large := smallRun(iterations), largeRun(iterations)
-	ratio := float64(large) / float64(small)
-	t.Logf("%d misses from a hub of degree 1000: %v, 16000: %v, ratio %.1f (hub-degree cost ~16)", iterations, small, large, ratio)
-	require.Less(t, ratio, 4.0)
+	small, large := run(1000), run(16000)
+	require.Positive(t, small, "the real Badger lookup must be measured")
+	ratio := large / small
+	t.Logf("allocations per miss: degree 1000: %.0f, 16000: %.0f, ratio %.1f (hub scan ~16)", small, large, ratio)
+	require.Less(t, ratio, 4.0, "fallback must not allocate the high-degree hub's adjacency")
 }

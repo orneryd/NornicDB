@@ -92,7 +92,7 @@ func TestEmbeddingRangeManifestInvalidRecordRepairsThroughPublicReplacement(t *t
 			payload.ChunkEmbeddings = [][]float32{{1, 2}}
 			payload.EmbedMeta = map[string]any{"chunk_count": 1}
 			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(payload))
-			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				meta := map[string]any{"chunk_count": 1}
 				if marker != nil {
 					meta[embeddingRangeManifestKey] = marker

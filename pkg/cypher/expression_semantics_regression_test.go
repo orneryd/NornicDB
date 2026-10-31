@@ -153,7 +153,7 @@ func TestNonBooleanWhereExpressionsReturnClassifiedErrors(t *testing.T) {
 
 func TestNonBooleanWhereFailsExplicitTransaction(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE (:NonBooleanWhere {id: 'string'})", nil)
 	require.NoError(t, err)

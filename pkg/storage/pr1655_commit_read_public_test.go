@@ -174,7 +174,7 @@ func pr1655RunExecuteScenario(t *testing.T, scenario pr1655ExecuteScenario) {
 
 	_, err = exec.Execute(ctx, "CREATE (:Doc {id: 'original', summary_input: 'before'})", nil)
 	require.NoError(t, err)
-	require.NoError(t, base.FlushWriteBehind(), "the seed must be stored before the statement pins its snapshot")
+	require.NoError(t, base.FlushWriteBehind(nil), "the seed must be stored before the statement pins its snapshot")
 	nodeID, err := pr1655SingleDocID(base)
 	require.NoError(t, err)
 	fault.nodeID = nodeID
@@ -212,7 +212,7 @@ func pr1655RunExecuteScenario(t *testing.T, scenario pr1655ExecuteScenario) {
 	pr1655AssertTypedCommitFailure(t, commitErr)
 	fault.restore(t)
 
-	require.NoError(t, base.FlushWriteBehind(), "any acknowledged write must be stored before the body is read")
+	require.NoError(t, base.FlushWriteBehind(nil), "any acknowledged write must be stored before the body is read")
 	after, err := exec.Execute(ctx, "MATCH (n:Doc {id: 'original'}) RETURN n.summary_input AS body", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]any{{"before"}}, after.Rows, "the failed commit must not publish the staged body")

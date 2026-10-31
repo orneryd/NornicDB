@@ -21,7 +21,6 @@ func (s *stubAccessAccumulator) IncrementAccess(entityID string) {
 
 func TestBadgerEngine_SetAccessAccumulator(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	stub := &stubAccessAccumulator{}
 	e.SetAccessAccumulator(stub)
@@ -38,7 +37,6 @@ func TestBadgerEngine_RecordMaterializedAccess(t *testing.T) {
 	nilEngine.RecordMaterializedAccess("n1")
 
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	e.RecordMaterializedAccess("n1")
 
 	stub := &stubAccessAccumulator{}
@@ -53,7 +51,6 @@ func TestBadgerEngine_RecordMaterializedAccess(t *testing.T) {
 
 func TestBadgerEngine_BeginQueryRevealScope_RevealAndNonReveal(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	require.False(t, e.revealAll.Load(), "default state is not revealing")
 
@@ -72,7 +69,6 @@ func TestBadgerEngine_BeginQueryRevealScope_RevealAndNonReveal(t *testing.T) {
 
 func TestBadgerEngine_ScorerForNamespace_ReturnsNilWhenNoSchema(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	// No schemas registered yet → scorer for an unknown namespace
 	// is nil. The wrapper must not panic when the underlying lookup

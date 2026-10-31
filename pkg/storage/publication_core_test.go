@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -122,7 +123,7 @@ func TestPublicationCoreMetadataCommitDoesNotWaitOnStage(t *testing.T) {
 	})
 	go func() {
 		defer close(olderDone)
-		olderErr = b.withPublishingUpdate(func(txn *badger.Txn) error { return txn.Set([]byte("core:entity"), []byte("body")) }, func() { close(entered); <-release }, func() []any { return []any{NodeID("db:n")} }, nil)
+		olderErr = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error { return txn.Set([]byte("core:entity"), []byte("body")) }, func(*commitCacheImages) { close(entered); <-release }, func() []any { return []any{NodeID("db:n")} }, nil)
 	}()
 	if !awaitPublicationCore(t, entered, "older commit rendezvous") {
 		return
@@ -130,7 +131,7 @@ func TestPublicationCoreMetadataCommitDoesNotWaitOnStage(t *testing.T) {
 	metadataDone = make(chan struct{})
 	go func() {
 		defer close(metadataDone)
-		metadataErr = b.withUpdate(func(txn *badger.Txn) error { return txn.Set([]byte("core:metadata"), []byte("value")) })
+		metadataErr = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set([]byte("core:metadata"), []byte("value")) })
 	}()
 	if !awaitPublicationCore(t, metadataDone, "metadata commit while publication is held") {
 		return
@@ -154,8 +155,8 @@ func TestPublicationCoreLargeCommitPublishesOnceAndAbortPublishesNothing(t *test
 				defer setLargeCommitBatchHook(func(int) error { return failure })()
 			}
 			var batches int
-			err := b.commitEngineWrite(func(cw *commitWriter) error {
-				cw.publish = func() { published.Add(1) }
+			err := b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
+				cw.publish = func(*commitCacheImages) { published.Add(1) }
 				cw.publishKeys = []any{NodeID("db:n")}
 				payload := make([]byte, 64)
 				for i := 0; i < 20000; i++ {
@@ -194,14 +195,14 @@ func TestPublicationCoreFailedCommitRetiresReservedNotification(t *testing.T) {
 	require.NotNil(t, n)
 	// Reserve through the same timestamp owner and then reject the physical
 	// write with a conflict. The caller completes its empty entry after abort.
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Set([]byte("core:conflict"), []byte("A")) }))
-	err = b.commitEngineWrite(func(cw *commitWriter) error {
+	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set([]byte("core:conflict"), []byte("A")) }))
+	err = b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 		cw.notification = n
 		_, e := cw.txn.Get([]byte("core:conflict"))
 		if e != nil {
 			return e
 		}
-		if e = b.withUpdate(func(txn *badger.Txn) error { return txn.Set([]byte("core:conflict"), []byte("B")) }); e != nil {
+		if e = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set([]byte("core:conflict"), []byte("B")) }); e != nil {
 			return e
 		}
 		return cw.writeOnce(func(txn *badger.Txn) error { return txn.Set([]byte("core:conflict"), []byte("C")) })

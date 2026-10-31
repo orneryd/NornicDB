@@ -12,10 +12,11 @@ type nodeDeletionResult struct {
 	node  *Node
 	edges []*Edge
 	ids   []EdgeID
+	facts []AffectedFact
 }
 
 func (r nodeDeletionResult) operation(id NodeID) Operation {
-	return Operation{Type: OpDeleteNode, NodeID: id, OldNode: r.node, DeletedEdgeIDs: r.ids, EdgesDeleted: int64(len(r.ids))}
+	return Operation{Type: OpDeleteNode, NodeID: id, OldNode: r.node, DeletedEdgeIDs: r.ids, DeletedEdgeFacts: r.facts, EdgesDeleted: int64(len(r.ids))}
 }
 
 // executeNodeDeletion owns record cleanup and cascade traversal for both native
@@ -89,6 +90,7 @@ func (b *BadgerEngine) executeNodeDeletion(w kvWriter, id NodeID, old *Node) (r 
 		}
 		r.edges = append(r.edges, edge)
 		r.ids = append(r.ids, edge.ID)
+		r.facts = append(r.facts, AffectedFact{EdgeID: edge.ID, StartNode: edge.StartNode, EndNode: edge.EndNode, Type: edge.Type, Deleted: true, Before: true})
 		if !isStaged {
 			if err = b.writeEdgeAdjacencyDeltaInTxn(raw, edge, nil, version); err != nil {
 				return r, err

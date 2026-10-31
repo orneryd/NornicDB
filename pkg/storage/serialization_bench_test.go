@@ -22,38 +22,58 @@ func benchEngine(b *testing.B) *BadgerEngine {
 	return eng
 }
 
-func BenchmarkSerializeNode(b *testing.B) {
-	eng := benchEngine(b)
-	node := benchmarkNode()
-	ns := namespaceForNodeID(node.ID)
+// benchmarkEncodeInUpdate measures one encode per fresh update transaction, the
+// way the commit path runs it, so the timed work is the encode alone.
+func benchmarkEncodeInUpdate(b *testing.B, eng *BadgerEngine, encode func(*badger.Txn) error) {
+	b.Helper()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		err := eng.withUpdate(func(txn *badger.Txn) error {
-			_, _, err := eng.encodeNodeInTxn(txn, ns, node)
-			return err
-		})
-		if err != nil {
+		if err := eng.withUpdate(updateRequest{}, encode); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-func BenchmarkDeserializeNode(b *testing.B) {
-	eng := benchEngine(b)
-	node := benchmarkNode()
-	ns := namespaceForNodeID(node.ID)
+// benchmarkEncodedFixture prepares an immutable body and its dictionaries
+// outside decode benchmark timing. Edge encoding also allocates numeric IDs.
+func benchmarkEncodedFixture(b *testing.B, eng *BadgerEngine, numericIDs bool, encode func(*badger.Txn) ([]byte, error)) []byte {
+	b.Helper()
 	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
-		var encErr error
-		data, _, encErr = eng.encodeNodeInTxn(txn, ns, node)
-		if encErr != nil {
-			return encErr
+	if err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		var err error
+		data, err = encode(txn)
+		if err != nil {
+			return err
+		}
+		if numericIDs {
+			_, _ = eng.idDict.flushTxnCounters(txn)
 		}
 		_ = eng.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}); err != nil {
 		b.Fatal(err)
 	}
+	return data
+}
+
+func BenchmarkSerializeNode(b *testing.B) {
+	eng := benchEngine(b)
+	node := benchmarkNode()
+	ns := namespaceForNodeID(node.ID)
+	benchmarkEncodeInUpdate(b, eng, func(txn *badger.Txn) error {
+		_, _, err := eng.encodeNodeInTxn(txn, ns, node)
+		return err
+	})
+}
+
+func BenchmarkDeserializeNode(b *testing.B) {
+	eng := benchEngine(b)
+	node := benchmarkNode()
+	ns := namespaceForNodeID(node.ID)
+	data := benchmarkEncodedFixture(b, eng, false, func(txn *badger.Txn) ([]byte, error) {
+		data, _, err := eng.encodeNodeInTxn(txn, ns, node)
+		return data, err
+	})
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -67,7 +87,7 @@ func BenchmarkDecodeTokenizedPropertiesGraphitiVector(b *testing.B) {
 	eng := benchEngine(b)
 	props := benchmarkGraphitiProperties()
 	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
+	if err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		data, encErr = eng.encodeTokenizedProperties(txn, "test", props)
 		if encErr != nil {
@@ -97,19 +117,10 @@ func BenchmarkDeserializeNodeGraphitiVector(b *testing.B) {
 	node := benchmarkNode()
 	node.Properties = benchmarkGraphitiProperties()
 	ns := namespaceForNodeID(node.ID)
-	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
-		var encErr error
-		data, _, encErr = eng.encodeNodeInTxn(txn, ns, node)
-		if encErr != nil {
-			return encErr
-		}
-		_ = eng.propKeyDict.flushTxnCounters(txn)
-		return nil
-	}); err != nil {
-		b.Fatal(err)
-	}
-
+	data := benchmarkEncodedFixture(b, eng, false, func(txn *badger.Txn) ([]byte, error) {
+		data, _, err := eng.encodeNodeInTxn(txn, ns, node)
+		return data, err
+	})
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -128,20 +139,11 @@ func BenchmarkDeserializeNodeGraphitiVectorProjectedScalars(b *testing.B) {
 	node := benchmarkNode()
 	node.Properties = benchmarkGraphitiProperties()
 	ns := namespaceForNodeID(node.ID)
-	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
-		var encErr error
-		data, _, encErr = eng.encodeNodeInTxn(txn, ns, node)
-		if encErr != nil {
-			return encErr
-		}
-		_ = eng.propKeyDict.flushTxnCounters(txn)
-		return nil
-	}); err != nil {
-		b.Fatal(err)
-	}
+	data := benchmarkEncodedFixture(b, eng, false, func(txn *badger.Txn) ([]byte, error) {
+		data, _, err := eng.encodeNodeInTxn(txn, ns, node)
+		return data, err
+	})
 	include := propertyProjectionSet([]string{"name", "group_id"})
-
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -162,35 +164,17 @@ func BenchmarkSerializeEdge(b *testing.B) {
 	eng := benchEngine(b)
 	edge := benchmarkEdge()
 	ns := namespaceForEdgeID(edge.ID)
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		err := eng.withUpdate(func(txn *badger.Txn) error {
-			_, err := eng.encodeEdgeInTxn(txn, ns, edge)
-			return err
-		})
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
+	benchmarkEncodeInUpdate(b, eng, func(txn *badger.Txn) error {
+		_, err := eng.encodeEdgeInTxn(txn, ns, edge)
+		return err
+	})
 }
 
 func BenchmarkDeserializeEdge(b *testing.B) {
 	eng := benchEngine(b)
 	edge := benchmarkEdge()
 	ns := namespaceForEdgeID(edge.ID)
-	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
-		var encErr error
-		data, encErr = eng.encodeEdgeInTxn(txn, ns, edge)
-		if encErr != nil {
-			return encErr
-		}
-		_, _ = eng.idDict.flushTxnCounters(txn)
-		_ = eng.propKeyDict.flushTxnCounters(txn)
-		return nil
-	}); err != nil {
-		b.Fatal(err)
-	}
+	data := benchmarkEncodedFixture(b, eng, true, func(txn *badger.Txn) ([]byte, error) { return eng.encodeEdgeInTxn(txn, ns, edge) })
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {

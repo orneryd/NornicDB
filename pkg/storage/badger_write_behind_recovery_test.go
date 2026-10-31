@@ -138,7 +138,7 @@ func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	require.NoError(t, tx.Commit())
 
 	// Flush lands the data AND the flush marker in Badger.
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.Zero(t, engine.writeBehind.PendingOps())
 
 	// Graceful close (flushes again — a no-op — and closes).

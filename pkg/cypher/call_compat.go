@@ -742,7 +742,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
 			return err
 		}
-		if err := schema.AddVectorIndexForEntity(indexName, token, property, int(dimension), similarity, entity); err != nil {
+		if err := schema.AddVectorIndex(indexName, token, property, int(dimension), similarity, entity); err != nil {
 			return err
 		}
 		if entity == storage.ConstraintEntityNode {
@@ -772,71 +772,57 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
-// callDbIndexFulltextCreateNodeIndex creates a fulltext index on nodes - Neo4j db.index.fulltext.createNodeIndex()
-// Syntax: CALL db.index.fulltext.createNodeIndex(indexName, labels, properties, config)
-func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	const procedure = "db.index.fulltext.createNodeIndex"
-	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
-	if err != nil {
-		return nil, err
-	}
-	labels, err := requiredProcedureStringList(procedure, args, 1, "labels")
-	if err != nil {
-		return nil, err
-	}
-	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
-	if err != nil {
-		return nil, err
-	}
-
-	// Create fulltext index using schema manager
-	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode); err != nil {
-			return err
-		}
-		return schema.AddFulltextIndex(indexName, labels, properties)
-	})
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresCreateFulltextIndexFailed(err), err)
-	}
-
-	return &ExecuteResult{
-		Columns: legacyProcedureColumns("db.index.fulltext.createNodeIndex"),
-		Rows:    [][]interface{}{{indexName, labels, properties}},
-	}, nil
+// fulltextIndexProcedure names a fulltext index creation procedure and the
+// Neo4j name of its second argument: db.index.fulltext.createNodeIndex takes
+// labels, db.index.fulltext.createRelationshipIndex relationship types.
+type fulltextIndexProcedure struct {
+	name, token string
 }
 
-// callDbIndexFulltextCreateRelationshipIndex creates a fulltext index on relationships - Neo4j db.index.fulltext.createRelationshipIndex()
-// Syntax: CALL db.index.fulltext.createRelationshipIndex(indexName, relationshipTypes, properties, config)
-func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	const procedure = "db.index.fulltext.createRelationshipIndex"
-	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+var (
+	fulltextNodeIndexProcedure         = fulltextIndexProcedure{"db.index.fulltext.createNodeIndex", "labels"}
+	fulltextRelationshipIndexProcedure = fulltextIndexProcedure{"db.index.fulltext.createRelationshipIndex", "relationshipTypes"}
+)
+
+// callDbIndexFulltextCreateIndex creates a fulltext index on nodes or
+// relationships from the call's evaluated arguments: (indexName, labels or
+// relationship types, properties[, config]). The relationship procedure keeps
+// NornicDB's row describing the created index.
+func (e *StorageExecutor) callDbIndexFulltextCreateIndex(ctx context.Context, args []interface{}, entity storage.ConstraintEntityType) (*ExecuteResult, error) {
+	procedure := fulltextNodeIndexProcedure
+	if entity == storage.ConstraintEntityRelationship {
+		procedure = fulltextRelationshipIndexProcedure
+	}
+	indexName, err := requiredProcedureString(procedure.name, args, 0, "indexName")
 	if err != nil {
 		return nil, err
 	}
-	relTypes, err := requiredProcedureStringList(procedure, args, 1, "relationshipTypes")
+	tokens, err := requiredProcedureStringList(procedure.name, args, 1, procedure.token)
 	if err != nil {
 		return nil, err
 	}
-	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
+	properties, err := requiredProcedureStringList(procedure.name, args, 2, "properties")
 	if err != nil {
 		return nil, err
 	}
 
-	// Create fulltext index using schema manager
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship); err != nil {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", tokens, properties, entity); err != nil {
 			return err
 		}
-		return schema.AddFulltextRelationshipIndex(indexName, relTypes, properties)
+		return schema.AddFulltextIndex(indexName, tokens, properties, entity)
 	})
 	if err != nil {
-		return nil, localizedError(localization.CypherProceduresCreateRelationshipFulltextIndexFailed(err), err)
+		failure := localization.CypherProceduresCreateFulltextIndexFailed(err)
+		if entity == storage.ConstraintEntityRelationship {
+			failure = localization.CypherProceduresCreateRelationshipFulltextIndexFailed(err)
+		}
+		return nil, localizedError(failure, err)
 	}
 
 	return &ExecuteResult{
-		Columns: legacyProcedureColumns("db.index.fulltext.createRelationshipIndex"),
-		Rows:    [][]interface{}{{indexName, relTypes, properties}},
+		Columns: legacyProcedureColumns(procedure.name),
+		Rows:    [][]interface{}{{indexName, tokens, properties}},
 	}, nil
 }
 

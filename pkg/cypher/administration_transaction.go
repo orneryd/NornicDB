@@ -130,7 +130,7 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 		return nil, err
 	}
 	owner := e.cloneWithStorage(system, selectedDatabaseStorage)
-	if _, err := owner.handleBegin(); err != nil {
+	if _, err := owner.handleBegin(ctx); err != nil {
 		return nil, err
 	}
 	outside := e.storage

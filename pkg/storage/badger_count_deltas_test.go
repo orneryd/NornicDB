@@ -110,7 +110,7 @@ func TestCountDeltaMalformedEdgeTypeBaseRepair(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		malformed := make([]byte, 4)
 		binary.BigEndian.PutUint32(malformed, 7)
 		return txn.Set(edgeTypeCountKey("ns1", "T"), malformed)

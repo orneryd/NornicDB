@@ -12,13 +12,11 @@ func TestRefreshUniqueConstraintValuesForEngine_NilArgs(t *testing.T) {
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(nil, NewSchemaManager()))
 
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(e, nil))
 }
 
 func TestRefreshUniqueConstraintValuesForEngine_NoConstraints(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	schema := NewSchemaManager()
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(e, schema))
@@ -26,7 +24,6 @@ func TestRefreshUniqueConstraintValuesForEngine_NoConstraints(t *testing.T) {
 
 func TestRefreshUniqueConstraintValuesForEngine_RebuildsCache(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	schema := e.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddConstraint(Constraint{
@@ -47,7 +44,6 @@ func TestRefreshUniqueConstraintValuesForEngine_RebuildsCache(t *testing.T) {
 
 func TestValidateRelationshipConstraintOnCreationForEngine_DispatchesByType(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	for _, n := range []NodeID{"test:a", "test:b"} {
 		_, err := e.CreateNode(&Node{ID: n, Labels: []string{"L"}, Properties: map[string]any{}})
@@ -78,7 +74,6 @@ func TestValidateRelationshipConstraintOnCreationForEngine_DispatchesByType(t *t
 
 func TestValidateDomainConstraintOnCreationForEngine(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{
 		ID: "test:n", Labels: []string{"Order"},
@@ -152,7 +147,6 @@ func TestValidateCardinalityOnCreationForEngine(t *testing.T) {
 
 func TestValidatePolicyOnCreationForEngine(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	for _, node := range []*Node{
 		{ID: "test:user", Labels: []string{"User"}, Properties: map[string]any{}},
@@ -190,7 +184,6 @@ func TestValidatePolicyOnCreationForEngine(t *testing.T) {
 
 func TestValidateRelPropertyTypeOnCreationForEngine(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	for _, n := range []NodeID{"test:a", "test:b"} {
 		_, err := e.CreateNode(&Node{ID: n, Labels: []string{"Endpoint"}, Properties: map[string]any{}})

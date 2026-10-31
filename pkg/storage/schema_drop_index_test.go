@@ -26,7 +26,7 @@ func TestSchemaManager_DropIndex_Property(t *testing.T) {
 
 func TestSchemaManager_DropIndex_Fulltext(t *testing.T) {
 	sm := NewSchemaManager()
-	if err := sm.AddFulltextIndex("ft_doc_content", []string{"Document"}, []string{"title", "body"}); err != nil {
+	if err := sm.AddFulltextIndex("ft_doc_content", []string{"Document"}, []string{"title", "body"}, ConstraintEntityNode); err != nil {
 		t.Fatalf("AddFulltextIndex failed: %v", err)
 	}
 
@@ -64,7 +64,7 @@ func TestSchemaManager_DropIndex_Range(t *testing.T) {
 
 func TestSchemaManager_DropIndex_Vector(t *testing.T) {
 	sm := NewSchemaManager()
-	if err := sm.AddVectorIndex("vec_embedding", "Document", "embedding", 1024, "cosine"); err != nil {
+	if err := sm.AddVectorIndex("vec_embedding", "Document", "embedding", 1024, "cosine", ConstraintEntityNode); err != nil {
 		t.Fatalf("AddVectorIndex failed: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestSchemaManager_DropIndex_PersistRollback(t *testing.T) {
 func TestSchemaManager_DropIndex_MultipleTypes(t *testing.T) {
 	sm := NewSchemaManager()
 	_ = sm.AddPropertyIndex("idx_a", "A", []string{"x"})
-	_ = sm.AddFulltextIndex("ft_b", []string{"B"}, []string{"y"})
+	_ = sm.AddFulltextIndex("ft_b", []string{"B"}, []string{"y"}, ConstraintEntityNode)
 	_ = sm.AddRangeIndex("range_c", "C", "z")
 
 	if len(nonLookupIndexes(sm.GetIndexes())) != 3 {

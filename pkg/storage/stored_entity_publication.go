@@ -277,7 +277,7 @@ func (s StoredEntitySnapshot) ForEach(visit func(StoredEntitySnapshotEntry) erro
 // returns the observer installed before any subsequent writer is admitted.
 // Neither initializer nor observer may reenter storage or write admission.
 func (b *BadgerEngine) InitializeStoredEntityObserver(namespace string, initialize func(StoredEntitySnapshot) (StoredEntityObserver, error), boundary StoredEntityReadBoundary) error {
-	lease, err := b.beginBarrierWrite(true, true)
+	lease, err := b.beginBarrierWrite(context.Background(), true, true)
 	if err != nil {
 		return err
 	}

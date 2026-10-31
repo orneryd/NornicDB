@@ -40,7 +40,7 @@ func TestBadgerTransaction_ValidateEdgeConstraints_BranchCoverage(t *testing.T) 
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "rel_domain", Type: ConstraintDomain, EntityType: ConstraintEntityRelationship, Label: "LINK", Properties: []string{"status"}, AllowedValues: []any{"ok", "warn"}}))
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "rel_card", Type: ConstraintCardinality, EntityType: ConstraintEntityRelationship, Label: "LINK", Direction: "OUTGOING", MaxCount: 1}))
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "rel_policy", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "LINK", PolicyMode: "DISALLOWED", SourceLabel: "Employee", TargetLabel: "Department"}))
-	require.NoError(t, sm.AddPropertyTypeConstraint("rel_rank_type", "LINK", "rank", PropertyTypeInteger, ConstraintEntityRelationship))
+	require.NoError(t, sm.AddPropertyTypeConstraint("rel_rank_type", "LINK", "rank", PropertyTypeInteger, PropertyTypeConstraintOptions{EntityType: ConstraintEntityRelationship}))
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "rel_temporal", Type: ConstraintTemporal, EntityType: ConstraintEntityRelationship, Label: "TEMP_LINK", Properties: []string{"key", "valid_from", "valid_to"}}))
 
 	tx, err := engine.BeginTransaction()

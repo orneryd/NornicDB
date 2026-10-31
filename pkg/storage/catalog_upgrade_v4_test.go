@@ -56,7 +56,7 @@ func catalogV4Snapshot(t *testing.T, b *BadgerEngine) map[string][]byte {
 	return out
 }
 func catalogV4Run(b *BadgerEngine, ctx context.Context) error {
-	lease, err := b.beginMaintenanceWrite(nil)
+	lease, err := b.beginMaintenanceWrite(ctx, nil)
 	if err != nil {
 		return err
 	}
