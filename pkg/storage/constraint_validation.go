@@ -170,6 +170,27 @@ func isValueInAllowedList(value interface{}, allowedValues []interface{}) bool {
 	return false
 }
 
+// scanStoredLabelNodes runs a creation validator's check over label's stored
+// nodes, decoding only properties. A check's error is the violation itself; a
+// failed scan is reported as one.
+func scanStoredLabelNodes(engine Engine, label string, properties []string, check func(*Node) error) error {
+	var violation error
+	err := StreamStoredNodesByLabelProjected(engine, label, properties, func(node *Node) error {
+		if node == nil {
+			return nil
+		}
+		violation = check(node)
+		return violation
+	})
+	if violation != nil {
+		return violation
+	}
+	if err != nil {
+		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+	}
+	return nil
+}
+
 // validateDomainConstraintOnCreationForEngine validates that all existing nodes satisfy the domain constraint.
 func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) error {
 	if len(c.Properties) != 1 {
@@ -181,23 +202,17 @@ func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) er
 
 	property := c.Properties[0]
 
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
-	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
-	}
-
-	for _, node := range nodes {
+	return scanStoredLabelNodes(engine, c.Label, []string{property}, func(node *Node) error {
 		value := node.Properties[property]
 		if value == nil {
-			continue // NULL is valid for domain constraints
+			return nil // NULL is valid for domain constraints
 		}
 		if !isValueInAllowedList(value, c.AllowedValues) {
 			message := localization.StorageValidationDomainNodeInvalid(string(node.ID), property, value, c.AllowedValues)
 			return newLocalizedConstraintViolation(ConstraintDomain, c.Label, []string{property}, message, nil)
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // validateUniqueConstraintOnCreation checks all existing nodes for duplicates.
@@ -213,15 +228,11 @@ func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) e
 	seen := make(constraintCreationValues)
 
 	// Scan all nodes with this label
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
-	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
-	}
 
-	for _, node := range nodes {
+	return scanStoredLabelNodes(engine, c.Label, []string{property}, func(node *Node) error {
 		value := node.Properties[property]
 		if value == nil {
-			continue // NULL values don't violate uniqueness
+			return nil // NULL values don't violate uniqueness
 		}
 
 		if existingNodeID, found := seen.add(string(node.ID), []interface{}{value}); found {
@@ -229,9 +240,8 @@ func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) e
 			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{property}, message, nil)
 		}
 
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // validateNodeKeyConstraintOnCreation checks all existing nodes for duplicate composite keys.
@@ -242,12 +252,7 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 
 	seen := make(constraintCreationValues)
 
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
-	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
-	}
-
-	for _, node := range nodes {
+	return scanStoredLabelNodes(engine, c.Label, c.Properties, func(node *Node) error {
 		// Extract all property values
 		values := make([]interface{}, len(c.Properties))
 		hasAllValues := true
@@ -266,7 +271,7 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 		}
 
 		if !hasAllValues {
-			continue
+			return nil
 		}
 
 		if existingID, found := seen.add(string(node.ID), values); found {
@@ -277,9 +282,8 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 		}
 
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // validateExistenceConstraintOnCreation checks all existing nodes have the required property.
@@ -290,20 +294,14 @@ func validateExistenceConstraintOnCreationWithEngine(engine Engine, c Constraint
 
 	property := c.Properties[0]
 
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
-	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
-	}
-
-	for _, node := range nodes {
+	return scanStoredLabelNodes(engine, c.Label, []string{property}, func(node *Node) error {
 		value := node.Properties[property]
 		if value == nil {
 			message := localization.StorageValidationNodeExistsMissingCreation(string(node.ID), property)
 			return newLocalizedConstraintViolation(ConstraintExists, c.Label, []string{property}, message, nil)
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // validateTemporalConstraintOnCreationWithEngine enforces no-overlap for temporal intervals.
@@ -315,14 +313,9 @@ func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint)
 		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
 
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
-	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
-	}
-
 	groups := temporalCreationGroups{spec: spec}
 	byKey := make(map[int][]temporalInterval)
-	for _, node := range nodes {
+	if err := scanStoredLabelNodes(engine, c.Label, c.Properties, func(node *Node) error {
 		keyVal, missing := spec.keyValue(node.Properties)
 		if missing != "" {
 			message := localization.StorageValidationTemporalNodeKeyNullCreation(string(node.ID), missing)
@@ -337,6 +330,9 @@ func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint)
 		}
 		interval.nodeID = node.ID
 		byKey[key] = append(byKey[key], interval)
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	for _, intervals := range byKey {
@@ -655,19 +651,13 @@ func ValidatePropertyTypeConstraintOnCreationForEngine(engine Engine, ptc Proper
 		return validateRelPropertyTypeOnCreationForEngine(engine, ptc)
 	}
 
-	nodes, err := GetStoredNodesByLabel(engine, ptc.Label)
-	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
-	}
-
-	for _, node := range nodes {
+	return scanStoredLabelNodes(engine, ptc.Label, []string{ptc.Property}, func(node *Node) error {
 		value := node.Properties[ptc.Property]
 		if err := ValidatePropertyType(value, ptc.ExpectedType); err != nil {
 			return localizedError(localization.StorageValidationNodePropertyInvalid(string(node.ID), ptc.Property, err), err)
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // validateRelPropertyTypeOnCreationForEngine validates property type
