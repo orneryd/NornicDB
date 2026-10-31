@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -93,7 +94,7 @@ func (m *LifecycleMetrics) RecordPruneRun(result ApplyResult, duration time.Dura
 // ToMap renders status-ready lifecycle metrics.
 func (m *LifecycleMetrics) ToMap(registry *ReaderRegistry) map[string]interface{} {
 	m.mu.RLock()
-	lastRun := m.lastRunResult
+	lastRun := callerowned.Map(m.lastRunResult)
 	nsMetrics := make(map[string]map[string]int64, len(m.namespaceMetrics))
 	topDebtKeys := append([]storage.MVCCLifecycleDebtKey(nil), m.topDebtKeys...)
 	rollups := lifecycleRollupsFromHistory(time.Now(), m.pruneHistory, m.debtHistory)
