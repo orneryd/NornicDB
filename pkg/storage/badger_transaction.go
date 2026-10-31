@@ -3523,26 +3523,29 @@ func (tx *BadgerTransaction) labelScanScopeLocked(prefixes ...string) string {
 	return scope
 }
 
-// committedConstraintNodesLocked returns the committed nodes with label that
-// a constraint check compares a written node with. It reads the latest
-// committed state, not the transaction's snapshot: a value another
-// transaction committed after this one began still conflicts, as in Neo4j
-// (#700), and the constraint keys' commit locks (the canonical commit-lock registry) keep that
-// state from changing under the check. Nodes this transaction deletes or
-// rewrites are left out; the checks compare their pending versions
-// separately.
-func (tx *BadgerTransaction) committedConstraintNodesLocked(label string) ([]*Node, error) {
-	nodes, err := tx.engine.GetStoredNodesByLabel(label)
-	if err != nil {
-		return nil, err
-	}
-	kept := nodes[:0]
-	for _, node := range nodes {
-		if !tx.committedNodeSupersededLocked(node.ID) {
-			kept = append(kept, node)
+// streamCommittedConstraintNodesLocked visits the committed nodes with label
+// that a constraint check compares a written node with, decoding only
+// properties. It reads the latest committed state, not the transaction's
+// snapshot: a value another transaction committed after this one began still
+// conflicts, as in Neo4j (#700), and the constraint keys' commit locks (the
+// canonical commit-lock registry) keep that state from changing under the
+// check. Nodes this transaction deletes or rewrites are left out; the checks
+// compare their pending versions separately. The commit context is polled as
+// it goes.
+func (tx *BadgerTransaction) streamCommittedConstraintNodesLocked(label string, properties []string, visit func(*Node) error) error {
+	scanned := 0
+	return tx.engine.StreamStoredNodesByLabelProjected(label, properties, func(node *Node) error {
+		if scanned%commitCancelPollEvery == 0 {
+			if err := tx.commitCancelledLocked(); err != nil {
+				return err
+			}
 		}
-	}
-	return kept, nil
+		scanned++
+		if node == nil || tx.committedNodeSupersededLocked(node.ID) {
+			return nil
+		}
+		return visit(node)
+	})
 }
 
 // committedNodeSupersededLocked reports whether the transaction no longer sees
@@ -4147,29 +4150,19 @@ func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property s
 		hook()
 	}
 
-	nodes, err := tx.committedConstraintNodesLocked(label)
-	if err != nil {
-		return err
-	}
-	for i, existingNode := range nodes {
-		if i%commitCancelPollEvery == 0 {
-			if err := tx.commitCancelledLocked(); err != nil {
-				return err
-			}
-		}
-		if existingNode == nil || existingNode.ID == excludeNodeID {
-			continue
+	return tx.streamCommittedConstraintNodesLocked(label, []string{property}, func(existingNode *Node) error {
+		if existingNode.ID == excludeNodeID {
+			return nil
 		}
 		if namespace != "" && !strings.HasPrefix(string(existingNode.ID), namespace+":") {
-			continue
+			return nil
 		}
 		if existingValue, ok := existingNode.Properties[property]; ok && compareValues(existingValue, value) {
 			message := localization.StorageValidationNodeUniqueExisting(property, value, string(existingNode.ID))
 			return newLocalizedConstraintViolation(ConstraintUnique, label, []string{property}, message, nil)
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // checkNodeKeyConstraint ensures composite key uniqueness across ALL data.
@@ -4270,39 +4263,22 @@ func (tx *BadgerTransaction) scanForNodeKeyViolation(namespace, label string, pr
 	if hook := nodeKeyScanHook.Load(); hook != nil {
 		(*hook)()
 	}
-	nodes, err := tx.committedConstraintNodesLocked(label)
-	if err != nil {
-		return err
-	}
-	for i, existingNode := range nodes {
-		if i%commitCancelPollEvery == 0 {
-			if err := tx.commitCancelledLocked(); err != nil {
-				return err
-			}
-		}
-		if existingNode == nil || existingNode.ID == excludeNodeID {
-			continue
+	return tx.streamCommittedConstraintNodesLocked(label, properties, func(existingNode *Node) error {
+		if existingNode.ID == excludeNodeID {
+			return nil
 		}
 		if namespace != "" && !strings.HasPrefix(string(existingNode.ID), namespace+":") {
-			continue
+			return nil
 		}
-
-		match := true
 		for i, prop := range properties {
 			existingValue, ok := existingNode.Properties[prop]
 			if !ok || !compareValues(existingValue, values[i]) {
-				match = false
-				break
+				return nil
 			}
 		}
-
-		if match {
-			message := localization.StorageValidationNodeCompositeKeyExisting(properties, values, string(existingNode.ID))
-			return newLocalizedConstraintViolation(ConstraintNodeKey, label, properties, message, nil)
-		}
-	}
-
-	return nil
+		message := localization.StorageValidationNodeCompositeKeyExisting(properties, values, string(existingNode.ID))
+		return newLocalizedConstraintViolation(ConstraintNodeKey, label, properties, message, nil)
+	})
 }
 
 // checkExistenceConstraint ensures required property exists.
@@ -4395,19 +4371,12 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 
 	// Check overlaps against committed storage using the label index scan.
 	runTemporalConstraintScanHook()
-	visibleNodes, err := tx.committedConstraintNodesLocked(c.Label)
-	if err != nil {
-		return err
-	}
-	for _, other := range visibleNodes {
-		if other == nil || other.ID == node.ID || !strings.HasPrefix(string(other.ID), nsPrefix) {
-			continue
+	return tx.streamCommittedConstraintNodesLocked(c.Label, c.Properties, func(other *Node) error {
+		if other.ID == node.ID || !strings.HasPrefix(string(other.ID), nsPrefix) {
+			return nil
 		}
-		if err := collides(other); err != nil {
-			return err
-		}
-	}
-	return nil
+		return collides(other)
+	})
 }
 
 // PrepareMergeKey readies the transaction for a MERGE that looks up the node
