@@ -12,8 +12,8 @@ func EngineWithVectorWorkOrigin(engine Engine, origin uint64) (Engine, error) {
 	if engine == nil {
 		return nil, fmt.Errorf("nil admitted entity engine: %w", ErrInvalidData)
 	}
-	if _, carried := asVectorWorkOriginCarrier(engine); carried {
-		return engine, nil
+	if carrier, carried := asVectorWorkOriginCarrier(engine); carried {
+		return carrier, nil
 	}
 	return newVectorWorkOriginEngine(engine, origin), nil
 }

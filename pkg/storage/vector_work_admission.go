@@ -89,8 +89,8 @@ func SystemStoreEngine(engine Engine) Engine {
 	if engine == nil {
 		return nil
 	}
-	if _, carried := asVectorWorkOriginCarrier(engine); carried {
-		return engine
+	if carrier, carried := asVectorWorkOriginCarrier(engine); carried {
+		return carrier
 	}
 	return newVectorWorkOriginEngine(engine, SystemStoreAdmission)
 }
