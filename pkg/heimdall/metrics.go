@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/search"
 )
 
@@ -235,7 +236,8 @@ func (c *MetricsCollector) Collect() *NornicDBMetrics {
 
 	// Return cached metrics if still fresh
 	if c.cache != nil && time.Since(c.lastCache) < c.cacheTTL {
-		return c.cache
+		// Each caller gets its own copy of the retained snapshot.
+		return callerowned.Of(c.cache)
 	}
 
 	metrics := &NornicDBMetrics{
@@ -262,7 +264,7 @@ func (c *MetricsCollector) Collect() *NornicDBMetrics {
 	c.cache = metrics
 	c.lastCache = time.Now()
 
-	return metrics
+	return callerowned.Of(metrics)
 }
 
 // Runtime returns current runtime metrics (always cheap to collect).

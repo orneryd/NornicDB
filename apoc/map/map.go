@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 )
 
 // FromPairs creates a map from a list of key-value pairs.
@@ -471,13 +473,8 @@ func DropNullValues(m map[string]interface{}) map[string]interface{} {
 // Helper functions
 
 func copyMap(m map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-	for k, v := range m {
-		if nested, ok := v.(map[string]interface{}); ok {
-			result[k] = copyMap(nested)
-		} else {
-			result[k] = v
-		}
+	if m == nil {
+		return make(map[string]interface{})
 	}
-	return result
+	return callerowned.Map(m)
 }
