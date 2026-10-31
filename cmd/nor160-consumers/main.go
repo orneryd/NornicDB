@@ -1023,6 +1023,31 @@ func (c *NOR160ControlCache) GetHandoffCaptured(id NodeID) *Node {
 	return out
 }
 
+// A store into the parameter's own field keeps nothing elsewhere.
+func nor160ControlHandoffSelf(n *Node) { n.Properties = n.EmbedMeta }
+
+func (c *NOR160ControlCache) GetHandoffSelf(id NodeID) *Node {
+	n := copyNode(c.nodes[id])
+	nor160ControlHandoffSelf(n)
+	return n
+}
+
+// An unresolved call is attributed to its own site, through a caller.
+type nor160ControlSink interface{ nor160Sink(*Node) }
+
+func nor160ControlHandoffUnknownCall(s nor160ControlSink, n *Node) { s.nor160Sink(n) }
+
+func nor160ControlHandoffUnknownVia(s nor160ControlSink, n *Node) {
+	nor160ControlHandoffUnknownCall(s, n)
+}
+
+func (c *NOR160ControlCache) GetHandoffUnknown(id NodeID, s nor160ControlSink) *Node {
+	n := copyNode(c.nodes[id])
+	nor160ControlHandoffUnknownVia(s, n)
+	nor160ControlHandoffOverwrites(n)
+	return n
+}
+
 func (c *NOR160ControlCache) GetHandoffKept(id NodeID) *Node {
 	n := copyNode(c.nodes[id])
 	c.nor160ControlHandoffKeeps(n)
@@ -1159,11 +1184,21 @@ var handoffControls = []handoffControl{
 	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffCaptured", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffCaptured$1", "held", false},
 	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffReturned", storagePkg + ".nor160ControlHandoffReturns", "returns", true},
 	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffReturned", storagePkg + ".nor160ControlHandoffReturns", "held", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffSelf", storagePkg + ".nor160ControlHandoffSelf", "self_field", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffSelf", storagePkg + ".nor160ControlHandoffSelf", "held", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffSelf", storagePkg + ".nor160ControlHandoffSelf", "write:nor160ControlHandoffSelf", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffKept", "(*" + storagePkg + ".NOR160ControlCache).nor160ControlHandoffKeeps", "self_field", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffUnknown", storagePkg + ".nor160ControlHandoffUnknownVia", "unknown_call", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffUnknown", storagePkg + ".nor160ControlHandoffUnknownVia", "site:nor160ControlHandoffUnknownCall", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffUnknown", storagePkg + ".nor160ControlHandoffUnknownVia", "site:nor160ControlHandoffUnknownVia", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffKept", "(*" + storagePkg + ".NOR160ControlCache).nor160ControlHandoffKeeps", "unknown_call", false},
 	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffSent", storagePkg + ".nor160ControlHandoffSends", "sends", true},
 	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffSent", storagePkg + ".nor160ControlHandoffSends", "held", false},
 }
 
 var controls = []control{
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffSelf", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffUnknown", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffReturned", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffCaptured", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffSent", false},
@@ -4668,19 +4703,57 @@ type handoff struct {
 }
 
 // handoffRoutes: the routes by which a callee, or a callee of it, passes the
-// value on. Held: stored into memory neither local nor captured, so an object
-// keeps it. Captured: stored into a closure's captured variable, handing it to
-// the enclosing function. Sends: sent on a channel. UnknownCall: passed to a
-// call with no resolved callee, so this fact is incomplete for this callee.
+// value on. Held: stored into memory that is neither local, captured nor the
+// parameter's own, so an object keeps it. SelfField: stored into a field of the
+// parameter itself, which keeps nothing elsewhere. Captured: stored into a
+// closure's captured variable, handing it to the enclosing function. Sends:
+// sent on a channel. UnknownCall: passed to a call with no resolved callee, at
+// UnknownSites, so this fact is incomplete for this callee. WriteSites: where a
+// reference field of the parameter is overwritten, here or in a callee.
 type handoffRoutes struct {
-	Held        bool `json:"held"`
-	Captured    bool `json:"captured"`
-	Sends       bool `json:"sends"`
-	UnknownCall bool `json:"unknown_call"`
+	Held         bool     `json:"held"`
+	SelfField    bool     `json:"self_field"`
+	Captured     bool     `json:"captured"`
+	Sends        bool     `json:"sends"`
+	UnknownCall  bool     `json:"unknown_call"`
+	UnknownSites []string `json:"unknown_sites,omitempty"`
+	WriteSites   []string `json:"write_sites,omitempty"`
+}
+
+func mergeSites(x, y []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, list := range [][]string{x, y} {
+		for _, site := range list {
+			if !seen[site] {
+				seen[site] = true
+				out = append(out, site)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (r handoffRoutes) or(x handoffRoutes) handoffRoutes {
-	return handoffRoutes{r.Held || x.Held, r.Captured || x.Captured, r.Sends || x.Sends, r.UnknownCall || x.UnknownCall}
+	return handoffRoutes{
+		Held:         r.Held || x.Held,
+		SelfField:    r.SelfField || x.SelfField,
+		Captured:     r.Captured || x.Captured,
+		Sends:        r.Sends || x.Sends,
+		UnknownCall:  r.UnknownCall || x.UnknownCall,
+		UnknownSites: mergeSites(r.UnknownSites, x.UnknownSites),
+		WriteSites:   mergeSites(r.WriteSites, x.WriteSites),
+	}
+}
+
+func siteIn(sites []string, name string) bool {
+	for _, site := range sites {
+		if strings.Contains(site, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // capturedRoot: the captured variable memory at v is reached through.
@@ -4715,9 +4788,11 @@ func (a *analysis) routesOf(g *ssa.Function, m int, memo map[string]*handoffRout
 	s := a.states[g]
 	if s == nil {
 		result.UnknownCall = true
+		result.UnknownSites = []string{"no summary: " + fullName(g)}
 		return *result
 	}
 	has := func(v ssa.Value) bool { return s.val(v).Params&bit(m) != 0 }
+	site := func(p token.Pos) string { return positionOf(g, p) + " " + fullName(g) }
 	for _, b := range g.Blocks {
 		for _, ins := range b.Instrs {
 			switch x := ins.(type) {
@@ -4725,12 +4800,23 @@ func (a *analysis) routesOf(g *ssa.Function, m int, memo map[string]*handoffRout
 				if al, ok := x.Addr.(*ssa.Alloc); ok && a.resultSlots(g)[al] {
 					continue
 				}
+				fa, isField := x.Addr.(*ssa.FieldAddr)
+				if isField && has(fa.X) {
+					if _, st := structOf(pointee(fa.X.Type())); st != nil {
+						if ft := st.Field(fa.Field).Type(); reference(ft) && !immutableReferent(ft) {
+							result.WriteSites = mergeSites(result.WriteSites, []string{site(x.Pos()) + " ." + st.Field(fa.Field).Name()})
+						}
+					}
+				}
 				if !has(x.Val) || local(storeBase(x.Addr)) {
 					continue
 				}
-				if capturedRoot(x.Addr) != nil {
+				switch {
+				case isField && has(fa.X):
+					result.SelfField = true
+				case capturedRoot(x.Addr) != nil:
 					result.Captured = true
-				} else {
+				default:
 					result.Held = true
 				}
 			case *ssa.MapUpdate:
@@ -4760,6 +4846,7 @@ func (a *analysis) routesOf(g *ssa.Function, m int, memo map[string]*handoffRout
 					if len(callees) == 0 {
 						if c.IsInvoke() || !isBoolResult(c.Signature()) {
 							result.UnknownCall = true
+							result.UnknownSites = mergeSites(result.UnknownSites, []string{site(x.Pos())})
 						}
 						continue
 					}
@@ -4774,7 +4861,17 @@ func (a *analysis) routesOf(g *ssa.Function, m int, memo map[string]*handoffRout
 }
 
 func (h handoff) effect(name string) bool {
+	if rest, ok := strings.CutPrefix(name, "site:"); ok {
+		return siteIn(h.UnknownSites, rest)
+	}
+	if rest, ok := strings.CutPrefix(name, "write:"); ok {
+		return siteIn(h.WriteSites, rest)
+	}
 	switch name {
+	case "self_field":
+		return h.SelfField
+	case "unknown_call":
+		return h.UnknownCall
 	case "overwrites":
 		return h.Overwrites
 	case "drops":
