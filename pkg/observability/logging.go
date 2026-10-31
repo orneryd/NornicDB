@@ -10,7 +10,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	"unicode/utf8"
+
+	"github.com/orneryd/nornicdb/internal/jsontext"
 )
 
 // nornicdbJSONHandler implements slog.Handler with a sync.Pool-backed buffer
@@ -111,7 +112,7 @@ func (h *nornicdbJSONHandler) Handle(_ context.Context, r slog.Record) error {
 	buf = strconv.AppendQuote(buf, r.Level.String())
 	buf = append(buf, ',')
 	buf = append(buf, `"msg":`...)
-	buf = appendEscapedJSONString(buf, r.Message)
+	buf = jsontext.AppendLogString(buf, r.Message)
 
 	// Preformatted attrs (already JSON-encoded with leading commas).
 	if len(h.preformatted) > 0 {
@@ -144,7 +145,7 @@ func (h *nornicdbJSONHandler) Handle(_ context.Context, r slog.Record) error {
 			if !preEndsOpen {
 				buf = append(buf, ',')
 			}
-			buf = appendEscapedJSONString(buf, name)
+			buf = jsontext.AppendLogString(buf, name)
 			buf = append(buf, ':', '{')
 			openGroups++
 			preEndsOpen = true
@@ -243,7 +244,7 @@ func (h *nornicdbJSONHandler) flushPendingGroups() {
 		if !h.preformattedEndsWithOpenBrace {
 			h.preformatted = append(h.preformatted, ',')
 		}
-		h.preformatted = appendEscapedJSONString(h.preformatted, name)
+		h.preformatted = jsontext.AppendLogString(h.preformatted, name)
 		h.preformatted = append(h.preformatted, ':', '{')
 		h.openGroups++
 		h.preformattedEndsWithOpenBrace = true
@@ -281,7 +282,7 @@ func appendAttr(dst []byte, a slog.Attr, groups *[]string) []byte {
 			return dst
 		}
 		dst = append(dst, ',')
-		dst = appendEscapedJSONString(dst, a.Key)
+		dst = jsontext.AppendLogString(dst, a.Key)
 		dst = append(dst, ':', '{')
 		// First child has no leading comma.
 		first := true
@@ -298,7 +299,7 @@ func appendAttr(dst []byte, a slog.Attr, groups *[]string) []byte {
 	}
 
 	dst = append(dst, ',')
-	dst = appendEscapedJSONString(dst, a.Key)
+	dst = jsontext.AppendLogString(dst, a.Key)
 	dst = append(dst, ':')
 	dst = appendValue(dst, a.Value)
 	return dst
@@ -324,7 +325,7 @@ func appendFirstAttr(dst []byte, a slog.Attr) []byte {
 		if len(children) == 0 {
 			return dst
 		}
-		dst = appendEscapedJSONString(dst, a.Key)
+		dst = jsontext.AppendLogString(dst, a.Key)
 		dst = append(dst, ':', '{')
 		first := true
 		groups := []string(nil)
@@ -339,7 +340,7 @@ func appendFirstAttr(dst []byte, a slog.Attr) []byte {
 		dst = append(dst, '}')
 		return dst
 	}
-	dst = appendEscapedJSONString(dst, a.Key)
+	dst = jsontext.AppendLogString(dst, a.Key)
 	dst = append(dst, ':')
 	dst = appendValue(dst, a.Value)
 	return dst
@@ -351,7 +352,7 @@ func appendFirstAttr(dst []byte, a slog.Attr) []byte {
 func appendValue(dst []byte, v slog.Value) []byte {
 	switch v.Kind() {
 	case slog.KindString:
-		return appendEscapedJSONString(dst, v.String())
+		return jsontext.AppendLogString(dst, v.String())
 	case slog.KindInt64:
 		return strconv.AppendInt(dst, v.Int64(), 10)
 	case slog.KindUint64:
@@ -380,7 +381,7 @@ func appendValue(dst []byte, v slog.Value) []byte {
 	case slog.KindAny:
 		return appendAny(dst, v.Any())
 	default:
-		return appendEscapedJSONString(dst, v.String())
+		return jsontext.AppendLogString(dst, v.String())
 	}
 }
 
@@ -400,113 +401,20 @@ func appendAny(dst []byte, v any) []byte {
 		dst = append(dst, '"')
 		return dst
 	case error:
-		return appendEscapedJSONString(dst, x.Error())
+		return jsontext.AppendLogString(dst, x.Error())
 	case []string:
 		dst = append(dst, '[')
 		for i, s := range x {
 			if i > 0 {
 				dst = append(dst, ',')
 			}
-			dst = appendEscapedJSONString(dst, s)
+			dst = jsontext.AppendLogString(dst, s)
 		}
 		dst = append(dst, ']')
 		return dst
 	case fmt.Stringer:
-		return appendEscapedJSONString(dst, x.String())
+		return jsontext.AppendLogString(dst, x.String())
 	default:
-		return appendEscapedJSONString(dst, fmt.Sprintf("%v", v))
+		return jsontext.AppendLogString(dst, fmt.Sprintf("%v", v))
 	}
-}
-
-// appendEscapedJSONString writes a JSON-escaped string literal per RFC 8259.
-// HTML escaping is DISABLED to match stdlib slog.NewJSONHandler (which
-// explicitly calls SetEscapeHTML(false) at json_handler.go:152).
-//
-// Escape rules:
-//   - " → \"
-//   - \ → \\
-//   - \n → \n; \r → \r; \t → \t
-//   - bytes <0x20 (other than \t,\n,\r) → \u00XX
-//   - U+2028, U+2029 →  ,   (matches stdlib)
-//   - Invalid UTF-8 bytes emitted via � substitution.
-func appendEscapedJSONString(dst []byte, s string) []byte {
-	dst = append(dst, '"')
-	start := 0
-	for i := 0; i < len(s); {
-		b := s[i]
-		if b < utf8.RuneSelf { // ASCII fast path
-			if safeASCII(b) {
-				i++
-				continue
-			}
-			if start < i {
-				dst = append(dst, s[start:i]...)
-			}
-			switch b {
-			case '"':
-				dst = append(dst, '\\', '"')
-			case '\\':
-				dst = append(dst, '\\', '\\')
-			case '\n':
-				dst = append(dst, '\\', 'n')
-			case '\r':
-				dst = append(dst, '\\', 'r')
-			case '\t':
-				dst = append(dst, '\\', 't')
-			default:
-				dst = append(dst, '\\', 'u', '0', '0',
-					hexDigit(b>>4), hexDigit(b&0xF))
-			}
-			i++
-			start = i
-			continue
-		}
-		// Non-ASCII path — handle U+2028 / U+2029 specially.
-		c, size := utf8.DecodeRuneInString(s[i:])
-		if c == utf8.RuneError && size == 1 {
-			if start < i {
-				dst = append(dst, s[start:i]...)
-			}
-			dst = append(dst, '\\', 'u', 'f', 'f', 'f', 'd')
-			i += size
-			start = i
-			continue
-		}
-		if c == ' ' || c == ' ' {
-			if start < i {
-				dst = append(dst, s[start:i]...)
-			}
-			dst = append(dst, '\\', 'u', '2', '0', '2',
-				hexDigit(byte(c)&0xF))
-			i += size
-			start = i
-			continue
-		}
-		i += size
-	}
-	if start < len(s) {
-		dst = append(dst, s[start:]...)
-	}
-	dst = append(dst, '"')
-	return dst
-}
-
-// safeASCII reports whether a byte requires no JSON escape. Mirrors stdlib
-// safeSet for ASCII ranges with HTML escaping disabled (so '<', '>', '&'
-// are SAFE — D-02b parity).
-func safeASCII(b byte) bool {
-	if b < 0x20 {
-		return false
-	}
-	if b == '"' || b == '\\' {
-		return false
-	}
-	return true
-}
-
-func hexDigit(n byte) byte {
-	if n < 10 {
-		return '0' + n
-	}
-	return 'a' + n - 10
 }
