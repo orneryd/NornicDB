@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Go query metadata and permission readers now require an explicit raw or accepted source stage; see [the source-stage migration guide](docs/development/cypher-source-stage-api.md).
 
+<!-- Author: Codex, NOR-291 implementation lane, 2026-10-27. -->
+### Fixed
+
+- Project each accepted replication command ID at most once when committed writes
+  are retried, including after reopening the replication journal. Native application
+  failures still prevent Raft and replica applied positions from advancing.
+
 ### Added
 
 - Add opt-in CUDA and Vulkan HNSW qualification beyond 4 GiB of resident
