@@ -58,29 +58,28 @@ func (tx *BadgerTransaction) removePendingEdgeLocked(id EdgeID) {
 	delete(tx.pendingEdges, id)
 }
 
+// committedEdgeKeptLocked reports whether a committed edge survives the
+// transaction's own writes: not deleted, and not rewritten (a rewrite shadows
+// its former endpoints even when its new endpoints aren't in this node's
+// index). Producers decide it before they copy anything (NOR-160).
+func (tx *BadgerTransaction) committedEdgeKeptLocked(edge *Edge) bool {
+	if _, gone := tx.deletedEdges[edge.ID]; gone {
+		return false
+	}
+	_, rewritten := tx.pendingEdges[edge.ID]
+	return !rewritten
+}
+
+// mergePendingAdjacentEdgesLocked adds the transaction's own pending edges to
+// committed adjacency the producers have already selected (committedEdgeKept
+// and the read's direction): it drops nothing. A selected pending edge is the
+// transaction's retained value, copied here once (NOR-160).
 func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, id NodeID, include func(*Edge) bool) []*Edge {
-	if len(tx.pendingEdges) == 0 && len(tx.deletedEdges) == 0 {
-		return committed
+	result := committed
+	if len(tx.pendingEdges) == 0 {
+		return result
 	}
-	pending := tx.pendingAdjacencyLocked(id)
-	// Committed adjacency is caller-owned. A rewrite shadows its former
-	// endpoints even when its new endpoints aren't in this node's index.
-	result := committed[:0]
-	for _, edge := range committed {
-		if edge == nil {
-			continue
-		}
-		if _, gone := tx.deletedEdges[edge.ID]; gone {
-			continue
-		}
-		if _, rewritten := tx.pendingEdges[edge.ID]; rewritten {
-			continue
-		}
-		if include(edge) {
-			result = append(result, edge)
-		}
-	}
-	for _, edge := range pending {
+	for _, edge := range tx.pendingAdjacencyLocked(id) {
 		if _, gone := tx.deletedEdges[edge.ID]; !gone && include(edge) {
 			result = append(result, copyEdge(edge))
 		}

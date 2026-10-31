@@ -2,15 +2,6 @@ package storage
 
 import "github.com/dgraph-io/badger/v4"
 
-// nodeBodyAccess keeps mutable query results detached. Commit validation may
-// borrow an immutable version-matched body only for its immediate comparisons.
-type nodeBodyAccess uint8
-
-const (
-	nodeBodyDetached nodeBodyAccess = iota
-	nodeBodyBorrowed
-)
-
 type nodeItemHydration uint8
 
 const (
@@ -19,11 +10,26 @@ const (
 	nodeItemFullEmbeddings
 )
 
-// readNodeItemInTxn reuses only a body with this record's physical version.
-// Worker embedding state is hydrated from the same transaction, independently
-// of the body cache: sidecar writes do not change the node record's version.
-func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration) (*Node, error) {
-	node, hit := b.cacheLoadNodeBody(id, item.Version(), nil, nodeBodyDetached)
+// decayKeep is the decay selection of a read with visibility v, decided on a
+// cached body before it is copied.
+func (b *BadgerEngine) decayKeep(v readVisibility) func(*Node) bool {
+	now := DecayScoringTime()
+	return func(node *Node) bool { return !b.filterEntityByDecay(v, node, now) }
+}
+
+// readKeptNodeItemInTxn reads one stored node record, reusing only a body
+// cached for this record's physical version. Worker embedding state is
+// hydrated from the same transaction, independently of the body cache:
+// sidecar writes do not change the node record's version. keep is the read's
+// own selection (every caller states it; nil only where nothing is rejected
+// afterwards): it decides on the body before it is materialized or hydrated,
+// so a rejected cached body is never copied. A rejected node returns
+// (nil, nil) (NOR-160).
+func (b *BadgerEngine) readKeptNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration, keep func(*Node) bool) (*Node, error) {
+	node, hit := b.cacheLoadNodeBody(id, item.Version(), nil, keep)
+	if hit && node == nil {
+		return nil, nil
+	}
 	if !hit {
 		err := item.Value(func(value []byte) error {
 			var err error
@@ -37,6 +43,9 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 			return nil, ErrNotFound
 		}
 		b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs())
+		if keep != nil && !keep(node) {
+			return nil, nil
+		}
 	}
 	switch hydrate {
 	case nodeItemBodyOnly:
@@ -48,22 +57,14 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 	}
 }
 
-// cacheLoadEdgeAtVersion is the version-checked form of the edge body's hot
-// cache. A later body can never replace the record in a pinned transaction.
-func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge, bool) {
-	b.edgeCacheMu.RLock()
-	defer b.edgeCacheMu.RUnlock()
-	edge, found := b.edgeCache[id]
-	return edge, found && edge != nil && b.edgeCacheVersions[id] == version
-}
-
 // readProjectedNodeItemInTxn shares the versioned body decision between point,
 // label and MVCC projection readers. A nil projection retains full hydration.
-func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess) (*Node, error) {
+// keep is the read's own selection, as for readKeptNodeItemInTxn.
+func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, keepNode func(*Node) bool) (*Node, error) {
 	if properties == nil {
-		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
+		return b.readKeptNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, keepNode)
 	}
-	if cached, ok := b.cacheLoadNodeBody(id, item.Version(), properties, access); ok {
+	if cached, ok := b.cacheLoadNodeBody(id, item.Version(), properties, keepNode); ok {
 		return cached, nil
 	}
 	var node *Node
@@ -72,5 +73,8 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 		node, err = b.decodeNodeProjected(namespaceForNodeID(id), value, include)
 		return err
 	})
+	if err == nil && node != nil && keepNode != nil && !keepNode(node) {
+		return nil, nil
+	}
 	return node, err
 }

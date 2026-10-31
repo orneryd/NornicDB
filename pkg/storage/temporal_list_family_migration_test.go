@@ -111,7 +111,7 @@ func TestTemporalListFamilyTemporalFormat4Migration(t *testing.T) {
 				require.NoError(t, err)
 				second, err := reopened.GetNode("test:second")
 				require.NoError(t, err)
-				history, complete, err := reopened.temporalKeyHistoryNodesLatest(context.Background(), "test", c, first)
+				history, complete, err := reopened.temporalKeyHistoryNodesLatest(context.Background(), "test", c, first, nil)
 				require.NoError(t, err)
 				require.True(t, complete)
 				require.Len(t, history, 2, "both retained holders share the rebuilt history")

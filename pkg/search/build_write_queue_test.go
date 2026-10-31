@@ -572,7 +572,8 @@ func queuedTypedProperties() (map[string]any, func(byte)) {
 // value shares no buffer with the caller, for any container type.
 func TestQueuedValuesAreOwnedWhateverTheirType(t *testing.T) {
 	props, rewrite := queuedTypedProperties()
-	copied := cloneQueuedMap(props)
+	node, _ := copyQueuedNode(&storage.Node{ID: "nornic:typed", Properties: props})
+	copied := node.Properties
 	want, _ := queuedTypedProperties()
 	rewrite(1)
 	require.Equal(t, want, copied, "the queued copy changed with the caller's buffers")

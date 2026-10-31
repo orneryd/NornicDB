@@ -46,9 +46,9 @@ import (
 	"crypto/rand"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"strings"
-
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"strings"
 )
 
 // applySetMapMergeToNode applies SET n += <expr>: every key of the map (or of
@@ -126,12 +126,8 @@ func setPropertyMap(properties map[string]interface{}) map[string]interface{} {
 // Its elements were already normalized and validated by storablePropertyValue;
 // storage copies typed slices at its own boundary, as before.
 func copyStoredPropertyValue(value interface{}) interface{} {
-	if list, ok := value.([]interface{}); ok {
-		copied := make([]interface{}, len(list))
-		copy(copied, list)
-		return copied
-	}
-	return value
+	// A stored value never shares containers with the statement that set it.
+	return callerowned.Value(value)
 }
 
 // propertyMapForSetValue implements Cypher's entity-as-property-map semantics

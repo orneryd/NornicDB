@@ -487,7 +487,14 @@ func (e *StorageExecutor) fetchCosineNodeScoresProjectedLabel(ctx context.Contex
 	}
 	candidates := vectorNodeScoreHeap{orderDesc: orderDesc}
 	heap.Init(&candidates)
-	err := reader.StreamNodesByLabelProjected(label, projectedProps, func(node *storage.Node) error {
+	// The filter and the score only read a candidate; the heap keeps it until
+	// the scan ends, and only the nodes that stay in it are copied.
+	stream := reader.StreamNodesByLabelProjected
+	readOnly, isReadOnly := reader.(storage.ReadOnlyLabelNodeReader)
+	if isReadOnly {
+		stream = readOnly.VisitReadOnlyNodesByLabel
+	}
+	err := stream(label, projectedProps, func(node *storage.Node) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -511,6 +518,11 @@ func (e *StorageExecutor) fetchCosineNodeScoresProjectedLabel(ctx context.Contex
 	}
 	out := candidates.scores
 	sort.Slice(out, func(i, j int) bool { return vectorNodeScoreBetter(out[i], out[j], orderDesc) })
+	if isReadOnly {
+		for i := range out {
+			out[i].node = storage.CopyNode(out[i].node)
+		}
+	}
 	return out, true
 }
 

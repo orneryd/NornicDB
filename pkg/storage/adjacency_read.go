@@ -19,6 +19,14 @@ const (
 // Only an actual namespace view qualifies IDs. Optional providers are bound on
 // its immediate decorator; native physical readers are never found by unwrap.
 func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility) (out, in []*Edge, err error) {
+	return readAdjacencyKept(engine, kind, start, end, version, visibility, nil)
+}
+
+// readAdjacencyKept is readAdjacency with the caller's own selection, per
+// direction: on the native reader it is decided before any edge is copied, so
+// an edge the caller rejects is never copied (NOR-160). Other engines copy in
+// their own reads; their result is filtered by keep afterwards.
+func readAdjacencyKept(engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility, keep func(*Edge, bool) bool) (out, in []*Edge, err error) {
 	var namespace *NamespacedEngine
 	if n, ok := engine.(*NamespacedEngine); ok {
 		namespace = n
@@ -39,6 +47,7 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 	default:
 		return nil, nil, ErrInvalidData
 	}
+	nativeKept := false
 	// The dispatcher is the sole owner of ordering and partial-result policy.
 	consume := func(read func(bool) ([]*Edge, error)) error {
 		if wantOut {
@@ -72,7 +81,8 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 	} else {
 		native, isNative := engine.(*BadgerEngine)
 		if isNative && kind != adjacencyBetween {
-			reader, captureErr := native.captureAdjacencyReader(start, wantOut, wantIn, visibility)
+			reader, captureErr := native.captureAdjacencyReader(start, wantOut, wantIn, visibility, keep)
+			nativeKept = true
 			if captureErr != nil {
 				err = captureErr
 			} else {
@@ -109,6 +119,9 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 		}
 	}
 
+	if keep != nil && !nativeKept && err == nil {
+		out, in = keptEdges(out, keep, true), keptEdges(in, keep, false)
+	}
 	if namespace != nil {
 		if err != nil {
 			return nil, nil, err
@@ -119,4 +132,15 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 		in = namespace.toUserEdgesInNamespace(in, false, pinned)
 	}
 	return out, in, err
+}
+
+// keptEdges filters a non-native engine's result by the caller's selection.
+func keptEdges(edges []*Edge, keep func(*Edge, bool) bool, outgoing bool) []*Edge {
+	kept := edges[:0]
+	for _, edge := range edges {
+		if keep(edge, outgoing) {
+			kept = append(kept, edge)
+		}
+	}
+	return kept
 }

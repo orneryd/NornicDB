@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -106,14 +107,13 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 		if hook := getUniqueConstraintScanHook(); hook != nil {
 			hook()
 		}
-		edges, err := b.GetStoredEdgesByType(edge.Type)
-		if err != nil {
+		idx = &relationshipUniqueIndex{key: key, properties: append([]string(nil), c.Properties...), keys: make(map[EdgeID][]interface{}), index: &CompositeIndex{Properties: append([]string(nil), c.Properties...), values: make(map[interface{}][]NodeID), fullIndex: make(map[string][]NodeID), prefixIndex: make(map[string][]NodeID)}}
+		if err := b.StreamStoredEdgesByType(context.Background(), edge.Type, func(existing *Edge) error {
+			idx.put(existing)
+			return nil
+		}); err != nil {
 			set.active.Store(len(set.entries) > 0)
 			return nil, false, err
-		}
-		idx = &relationshipUniqueIndex{key: key, properties: append([]string(nil), c.Properties...), keys: make(map[EdgeID][]interface{}), index: &CompositeIndex{Properties: append([]string(nil), c.Properties...), values: make(map[interface{}][]NodeID), fullIndex: make(map[string][]NodeID), prefixIndex: make(map[string][]NodeID)}}
-		for _, existing := range edges {
-			idx.put(existing)
 		}
 		if set.entries == nil {
 			set.entries = make(map[relationshipUniqueIndexKey]*relationshipUniqueIndex)

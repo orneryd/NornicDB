@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/config"
 )
 
@@ -146,7 +147,8 @@ func (s *EdgeMetaStore) Append(ctx context.Context, meta EdgeMeta) error {
 	keyStr := key.String()
 
 	// Append to history
-	metaCopy := meta // Create copy to prevent mutation
+	// The store keeps its own image, Metadata included (pkg/callerowned).
+	metaCopy := callerowned.Of(meta)
 	s.records[keyStr] = append(s.records[keyStr], &metaCopy)
 	s.allMetas = append(s.allMetas, &metaCopy)
 
@@ -194,13 +196,8 @@ func (s *EdgeMetaStore) GetHistory(ctx context.Context, src, dst, label string) 
 		return []*EdgeMeta{}, nil
 	}
 
-	// Return copies to prevent mutation
-	result := make([]*EdgeMeta, len(history))
-	for i, meta := range history {
-		metaCopy := *meta
-		result[i] = &metaCopy
-	}
-	return result, nil
+	// Return caller-owned copies (pkg/callerowned), Metadata included.
+	return callerowned.Each(history, callerowned.Of[*EdgeMeta]), nil
 }
 
 // GetLatest returns the most recent provenance record for an edge.
@@ -219,15 +216,13 @@ func (s *EdgeMetaStore) GetLatest(ctx context.Context, src, dst, label string) (
 // record matching keep until limit records are collected (limit <= 0 means
 // unlimited). The caller holds the read lock.
 func (s *EdgeMetaStore) filterMetasLocked(limit int, keep func(*EdgeMeta) bool) []*EdgeMeta {
-	result := make([]*EdgeMeta, 0)
-	for i := len(s.allMetas) - 1; i >= 0 && (limit <= 0 || len(result) < limit); i-- {
-		meta := s.allMetas[i]
-		if keep(meta) {
-			metaCopy := *meta
-			result = append(result, &metaCopy)
+	matched := make([]*EdgeMeta, 0)
+	for i := len(s.allMetas) - 1; i >= 0 && (limit <= 0 || len(matched) < limit); i-- {
+		if meta := s.allMetas[i]; keep(meta) {
+			matched = append(matched, meta)
 		}
 	}
-	return result
+	return callerowned.Each(matched, callerowned.Of[*EdgeMeta])
 }
 
 // GetBySignalType filters by how edges were created.
@@ -392,12 +387,7 @@ func (s *EdgeMetaStore) Export() []*EdgeMeta {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	result := make([]*EdgeMeta, len(s.allMetas))
-	for i, meta := range s.allMetas {
-		metaCopy := *meta
-		result[i] = &metaCopy
-	}
-	return result
+	return callerowned.Each(s.allMetas, callerowned.Of[*EdgeMeta])
 }
 
 // Import loads provenance records from backup/import.
@@ -412,7 +402,7 @@ func (s *EdgeMetaStore) Import(records []*EdgeMeta) int {
 			continue
 		}
 
-		metaCopy := *meta
+		metaCopy := *callerowned.Of(meta)
 		key := EdgeMetaKey{Src: metaCopy.Src, Dst: metaCopy.Dst, Label: metaCopy.Label}
 		keyStr := key.String()
 

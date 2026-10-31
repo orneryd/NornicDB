@@ -118,11 +118,11 @@ func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
 		return nil
 	}))
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(streamed))
-	nodes, err = tx.getNodesByLabelLocked("Person")
+	nodes, err = deliveredNodes(tx.getNodesByLabelLocked("Person"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(nodes))
 	tx.readTS = MVCCVersion{}
-	nodes, err = tx.getNodesByLabelLocked("Person")
+	nodes, err = deliveredNodes(tx.getNodesByLabelLocked("Person"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(nodes))
 	tx.snapshotTx.Discard()

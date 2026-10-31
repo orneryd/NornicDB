@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
@@ -134,53 +135,71 @@ func TestBadgerStats_UnexpectedClosedDBErrorBranches(t *testing.T) {
 }
 
 func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
-	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"title": "ok"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Doc"}, Properties: map[string]any{"title": "ok2"}})
-	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
-
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
-		// Trigger len(key)<=1 and decode-error branches in node/edge streaming methods.
-		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
-		require.NoError(t, txn.Set(nodeKey("test:bad-node"), []byte("bad-node-payload")))
-		require.NoError(t, txn.Set([]byte{prefixEdge}, []byte{}))
-		require.NoError(t, txn.Set(edgeKey("test:bad-edge"), []byte("bad-edge-payload")))
-		return nil
-	}))
-
-	t.Run("iterate nodes skips malformed entries", func(t *testing.T) {
-		seen := 0
-		err := engine.IterateNodes(func(*Node) bool {
-			seen++
-			return true
+	// fixture writes two nodes and an edge, then the malformed entries: keys
+	// with no ID (the len(key)<=1 branch) and, when corrupt, rows whose bodies
+	// cannot be decoded (the decode-error branch).
+	fixture := func(t *testing.T, corrupt bool) *BadgerEngine {
+		engine := newTestEngine(t)
+		_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"title": "ok"}})
+		require.NoError(t, err)
+		_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Doc"}, Properties: map[string]any{"title": "ok2"}})
+		require.NoError(t, err)
+		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
+			require.NoError(t, txn.Set([]byte{prefixEdge}, []byte{}))
+			if corrupt {
+				require.NoError(t, txn.Set(nodeKey("test:bad-node"), []byte("bad-node-payload")))
+				require.NoError(t, txn.Set(edgeKey("test:bad-edge"), []byte("bad-edge-payload")))
+			}
+			return nil
+		}))
+		return engine
+	}
+	// Every list and stream read of the stored rows treats an entry with no ID
+	// as no row and an unreadable stored row as an error
+	// (TestBadgerNodeReadsRejectCorruption, NOR-160).
+	reads := map[string]func(*BadgerEngine, context.Context) error{
+		"iterate nodes": func(e *BadgerEngine, _ context.Context) error {
+			seen := 0
+			err := e.IterateNodes(func(*Node) bool { seen++; return true })
+			if err == nil && seen < 2 {
+				return fmt.Errorf("iterated %d nodes", seen)
+			}
+			return err
+		},
+		"stream nodes": func(e *BadgerEngine, ctx context.Context) error {
+			return e.StreamNodes(ctx, func(*Node) error { return nil })
+		},
+		"stream edges": func(e *BadgerEngine, ctx context.Context) error {
+			return e.StreamEdges(ctx, func(*Edge) error { return nil })
+		},
+		"stream node chunks": func(e *BadgerEngine, ctx context.Context) error {
+			return e.StreamNodeChunks(ctx, 100, func([]*Node) error { return nil })
+		},
+		// The collection reads of the same rows follow the same two rules.
+		"all nodes": func(e *BadgerEngine, _ context.Context) error { _, err := e.AllNodes(); return err },
+		"all edges": func(e *BadgerEngine, _ context.Context) error { _, err := e.AllEdges(); return err },
+	}
+	for name, read := range reads {
+		t.Run(name+"/entries without an ID are skipped", func(t *testing.T) {
+			require.NoError(t, read(fixture(t, false), context.Background()))
 		})
-		require.NoError(t, err)
-		require.GreaterOrEqual(t, seen, 2)
-	})
+		t.Run(name+"/an unreadable row is an error", func(t *testing.T) {
+			require.Error(t, read(fixture(t, true), context.Background()))
+		})
+	}
 
-	t.Run("stream nodes handles canceled context and malformed entries", func(t *testing.T) {
+	t.Run("canceled context", func(t *testing.T) {
+		engine := fixture(t, false)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		err := engine.StreamNodes(ctx, func(*Node) error { return nil })
-		require.ErrorIs(t, err, context.Canceled)
-
-		err = engine.StreamNodes(context.Background(), func(*Node) error { return nil })
-		require.NoError(t, err)
-	})
-
-	t.Run("stream edges handles canceled context and decode errors", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		err := engine.StreamEdges(ctx, func(*Edge) error { return nil })
-		require.ErrorIs(t, err, context.Canceled)
-
-		err = engine.StreamEdges(context.Background(), func(*Edge) error { return nil })
-		require.NoError(t, err)
+		require.ErrorIs(t, engine.StreamNodes(ctx, func(*Node) error { return nil }), context.Canceled)
+		require.ErrorIs(t, engine.StreamEdges(ctx, func(*Edge) error { return nil }), context.Canceled)
 	})
 
 	t.Run("stream node chunks stop paths", func(t *testing.T) {
+		engine := fixture(t, false)
 		// Stop on full chunk path (len(chunk) >= chunkSize).
 		err := engine.StreamNodeChunks(context.Background(), 1, func(nodes []*Node) error {
 			if len(nodes) > 0 {

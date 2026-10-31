@@ -152,10 +152,10 @@ func TestCloneWithStorageSharesNodeLookupCacheAndLock(t *testing.T) {
 		Properties: map[string]interface{}{"id": "clone"},
 	})
 
-	if got := parent.findMergeNodeInCache(nil, []string{"Person"}, map[string]interface{}{"id": "clone"}); got == nil {
+	if got := mergeCacheProposal(parent, []string{"Person"}, map[string]interface{}{"id": "clone"}); got == nil {
 		t.Fatal("parent cache did not observe clone node")
 	}
-	if got := clone.findMergeNodeInCache(nil, []string{"Person"}, map[string]interface{}{"id": "parent"}); got == nil {
+	if got := mergeCacheProposal(clone, []string{"Person"}, map[string]interface{}{"id": "parent"}); got == nil {
 		t.Fatal("clone cache did not observe parent node")
 	}
 }
@@ -195,7 +195,7 @@ func TestCloneWithStorageIsolatesNodeLookupCacheForTxClones(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"id": "abc"},
 	})
-	if got := clone.findMergeNodeInCache(nil, []string{"Person"}, map[string]interface{}{"id": "abc"}); got != nil {
+	if got := mergeCacheProposal(clone, []string{"Person"}, map[string]interface{}{"id": "abc"}); got != nil {
 		t.Fatalf("transactional clone leaked parent's pre-commit cache entry: %+v", got)
 	}
 }
@@ -1579,4 +1579,20 @@ func TestExecuteMergeNodeAndMatchSegment_AdditionalBranches(t *testing.T) {
 	all, err := exec.Execute(ctx, "MATCH (n:Person) RETURN n.name ORDER BY n.name", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"alice"}, {"bob"}, {"bound"}}, all.Rows)
+}
+
+// mergeCacheProposal is the candidate the MERGE lookup cache proposes for
+// labels and props, read without a store (the production lookup always
+// re-reads the proposal from its store).
+func mergeCacheProposal(e *StorageExecutor, labels []string, props map[string]interface{}) *storage.Node {
+	e.ensureNodeLookupCache()
+	cacheMu := e.nodeLookupCacheLock()
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+	for prop, val := range props {
+		if cached, ok := e.nodeLookupCache[mergeLookupCacheKey(labels, prop, val)]; ok && mergeNodeMatches(cached, labels, props) {
+			return cached
+		}
+	}
+	return nil
 }

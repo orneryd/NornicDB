@@ -2,6 +2,7 @@ package storage
 
 import (
 	"strings"
+	"sync/atomic"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -14,6 +15,18 @@ const labelScanPointLookups = 1024
 // labelScanMaxBuffered bounds the one-pass tail. Larger scans fall back to
 // streaming point reads rather than retaining every remaining node body.
 const labelScanMaxBuffered = 1024
+
+// labelScanBodyReadObserver lets tests see which node bodies a label stream
+// reads, cache hit or stored record, and in what order: the evidence that the
+// stream stays bounded (a stopped scan never reads its tail). Nil outside
+// tests (NOR-160).
+var labelScanBodyReadObserver atomic.Pointer[func(NodeID)]
+
+func observeLabelScanBodyRead(id NodeID) {
+	if observe := labelScanBodyReadObserver.Load(); observe != nil {
+		(*observe)(id)
+	}
+}
 
 // readNodeRecordsInOnePass calls read with the stored record of each of ids
 // that exists, walking scope's node records once ("" is every database)
