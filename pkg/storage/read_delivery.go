@@ -75,16 +75,24 @@ func deliverNodes(images []nodeImage, properties []string, strip bool) []*Node {
 }
 
 // decodedEdges and borrowedEdges mark a whole population.
-func decodedEdges(edges []*Edge) []edgeImage  { return markEdges(edges, false) }
-func borrowedEdges(edges []*Edge) []edgeImage { return markEdges(edges, true) }
-
-func markEdges(edges []*Edge, retained bool) []edgeImage {
+func decodedEdges(edges []*Edge) []edgeImage {
 	if edges == nil {
 		return nil
 	}
 	out := make([]edgeImage, len(edges))
 	for i, edge := range edges {
-		out[i] = edgeImage{Edge: edge, retained: retained}
+		out[i] = decodedEdge(edge)
+	}
+	return out
+}
+
+func borrowedEdges(edges []*Edge) []edgeImage {
+	if edges == nil {
+		return nil
+	}
+	out := make([]edgeImage, len(edges))
+	for i, edge := range edges {
+		out[i] = borrowedEdge(edge)
 	}
 	return out
 }
