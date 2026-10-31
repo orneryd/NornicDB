@@ -3,8 +3,12 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 // Shutdown matrix S2, BadgerEngine: concurrent Close callers all join the one
@@ -56,5 +60,28 @@ func TestOwnerMatrixBadgerConcurrentClose(t *testing.T) {
 	}
 	if engine.DB() != nil {
 		t.Error("engine state not released after Close")
+	}
+}
+
+// Shutdown matrix S3, BadgerEngine: an open that fails reports its error
+// and leaves nothing running; the data directory can then be opened cleanly.
+func TestOwnerMatrixBadgerOpenFailure(t *testing.T) {
+	dir := t.TempDir()
+	notADir := filepath.Join(dir, "file")
+	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(notADir)); err == nil {
+		t.Fatal("opening a data directory that is a file must fail")
+	}
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(filepath.Join(dir, "data")))
+	if err != nil {
+		t.Fatalf("a valid directory must open after a failed open: %v", err)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatalf("a repeat Close must join the same stop: %v", err)
 	}
 }
