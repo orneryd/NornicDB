@@ -83,7 +83,7 @@ func TestAcceptedWALCloseRetiresPendingNativeFrameWithoutDiscard(t *testing.T) {
 	handle := pending.(*walAcceptedEntityCommit).prepared
 	snapshotDone := make(chan error, 1)
 	snapshotJoined := make(chan struct{})
-	go func() { defer close(snapshotJoined); snapshotDone <- w.createSnapshotAndCompact() }()
+	go func() { defer close(snapshotJoined); snapshotDone <- w.createSnapshotAndCompact(w.work.Context()) }()
 	closeDone := make(chan error, 1)
 	closeJoined := make(chan struct{})
 	go func() { defer close(closeJoined); closeDone <- w.Close() }()

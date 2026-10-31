@@ -430,7 +430,7 @@ func makeProviderShapeReranker(t *testing.T, representation providerRepresentati
 	t.Helper()
 	if representation.name == "local.scorer" {
 		cfg := DefaultLocalRerankerConfig()
-		return NewLocalReranker(providerShapeScorer{shape: shape}, cfg)
+		return NewLocalReranker(providerShapeScorer{shape: shape}, cfg, testRerankAdmission())
 	}
 	body := providerShapeBody(representation, shape)
 	if strings.HasPrefix(representation.name, "llm.") {

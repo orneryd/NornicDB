@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 retained operation errors at the timeout response owner, 2026-10-27.
 package bolt
 
 import (
@@ -35,11 +36,11 @@ func (s *Session) joinTransactionTimeout() error {
 
 // sendTransactionTimeoutAfterJoin emits the client timeout status only after
 // cleanup is proven successful; cleanup failure closes the connection instead.
-func (s *Session) sendTransactionTimeoutAfterJoin() error {
+func (s *Session) sendTransactionTimeoutAfterJoin(statementErrors ...error) error {
 	if err := s.joinTransactionTimeout(); err != nil {
 		return err
 	}
-	return s.sendTransactionTimeoutFailure()
+	return s.sendTransactionTimeoutFailure(statementErrors...)
 }
 
 // flushPendingExecutorWrites performs the legacy deferred Flush under explicit
@@ -91,10 +92,8 @@ func (s *Session) sendFlushLifecycleFailure(err error) error {
 	if errors.Is(err, errTransactionTimedOut) {
 		return s.sendTransactionTimeoutFailure()
 	}
-	return s.sendTransactionControlFailure(
-		"Neo.DatabaseError.General.UnknownError",
-		fmt.Sprintf("Deferred transaction flush failed: %v", err),
-	)
+	failure := fmt.Errorf("Deferred transaction flush failed: %w", err)
+	return s.sendTransactionControlError(nornicerrors.WithStatus(failure, "Neo.DatabaseError.General.UnknownError", localization.ExternalDiagnostic(failure)))
 }
 
 // rollbackExplicitTransaction clears protocol state only after lifecycle
@@ -129,7 +128,7 @@ func (s *Session) failClosedTransactionCleanup(_ error) {
 		s.connCancel()
 	}
 	if s.conn != nil {
-		_ = s.conn.Close()
+		s.closeConnection()
 	}
 }
 
@@ -140,10 +139,6 @@ func (s *Session) clearExplicitTransactionState() {
 	s.inTransaction = false
 	s.txMetadata = nil
 	s.txDatabase = ""
-	s.txHasMerge = false
-	s.txHasNonMergeWrite = false
-	s.txMergeStatements = nil
-	s.txWriteInfos = nil
 	s.pendingFlush = false
 	s.lastResult = nil
 	s.resultIndex = 0
@@ -173,7 +168,7 @@ func (s *Session) observeTransactionTerminal(
 		level = slog.LevelWarn
 		event = localization.BoltTransactionTimeoutCleanupRequestedEvent(string(reason), database, duration)
 	} else if reason == transactionTerminalCommit && cleanupErr != nil {
-		if _, retryable := nornicerrors.MapTransientTransactionError(cleanupErr); retryable {
+		if nornicerrors.IsTransientTransactionError(cleanupErr) {
 			level = slog.LevelWarn
 		} else {
 			level = slog.LevelError

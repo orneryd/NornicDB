@@ -48,7 +48,7 @@ func TestHandleCommitPanicPreservesCleanupFailure(t *testing.T) {
 	session := newTestSession(&mockConn{}, executor)
 	session.inTransaction = true
 	require.NoError(t, session.txLifecycle.begin(
-		context.Background(), 0, "neo4j", executor, nil, nil))
+		context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil))
 
 	require.PanicsWithValue(t, "pending-write reporter panic", func() { _ = session.handleCommit(nil) })
 	require.True(t, session.transactionCleanupFailed,
@@ -96,7 +96,7 @@ func TestTransactionLifecycleBeginFailureCleansPartialAllocation(t *testing.T) {
 			var recovered any
 			func() {
 				defer func() { recovered = recover() }()
-				err := lifecycle.begin(context.Background(), 0, "neo4j", executor, nil, nil)
+				err := lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil)
 				if tt.beginErr != nil {
 					require.ErrorIs(t, err, tt.beginErr)
 				}
@@ -115,12 +115,12 @@ func TestTransactionLifecycleBeginCleanupFailurePoisonsLifecycle(t *testing.T) {
 	executor := &partialBeginLifecycleExecutor{beginErr: beginErr, rollbackErr: rollbackErr}
 	lifecycle := &transactionLifecycle{}
 
-	err := lifecycle.begin(context.Background(), 0, "neo4j", executor, nil, nil)
+	err := lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil)
 	require.ErrorIs(t, err, beginErr)
 	require.ErrorContains(t, err, rollbackErr.Error())
 	require.Equal(t, 1, executor.rollbackCalls)
 	require.True(t, executor.active)
-	require.Error(t, lifecycle.begin(context.Background(), 0, "neo4j", executor, nil, nil),
+	require.Error(t, lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil),
 		"unknown backend ownership must prevent lifecycle reuse")
 	require.ErrorIs(t, lifecycle.rollback(transactionTerminalReset), rollbackErr,
 		"RESET must surface poisoned BEGIN cleanup instead of restoring reuse")
@@ -149,7 +149,7 @@ func TestTransactionLifecycleIdleExpiryCleanupDoesNotDependOnObserver(t *testing
 	observerEntered := make(chan transactionTerminalReason, 1)
 	releaseObserver := make(chan struct{})
 	lifecycle := &transactionLifecycle{}
-	require.NoError(t, lifecycle.begin(context.Background(), 0, "neo4j", executor, nil,
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil,
 		func(reason transactionTerminalReason, _ string, _ time.Duration, _ error) {
 			observerEntered <- reason
 			<-releaseObserver

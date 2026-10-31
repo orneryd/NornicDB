@@ -2,11 +2,11 @@ package fabric
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -111,7 +111,7 @@ func (p *remoteParticipant) complete(ctx context.Context, commit bool, result *r
 			result.err = p.tx.Rollback(workCtx)
 		}
 		if result.err != nil && workCtx.Err() != nil {
-			result.err = fmt.Errorf("remote sub-transaction did not end before its deadline: %w (%w)", workCtx.Err(), result.err)
+			result.err = nornicerrors.CombineTerminalOutcomes(fmt.Errorf("remote sub-transaction did not end before its deadline: %w", workCtx.Err()), result.err)
 		}
 	}
 	independent, hasLifetime := p.tx.(interface{ OutlivesConnection() bool })
@@ -189,7 +189,7 @@ func (r *RemoteFragmentExecutor) RollbackParticipants(ctx context.Context) error
 		}()
 	}
 	wg.Wait()
-	return errors.Join(errs...)
+	return nornicerrors.CombineTerminalOutcomes(nil, errs...)
 }
 
 // Execute runs a Cypher query against a remote NornicDB instance.
@@ -240,7 +240,7 @@ func (r *RemoteFragmentExecutor) Close() error {
 		}
 		delete(r.engineCache, key)
 	}
-	return errors.Join(cleanupErrors...)
+	return nornicerrors.CombineTerminalOutcomes(nil, cleanupErrors...)
 }
 
 // remoteEngineIdentity keeps admitted credential fields distinct and exact.
@@ -394,7 +394,7 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 	registered := false
 	defer func() {
 		if !registered {
-			resultErr = errors.Join(resultErr, handle.endWithin(context.WithoutCancel(ctx), false))
+			resultErr = nornicerrors.CombineTerminalOutcomes(resultErr, handle.endWithin(context.WithoutCancel(ctx), false))
 		}
 	}()
 
@@ -403,12 +403,13 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 		return nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
 	}
 	// The sub-transaction ends with its transaction, after the statement or
-	// APPLY batch that enlisted it has returned and cancelled ctx. BindContext
-	// keeps the transaction owner's lifetime and values, not the statement's
-	// cancellation; endWithin bounds the remote terminal request.
+	// APPLY batch that enlisted it has returned and cancelled ctx. The
+	// transaction owns commit; rollback cleanup remains independent of its
+	// cancellation. The existing remote terminal owner bounds both.
 	terminalCtx := fabricTx.BindContext(ctx)
+	rollbackCtx := context.WithoutCancel(ctx)
 	commitFn := func(participant *SubTransaction) error { return handle.endWithin(terminalCtx, participant.IsWrite) }
-	rollbackFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, false) }
+	rollbackFn := func(_ *SubTransaction) error { return handle.endWithin(rollbackCtx, false) }
 	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, ParticipantCallbacks{Commit: commitFn, Rollback: rollbackFn, Outcome: handle.commitOutcome}); err != nil {
 		return nil, err
 	}

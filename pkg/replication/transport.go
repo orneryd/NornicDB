@@ -38,7 +38,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"errors"
-	"github.com/orneryd/nornicdb/pkg/storage"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -46,7 +46,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // ClusterMessageType identifies cluster protocol messages.
@@ -125,6 +129,10 @@ type ClusterTransport struct {
 
 	// Message handlers
 	handlers map[ClusterMessageType]MessageHandler
+	// Native construction dependencies permit I/O fault schedules without
+	// replacing Connect/Listen or their admission/publication paths.
+	dialNative   func(context.Context, string, string) (net.Conn, error)
+	listenNative func(string, string) (net.Listener, error)
 }
 
 // MessageHandler processes incoming cluster messages.
@@ -178,9 +186,8 @@ func NewClusterTransport(config *ClusterTransportConfig) *ClusterTransport {
 			config.MaxMsgSize = defaults.MaxMsgSize
 		}
 	}
-	return &ClusterTransport{
+	t := &ClusterTransport{
 		clusterLifecycle: clusterLifecycle[transportResources]{
-			closeCh: make(chan struct{}),
 			resources: transportResources{
 				connections: make(map[string]*ClusterConnection),
 				logger:      config.Logger,
@@ -200,6 +207,10 @@ func NewClusterTransport(config *ClusterTransportConfig) *ClusterTransport {
 		replay:       newReplayCache(),
 		handlers:     make(map[ClusterMessageType]MessageHandler),
 	}
+	// Close's stop signal closes the listener and every connection, so a
+	// blocked Accept or read returns; Shutdown then joins actual completion.
+	t.work.OnStop(t.closeResources)
+	return t
 }
 
 func (t *ClusterTransport) logPrintf(ctx context.Context, level slog.Level, format string, args ...any) {
@@ -215,13 +226,13 @@ func (t *ClusterTransport) RegisterHandler(msgType ClusterMessageType, handler M
 
 // Connect establishes a connection to a peer node.
 func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnection, error) {
-	if t.resources.closed.Load() {
+	if t.work.Closing() {
 		return nil, localizedError(localization.ReplicationTransportClosed(), nil)
 	}
 
 	// Check for existing connection under the same shutdown admission cut.
 	t.resources.mu.RLock()
-	if t.resources.closed.Load() {
+	if t.work.Closing() {
 		t.resources.mu.RUnlock()
 		return nil, localizedError(localization.ReplicationTransportClosed(), nil)
 	}
@@ -229,7 +240,12 @@ func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnec
 		t.resources.mu.RUnlock()
 		return conn, nil
 	}
+	_, release, accepted := t.work.Acquire(t.work.Context())
 	t.resources.mu.RUnlock()
+	if !accepted {
+		return nil, localizedError(localization.ReplicationTransportClosed(), nil)
+	}
+	defer release()
 
 	// Dial with timeout (also set Dialer.Timeout so the net stack doesn't hang
 	// if a caller passes a context without a deadline).
@@ -244,7 +260,9 @@ func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnec
 	d.Timeout = dialTimeout
 	var netConn net.Conn
 	var err error
-	if t.tlsClient != nil {
+	if t.dialNative != nil {
+		netConn, err = t.dialNative(dialCtx, "tcp", addr)
+	} else if t.tlsClient != nil {
 		netConn, err = tls.DialWithDialer(&d, "tcp", addr, t.tlsClient)
 	} else {
 		netConn, err = d.DialContext(dialCtx, "tcp", addr)
@@ -255,21 +273,29 @@ func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnec
 
 	conn := t.createConnection(addr, netConn)
 	t.resources.mu.Lock()
-	if t.resources.closed.Load() {
+	if t.work.Closing() {
 		t.resources.mu.Unlock()
-		_ = netConn.Close()
-		return nil, localizedError(localization.ReplicationTransportClosed(), nil)
+		closeErr := netConn.Close()
+		if util.ErrorIsOnly(closeErr, net.ErrClosed) {
+			closeErr = nil
+		}
+		t.work.RecordError("", closeErr)
+		return nil, compose.Outcomes(localizedError(localization.ReplicationTransportClosed(), nil), closeErr)
 	}
 	// A concurrent dial may already have installed the reusable peer.
 	if existing := t.resources.connections[addr]; existing != nil && existing.IsConnected() {
 		t.resources.mu.Unlock()
-		_ = netConn.Close()
+		closeErr := netConn.Close()
+		if util.ErrorIsOnly(closeErr, net.ErrClosed) {
+			closeErr = nil
+		}
+		t.work.RecordError("", closeErr)
 		return existing, nil
 	}
-	conn.wg.Add(1)
+	readRelease := conn.admitReader()
 	t.resources.connections[addr] = conn
 	t.resources.mu.Unlock()
-	go conn.readLoop()
+	go conn.readLoop(readRelease)
 
 	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Connected to peer %s", addr)
 	return conn, nil
@@ -278,7 +304,6 @@ func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnec
 func (t *ClusterTransport) createConnection(addr string, netConn net.Conn) *ClusterConnection {
 	conn := &ClusterConnection{
 		clusterLifecycle: clusterLifecycle[connectionResources]{
-			closeCh:   make(chan struct{}),
 			resources: connectionResources{conn: netConn},
 		},
 		transport:    t,
@@ -294,18 +319,25 @@ func (t *ClusterTransport) createConnection(addr string, netConn net.Conn) *Clus
 	}
 	// Mark connected immediately so callers can send without racing readLoop startup.
 	conn.connected.Store(true)
+	conn.work.OnStop(conn.closeResources)
 	return conn
 }
 
 // Listen starts accepting cluster connections.
 func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler ConnectionHandler) error {
-	if t.resources.closed.Load() {
+	t.resources.mu.Lock()
+	listenCtx, release, accepted := t.work.Acquire(t.work.Context())
+	t.resources.mu.Unlock()
+	if !accepted {
 		return localizedError(localization.ReplicationTransportClosed(), nil)
 	}
+	defer release()
 
 	var listener net.Listener
 	var err error
-	if t.tlsServer != nil {
+	if t.listenNative != nil {
+		listener, err = t.listenNative("tcp", addr)
+	} else if t.tlsServer != nil {
 		listener, err = tls.Listen("tcp", addr, t.tlsServer)
 	} else {
 		listener, err = net.Listen("tcp", addr)
@@ -313,28 +345,46 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 	if err != nil {
 		return localizedError(localization.ReplicationTransportListenFailed(addr, err), err)
 	}
+	boundAddr := listener.Addr().String()
 
 	t.resources.mu.Lock()
-	if t.resources.closed.Load() {
+	if t.work.Closing() {
 		t.resources.mu.Unlock()
-		_ = listener.Close()
-		return nil
+		closeErr := listener.Close()
+		if util.ErrorIsOnly(closeErr, net.ErrClosed) {
+			closeErr = nil
+		}
+		t.work.RecordError("", closeErr)
+		return closeErr
 	}
 	t.resources.listener = listener
 	// If an ephemeral port was requested (or the caller passes an empty addr in tests),
 	// record the actual bound address for later dials/diagnostics.
-	t.bindAddr = listener.Addr().String()
+	t.bindAddr = boundAddr
 	t.resources.mu.Unlock()
 
-	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Listening on %s", listener.Addr().String())
+	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Listening on %s", boundAddr)
 
 	// Cancelling ctx closes the listener, so a blocked Accept returns. Only
 	// a TCP listener gets the accept deadline below; a TLS listener's
 	// Accept would otherwise wait until the transport closed, and an HA
 	// standby, which cancels ctx and waits for this loop before closing
 	// the transport, could never shut down.
-	stopClose := context.AfterFunc(ctx, func() { _ = listener.Close() })
-	defer stopClose()
+	// Listen's admission enrolls the close callback before it is armed.
+	_, closeRelease, _ := t.work.Acquire(listenCtx)
+	stopClose := context.AfterFunc(ctx, func() {
+		defer closeRelease()
+		closeErr := listener.Close()
+		if util.ErrorIsOnly(closeErr, net.ErrClosed) {
+			closeErr = nil
+		}
+		t.work.RecordError("", closeErr)
+	})
+	defer func() {
+		if stopClose() {
+			closeRelease()
+		}
+	}()
 
 	for {
 		select {
@@ -344,7 +394,7 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 		}
 		// Close closes the listener, so a blocked Accept returns and the
 		// loop exits here.
-		if t.resources.closed.Load() {
+		if t.work.Closing() {
 			return nil
 		}
 
@@ -358,26 +408,30 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				continue
 			}
-			if !t.resources.closed.Load() {
+			if !t.work.Closing() {
 				t.logPrintf(ctx, slog.LevelError, "[Cluster] Accept error: %v", err)
 			}
 			continue
 		}
 
 		t.resources.mu.Lock()
-		if t.resources.closed.Load() {
+		if t.work.Closing() {
 			t.resources.mu.Unlock()
-			_ = netConn.Close()
-			return nil
+			closeErr := netConn.Close()
+			if util.ErrorIsOnly(closeErr, net.ErrClosed) {
+				closeErr = nil
+			}
+			t.work.RecordError("", closeErr)
+			return closeErr
 		}
-		t.wg.Add(1)
+		_, incomingRelease, _ := t.work.Acquire(listenCtx)
 		t.resources.mu.Unlock()
-		go t.handleIncoming(ctx, netConn, handler)
+		go t.handleIncoming(ctx, netConn, handler, incomingRelease)
 	}
 }
 
-func (t *ClusterTransport) handleIncoming(ctx context.Context, netConn net.Conn, onConnect ConnectionHandler) {
-	defer t.wg.Done()
+func (t *ClusterTransport) handleIncoming(ctx context.Context, netConn net.Conn, onConnect ConnectionHandler, release func()) {
+	defer release()
 
 	remoteAddr := netConn.RemoteAddr().String()
 	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Accepted connection from %s", remoteAddr)
@@ -388,12 +442,16 @@ func (t *ClusterTransport) handleIncoming(ctx context.Context, netConn net.Conn,
 	conn := t.createConnection(remoteAddr, netConn)
 
 	t.resources.mu.Lock()
-	if t.resources.closed.Load() {
+	if t.work.Closing() {
 		t.resources.mu.Unlock()
-		_ = netConn.Close()
+		closeErr := netConn.Close()
+		if util.ErrorIsOnly(closeErr, net.ErrClosed) {
+			closeErr = nil
+		}
+		t.work.RecordError("", closeErr)
 		return
 	}
-	conn.wg.Add(1)
+	readRelease := conn.admitReader()
 	t.resources.connections[remoteAddr] = conn
 	t.resources.mu.Unlock()
 
@@ -404,8 +462,8 @@ func (t *ClusterTransport) handleIncoming(ctx context.Context, netConn net.Conn,
 		conn.onAuthenticated = func() { onConnect(conn) }
 	}
 
-	go conn.readLoopWithContext(ctx)
-	conn.wg.Wait()
+	go conn.readLoopWithContext(ctx, readRelease)
+	<-conn.work.Quiescent()
 }
 
 // ClusterConnection implements PeerConnection for cluster communication.
@@ -476,25 +534,39 @@ func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-c.closeCh:
+	case <-c.work.Context().Done():
 		return nil, localizedError(localization.ReplicationRPCConnectionClosed(), nil)
 	case resp := <-respCh:
 		return resp, nil
 	}
 }
 
-func (c *ClusterConnection) readLoop() {
-	c.readLoopWithContext(context.Background())
+func (c *ClusterConnection) readLoop(release func()) {
+	c.readLoopWithContext(c.work.Context(), release)
 }
 
-func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
-	defer c.wg.Done()
+// admitReader enrolls the connection's read loop before it is launched.
+func (c *ClusterConnection) admitReader() func() {
+	_, release, _ := c.work.Acquire(c.work.Context())
+	return release
+}
+
+// readLoopWithContext is the connection's accepted work. Its exit ends the
+// connection: admission is sealed, waiters observe the cancellation, the
+// socket is closed and the loop's ticket is released last.
+func (c *ClusterConnection) readLoopWithContext(ctx context.Context, release func()) {
+	defer release()
 	c.connected.Store(true)
 	defer func() {
 		c.connected.Store(false)
-		close(c.closeCh)
+		c.work.CloseAdmission()
+		c.work.Cancel()
 		if c.resources.conn != nil {
-			_ = c.resources.conn.Close()
+			closeErr := c.resources.conn.Close()
+			if util.ErrorIsOnly(closeErr, net.ErrClosed) {
+				closeErr = nil
+			}
+			c.work.RecordError("", closeErr)
 		}
 	}()
 
@@ -502,7 +574,7 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.transport.closeCh:
+		case <-c.transport.work.Context().Done():
 			return
 		default:
 		}
@@ -783,7 +855,6 @@ func exchangeClusterRPC[Response any](c *ClusterConnection, ctx context.Context,
 
 type transportResources struct {
 	mu          sync.RWMutex
-	closed      atomic.Bool
 	listener    net.Listener
 	connections map[string]*ClusterConnection
 	logger      *slog.Logger
@@ -795,55 +866,50 @@ type connectionResources struct {
 	conn net.Conn
 }
 
-// clusterLifecycle owns the admission/write mutex, worker join and shutdown
-// signal for either cluster resource. Its concrete payload contains only that
-// role's resources; neither owner keeps a back-pointer or shutdown callback.
+// clusterLifecycle is a cluster resource's use of its one lifecycle owner.
+// Its concrete payload contains only that role's resources; neither owner
+// keeps a back-pointer or shutdown callback.
 type clusterLifecycle[Resources transportResources | connectionResources] struct {
-	wg        sync.WaitGroup
-	closeCh   chan struct{}
+	work      lifecycle.WorkLifetime
 	resources Resources
 }
 
-// Close retires admission under the resource's mutex, closes dependent sockets
-// and joins workers outside that mutex. Transport repeats return immediately;
-// connection repeats still close their socket and join the existing read loop.
-func (owner *clusterLifecycle[Resources]) Close() error {
-	var mu sync.Locker
-	var transport *transportResources
-	var connection *connectionResources
+// closeResources is the stop signal: it closes the listener and connections
+// (transport) or the socket (connection), so blocked I/O returns.
+func (owner *clusterLifecycle[Resources]) closeResources() error {
+	var resources []io.Closer
 	switch payload := any(&owner.resources).(type) {
 	case *transportResources:
-		transport, mu = payload, &payload.mu
-	case *connectionResources:
-		connection, mu = payload, &payload.mu
-	}
-	mu.Lock()
-	var resources []io.Closer
-	if transport != nil {
-		if transport.closed.Swap(true) {
-			mu.Unlock()
-			return nil
+		payload.mu.Lock()
+		if payload.listener != nil {
+			resources = append(resources, payload.listener)
 		}
-		close(owner.closeCh)
-		resources = make([]io.Closer, 0, len(transport.connections)+1)
-		if transport.listener != nil {
-			resources = append(resources, transport.listener)
-		}
-		for _, child := range transport.connections {
+		for _, child := range payload.connections {
 			resources = append(resources, child)
 		}
-	} else if connection.conn != nil {
-		// Socket close remains excluded against concrete response writers.
-		// Worker joins happen only after releasing the same mutex they need.
-		_ = connection.conn.Close()
+		payload.mu.Unlock()
+	case *connectionResources:
+		// conn is immutable after construction. Closing it must be able to
+		// interrupt Write even while the write serialization mutex is held.
+		if payload.conn != nil {
+			resources = append(resources, payload.conn)
+		}
 	}
-	mu.Unlock()
-	for _, resource := range resources {
-		_ = resource.Close()
+	var closeErr error
+	for index, resource := range resources {
+		if err := resource.Close(); err != nil && !util.ErrorIsOnly(err, net.ErrClosed) {
+			closeErr = compose.Outcomes(closeErr, fmt.Errorf("cluster %T resource %d close: %w", &owner.resources, index, err))
+		}
 	}
-	owner.wg.Wait()
-	if transport != nil {
+	return closeErr
+}
+
+// Close is the owner's stop protocol: the first caller seals admission and
+// signals; every caller, first or repeated, joins the same actual completion.
+func (owner *clusterLifecycle[Resources]) Close() error {
+	err := owner.work.Shutdown(context.Background(), nil)
+	if transport, ok := any(&owner.resources).(*transportResources); ok {
 		logReplicationEvent(context.Background(), transport.logger, transport.localizer, slog.LevelInfo, localization.ReplicationOperatorEvent("[Cluster] Transport closed"))
 	}
-	return nil
+	return err
 }

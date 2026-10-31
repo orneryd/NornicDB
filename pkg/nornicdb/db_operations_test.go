@@ -100,7 +100,7 @@ func TestDB_GetIndexes(t *testing.T) {
 		require.Empty(t, indexes)
 		require.ErrorContains(t, minimal.CreateIndex(context.Background(), "A", "b", "property"), "schema manager not initialized")
 
-		minimal.closed = true
+		minimal.work.CloseAdmission()
 		_, err = minimal.GetIndexes(context.Background())
 		require.ErrorIs(t, err, ErrClosed)
 		require.ErrorIs(t, minimal.CreateIndex(context.Background(), "A", "b", "property"), ErrClosed)

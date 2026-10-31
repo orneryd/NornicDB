@@ -13,8 +13,7 @@ type DeindexCleanupJob struct {
 	engine   *BadgerEngine
 	interval time.Duration
 	mu       sync.Mutex
-	cancel   context.CancelFunc
-	done     chan struct{}
+	run      *engineWorker // the running job, accepted engine work; mu
 }
 
 // NewDeindexCleanupJob creates a cleanup job. Default interval is 24h.
@@ -28,31 +27,27 @@ func NewDeindexCleanupJob(engine *BadgerEngine, interval time.Duration) *Deindex
 	}
 }
 
+// Start runs the job, as accepted engine work, until Stop, the engine's stop
+// or ctx ends.
 func (j *DeindexCleanupJob) Start(ctx context.Context) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if j.cancel != nil {
+	if j.run != nil {
 		return
 	}
-	ctx, j.cancel = context.WithCancel(ctx)
-	j.done = make(chan struct{})
-	go j.run(ctx)
+	j.run = j.engine.startEngineWorker(ctx, j.loop)
 }
 
+// Stop stops the job and waits for its actual return.
 func (j *DeindexCleanupJob) Stop() {
 	j.mu.Lock()
-	cancel := j.cancel
-	done := j.done
-	j.cancel = nil
+	run := j.run
+	j.run = nil
 	j.mu.Unlock()
-	if cancel != nil {
-		cancel()
-		<-done
-	}
+	run.stopAndJoin()
 }
 
-func (j *DeindexCleanupJob) run(ctx context.Context) {
-	defer close(j.done)
+func (j *DeindexCleanupJob) loop(ctx context.Context) {
 	ticker := time.NewTicker(j.interval)
 	defer ticker.Stop()
 	for {
