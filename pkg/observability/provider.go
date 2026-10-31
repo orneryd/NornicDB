@@ -2,14 +2,15 @@ package observability
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -48,14 +49,9 @@ type Provider struct {
 	// Sync() per D-09a (captures drain-time finalize logs to disk).
 	writerRef io.Writer
 
-	// shutdownOnce makes Shutdown idempotent: Plan-03's telemetryListener
-	// calls Provider.Shutdown as part of its OQ4 ordering, AND test fixtures
-	// (TestEnv) call it from t.Cleanup. The OTel SDK returns "reader is
-	// shutdown" on a second Shutdown call to MeterProvider, which is
-	// surprising for a Provider whose docstring promises idempotency. The
-	// sync.Once collapses the second-call path to a no-op success.
-	shutdownOnce sync.Once
-	shutdownErr  error
+	// One native-disposal result; callers share its actual completion without
+	// holding publication state across SDK or writer code.
+	shutdown lifecycle.OnceCompletion
 }
 
 // New constructs a *Provider following the OBS-03 init order:
@@ -260,39 +256,59 @@ func (p *Provider) Logger() *slog.Logger { return p.logger }
 // Config returns a copy of the construction-time config.
 func (p *Provider) Config() ObservabilityConfig { return p.cfg }
 
-// Shutdown flushes the BSP and shuts down the meter provider. Idempotent in
-// the sense that it can be called multiple times safely; the underlying SDK
-// providers are themselves idempotent on Shutdown.
+// Shutdown flushes the BSP and shuts down the meter provider once. ctx bounds
+// this caller's wait; retained disposal keeps its values and runs to actual
+// completion. A later Shutdown joins the same completion and returns its outcome.
 //
 // Called by the telemetry listener's Shutdown in Plan 03 (per Open Question 4
 // resolution — the lifecycle.Component owns the Provider's flush budget).
 func (p *Provider) Shutdown(ctx context.Context) error {
-	p.shutdownOnce.Do(func() {
-		var errs error
-		// noop.NewTracerProvider() returns a trace.TracerProvider interface that
-		// has no Shutdown method; only the SDK provider does. Type-assert to
-		// handle both paths cleanly.
-		if tp, ok := p.tracerProvider.(interface {
-			Shutdown(context.Context) error
-		}); ok {
-			if err := tp.Shutdown(ctx); err != nil {
-				errs = errors.Join(errs, fmt.Errorf("tracer provider shutdown: %w", err))
-			}
-		}
-		if p.meterProvider != nil {
-			if err := p.meterProvider.Shutdown(ctx); err != nil {
-				errs = errors.Join(errs, fmt.Errorf("meter provider shutdown: %w", err))
-			}
-		}
-		// D-09a: opportunistic Sync() against the logger writer. *os.File
-		// flushes to disk; *bytes.Buffer (tests) and the standard streams
-		// no-op. Cost ~1-3ms; well under the 5s flush budget. Errors are
-		// intentionally swallowed — Sync failure during shutdown is not
-		// actionable, and we do not want it to mask earlier exporter errors.
-		if syncer, ok := p.writerRef.(interface{ Sync() error }); ok {
-			_ = syncer.Sync()
-		}
-		p.shutdownErr = errs
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return p.shutdown.DoContext(ctx, func() error {
+		return p.finishShutdown(context.WithoutCancel(ctx))
 	})
-	return p.shutdownErr
+}
+
+// finishShutdown runs outside the publication fence. A caller deadline never
+// supplies a dead context to retained disposal or releases its completion future.
+func (p *Provider) finishShutdown(ctx context.Context) error {
+	var errs error
+	// noop.NewTracerProvider() returns a trace.TracerProvider interface that
+	// has no Shutdown method; only the SDK provider does. Type-assert to
+	// handle both paths cleanly.
+	if tp, ok := p.tracerProvider.(interface {
+		Shutdown(context.Context) error
+	}); ok {
+		if err := tp.Shutdown(ctx); err != nil {
+			errs = compose.Outcomes(errs, fmt.Errorf("tracer provider shutdown: %w", err))
+		}
+	}
+	if p.meterProvider != nil {
+		if err := p.meterProvider.Shutdown(ctx); err != nil {
+			errs = compose.Outcomes(errs, fmt.Errorf("meter provider shutdown: %w", err))
+		}
+	}
+	// Regular files and explicit Sync writers participate in final flush.
+	// Pipes/terminals are borrowed streams with no durable Sync operation.
+	// Keep every applicable outcome beside the exporter shutdown results.
+	if syncer, ok := p.writerRef.(interface{ Sync() error }); ok {
+		applicable := true
+		if file, ok := p.writerRef.(*os.File); ok {
+			info, err := file.Stat()
+			if err != nil {
+				errs = compose.Outcomes(errs, fmt.Errorf("logger writer stat: %w", err))
+				applicable = false
+			} else {
+				applicable = info.Mode().IsRegular()
+			}
+		}
+		if applicable {
+			if err := syncer.Sync(); err != nil {
+				errs = compose.Outcomes(errs, fmt.Errorf("logger writer sync: %w", err))
+			}
+		}
+	}
+	return errs
 }

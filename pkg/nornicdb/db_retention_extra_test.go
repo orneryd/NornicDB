@@ -219,8 +219,8 @@ func TestRetentionSweep_BudgetAndStartBranches(t *testing.T) {
 	cancel()
 	db.config.Retention.SweepIntervalSeconds = 1
 	db.startRetentionSweep(canceled)
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 
-	db.closed = true
+	db.work.CloseAdmission()
 	db.startRetentionSweep(context.Background())
 }

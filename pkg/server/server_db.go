@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal-outcome response propagation, 2026-10-27.
 package server
 
 import (
@@ -167,9 +168,6 @@ func (s *Server) databaseScopedExecutorOptions(dbName, authToken string) cypher.
 			// Copy query embedder from the base DB executor so string-input vector procedures work.
 			if base != nil {
 				executor.ShareQueryStatisticsFrom(base)
-				if inferMgr := base.GetInferenceManager(); inferMgr != nil {
-					executor.SetInferenceManager(inferMgr)
-				}
 				// NornicDB issue #563 defect 1: this is the executor behind every
 				// HTTP POST /db/{name}/tx/commit for a non-default database — the
 				// overwhelming majority of this HTTP traffic. Without inheriting
@@ -755,8 +753,10 @@ func queryStatsFromResult(result *cypher.ExecuteResult) *QueryStats {
 // Neo4j code the engine raised (or a transient transaction code), with the
 // message without that code prefix. Every transaction endpoint reports
 // statement errors through here.
-func statementError(err error) QueryError {
-	code, message := mapSessionExecError(err)
+// statementError is a failed statement's status and message, rendered in one
+// pass with the request's localization.
+func statementError(err error, localize func(localization.Message) string) QueryError {
+	code, message := nornicerrors.RenderStatus(err, localize)
 	return QueryError{Code: code, Message: message}
 }
 
@@ -765,8 +765,7 @@ func statementError(err error) QueryError {
 // is recorded in response first, as Neo4j's HTTP API reports it (#668); a
 // statement failing at compile time has no result.
 func statementFailure(ctx context.Context, response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error, localize func(localization.Message) string) QueryError {
-	failure := statementError(err)
-	localizeStatementError(&failure, err, localize)
+	failure := statementError(err, localize)
 	if executor != nil && !nornicerrors.IsCompileTimeError(err) {
 		columns, columnErr := executor.StatementResultColumnsContext(ctx, query, cypher.RawSource)
 		if columnErr != nil {
@@ -780,13 +779,6 @@ func statementFailure(ctx context.Context, response *TransactionResponse, execut
 		}
 	}
 	return failure
-}
-
-func localizeStatementError(failure *QueryError, err error, localize func(localization.Message) string) {
-	var localized *localization.LocalizedError
-	if errors.As(err, &localized) && localized.Code == failure.Code && localize != nil {
-		failure.Message = localize(localized.Message)
-	}
 }
 
 // QueryError is an error from a query (Neo4j format).
@@ -1296,7 +1288,7 @@ func (s *Server) executeTxStatements(
 	authToken string,
 	claims *auth.JWTClaims,
 	dbName string,
-	session *txsession.Session,
+	lease *txsession.Lease,
 	statements []StatementRequest,
 	response *TransactionResponse,
 ) (failed bool) {
@@ -1304,7 +1296,7 @@ func (s *Server) executeTxStatements(
 		text, _ := localizationboundary.Render(ctx, s.localizer, message, localizationboundary.FallbackOrID, localizationboundary.SourceEnglish)
 		return text
 	}
-	return s.runRequestStatements(s.withRequestIdentity(ctx, nil, claims), authToken, claims, dbName, statements, s.sessionStatementRunner(session), localize, response)
+	return s.runRequestStatements(s.withRequestIdentity(ctx, nil, claims), authToken, claims, dbName, statements, s.sessionStatementRunner(lease), localize, response)
 }
 
 // statementRunner executes one statement of an HTTP /tx request on a
@@ -1347,9 +1339,10 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 
 // sessionStatementRunner runs the original statement in an open transaction.
 // The executor owns USE, :USE and the transaction's database selection rules.
-func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
+func (s *Server) sessionStatementRunner(lease *txsession.Lease) statementRunner {
+	session := lease.Session
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
-		result, err := s.txSessions.ExecuteInSession(cypher.WithClientStatement(txphase.Statements(ctx)), session, query, params)
+		result, err := lease.ExecuteInSession(cypher.WithClientStatement(txphase.Statements(ctx)), query, params)
 		return result, session.Executor, err
 	}
 }
@@ -1410,8 +1403,7 @@ func (s *Server) runRequestStatements(
 		// An empty statement (or only a comment) is Neo4j's SyntaxError, so it
 		// fails its request like any other invalid statement.
 		if err := cypher.ValidateStatementText(queryStatement); err != nil {
-			failure := statementError(err)
-			localizeStatementError(&failure, err, localize)
+			failure := statementError(err, localize)
 			return &failure
 		}
 
@@ -1423,8 +1415,7 @@ func (s *Server) runRequestStatements(
 			if errors.As(err, &own) {
 				return &own.QueryError
 			}
-			failure := statementError(err)
-			localizeStatementError(&failure, err, localize)
+			failure := statementError(err, localize)
 			// Authorization failures never publish a statement result, even when
 			// the executor supplies column metadata alongside the denial. Keep
 			// runtime partial results for non-security statement failures below.
@@ -1490,33 +1481,38 @@ func (s *Server) runOneShotTransaction(
 		})
 		return
 	}
-	session, openErr := s.openRequestTransaction(r, claims, dbName, localize)
+	lease, openErr := s.openRequestTransaction(r, claims, dbName, localize)
 	if openErr != nil {
 		response.Errors = append(response.Errors, *openErr)
 		return
 	}
+	defer func() { lease.Release() }()
+	session := lease.Session
 	wrote := false
 	run := func(ctx context.Context, target, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
 		if session == nil {
 			var openErr *QueryError
-			session, openErr = s.openRequestTransaction(r, claims, dbName, localize)
+			lease, openErr = s.openRequestTransaction(r, claims, dbName, localize)
 			if openErr != nil {
 				return nil, nil, &requestStatementError{QueryError: *openErr}
 			}
+			session = lease.Session
 		}
-		result, executor, err := s.sessionStatementRunner(session)(ctx, target, query, params)
+		result, executor, err := s.sessionStatementRunner(lease)(ctx, target, query, params)
 		var detail interface{ BoltErrorDetail() string }
 		code, _ := mapSessionExecError(err)
-		if err != nil && code == "Neo.DatabaseError.Transaction.TransactionStartFailed" && errors.As(err, &detail) && detail.BoltErrorDetail() == "InvalidCallInTransactions" {
+		if err != nil && code == nornicerrors.TransactionStartFailed && errors.As(err, &detail) && detail.BoltErrorDetail() == "InvalidCallInTransactions" {
 			if wrote {
 				return nil, executor, &requestStatementError{QueryError{
 					Code:    "Neo.DatabaseError.Statement.ExecutionFailed",
 					Message: "Expected transaction state to be empty when calling transactional subquery. (Transactions committed: 0)",
 				}}
 			}
-			if rollbackErr := s.rollbackRequestTransaction(ctx, session, nil); rollbackErr != nil {
-				return nil, executor, rollbackErr
+			if rollbackErr := s.rollbackRequestTransaction(ctx, lease, nil); rollbackErr != nil {
+				return nil, executor, nornicerrors.CombineTerminalOutcomes(err, rollbackErr)
 			}
+			lease.Release()
+			lease = nil
 			session = nil
 			return s.autoCommitStatementRunner(r.Header.Get("Authorization"))(ctx, target, query, params)
 		}
@@ -1527,31 +1523,32 @@ func (s *Server) runOneShotTransaction(
 	}
 	if s.runRequestStatements(s.withRequestIdentity(r.Context(), r, claims), r.Header.Get("Authorization"), claims, dbName, statements, run, localize, response) {
 		if session != nil {
-			s.rollbackRequestTransaction(r.Context(), session, response)
+			s.rollbackRequestTransaction(r.Context(), lease, response)
 		}
 		return
 	}
 	if session != nil {
-		s.commitRequestTransaction(r.Context(), session, response)
+		s.commitRequestTransaction(r.Context(), lease, response)
 	}
 }
 
 // openRequestTransaction opens a transaction on dbName for an HTTP request.
 // A database with remote constituents gets an executor built with the
 // request's auth token, which it forwards to the remote engines.
-func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims, dbName string, localize func(localization.Message) string) (*txsession.Session, *QueryError) {
-	var session *txsession.Session
+func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims, dbName string, localize func(localization.Message) string) (*txsession.Lease, *QueryError) {
+	var lease *txsession.Lease
 	var err error
 	authToken := r.Header.Get("Authorization")
 	ownerKey := transactionOwnerKey(r, claims)
 	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
 		executor, execErr := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, authToken))
 		if execErr != nil {
-			return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: execErr.Error()}
+			code, message := nornicerrors.RenderStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, execErr), localize)
+			return nil, &QueryError{Code: code, Message: message}
 		}
-		session, err = s.txSessions.OpenWithExecutorForOwner(r.Context(), dbName, executor, ownerKey)
+		lease, err = s.txSessions.OpenRequestWithExecutorForOwner(r.Context(), dbName, executor, ownerKey)
 	} else {
-		session, err = s.txSessions.OpenForOwner(r.Context(), dbName, ownerKey)
+		lease, err = s.txSessions.OpenRequestForOwner(r.Context(), dbName, ownerKey)
 	}
 	if err != nil {
 		if errors.Is(err, multidb.ErrDatabaseNotFound) {
@@ -1560,17 +1557,19 @@ func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims,
 				Message: localize(localization.HTTPDatabaseNotFound(dbName)),
 			}
 		}
-		return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: err.Error()}
+		code, message := nornicerrors.RenderStatus(err, localize)
+		return nil, &QueryError{Code: code, Message: message}
 	}
-	return session, nil
+	s.retainTransactionResponse(r.Context(), lease)
+	return lease, nil
 }
 
 // commitRequestTransaction commits an HTTP request's transaction and records
 // the commit's error, or its receipt and optimistic metadata, on response.
-func (s *Server) commitRequestTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) {
-	commitResult, err := s.txSessions.CommitAndDelete(ctx, session)
+func (s *Server) commitRequestTransaction(ctx context.Context, lease *txsession.Lease, response *TransactionResponse) {
+	commitResult, err := lease.CommitAndDelete(ctx)
 	if err != nil {
-		code, message := nornicerrors.Neo4jCommitStatus(err)
+		code, message := nornicerrors.Neo4jStatus(err)
 		response.Errors = append(response.Errors, QueryError{Code: code, Message: message})
 		return
 	}
@@ -1603,17 +1602,22 @@ func applyResultMetadata(response *TransactionResponse, metadata map[string]inte
 // Neo.ClientError.Transaction.TransactionNotFound. The response's receipt and
 // optimistic metadata described writes that are now discarded, so they are
 // dropped.
-func (s *Server) rollbackRequestTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) error {
-	err := s.txSessions.RollbackAndDelete(ctx, session)
+func (s *Server) rollbackRequestTransaction(ctx context.Context, lease *txsession.Lease, response *TransactionResponse) error {
+	err := lease.RollbackAndDelete(ctx)
 	if response != nil {
 		if err != nil {
-			code, message := mapSessionExecError(err)
-			response.Errors = append(response.Errors, QueryError{Code: code, Message: message})
+			response.Errors = append(response.Errors, rollbackError(err))
 		}
 		response.Receipt = nil
 		response.Optimistic = nil
 	}
 	return err
+}
+
+// rollbackError is a failed rollback's response error.
+func rollbackError(err error) QueryError {
+	code, message := nornicerrors.Neo4jStatus(err)
+	return QueryError{Code: code, Message: message}
 }
 
 // transactionExpires formats an explicit transaction's expiry as an HTTP
@@ -1634,7 +1638,6 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
-
 	var req TransactionRequest
 	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil && err != io.EOF {
 		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
@@ -1642,7 +1645,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	}
 
 	r = r.WithContext(cypher.WithTransactionMetadata(r.Context(), req.TransactionMetadata))
-	txSession, openErr := s.openRequestTransaction(r, claims, dbName, func(message localization.Message) string { return s.localizedText(w, r, message) })
+	lease, openErr := s.openRequestTransaction(r, claims, dbName, func(message localization.Message) string { return s.localizedText(w, r, message) })
 	if openErr != nil {
 		status := http.StatusInternalServerError
 		if openErr.Code == "Neo.ClientError.Database.DatabaseNotFound" {
@@ -1651,21 +1654,23 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		httpresponse.WriteJSON(w, status, TransactionResponse{Results: make([]QueryResult, 0), Errors: []QueryError{*openErr}})
 		return
 	}
+	defer lease.Release()
+	txSession := lease.Session
 
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
 		Errors:  make([]QueryError, 0),
 		Commit:  s.transactionCommitURL(r, dbName, txSession.ID),
 		Transaction: &TransactionInfo{
-			Expires: transactionExpires(txSession.Expiration()),
+			Expires: transactionExpires(txSession.ExpiresAt()),
 		},
 	}
 
 	if len(req.Statements) > 0 {
-		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, txSession, req.Statements, &response) {
-			s.rollbackRequestTransaction(r.Context(), txSession, &response)
+		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, lease, req.Statements, &response) {
+			s.rollbackRequestTransaction(r.Context(), lease, &response)
 		}
-		response.Transaction.Expires = transactionExpires(txSession.Expiration())
+		response.Transaction.Expires = transactionExpires(txSession.ExpiresAt())
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
@@ -1679,33 +1684,48 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
-
-	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims))
-	if !ok || tx == nil || tx.Database != dbName {
+	// Keep the early not-found response for unknown IDs. This pointer is only
+	// used for the immutable database check; the request acquires a lease after
+	// body decoding and revalidates expiry before executing anything.
+	if tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims)); !ok || tx == nil || tx.Database != dbName {
 		s.writeNeo4jTransactionNotFound(w, r)
 		return
 	}
 
 	var req TransactionRequest
 	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil {
-		rollbackErr := s.rollbackRequestTransaction(r.Context(), tx, nil)
+		lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+		if !ok {
+			return
+		}
+		rollbackErr := s.rollbackRequestTransaction(r.Context(), lease, nil)
+		lease.Release()
 		s.writeNeo4jInvalidTransactionBody(w, r, err, rollbackErr)
 		return
 	}
+	lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+	if !ok {
+		return
+	}
+	defer lease.Release()
+	tx := lease.Session
 
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
 		Errors:  make([]QueryError, 0),
 		Commit:  s.transactionCommitURL(r, dbName, txID),
 		Transaction: &TransactionInfo{
-			Expires: transactionExpires(tx.Expires),
+			Expires: transactionExpires(tx.ExpiresAt()),
 		},
 	}
 
-	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
-		s.rollbackRequestTransaction(r.Context(), tx, &response)
+	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, lease, req.Statements, &response) {
+		s.rollbackRequestTransaction(r.Context(), lease, &response)
 	}
-	response.Transaction.Expires = transactionExpires(tx.Expires)
+	if len(req.Statements) == 0 {
+		s.txSessions.Touch(tx)
+	}
+	response.Transaction.Expires = transactionExpires(tx.ExpiresAt())
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	httpresponse.WriteJSON(w, http.StatusOK, response)
@@ -1719,6 +1739,10 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
+	if tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims)); !ok || tx == nil || tx.Database != dbName {
+		s.writeNeo4jTransactionNotFound(w, r)
+		return
+	}
 
 	response := TransactionResponse{
 		Results:       make([]QueryResult, 0),
@@ -1726,28 +1750,32 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 		LastBookmarks: []string{s.generateBookmark()},
 	}
 
-	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims))
-	if !ok || tx == nil || tx.Database != dbName {
-		s.writeNeo4jTransactionNotFound(w, r)
-		return
-	}
-
 	var req TransactionRequest
 	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil && err != io.EOF {
-		rollbackErr := s.rollbackRequestTransaction(r.Context(), tx, nil)
+		lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+		if !ok {
+			return
+		}
+		rollbackErr := s.rollbackRequestTransaction(r.Context(), lease, nil)
+		lease.Release()
 		s.writeNeo4jInvalidTransactionBody(w, r, err, rollbackErr)
 		return
 	}
+	lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+	if !ok {
+		return
+	}
+	defer lease.Release()
 
 	// Execute optional final statements in transaction context first.
-	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
-		s.rollbackRequestTransaction(r.Context(), tx, &response)
+	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, lease, req.Statements, &response) {
+		s.rollbackRequestTransaction(r.Context(), lease, &response)
 		s.applyMVCCPressureWarnings(w, dbName, &response)
 		httpresponse.WriteJSON(w, http.StatusOK, response)
 		return
 	}
 
-	s.commitRequestTransaction(r.Context(), tx, &response)
+	s.commitRequestTransaction(r.Context(), lease, &response)
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
@@ -1759,19 +1787,34 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, getClaims(r)))
-	if !ok || tx == nil || tx.Database != dbName {
-		s.writeNeo4jTransactionNotFound(w, r)
+	lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, getClaims(r)))
+	if !ok {
 		return
 	}
+	defer lease.Release()
 
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
 		Errors:  make([]QueryError, 0),
 	}
-	s.rollbackRequestTransaction(r.Context(), tx, &response)
+	s.rollbackRequestTransaction(r.Context(), lease, &response)
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	httpresponse.WriteJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) leaseTransactionOrNotFound(w http.ResponseWriter, r *http.Request, dbName, txID, owner string) (*txsession.Lease, bool) {
+	lease, ok := s.txSessions.AcquireForOwner(txID, owner)
+	if !ok || lease == nil {
+		s.writeNeo4jTransactionNotFound(w, r)
+		return nil, false
+	}
+	if lease.Session.Database != dbName {
+		lease.Release()
+		s.writeNeo4jTransactionNotFound(w, r)
+		return nil, false
+	}
+	s.retainTransactionResponse(r.Context(), lease)
+	return lease, true
 }
 
 func (s *Server) bindStatementCacheIndex() {

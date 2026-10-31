@@ -212,7 +212,7 @@ func (w *WAL) sealPropertyEpochsLocked() error {
 // planPropertyEpochSealLocked reads every file once, the active file last.
 // Nothing is rewritten here, so a visitor can veto the whole conversion.
 func (w *WAL) planPropertyEpochSealLocked(visit func(WALEntry) error) ([]walPropertyEpochSealPlan, error) {
-	if !w.closed.Load() {
+	if !w.handleReleased {
 		if err := w.syncLocked(); err != nil {
 			return nil, err
 		}
@@ -250,7 +250,7 @@ func (w *WAL) applyPropertyEpochSealLocked(plans []walPropertyEpochSealPlan) err
 		}
 	}
 	// Release the append handle before replacement (also required on Windows).
-	if !w.closed.Load() {
+	if !w.handleReleased {
 		if err := w.file.Close(); err != nil {
 			return err
 		}
@@ -261,7 +261,7 @@ func (w *WAL) applyPropertyEpochSealLocked(plans []walPropertyEpochSealPlan) err
 		// which sets the marker again.
 		err = w.clearPropertyEpochUnsealedLocked()
 	}
-	if !w.closed.Load() {
+	if !w.handleReleased {
 		if reopenErr := w.reopenWAL(); reopenErr != nil {
 			return reopenErr
 		}
@@ -270,7 +270,7 @@ func (w *WAL) applyPropertyEpochSealLocked(plans []walPropertyEpochSealPlan) err
 	return err
 }
 
-// Close's lifetime owner has stopped admissions and waited for txnWG before
+// Close's lifetime owner has sealed admission and every admitted helper returned before
 // calling this with its captured handle. No ensureOpen-then-use or nested
 // write-barrier acquisition is involved. Foreign provenance is never erased:
 // a separate proof permits old-writer appends only after a complete clean stop.

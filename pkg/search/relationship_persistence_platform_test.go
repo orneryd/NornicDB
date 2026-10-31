@@ -30,7 +30,7 @@ func TestRelationshipEmbeddingPersistsWithRelativeIndexPath(t *testing.T) {
 		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	})
 	svc.StartRelationshipIndex()
-	<-svc.relationshipSearch().done
+	<-svc.relationshipSearch().worker.Done()
 	require.NoError(t, svc.Close())
 	require.Equal(t, 2, svc.RelationshipEmbeddingCount())
 	saved, err := svc.loadRelationshipVectors()
@@ -44,7 +44,7 @@ func TestRelationshipEmbeddingPersistsWithRelativeIndexPath(t *testing.T) {
 		s.SetPersistenceEnabled(true)
 		s.SetFulltextIndexPath("bm25")
 	})
-	<-restarted.relationshipSearch().ready
+	<-restarted.relationshipSearch().loaded.Done()
 	require.Equal(t, 2, restarted.RelationshipEmbeddingCount())
 	require.Zero(t, reused.calls.Load())
 	require.NoError(t, restarted.Close())

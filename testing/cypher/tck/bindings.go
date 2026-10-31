@@ -11,6 +11,8 @@ import (
 
 	"github.com/cucumber/godog"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 const (
@@ -73,7 +75,7 @@ func RegisterSteps(ctx *godog.ScenarioContext, factory BackendFactory) {
 	ctx.After(func(runCtx context.Context, _ *godog.Scenario, scenarioErr error) (context.Context, error) {
 		if closer, ok := state.backend.(BackendCloser); ok {
 			if err := closer.Close(runCtx); err != nil {
-				return runCtx, errors.Join(scenarioErr, fmt.Errorf("close scenario backend: %w", err))
+				return runCtx, compose.Outcomes(scenarioErr, fmt.Errorf("close scenario backend: %w", err))
 			}
 		}
 		return runCtx, nil

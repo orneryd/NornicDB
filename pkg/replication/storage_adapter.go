@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -36,8 +37,9 @@ type StorageAdapter struct {
 	walQueue   chan *walWriteRequest
 	walBatch   []*walWriteRequest
 	walBatchMu sync.Mutex
-	walStopCh  chan struct{}
-	walWg      sync.WaitGroup
+	// work is the adapter's one owner: the async WAL writer is its accepted
+	// work, its cancellation is the writer's stop, and Close is its one stop.
+	work lifecycle.WorkLifetime
 }
 
 // walWriteRequest represents a pending WAL write.
@@ -91,20 +93,20 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 	}
 
 	adapter := &StorageAdapter{
-		engine:    engine,
-		wal:       wal,
-		walDir:    walDir,
-		walQueue:  make(chan *walWriteRequest, 1000), // Buffered channel for async WAL writes
-		walBatch:  make([]*walWriteRequest, 0, 100),  // Pre-allocated batch buffer
-		walStopCh: make(chan struct{}),
+		engine:   engine,
+		wal:      wal,
+		walDir:   walDir,
+		walQueue: make(chan *walWriteRequest, 1000), // Buffered channel for async WAL writes
+		walBatch: make([]*walWriteRequest, 0, 100),  // Pre-allocated batch buffer
 	}
 
 	// Load existing WAL position
 	_ = adapter.loadWALPosition()
 
 	// Start async WAL writer
-	adapter.walWg.Add(1)
-	go adapter.walWriterLoop()
+	if adapter.work.Enter() {
+		go adapter.walWriterLoop()
+	}
 
 	return adapter, nil
 }
@@ -239,14 +241,14 @@ func (a *StorageAdapter) appendToMemWAL(pos uint64, record replicationWALRecord,
 
 // walWriterLoop processes WAL writes asynchronously in batches.
 func (a *StorageAdapter) walWriterLoop() {
-	defer a.walWg.Done()
+	defer a.work.Leave()
 
 	ticker := time.NewTicker(10 * time.Millisecond) // Batch interval
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-a.walStopCh:
+		case <-a.work.Context().Done():
 			// Flush remaining writes
 			a.flushWALBatch()
 			return
@@ -362,7 +364,7 @@ func (a *StorageAdapter) FlushWAL() error {
 	// Push the barrier behind everything already queued.
 	select {
 	case a.walQueue <- barrier:
-	case <-a.walStopCh:
+	case <-a.work.Context().Done():
 		// Writer is shutting down; fall through to a best-effort sync.
 		a.walMu.Lock()
 		defer a.walMu.Unlock()
@@ -382,7 +384,7 @@ func (a *StorageAdapter) FlushWAL() error {
 		if err != nil {
 			return localizedError(localization.ReplicationStorageFlushWALFailed(err), err)
 		}
-	case <-a.walStopCh:
+	case <-a.work.Context().Done():
 		// Adapter closing; drop barrier wait.
 	}
 
@@ -403,26 +405,18 @@ func (a *StorageAdapter) FlushWAL() error {
 // Production callers should use Close instead — this helper exists only
 // for tests that need to swap the queue mid-life.
 func (a *StorageAdapter) stopWALWriterForTest() {
-	select {
-	case <-a.walStopCh:
-		// Already stopped.
-	default:
-		close(a.walStopCh)
-	}
-	a.walWg.Wait()
+	<-a.work.BeginStop(nil)
 }
 
 // Close releases replication resources (WAL file handles/background goroutines).
 func (a *StorageAdapter) Close() error {
-	// Stop async WAL writer (only once)
-	select {
-	case <-a.walStopCh:
-		// Already closed
-	default:
-		close(a.walStopCh)
-	}
-	a.walWg.Wait()
+	// The owner's stop: the writer flushes and returns, then the WAL closes
+	// once. Every caller joins the same stop and outcome.
+	return a.work.Shutdown(context.Background(), a.closeWAL)
+}
 
+// closeWAL is the adapter owner's dispose, after the WAL writer returned.
+func (a *StorageAdapter) closeWAL() error {
 	a.walMu.Lock()
 	defer a.walMu.Unlock()
 	if a.wal != nil {

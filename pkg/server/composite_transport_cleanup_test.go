@@ -26,8 +26,7 @@ func TestHTTPCompositeRequestCleanupFailures(t *testing.T) {
 	token := "Bearer " + getAuthToken(t, auth, "admin")
 	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cleanup_leaf"}))
 	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cleanup_comp", []multidb.ConstituentRef{{Alias: "one", DatabaseName: "cleanup_leaf", Type: "local", AccessMode: "read_write"}}))
-	server.txSessions = txsession.NewManager(time.Hour, server.newExecutorForDatabase)
-	server.txSessions.SetLifetimeContext(server.requestsCtx)
+	server.txSessions = txsession.NewManager(time.Hour, server.newExecutorForDatabase, server.shutdown.work.Context())
 	failure := errors.New("transport rollback cleanup not confirmed")
 	var rollbackErr error
 	require.NoError(t, cypher.RegisterUserProcedure(cypher.ProcedureSpec{Name: "transport.cleanupFault", Mode: cypher.ProcedureModeRead, Returns: []cypher.ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, _ *cypher.StorageExecutor, _ string, _ []interface{}) (*cypher.ExecuteResult, error) {

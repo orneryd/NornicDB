@@ -1,4 +1,5 @@
 // Package main provides the NornicDB CLI entry point.
+// Author: Codex, NOR-180 shell terminal-outcome diagnostics, 2026-10-27.
 package main
 
 import (
@@ -7,7 +8,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/pkg/security"
 	"io"
 	"log"
 	"os"
@@ -18,8 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
@@ -27,6 +25,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
@@ -35,10 +35,12 @@ import (
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/pool"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/server"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/orneryd/nornicdb/ui"
+	"github.com/spf13/cobra"
 )
 
 func main() {
@@ -341,7 +343,13 @@ func applyServeEmbeddingOverrides(cmd *cobra.Command, cfg *config.Config) {
 	}
 }
 
-func runServe(cmd *cobra.Command, args []string) error {
+// The command constructor dependency remains the native DB owner. Tests may
+// decorate its configuration and still execute the real Open/Close paths.
+var openCommandDB = nornicdb.Open
+
+func runServe(cmd *cobra.Command, args []string) (runErr error) {
+	owned := &serveLifetime{}
+	defer func() { runErr = compose.Outcomes(runErr, owned.close()) }()
 	boltPort, _ := cmd.Flags().GetInt("bolt-port")
 	httpPort, _ := cmd.Flags().GetInt("http-port")
 	address, _ := cmd.Flags().GetString("address")
@@ -408,8 +416,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		cause := fmt.Errorf("stdio-log-compact-seconds must be >= 0")
 		return newCommandError(cmd, localization.NornicDBCLIInvalidStdioInterval(stdioLogCompactSeconds), cause)
 	}
-	stopStdioCompactor := startStdioLogCompactor(stdioLogMaxKB, time.Duration(stdioLogCompactSeconds)*time.Second)
-	defer stopStdioCompactor()
+	owned.stopCompactor = startStdioLogCompactor(stdioLogMaxKB, time.Duration(stdioLogCompactSeconds)*time.Second)
 
 	// Apply memory configuration FIRST (before heavy allocations)
 	// First, try to load from config file, then fall back to environment variables
@@ -657,6 +664,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Format: cfg.Logging.Format,
 		Output: cfg.Logging.Output,
 	}, earlyLoggerInfo)
+	if file, opened := earlyWriterRef.(*os.File); opened && file != os.Stdout && file != os.Stderr {
+		owned.writer = file
+	}
 	if earlyLogErr != nil {
 		fmt.Fprintln(os.Stderr, "WARN logger init: ", earlyLogErr)
 	}
@@ -677,11 +687,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Open database
 	commandPrintln(cmd, localization.NornicDBCLIOpeningDatabase())
-	db, err := nornicdb.Open(dataDir, dbConfig)
+	db, err := openCommandDB(dataDir, dbConfig)
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
-	defer db.Close()
+	owned.db = db
 
 	// Initialize GPU acceleration (Metal on macOS, auto-detect otherwise)
 	commandPrintln(cmd, localization.NornicDBCLIInitializingGPU())
@@ -848,14 +858,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLICreateServerFailed(err), err)
 	}
-	// Stop the server on every return, setup failures below included, so its
-	// background embedder initialisation ends before the deferred db.Close.
-	// After the supervisor's drain this is a no-op.
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), lifecycle.ShutdownTimeout)
-		defer cancel()
-		_ = httpServer.Stop(stopCtx)
-	}()
+	owned.http = httpServer
+	// The command return-frame owns construction until the supervisor starts.
+	var boltServer *bolt.Server
+	var boltLifetime *lifecycle.WorkLifetime
 
 	// HTTP server START is deferred until AFTER observability.New runs
 	// below — Plan 04-02 D-02c init-order chokepoint. The Plan 04-02
@@ -870,6 +876,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// share the assembled handler stack (recovering -> mandatory -> redact
 	// -> json) and Bolt HELLO "credentials" are auto-redacted (D-03a).
 	boltConfig := bolt.DefaultConfig()
+	boltLifetime = &lifecycle.WorkLifetime{}
+	owned.boltLifetime = boltLifetime
+	boltConfig.Lifetime = boltLifetime
 	boltConfig.Host = resolvedAddress
 	boltConfig.Port = boltPort
 	boltConfig.LogQueries = logQueries
@@ -898,14 +907,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		var tlsCfg *tls.Config
 		if cfg.Server.BoltTLSClientCAFile != "" {
-			tlsCfg, err = bolt.LoadTLSConfigWithClientCA(
+			tlsCfg, err = bolt.LoadTLSConfigForLifetime(
+				boltConfig.Lifetime,
 				cfg.Server.BoltTLSCert,
 				cfg.Server.BoltTLSKey,
 				cfg.Server.BoltTLSClientCAFile,
 				mode,
 			)
 		} else {
-			tlsCfg, err = bolt.LoadTLSConfig(cfg.Server.BoltTLSCert, cfg.Server.BoltTLSKey)
+			tlsCfg, err = bolt.LoadTLSConfigForLifetime(boltConfig.Lifetime, cfg.Server.BoltTLSCert, cfg.Server.BoltTLSKey, "", bolt.ClientAuthNone)
 		}
 		if err != nil {
 			return newCommandError(cmd, localization.NornicDBCLIBoltTLSLoadFailed(err), err)
@@ -922,7 +932,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// semantics are identical across protocols.
 	queryExecutor := NewDBQueryExecutor(db)
 	queryExecutor.localizer = localizer
-	boltServer := bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
+	boltServer = bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
+	owned.bolt = boltServer
 	boltServer.SetMemoryPolicy(db.MemoryPolicy())
 	httpServer.SetConnectionLister(boltServer.ConnectionListings)
 	connectionTracker := multidb.NewConnectionTracker()
@@ -958,6 +969,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if obsErr != nil {
 		return newCommandError(cmd, localization.NornicDBCLIObservabilityInitFailed(obsErr), obsErr)
 	}
+	owned.components = []lifecycle.Component{&providerConstructionComponent{Provider: obs}}
 	log.Printf("INFO observability: instance_id=%s (source=%s)", obs.InstanceID(), obs.InstanceIDSource())
 
 	// Phase 5 D-02d: resolve the tenant-labels-enabled bool BEFORE any Phase
@@ -1189,12 +1201,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if telemetryErr != nil {
 		return newCommandError(cmd, localization.NornicDBCLITelemetryListenerFailed(telemetryErr), telemetryErr)
 	}
+	owned.components[0] = telemetry
 
 	// 4. Build the optional pprof listener (Component, may be nil when
 	//    cfg.Observability.Pprof.Enabled is false — OBS-06 / Phase-success-2).
 	pprof, pprofErr := observability.NewPprofListener(cfg.Observability.Pprof)
 	if pprofErr != nil {
 		return newCommandError(cmd, localization.NornicDBCLIPprofListenerFailed(pprofErr), pprofErr)
+	}
+	if pprof != nil {
+		owned.components = append(owned.components, pprof)
 	}
 
 	// 5. Register health checks AFTER storage/search are open (D-03c).
@@ -1233,10 +1249,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	//    → workers
 	//    → bolt
 	//    → http LAST (drains FIRST — stop accepting new requests immediately).
-	components := []lifecycle.Component{telemetry}
-	if pprof != nil {
-		components = append(components, pprof)
-	}
+	components := owned.components
 	// Plan 04-04: bytes_metrics_sweeper drains AFTER workers and BEFORE
 	// the telemetry listener (RESEARCH §Q4 ordering). It sits between
 	// pprof and workers in registration order — that places it earlier
@@ -1296,6 +1309,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	//    NotifyContext, runs every Component.Start in an errgroup, and
 	//    on cancellation drains in REVERSE order on a fresh
 	//    context.WithTimeout(context.Background(), 30s) (OBS-09).
+	owned.components = components
+	owned.supervised = true
 	if runErr := lifecycle.Run(cmd.Context(), components...); runErr != nil {
 		return newCommandError(cmd, localization.NornicDBCLISupervisedRunFailed(runErr), runErr)
 	}
@@ -1424,64 +1439,68 @@ func hasExplicitProtocolBindEnv() bool {
 	return false
 }
 
-func startStdioLogCompactor(maxKB int, interval time.Duration) func() {
+func startStdioLogCompactor(maxKB int, interval time.Duration) func() error {
 	if maxKB <= 0 {
-		return func() {}
+		return func() error { return nil }
 	}
 	if interval <= 0 {
 		interval = time.Hour
 	}
 	maxBytes := int64(maxKB) * 1024
-
-	compact := func() {
-		compactStreamIfOversized("stdout", os.Stdout, maxBytes)
-		compactStreamIfOversized("stderr", os.Stderr, maxBytes)
+	// The command's native producer uses the same lifetime protocol as its
+	// listeners. Its ticket exists before startup I/O or dispatch, and Close
+	// signals the ticker worker and joins its actual return.
+	work := &lifecycle.WorkLifetime{}
+	ctx, release, accepted := work.Acquire(work.Context())
+	if !accepted {
+		panic("new stdio lifetime rejected its initial worker")
 	}
-
-	// Automatic startup pass handles existing oversized log files.
+	compact := func() {
+		work.RecordError("stdio stdout compaction", compactStreamIfOversized("stdout", os.Stdout, maxBytes))
+		work.RecordError("stdio stderr compaction", compactStreamIfOversized("stderr", os.Stderr, maxBytes))
+	}
 	compact()
-
-	stopCh := make(chan struct{})
 	go func() {
+		defer release()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				compact()
-			case <-stopCh:
+			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-
-	return func() { close(stopCh) }
+	return work.Close
 }
 
-func compactStreamIfOversized(name string, stream *os.File, maxBytes int64) {
+func compactStreamIfOversized(name string, stream *os.File, maxBytes int64) error {
 	if stream == nil {
-		return
+		return nil
 	}
 	info, err := stream.Stat()
 	if err != nil {
-		return
+		return fmt.Errorf("%s stat: %w", name, err)
 	}
 	// Only manage file-backed streams (for example launchd StandardOutPath/StandardErrorPath).
 	if !info.Mode().IsRegular() || info.Size() <= maxBytes {
-		return
+		return nil
 	}
 
 	prevSize := info.Size()
 	if err := stream.Truncate(0); err != nil {
 		log.Printf("⚠️ stdio log compaction failed for %s: truncate: %v", name, err)
-		return
+		return fmt.Errorf("%s truncate: %w", name, err)
 	}
 	// Keep writes in the truncated file instead of previous offset.
 	if _, err := stream.Seek(0, io.SeekStart); err != nil {
 		log.Printf("⚠️ stdio log compaction for %s truncated but seek failed: %v", name, err)
-		return
+		return fmt.Errorf("%s seek after truncate: %w", name, err)
 	}
 	log.Printf("🧹 compacted %s stream log from %d bytes to 0 bytes (limit=%d bytes)", name, prevSize, maxBytes)
+	return nil
 }
 
 // DBQueryExecutor adapts nornicdb.DB to bolt.QueryExecutor interface.
@@ -1533,9 +1552,7 @@ func newTxScopedExecutor(db *nornicdb.DB, dbName string) (*cypher.StorageExecuto
 		executor.ShareQueryStatisticsFrom(baseExec)
 		executor.ShareStatementCachesFrom(baseExec)
 		executor.ShareEmbedderFrom(baseExec)
-		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
-			executor.SetInferenceManager(inferMgr)
-		}
+		executor.ShareInferenceManagerFrom(baseExec)
 		// Phase 2 D-01 + D-04c: inherit logger and slow-query threshold from
 		// the base executor so per-transaction scoped executors emit the
 		// LOG-07 slow-query record on the same logger pipeline.
@@ -1581,9 +1598,7 @@ func (e *DBQueryExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageExecutor
 	if baseExec := e.db.GetCypherExecutor(); baseExec != nil {
 		exec.ShareQueryStatisticsFrom(baseExec)
 		exec.ShareEmbedderFrom(baseExec)
-		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
-			exec.SetInferenceManager(inferMgr)
-		}
+		exec.ShareInferenceManagerFrom(baseExec)
 		// NornicDB issue #563 defect 1: this is the sole wiring point for
 		// every Bolt database-scoped executor (pkg/bolt/server.go's
 		// newDatabaseScopedCypherExecutor calls it via the
@@ -1747,7 +1762,7 @@ http_port: 7474
 	return nil
 }
 
-func runShell(cmd *cobra.Command, args []string) error {
+func runShell(cmd *cobra.Command, args []string) (runErr error) {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 
 	// Open database
@@ -1755,11 +1770,11 @@ func runShell(cmd *cobra.Command, args []string) error {
 	config := nornicdb.DefaultConfig()
 	config.Database.DataDir = dataDir
 
-	db, err := nornicdb.Open(dataDir, config)
+	db, err := openCommandDB(dataDir, config)
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
-	defer db.Close()
+	defer func() { runErr = compose.Outcomes(runErr, db.Close()) }()
 
 	executor := db.GetCypherExecutor()
 	if executor == nil {
@@ -1791,6 +1806,12 @@ func runShell(cmd *cobra.Command, args []string) error {
 		result, err := executor.Execute(ctx, query, nil)
 		if err != nil {
 			commandPrintln(cmd, localization.NornicDBCLIShellQueryFailed())
+			if nornicerrors.HasStatusDiagnostic(err) {
+				diagnostic := nornicerrors.AppendStatusDiagnostics(err, "", func(message localization.Message) string {
+					return cli.Render(commandLocalizer(cmd), message)
+				})
+				cmd.Println(strings.TrimPrefix(diagnostic, "\n"))
+			}
 			continue
 		}
 
@@ -1826,7 +1847,7 @@ func runShell(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runDecaySuppress(cmd *cobra.Command, args []string) error {
+func runDecaySuppress(cmd *cobra.Command, args []string) (runErr error) {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	threshold, _ := cmd.Flags().GetFloat64("threshold")
 
@@ -1835,11 +1856,11 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 	cfg.Database.DataDir = dataDir
 	cfg.Memory.DecayEnabled = true
 
-	db, err := nornicdb.Open(dataDir, cfg)
+	db, err := openCommandDB(dataDir, cfg)
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
-	defer db.Close()
+	defer func() { runErr = compose.Outcomes(runErr, db.Close()) }()
 
 	be := unwrapBadgerEngine(db.GetBaseStorageForManager())
 	if be == nil {
@@ -1904,7 +1925,7 @@ func applySuppressionCounters(becameSuppressed bool, newlySuppressed, alreadySup
 	*alreadySuppressed++
 }
 
-func runDecayStats(cmd *cobra.Command, args []string) error {
+func runDecayStats(cmd *cobra.Command, args []string) (runErr error) {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 
 	commandPrintln(cmd, localization.NornicDBCLIDecayOpening(dataDir))
@@ -1912,11 +1933,11 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 	cfg.Database.DataDir = dataDir
 	cfg.Memory.DecayEnabled = true
 
-	db, err := nornicdb.Open(dataDir, cfg)
+	db, err := openCommandDB(dataDir, cfg)
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
-	defer db.Close()
+	defer func() { runErr = compose.Outcomes(runErr, db.Close()) }()
 
 	be := unwrapBadgerEngine(db.GetBaseStorageForManager())
 	if be == nil {

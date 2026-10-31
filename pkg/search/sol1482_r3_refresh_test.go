@@ -223,7 +223,7 @@ func TestSol1482R3RelationshipStartupCannotOverwriteRefresh(t *testing.T) {
 			require.NoError(t, svc.RefreshEdge("r"))
 			b.open()
 			select {
-			case <-svc.relationshipSearch().ready:
+			case <-svc.relationshipSearch().loaded.Done():
 			case <-time.After(5 * time.Second):
 				t.Fatal("relationship startup did not finish")
 			}

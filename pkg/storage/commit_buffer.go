@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
@@ -475,10 +476,9 @@ type WriteBehindBuffer struct {
 	trackedPairs []pendingPropertyKey
 
 	flushCh chan struct{}
-	done    chan struct{}
-	closeMu sync.Mutex
-	closed  bool
-	wg      sync.WaitGroup
+	// work is the buffer's one owner: the background flusher is its accepted
+	// work and Close is its one stop.
+	work lifecycle.WorkLifetime
 
 	errMu   sync.Mutex
 	lastErr error
@@ -532,7 +532,6 @@ func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*Commit
 		minDelay:     defaultWriteBehindMinDelay,
 		maxDelay:     defaultWriteBehindMaxDelay,
 		flushCh:      make(chan struct{}, 1),
-		done:         make(chan struct{}),
 	}
 	if w.minDelay > interval {
 		w.minDelay = interval
@@ -540,8 +539,9 @@ func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*Commit
 	if w.maxDelay < interval {
 		w.maxDelay = interval
 	}
-	w.wg.Add(1)
-	go w.run()
+	if w.work.Enter() {
+		go w.run()
+	}
 	return w
 }
 
@@ -752,7 +752,8 @@ func (w *WriteBehindBuffer) effectiveMaxLocked() int {
 }
 
 func (w *WriteBehindBuffer) run() {
-	defer w.wg.Done()
+	defer w.work.Leave()
+	stop := w.work.Context().Done()
 	timer := time.NewTimer(w.interval)
 	defer timer.Stop()
 	reset := func() {
@@ -763,7 +764,7 @@ func (w *WriteBehindBuffer) run() {
 	}
 	for {
 		select {
-		case <-w.done:
+		case <-stop:
 			return
 		case <-timer.C:
 			w.rotate()
@@ -1127,17 +1128,10 @@ func (w *WriteBehindBuffer) LastErr() error {
 	return w.lastErr
 }
 
-// Close stops the background flusher. Callers must Flush first to drain.
+// Close stops the background flusher and joins its actual return; every
+// caller joins the same stop. Callers must Flush first to drain.
 func (w *WriteBehindBuffer) Close() {
-	w.closeMu.Lock()
-	if w.closed {
-		w.closeMu.Unlock()
-		return
-	}
-	w.closed = true
-	close(w.done)
-	w.closeMu.Unlock()
-	w.wg.Wait()
+	<-w.work.BeginStop(nil)
 }
 
 // GetNode resolves the latest buffered state for id across generations,

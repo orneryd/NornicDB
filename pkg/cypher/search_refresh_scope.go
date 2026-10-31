@@ -31,3 +31,25 @@ func (s cypherRefreshScope) PrepareSearchRefresh(_ context.Context, request sear
 	}
 	return s.executor.search(), false, nil
 }
+
+// refreshSearch routes one change through the scope under the lifetime of the
+// search service that owns the refresh: that service's BeginShutdown/Close
+// end it, not the request that produced the change. Without a service there
+// is no refresh work now; a transaction keeps the change for its commit, as
+// PrepareSearchRefresh does.
+func (e *StorageExecutor) refreshSearch(request search.RefreshRequest) {
+	service := request.PostCommitService
+	if !request.PostCommit {
+		service = e.search()
+	}
+	if service != nil {
+		_ = search.RefreshIndexes(service.LifetimeContext(), cypherRefreshScope{executor: e}, request)
+		return
+	}
+	if request.PostCommit || (request.Node == "" && request.Edge == "") {
+		return
+	}
+	if tx, ok := e.storage.(*transactionStorageWrapper); ok && e.searchResolver != nil {
+		tx.deferSearchRefresh(request.Node, request.Edge)
+	}
+}

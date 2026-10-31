@@ -605,7 +605,6 @@ func TestIPRateLimiterCleanup(t *testing.T) {
 				hourReset: time.Now().Add(time.Hour),
 			},
 		},
-		stopCleanup: make(chan struct{}),
 	}
 	rl.cleanup()
 	assert.NotContains(t, rl.counters, "1.1.1.1")

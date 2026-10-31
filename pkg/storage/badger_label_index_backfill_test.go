@@ -143,7 +143,7 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 	// Third-open backfill goroutine must NOT run because the marker
 	// is set. Probe: backfillDone is nil (no goroutine launched).
 	engine3.labelIndexBackfillMu.Lock()
-	stillIdle := engine3.labelIndexBackfillDone == nil
+	stillIdle := engine3.labelIndexBackfill == nil
 	engine3.labelIndexBackfillMu.Unlock()
 	assert.True(t, stillIdle,
 		"backfill must not relaunch on subsequent opens once the marker is set")
@@ -282,11 +282,11 @@ func TestLabelIndexBackfill_ReadyMarkerRequiresCurrentScheme(t *testing.T) {
 
 // pendingLabelIndexBackfill returns the scheduled backfill's completion channel,
 // or nil when the persisted marker already reports the current scheme.
-func pendingLabelIndexBackfill(t *testing.T, store *BadgerEngine) <-chan struct{} {
+func pendingLabelIndexBackfill(t *testing.T, store *BadgerEngine) *engineWorker {
 	t.Helper()
 	store.labelIndexBackfillMu.Lock()
 	defer store.labelIndexBackfillMu.Unlock()
-	return store.labelIndexBackfillDone
+	return store.labelIndexBackfill
 }
 
 // requireLabelIndexReadyMarker asserts the persisted marker names want as the
@@ -323,7 +323,7 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 	done := pendingLabelIndexBackfill(t, reopened)
 	require.NotNil(t, done, "a legacy ready marker must schedule the existing backfill")
 	select {
-	case <-done:
+	case <-done.done.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("legacy label-index backfill did not finish")
 	}

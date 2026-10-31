@@ -31,6 +31,7 @@ func (tx *BadgerTransaction) AdmitWrite() error {
 }
 
 func (tx *BadgerTransaction) admitWriteLocked() error {
+	tx.effects.Add(1)
 	if tx.writeAdmission == nil {
 		return nil
 	}

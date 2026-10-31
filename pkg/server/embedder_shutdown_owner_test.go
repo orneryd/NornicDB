@@ -79,7 +79,7 @@ func checkEmbedderShutdownOwner(t *testing.T, state string, cacheSize int, stopF
 	var ready <-chan struct{}
 	switch state {
 	case "healthy":
-		ready = s.embedderInitDone
+		ready = s.embedderInit.Done()
 	case "failed health":
 		ready = warned
 	case "health pending":
@@ -110,7 +110,7 @@ func checkEmbedderShutdownOwner(t *testing.T, state string, cacheSize int, stopF
 	// DB.Close owns shutdown, including an initializer not stopped by HTTP.
 	require.NoError(t, s.db.Close())
 	select {
-	case <-s.embedderInitDone:
+	case <-s.embedderInit.Done():
 	default:
 		t.Error("initializer outlived DB.Close")
 	}
