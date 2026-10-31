@@ -855,6 +855,18 @@ func (m *SubsystemManager) redactOutcome(err error) error {
 
 func (m *SubsystemManager) setContext(ctx SubsystemContext, newHost bool) {
 	credentials := observability.ClientCredentials(ctx.Config.APIURL, ctx.Config.APIKey)
+	if newHost {
+		// A new host's registration epoch exists only after the previous one
+		// stopped: its accepted initializations are joined first.
+		m.mu.Lock()
+		previous := m.registrations
+		m.mu.Unlock()
+		if previous != nil {
+			if err := previous.Shutdown(context.Background(), nil); err != nil {
+				m.lifetime().RecordError("", m.redactOutcome(err))
+			}
+		}
+	}
 	m.mu.Lock()
 	m.ctx = ctx
 	// Retain prior keys while their accepted cleanup can still report. This is
