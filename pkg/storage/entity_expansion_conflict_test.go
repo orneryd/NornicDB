@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 			if operation == "move" {
 				heldID, isEdge = "test:a", false
 			}
-			_, release, err := b.beginEntityWrite(heldID, isEdge, nil)
+			_, release, err := b.beginEntityWrite(context.Background(), heldID, isEdge, nil)
 			require.NoError(t, err)
 			var publications atomic.Int32
 			b.OnEdgeUpdated(func(*Edge) { publications.Add(1) })
@@ -99,7 +100,27 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 				}
 			}
 			if operation == "growth" {
-				require.NoError(t, b.CreateEdge(&Edge{ID: "test:f", StartNode: "test:a", EndNode: "test:c", Type: "NEW"}))
+				// The blocker models a peer's lease. The growth writer must not
+				// inherit that manually held test lease when delivering listeners.
+				growthDone, growthJoined := make(chan error, 1), make(chan struct{})
+				t.Cleanup(func() {
+					release()
+					select {
+					case <-growthJoined:
+					case <-time.After(5 * time.Second):
+						t.Error("growth writer did not join")
+					}
+				})
+				go func() {
+					defer close(growthJoined)
+					growthDone <- b.CreateEdge(&Edge{ID: "test:f", StartNode: "test:a", EndNode: "test:c", Type: "NEW"})
+				}()
+				select {
+				case err := <-growthDone:
+					require.NoError(t, err)
+				case <-time.After(5 * time.Second):
+					t.Fatal("growth writer did not complete")
+				}
 			}
 			release()
 			select {
@@ -155,8 +176,12 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 	}
 }
 
-func TestNativeCompleteFootprintWaitsForSuppressionCleanup(t *testing.T) {
-	b := newTestEngine(t)
+// suppressedEdgeForCleanup persists an edge, suppresses it, and deletes it while
+// the next worker pass is already ending, so a same-ID recreation must wait for
+// the cleanup that retires the old suppression. It restores the ending flag when
+// the test finishes, after the test's own cleanup.
+func suppressedEdgeForCleanup(t *testing.T, b *BadgerEngine) *Edge {
+	t.Helper()
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := b.CreateNode(&Node{ID: id})
 		require.NoError(t, err)
@@ -164,14 +189,18 @@ func TestNativeCompleteFootprintWaitsForSuppressionCleanup(t *testing.T) {
 	edge := &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}
 	require.NoError(t, b.CreateEdge(edge))
 	require.NoError(t, b.SetManualSuppression(StoredEntityEdgeKind, string(edge.ID), true))
-	// Control only the existing worker's launch, preserving the public delete's
-	// real pending end and the worker's actual snapshot/recheck phases.
 	t.Cleanup(func() { b.manualSuppressionMu.Lock(); b.suppressionEnding = false; b.manualSuppressionMu.Unlock() })
 	b.manualSuppressionMu.Lock()
 	b.suppressionEnding = true
 	b.manualSuppressionMu.Unlock()
 	require.NoError(t, b.DeleteEdge(edge.ID))
-	_, release, err := b.beginEntityWrite(string(edge.ID), true, nil)
+	return edge
+}
+
+func TestNativeCompleteFootprintWaitsForSuppressionCleanup(t *testing.T) {
+	b := newTestEngine(t)
+	edge := suppressedEdgeForCleanup(t, b)
+	_, release, err := b.beginEntityWrite(context.Background(), string(edge.ID), true, nil)
 	require.NoError(t, err)
 	waiting := make(chan struct{})
 	resume := make(chan struct{})
@@ -301,18 +330,7 @@ func TestNativeCompleteFootprintCloseDrainsQueuedSuppression(t *testing.T) {
 		t.Cleanup(func() { _ = b.Close() })
 	}
 	require.NoError(t, err)
-	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err = b.CreateNode(&Node{ID: id})
-		require.NoError(t, err)
-	}
-	edge := &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}
-	require.NoError(t, b.CreateEdge(edge))
-	require.NoError(t, b.SetManualSuppression(StoredEntityEdgeKind, string(edge.ID), true))
-	t.Cleanup(func() { b.manualSuppressionMu.Lock(); b.suppressionEnding = false; b.manualSuppressionMu.Unlock() })
-	b.manualSuppressionMu.Lock()
-	b.suppressionEnding = true
-	b.manualSuppressionMu.Unlock()
-	require.NoError(t, b.DeleteEdge(edge.ID))
+	edge := suppressedEdgeForCleanup(t, b)
 	require.NoError(t, b.Close(), "Close must borrow its admitted lifecycle after closing normal admission")
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	if reopened != nil {

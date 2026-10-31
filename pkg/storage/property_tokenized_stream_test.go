@@ -102,7 +102,7 @@ func TestTokenizedPropertyEncodingMatchesMarshalBytes(t *testing.T) {
 		map[string]any{"one": map[string]any{"nested": int64(7)}},
 		time.Date(2026, 1, 2, 3, 4, 5, 6, time.FixedZone("offset", -7*60*60)),
 	}
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for _, properties := range []map[string]any{nil, {}} {
 			encoded, err := engine.encodeTokenizedProperties(txn, "test", properties)
 			require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestTokenizedPropertyEncodingMatchesMarshalBytes(t *testing.T) {
 func TestTokenizedPropertyEncoderResetsBetweenValues(t *testing.T) {
 	engine := newTestEngine(t)
 	properties := map[string]any{"first": flagChangingProperty(17), "second": flagChangingProperty(258)}
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		encoded, err := engine.encodeTokenizedProperties(txn, "test", properties)
 		if err != nil {
 			return err

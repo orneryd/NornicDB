@@ -17,7 +17,7 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 		store, err := manager.GetStorage("tenant_a")
 		require.NoError(t, err)
 		require.NoError(t, store.GetSchema().AddUniqueConstraint("person_id_unique", "Person", "id"))
-		require.NoError(t, store.GetSchema().AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger))
+		require.NoError(t, store.GetSchema().AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger, storage.PropertyTypeConstraintOptions{}))
 		_, err = store.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1", "age": int64(3)}})
 		require.NoError(t, err)
 	}

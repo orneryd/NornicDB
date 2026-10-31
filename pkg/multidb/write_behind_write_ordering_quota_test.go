@@ -32,7 +32,7 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 					require.NoError(t, err)
 				}
 				require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK"}))
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 
 				tx, err := engine.BeginTransaction()
 				require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 					err = store.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: later}})
 				}
 				require.NoError(t, err)
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 
 				wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(tracker.Engine)
 				require.NoError(t, err)

@@ -887,7 +887,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 		if err := schema.AddConstraint(Constraint{Name: "person_temporal", Type: ConstraintTemporal, Label: "Person", Properties: []string{"account", "from", "to"}}); err != nil {
 			t.Fatalf("AddConstraint temporal failed: %v", err)
 		}
-		if err := schema.AddPropertyTypeConstraint("person_age_type", "Person", "age", PropertyTypeInteger); err != nil {
+		if err := schema.AddPropertyTypeConstraint("person_age_type", "Person", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}); err != nil {
 			t.Fatalf("AddPropertyTypeConstraint failed: %v", err)
 		}
 
@@ -1014,7 +1014,7 @@ func TestTransaction_IncidentEdgesBuffered(t *testing.T) {
 		missingEdge := EdgeID(prefixTestID("missing-edge"))
 		badEdge := EdgeID(prefixTestID("bad-edge"))
 
-		if err := engine.withUpdate(func(txn *badger.Txn) error {
+		if err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			missingOut, err := engine.outgoingIndexKeyString(txn, nodeID, missingEdge)
 			if err != nil {
 				return err
@@ -1101,7 +1101,7 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 		if err := engine.CreateEdge(edge); err != nil {
 			t.Fatalf("CreateEdge failed: %v", err)
 		}
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			emb, err := encodeEmbedding([]float32{1, 2})
 			if err != nil {
 				return err
@@ -1688,7 +1688,7 @@ func TestTransaction_IncidentEdgesSkipNonEdgeKeys(t *testing.T) {
 	outPrefix := engine.outgoingIndexPrefixString(start)
 	require.NotNil(t, outPrefix)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(append(append([]byte{}, outPrefix...), 'x'), []byte{})
 	}))
 	tx, err := engine.BeginTransaction()

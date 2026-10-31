@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 
@@ -67,7 +68,7 @@ func TestIDDictionaryPendingEntries(t *testing.T) {
 	require.True(t, hasNode)
 	require.True(t, hasEdge)
 	d.flushTxnCounters(second)
-	require.NoError(t, engine.db.commit(second))
+	require.NoError(t, engine.db.commit(context.Background(), second, nil))
 	d.markTxnCommitted(second)
 	n, e = pending("p:n", "p:e")
 	require.False(t, n)

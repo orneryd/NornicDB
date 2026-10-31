@@ -36,6 +36,11 @@ type program struct {
 	ssa   *ssa.Program
 	funcs []*ssa.Function // every function with a body in the module, sorted
 	cg    *callgraph.Graph
+	// siteCallees is the call graph's targets of each call site, in a
+	// stable order. It is built once, after the graph is final (see
+	// indexCallTargets): the graph never changes after load, so every
+	// reader shares this index instead of scanning the graph per call.
+	siteCallees map[ssa.CallInstruction][]*ssa.Function
 }
 
 // load type-checks every package of the module rooted at root for
@@ -96,7 +101,37 @@ func load(root string, overlay map[string][]byte) (*program, error) {
 	}
 	sort.Slice(p.funcs, func(i, j int) bool { return p.funcName(p.funcs[i]) < p.funcName(p.funcs[j]) })
 	p.cg = vta.CallGraph(all, cha.CallGraph(prog))
+	p.indexCallTargets()
 	return p, nil
+}
+
+// callTargets are the functions the call graph gives for one dynamic call site, in
+// stable order. An empty result is unknown: no caller may read it as "calls
+// nothing".
+func (p *program) callTargets(site ssa.CallInstruction) []*ssa.Function {
+	return p.siteCallees[site]
+}
+
+// indexCallTargets indexes dynamic call-graph edges by their call sites. The
+// index is the one owner of per-site call targets: it is built once here,
+// before the program is shared, so readers need no synchronization and no
+// per-call graph scan.
+func (p *program) indexCallTargets() {
+	p.siteCallees = map[ssa.CallInstruction][]*ssa.Function{}
+	if p.cg == nil {
+		return
+	}
+	for _, node := range p.cg.Nodes {
+		for _, edge := range node.Out {
+			if edge.Site != nil && edge.Callee.Func != nil && edge.Site.Common().StaticCallee() == nil {
+				p.siteCallees[edge.Site] = append(p.siteCallees[edge.Site], edge.Callee.Func)
+			}
+		}
+	}
+	for site, callees := range p.siteCallees {
+		sort.Slice(callees, func(i, j int) bool { return p.funcName(callees[i]) < p.funcName(callees[j]) })
+		p.siteCallees[site] = callees
+	}
 }
 
 // relPos is a go/packages error position relative to the module root.

@@ -117,7 +117,7 @@ func TestPrepareMergeNodeForWriteBufferedAdmission(t *testing.T) {
 			}
 			nodeID := createKeyNode(t, engine, name, 1)
 			if !tc.drained {
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 			}
 			key := map[string]interface{}{"k": int64(1)}
 			buffered := beginMergeKeyTx(t, engine)
@@ -134,7 +134,7 @@ func TestPrepareMergeNodeForWriteBufferedAdmission(t *testing.T) {
 			// A frame born after ACK but before physical flush must catch up even
 			// when the actual flush precedes its MERGE admission (NOR-117).
 			if tc.drained {
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 				_, pending, _ = engine.writeBehind.GetNode(nodeID)
 				require.False(t, pending)
 			}

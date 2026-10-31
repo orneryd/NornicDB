@@ -131,7 +131,7 @@ func TestEmbeddingSidecar_StaleSidecarIgnored(t *testing.T) {
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
 	stale, err := encodeValue(map[string]any{"has_embedding": true, "chunk_count": 1, embeddingContentUpdatedAtKey: now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)})
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Set(embeddingMetaKey(node.ID), stale) }))
+	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(embeddingMetaKey(node.ID), stale) }))
 	b.cacheDeleteNode(node.ID, nodeCacheAllForms)
 
 	got, err := b.GetNode(node.ID)

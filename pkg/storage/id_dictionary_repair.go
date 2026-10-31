@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 
 	"github.com/dgraph-io/badger/v4"
@@ -106,7 +107,7 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 	// The check and the repair rewrite dictionary entries and MVCC heads: a
 	// maintenance write (beginMaintenanceWrite), so every write-behind commit
 	// acknowledged before it is applied first and no write runs across it.
-	lifecycle, err := b.beginMaintenanceWrite(nil)
+	lifecycle, err := b.beginMaintenanceWrite(context.Background(), nil)
 	if err != nil {
 		return nil, err
 	}

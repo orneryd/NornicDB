@@ -30,7 +30,7 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	})
 	_, err = engine.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
@@ -41,7 +41,7 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	// barrier shared and before its drain.
 	var stripes orderStripeSet
 	stripes.entities(writtenEntities{nodes: []NodeID{"test:n"}})
-	engine.writeBehind.order.lock(&stripes, true)
+	require.NoError(t, engine.writeBehind.order.lockContext(nil, &stripes, true))
 	updated := make(chan error, 1)
 	go func() {
 		updated <- engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": int64(3)}}})

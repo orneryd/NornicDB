@@ -13,7 +13,6 @@ import (
 // after the deletion returns never meets the dropped one's derived state.
 func TestDeleteByPrefixReturnsAfterResetConsumed(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(&Node{ID: "test:keep"})
 	require.NoError(t, err)
 

@@ -13,7 +13,7 @@ func TestMVCC_WriteHelpers_InvalidIDBranches(t *testing.T) {
 	engine := newTestEngine(t)
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 9}
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		err := engine.writeNodeMVCCVersionInTxn(txn, &Node{ID: "bad", Labels: []string{"L"}}, v)
 		require.NoError(t, err)
 		err = engine.writeNodeMVCCTombstoneInTxn(txn, "bad", v)
@@ -41,7 +41,7 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R", Properties: map[string]any{"p": "v"}}))
 
 	// Hit nil-op continue branches and create branches.
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{
 			{Type: OpCreateNode, Node: nil},
 			{Type: OpUpdateNode, Node: nil},
@@ -55,7 +55,7 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 	require.NoError(t, err)
 
 	// Corrupt head records to force load*MVCCHead decode-error branches in materialize update/delete paths.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		nh := engine.mvccNodeHeadKeyStringLookup("test:n1")
 		eh := engine.mvccEdgeHeadKeyStringLookup("test:e1")
 		if nh == nil || eh == nil {
@@ -67,7 +67,7 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 		return txn.Set(eh, []byte("bad-head"))
 	}))
 
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{
 			{Type: OpUpdateNode, Node: &Node{ID: "test:n1", Labels: []string{"L"}}, OldNode: &Node{ID: "test:n1", Labels: []string{"L"}}},
 		}
@@ -75,7 +75,7 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{
 			{Type: OpUpdateEdge, Edge: &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R"}, OldEdge: &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R"}},
 		}
@@ -89,8 +89,8 @@ func TestMVCC_RebuildAndBootstrap_ContextAndSkipBranches(t *testing.T) {
 	_, err := engine.CreateNode(&Node{ID: "test:b1", Labels: []string{"L"}})
 	require.NoError(t, err)
 
-	// Existing head should trigger skip branch in applyNodeBootstrapBatch.
-	require.NoError(t, engine.applyNodeBootstrapBatch([]*Node{
+	// Existing head should trigger skip branch in applyMVCCBootstrapBatch.
+	require.NoError(t, applyMVCCBootstrapBatch[*Node, NodeID, nodeMVCCBootstrapKind](engine, context.Background(), []*Node{
 		{ID: "test:b1", Labels: []string{"L"}},
 		nil,
 	}))

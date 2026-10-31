@@ -281,8 +281,6 @@ func TestCompositeEngine_StreamingFallbackAndErrors(t *testing.T) {
 	t.Run("streaming engines propagate wrapped errors", func(t *testing.T) {
 		base1 := newTestMemoryEngine(t)
 		base2 := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base1.Close() })
-		t.Cleanup(func() { _ = base2.Close() })
 		engine1 := &compositeStreamEngine{Engine: base1}
 		engine2 := &compositeStreamEngine{Engine: base2}
 		composite := NewCompositeEngine(
@@ -327,8 +325,6 @@ func TestCompositeEngine_StreamingFallbackAndErrors(t *testing.T) {
 	t.Run("fallback engines use allnodes and alledges", func(t *testing.T) {
 		base1 := newTestMemoryEngine(t)
 		base2 := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base1.Close() })
-		t.Cleanup(func() { _ = base2.Close() })
 		engine1 := &nonStreamingCountEngine{Engine: base1}
 		engine2 := &nonStreamingCountEngine{Engine: base2}
 		composite := NewCompositeEngine(
@@ -584,8 +580,6 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 	t.Run("uses transaction state when both nodes map to same namespaced constituent", func(t *testing.T) {
 		base1 := newTestMemoryEngine(t)
 		base2 := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base1.Close() })
-		t.Cleanup(func() { _ = base2.Close() })
 		engine1 := NewNamespacedEngine(base1, "db1")
 		engine2 := NewNamespacedEngine(base2, "db2")
 		composite := NewCompositeEngine(
@@ -615,8 +609,6 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 	t.Run("returns read-only constituent error when start node only exists there", func(t *testing.T) {
 		base1 := newTestMemoryEngine(t)
 		base2 := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base1.Close() })
-		t.Cleanup(func() { _ = base2.Close() })
 		engine1 := NewNamespacedEngine(base1, "db1")
 		engine2 := NewNamespacedEngine(base2, "db2")
 		composite := NewCompositeEngine(
@@ -2249,7 +2241,6 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		errEngine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
 		okEngine := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = errEngine.MemoryEngine.Close() })
-		t.Cleanup(func() { _ = okEngine.Close() })
 
 		okNode := &Node{ID: NodeID(prefixTestID("ok-node")), Labels: []string{"Person"}}
 		_, err := okEngine.CreateNode(okNode)
@@ -2346,7 +2337,6 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		errEngine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
 		okEngine := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = errEngine.MemoryEngine.Close() })
-		t.Cleanup(func() { _ = okEngine.Close() })
 
 		composite := NewCompositeEngine(
 			map[string]Engine{"err": errEngine, "ok": okEngine},

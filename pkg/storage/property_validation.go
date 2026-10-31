@@ -41,7 +41,7 @@ func validatePropertyValueForStorage(value interface{}) error {
 			}
 		}
 		return nil
-	case []byte, []string, []int, []int32, []int64, []float32, []float64, []bool:
+	case []byte, []string, []int, []int32, []int64, []uint64, []float32, []float64, []bool:
 		return nil
 	case map[string]interface{}:
 		for key, item := range typedValue {

@@ -104,7 +104,7 @@ func TestDeleteConnectedNodeFailures(t *testing.T) {
 
 	// Reading the relationships fails: a stored one can't be decoded.
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(edgeKey("test:ab"), []byte("corrupt-edge"))
 	}))
 	tx, err = engine.BeginTransaction()

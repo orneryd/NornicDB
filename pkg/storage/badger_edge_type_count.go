@@ -93,61 +93,6 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 	return b.namedCountInNamespace(countDeltaKindEdgeType, namespace, edgeType)
 }
 
-// repairEdgeTypeCountLocked recomputes one namespace/type count from the
-// edge-type index after dropping the pair's persisted base and deltas. The
-// caller must hold edgeTypeCountWriteMu.
-func (b *BadgerEngine) repairEdgeTypeCountLocked(namespace, edgeType string) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		prefix := countDeltaPrefixFor(countDeltaKindEdgeType, namespace, edgeType)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
-				it.Close()
-				return err
-			}
-		}
-		it.Close()
-		count, err := b.countEdgeTypeIndexEntriesInNamespace(namespace, edgeType)
-		if err != nil {
-			return err
-		}
-		key := edgeTypeCountKey(namespace, edgeType)
-		if count == 0 {
-			return txn.Delete(key)
-		}
-		return txn.Set(key, encodeDerivedCount(count))
-	})
-}
-
-// countEdgeTypeIndexEntriesInNamespace counts the edge-type-index entries of
-// one type whose edge lives in one namespace.
-func (b *BadgerEngine) countEdgeTypeIndexEntriesInNamespace(namespace, edgeType string) (int64, error) {
-	var count int64
-	err := b.db.View(func(txn *badger.Txn) error {
-		prefix := edgeTypeIndexPrefix(edgeType)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			num, ok := extractEdgeNumIDFromEdgeTypeKey(key)
-			if !ok {
-				continue
-			}
-			id, ok := b.idDict.lookupEdgeIDByNum(num)
-			if !ok {
-				continue
-			}
-			ns, _, ok := ParseDatabasePrefix(string(id))
-			if !ok || ns != namespace {
-				continue
-			}
-			count++
-		}
-		return nil
-	})
-	return count, err
-}
-
 // EdgeCountByType returns the total count of edges of the given type across
 // all namespaces. This is the O(#namespaces) point-read fast path behind
 // MATCH ()-[r:T]->() RETURN count(r).
@@ -385,7 +330,7 @@ func (b *BadgerEngine) collectAuthoritativeEdgeTypeCounts() (map[string]int64, e
 }
 
 func (b *BadgerEngine) rebuildEdgeTypeCountsSnapshot(snap *edgeTypeCountSnapshot) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		prefixes := [][]byte{edgeTypeCountPrefix(), edgeTypeStartLabelCountPrefix(), edgeTypeEndLabelCountPrefix()}
 		for _, prefix := range prefixes {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
@@ -481,15 +426,13 @@ func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) {
 	if db == nil {
 		return
 	}
-	view := func(fn func(txn *badger.Txn) error) error { return db.View(fn) }
-	run := func(fn func(txn *badger.Txn) error) error { return db.Update(fn) }
 	b.labelCountWriteMu.Lock()
-	if err := b.foldCountDeltasOn(view, run, countDeltaKindLabel, labelCountKey, "", ""); err != nil && b.log != nil {
+	if err := b.foldCountDeltasOn(countFoldSource{db: db}, countDeltaKindLabel, labelCountKey, "", ""); err != nil && b.log != nil {
 		b.log.Warn("failed to fold label-count deltas at close", "error", err)
 	}
 	b.labelCountWriteMu.Unlock()
 	b.edgeTypeCountWriteMu.Lock()
-	if err := b.foldCountDeltasOn(view, run, countDeltaKindEdgeType, edgeTypeCountKey, "", ""); err != nil && b.log != nil {
+	if err := b.foldCountDeltasOn(countFoldSource{db: db}, countDeltaKindEdgeType, edgeTypeCountKey, "", ""); err != nil && b.log != nil {
 		b.log.Warn("failed to fold edge-type-count deltas at close", "error", err)
 	}
 	b.edgeTypeCountWriteMu.Unlock()
@@ -497,26 +440,16 @@ func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) {
 
 // decrementEdgeTypeCounts applies a batch of negative deltas (DeleteByPrefix).
 func (b *BadgerEngine) decrementEdgeTypeCounts(counts map[namespaceEdgeType]int64) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		for key, count := range counts {
-			if err := b.adjustEdgeTypeCountInTxn(txn, key.namespace, key.edgeType, -count); err != nil {
-				return err
-			}
-		}
-		return nil
+	return applyCountDeltas(b, counts, func(txn *badger.Txn, key namespaceEdgeType, count int64) error {
+		return b.adjustEdgeTypeCountInTxn(txn, key.namespace, key.edgeType, -count)
 	})
 }
 
 // decrementEdgeTypeLabelCounts applies a batch of negative positional deltas
 // (DeleteByPrefix).
 func (b *BadgerEngine) decrementEdgeTypeLabelCounts(sub byte, counts map[namespaceEdgeTypeLabel]int64) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		for key, count := range counts {
-			if err := b.adjustEdgeTypeLabelCountInTxn(txn, sub, key.namespace, key.label, key.edgeType, -count); err != nil {
-				return err
-			}
-		}
-		return nil
+	return applyCountDeltas(b, counts, func(txn *badger.Txn, key namespaceEdgeTypeLabel, count int64) error {
+		return b.adjustEdgeTypeLabelCountInTxn(txn, sub, key.namespace, key.label, key.edgeType, -count)
 	})
 }
 
@@ -542,13 +475,8 @@ func (b *BadgerEngine) applyEdgeTypeCountDeltasLocked(deltas map[namespaceEdgeTy
 	if len(deltas) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
-		for key, delta := range deltas {
-			if err := b.adjustEdgeTypeCountInTxn(txn, key.namespace, key.edgeType, delta); err != nil {
-				return err
-			}
-		}
-		return nil
+	return applyCountDeltas(b, deltas, func(txn *badger.Txn, key namespaceEdgeType, delta int64) error {
+		return b.adjustEdgeTypeCountInTxn(txn, key.namespace, key.edgeType, delta)
 	})
 }
 
@@ -1064,12 +992,7 @@ func (b *BadgerEngine) applyEdgeTypeLabelCountDeltasLocked(deltas map[edgeTypeLa
 	if len(deltas) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
-		for key, delta := range deltas {
-			if err := b.adjustEdgeTypeLabelCountInTxn(txn, key.sub, key.namespace, key.label, key.edgeType, delta); err != nil {
-				return err
-			}
-		}
-		return nil
+	return applyCountDeltas(b, deltas, func(txn *badger.Txn, key edgeTypeLabelDelta, delta int64) error {
+		return b.adjustEdgeTypeLabelCountInTxn(txn, key.sub, key.namespace, key.label, key.edgeType, delta)
 	})
 }

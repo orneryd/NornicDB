@@ -22,7 +22,7 @@ func TestBadgerStats_RefreshPendingAndFindNodeBranchCoverage(t *testing.T) {
 	require.NoError(t, err)
 	engine.MarkNodeEmbedded("test:add")
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		// First-pass pending index cleanup branches.
 		require.NoError(t, txn.Set([]byte{prefixPendingEmbed}, []byte{})) // len(key)<=1
 		require.NoError(t, txn.Set(pendingEmbedKey("system:idx"), []byte{}))
@@ -63,7 +63,7 @@ func TestBadgerStats_StreamNodesByPrefixAndClosedBranchCoverage(t *testing.T) {
 	_, err = engine.CreateNode(&Node{ID: "tenant:b", Labels: []string{"Doc"}, Properties: map[string]any{"title": "b"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))            // len(key)<=1 callback path
 		require.NoError(t, txn.Set(nodeKey("tenant:broken"), []byte("bad"))) // decode error continue
 		return nil
@@ -141,7 +141,7 @@ func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		// Trigger len(key)<=1 and decode-error branches in node/edge streaming methods.
 		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
 		require.NoError(t, txn.Set(nodeKey("test:bad-node"), []byte("bad-node-payload")))
@@ -212,7 +212,7 @@ func TestBadgerStats_ClearAllEmbeddingsPrefixAdditionalBranches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		// len(key)<=1 branch.
 		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
 

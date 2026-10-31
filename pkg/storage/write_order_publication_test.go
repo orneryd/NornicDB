@@ -87,7 +87,7 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 			_, err := engine.CreateNode(listenerOrderNode("initial"))
 			require.NoError(t, err)
 			require.NoError(t, engine.CreateEdge(listenerOrderEdge("initial")))
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 
 			var called, writing, ranAfterWrite atomic.Bool
 			var listenerErr error
@@ -154,7 +154,7 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 					}, nil)
 				}
 				if writeErr == nil {
-					writeErr = engine.FlushWriteBehind()
+					writeErr = engine.FlushWriteBehind(nil)
 				}
 				if writeErr == nil {
 					<-listenerDone
@@ -195,7 +195,7 @@ func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	_, err := engine.CreateNode(listenerOrderNode("initial"))
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	entered := make(chan struct{})
 	written := make(chan struct{})
 	var called, waitedForListener atomic.Bool
@@ -222,7 +222,7 @@ func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 	var writeErr, flushErr error
 	finished := finishesWithin(t, time.Minute, func() {
 		flushed := make(chan error, 1)
-		go func() { flushed <- engine.FlushWriteBehind() }()
+		go func() { flushed <- engine.FlushWriteBehind(nil) }()
 		<-entered
 		writeErr = engine.UpdateNode(NodeUpdateRequest{After: listenerOrderNode("direct")})
 		close(written)
@@ -238,7 +238,7 @@ func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 	require.NoError(t, writeErr)
 	require.NoError(t, flushErr)
 	require.NoError(t, listenerErr)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.Equal(t, "listener", storedValue(engine, "node"))
 }
 
@@ -261,13 +261,13 @@ func TestOrderedWriteWaitsForAnInFlightReplay(t *testing.T) {
 			}
 			_, err := engine.CreateNode(listenerOrderNode("initial"))
 			require.NoError(t, err)
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
 				return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("acknowledged"), Policy: ClientNodeEdits})
 			}, nil))
 			slow.Store(true)
 			flushed := make(chan error, 1)
-			go func() { flushed <- engine.FlushWriteBehind() }()
+			go func() { flushed <- engine.FlushWriteBehind(nil) }()
 			require.Eventually(t, func() bool { return !slow.Load() }, 10*time.Second, time.Millisecond, "the replay started")
 			switch route {
 			case "delete":
@@ -281,7 +281,7 @@ func TestOrderedWriteWaitsForAnInFlightReplay(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.NoError(t, <-flushed)
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			if route == "delete" {
 				require.Equal(t, "absent", storedValue(engine, "node"), "the acknowledged update replayed over the later delete")
 			} else {
@@ -302,7 +302,7 @@ func TestListenerWriteBackAfterSuppressionRewrite(t *testing.T) {
 	engine := newDecayWriteBehindEngine(t, t.TempDir())
 	_, err := engine.CreateNode(node([]string{"Untargeted"}, "initial"))
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	var called atomic.Bool
 	var listenerErr error
 	listenerDone := make(chan struct{})
@@ -320,7 +320,7 @@ func TestListenerWriteBackAfterSuppressionRewrite(t *testing.T) {
 	var rewriteErr error
 	finished := finishesWithin(t, time.Minute, func() {
 		if _, rewriteErr = engine.EnqueueDeindexIfSuppressed("test:n", false); rewriteErr == nil {
-			rewriteErr = engine.FlushWriteBehind()
+			rewriteErr = engine.FlushWriteBehind(nil)
 		}
 		if rewriteErr == nil {
 			<-listenerDone

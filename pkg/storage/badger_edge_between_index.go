@@ -68,7 +68,7 @@ func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection
 			err = fmt.Errorf("rebuild edge-between index: %w", err)
 		}
 	}()
-	if err := b.db.DropPrefix(prefixDropOptions{engine: b}, []byte{prefixEdgeBetweenIndex}, []byte{prefixEdgeBetweenHead}); err != nil {
+	if err := b.db.DropPrefix(ctx, prefixDropOptions{engine: b}, []byte{prefixEdgeBetweenIndex}, []byte{prefixEdgeBetweenHead}); err != nil {
 		return 0, fmt.Errorf("clear edge-between set index before rebuild: %w", err)
 	}
 	// D-07 single-allocation: pre-bind subsystem attributes once for the
@@ -102,7 +102,7 @@ func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection
 	if err := ctx.Err(); err != nil {
 		return processed, err
 	}
-	err = b.withUpdate(func(txn *badger.Txn) error {
+	err = b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return txn.Set(edgeBetweenIndexReadyKey, []byte{1})
 	})
 	if err != nil {
@@ -110,13 +110,13 @@ func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection
 	}
 	edgePhase = false
 	if selection == rebuildCaseSensitiveUpgrade {
-		if err := b.db.DropPrefix(prefixDropOptions{engine: b}, []byte{0x18}, []byte{0x19}); err != nil {
+		if err := b.db.DropPrefix(ctx, prefixDropOptions{engine: b}, []byte{0x18}, []byte{0x19}); err != nil {
 			return processed, fmt.Errorf("clear displaced relationship indexes: %w", err)
 		}
 		if err := b.rewriteIndexEntryCatalogs(ctx); err != nil {
 			return processed, fmt.Errorf("rewrite index entry catalogs: %w", err)
 		}
-		err = b.withUpdate(func(txn *badger.Txn) error { return txn.Delete(cleanShutdownMarkerKey) })
+		err = b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error { return txn.Delete(cleanShutdownMarkerKey) })
 	}
 	return processed, err
 }

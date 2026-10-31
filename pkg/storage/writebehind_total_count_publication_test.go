@@ -56,7 +56,7 @@ func TestWriteBehindTotalCountsDuringPublicationCallbacks(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:link", StartNode: "test:anchor", EndNode: "test:child", Type: "LINK"}))
 	require.NoError(t, tx.Commit())
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	for range 2 {
 		select {
 		case got := <-observed:
@@ -179,7 +179,7 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:c", Type: "LINK"}))
 	require.NoError(t, tx.Commit())
 	// Do not warm partial-prefix caches here: their first read occurs in callback.
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.GreaterOrEqual(t, len(observed), 4)
 	for len(observed) > 0 {
 		check(<-observed)
@@ -190,7 +190,7 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	require.NoError(t, noop.SetImplicit(true))
 	require.NoError(t, noop.SetNamespace("test"))
 	require.NoError(t, noop.Commit())
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	check(read())
 	require.Empty(t, observed, "empty commits do not republish callbacks")
 	require.NoError(t, engine.Close())
@@ -286,8 +286,8 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 func TestWriteBehindTotalCountsMixedStagingAPIs(t *testing.T) {
 	buffer := NewWriteBehindBuffer(time.Hour, 0, func(*CommitBuffer) error { return nil })
 	defer buffer.Close()
-	buffer.AppendNode(&Node{ID: "test:raw"})
-	buffer.AppendEdge(&Edge{ID: "test:rawedge", StartNode: "test:raw", EndNode: "test:raw", Type: "LINK"})
+	require.NoError(t, buffer.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{ID: "test:raw"}}))
+	require.NoError(t, buffer.Append(BufferedMutation{Kind: BufferedOpEdge, Edge: &Edge{ID: "test:rawedge", StartNode: "test:raw", EndNode: "test:raw", Type: "LINK"}}))
 	require.Equal(t, int64(1), buffer.NodeCountDeltaForPrefix(""))
 	require.Equal(t, int64(1), buffer.EdgeCountDelta())
 	require.Equal(t, int64(1), buffer.NodeCountDeltaForPrefix("test:"))

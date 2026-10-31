@@ -34,7 +34,7 @@ func TestBadgerConstraintValidation_NullUniqueValueAndMissingProperties(t *testi
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "e_name", Type: ConstraintExists, Label: "User", Properties: []string{"name"}}))
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "u_email", Type: ConstraintUnique, Label: "User", Properties: []string{"email"}}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		require.NoError(t, engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"name": "A"}}, schema, "test", ""))
 
 		err := engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u2", Labels: []string{"User"}}, schema, "test", "")

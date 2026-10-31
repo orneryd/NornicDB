@@ -151,7 +151,7 @@ func walPublicSource(b *testing.B, root string, nodes []*storage.Node, keys int,
 	}
 	_, err := store.CreateNode(seed)
 	walPublicCheck(b, err)
-	walPublicCheck(b, store.FlushWriteBehind())
+	walPublicCheck(b, store.FlushWriteBehind(nil))
 	backup := filepath.Join(root, "before-wal.backup")
 	if !timed {
 		walPublicCheck(b, store.Backup(backup))
@@ -168,7 +168,7 @@ func walPublicSource(b *testing.B, root string, nodes []*storage.Node, keys int,
 	if timed {
 		b.StopTimer()
 	}
-	walPublicCheck(b, store.FlushWriteBehind())
+	walPublicCheck(b, store.FlushWriteBehind(nil))
 	walPublicValidate(b, store, nodes, keys)
 	walPublicCheck(b, journal.Close())
 	store = nil

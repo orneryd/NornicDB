@@ -23,7 +23,7 @@ func TestSnapshotOverlayQueryNodeVectorModes(t *testing.T) {
 						bufferedCreate(t, b, &Node{ID: "test:pending"})
 						require.Positive(t, b.writeBehind.PendingOps())
 					} else if phase == "retired" {
-						require.NoError(t, b.FlushWriteBehind())
+						require.NoError(t, b.FlushWriteBehind(nil))
 						require.Zero(t, b.writeBehind.PendingOps())
 					}
 					b.invalidateCachesAfterRestore()

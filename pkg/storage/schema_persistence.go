@@ -85,28 +85,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.constraints) > 0 {
 		def.Constraints = make([]Constraint, 0, len(sm.constraints))
 		for _, c := range sm.constraints {
-			// Copy properties slice to avoid aliasing.
-			props := make([]string, len(c.Properties))
-			copy(props, c.Properties)
-			var allowedVals []interface{}
-			if len(c.AllowedValues) > 0 {
-				allowedVals = make([]interface{}, len(c.AllowedValues))
-				copy(allowedVals, c.AllowedValues)
-			}
-			def.Constraints = append(def.Constraints, Constraint{
-				Name:          c.Name,
-				Type:          c.Type,
-				EntityType:    c.EntityType,
-				Label:         c.Label,
-				Properties:    props,
-				OwnedIndex:    c.OwnedIndex,
-				AllowedValues: allowedVals,
-				MaxCount:      c.MaxCount,
-				Direction:     c.Direction,
-				SourceLabel:   c.SourceLabel,
-				TargetLabel:   c.TargetLabel,
-				PolicyMode:    c.PolicyMode,
-			})
+			def.Constraints = append(def.Constraints, cloneConstraint(c))
 		}
 		sort.Slice(def.Constraints, func(i, j int) bool {
 			if def.Constraints[i].Label != def.Constraints[j].Label {
@@ -233,7 +212,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 				Kind:             idx.Kind,
 				Label:            idx.Label,
 				Property:         idx.Property,
-				Properties:       idx.Properties,
+				Properties:       append([]string(nil), idx.Properties...),
 				EntityType:       idx.EntityType,
 				OwningConstraint: idx.OwningConstraint,
 			})
@@ -258,18 +237,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.decayProfileBindings) > 0 {
 		def.DecayProfileBindings = make([]knowledgepolicy.DecayProfileBinding, 0, len(sm.decayProfileBindings))
 		for _, b := range sm.decayProfileBindings {
-			bc := *b
-			if len(bc.TargetLabels) > 0 {
-				labels := make([]string, len(bc.TargetLabels))
-				copy(labels, bc.TargetLabels)
-				bc.TargetLabels = labels
-			}
-			if len(bc.PropertyRules) > 0 {
-				rules := make([]knowledgepolicy.DecayProfilePropertyRule, len(bc.PropertyRules))
-				copy(rules, bc.PropertyRules)
-				bc.PropertyRules = rules
-			}
-			def.DecayProfileBindings = append(def.DecayProfileBindings, bc)
+			def.DecayProfileBindings = append(def.DecayProfileBindings, cloneDecayProfileBinding(b))
 		}
 		sort.Slice(def.DecayProfileBindings, func(i, j int) bool {
 			return def.DecayProfileBindings[i].Name < def.DecayProfileBindings[j].Name
@@ -291,18 +259,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.promotionPolicies) > 0 {
 		def.PromotionPolicies = make([]knowledgepolicy.PromotionPolicyDef, 0, len(sm.promotionPolicies))
 		for _, p := range sm.promotionPolicies {
-			pc := *p
-			if len(pc.TargetLabels) > 0 {
-				labels := make([]string, len(pc.TargetLabels))
-				copy(labels, pc.TargetLabels)
-				pc.TargetLabels = labels
-			}
-			if len(pc.WhenClauses) > 0 {
-				clauses := make([]knowledgepolicy.PromotionPolicyWhenClause, len(pc.WhenClauses))
-				copy(clauses, pc.WhenClauses)
-				pc.WhenClauses = clauses
-			}
-			def.PromotionPolicies = append(def.PromotionPolicies, pc)
+			def.PromotionPolicies = append(def.PromotionPolicies, clonePromotionPolicy(p))
 		}
 		sort.Slice(def.PromotionPolicies, func(i, j int) bool {
 			return def.PromotionPolicies[i].Name < def.PromotionPolicies[j].Name
@@ -350,27 +307,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 
 	// Constraints.
 	for _, c := range def.Constraints {
-		props := make([]string, len(c.Properties))
-		copy(props, c.Properties)
-		var allowedVals []interface{}
-		if len(c.AllowedValues) > 0 {
-			allowedVals = make([]interface{}, len(c.AllowedValues))
-			copy(allowedVals, c.AllowedValues)
-		}
-		cc := Constraint{
-			Name:          c.Name,
-			Type:          c.Type,
-			EntityType:    c.EntityType,
-			Label:         c.Label,
-			Properties:    props,
-			OwnedIndex:    c.OwnedIndex,
-			AllowedValues: allowedVals,
-			MaxCount:      c.MaxCount,
-			Direction:     c.Direction,
-			SourceLabel:   c.SourceLabel,
-			TargetLabel:   c.TargetLabel,
-			PolicyMode:    c.PolicyMode,
-		}
+		cc := cloneConstraint(c)
 		sm.constraints[cc.Name] = cc
 
 		if cc.Type == ConstraintUnique && len(cc.Properties) == 1 {
@@ -475,7 +412,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 			Kind:             idx.Kind,
 			Label:            idx.Label,
 			Property:         idx.Property,
-			Properties:       idx.Properties,
+			Properties:       append([]string(nil), idx.Properties...),
 			EntityType:       idx.EntityType,
 			OwningConstraint: idx.OwningConstraint,
 			entries:          make([]rangeEntry, 0),
@@ -493,36 +430,16 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 		bc := b
 		sm.decayProfileBundles[bc.Name] = &bc
 	}
-	for _, b := range def.DecayProfileBindings {
-		bc := b
-		if len(bc.TargetLabels) > 0 {
-			labels := make([]string, len(bc.TargetLabels))
-			copy(labels, bc.TargetLabels)
-			bc.TargetLabels = labels
-		}
-		if len(bc.PropertyRules) > 0 {
-			rules := make([]knowledgepolicy.DecayProfilePropertyRule, len(bc.PropertyRules))
-			copy(rules, bc.PropertyRules)
-			bc.PropertyRules = rules
-		}
+	for i := range def.DecayProfileBindings {
+		bc := cloneDecayProfileBinding(&def.DecayProfileBindings[i])
 		sm.decayProfileBindings[bc.Name] = &bc
 	}
 	for _, p := range def.PromotionProfiles {
 		pc := p
 		sm.promotionProfiles[pc.Name] = &pc
 	}
-	for _, p := range def.PromotionPolicies {
-		pc := p
-		if len(pc.TargetLabels) > 0 {
-			labels := make([]string, len(pc.TargetLabels))
-			copy(labels, pc.TargetLabels)
-			pc.TargetLabels = labels
-		}
-		if len(pc.WhenClauses) > 0 {
-			clauses := make([]knowledgepolicy.PromotionPolicyWhenClause, len(pc.WhenClauses))
-			copy(clauses, pc.WhenClauses)
-			pc.WhenClauses = clauses
-		}
+	for i := range def.PromotionPolicies {
+		pc := clonePromotionPolicy(&def.PromotionPolicies[i])
 		sm.promotionPolicies[pc.Name] = &pc
 	}
 

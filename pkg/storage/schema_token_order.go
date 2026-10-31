@@ -88,8 +88,8 @@ func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
 		return nil
 	}
 
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 	if sm.tokenOrder.labelPositions == nil {
 		sm.tokenOrder = newSchemaTokenOrder(nil, nil)
 	}

@@ -25,7 +25,10 @@ type mutant struct {
 	entry string
 }
 
-const storageHeader = "package storage\n\nimport badger \"github.com/dgraph-io/badger/v4\"\n\nvar _ = badger.NewEntry\n\n"
+const storageHeader = "package storage\n\nimport (\n\t\"context\"\n\n\tbadger \"github.com/dgraph-io/badger/v4\"\n)\n\nvar _ = badger.NewEntry\nvar _ context.Context\n\n"
+
+const commitCountLockBinding = "\tcw.beforeLarge = tx.acquireCommitPublicationLocked\n"
+const commitCountLockInline = "\tif err := tx.acquireCommitPublicationLocked(); err != nil {\n\t\treturn tx.abortCommitLocked(err)\n\t}\n"
 
 var mutants = []mutant{
 	{
@@ -46,7 +49,7 @@ var mutants = []mutant{
 	{
 		name: "explicit empty entities do not acquire order", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantEmptyEntities() error {
-	return b.withUpdate(func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) }, []writtenEntities{}...)
+	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) }, []writtenEntities{}...)
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantEmptyEntities", want: []string{"unordered write:", "prefixNode"},
@@ -56,8 +59,8 @@ var mutants = []mutant{
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantCallbackAlias() error {
 	callback := func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) }
 	alias := callback
-	if err := b.withUpdate(alias, writtenEntities{nodes: []NodeID{"census-mutant"}}); err != nil { return err }
-	return b.withUpdate(callback)
+	if err := b.withUpdate(updateRequest{}, alias, writtenEntities{nodes: []NodeID{"census-mutant"}}); err != nil { return err }
+	return b.withUpdate(updateRequest{}, callback)
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantCallbackAlias", want: []string{"unordered write:", "prefixNode"},
@@ -69,7 +72,7 @@ func (*censusMutantLockReceiver) acquireCommitPublicationLocked() {}
 func (b *BadgerEngine) CensusMutantWrongBoundReceiver() error {
 	take := (&censusMutantLockReceiver{}).acquireCommitPublicationLocked
 	take()
-	return b.withUpdate(func(txn *badger.Txn) error { return txn.Set(edgeTypeLabelCountKey(prefixMVCCMetaEdgeTypeStartLabelCount, "test", "Census", "LINK"), nil) })
+	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(edgeTypeLabelCountKey(prefixMVCCMetaEdgeTypeStartLabelCount, "test", "Census", "LINK"), nil) })
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantWrongBoundReceiver", want: []string{"unordered write:", "prefixMVCCMetaEdgeTypeStartLabelCount"},
@@ -79,7 +82,7 @@ func (b *BadgerEngine) CensusMutantWrongBoundReceiver() error {
 		// wrapper holds the order where it runs the closure.
 		name: "closure handed to a wrapper that takes no order", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) censusMutantRunner(fn func(txn *badger.Txn) error) error {
-	return b.withUpdate(fn)
+	return b.withUpdate(updateRequest{}, fn)
 }
 
 func (b *BadgerEngine) CensusMutantWrapped() error {
@@ -111,7 +114,7 @@ func (b *BadgerEngine) CensusMutantRunnerKeeps(id NodeID) { b.censusMutantRunWit
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantCountUnderRLock() error {
 	b.labelCountWriteMu.RLock()
 	defer b.labelCountWriteMu.RUnlock()
-	return b.withUpdate(func(txn *badger.Txn) error { return txn.Set(labelCountKey("census", "Mutant"), nil) })
+	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(labelCountKey("census", "Mutant"), nil) })
 }
 `,
 		want: []string{"unordered write: pkg/storage.BadgerEngine.CensusMutantCountUnderRLock", "prefixMVCCMetaLabelCount (derived-count)"},
@@ -120,11 +123,19 @@ func (b *BadgerEngine) CensusMutantRunnerKeeps(id NodeID) { b.censusMutantRunWit
 		// The commit's positional counts are covered by the lock its
 		// helper takes: without the helper's call they are not. The commit
 		// itself lives in pkg/storage/badger_transaction_publication.go
-		// (PublishCommit); the edit is anchored where the
-		// helper runs, just before the commit's own Badger commit.
+		// (PublishCommit). Remove both its large-batch callback binding and
+		// its inline completion call to inject the complete missing-owner fault.
 		name:  "commit count lock helper not called",
 		file:  "pkg/storage/badger_transaction_publication.go",
-		edits: [][2]string{{"\ttx.acquireCommitPublicationLocked()\n\n\t// Commit Badger transaction (atomic!)", "\n\t// Commit Badger transaction (atomic!)"}},
+		edits: [][2]string{{commitCountLockBinding, ""}, {commitCountLockInline, ""}},
+		entry: "pkg/storage.BadgerTransaction.Commit", want: []string{"unordered write:", "prefixMVCCMetaEdgeTypeStartLabelCount"},
+	},
+	{
+		// Keeping the large-batch binding must not bless ordinary commits
+		// whose inline acquisition was removed.
+		name:  "ordinary commit count lock helper not called",
+		file:  "pkg/storage/badger_transaction_publication.go",
+		edits: [][2]string{{commitCountLockInline, ""}},
 		entry: "pkg/storage.BadgerTransaction.Commit", want: []string{"unordered write:", "prefixMVCCMetaEdgeTypeStartLabelCount"},
 	},
 	{
@@ -140,7 +151,7 @@ func (b *BadgerEngine) CensusMutantRunnerKeeps(id NodeID) { b.censusMutantRunWit
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantWrongCountLock() error {
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
-	return b.withUpdate(func(txn *badger.Txn) error { return txn.Set(edgeTypeCountKey("census", "MUTANT"), nil) })
+	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(edgeTypeCountKey("census", "MUTANT"), nil) })
 }
 `,
 		want: []string{"unordered write: pkg/storage.BadgerEngine.CensusMutantWrongCountLock", "prefixMVCCMetaEdgeTypeCount (derived-count)"},
@@ -178,9 +189,9 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	{
 		name: "acquisition after the write", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantLateOwner() error {
-	err := b.withUpdate(func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
+	err := b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
 	var order orderHold
-	if _, oerr := b.orderAfterBufferedCommits(&order, writtenEntities{}); oerr != nil {
+	if _, oerr := b.orderAfterBufferedCommits(context.Background(), &order, writtenEntities{}); oerr != nil {
 		return oerr
 	}
 	defer order.release()
@@ -193,7 +204,7 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 		name: "acquisition referenced, never called", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantUnusedOwner() error {
 	_ = b.beginLifecycleWrite
-	return b.withUpdate(func(txn *badger.Txn) error { return txn.Set(edgeKey("census-mutant"), nil) })
+	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(edgeKey("census-mutant"), nil) })
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantUnusedOwner", want: []string{"unordered write:", "prefixEdge"},
@@ -201,9 +212,9 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	{
 		name: "acquisition whose error is ignored", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantIgnoredOwner() error {
-	l, _ := b.beginLifecycleWrite("")
+	l, _ := b.beginLifecycleWrite(context.Background(), "")
 	defer l.finish()
-	return b.withUpdate(func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
+	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantIgnoredOwner", want: []string{"unordered write:", "prefixNode"},
@@ -220,7 +231,7 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	},
 	{
 		name: "acquisition removed from an existing writer", file: "pkg/storage/badger_nodes.go",
-		edits: [][2]string{{"if err := b.orderCovering(&order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {", "if err := error(nil); err != nil {"}},
+		edits: [][2]string{{"if err := b.orderCovering(write.ctx, &order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {", "if err := error(nil); err != nil {"}},
 		entry: "pkg/storage.BadgerEngine.DeleteNode", want: []string{"unordered write:", ""},
 	},
 	{
@@ -231,16 +242,16 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	},
 	{
 		name: "branch around the acquisition", file: "pkg/storage/badger_nodes.go",
-		edits: [][2]string{{"\tvar order orderHold\n\tif b.writeBehind != nil {\n\t\tif err := b.orderCovering(&order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {",
-			"\tvar order orderHold\n\tif b.writeBehind != nil && id != \"census-mutant\" {\n\t\tif err := b.orderCovering(&order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {"}},
+		edits: [][2]string{{"\tvar order orderHold\n\tif b.writeBehind != nil {\n\t\tif err := b.orderCovering(write.ctx, &order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {",
+			"\tvar order orderHold\n\tif b.writeBehind != nil && id != \"census-mutant\" {\n\t\tif err := b.orderCovering(write.ctx, &order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {"}},
 		entry: "pkg/storage.BadgerEngine.DeleteNode", want: []string{"unordered write:", ""},
 	},
 	{
 		// The buffer test through a predicate counts, but only its branch
 		// without a buffer: an acquisition taken only there covers nothing.
 		name: "acquisition only when there is no buffer", file: "pkg/storage/badger_nodes.go",
-		edits: [][2]string{{"\tvar order orderHold\n\tif b.writeBehind != nil {\n\t\tif err := b.orderCovering(&order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {",
-			"\tvar order orderHold\n\tif !b.writeBehindEnabled() {\n\t\tif err := b.orderCovering(&order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {"}},
+		edits: [][2]string{{"\tvar order orderHold\n\tif b.writeBehind != nil {\n\t\tif err := b.orderCovering(write.ctx, &order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {",
+			"\tvar order orderHold\n\tif !b.writeBehindEnabled() {\n\t\tif err := b.orderCovering(write.ctx, &order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {"}},
 		entry: "pkg/storage.BadgerEngine.DeleteNode", want: []string{"unordered write:", ""},
 	},
 	{
@@ -249,7 +260,7 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	return txn.Set(labelIndexKey("Census", 1), nil)
 }
 
-func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(b.censusMutantWrite) }
+func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(updateRequest{}, b.censusMutantWrite) }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantHelper", want: []string{"unordered write:", "prefixLabelIndex"},
 	},
@@ -304,7 +315,7 @@ func (m *DatabaseManager) CensusMutantStaticVisible() error {
 type censusMutantImpl struct{}
 
 func (censusMutantImpl) write(b *BadgerEngine) error {
-	return b.withUpdate(func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
+	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
 }
 
 func (b *BadgerEngine) CensusMutantInterface() error {
@@ -321,7 +332,7 @@ func (b *BadgerEngine) CensusMutantInterface() error {
 var censusMutantHooks censusMutantHook
 
 func (b *BadgerEngine) CensusMutantUnresolved() error {
-	return b.withUpdate(func(txn *badger.Txn) error { return censusMutantHooks.fn(txn) })
+	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return censusMutantHooks.fn(txn) })
 }
 `,
 		want: []string{"unresolved write callback: pkg/storage.BadgerEngine.CensusMutantUnresolved$1"},

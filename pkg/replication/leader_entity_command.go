@@ -54,7 +54,7 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 		}
 		return nil, nil, true, storage.ErrInvalidData
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthority()
+	releaseAuthority, err := prepared.RetainAcceptedAuthority(ctx)
 	if err != nil {
 		prepared.Abort()
 		if settle != nil {
@@ -129,6 +129,7 @@ func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	ctx = observeLeaderPublicationContext(ctx)
 	normalized, settle, handled, err := preparer.PrepareEntityCommand(ctx, cmd)
 	if !handled || err != nil {
 		return handled, err
@@ -144,7 +145,12 @@ func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command
 		}
 		return true, ErrNotReady
 	}
-	receipt, err := submitter.SubmitAcceptedCommand(ctx, normalized, settle)
+	var receipt *storage.CommitReceipt
+	err = storage.DecidePublication(ctx, func() error {
+		var submitErr error
+		receipt, submitErr = submitter.SubmitAcceptedCommand(ctx, normalized, settle)
+		return submitErr
+	})
 	if err != nil {
 		normalized.accepted.prepared.AbortNative()
 		if settle != nil {

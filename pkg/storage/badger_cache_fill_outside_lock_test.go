@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Author: #1548 implementation lane (Codex). Source arguments below adapt
+// TJ's controls to required source-version admission; their schedules remain.
 // cacheFillNode copies the body it is handed before it takes nodeCacheMu.
 // These tests pin the two contracts that makes it safe to do so: a read that
 // races a write still never publishes what it read, and a body is copied
@@ -81,6 +83,7 @@ func TestNodeCacheFillFromStorageReadRejectsStaleBodyAfterWrite(t *testing.T) {
 
 			// A read captures gen, then decodes v=1 from storage.
 			gen := engine.nodeCacheGen.current()
+			source := engine.db.oracle.published.Load()
 			decoded, err := engine.getStoredBody(id)
 			require.NoError(t, err)
 
@@ -88,7 +91,7 @@ func TestNodeCacheFillFromStorageReadRejectsStaleBodyAfterWrite(t *testing.T) {
 			err = engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}}})
 			require.NoError(t, err)
 
-			engine.cacheFillNode(gen, decoded, tc.mode)
+			engine.cacheFillNode(gen, decoded, tc.mode, source)
 			if value, ok := tc.valueOf(engine, id); ok {
 				require.EqualValues(t, 2, value, "a stale fill must be dropped")
 			}
@@ -115,7 +118,7 @@ func TestNodeCacheFillIsolatesReadImageAndCallerCopy(t *testing.T) {
 	// A full fill: the decoded body handed over is not the cached body.
 	decoded, err := engine.getStoredBody(id)
 	require.NoError(t, err)
-	engine.cacheFillNode(engine.nodeCacheGen.current(), decoded, nodeReadCacheFull)
+	engine.cacheFillNode(engine.nodeCacheGen.current(), decoded, nodeReadCacheFull, engine.db.oracle.published.Load())
 	cached, ok := engine.nodeCache[id]
 	require.True(t, ok)
 	require.False(t, decoded == cached, "the cached body is not the read's image")
@@ -131,7 +134,7 @@ func TestNodeCacheFillIsolatesReadImageAndCallerCopy(t *testing.T) {
 	engine.cacheDeleteNode(id, nodeCacheAllForms)
 	queryDecoded, err := engine.getStoredBody(id)
 	require.NoError(t, err)
-	engine.cacheFillNode(engine.nodeCacheGen.current(), queryDecoded, nodeReadCacheQuery)
+	engine.cacheFillNode(engine.nodeCacheGen.current(), queryDecoded, nodeReadCacheQuery, engine.db.oracle.published.Load())
 	queryCached, ok := engine.queryNodeCache[id]
 	require.True(t, ok)
 	require.False(t, queryDecoded == queryCached, "the cached query body is not the read's image")
@@ -184,6 +187,7 @@ func TestNodeCacheFillOutsideLockKeepsGenerationOrdering(t *testing.T) {
 	for round := 0; round < rounds; round++ {
 		// Each reader decodes the pre-write body from storage.
 		gen := engine.nodeCacheGen.current()
+		source := engine.db.oracle.published.Load()
 		bodies := make([]*Node, readers)
 		for r := 0; r < readers; r++ {
 			bodies[r], err = engine.getStoredBody(id)
@@ -207,7 +211,7 @@ func TestNodeCacheFillOutsideLockKeepsGenerationOrdering(t *testing.T) {
 			go func(body *Node, mode nodeReadCacheMode) {
 				defer filled.Done()
 				start.Wait()
-				engine.cacheFillNode(gen, body, mode)
+				engine.cacheFillNode(gen, body, mode, source)
 			}(bodies[r], mode)
 		}
 		start.Done()
@@ -242,11 +246,12 @@ func TestNodeCacheConcurrentFillNeverPublishesStaleBody(t *testing.T) {
 			defer wg.Done()
 			for i := 0; !stop.Load(); i++ {
 				gen := engine.nodeCacheGen.current()
+				source := engine.db.oracle.published.Load()
 				body, decodeErr := engine.getStoredBody(id)
 				if decodeErr != nil {
 					continue
 				}
-				engine.cacheFillNode(gen, body, nodeReadCacheMode(r%4))
+				engine.cacheFillNode(gen, body, nodeReadCacheMode(r%4), source)
 				_, _ = engine.cacheLoadQueryNode(id)
 			}
 		}(r)
@@ -267,6 +272,23 @@ func TestNodeCacheConcurrentFillNeverPublishesStaleBody(t *testing.T) {
 	}
 }
 
+// nodeCacheFillBenchmarkFixture shares untimed setup only. The two benchmark
+// loops retain their distinct generation loads and cache-fill behavior.
+func nodeCacheFillBenchmarkFixture(b *testing.B, distinct int, tags bool) (*BadgerEngine, []*Node) {
+	b.Helper()
+	engine, err := fixtureowner.OwnResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
+	require.NoError(b, err)
+	bodies := make([]*Node, distinct)
+	for i := range bodies {
+		properties := map[string]any{"name": fmt.Sprintf("node-%d", i), "score": int64(i)}
+		if tags {
+			properties["tags"] = []any{"a", "b"}
+		}
+		bodies[i] = &Node{ID: NodeID(fmt.Sprintf("bench:fill:%d", i)), Labels: []string{"Person", "Bench"}, Properties: properties}
+	}
+	return engine, bodies
+}
+
 // BenchmarkNodeCacheFillParallel measures cacheFillNode from many goroutines
 // filling distinct nodes, the shape a wide label scan has. The deep copy runs
 // outside nodeCacheMu, so the lock covers the generation check and map writes
@@ -274,25 +296,15 @@ func TestNodeCacheConcurrentFillNeverPublishesStaleBody(t *testing.T) {
 // The engine it opens is a real store fixture: it enters the lifetime owner and
 // is closed by it, exactly like a test fixture.
 func BenchmarkNodeCacheFillParallel(b *testing.B) {
-	engine, err := fixtureowner.OwnResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
-	require.NoError(b, err)
-
 	const distinct = 1024
-	bodies := make([]*Node, distinct)
-	for i := range bodies {
-		bodies[i] = &Node{
-			ID:         NodeID(fmt.Sprintf("bench:fill:%d", i)),
-			Labels:     []string{"Person", "Bench"},
-			Properties: map[string]any{"name": fmt.Sprintf("node-%d", i), "score": int64(i), "tags": []any{"a", "b"}},
-		}
-	}
+	engine, bodies := nodeCacheFillBenchmarkFixture(b, distinct, true)
 	var next atomic.Uint64
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			i := int(next.Add(1)-1) % distinct
-			engine.cacheFillNode(engine.nodeCacheGen.current(), bodies[i], nodeReadCacheFull)
+			engine.cacheFillNode(engine.nodeCacheGen.current(), bodies[i], nodeReadCacheFull, engine.db.oracle.published.Load())
 		}
 	})
 }
@@ -302,18 +314,8 @@ func BenchmarkNodeCacheFillParallel(b *testing.B) {
 // finds the generation stale and drops it: the worst case for the copy's
 // placement relative to the lock.
 func BenchmarkNodeCacheFillParallelStale(b *testing.B) {
-	engine, err := fixtureowner.OwnResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
-	require.NoError(b, err)
-
 	const distinct = 1024
-	bodies := make([]*Node, distinct)
-	for i := range bodies {
-		bodies[i] = &Node{
-			ID:         NodeID(fmt.Sprintf("bench:fill:%d", i)),
-			Labels:     []string{"Person", "Bench"},
-			Properties: map[string]any{"name": fmt.Sprintf("node-%d", i), "score": int64(i)},
-		}
-	}
+	engine, bodies := nodeCacheFillBenchmarkFixture(b, distinct, false)
 	stale := engine.nodeCacheGen.current() - 1
 	var next atomic.Uint64
 	b.ReportAllocs()
@@ -321,7 +323,7 @@ func BenchmarkNodeCacheFillParallelStale(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			i := int(next.Add(1)-1) % distinct
-			engine.cacheFillNode(stale, bodies[i], nodeReadCacheFull)
+			engine.cacheFillNode(stale, bodies[i], nodeReadCacheFull, engine.db.oracle.published.Load())
 		}
 	})
 }

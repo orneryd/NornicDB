@@ -36,7 +36,6 @@ import (
 func txReadFixture(t *testing.T) *MemoryEngine {
 	t.Helper()
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	commitNamespace := func(nodes []*Node, edges []*Edge) {
 		tx, err := engine.BeginTransaction()
@@ -306,7 +305,6 @@ func TestTxReads_EndpointPrefixNodeCacheIsBounded(t *testing.T) {
 
 func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	writer, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	for index := 0; index < maxSnapshotNodeLabelCacheNodes+2; index++ {

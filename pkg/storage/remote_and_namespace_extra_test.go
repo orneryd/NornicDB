@@ -145,7 +145,6 @@ func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 
 func TestNamespacedExtraLifecycleLabelAndAccessBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	recorder := &namespaceLifecycleRecorder{
 		Engine:   base,
 		debtKeys: []MVCCLifecycleDebtKey{{LogicalKey: "tenant:n1", DebtBytes: 42}},

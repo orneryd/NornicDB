@@ -355,7 +355,7 @@ func DefaultWALConfig() *WALConfig {
 // WAL provides write-ahead logging for durability.
 // Thread-safe for concurrent writes.
 type WAL struct {
-	mu                         sync.Mutex
+	mu                         trackedRWMutex
 	propertyDictionary         *propertyKeyDictionary
 	propertyEpoch              *WALPropertyEpoch
 	propertyEpochRevision      uint64

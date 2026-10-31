@@ -43,7 +43,7 @@ type BadgerTransaction struct {
 	clientDetached                 atomic.Bool
 	commitLogicalID                string
 	commitReleaseAcceptedAuthority func()
-	mu                             sync.Mutex
+	mu                             trackedRWMutex
 
 	// writeAdmission decides whether the transaction may write, before its
 	// first write (SetWriteAdmission); nil once it admitted, or without one.
@@ -405,12 +405,12 @@ func (tx *BadgerTransaction) refreshReadVersionForNamespaceLocked() error {
 
 // IsActive returns true if the transaction is still active.
 func (tx *BadgerTransaction) IsActive() bool {
-	if tx.clientDetached.Load() {
+	if tx.clientOwnershipError(transactionRead) != nil {
 		return false
 	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	return tx.Status == TxStatusActive
+	return tx.clientOwnershipError(transactionRead) == nil && tx.Status == TxStatusActive
 }
 
 func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool, closedErr error) {
@@ -612,12 +612,22 @@ const (
 	transactionCoordinatorCommit
 )
 
+// clientOwnershipError is the atomic ownership check usable before waiting on
+// tx.mu and again under that lock. Accepted native completion alone retains
+// ownership after the client handle is detached.
+func (tx *BadgerTransaction) clientOwnershipError(operation transactionOperation) error {
+	if operation != transactionCoordinatorCommit && tx.clientDetached.Load() {
+		return ErrTransactionClosed
+	}
+	return nil
+}
+
 // ensureOperationAllowedLocked owns lifecycle and operation admission. Only an
 // accepted commit continuation may proceed after client detachment. Data and
 // schema writes retain their exclusion and claim a writer before staging.
 func (tx *BadgerTransaction) ensureOperationAllowedLocked(operation transactionOperation) error {
-	if operation != transactionCoordinatorCommit && tx.clientDetached.Load() {
-		return ErrTransactionClosed
+	if err := tx.clientOwnershipError(operation); err != nil {
+		return err
 	}
 	if tx.Status != TxStatusActive {
 		if tx.closedErr != nil {
@@ -771,6 +781,9 @@ func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
 	// Apply deletes first (in case a key is both written and deleted, delete wins)
 	for keyStr := range tx.pendingDeletes {
 		key := []byte(keyStr)
+		if tx.commitW != nil {
+			tx.commitW.rawCache.add(tx.engine, key, tx.pendingWrites[keyStr])
+		}
 		if err := w.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
 			return fmt.Errorf("flushing delete for key %s: %w", keyStr, err)
 		}
@@ -783,6 +796,9 @@ func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
 			continue
 		}
 		key := []byte(keyStr)
+		if tx.commitW != nil {
+			tx.commitW.rawCache.add(tx.engine, key, tx.pendingWrites[keyStr])
+		}
 		if err := w.write(func(txn *badger.Txn) error {
 			return tx.engine.setKeyWithPendingHint(txn, key, value)
 		}); err != nil {
@@ -2931,12 +2947,15 @@ func commitConflictError(err error) error {
 
 // Rollback discards all changes.
 func (tx *BadgerTransaction) Rollback() error {
-	if tx.clientDetached.Load() {
-		return ErrTransactionClosed
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return err
 	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return err
+	}
 	if tx.Status != TxStatusActive {
 		return ErrTransactionClosed
 	}
@@ -2991,6 +3010,7 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 			}
 		}
 		bytes += int64(cap(op.DeletedEdgeIDs)) * int64(unsafe.Sizeof(EdgeID("")))
+		bytes += estimateAffectedFactsBytes(op.DeletedEdgeFacts)
 		for _, id := range op.DeletedEdgeIDs {
 			bytes += int64(len(id))
 		}
@@ -3044,13 +3064,9 @@ func (tx *BadgerTransaction) SetMetadata(metadata map[string]interface{}) error 
 		return localizedError(localization.StorageTransactionMetadataTooLarge(totalSize, 2048), nil)
 	}
 
-	// Merge
-	if tx.Metadata == nil {
-		tx.Metadata = make(map[string]interface{})
-	}
-	for k, v := range metadata {
-		tx.Metadata[k] = v
-	}
+	// Merge through the one per-entry ownership owner. Each merged value is
+	// owned here, so the retained map is the image CDC encodes later.
+	tx.Metadata = ownedEntries(tx.Metadata, metadata)
 
 	return nil
 }
@@ -3060,11 +3076,9 @@ func (tx *BadgerTransaction) GetMetadata() map[string]interface{} {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	result := make(map[string]interface{})
-	for k, v := range tx.Metadata {
-		result[k] = v
-	}
-	return result
+	// Always an independent, non-nil image: the caller can neither reach nor
+	// replace retained metadata state.
+	return ownedEntries(nil, tx.Metadata)
 }
 
 // OperationCount returns the number of buffered operations.

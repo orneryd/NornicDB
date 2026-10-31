@@ -37,7 +37,7 @@ func tlfWriteFormat3Indexes(t *testing.T, engine *BadgerEngine, c Constraint, pr
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	require.True(t, ok)
 	var old [2]temporalIndexDescriptor
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for i, id := range []NodeID{"test:first", "test:second"} {
 			keyValue, missing := spec.keyValue(properties[i])
 			require.Empty(t, missing)
@@ -145,7 +145,14 @@ func TestTemporalListFamilyTemporalFormat4Migration(t *testing.T) {
 }
 
 func TestTemporalListFamilyTemporalFormat4Trust(t *testing.T) {
-	for _, mode := range []string{"cancel", "partial-cancel"} {
+	// A rebuild stops trusting the stored index only once it starts replacing
+	// it: it clears the ready flag and deletes the durable format marker
+	// immediately before the index is cleared. An attempt that is aborted
+	// before that point leaves the index the preceding successful rebuild
+	// published untouched, so it stays trusted and current; an attempt
+	// aborted after it leaves no index a later clean shutdown could
+	// certify, so enforcement falls back to the label scan.
+	for _, mode := range []string{"cancel", "partial-cancel", "mid-rebuild-cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			inner, engine := tlfEngine(t, false)
 			c := tlfMixedConstraint(0, false)
@@ -154,31 +161,69 @@ func TestTemporalListFamilyTemporalFormat4Trust(t *testing.T) {
 			tlfSeed(t, engine, c, "first", pair[0])
 			require.NoError(t, inner.RebuildTemporalIndexes(context.Background()))
 			ctx := context.Context(context.Background())
-			if mode == "cancel" {
+			interrupted := false
+			restorePause := func() {}
+			switch mode {
+			case "cancel":
 				canceled, cancel := context.WithCancel(ctx)
 				cancel()
 				ctx = canceled
-			} else {
+			case "partial-cancel":
 				ctx = &cancelAfterInitialCheckContext{Context: context.Background()}
+			case "mid-rebuild-cancel":
+				cancelCtx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				ctx = cancelCtx
+				restorePause = setMaintenancePauseHook(func(point string) {
+					if point == pauseTemporalRebuildNode {
+						cancel()
+					}
+				})
+				defer restorePause()
+				interrupted = true
 			}
 			err := inner.RebuildTemporalIndexes(ctx)
+			restorePause()
 			require.Error(t, err)
 			require.True(t, errors.Is(err, context.Canceled))
-			require.False(t, inner.temporalIndexReady.Load())
 			current, err := inner.temporalIndexFormatIsCurrent()
 			require.NoError(t, err)
-			require.False(t, current, "failed rebuild leaves format marker absent")
+			if interrupted {
+				require.False(t, inner.temporalIndexReady.Load(), "an interrupted rebuild leaves no trusted index")
+				require.False(t, current, "failed rebuild leaves format marker absent")
+			} else {
+				require.True(t, inner.temporalIndexReady.Load(), "an attempt aborted before invalidation keeps the complete index trusted")
+				require.True(t, current, "an attempt aborted before invalidation keeps the format marker")
+			}
 			if partial, ok := ctx.(*cancelAfterInitialCheckContext); ok {
 				require.GreaterOrEqual(t, partial.checks, 2)
 			}
+
+			// Both states still enforce NO OVERLAP: the trusted index answers
+			// from the key history, the revoked one from the label scan.
+			var scans atomic.Int64
+			restoreScan := setTemporalConstraintScanHook(func() { scans.Add(1) })
+			_, err = engine.CreateNode(&Node{ID: "overlap", Labels: []string{c.Label}, Properties: pair[1]})
+			restoreScan()
+			require.Error(t, err)
+			if interrupted {
+				require.NotZero(t, scans.Load(), "a revoked index falls back to the label scan")
+			} else {
+				require.Zero(t, scans.Load(), "a trusted index answers from the key history")
+			}
+
 			require.NoError(t, inner.RebuildTemporalIndexes(context.Background()))
 			current, err = inner.temporalIndexFormatIsCurrent()
 			require.NoError(t, err)
 			require.True(t, current)
 			require.True(t, inner.temporalIndexReady.Load())
+			var retryScans atomic.Int64
+			restoreRetryScan := setTemporalConstraintScanHook(func() { retryScans.Add(1) })
 			_, err = engine.CreateNode(&Node{ID: "overlap", Labels: []string{c.Label}, Properties: pair[1]})
+			restoreRetryScan()
 			require.Error(t, err)
-			t.Logf("TLF_FORMAT4_TRUST mode=%s failed-untrusted retry-trusted", mode)
+			require.Zero(t, retryScans.Load(), "the retried rebuild restores the trusted key history")
+			t.Logf("TLF_FORMAT4_TRUST mode=%s aborted-then-recovered", mode)
 		})
 	}
 }

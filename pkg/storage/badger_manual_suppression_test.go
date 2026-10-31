@@ -128,7 +128,6 @@ type unsuppressibleEngine struct{ Engine }
 // ErrNotImplemented; a closed engine fails (#1064).
 func TestManualSuppressionUnsupportedAndClosed(t *testing.T) {
 	backing := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = backing.Close() })
 	memory := unsuppressibleEngine{Engine: backing}
 	wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)

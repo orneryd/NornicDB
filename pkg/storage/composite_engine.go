@@ -1199,7 +1199,7 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 					constraint.Name,
 					constraint.Label,
 					constraint.Property,
-					constraint.ExpectedType,
+					constraint.ExpectedType, PropertyTypeConstraintOptions{},
 				)
 			}
 		}
@@ -1247,9 +1247,9 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 						relationshipTypes := anyToStringSlice(idxMap["relationshipTypes"])
 						properties := anyToStringSlice(idxMap["properties"])
 						if len(labels) > 0 && len(properties) > 0 {
-							_ = mergedSchema.AddFulltextIndex(idxName, labels, properties)
+							_ = mergedSchema.AddFulltextIndex(idxName, labels, properties, ConstraintEntityNode)
 						} else if len(relationshipTypes) > 0 && len(properties) > 0 {
-							_ = mergedSchema.AddFulltextRelationshipIndex(idxName, relationshipTypes, properties)
+							_ = mergedSchema.AddFulltextIndex(idxName, relationshipTypes, properties, ConstraintEntityRelationship)
 						}
 					case "VECTOR":
 						if label, ok := idxMap["label"].(string); ok {
@@ -1268,7 +1268,7 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 								if etRaw, ok := idxMap["entityType"].(string); ok && strings.EqualFold(etRaw, string(ConstraintEntityRelationship)) {
 									entityType = ConstraintEntityRelationship
 								}
-								_ = mergedSchema.AddVectorIndexForEntity(idxName, label, property, dimensions, similarityFunc, entityType)
+								_ = mergedSchema.AddVectorIndex(idxName, label, property, dimensions, similarityFunc, entityType)
 							}
 						}
 					case "RANGE":

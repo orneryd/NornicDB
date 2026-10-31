@@ -204,12 +204,8 @@ func (p *WatcherPlugin) Config() map[string]interface{} {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// Return copy
-	result := make(map[string]interface{})
-	for k, v := range p.config {
-		result[k] = v
-	}
-	return result
+	// The plugin keeps one shallow-snapshot owner; Config adds the lock.
+	return p.configSnapshotLocked()
 }
 
 func (p *WatcherPlugin) Configure(settings map[string]interface{}) error {
@@ -1553,6 +1549,8 @@ func (p *WatcherPlugin) refreshSessionMemoryFromGraph(ctx context.Context, userM
 	}
 }
 
+// configSnapshotLocked returns an independent map that shares the configured
+// values. The caller holds p.mu; Config is this snapshot plus the read lock.
 func (p *WatcherPlugin) configSnapshotLocked() map[string]interface{} {
 	result := make(map[string]interface{}, len(p.config))
 	for k, v := range p.config {

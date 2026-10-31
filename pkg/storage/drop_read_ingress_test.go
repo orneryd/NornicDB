@@ -42,7 +42,7 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 					}
 					require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "REL"}))
 				}
-				require.NoError(t, b.FlushWriteBehind())
+				require.NoError(t, b.FlushWriteBehind(nil))
 				// Work IDs are opaque and deliberately name the opposite
 				// namespace. Only their stored graph target controls access.
 				require.NoError(t, b.PutDeindexWorkItem(&storage.DeindexWorkItem{WorkItemID: "tenant:opaque-peer", TargetID: "peer:a", Status: "pending"}))
@@ -251,7 +251,7 @@ func TestPendingDropUnboundTransactionPrefixReadsRemainPeerScoped(t *testing.T) 
 					_, err = b.CreateNode(&storage.Node{ID: id, Labels: []string{"ReadFence"}})
 					require.NoError(t, err)
 				}
-				require.NoError(t, b.FlushWriteBehind())
+				require.NoError(t, b.FlushWriteBehind(nil))
 				storage.ReviewSetDropTailFailure(b, func(string) error { return errors.New("unbound prefix fixture tail failure") })
 				t.Cleanup(func() { storage.ReviewSetDropTailFailure(b, nil) })
 				_, _, err = b.DeleteByPrefix("tenant:")

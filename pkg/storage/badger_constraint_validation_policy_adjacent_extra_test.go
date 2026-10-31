@@ -25,7 +25,7 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			prefix := engine.outgoingIndexPrefixString("test:a")
 			require.NotNil(t, prefix)
 			// malformed key: extractEdgeNumIDFromOutgoingKey => !ok branch
@@ -59,7 +59,7 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			// Missing target node => readNodeLabelsInTxn error => continue path.
 			return txn.Delete(nodeKey("test:b"))
 		}))

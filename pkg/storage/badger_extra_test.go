@@ -101,7 +101,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		missingID := NodeID(prefixTestID("aa-missing"))
 		corruptID := NodeID(prefixTestID("ab-corrupt"))
 		valid := &Node{ID: NodeID(prefixTestID("zz-valid")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "valid"}}
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			missingKey, err := b.labelIndexKeyString(txn, "Person", missingID)
 			if err != nil {
 				return err
@@ -124,7 +124,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		got, err := b.GetFirstNodeByLabel("Person")
 		require.Error(t, err)
 		require.Nil(t, got)
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Delete(nodeKey(corruptID))
 		}))
 		got, err = b.GetFirstNodeByLabel("Person")
@@ -143,7 +143,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		require.NoError(t, err)
 
 		staleID := NodeID(prefixTestID("foreach-stale"))
-		b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Person", staleID)
+		b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Person", staleID, b.db.oracle.published.Load())
 
 		var visited []NodeID
 		err = b.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
@@ -170,7 +170,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		b := createTestBadgerEngine(t)
 		cached := &Node{ID: NodeID(prefixTestID("batch-cached")), Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "cached"}}
 		stored := &Node{ID: NodeID(prefixTestID("batch-stored")), Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "stored"}}
-		b.cacheStoreNode(cached)
+		b.cacheStoreNode(cached, b.db.oracle.published.Load())
 		_, err := b.CreateNode(stored)
 		require.NoError(t, err)
 
@@ -190,8 +190,8 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		b := createTestBadgerEngine(t)
 		n1 := &Node{ID: NodeID(prefixTestID("cache-only-1")), Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "one"}}
 		n2 := &Node{ID: NodeID(prefixTestID("cache-only-2")), Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "two"}}
-		b.cacheStoreNode(n1)
-		b.cacheStoreNode(n2)
+		b.cacheStoreNode(n1, b.db.oracle.published.Load())
+		b.cacheStoreNode(n2, b.db.oracle.published.Load())
 
 		result, err := b.BatchGetNodes([]NodeID{n1.ID, n2.ID})
 		require.NoError(t, err)
@@ -208,7 +208,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		corruptID := NodeID(prefixTestID("batch-corrupt"))
 		_, err := b.CreateNode(valid)
 		require.NoError(t, err)
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(nodeKey(corruptID), []byte("not-a-node"))
 		}))
 
@@ -244,7 +244,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		require.NoError(t, b.CreateEdge(&Edge{ID: EdgeID(prefixTestID("edge-good")), StartNode: start.ID, EndNode: end.ID, Type: "REL"}))
 
 		corruptID := EdgeID(prefixTestID("edge-bad"))
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			corruptOut, err := b.outgoingIndexKeyString(txn, start.ID, corruptID)
 			if err != nil {
 				return err
@@ -321,7 +321,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 			Properties: map[string]interface{}{},
 		}
 		require.NoError(t, b.CreateEdge(edge))
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(edgeKey(edge.ID), []byte("not-an-edge"))
 		}))
 		err = b.UpdateEdge(EdgeUpdateRequest{After: edge})
@@ -497,7 +497,7 @@ func TestSchemaManager_AddPropertyTypeConstraint(t *testing.T) {
 	b := createTestBadgerEngine(t)
 	sm := b.GetSchema()
 
-	err := sm.AddPropertyTypeConstraint("ptc-age", "Person", "age", PropertyTypeInteger)
+	err := sm.AddPropertyTypeConstraint("ptc-age", "Person", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{})
 	assert.NoError(t, err)
 }
 

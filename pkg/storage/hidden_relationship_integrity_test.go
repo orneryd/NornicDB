@@ -54,7 +54,7 @@ func setupHiddenGraph(t *testing.T, engine *BadgerEngine) {
 	}
 	if engine.writeBehind != nil {
 		// Suppression marks stored records.
-		require.NoError(t, engine.FlushWriteBehind())
+		require.NoError(t, engine.FlushWriteBehind(nil))
 	}
 	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:e1", true))
 	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:e4", true))
@@ -182,7 +182,7 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 				require.Equal(t, []string{"test:e5"}, incident("test:peer2"))
 				require.Empty(t, incident("test:hiddenPeer"))
 				require.NoError(t, tx.Rollback())
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 			}
 			requireHubDeleted(t, engine)
 

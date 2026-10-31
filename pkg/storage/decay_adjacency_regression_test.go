@@ -16,7 +16,6 @@ func TestDecayRelaxAfterHiddenEdgeUpdateRestoresAdjacency(t *testing.T) {
 	for _, update := range []bool{false, true} {
 		t.Run(map[bool]string{false: "no-update-control", true: "updated-while-hidden"}[update], func(t *testing.T) {
 			engine := newTestMemoryEngine(t)
-			t.Cleanup(func() { _ = engine.Close() })
 			engine.SetDecayEnabled(true)
 			schema := engine.GetSchemaForNamespace("test")
 			require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{Name: "edge_decay", Scope: knowledgepolicy.ScopeEdge, Function: knowledgepolicy.DecayFunctionExponential, HalfLifeSeconds: 1, VisibilityThreshold: 0.1, ScoreFrom: knowledgepolicy.ScoreFromCreated, Enabled: true, DecayEnabled: true}))
@@ -69,7 +68,6 @@ func TestDecayRelaxAfterHiddenEdgeUpdateRestoresAdjacency(t *testing.T) {
 
 func TestDecayRelaxAfterHiddenNodeUpdateRefreshesCache(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetDecayEnabled(true)
 	schema := engine.GetSchemaForNamespace("test")
 	require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{Name: "node_decay", Scope: knowledgepolicy.ScopeNode, Function: knowledgepolicy.DecayFunctionExponential, HalfLifeSeconds: 1, VisibilityThreshold: 0.1, ScoreFrom: knowledgepolicy.ScoreFromCreated, Enabled: true, DecayEnabled: true}))
@@ -104,7 +102,6 @@ func TestDecayRelaxAfterHiddenNodeUpdateRefreshesCache(t *testing.T) {
 // publishes neither cache, and the stored bodies keep the flags they had.
 func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetDecayEnabled(true)
 	_, err := engine.CreateNode(&Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: "test:n"})
 	require.NoError(t, err)
@@ -115,7 +112,7 @@ func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
 	rollback := errors.New("injected rollback after suppression writes")
 	var changedNode *Node
 	var changedEdge *Edge
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		evaluation1, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: "test:n", isEdge: false})
 		changed, mutation := evaluation1.suppressed, evaluation1.node
 		require.False(t, changed)

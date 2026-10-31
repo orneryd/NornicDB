@@ -2859,7 +2859,6 @@ func TestWALEngine_StreamNodesByPrefix(t *testing.T) {
 
 	t.Run("enforces prefix scope through the Engine kernel", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		inner := &walStreamingCountEngine{
 			Engine: base,
 			nodes: []*Node{
@@ -2887,7 +2886,6 @@ func TestWALEngine_ForEachNodeIDByLabel(t *testing.T) {
 	defer config.DisableWAL()
 
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 
 	for i := 0; i < 5; i++ {
 		_, err := base.CreateNode(&Node{
@@ -3025,7 +3023,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 	t.Run("prefix counts use fallback and propagate streaming errors", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		engine := &exportableOnlyEngine{
 			Engine:   base,
 			allNodes: []*Node{{ID: "test:n1"}, {ID: "other:n2"}},
@@ -3042,7 +3039,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		assert.Equal(t, int64(1), edges)
 
 		streamErrBase := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = streamErrBase.Close() })
 		streamErrEngine := &walPrefixErrorEngine{
 			Engine:  streamErrBase,
 			nodeErr: errors.New("stream nodes failed"),
@@ -3059,7 +3055,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 	t.Run("prefix stats and schema provider delegation", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		schema := NewSchemaManager()
 		engine := &walSchemaProviderEngine{
 			Engine: &walPrefixStatsEngine{
@@ -3087,7 +3082,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 	t.Run("prefix counts use streaming fallback", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		engine := &walStreamingCountEngine{
 			Engine: base,
 			nodes: []*Node{
@@ -3114,7 +3108,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 	t.Run("embedding delegates and iterate fallback", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = engine.Close() })
 		engine.SetEmbeddingsEnabled(true)
 		walEngine := newWALEngine(t, engine)
 
@@ -3141,7 +3134,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		assert.Equal(t, 1, visited)
 
 		noIterBase := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = noIterBase.Close() })
 		noIter := newWALEngine(t, &exportableOnlyEngine{Engine: noIterBase})
 		err = noIter.IterateNodes(func(node *Node) bool { return true })
 		require.ErrorContains(t, err, "does not support IterateNodes")
@@ -3154,7 +3146,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 	t.Run("stream fallback handles callback and load errors", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		engine := &exportableOnlyEngine{
 			Engine:   base,
 			allNodes: []*Node{{ID: "test:n1"}, {ID: "test:n2"}},
@@ -3181,7 +3172,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 	t.Run("direct streaming delegate propagates node edge and chunk errors", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		engine := &walStreamErrorEngine{
 			Engine:  base,
 			nodeErr: errors.New("delegate nodes failed"),
@@ -3201,7 +3191,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 	t.Run("stream node chunks fallback and delete by prefix", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		engine := &exportableOnlyEngine{
 			Engine: base,
 			allNodes: []*Node{
@@ -3241,7 +3230,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		assert.Equal(t, time.Time{}, (*WALEngine)(nil).LastWriteTime())
 
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		engine := &walNamespaceListerEngine{
 			Engine:     base,
 			namespaces: []string{"tenant_a", "tenant_b"},
@@ -3261,7 +3249,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 	t.Run("update embedding dispatch and bulk database guards", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 
 		dispatch := &walEmbeddingDispatchEngine{Engine: base}
 		walEngine := newWALEngine(t, dispatch)
@@ -3332,7 +3319,6 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 	t.Run("delegate getters and bulk delete edges", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = engine.Close() })
 		walEngine := newWALEngine(t, engine)
 
 		_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "one"}})

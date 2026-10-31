@@ -59,7 +59,7 @@ func TestWriteBehind_IndexedMatchSeesBufferedNodes(t *testing.T) {
 		"every friendship must be created while the user writes are still buffered")
 
 	// The same visibility must hold after the buffer drains.
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	res, err = exec.Execute(ctx, "MATCH ()-[r:Friend]->() RETURN count(r) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(len(pairs)), res.Rows[0][0])
@@ -86,7 +86,7 @@ func TestWriteBehind_IndexedMatchReusesBufferedIndexAfterFlush(t *testing.T) {
 	_, err = exec.Execute(ctx, "UNWIND $rows AS r CREATE (:User {id: r.id})",
 		map[string]any{"rows": []map[string]any{{"id": int64(1)}}})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 
 	_, err = exec.Execute(ctx, "UNWIND $rows AS r CREATE (:User {id: r.id})",
 		map[string]any{"rows": []map[string]any{{"id": int64(2)}}})
@@ -141,7 +141,7 @@ func TestWriteBehind_MergeAndDetachDeleteOverBufferedEdges(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), res.Rows[0][0], "DETACH DELETE must remove buffered relationships")
 
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	res, err = exec.Execute(ctx, "MATCH ()-[r:Friend]->() RETURN count(r) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), res.Rows[0][0], "no orphan may reappear after the flush")

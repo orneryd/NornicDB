@@ -9,6 +9,19 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
+// encodeTokenizedPropertiesForTest encodes props in one update transaction and
+// returns the tokenized body, the fixture both empty-map encoder contracts read.
+func encodeTokenizedPropertiesForTest(t *testing.T, eng *BadgerEngine, props map[string]any) []byte {
+	t.Helper()
+	var data []byte
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		var err error
+		data, err = eng.encodeTokenizedProperties(txn, "ns", props)
+		return err
+	}))
+	return data
+}
+
 // TestEncodeTokenizedProperties_Empty covers the early-return path for
 // empty/nil property maps. Decoders must still see a well-formed
 // msgpack payload (an empty map), not zero bytes.
@@ -23,12 +36,7 @@ func TestEncodeTokenizedProperties_Empty(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var data []byte
-			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-				var err error
-				data, err = eng.encodeTokenizedProperties(txn, "ns", tc.props)
-				return err
-			}))
+			data := encodeTokenizedPropertiesForTest(t, eng, tc.props)
 			require.NotEmpty(t, data, "empty property map must still produce a msgpack body")
 
 			// Round-trip back to a string map and verify length 0.
@@ -46,7 +54,7 @@ func TestEncodeTokenizedProperties_Empty(t *testing.T) {
 // to the right place.
 func TestEncodeTokenizedProperties_AllocatesIDs(t *testing.T) {
 	eng := newTestEngine(t)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		// Pre-allocate "name" so we can verify the encoder reuses its ID.
 		preID, err := eng.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "name")
 		require.NoError(t, err)
@@ -236,7 +244,7 @@ func TestDecodeTokenizedProperties_CountExceedsPayload(t *testing.T) {
 // where a value's msgpack stream is incomplete.
 func TestDecodeTokenizedProperties_TruncatedValue(t *testing.T) {
 	eng := newTestEngine(t)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		_, err := eng.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "k")
 		require.NoError(t, err)
 		_ = eng.propKeyDict.flushTxnCounters(txn)
@@ -268,7 +276,7 @@ func TestDecodeTokenizedProperties_TrailingBytes(t *testing.T) {
 // branch where msgpack.Marshal fails on a property value.
 func TestEncodeTokenizedProperties_RejectsUnencodableValue(t *testing.T) {
 	eng := newTestEngine(t)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		_, err := eng.encodeTokenizedProperties(txn, "ns", map[string]any{
 			"badField": make(chan int),
 		})
@@ -409,7 +417,7 @@ func TestDecodeEdge_RejectsNonV2Body(t *testing.T) {
 func encodeEdgeCompactV2Direct(t *testing.T, eng *BadgerEngine, edge *Edge, startNum, endNum uint64) ([]byte, error) {
 	t.Helper()
 	var data []byte
-	err := eng.withUpdate(func(txn *badger.Txn) error {
+	err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeEdgeCompactV2(txn, "ns", edge, startNum, endNum)
 		if err != nil {
@@ -440,7 +448,7 @@ func TestEncodedBodySize_ReductionForRepeatedKeys(t *testing.T) {
 	}
 
 	var v2Total, v1Total int
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for i := 0; i < 100; i++ {
 			node := &Node{
 				ID:         NodeID("test:product-" + string(rune('a'+i%26))),

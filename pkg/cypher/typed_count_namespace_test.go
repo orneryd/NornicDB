@@ -45,7 +45,7 @@ func openTypedCountScope(t *testing.T, dir string, buffered bool) *typedCountSco
 func (f *typedCountScopeFixture) close(t *testing.T) {
 	t.Helper()
 	if !f.closed {
-		require.NoError(t, f.base.FlushWriteBehind())
+		require.NoError(t, f.base.FlushWriteBehind(nil))
 		require.NoError(t, f.manager.Close())
 		f.closed = true
 	}
@@ -150,7 +150,7 @@ func TestTypedCountNamespaceLifecycle(t *testing.T) {
 			if buffered {
 				executeBehaviorQuery(t, f.admin, "CREATE DATABASE scope_drop")
 				dropView := f.executor(t, "scope_drop")
-				require.NoError(t, f.base.FlushWriteBehind())
+				require.NoError(t, f.base.FlushWriteBehind(nil))
 				before := typedCountPersistedNodes(f.base)
 				executeBehaviorQuery(t, dropView, "CREATE (:ScopeProbe)-[:SCOPE]->(:ScopeProbe)")
 				require.Equal(t, before, typedCountPersistedNodes(f.base), "create must remain acknowledged-only at DROP")

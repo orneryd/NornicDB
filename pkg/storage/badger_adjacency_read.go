@@ -29,14 +29,14 @@ func (b *BadgerEngine) captureAdjacencyReader(nodeID NodeID, wantOut, wantIn boo
 	reader.adjGen, reader.edgeGen = b.adjCacheGen.current(), b.edgeCacheGen.current()
 	reader.view, err = b.captureReadView(func(w *WriteBehindBuffer) {
 		if wantOut {
-			reader.out.ids, reader.out.hit = b.adjCacheLoadOutgoing(nodeID)
+			reader.out.ids, reader.out.hit = b.adjCacheLoad(nodeID, true)
 			if w != nil {
 				pendingAdjacency := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: true})
 				reader.out.live, reader.out.suppressed, reader.out.deleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
 			}
 		}
 		if wantIn {
-			reader.in.ids, reader.in.hit = b.adjCacheLoadIncoming(nodeID)
+			reader.in.ids, reader.in.hit = b.adjCacheLoad(nodeID, false)
 			if w != nil {
 				pendingAdjacency := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: false})
 				reader.in.live, reader.in.suppressed, reader.in.deleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
@@ -80,11 +80,7 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 					return err
 				}
 			}
-			if outgoing {
-				b.adjCacheStoreOutgoing(adjGen, nodeID, d.ids)
-			} else {
-				b.adjCacheStoreIncoming(adjGen, nodeID, d.ids)
-			}
+			b.adjCacheStore(adjGen, nodeID, d.ids, txn.ReadTs(), outgoing)
 		}
 		// Read cached IDs from this transaction, never a later body cache.
 		if edges == nil {
@@ -144,10 +140,10 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	var outIDs, inIDs []EdgeID
 	var outHit, inHit = !wantOut, !wantIn
 	if wantOut {
-		outIDs, outHit = b.adjCacheLoadOutgoing(id)
+		outIDs, outHit = b.adjCacheLoad(id, true)
 	}
 	if wantIn {
-		inIDs, inHit = b.adjCacheLoadIncoming(id)
+		inIDs, inHit = b.adjCacheLoad(id, false)
 	}
 	if !outHit || !inHit {
 		return nil, nil, false
