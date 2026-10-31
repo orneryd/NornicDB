@@ -1,3 +1,10 @@
+# Author: Codex, NOR-180 WAL terminal messages, 2026-10-26.
+- id: cyphertransactions.wal_abort_failed
+  description: Failed logical WAL abort record. TxID and Cause are untranslated diagnostics.
+  other: "no se pudo escribir el registro de anulación WAL de la transacción {{.TxID}}: {{.Cause}}"
+- id: cyphertransactions.wal_commit_failed
+  description: Native commit succeeded but logical WAL commit record failed. TxID and Cause are untranslated diagnostics.
+  other: "la transacción {{.TxID}} se confirmó, pero no se pudo escribir su registro de confirmación WAL: {{.Cause}}"
 - id: cyphertransactions.already_active
   description: Ya hay una transacción explícita activa.
   other: ya hay una transacción activa

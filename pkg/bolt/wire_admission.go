@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 admission cleanup response propagation, 2026-10-27.
 package bolt
 
 import (
@@ -6,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
 )
@@ -58,16 +60,26 @@ func messageDecodesPayload(kind byte) bool {
 }
 
 func (s *Session) sendApplicationAdmissionFailure(err error) error {
+	var cleanupErr error
 	if s.inTransaction {
-		if rollbackErr := s.rollbackExplicitTransaction(transactionTerminalRollback); rollbackErr != nil {
-			return rollbackErr
-		}
+		cleanupErr = s.rollbackExplicitTransaction(transactionTerminalRollback)
+	}
+	if cleanupErr != nil && !nornicerrors.HasStatusDiagnostic(cleanupErr) {
+		return cleanupErr
 	}
 	message := localization.ApplicationMemoryPressure()
 	if errors.Is(err, memory.ErrStaleSample) {
 		message = localization.ApplicationMemoryUnavailable()
 	}
-	return s.sendLocalizedRunFailure("Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
+	primary := nornicerrors.WithStatus(err, "Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
+	outcome := nornicerrors.CombineTerminalOutcomes(primary, cleanupErr)
+	code, text := nornicerrors.RenderStatus(outcome, s.localize)
+	if err := s.sendRunFailure(code, text); err != nil {
+		return err
+	}
+	// The response carries the primary rejection and terminal diagnostic before
+	// the existing fatal cleanup result closes the connection.
+	return cleanupErr
 }
 
 // readWireMessage owns accumulation for both synchronous and queued readers.

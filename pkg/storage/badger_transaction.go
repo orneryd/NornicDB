@@ -41,6 +41,7 @@ type snapshotLabelCacheKey struct {
 //   - Durability: Badger's WAL ensures persistence
 type BadgerTransaction struct {
 	clientDetached                 atomic.Bool
+	effects                        atomic.Uint64
 	commitLogicalID                string
 	commitReleaseAcceptedAuthority func()
 	mu                             trackedRWMutex
@@ -3064,6 +3065,7 @@ func (tx *BadgerTransaction) SetMetadata(metadata map[string]interface{}) error 
 		return localizedError(localization.StorageTransactionMetadataTooLarge(totalSize, 2048), nil)
 	}
 
+	tx.effects.Add(1)
 	// Merge through the one per-entry ownership owner. Each merged value is
 	// owned here, so the retained map is the image CDC encodes later.
 	tx.Metadata = ownedEntries(tx.Metadata, metadata)
@@ -3080,6 +3082,15 @@ func (tx *BadgerTransaction) GetMetadata() map[string]interface{} {
 	// replace retained metadata state.
 	return ownedEntries(nil, tx.Metadata)
 }
+
+// EffectSerial counts what this transaction's statements have done: every write that
+// claims admission (admitWriteLocked), nested bodies included, every metadata change
+// and every NoteEffect. It only rises, also when a write replaces an earlier one's
+// pending image. TestEveryTransactionWriteRouteMovesTheEffectSignal keeps that complete.
+func (tx *BadgerTransaction) EffectSerial() uint64 { return tx.effects.Load() }
+
+// NoteEffect records an effect that staged nothing here but took place.
+func (tx *BadgerTransaction) NoteEffect() { tx.effects.Add(1) }
 
 // OperationCount returns the number of buffered operations.
 func (tx *BadgerTransaction) OperationCount() int {

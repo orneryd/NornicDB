@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -93,7 +94,7 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 				if explicit {
 					_, err := executor.handleBegin(nil)
 					require.NoError(t, err)
-					t.Cleanup(func() { _, _ = executor.handleRollback() })
+					t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 				}
 				var before, after runtime.MemStats
 				runtime.ReadMemStats(&before)
@@ -117,7 +118,7 @@ func TestUnwindRangeExplicitTransactionFiltersBeforeMaterializingRows(t *testing
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "range_explicit"))
 	_, err := executor.handleBegin(nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = executor.handleRollback() })
+	t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 	requireUnwindRangeFiltersBeforeMaterializingRows(t, func() (*ExecuteResult, error) {
 		return executor.executeInTransaction(context.Background(), unwindRangeFilterQuery, unwindRangeFilterQuery)
 	})
@@ -146,7 +147,7 @@ func TestUnwindStreamingAggregateSemantics(t *testing.T) {
 				if explicit {
 					_, err = executor.handleBegin(nil)
 					require.NoError(t, err)
-					t.Cleanup(func() { _, _ = executor.handleRollback() })
+					t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
 				} else {
 					result, err = executor.Execute(context.Background(), test.query, nil)
@@ -362,7 +363,7 @@ func TestUnwindRangeReportedWorkload(t *testing.T) {
 					if explicit {
 						_, err = executor.handleBegin(nil)
 						require.NoError(t, err)
-						t.Cleanup(func() { _, _ = executor.handleRollback() })
+						t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 						result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
 					} else {
 						result, err = executor.Execute(context.Background(), test.query, nil)
