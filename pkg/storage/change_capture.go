@@ -736,8 +736,7 @@ type changeRetentionJob struct {
 	engine   *BadgerEngine
 	interval time.Duration
 	mu       sync.Mutex
-	cancel   context.CancelFunc
-	done     chan struct{}
+	run      *engineWorker // the running job, accepted engine work; mu
 }
 
 // defaultChangeRetention is Neo4j's default transaction log retention.
@@ -761,32 +760,27 @@ func (b *BadgerEngine) changeRetention() time.Duration {
 	return defaultChangeRetention
 }
 
-// Start runs the job until Stop or ctx ends.
+// Start runs the job, as accepted engine work, until Stop, the engine's stop
+// or ctx ends.
 func (j *changeRetentionJob) Start(ctx context.Context) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if j.cancel != nil {
+	if j.run != nil {
 		return
 	}
-	ctx, j.cancel = context.WithCancel(ctx)
-	j.done = make(chan struct{})
-	go j.run(ctx)
+	j.run = j.engine.startEngineWorker(ctx, j.loop)
 }
 
-// Stop stops the job and waits for it.
+// Stop stops the job and waits for its actual return.
 func (j *changeRetentionJob) Stop() {
 	j.mu.Lock()
-	cancel, done := j.cancel, j.done
-	j.cancel = nil
+	run := j.run
+	j.run = nil
 	j.mu.Unlock()
-	if cancel != nil {
-		cancel()
-		<-done
-	}
+	run.stopAndJoin()
 }
 
-func (j *changeRetentionJob) run(ctx context.Context) {
-	defer close(j.done)
+func (j *changeRetentionJob) loop(ctx context.Context) {
 	ticker := time.NewTicker(j.interval)
 	defer ticker.Stop()
 	for {

@@ -131,6 +131,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -151,7 +152,6 @@ import (
 	"time"
 )
 
-var boltTxWriteAnalyzer = cypher.NewQueryAnalyzer(256)
 
 // Protocol versions supported
 const (
@@ -1563,10 +1563,6 @@ type Session struct {
 	inTransaction                   bool
 	txMetadata                      map[string]any // Transaction metadata from BEGIN
 	txDatabase                      string
-	txHasMerge                      bool
-	txHasNonMergeWrite              bool
-	txMergeStatements               []cypher.CommitStatement
-	txWriteInfos                    []*cypher.QueryInfo // write statements; MERGE-only shape decided when a commit fails
 	txLifecycle                     transactionLifecycle
 	failedUntilReset                bool
 	transactionCleanupFailed        bool
@@ -1579,6 +1575,10 @@ type Session struct {
 	resultMemoryLeases    map[int64]*memory.Lease
 	resultIndex           int
 	lastLazy              *lazyResult
+	// Author: Codex, NOR-180. A lazy result abandoned by the next request can
+	// still finish with a failed terminal WAL write. The session response owner
+	// consumes that outcome once, after the helper has joined.
+	pendingResultFailure *lazyStatementError
 	// pendingMessage and pendingErr are what a lazy result's helper read
 	// and handed back to the message loop (serveLazyResult).
 	pendingMessage    *boltMessage
@@ -1918,6 +1918,10 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 		}
 		return errors.New("raw transaction executor is quarantined")
 	}
+	if failure := s.pendingResultFailure; failure != nil && msgType != MsgReset && msgType != MsgGoodbye {
+		s.pendingResultFailure = nil
+		return s.sendRunQueryFailure(failure.err, failure.query)
+	}
 	if s.failedUntilReset && msgType != MsgReset && msgType != MsgGoodbye {
 		return s.sendIgnored()
 	}
@@ -1949,18 +1953,14 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 	case MsgBegin:
 
 		if s.explicitTransactionsUnsupported {
-			err = s.sendTransactionControlFailure(
-				"Neo.ClientError.Transaction.TransactionStartFailed",
-				"explicit transactions require a SessionExecutorFactory that returns a distinct executor per connection",
-			)
+			err = s.sendTransactionControlError(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, errors.New("explicit transactions require a SessionExecutorFactory that returns a distinct executor per connection")))
 			break
 		}
 		// Reject a protocol-invalid nested BEGIN before decoding metadata or
 		// resolving another database executor. The active transaction retains its
 		// original executor and remains the sole owner of its storage transaction.
 		if s.inTransaction {
-			err = s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionStartFailed",
-				"an explicit transaction is already active")
+			err = s.sendTransactionControlError(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, errors.New("an explicit transaction is already active")))
 			break
 		}
 		s.refreshAuthResult()
@@ -1974,15 +1974,15 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 					err = beginErr
 					break
 				}
-				err = s.sendTransactionControlFailure("Neo.ClientError.Request.Invalid",
-					fmt.Sprintf("Failed to parse BEGIN metadata: %v", beginErr))
+				invalid := fmt.Errorf("Failed to parse BEGIN metadata: %w", beginErr)
+				err = s.sendTransactionControlError(nornicerrors.WithStatus(invalid, "Neo.ClientError.Request.Invalid", localization.ExternalDiagnostic(invalid)))
 				break
 			}
 			metadata = m
 		}
 		txTimeout, beginErr := validateTransactionTimeout(metadata)
 		if beginErr != nil {
-			err = s.sendTransactionControlFailure("Neo.ClientError.Request.Invalid", beginErr.Error())
+			err = s.sendTransactionControlError(nornicerrors.WithStatus(beginErr, "Neo.ClientError.Request.Invalid", localization.ExternalDiagnostic(beginErr)))
 			break
 		}
 
@@ -2004,15 +2004,14 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 			}
 			txExec, beginErr := s.getExecutorForDatabase(dbName, true)
 			if beginErr != nil {
-				err = s.sendTransactionControlFailure("Neo.ClientError.Database.DatabaseNotFound",
-					s.localize(localization.BoltDatabaseNotFoundWithCause(dbName, beginErr)))
+				err = s.sendTransactionControlError(nornicerrors.WithStatus(beginErr, "Neo.ClientError.Database.DatabaseNotFound", localization.BoltDatabaseNotFoundWithCause(dbName, beginErr)))
 				break
 			}
 			s.executor = txExec
 			txDatabase = dbName
 		}
 		if beginErr := s.bindDatabaseConnection(txDatabase); beginErr != nil {
-			err = s.sendTransactionControlFailure("Neo.TransientError.General.DatabaseUnavailable", beginErr.Error())
+			err = s.sendTransactionControlError(nornicerrors.WithStatus(beginErr, "Neo.TransientError.General.DatabaseUnavailable", localization.ExternalDiagnostic(beginErr)))
 			break
 		}
 
@@ -2046,8 +2045,7 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 			}
 			if s.txLifecycle.isDefunct() {
 				s.markTransactionCleanupFailed()
-				if sendErr := s.sendTransactionControlFailure(
-					"Neo.ClientError.Transaction.TransactionStartFailed", beginErr.Error()); sendErr != nil {
+				if sendErr := s.sendTransactionControlError(beginErr); sendErr != nil {
 					err = sendErr
 					break
 				}
@@ -2058,17 +2056,13 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 				err = fmt.Errorf("BEGIN transaction cleanup failed: %w", beginErr)
 				break
 			}
-			err = s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionStartFailed", beginErr.Error())
+			err = s.sendTransactionControlError(beginErr)
 			break
 		}
 
 		s.inTransaction = true
 		s.txMetadata = metadata
 		s.txDatabase = txDatabase
-		s.txHasMerge = false
-		s.txHasNonMergeWrite = false
-		s.txMergeStatements = nil
-		s.txWriteInfos = nil
 		s.queryId = 0
 		s.latestStatementID = -1
 		s.resultStreams = make(map[int64]*resultStream)

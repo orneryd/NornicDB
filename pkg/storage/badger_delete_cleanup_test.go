@@ -148,7 +148,7 @@ func TestDeleteCleanupLifecycle(t *testing.T) {
 	eng.stopDeleteCleanup()
 
 	c.deletes.Store(5)
-	eng.runDeleteCleanup(5)
+	eng.runDeleteCleanup(t.Context(), 5)
 	require.Equal(t, int64(5), c.deletes.Load())
 
 	mem, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())

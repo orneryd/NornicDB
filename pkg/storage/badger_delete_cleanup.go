@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,9 +42,7 @@ type deleteCleanup struct {
 	deletes   atomic.Int64 // since the last clean-up
 	last      atomic.Int64 // UnixNano of the latest delete
 	wake      chan struct{}
-	stop      chan struct{}
-	done      chan struct{}
-	stopOnce  sync.Once
+	run       *engineWorker
 }
 
 // recordDelete counts one deleted node or relationship and wakes the
@@ -65,11 +62,11 @@ func (c *deleteCleanup) recordDelete() {
 
 // waitQuiet waits until no delete has happened for c.quiet. It returns false
 // when the engine is closing.
-func (c *deleteCleanup) waitQuiet() bool {
+func (c *deleteCleanup) waitQuiet(ctx context.Context) bool {
 	for {
 		timer := time.NewTimer(c.quiet)
 		select {
-		case <-c.stop:
+		case <-ctx.Done():
 			timer.Stop()
 			return false
 		case <-timer.C:
@@ -86,26 +83,23 @@ func (b *BadgerEngine) startDeleteCleanup() {
 		threshold: deleteCleanupThreshold,
 		quiet:     deleteCleanupQuietPeriod,
 		wake:      make(chan struct{}, 1),
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
 	}
 	b.deleteCleanup = c
-	go func() {
-		defer close(c.done)
+	c.run = b.startEngineWorker(b.work.Context(), func(ctx context.Context) {
 		for {
 			select {
-			case <-c.stop:
+			case <-ctx.Done():
 				return
 			case <-c.wake:
 			}
-			if !c.waitQuiet() {
+			if !c.waitQuiet(ctx) {
 				return
 			}
 			if counted := c.deletes.Load(); counted >= c.threshold {
-				b.runDeleteCleanup(counted)
+				b.runDeleteCleanup(ctx, counted)
 			}
 		}
-	}()
+	})
 }
 
 // stopDeleteCleanup stops the clean-up goroutine and waits for it, including
@@ -115,15 +109,15 @@ func (b *BadgerEngine) stopDeleteCleanup() {
 	if c == nil {
 		return
 	}
-	c.stopOnce.Do(func() { close(c.stop) })
-	<-c.done
+	c.run.stopAndJoin()
 }
 
-// runDeleteCleanup runs one clean-up for counted deletes and logs it. A
-// failed clean-up keeps the count, so the next delete retries it.
-func (b *BadgerEngine) runDeleteCleanup(counted int64) {
+// runDeleteCleanup runs one clean-up for counted deletes and logs it, under
+// the clean-up worker's context, so the engine's stop ends it. A failed
+// clean-up keeps the count, so the next delete retries it.
+func (b *BadgerEngine) runDeleteCleanup(ctx context.Context, counted int64) {
 	start := time.Now()
-	if err := b.compactDeletedEntries(); err != nil {
+	if err := b.compactDeletedEntries(ctx); err != nil {
 		b.log.Error("deleted-entry clean-up failed", "deletes", counted, slog.Any("error", err))
 		return
 	}
@@ -135,13 +129,13 @@ func (b *BadgerEngine) runDeleteCleanup(counted int64) {
 // compactDeletedEntries has Badger flush its memtables and compact level 0,
 // which drops delete markers with no older data below them. It writes the
 // throw-away marker key with an ordinary commit and drops it.
-func (b *BadgerEngine) compactDeletedEntries() error {
+func (b *BadgerEngine) compactDeletedEntries(ctx context.Context) error {
 	if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return txn.Set(deleteCleanupMarkerKey, []byte{1})
 	}); err != nil {
 		return err
 	}
 	return recoverBadgerClosedPanic(func() error {
-		return b.db.DropPrefix(context.Background(), prefixDropOptions{metadata: true}, deleteCleanupMarkerKey)
+		return b.db.DropPrefix(ctx, prefixDropOptions{metadata: true}, deleteCleanupMarkerKey)
 	})
 }

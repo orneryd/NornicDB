@@ -128,7 +128,7 @@ func TestBadgerTransaction_CloseWaitsForListenerWithoutWriteBarrier(t *testing.T
 	<-entered
 	closed := make(chan error, 1)
 	go func() { closed <- engine.Close() }()
-	require.Eventually(t, func() bool { engine.mu.RLock(); defer engine.mu.RUnlock(); return engine.closed }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { engine.mu.RLock(); defer engine.mu.RUnlock(); return engine.work.Closing() }, time.Second, time.Millisecond)
 	close(release)
 	select {
 	case err := <-callbackResult:

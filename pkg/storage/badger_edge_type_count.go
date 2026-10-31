@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -422,20 +423,23 @@ func (b *BadgerEngine) foldAllEdgeTypeCountDeltas() error {
 // has drained every writer, so the count mutexes are uncontended, and it
 // writes through the raw database handle because the engine is already
 // marked closed.
-func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) {
+func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) error {
 	if db == nil {
-		return
+		return nil
 	}
 	b.labelCountWriteMu.Lock()
-	if err := b.foldCountDeltasOn(countFoldSource{db: db}, countDeltaKindLabel, labelCountKey, "", ""); err != nil && b.log != nil {
-		b.log.Warn("failed to fold label-count deltas at close", "error", err)
-	}
+	labelErr := b.foldCountDeltasOn(countFoldSource{db: db}, countDeltaKindLabel, labelCountKey, "", "")
 	b.labelCountWriteMu.Unlock()
 	b.edgeTypeCountWriteMu.Lock()
-	if err := b.foldCountDeltasOn(countFoldSource{db: db}, countDeltaKindEdgeType, edgeTypeCountKey, "", ""); err != nil && b.log != nil {
-		b.log.Warn("failed to fold edge-type-count deltas at close", "error", err)
-	}
+	edgeErr := b.foldCountDeltasOn(countFoldSource{db: db}, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
 	b.edgeTypeCountWriteMu.Unlock()
+	if labelErr != nil {
+		labelErr = fmt.Errorf("label-count final fold: %w", labelErr)
+	}
+	if edgeErr != nil {
+		edgeErr = fmt.Errorf("edge-type-count final fold: %w", edgeErr)
+	}
+	return compose.Outcomes(labelErr, edgeErr)
 }
 
 // decrementEdgeTypeCounts applies a batch of negative deltas (DeleteByPrefix).

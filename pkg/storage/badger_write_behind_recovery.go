@@ -2,8 +2,9 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 // Recovery retains one batch plus the record currently being decoded, rather
@@ -47,10 +48,11 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	}
 	// The batch reader retains engine state through import, physical apply
 	// and count repair. Close rejects later admissions and waits for this lease.
-	if _, err := b.beginHelperTxn(); err != nil {
+	_, err := b.beginHelperTxn()
+	if err != nil {
 		return 0, err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 
 	// A kill -9 can leave a torn tail record at EOF. Truncate it back to
 	// the last good boundary before reading (the same conservative repair
@@ -75,7 +77,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		pendingBytes = 0
 		return nil
 	}
-	err := VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
+	err = VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
 		if entry.Operation == OpEntityCommit {
 			// Keep the existing streaming replay owner: an earlier physical
 			// batch must finish before this semantic record can inspect its
@@ -167,10 +169,10 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	// Completed batches remain durable if a later record fails. Repair their
 	// counts as well, while preserving the original recovery failure.
 	if countErr := b.ensureLabelCounts(); countErr != nil {
-		err = errors.Join(err, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", countErr))
+		err = compose.Outcomes(err, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", countErr))
 	}
 	if countErr := b.ensureEdgeTypeCounts(); countErr != nil {
-		err = errors.Join(err, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", countErr))
+		err = compose.Outcomes(err, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", countErr))
 	}
 	return replayed, err
 }

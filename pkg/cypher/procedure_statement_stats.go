@@ -120,6 +120,13 @@ func (e *StorageExecutor) executeProcedureHandler(ctx context.Context, proc regi
 	var release func()
 	e, release = e.bindExecutionReadScope(ctx)
 	defer release()
+	if proc.Spec.Mode != ProcedureModeRead || proc.Spec.Admin {
+		// The version that ran declared more than a read; a later registration
+		// can't take that back. A body's own writes count where they are staged.
+		if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+			wrapper.tx.NoteEffect()
+		}
+	}
 	totals := &procedureStatementStats{Context: ctx}
 	result, err := proc.Handler(totals, e, query, args)
 	if err == nil && (totals.stats != nil || totals.committed != nil) {

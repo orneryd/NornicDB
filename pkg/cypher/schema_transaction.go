@@ -34,6 +34,7 @@ func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
 func (e *StorageExecutor) afterCommit(ctx context.Context, action func() error) error {
 	if wrapper := e.membership(ctx).storage; wrapper != nil {
 		wrapper.commitActions = append(wrapper.commitActions, action)
+		wrapper.tx.NoteEffect()
 		return nil
 	}
 	return action()
