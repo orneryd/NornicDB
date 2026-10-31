@@ -3,6 +3,8 @@ package resultstream
 import (
 	"context"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 )
 
 // ExpandFunc returns the complete ranked prefix available at depth. The
@@ -141,8 +143,10 @@ func (s *Progressive) SetRetainedBytesGrowthGuard(growthOK func() bool) {
 
 func (s *Progressive) pageLocked(position, end uint64) *Page {
 	hasMore := end < uint64(len(s.rows))
+	// The stream keeps its rows for replay; every page is a caller-owned copy
+	// through the single ownership implementation (NOR-160).
 	page := &Page{
-		Rows:     s.rows[position:end],
+		Rows:     callerowned.Rows(s.rows[position:end]),
 		Position: position,
 		Next:     end,
 		HasMore:  hasMore,
