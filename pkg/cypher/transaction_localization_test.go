@@ -30,7 +30,7 @@ func TestCypherTransactionsLocalizedErrorsHaveTypedIdentityAndExactEnglish(t *te
 
 	t.Run("syntax validation", func(t *testing.T) {
 		exec := &StorageExecutor{}
-		err := exec.validateSyntax(context.Background(), "INVALID", false, syntaxNativeCore)
+		err := exec.validateStatementSyntax(context.Background(), "INVALID", false)
 		requireCypherTransactionsLocalizedError(t, err, localization.MessageCypherTransactionsSyntaxStartInvalid, "syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, ALTER, USE, BEGIN, COMMIT, ROLLBACK, etc.)")
 	})
 

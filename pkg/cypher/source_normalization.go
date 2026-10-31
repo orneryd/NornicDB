@@ -35,6 +35,9 @@ func (r *queryRewrite) restoreSourceError(err error) (error, bool) {
 	if err == nil {
 		return nil, false
 	}
+	if isOwnedStatementDiagnostic(err) {
+		return err, false
+	}
 	restoredText, changed := (resultRestoration{source: r}).value(err.Error(), sourceDiagnosticText)
 	message := restoredText.(string)
 	var semanticCopy *SemanticError
@@ -73,6 +76,48 @@ func withSourceRewrite(ctx context.Context, rewrite *queryRewrite) context.Conte
 	}
 	source := cyphertext.SourceFor(ctx, rewrite.Original)
 	return cyphertext.WithSourceView(ctx, source.Rewrite(rewrite.Text, rewrite.Edits))
+}
+
+// statementSource distinguishes a new client statement from a transparent
+// continuation. Source windows are supplied by their readers, never recovered
+// by searching for matching query text.
+func statementSource(ctx context.Context, text string, continuation bool) (context.Context, *cyphertext.Source) {
+	if continuation {
+		if source, ok := cyphertext.RetainedSource(ctx, text, cyphertext.AcceptedSource); ok {
+			return cyphertext.WithSourceView(ctx, source), source
+		}
+	} else if nested, _ := ctx.Value(executingStatementContextKey{}).(bool); nested {
+		source := cyphertext.NewSource(ctx, text, cyphertext.RawSource)
+		return cyphertext.WithSourceView(ctx, source), source
+	}
+	return cyphertext.WithSource(ctx, text)
+}
+
+func statementSourceWindow(ctx context.Context, text string, span cyphertext.Span) context.Context {
+	source, ok := cyphertext.RetainedSource(ctx, text, cyphertext.AcceptedSource)
+	if !ok {
+		source = cyphertext.NewSource(ctx, text, cyphertext.AcceptedSource)
+	}
+	return cyphertext.WithSourceView(ctx, source.Window(span.Start, span.End))
+}
+
+// withSourceAffixes keeps generated framing outside the user's coordinate
+// system. The original text remains a known source window after prefix/suffix
+// insertion, including a re-applied mode or FINISH on a continued statement.
+func withSourceAffixes(ctx context.Context, text, prefix, suffix string) (context.Context, string) {
+	source, ok := cyphertext.RetainedSource(ctx, text, cyphertext.AcceptedSource)
+	if !ok {
+		source = cyphertext.NewSource(ctx, text, cyphertext.AcceptedSource)
+	}
+	edits := make([]cyphertext.SourceEdit, 0, 2)
+	if prefix != "" {
+		edits = append(edits, cyphertext.SourceEdit{Original: cyphertext.Span{}, Accepted: cyphertext.Span{End: len(prefix)}})
+	}
+	if suffix != "" {
+		edits = append(edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: len(text), End: len(text)}, Accepted: cyphertext.Span{Start: len(prefix) + len(text), End: len(prefix) + len(text) + len(suffix)}})
+	}
+	text = prefix + text + suffix
+	return cyphertext.WithSourceView(ctx, source.Rewrite(text, edits)), text
 }
 
 type sourceTrimPolicy uint8

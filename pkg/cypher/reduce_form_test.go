@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -73,10 +72,7 @@ func TestAllReduceAndPropertyExists(t *testing.T) {
 		require.Error(t, err, query)
 		requireStatusCode(t, err, code)
 	}
-	if !config.IsANTLRParser() {
-		// The ANTLR parser rejects the call before the form check, as an
-		// expression it can't read.
-		_, err = exec.Execute(ctx, "CYPHER 25 RETURN allReduce(acc = 0, x IN [1, 2] | x) AS v", nil)
-		require.ErrorContains(t, err, "Invalid syntax for the `allReduce` function. The function allReduce must have the signature allReduce(")
-	}
+	// The shared grammar rejects the call before the form check on either parser.
+	_, err = exec.Execute(ctx, "CYPHER 25 RETURN allReduce(acc = 0, x IN [1, 2] | x) AS v", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 }

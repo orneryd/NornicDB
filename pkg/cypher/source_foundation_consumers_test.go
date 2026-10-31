@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -111,8 +110,7 @@ func TestSourceFoundationDiagnosticCoordinates(t *testing.T) {
 func TestSourceFoundationLocalizedDiagnosticCoordinates(t *testing.T) {
 	query := "\ufeffRETURN\u00a0（1） @"
 	source := cyphertext.NormalizeSource(query)
-	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	cause := executor.validateSyntax(t.Context(), source.Text, false, syntaxANTLRCore)
+	cause := grammarDiagnostic(t.Context(), source.Text)
 	require.Error(t, cause)
 	_, err := (resultRestoration{source: sourceQueryRewrite(source)}).restore(nil, cause, nil)
 	require.ErrorIs(t, err, cause)
@@ -129,10 +127,8 @@ func TestSourceFoundationLocalizedDiagnosticCoordinates(t *testing.T) {
 		}
 	}
 	check(err)
-	if config.IsANTLRParser() {
-		_, err = executor.Execute(t.Context(), query, nil)
-		check(err)
-	}
+	_, err = NewStorageExecutor(newTestMemoryEngine(t)).Execute(t.Context(), query, nil)
+	check(err)
 }
 
 // Contextual pattern and guard structure stays with these advisory consumers;

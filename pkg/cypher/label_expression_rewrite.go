@@ -1414,16 +1414,11 @@ func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
 		i--
 	}
 	if i >= start && q[i] == ')' {
-		depth := 0
-		for ; i >= start; i-- {
-			if q[i] == ')' {
-				depth++
-			} else if q[i] == '(' {
-				depth--
-				if depth == 0 {
-					break
-				}
-			}
+		// Structural lookbehind uses the same quote-aware delimiter owner
+		// as forward readers. A malformed closer is not a subquery product.
+		i = cyphertext.FindMatchingDelimiter(q, i, '(', ')', cyphertext.ClosingDelimiter)
+		if i < start {
+			return false
 		}
 		i--
 		for i >= start && cyphertext.IsWhitespaceAt(q, i) {

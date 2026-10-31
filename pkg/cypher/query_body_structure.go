@@ -21,7 +21,7 @@ func queryBodyContainerKeyword(word string) bool {
 }
 
 func forEachQueryBody(ctx context.Context, source string, containers []string, visit func(string, int, int) error) error {
-	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) {
+	if isNornicExtensionStatement(source) {
 		return nil
 	}
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)

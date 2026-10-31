@@ -93,11 +93,11 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 		return nil, err
 	}
 	if endsInFinish(ctx, query) {
-		query += " FINISH"
+		ctx, query = withSourceAffixes(ctx, query, "", " FINISH")
 	}
 	// Catalog commands are validated by their typed command preparation; graph
 	// body composition has no clauses to validate in their native DDL syntax.
-	if !isMetadataCommand(query, metadataCatalogExecution) {
+	if !classifyStatement(query).catalog {
 		if err := validateQueryBodyComposition(ctx, query); err != nil {
 			return nil, err
 		}
@@ -131,7 +131,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 		return nil, err
 	}
 	if endsInFinish(ctx, query) {
-		query += " FINISH"
+		ctx, query = withSourceAffixes(ctx, query, "", " FINISH")
 	}
 	// Resolve participant signatures through the same owner as EXPLAIN and
 	// planning. Incomplete metadata cannot authorize execution effects.

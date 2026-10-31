@@ -89,11 +89,16 @@ func newSemanticError(code, detail, message string) error {
 	return &SemanticError{Code: code, Detail: detail, Message: message}
 }
 
-// syntaxAdmissionError retains specific pattern diagnostics at grammar admission.
+// syntaxAdmissionError is the one classification of a grammar rejection, for
+// every caller: the canonical grammar diagnostic, sealed in submitted-source
+// coordinates, with a specific pattern explanation folded in. Causes that are
+// not grammar parse errors keep their own classification.
 func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage, cause error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	var grammar *localization.LocalizedError
+	canonical := errors.As(cause, &grammar) && grammar.Message.ID == localization.MessageCypherANTLRParseSyntaxError
 	view := cyphertext.NewSource(ctx, source, stage)
 	if err := ctx.Err(); err != nil {
 		return err
@@ -101,11 +106,24 @@ func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage,
 	if view.Err == nil {
 		source = view.Text
 		if err := malformedCallScopeError(ctx, source); err != nil {
+			if canonical {
+				if interrupted := ctx.Err(); interrupted != nil {
+					return interrupted
+				}
+				return ownedStatementDiagnostic(ctx, source, stage, grammar.Message, cause, err)
+			}
 			return err
 		}
 	}
 	if invalidRelationshipPattern(source) {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidRelationshipPattern", "invalid variable-length relationship pattern")
+		refinement := newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidRelationshipPattern", "invalid variable-length relationship pattern")
+		if canonical {
+			return ownedStatementDiagnostic(ctx, source, stage, grammar.Message, cause, refinement)
+		}
+		return refinement
+	}
+	if canonical {
+		return ownedStatementDiagnostic(ctx, source, stage, grammar.Message, cause, nil)
 	}
 	var localized *localization.LocalizedError
 	if errors.As(cause, &localized) {

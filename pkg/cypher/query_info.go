@@ -278,19 +278,11 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.HasLoadCSV = containsKeyword(upper, "LOAD CSV")
 
 	// Special handling
-	mode, _ := parseExecutionMode(upper)
-	info.HasExplain = mode == ModeExplain
-	info.HasProfile = mode == ModeProfile
-	info.HasShow = strings.HasPrefix(upper, "SHOW")
-	info.HasSchema = containsKeyword(upper, "CREATE INDEX") ||
-		containsKeyword(upper, "CREATE RANGE INDEX") ||
-		containsKeyword(upper, "CREATE FULLTEXT INDEX") ||
-		containsKeyword(upper, "CREATE VECTOR INDEX") ||
-		containsKeyword(upper, "CREATE TEXT INDEX") ||
-		containsKeyword(upper, "CREATE POINT INDEX") ||
-		containsKeyword(upper, "DROP INDEX") ||
-		containsKeyword(upper, "CREATE CONSTRAINT") ||
-		containsKeyword(upper, "DROP CONSTRAINT")
+	class := classifyStatement(upper)
+	info.HasExplain = class.prefixMode == prefixExplain
+	info.HasProfile = class.prefixMode == prefixProfile
+	info.HasShow = class.show
+	info.HasSchema = class.ordinarySchema
 
 	// Path functions
 	info.HasShortestPath = strings.Contains(upper, "SHORTESTPATH") ||
@@ -705,6 +697,14 @@ func containsKeyword(upper, keyword string) bool {
 
 // detectFirstClause determines the first clause type.
 func detectFirstClause(upper string) ClauseType {
+	// A command is not a clause: the owner answers before the text does.
+	class := classifyStatement(upper)
+	switch {
+	case class.show:
+		return ClauseShow
+	case class.command != commandNone:
+		return ClauseUnknown
+	}
 	upper = strings.TrimSpace(upper)
 
 	_, upper = parseExecutionMode(upper)
@@ -730,8 +730,6 @@ func detectFirstClause(upper string) ClauseType {
 		return ClauseCall
 	case strings.HasPrefix(upper, "LOAD CSV"):
 		return ClauseLoadCSV
-	case strings.HasPrefix(upper, "SHOW"):
-		return ClauseShow
 	default:
 		return ClauseUnknown
 	}

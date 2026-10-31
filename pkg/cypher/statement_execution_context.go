@@ -70,7 +70,7 @@ func publishStatementCommit(ctx context.Context) {
 // such as 'CREATE'. The conservative analyzer flags alone cannot establish that.
 func (e *StorageExecutor) publishDirectStatementCommit(ctx context.Context, query string) {
 	permissions := QueryPermissionRequirements(context.Background(), query, AcceptedSource)
-	if permissions.Write || permissions.Schema {
+	if permissions.ChangesState {
 		publishStatementCommit(ctx)
 	}
 }

@@ -52,7 +52,7 @@ func (f *statementCacheDisposeFixture) warm(t *testing.T) {
 	if _, err := f.members[2].Execute(context.Background(), f.query, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !f.base.hasCachedValidSyntax(f.query, activeSyntaxValidator()) {
+	if !f.base.hasCachedValidSyntax(f.query, syntaxStatementAccepted) {
 		t.Fatal("cold family did not share verdict")
 	}
 }
@@ -62,9 +62,9 @@ func (f *statementCacheDisposeFixture) warm(t *testing.T) {
 // runs.
 func (f *statementCacheDisposeFixture) churn(child *StorageExecutor, iterations int) {
 	for range iterations {
-		child.markCachedValidSyntax(f.key, activeSyntaxValidator())
+		child.markCachedValidSyntax(f.key, syntaxStatementAccepted)
 		child.cachedUpperQuery("return 42 as value")
-		child.hasCachedValidSyntax(f.key, activeSyntaxValidator())
+		child.hasCachedValidSyntax(f.key, syntaxStatementAccepted)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -141,17 +142,12 @@ func TestRuntimeReaderLiveMalformedDiagnostics(t *testing.T) {
 
 func requireRuntimeReaderGrammarDiagnostic(t *testing.T, query string, err error) {
 	t.Helper()
-	source := query
-	var rewrite *queryRewrite
-	if config.IsCypherQueryNormalizationEnabled() {
-		var normalizeErr error
-		source, rewrite, normalizeErr = normalizeQueryText(t.Context(), source)
-		require.NoError(t, normalizeErr)
-	}
-	grammarErr := cypherantlr.ValidateContext(t.Context(), source, cyphertext.RawSource)
+	_, grammarErr := cypherantlr.ParseSyntax(t.Context(), query, cypherantlr.StatementEntry, classifyStatement(query).version == "25", cyphertext.RawSource)
 	require.Error(t, grammarErr)
-	_, want := (resultRestoration{source: rewrite}).restore(nil, syntaxAdmissionError(t.Context(), source, AcceptedSource, grammarErr), nil)
-	require.EqualError(t, err, want.Error())
+	var want, got *localization.LocalizedError
+	require.ErrorAs(t, grammarErr, &want)
+	require.ErrorAs(t, err, &got)
+	require.Equal(t, want.Message, got.Message, "class and submitted-source positions")
 }
 
 // A malformed CALL scope clause is Neo4j's import error on both parsers.
@@ -168,7 +164,9 @@ func TestMalformedCallScopeClauseDiagnosticOnBothParsers(t *testing.T) {
 			t.Run("procedure named call with unclosed arguments", func(t *testing.T) {
 				executor := NewStorageExecutor(newTestMemoryEngine(t))
 				_, err := executor.Execute(t.Context(), "CALL call(1", nil)
+				// NornicDB's delimiter check answers on either parser, as on release.
 				require.EqualError(t, err, "Neo.ClientError.Statement.SyntaxError: syntax error: unbalanced parentheses")
+				require.NotContains(t, err.Error(), "CALL imports must contain only variable names")
 				requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 			})
 

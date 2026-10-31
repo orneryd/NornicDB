@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -118,5 +119,9 @@ func compositeGraphs(ctx Context) ([]string, bool) {
 	if ctx.Graphs == nil {
 		return nil, false
 	}
-	return ctx.Graphs.CompositeGraphs()
+	request := ctx.Request
+	if request == nil {
+		request = context.Background()
+	}
+	return ctx.Graphs.CompositeGraphs(request)
 }

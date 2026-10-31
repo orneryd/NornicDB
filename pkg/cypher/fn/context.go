@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -27,6 +28,9 @@ type Context struct {
 	// Graphs lists the graphs of the composite database the query runs on.
 	// Nil means not a composite database.
 	Graphs GraphCatalog
+	// Request is the statement's context, which names the principal whose
+	// graphs Graphs lists.
+	Request context.Context
 
 	// Cypher25 is set while a Cypher 25 statement runs: a function whose
 	// results or errors Neo4j 2026.09 changed follows Neo4j 2026.09 then, and
@@ -40,7 +44,7 @@ type Context struct {
 // built per row can carry its executor without allocating (a method value
 // would build a closure each time).
 type GraphCatalog interface {
-	CompositeGraphs() (graphs []string, composite bool)
+	CompositeGraphs(ctx context.Context) (graphs []string, composite bool)
 }
 
 // GraphStorage resolves the execution selection only for a function that reads

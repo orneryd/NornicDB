@@ -77,11 +77,11 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 	trimmed := strings.TrimSpace(text)
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
-	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || keywordIndexFrom(text, "LOAD", 0, opts) >= 0 {
+	if class := classifyStatement(trimmed); class.show || class.terminate || class.prefixMode == prefixProfile || keywordIndexFrom(text, "LOAD", 0, opts) >= 0 {
 		return policy
 	}
 	requirements := QueryPermissionRequirements(ctx, text, AcceptedSource)
-	if requirements.Write || requirements.Schema || requirements.Admin {
+	if !requirements.ReadOnly() {
 		return policy
 	}
 	if err := forEachFunctionInvocation(text, func(name, normalized string, open int) error {

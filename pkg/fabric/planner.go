@@ -16,6 +16,8 @@ import (
 // This mirrors Neo4j's FabricPlanner.scala.
 type FabricPlanner struct {
 	catalog *Catalog
+	// deferTargetResolution leaves resolving static USE targets to the caller.
+	deferTargetResolution bool
 	// keywordIsName is the Cypher executor's reader of a clause keyword that is
 	// a name where it stands; nil reads every keyword as a clause.
 	keywordIsName ClauseKeywordNameReader
@@ -699,14 +701,27 @@ type callSubqueryBlock struct {
 	scope  string
 }
 
+// ResolveUseTarget reports a static USE target the catalog doesn't hold.
+func (c *Catalog) ResolveUseTarget(target string) error {
+	if _, err := c.Resolve(target); err != nil {
+		return fmt.Errorf("invalid USE target '%s': %w", target, err)
+	}
+	return nil
+}
+
+// DeferTargetResolution leaves resolving static USE targets to the caller, who
+// admits every selection of the plan first (Plan's result is then the same
+// whether a target exists or not, so it can't reveal one and can be cached).
+func (p *FabricPlanner) DeferTargetResolution() { p.deferTargetResolution = true }
+
 func (p *FabricPlanner) validateUseTarget(sessionDB string, targetDB string) error {
 	target := targetDB
 	if target == "" {
 		return fmt.Errorf("USE clause requires a database name")
 	}
-	if p.catalog != nil {
-		if _, err := p.catalog.Resolve(target); err != nil {
-			return fmt.Errorf("invalid USE target '%s': %w", target, err)
+	if p.catalog != nil && !p.deferTargetResolution {
+		if err := p.catalog.ResolveUseTarget(target); err != nil {
+			return err
 		}
 	}
 

@@ -59,7 +59,7 @@ func TestReview1477R2PublicColdFamily(t *testing.T) {
 	for err := range errors {
 		t.Error(err)
 	}
-	if !root.hasCachedValidSyntax("RETURN $v AS v", activeSyntaxValidator()) {
+	if !root.hasCachedValidSyntax("RETURN $v AS v", syntaxStatementAccepted) {
 		t.Error("public USE/Fabric children did not populate the root verdict")
 	}
 	owner := root.StatementCaches()
@@ -111,7 +111,7 @@ func TestReview1477R2LiveUseOwnerSurvivesRemoval(t *testing.T) {
 				t.Fatal(err)
 			}
 			const body = "MATCH (n:LiveReview) RETURN count(n) AS c"
-			if !executor.hasCachedValidSyntax(body, activeSyntaxValidator()) {
+			if !executor.hasCachedValidSyntax(body, syntaxStatementAccepted) {
 				t.Fatal("live USE path never warmed")
 			}
 			switch removal {
@@ -128,7 +128,7 @@ func TestReview1477R2LiveUseOwnerSurvivesRemoval(t *testing.T) {
 			if _, err := executor.Execute(context.Background(), query, nil); err != nil {
 				t.Fatal(err)
 			}
-			if owner.Disposed() || !executor.hasCachedValidSyntax(body, activeSyntaxValidator()) {
+			if owner.Disposed() || !executor.hasCachedValidSyntax(body, syntaxStatementAccepted) {
 				t.Fatal("unrelated catalog removal permanently disabled caching for the surviving cross-database USE owner")
 			}
 		})

@@ -19,14 +19,19 @@ func TestCustomProcedureBodyRunsNoAdministrationCommand(t *testing.T) {
 	admin := getAuthToken(t, users, "admin")
 	reader := getAuthToken(t, users, "reader")
 
+	// A READ procedure cannot hold an administration command at all.
+	require.NotEmpty(t, txErrorCode(t, server, "nornic", admin,
+		"CALL apoc.custom.installProcedure('r3readgrant() :: VOID', 'GRANT EXECUTE BOOSTED PROCEDURE * ON DBMS TO editor', 'nornic', 'read')"))
+	require.NotEmpty(t, txErrorCode(t, server, "nornic", admin,
+		"CREATE PROCEDURE custom.r3readrevoke() MODE READ AS REVOKE EXECUTE BOOSTED PROCEDURE * ON DBMS FROM editor"))
 	require.Empty(t, txErrorCode(t, server, "nornic", admin,
-		"CALL apoc.custom.installProcedure('r3grant() :: VOID', 'GRANT EXECUTE BOOSTED PROCEDURE * ON DBMS TO editor', 'nornic', 'read')"))
+		"CALL apoc.custom.installProcedure('r3grant() :: VOID', 'GRANT EXECUTE BOOSTED PROCEDURE * ON DBMS TO editor', 'nornic', 'write')"))
 	require.Empty(t, txErrorCode(t, server, "nornic", admin,
-		"CREATE PROCEDURE custom.r3revoke() MODE READ AS REVOKE EXECUTE BOOSTED PROCEDURE * ON DBMS FROM editor"))
-	for _, token := range []string{admin, reader} {
-		for _, call := range []string{"CALL custom.r3grant()", "CALL custom.r3revoke()"} {
-			require.Equal(t, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType", txErrorCode(t, server, "nornic", token, call), call)
-		}
+		"CREATE PROCEDURE custom.r3revoke() MODE WRITE AS REVOKE EXECUTE BOOSTED PROCEDURE * ON DBMS FROM editor"))
+	for _, call := range []string{"CALL custom.r3grant()", "CALL custom.r3revoke()"} {
+		require.Equal(t, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType", txErrorCode(t, server, "nornic", admin, call), call)
+		// A reader may not call a WRITE procedure at all.
+		require.NotEmpty(t, txErrorCode(t, server, "nornic", reader, call), call)
 	}
 	grants, err := server.procedurePrivileges.List(ctx)
 	require.NoError(t, err)

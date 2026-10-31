@@ -111,5 +111,5 @@ func TestUnknownFunctionBeforeANTLRParserError(t *testing.T) {
 	t.Cleanup(func() { config.SetParserType(previous) })
 	config.SetParserType(config.ParserTypeANTLR)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "unknown_function_antlr"))
-	requireSemanticDetail(t, exec.validateSyntax(context.Background(), "MATCH (n) RETURN nosuch(n) AS x LIMIT 1 OFFSET 1", true, syntaxStatement), "UnknownFunction")
+	requireSemanticDetail(t, exec.validateStatementSyntax(context.Background(), "MATCH (n) RETURN nosuch(n) AS x LIMIT 1 OFFSET 1", true), "UnknownFunction")
 }

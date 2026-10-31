@@ -6,53 +6,11 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
-
-type metadataCommandPurpose uint8
-
-const (
-	metadataCatalogExecution metadataCommandPurpose = iota
-	metadataCreateAdmission
-)
-
-// isMetadataCommand keeps catalog execution and CREATE semantic admission on
-// one classifier. Schema creation is exempt from pattern validation but retains
-// its existing transactional execution route; catalog commands bypass it.
-func isMetadataCommand(cypher string, purpose metadataCommandPurpose) bool {
-	if startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
-		isCreateOrReplaceDatabaseQuery(cypher) ||
-		startsWithKeywords(cypher, "CREATE", "DATABASE") ||
-		startsWithKeywords(cypher, "CREATE", "ALIAS") ||
-		startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE") ||
-		startsWithKeywords(cypher, "DROP", "DATABASE") ||
-		startsWithKeywords(cypher, "DROP", "ALIAS") ||
-		startsWithKeywords(cypher, "SHOW", "DATABASES") ||
-		startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE") ||
-		startsWithKeywords(cypher, "ALTER", "DATABASE") ||
-		isPrivilegeAdministrationCommand(cypher) {
-		return true
-	}
-	if purpose != metadataCreateAdmission {
-		return false
-	}
-	return isCreateProcedureCommand(cypher) ||
-		startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") ||
-		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") ||
-		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") ||
-		startsWithKeywords(cypher, "CREATE", "CONSTRAINT") ||
-		startsWithKeywords(cypher, "CREATE", "INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "RANGE INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "TEXT INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "POINT INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX")
-}
 
 func isShowConstraintContractsCommand(cypher string) bool {
 	return startsWithKeywords(cypher, "SHOW", "CONSTRAINT CONTRACTS")
@@ -84,6 +42,8 @@ func topLevelUnion(ctx context.Context, cypher, upperQuery string) (unionAll, un
 
 // executeWithoutTransaction executes query without transaction wrapping (original path).
 func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (result *ExecuteResult, err error) {
+	// The owner answers first; every route below reads its answer.
+	class := classifyStatement(cypher)
 	reveal := hasRevealCall(cypher)
 	if scope := e.executionReadScopeOf(); scope != nil {
 		if reveal && !scope.reveal {
@@ -116,6 +76,17 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 			result, err = nil, recorded
 		}
 	}()
+	// A command the owner names runs on its command owner. The clause words
+	// in its own text (a procedure body's WITH, SET, DELETE, CALL { } or
+	// UNION) never route it as a graph query.
+	if class.command != commandNone {
+		if result, handled, err := e.executeNamedCommand(ctx, cypher, class.command); handled {
+			return result, err
+		}
+	}
+	if class.command == commandAlterDatabase || class.command == commandAlterDatabaseLimit || class.command == commandAlterDatabaseOption {
+		return e.executeAlterDatabase(ctx, cypher)
+	}
 	// A top-level UNION composes complete single queries. Route it before any
 	// handler can consume the leading MATCH, RETURN, or UNWIND branch.
 	if unionAll, union := topLevelUnion(ctx, cypher, upperQuery); union {
@@ -165,13 +136,8 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		createIdx = findKeywordIndex(cypher, "CREATE")
 		optionalMatchIdx = findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH")
 	} else if startsWithCreate {
-		if !isCreateProcedureCommand(cypher) &&
-			!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
-			!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
-			!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
-			if _, ok := canExecuteAsPipeline(ctx, cypher); ok {
-				return e.executeRequiredPipeline(ctx, cypher)
-			}
+		if _, ok := canExecuteAsPipeline(ctx, cypher); ok {
+			return e.executeRequiredPipeline(ctx, cypher)
 		}
 		withIdx = findKeywordIndex(cypher, "WITH")
 	}
@@ -206,24 +172,11 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if startsWithCreate && hasSet && containsKeywordOutsideStrings(cypher, "REMOVE") {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
-	if startsWithCreate && !isCreateProcedureCommand(cypher) && hasSet && !hasOnCreateSet && !hasOnMatchSet &&
-		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
-		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
-		!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
+	if startsWithCreate && hasSet && !hasOnCreateSet && !hasOnMatchSet {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
-	if startsWithKeywords(cypher, "ALTER", "DATABASE") {
-		return e.executeAlterDatabase(ctx, cypher)
-	}
-
-	if hasSet && !isCreateProcedureCommand(cypher) && !hasOnCreateSet && !hasOnMatchSet &&
-		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
-		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
-		!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") &&
-		!startsWithKeywords(cypher, "ALTER", "DECAY PROFILE") &&
-		!startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE") &&
-		!startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY") {
+	if hasSet && !hasOnCreateSet && !hasOnMatchSet {
 		if startsWithMatch || findKeywordIndex(cypher, "SET") == 0 {
 			return e.executeRequiredPipeline(ctx, cypher)
 		}
@@ -243,67 +196,17 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 
 	switch {
-	case isProcedurePrivilegeCommand(cypher):
-		return e.executeProcedurePrivilegeCommand(ctx, cypher)
-	case startsWithKeywordFold(strings.TrimSpace(cypher), "GRANT"), startsWithKeywordFold(strings.TrimSpace(cypher), "REVOKE"),
-		startsWithKeywordFold(strings.TrimSpace(cypher), "DENY"):
-		// Only procedure execution privileges are supported.
-		return nil, unsupportedAdministrationCommandError(cypher)
-	case isCreateProcedureCommand(cypher):
-		return e.executeCreateProcedure(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "DECAY PROFILE"),
-		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE"),
-		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY"):
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case startsWithKeywords(cypher, "OPTIONAL", "MATCH"),
 		startsWithKeywords(cypher, "OPTIONAL", "CALL"):
 		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithMatch:
 		return e.executeRequiredPipeline(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "CONSTRAINT"),
-		startsWithKeywords(cypher, "CREATE", "RANGE INDEX"),
-		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX"),
-		startsWithKeywords(cypher, "CREATE", "TEXT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "POINT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX"),
-		findKeywordIndex(cypher, "CREATE INDEX") == 0:
-		return e.executeSchemaCommand(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE"):
-		return e.executeCompositeCommand(ctx, cypher, compositeCreateCommand)
-	case isCreateOrReplaceDatabaseQuery(cypher):
-		return e.executeDatabaseCreate(ctx, cypher, replaceExistingDatabase)
-	case startsWithKeywords(cypher, "CREATE", "DATABASE"):
-		return e.executeDatabaseCreate(ctx, cypher, createNewDatabase)
-	case startsWithKeywords(cypher, "CREATE", "ALIAS"):
-		return e.executeCreateAlias(ctx, cypher)
 	case startsWithCreate:
 		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithKeywordFold(cypher, "CALL"):
 		return e.executeCall(ctx, cypher)
 	case startsWithKeywordFold(cypher, "RETURN"):
 		return e.executeReturn(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE"):
-		return e.executeDatabaseDrop(ctx, cypher, dropCompositeDatabase)
-	case startsWithKeywords(cypher, "DROP", "DATABASE"):
-		return e.executeDatabaseDrop(ctx, cypher, dropStandardDatabase)
-	case startsWithKeywords(cypher, "DROP", "ALIAS"):
-		return e.executeDropAlias(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "CONSTRAINT"):
-		return e.executeSchemaCommand(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "DECAY PROFILE"),
-		startsWithKeywords(cypher, "DROP", "PROMOTION PROFILE"),
-		startsWithKeywords(cypher, "DROP", "PROMOTION POLICY"):
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	case isDropProcedureCommand(cypher):
-		return e.executeDropProcedure(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "INDEX"):
-		return e.executeSchemaCommand(ctx, cypher)
-	case isDropRoleCommand(cypher):
-		return nil, localizedStatusError("Neo.ClientError.Statement.UnsupportedAdministrationCommand", "UnsupportedAdministrationCommand",
-			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
-	case findKeywordIndex(cypher, "DROP") == 0:
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
 	case startsWithKeywordFold(cypher, "WITH"):
 		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithKeywordFold(cypher, "UNWIND"):
@@ -312,12 +215,6 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeRequiredPipeline(ctx, cypher)
 	case findKeywordIndex(cypher, "LOAD CSV") == 0:
 		return e.executeLoadCSV(ctx, cypher)
-	case startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE"):
-		return e.executeCompositeCommand(ctx, cypher, compositeAlterCommand)
-	case startsWithKeywords(cypher, "ALTER", "DECAY PROFILE"),
-		startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE"),
-		startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY"):
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	default:
 		// Terminal chokepoint of the converged router: a statement that passed
 		// syntax validation but matches no handler is rejected here — never a
@@ -332,6 +229,51 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 			detail: "UnexpectedSyntax",
 		}
 	}
+}
+
+// executeNamedCommand runs a command statement in the owner its command
+// names (statementClass.command). SHOW commands run in executeShowStatement.
+func (e *StorageExecutor) executeNamedCommand(ctx context.Context, cypher string, command statementCommand) (*ExecuteResult, bool, error) {
+	var result *ExecuteResult
+	var err error
+	switch command {
+	case commandProcedurePrivilege:
+		result, err = e.executeProcedurePrivilegeCommand(ctx, cypher)
+	case commandUnsupportedPrivilege, commandMalformedPrivilege:
+		// Only procedure execution privileges are supported.
+		err = unsupportedAdministrationCommandError(cypher)
+	case commandCreateProcedure:
+		result, err = e.executeCreateProcedure(ctx, cypher)
+	case commandCreateKnowledgePolicy, commandAlterKnowledgePolicy, commandDropKnowledgePolicy:
+		result, err = e.executeKnowledgePolicyDDL(ctx, cypher)
+	case commandSchema:
+		result, err = e.executeSchemaCommand(ctx, cypher)
+	case commandCreateCompositeDatabase:
+		result, err = e.executeCompositeCommand(ctx, cypher, compositeCreateCommand)
+	case commandCreateOrReplaceDatabase:
+		result, err = e.executeDatabaseCreate(ctx, cypher, replaceExistingDatabase)
+	case commandCreateDatabase, commandCreateDatabaseOptions:
+		result, err = e.executeDatabaseCreate(ctx, cypher, createNewDatabase)
+	case commandCreateAlias:
+		result, err = e.executeCreateAlias(ctx, cypher)
+	case commandDropCompositeDatabase:
+		result, err = e.executeDatabaseDrop(ctx, cypher, dropCompositeDatabase)
+	case commandDropDatabase:
+		result, err = e.executeDatabaseDrop(ctx, cypher, dropStandardDatabase)
+	case commandDropAlias:
+		result, err = e.executeDropAlias(ctx, cypher)
+	case commandDropProcedure:
+		result, err = e.executeDropProcedure(ctx, cypher)
+	case commandDropRole:
+		err = unsupportedAdministrationCommandError(cypher)
+	case commandInvalidDrop, commandDropSchemaOther, commandDropAdministration, commandDropRetentionPolicy:
+		err = newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
+	case commandAlterCompositeDatabase:
+		result, err = e.executeCompositeCommand(ctx, cypher, compositeAlterCommand)
+	default:
+		return nil, false, nil
+	}
+	return result, true, err
 }
 
 func (e *StorageExecutor) executeRequiredPipeline(ctx context.Context, cypher string) (*ExecuteResult, error) {
@@ -446,248 +388,185 @@ func splitReturnExpressions(clause string) []string {
 	return splitTopLevelComma(clause)
 }
 
-// syntaxValidationMode selects the existing statement admission or an isolated
-// parser slice. Core modes are used by parser diagnostics and measurements;
-// they deliberately omit the shared statement validators.
-type syntaxValidationMode uint8
-
-const (
-	syntaxStatement syntaxValidationMode = iota
-	syntaxNativeCore
-	syntaxANTLRCore
-)
-
-// validateSyntax is the sole syntax-validation pipeline. Statement admission
-// uses the configured parser and shared checks; core modes preserve the isolated
-// native benchmark and ANTLR diagnostic contracts. cypher25 selects scope rules.
-func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cypher25 bool, mode syntaxValidationMode) error {
-	if mode == syntaxNativeCore && e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
+// validateStatementSyntax is the one statement admission owner: public and
+// internal execution, Fabric validation, EXPLAIN/PROFILE and the Bolt/HTTP
+// entries all call it. It classifies the statement once
+// (classifyStatement). NornicDB's own checks answer first, with the same codes,
+// messages and classes on either parser; the shared grammar then rejects what
+// only it rejects, after the semantic checks that explain such a rejection.
+// Neither a parser configuration nor an isolated validator verdict can choose
+// another terminal or bypass these checks.
+func (e *StorageExecutor) validateStatementSyntax(ctx context.Context, cypher string, cypher25 bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if e.hasCachedValidSyntax(cypher, syntaxStatementAccepted) {
 		return nil
 	}
-	validator := uint8(syntaxValidNornic)
-	if mode == syntaxANTLRCore || mode == syntaxStatement && config.IsANTLRParser() {
-		validator = syntaxValidANTLR
+	class := classifyStatement(cypher)
+	checks := []func(string) error{validateUnicodeOperators, validateStaticMapKeys, validateNumericLiterals, validateArrowOperators, validatePlaceholderOperands}
+	if class.optionsDefinition {
+		checks[1] = nil
 	}
-	if mode == syntaxStatement {
-		// Cancellation precedes even a cached statement admission.
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	if class.limitsAlteration {
+		checks[2] = nil
 	}
-	if mode == syntaxStatement && e.hasCachedValidSyntax(cypher, validator) {
-		return nil
-	}
-	if mode == syntaxStatement {
-		if err := validateUnicodeOperators(cypher); err != nil {
-			return err
+	for _, check := range checks {
+		if check == nil {
+			continue
 		}
-		if err := validateStaticMapKeys(cypher); err != nil {
-			return err
-		}
-		if err := validateNumericLiterals(cypher); err != nil {
-			return err
-		}
-		if err := validateArrowOperators(cypher); err != nil {
-			return err
-		}
-		if err := validatePlaceholderOperands(cypher); err != nil {
+		if err := check(cypher); err != nil {
 			return err
 		}
 	}
-
-	var parserError error
-	if validator == syntaxValidANTLR && !isNornicExtensionStatement(cypher) {
-		if mode == syntaxStatement {
-			// Execution admits the canonical statement product, just as the
-			// native readers do. ValidateContext's API-specific diagnostic
-			// wrapper belongs only to isolated validator consumers.
-			_, parserError = antlr.ParseSyntax(ctx, cypher, antlr.StatementEntry, false, cyphertext.AcceptedSource)
-		} else {
-			parserError = antlr.ValidateContext(ctx, cypher, cyphertext.AcceptedSource)
-		}
-		if parserError == context.Canceled || parserError == context.DeadlineExceeded {
-			return parserError
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if parserError == nil {
-			e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
-			return nil
-		}
+	if err := validateNativeSurfaceSyntax(cypher, class); err != nil {
+		return err
 	}
-
-	if mode == syntaxNativeCore || !e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
-		// Grammar checks consume code from the same lexical expression reader as
-		// projections. Comments cannot introduce operands, quotes or delimiters;
-		// keep the original statement as the validation-cache key.
-		original := cypher
-		cypher = lexicalExpressionText(cypher)
-		if containsNotInOperator(cypher) {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				"Invalid input 'NOT': NOT IN is not a Cypher operator; write NOT x IN [list]")
+	verdict := syntaxStatementAccepted
+	if !class.commandOwned {
+		_, err := antlr.ParseSyntax(ctx, cypher, antlr.StatementEntry, cypher25, cyphertext.AcceptedSource)
+		if interrupted := ctx.Err(); interrupted != nil {
+			return interrupted
 		}
-		if containsTrailingListComma(cypher) {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				"Invalid input ']': expected an expression")
-		}
-		if singleNodePatternComprehension(cypher) {
-			// [(n) | …]: a pattern comprehension needs a relationship, as the
-			// ANTLR parser and Neo4j require ("Invalid input '|'").
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				localization.CypherCoreInvalidInputExpectedExpression("|"))
-		}
-		if hasAdjacentStringLiterals(cypher) {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				"Invalid input: adjacent string literals require an operator between them")
-		}
-		if explainProfileConflict(cypher) {
-			return executionModeConflictError()
-		}
-		if _, ok := readTrailingFinish(cypher, detectFinishSuffix); ok {
-			// FINISH can't follow RETURN, as in Neo4j; every valid trailing
-			// FINISH was stripped before validation.
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "RETURN can only be used at the end of the query")
-		}
-		if !hasValidStartKeyword(cypher) {
-			// Neo4j reports an unrecognized statement as a syntax error; classify
-			// the localized terminal so Bolt carries the proper status code.
-			return &classifiedCypherError{
-				cause:  localizedError(localization.CypherTransactionsSyntaxStartInvalid(), nil),
-				code:   "Neo.ClientError.Statement.SyntaxError",
-				detail: "UnexpectedSyntax",
+		if err != nil {
+			if err := e.validateMatchSemanticScopes(ctx, cypher, cypher25); err != nil {
+				return err
 			}
-		}
-		if err := validateLeadingNodePatternTransition(cypher); err != nil {
-			return err
-		}
-
-		if isGraphQueryStatement(cypher) && hasAdjacentOperands(cypher) {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: an expression is followed by another expression without an operator")
-		}
-
-		parenCount := 0
-		bracketCount := 0
-		braceCount := 0
-
-		for i := 0; i < len(cypher); i++ {
-			c := cypher[i]
-			if isCypherQuoteByte(c) {
-				end, closed := scanCypherQuotedText(cypher, i, c)
-				if !closed {
-					return &classifiedCypherError{cause: localizedError(localization.CypherTransactionsSyntaxUnclosedQuote(), nil), code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax"}
-				}
-				i = end - 1
-				continue
+			if err := validateKnownFunctions(cypher); err != nil {
+				return err
 			}
-			if c == '/' {
-				if end := queryCommentEnd(cypher, i); end >= 0 {
-					i = end - 1
-					continue
-				}
-			}
-			if c == '.' && i+1 < len(cypher) && cypher[i+1] == '.' && bracketCount == 0 {
-				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
-			}
-			if c == '.' && (i == 0 || cypher[i-1] != '.') && (i+1 == len(cypher) || cypher[i+1] != '.') {
-				// A dot other than a range's (1..2) starts a property key (n.k,
-				// n.`k`), a map projection's all-properties (.*) or a number's
-				// digits: RETURN n. is Neo4j's "expected an identifier".
-				if next := queryGapEnd(cypher, i+1); next == len(cypher) || (!cyphertext.NamePartAt(cypher, next) || cypher[next] == '$') && !isCypherBacktickByte(cypher[next]) && cypher[next] != '*' {
-					token := ""
-					if next < len(cypher) {
-						token = cypher[next : next+1]
-					}
-					return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-						localization.CypherCoreInvalidInputExpectedIdentifier(token))
-				}
-			}
-			if c == '+' {
-				next := skipSpaces(cypher, i+1)
-				if next < len(cypher) && cypher[next] == '*' {
-					return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
-				}
-			}
-
-			switch c {
-			case '(':
-				parenCount++
-			case ')':
-				parenCount--
-			case '[':
-				bracketCount++
-			case ']':
-				bracketCount--
-			case '{':
-				braceCount++
-			case '}':
-				braceCount--
-			}
-
-			if parenCount < 0 || bracketCount < 0 || braceCount < 0 {
-				return newSemanticError(
-					"Neo.ClientError.Statement.SyntaxError",
-					"UnexpectedSyntax",
-					fmt.Sprintf("syntax error: unbalanced delimiter at position %d", i),
-				)
-			}
+			return observability.RedactError(syntaxAdmissionError(ctx, cypher, AcceptedSource, err), observability.ContextCredentials(cypher)...)
 		}
-
-		if parenCount != 0 {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced parentheses")
-		}
-		if bracketCount != 0 {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced square brackets")
-		}
-		if braceCount != 0 {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced curly braces")
-		}
-		e.markCachedValidSyntax(original, syntaxValidNornic)
-		cypher = original
+		verdict |= syntaxGrammarAccepted
 	}
-	if parserError != nil {
-		if err := e.validateMatchSemanticScopes(ctx, cypher, cypher25); err != nil {
-			return err
-		}
-		if err := validateKnownFunctions(cypher); err != nil {
-			return err
-		}
-		err := syntaxAdmissionError(ctx, cypher, AcceptedSource, parserError)
-		return observability.RedactError(err, observability.ContextCredentials(cypher)...)
-	}
-	if validator == syntaxValidANTLR {
-		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
-	}
+	e.markCachedValidSyntax(cypher, verdict)
 	return nil
 }
 
-// isNornicExtensionStatement reports whether cypher is a statement outside
-// the ANTLR grammar, which the Nornic validator checks instead under
-// NORNICDB_PARSER=antlr (#957): NornicDB's own knowledge-policy DDL,
-// procedure DDL (CREATE [OR REPLACE] PROCEDURE, DROP PROCEDURE) and database
-// limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS), and the database options
-// the grammar doesn't model yet (CREATE DATABASE … OPTIONS, ALTER DATABASE …
-// SET / REMOVE OPTION, #937).
-func isNornicExtensionStatement(cypher string) bool {
-	// EXPLAIN / PROFILE of one is one too, so both parsers treat EXPLAIN
-	// GRANT … as the default parser does.
-	_, cypher = parseExecutionMode(cypher)
-	cypher = strings.TrimSpace(cypher)
-	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
-		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
-		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
-		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
-			findKeywordIndex(cypher, "SET OPTION") >= 0 || findKeywordIndex(cypher, "REMOVE OPTION") >= 0)) ||
-		((startsWithKeywords(cypher, "CREATE", "DATABASE") || startsWithKeywords(cypher, "CREATE", "OR")) &&
-			findKeywordIndex(cypher, "DATABASE") >= 0 && findKeywordIndex(cypher, "OPTIONS") >= 0)
-}
+// validateNativeSurfaceSyntax holds NornicDB's own lexical and statement-shape
+// checks, which statement admission runs first.
+func validateNativeSurfaceSyntax(cypher string, class statementClass) error {
+	cypher = lexicalExpressionText(cypher)
+	if containsNotInOperator(cypher) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			"Invalid input 'NOT': NOT IN is not a Cypher operator; write NOT x IN [list]")
+	}
+	if containsTrailingListComma(cypher) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			"Invalid input ']': expected an expression")
+	}
+	if singleNodePatternComprehension(cypher) {
+		// [(n) | …]: a pattern comprehension needs a relationship, as the
+		// ANTLR parser and Neo4j require ("Invalid input '|'").
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherCoreInvalidInputExpectedExpression("|"))
+	}
+	if hasAdjacentStringLiterals(cypher) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			"Invalid input: adjacent string literals require an operator between them")
+	}
+	if explainProfileConflict(cypher) {
+		return executionModeConflictError()
+	}
+	if _, ok := readTrailingFinish(cypher, detectFinishSuffix); ok {
+		// FINISH can't follow RETURN, as in Neo4j; every valid trailing
+		// FINISH was stripped before validation.
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "RETURN can only be used at the end of the query")
+	}
+	if !hasValidStartKeyword(class) {
+		// Neo4j reports an unrecognized statement as a syntax error; classify
+		// the localized terminal so Bolt carries the proper status code.
+		return &classifiedCypherError{
+			cause:  localizedError(localization.CypherTransactionsSyntaxStartInvalid(), nil),
+			code:   "Neo.ClientError.Statement.SyntaxError",
+			detail: "UnexpectedSyntax",
+		}
+	}
+	if err := validateLeadingNodePatternTransition(cypher); err != nil {
+		return err
+	}
 
-// isDropRoleCommand reports DROP ROLE, which Neo4j parses and Neo4j
-// Community refuses as an unsupported administration command; NornicDB
-// does the same on both parsers. Roles are deleted through the HTTP role
-// API, whose owner also updates the server's loaded role caches.
-func isDropRoleCommand(cypher string) bool {
-	return startsWithKeywords(cypher, "DROP", "ROLE")
+	if class.graphQuery && hasAdjacentOperands(cypher) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: an expression is followed by another expression without an operator")
+	}
+
+	parenCount := 0
+	bracketCount := 0
+	braceCount := 0
+
+	for i := 0; i < len(cypher); i++ {
+		c := cypher[i]
+		if isCypherQuoteByte(c) {
+			end, closed := scanCypherQuotedText(cypher, i, c)
+			if !closed {
+				return &classifiedCypherError{cause: localizedError(localization.CypherTransactionsSyntaxUnclosedQuote(), nil), code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax"}
+			}
+			i = end - 1
+			continue
+		}
+		if c == '/' {
+			if end := queryCommentEnd(cypher, i); end >= 0 {
+				i = end - 1
+				continue
+			}
+		}
+		if c == '.' && i+1 < len(cypher) && cypher[i+1] == '.' && bracketCount == 0 {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
+		}
+		if c == '.' && (i == 0 || cypher[i-1] != '.') && (i+1 == len(cypher) || cypher[i+1] != '.') {
+			// A dot other than a range's (1..2) starts a property key (n.k,
+			// n.`k`), a map projection's all-properties (.*) or a number's
+			// digits: RETURN n. is Neo4j's "expected an identifier".
+			if next := queryGapEnd(cypher, i+1); next == len(cypher) || (!cyphertext.NamePartAt(cypher, next) || cypher[next] == '$') && !isCypherBacktickByte(cypher[next]) && cypher[next] != '*' {
+				token := ""
+				if next < len(cypher) {
+					token = cypher[next : next+1]
+				}
+				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+					localization.CypherCoreInvalidInputExpectedIdentifier(token))
+			}
+		}
+		if c == '+' {
+			next := skipSpaces(cypher, i+1)
+			if next < len(cypher) && cypher[next] == '*' {
+				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
+			}
+		}
+
+		switch c {
+		case '(':
+			parenCount++
+		case ')':
+			parenCount--
+		case '[':
+			bracketCount++
+		case ']':
+			bracketCount--
+		case '{':
+			braceCount++
+		case '}':
+			braceCount--
+		}
+
+		if parenCount < 0 || bracketCount < 0 || braceCount < 0 {
+			return newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"UnexpectedSyntax",
+				fmt.Sprintf("syntax error: unbalanced delimiter at position %d", i),
+			)
+		}
+	}
+
+	if parenCount != 0 {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced parentheses")
+	}
+	if bracketCount != 0 {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced square brackets")
+	}
+	if braceCount != 0 {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced curly braces")
+	}
+	return nil
 }
 
 // hasAdjacentOperands reports two operands with no operator between them,
@@ -699,7 +578,7 @@ func isDropRoleCommand(cypher string) bool {
 // by a literal is a variable next to an operand (n 'x') unless it is one of
 // the keywords a literal may follow (literalLeadingKeywords); otherwise a bare
 // word resets the check.
-// It applies to graph queries only (isGraphQueryStatement): schema,
+// It applies to graph queries only (statementClass.graphQuery): schema,
 // administration and knowledge-policy statements have their own grammars,
 // e.g. constraint contract blocks separate predicates by line breaks.
 func hasAdjacentOperands(cypher string) bool {
@@ -826,34 +705,6 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 	return !keyword
 }
 
-// isGraphQueryStatement reports whether a statement is a Cypher graph query:
-// it starts (after EXPLAIN / PROFILE) with MATCH, OPTIONAL MATCH, WITH,
-// RETURN, UNWIND, MERGE, CALL, FOREACH, LOAD CSV, UNION or USE, or with
-// CREATE followed by a pattern ("CREATE (" or "CREATE p = "). CREATE INDEX /
-// CONSTRAINT / DATABASE / USER and the other CREATE ... definitions are not.
-func isGraphQueryStatement(cypher string) bool {
-	query := strings.TrimSpace(cypher)
-	for _, prefix := range []string{"EXPLAIN", "PROFILE"} {
-		if matchKeywordAt(query, 0, prefix) {
-			query = strings.TrimSpace(query[len(prefix):])
-		}
-	}
-	for _, keyword := range []string{"MATCH", "OPTIONAL", "WITH", "RETURN", "UNWIND", "MERGE", "CALL", "FOREACH", "LOAD", "UNION", "USE"} {
-		if matchKeywordAt(query, 0, keyword) {
-			return true
-		}
-	}
-	if !matchKeywordAt(query, 0, "CREATE") {
-		return false
-	}
-	rest := strings.TrimSpace(query[len("CREATE"):])
-	if strings.HasPrefix(rest, "(") {
-		return true
-	}
-	name, ok := cyphertext.ScanIdentifier(rest, 0)
-	return ok && name.Value != "" && strings.HasPrefix(strings.TrimSpace(rest[name.End:]), "=")
-}
-
 func validateLeadingNodePatternTransition(cypher string) error {
 	query := strings.TrimSpace(cypher)
 	keyword := ""
@@ -895,19 +746,11 @@ func validateLeadingNodePatternTransition(cypher string) error {
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unexpected text after node pattern")
 }
 
-var validSyntaxStarts = [...]string{
-	"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH",
-	"UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN",
-	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK", "TERMINATE", "LET", "FILTER", "FOR",
-}
-
-func hasValidStartKeyword(cypher string) bool {
-	for _, start := range validSyntaxStarts {
-		if startsWithKeywordFold(cypher, start) {
-			return true
-		}
-	}
-	return isPrivilegeCommandShaped(cypher)
+// hasValidStartKeyword reports whether the statement opens with a word
+// NornicDB accepts at its start (statementClass.opening), or is a privilege
+// command.
+func hasValidStartKeyword(class statementClass) bool {
+	return class.opening != openingNone || class.privilegeShaped
 }
 
 // ensureSyntaxValidationCache lazily installs the syntax-validation cache
@@ -929,8 +772,8 @@ func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 // the upper-cased text. Configure it before executing queries. Protocol
 // transactions (Bolt and HTTP explicit transactions) build a new executor
 // per transaction; without the shared verdicts every statement in such a
-// transaction was validated again from scratch, which under
-// NORNICDB_PARSER=antlr is a full grammar parse of the statement.
+// transaction was validated again from scratch, which is a full grammar
+// parse of the statement on either parser.
 //
 //	transactionExecutor := NewStorageExecutor(databaseStorage)
 //	transactionExecutor.ShareStatementCachesFrom(databaseExecutor)
@@ -942,26 +785,16 @@ func (e *StorageExecutor) ShareStatementCachesFrom(source *StorageExecutor) {
 	e.statementCacheScope = source.statementCacheScope
 }
 
-// The validators a statement text is cached as valid for: each marks only
-// its own acceptance, so the Nornic validator, which also runs when the
-// ANTLR parse fails, never marks a text the ANTLR grammar rejected.
+// The acceptance facts a statement text is cached with. Each owner stamps only
+// its own fact; none depends on the configured parser.
 const (
-	syntaxValidNornic uint8 = 1 << iota
-	syntaxValidANTLR
-	// syntaxGrammarAccepted marks a text the ANTLR grammar itself accepted.
-	// It is not a validator: syntaxValidANTLR also covers NornicDB's
-	// extension statements, which the grammar rejects. The log redactor
-	// reads it on both parsers (redactForLog).
-	syntaxGrammarAccepted
+	// syntaxGrammarAccepted marks a text the shared grammar itself accepted.
+	// Statement admission also accepts NornicDB's extension statements, which
+	// the grammar rejects. The log redactor reads it (redactForLog).
+	syntaxGrammarAccepted uint8 = 1 << iota
+	// A full execution admission, independent of the configured parser.
+	syntaxStatementAccepted
 )
-
-// activeSyntaxValidator is the validator the configured parser selects.
-func activeSyntaxValidator() uint8 {
-	if config.IsANTLRParser() {
-		return syntaxValidANTLR
-	}
-	return syntaxValidNornic
-}
 
 func (e *StorageExecutor) hasCachedValidSyntax(cypher string, validator uint8) bool {
 	if cypher == "" {
@@ -995,13 +828,7 @@ func (e *StorageExecutor) markCachedValidSyntax(cypher string, validator uint8) 
 	if !cacheable {
 		return
 	}
-	add := func(key string, verdict uint8) { e.addSyntaxCacheEntry(key, verdict, scopes) }
-	add(cypher, validator)
-	if structural := validator &^ syntaxGrammarAccepted; structural != 0 {
-		if canonical, normalized := normalizeLiteralText(cypher); normalized {
-			add(canonical, structural)
-		}
-	}
+	e.addSyntaxCacheFamily(cypher, validator, scopes)
 }
 
 // unresolvedReturnItemError is the error of a RETURN item the row evaluator
@@ -1038,93 +865,52 @@ func unsupportedOptionalMatchShapeError(cypher string) error {
 // a SHOW command's YIELD may be followed by any clause (CALL { … }, DELETE,
 // SET, …), and the command still runs as a SHOW (#907).
 func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher string) (*ExecuteResult, bool, error) {
-	// Every statement passes here: one prefix test spares the others the
-	// command checks below.
-	if !hasPrefixFold(cypher, "SHOW") && !hasPrefixFold(cypher, "TERMINATE") {
-		return nil, false, nil
-	}
-	// SHOW [kind] CONSTRAINTS (showConstraintKindOf).
-	if _, isConstraints, err := showConstraintKindOf(cypher, cypherVersionFromContext(ctx) == "25"); isConstraints {
-		if err != nil {
+	command := classifyStatement(cypher).command
+	var run func(context.Context, string) (*ExecuteResult, error)
+	switch command {
+	case commandShowConstraints:
+		// SHOW [kind] CONSTRAINTS (showConstraintKindOf).
+		if _, _, err := showConstraintKindOf(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, true, err
 		}
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowConstraints)
-		return result, true, err
-	}
-	switch {
-	case startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEX"),
-		startsWithKeywords(cypher, "SHOW", "RANGE INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "RANGE INDEX"),
-		startsWithKeywords(cypher, "SHOW", "VECTOR INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "VECTOR INDEX"),
-		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEX"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "INDEX"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "DECAY PROFILES"),
-		startsWithKeywords(cypher, "SHOW", "PROMOTION PROFILES"),
-		startsWithKeywords(cypher, "SHOW", "PROMOTION POLICIES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeKnowledgePolicyDDL)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "PROCEDURES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowProcedures)
-		return result, true, err
-	case findKeywordIndex(cypher, "SHOW FUNCTIONS") == 0:
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowFunctions)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "COMPOSITE DATABASES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowCompositeDatabases)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "CONSTITUENTS"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowConstituents)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "DEFAULT DATABASE"),
-		startsWithKeywords(cypher, "SHOW", "HOME DATABASE"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDefaultDatabase)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "USERS"),
-		startsWithKeywords(cypher, "SHOW", "CURRENT USER"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "TRANSACTIONS"),
-		startsWithKeywords(cypher, "SHOW", "TRANSACTION"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowTransactions)
-		return result, true, err
-	case startsWithKeywords(cypher, "TERMINATE", "TRANSACTIONS"),
-		startsWithKeywords(cypher, "TERMINATE", "TRANSACTION"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeTerminateTransactions)
-		return result, true, err
-	case isShowPrivilegesCommand(cypher):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowPrivileges)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "ROLES"),
-		startsWithKeywords(cypher, "SHOW", "ROLE"),
-		startsWithKeywords(cypher, "SHOW", "PRIVILEGES"),
-		startsWithKeywords(cypher, "SHOW", "USER"),
-		startsWithKeywords(cypher, "SHOW", "SERVERS"),
-		startsWithKeywords(cypher, "SHOW", "SERVER"):
+		run = e.executeShowConstraints
+	case commandShowIndexes:
+		run = e.executeShowIndexes
+	case commandShowKnowledgePolicies:
+		run = e.executeKnowledgePolicyDDL
+	case commandShowProcedures:
+		run = e.executeShowProcedures
+	case commandShowFunctions:
+		run = e.executeShowFunctions
+	case commandShowCompositeDatabases:
+		run = e.executeShowCompositeDatabases
+	case commandShowConstituents:
+		run = e.executeShowConstituents
+	case commandShowDefaultDatabase:
+		run = e.executeShowDefaultDatabase
+	case commandShowUsers, commandShowCurrentUser:
+		run = e.executeShowUsers
+	case commandShowTransactions:
+		run = e.executeShowTransactions
+	case commandTerminateTransactions:
+		run = e.executeTerminateTransactions
+	case commandShowPrivileges:
+		run = e.executeShowPrivileges
+	case commandShowUnsupportedAdministration, commandShowUserDefined, commandShowServers:
 		return nil, true, unsupportedAdministrationCommandError(cypher)
-	case startsWithKeywords(cypher, "SHOW", "DATABASES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDatabases)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "DATABASE"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDatabase)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "ALIASES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowAliases)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "SETTINGS"),
-		startsWithKeywords(cypher, "SHOW", "SETTING"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowSettings)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "LIMITS"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowLimits)
-		return result, true, err
+	case commandShowDatabases:
+		run = e.executeShowDatabases
+	case commandShowDatabase:
+		run = e.executeShowDatabase
+	case commandShowAliases:
+		run = e.executeShowAliases
+	case commandShowSettings:
+		run = e.executeShowSettings
+	case commandShowLimits:
+		run = e.executeShowLimits
+	default:
+		return nil, false, nil
 	}
-	return nil, false, nil
+	result, err := e.executeShowWithTail(ctx, cypher, run)
+	return result, true, err
 }

@@ -38,7 +38,7 @@ func (s *semanticBindingScope) contains(name string) bool {
 // top-level clause decomposition as the semantic pipeline so fast paths cannot
 // disagree about whether a name is new, bound, or undefined.
 func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
-	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isMetadataCommand(cypher, metadataCreateAdmission) {
+	if classifyStatement(cypher).definition || findKeywordIndexInContext(cypher, "CREATE") < 0 {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(ctx, cypher)

@@ -958,8 +958,13 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 	return arguments, returns
 }
 
-// executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
+// executeShowDatabase handles SHOW DATABASE command (singular). As in Neo4j,
+// DATABASE and DATABASES are the same command (SHOW DATABASE[S] [name]). Without
+// a database manager, it shows the one database this executor serves.
 func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if e.dbManager != nil {
+		return e.executeShowDatabases(ctx, cypher)
+	}
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 
@@ -982,14 +987,28 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 		// already be set correctly by the server layer.
 	}
 
+	rows := make([][]interface{}, 0, 1)
+	if e.canSeeDatabase(ctx, dbName) {
+		rows = append(rows, showDatabaseRow(e.dbManager, dbName, "standard", "online", true, showDatabaseCreatedAt(e.dbManager, dbName)))
+	}
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: showDatabasesColumns,
-		Rows:    [][]interface{}{showDatabaseRow(e.dbManager, dbName, "standard", "online", true, showDatabaseCreatedAt(e.dbManager, dbName))},
+		Rows:    rows,
 		Stats: &QueryStats{
 			NodesCreated:         int(nodeCount),
 			RelationshipsCreated: int(edgeCount),
 		},
 	}, showDatabasesDefaultColumns), nil
+}
+
+// showDatabaseName reads the name of SHOW DATABASE[S] name (the command head).
+func showDatabaseName(head string) (string, bool) {
+	for _, keyword := range []string{"DATABASES", "DATABASE"} {
+		if start, ok := compositeAdminPrefix(head, "SHOW", keyword); ok && start < len(head) {
+			return compositeAdminName(head[start:])
+		}
+	}
+	return "", false
 }
 
 // executeShowDatabases handles SHOW DATABASES command (plural - lists all databases).
@@ -1030,8 +1049,12 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 
 	databases := e.dbManager.ListDatabases()
 	rows := make([][]interface{}, 0, len(databases))
+	name, named := showDatabaseName(cypher)
 
 	for _, db := range databases {
+		if named && !strings.EqualFold(db.Name(), name) || !e.canSeeDatabase(ctx, db.Name()) {
+			continue
+		}
 		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
 	}
 
@@ -1483,6 +1506,9 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 	// Format results
 	rows := make([][]interface{}, 0, len(aliases))
 	for alias, dbName := range aliases {
+		if !e.canSeeDatabase(ctx, dbName) {
+			continue
+		}
 		rows = append(rows, []interface{}{alias, dbName})
 	}
 
@@ -1807,6 +1833,10 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("SHOW LIMITS"), nil)
 	}
 
+	// A hidden database answers exactly as an absent one.
+	if !e.canSeeDatabase(ctx, databaseName) {
+		return nil, localizedError(localization.CypherAdminDatabaseNotFound(databaseName, multidb.ErrDatabaseNotFound), multidb.ErrDatabaseNotFound)
+	}
 	// Get limits from database manager
 	limitsInterface, err := e.dbManager.GetDatabaseLimits(databaseName)
 	if err != nil {

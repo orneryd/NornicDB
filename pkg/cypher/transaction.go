@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"time"
 
@@ -139,36 +138,28 @@ func queryOnFailedTransactionError(cause error) error {
 		"The transaction was marked as failed because a query failed: "+cause.Error())
 }
 
-// bareTransactionCommand returns the command word, as typed, when cypher is exactly a
+// bareTransactionCommand returns the command word, as typed, when cypher is a
 // bare transaction command (BEGIN, COMMIT or ROLLBACK, optionally followed by
-// TRANSACTION), else "".
+// TRANSACTION; classifyStatement names it), else "".
 func bareTransactionCommand(cypher string) string {
-	// Allocation-free: it runs for every client statement.
-	text := strings.TrimSpace(cypher)
-	word, rest := text, ""
-	if i := strings.IndexFunc(text, cyphertext.IsWhitespace); i >= 0 {
-		word, rest = text[:i], strings.TrimSpace(text[i:])
-	}
-	if rest != "" && !strings.EqualFold(rest, "TRANSACTION") {
-		return ""
-	}
-	if strings.EqualFold(word, "BEGIN") || strings.EqualFold(word, "COMMIT") || strings.EqualFold(word, "ROLLBACK") {
+	switch classifyStatement(cypher).command {
+	case commandBegin, commandCommit, commandRollback:
+		body := statementBody(cypher)
+		start := queryGapEnd(body, 0)
 		// As typed: Neo4j's SyntaxError quotes the input ('begin').
-		return word
+		return body[start:scanReservedWord(body, start)]
 	}
 	return ""
 }
 
-// parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
+// parseTransactionStatement runs a bare BEGIN, COMMIT or ROLLBACK.
 func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(strings.TrimSpace(cypher))
-
-	switch {
-	case upper == "BEGIN" || upper == "BEGIN TRANSACTION":
+	switch classifyStatement(cypher).command {
+	case commandBegin:
 		return e.handleBegin(ctx)
-	case upper == "COMMIT" || upper == "COMMIT TRANSACTION":
+	case commandCommit:
 		return e.handleCommit(ctx)
-	case upper == "ROLLBACK" || upper == "ROLLBACK TRANSACTION":
+	case commandRollback:
 		return e.handleRollback()
 	default:
 		return nil, nil // Not a transaction statement

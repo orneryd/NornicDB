@@ -189,6 +189,29 @@ func TestBoltBackendResetClearsSchemaArtifacts(t *testing.T) {
 	}
 }
 
+// Statements the statement-kind owner routes to the system database run in an
+// explicit transaction without a graph snapshot, however they are written.
+func TestBoltBackendExplicitSystemStatements(t *testing.T) {
+	driver, shutdown := startConformanceServer(t)
+	defer shutdown()
+	backend, err := NewBoltBackend(BoltBackendConfig{
+		Driver: driver, DatabaseName: "nornic", Mode: ExplicitTransactionMode,
+	})
+	if err != nil {
+		t.Fatalf("NewBoltBackend() error = %v", err)
+	}
+	ctx := context.Background()
+	for _, query := range []string{"SHOW DATABASES", "/* c */ SHOW DATABASES", "show default database", "CYPHER 5 SHOW HOME DATABASE"} {
+		result, err := backend.Execute(ctx, query, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		if len(result.Rows) == 0 {
+			t.Fatalf("%s: no rows", query)
+		}
+	}
+}
+
 func startConformanceServer(t *testing.T) (neo4j.DriverWithContext, func()) {
 	t.Helper()
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))

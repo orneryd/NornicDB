@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -28,7 +29,7 @@ type testGraphCatalog struct {
 	composite bool
 }
 
-func (c testGraphCatalog) CompositeGraphs() ([]string, bool) { return c.graphs, c.composite }
+func (c testGraphCatalog) CompositeGraphs(context.Context) ([]string, bool) { return c.graphs, c.composite }
 
 func TestGraphNamesListsCompositeGraphs(t *testing.T) {
 	ctx := graphTestContext([]string{"cmp.a", "cmp.b"}, true, nil)

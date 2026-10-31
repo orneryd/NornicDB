@@ -2,44 +2,11 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
-func cypherGrammarVersion(query string) string {
-	version := "5"
-	rest := strings.TrimSpace(query)
-	for rest != "" {
-		if startsWithKeywordFold(rest, "EXPLAIN") || startsWithKeywordFold(rest, "PROFILE") {
-			rest = strings.TrimSpace(rest[len("EXPLAIN"):])
-			continue
-		}
-		if !startsWithKeywordFold(rest, "CYPHER") {
-			break
-		}
-		rest = strings.TrimSpace(rest[len("CYPHER"):])
-		if len(rest) > 0 && isDigitByte(rest[0]) {
-			end := 0
-			for end < len(rest) && isDigitByte(rest[end]) {
-				end++
-			}
-			version = rest[:end]
-			rest = strings.TrimSpace(rest[end:])
-		}
-		for rest != "" && !startsWithClauseKeyword(rest) {
-			end := strings.IndexFunc(rest, cyphertext.IsWhitespace)
-			if end < 0 {
-				rest = ""
-				break
-			}
-			rest = strings.TrimSpace(rest[end:])
-		}
-	}
-	return version
-}
-
 func usesSharedGrammarClauses(ctx context.Context, query string) bool {
-	if isSchemaCommandStatement(query) {
+	if classifyStatement(query).schema {
 		return false
 	}
 	clauses, ok := pipelineClausesFor(ctx, query)

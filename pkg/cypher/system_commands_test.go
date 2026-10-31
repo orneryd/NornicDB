@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -293,11 +292,10 @@ func TestSystemCommands_CreateDatabase(t *testing.T) {
 	t.Run("invalid syntax", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE DATABASE", nil)
 		assert.Error(t, err)
-		// A SyntaxError, as in Neo4j; the message is the parser's own (#957).
+		// A SyntaxError, as in Neo4j, from the catalog command's owner on
+		// either parser (#957).
 		assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-		if !config.IsANTLRParser() {
-			assert.Contains(t, err.Error(), "database name expected")
-		}
+		assert.Contains(t, err.Error(), "database name expected")
 	})
 }
 
@@ -363,9 +361,7 @@ func TestSystemCommands_DropDatabase(t *testing.T) {
 		_, err := exec.Execute(ctx, "DROP DATABASE", nil)
 		assert.Error(t, err)
 		assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-		if !config.IsANTLRParser() {
-			assert.Contains(t, err.Error(), "database name expected")
-		}
+		assert.Contains(t, err.Error(), "database name expected")
 	})
 }
 
@@ -790,17 +786,26 @@ func TestSystemCommands_ShowDatabase_BranchCoverage(t *testing.T) {
 	assert.Equal(t, 1, res.Stats.NodesCreated)
 	assert.Equal(t, 1, res.Stats.RelationshipsCreated)
 
-	// dbManager + namespaced engine branch prefers namespace.
+	// With a database manager, SHOW DATABASE is SHOW DATABASES, as in Neo4j's
+	// SHOW DATABASE[S] [name]: it lists the databases, whatever the current one.
 	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_ns"})
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_other"})
 	exec.SetDatabaseManager(mockDBM)
-	res, err = exec.executeShowDatabase(ctx, "SHOW DATABASE")
-	require.NoError(t, err)
-	require.Equal(t, "tenant_ns", res.Rows[0][0])
-
-	// USE-database context branch has highest priority.
 	useCtx := context.WithValue(ctx, ctxKeyUseDatabase, "tenant_ctx")
-	res, err = exec.executeShowDatabase(useCtx, "SHOW DATABASE")
+	for _, listing := range []context.Context{ctx, useCtx} {
+		res, err = exec.executeShowDatabase(listing, "SHOW DATABASE")
+		require.NoError(t, err)
+		names := make([]interface{}, 0, len(res.Rows))
+		for _, row := range res.Rows {
+			names = append(names, row[0])
+		}
+		require.Subset(t, names, []interface{}{"tenant_ns", "tenant_other"})
+	}
+
+	// With a name, only that database.
+	res, err = exec.executeShowDatabase(ctx, "SHOW DATABASE tenant_ns")
 	require.NoError(t, err)
-	require.Equal(t, "tenant_ctx", res.Rows[0][0])
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "tenant_ns", res.Rows[0][0])
 }

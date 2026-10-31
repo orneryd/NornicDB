@@ -203,13 +203,6 @@ func TestParseUseClause_SyntaxErrors(t *testing.T) {
 			wantText: "USE clause must be either the first clause in a (sub-)query or preceded by an importing WITH clause in a sub-query."},
 		{name: "second USE in a subquery", query: "USE db use other RETURN 1", inSubquery: true,
 			want: localization.CypherCommandRoutingUseNotFirstClause()},
-		{name: "SHOW USERS after USE", query: "USE system SHOW USERS",
-			want:     localization.CypherCommandRoutingUseAdministrationCommand(),
-			wantText: "The `USE` clause is not required for Administration Commands. Retry your query omitting the `USE` clause and it will be routed automatically."},
-		{name: "CREATE DATABASE after USE", query: "USE system CREATE DATABASE foo",
-			want: localization.CypherCommandRoutingUseAdministrationCommand()},
-		{name: "GRANT after USE", query: "USE system GRANT ROLE r TO u",
-			want: localization.CypherCommandRoutingUseAdministrationCommand()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -246,81 +239,3 @@ func TestParseUseClause_InvalidFollowerMessages(t *testing.T) {
 	require.Contains(t, err.Error(), "'USE', 'WITH' or '}'")
 }
 
-// TestIsAdministrationCommand pins which statements count as Neo4j
-// administration commands (refused after USE) and which are ordinary
-// queries that share their first word (SHOW INDEXES, CREATE INDEX,
-// CREATE (n), SHOW USER DEFINED FUNCTIONS, …).
-func TestIsAdministrationCommand(t *testing.T) {
-	tests := []struct {
-		statement string
-		want      bool
-	}{
-		{"", false},
-		{"   ", false},
-		{"(n)", false},
-		{"MATCH (n) RETURN n", false},
-		{"GRANT ROLE r TO u", true},
-		{"deny read {*} on graph * to r", true},
-		{"REVOKE ROLE r FROM u", true},
-		{"RENAME USER a TO b", true},
-		{"START DATABASE foo", true},
-		{"STOP DATABASE foo", true},
-		{"ENABLE SERVER 'abc'", true},
-		{"DRYRUN REALLOCATE DATABASES", true},
-		{"DEALLOCATE DATABASES FROM SERVER 'a'", true},
-		{"REALLOCATE DATABASES", true},
-		{"// leading comment\nGRANT ROLE r TO u", true},
-		{"SHOW", false},
-		{"SHOW DATABASE foo", true},
-		{"show databases", true},
-		{"SHOW DEFAULT DATABASE", true},
-		{"SHOW HOME DATABASE", true},
-		{"SHOW SERVER 'a'", true},
-		{"SHOW SERVERS", true},
-		{"SHOW SUPPORTED PRIVILEGES", true},
-		{"SHOW POPULATED ROLES", true},
-		{"SHOW USERS", true},
-		{"SHOW CURRENT USER", true},
-		{"SHOW ROLE r PRIVILEGES", true},
-		{"SHOW ROLES", true},
-		{"SHOW PRIVILEGE", true},
-		{"SHOW PRIVILEGES", true},
-		{"SHOW ALIAS a FOR DATABASE", true},
-		{"SHOW ALIASES FOR DATABASES", true},
-		{"SHOW USER", true},
-		{"SHOW USER bob PRIVILEGES", true},
-		{"SHOW USER DEFINED FUNCTIONS", false},
-		{"SHOW ALL", false},
-		{"SHOW ALL ROLES", true},
-		{"SHOW ALL ROLE", true},
-		{"SHOW ALL PRIVILEGES", true},
-		{"SHOW ALL PRIVILEGE", true},
-		{"SHOW ALL FUNCTIONS", false},
-		{"SHOW INDEXES", false},
-		{"SHOW PROCEDURES", false},
-		{"SHOW TRANSACTIONS", false},
-		{"CREATE", false},
-		{"CREATE (n) RETURN n", false},
-		{"CREATE INDEX idx FOR (n:L) ON (n.p)", false},
-		{"CREATE DATABASE foo", true},
-		{"create composite database c", true},
-		{"CREATE ALIAS a FOR DATABASE foo", true},
-		{"CREATE USER u SET PASSWORD 'p'", true},
-		{"CREATE ROLE r", true},
-		{"CREATE OR REPLACE DATABASE foo", true},
-		{"CREATE OR REPLACE", false},
-		{"CREATE OR REPLACE INDEX", false},
-		{"CREATE CURRENT USER", false},
-		{"DROP DATABASE foo", true},
-		{"DROP SERVER 'a'", true},
-		{"DROP INDEX idx", false},
-		{"DROP CONSTRAINT c", false},
-		{"ALTER USER u SET PASSWORD 'p'", true},
-		{"ALTER CURRENT USER SET PASSWORD FROM 'a' TO 'b'", true},
-		{"ALTER CURRENT", false},
-		{"ALTER CURRENT ROLE", false},
-	}
-	for _, tt := range tests {
-		require.Equal(t, tt.want, IsAdministrationCommand(tt.statement), tt.statement)
-	}
-}

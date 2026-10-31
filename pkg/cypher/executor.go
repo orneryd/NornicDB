@@ -526,8 +526,8 @@ type syntaxValidationCache struct {
 
 type syntaxValidationCacheShard struct {
 	mu sync.RWMutex
-	// cache holds, per statement text, which validators accepted it
-	// (syntaxValidNornic, syntaxValidANTLR).
+	// cache holds, per statement text, its acceptance facts
+	// (syntaxStatementAccepted, syntaxGrammarAccepted).
 	cache        map[string]uint8
 	dependencies map[string][]*multidb.StatementCacheScope
 }
@@ -2030,11 +2030,12 @@ func statementAccessesGraph(info *QueryInfo) bool {
 // negative would read denied data.
 func statementAccessesGraphText(cypher string) bool {
 	opts := defaultKeywordScanOpts()
+	if class := classifyStatement(cypher); class.show || class.ordinarySchema {
+		return true
+	}
 	for _, keyword := range []string{
 		"MATCH", "OPTIONAL MATCH", "CREATE", "MERGE", "DELETE", "DETACH DELETE",
-		"SET", "REMOVE", "FOREACH", "LOAD CSV", "CALL", "SHOW", "CREATE INDEX",
-		"CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX",
-		"CREATE CONSTRAINT", "DROP INDEX", "DROP CONSTRAINT",
+		"SET", "REMOVE", "FOREACH", "LOAD CSV", "CALL",
 	} {
 		if keywordIndexFrom(cypher, keyword, 0, opts) >= 0 {
 			return true
@@ -2170,12 +2171,12 @@ func statementReadsGraphText(cypher string) bool {
 // references a parameter it wasn't given ("Expected parameter(s): p"), or nil.
 // Neo4j reports it after the statement compiles, so a statement that is also
 // a syntax or semantic error reports that error (Execute calls this after
-// validateSyntax and validateSemanticScopes; the Fabric route after it plans
+// validateStatementSyntax and validateSemanticScopes; the Fabric route after it plans
 // the statement). EXPLAIN runs nothing and needs no
 // values; in a procedure definition, $name is the procedure's argument.
 // Parameter names are reported as the statement wrote them (#734).
 func (e *StorageExecutor) statementParametersError(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if strings.IndexByte(cypher, '$') < 0 || (isExplainOrProfile(cypher) && !startsWithKeywordFold(strings.TrimSpace(cypher), "PROFILE")) || isCreateProcedureCommand(cypher) {
+	if class := classifyStatement(cypher); class.prefixMode == prefixExplain || class.procedureDefinition || strings.IndexByte(cypher, '$') < 0 {
 		return nil
 	}
 	shellParams := e.mergeShellParams(ctx, params)

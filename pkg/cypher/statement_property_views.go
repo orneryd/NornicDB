@@ -40,7 +40,7 @@ func (e *StorageExecutor) withStatementPropertyViews(ctx context.Context, query 
 		return nil
 	}
 	requirements := QueryPermissionRequirements(ctx, query, AcceptedSource)
-	if requirements.Write || requirements.Schema || requirements.Admin || !deterministicExecution(ctx, query, 0) {
+	if !requirements.ReadOnly() || !deterministicExecution(ctx, query, 0) {
 		return nil
 	}
 	scoped := e.cloneWithStorage(e.storage)
