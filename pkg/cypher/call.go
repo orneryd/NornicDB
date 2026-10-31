@@ -18,6 +18,8 @@
 
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"fmt"
@@ -1326,7 +1328,7 @@ func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"label"},
+		Columns: columnNames(dbLabelsColumns),
 		Rows:    make([][]interface{}, 0, len(labelSet)),
 	}
 	for _, label := range e.storage.GetSchema().OrderTokens(collection.SortedKeys(labelSet), false) {
@@ -1347,7 +1349,7 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"relationshipType"},
+		Columns: columnNames(dbRelationshipTypesColumns),
 		Rows:    make([][]interface{}, 0, len(typeSet)),
 	}
 	for _, relType := range e.storage.GetSchema().OrderTokens(collection.SortedKeys(typeSet), true) {
@@ -1387,7 +1389,7 @@ func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "type", "labelsOrTypes", "properties", "state"},
+		Columns: columnNames(dbIndexesColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -1412,7 +1414,7 @@ func (e *StorageExecutor) callDbIndexStats() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "type", "label", "property", "totalEntries", "uniqueValues", "selectivity"},
+		Columns: columnNames(dbIndexStatsColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -1424,7 +1426,7 @@ func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		return &ExecuteResult{
-			Columns: []string{"name", "type", "labelsOrTypes", "properties", "propertyType"},
+			Columns: columnNames(dbConstraintsColumns),
 			Rows:    [][]interface{}{},
 		}, nil
 	}
@@ -1463,7 +1465,7 @@ func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "type", "labelsOrTypes", "properties", "propertyType"},
+		Columns: columnNames(dbConstraintsColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -1475,7 +1477,7 @@ func (e *StorageExecutor) callDbmsComponents() (*ExecuteResult, error) {
 	// past 1.0.0 (bug reported May 2026 alongside the mcp-neo4j-memory
 	// regressions).
 	return &ExecuteResult{
-		Columns: []string{"name", "versions", "edition"},
+		Columns: columnNames(dbmsComponentsColumns),
 		Rows: [][]interface{}{
 			{"NornicDB", []string{buildinfo.Version()}, "community"},
 		},
@@ -1490,7 +1492,7 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 		build = "dev"
 	}
 	return &ExecuteResult{
-		Columns: []string{"version", "build", "edition"},
+		Columns: columnNames(nornicdbVersionColumns),
 		Rows: [][]interface{}{
 			{buildinfo.Version(), build, "community"},
 		},
@@ -1502,7 +1504,7 @@ func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
 	edgeCount, _ := e.storage.EdgeCount()
 
 	return &ExecuteResult{
-		Columns: []string{"nodes", "relationships", "labels", "relationshipTypes"},
+		Columns: columnNames(nornicdbStatsColumns),
 		Rows: [][]interface{}{
 			{nodeCount, edgeCount, e.countLabels(), e.countRelTypes()},
 		},
@@ -1542,7 +1544,7 @@ func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"enabled", "system", "configuredVia"},
+		Columns: columnNames(kpDecayInfoColumns),
 		Rows: [][]interface{}{
 			{enabled, "knowledge-layer scoring (decay profile bundles + bindings)", "CREATE DECAY PROFILE ... OPTIONS / CREATE DECAY PROFILE ... FOR ... APPLY DDL"},
 		},
@@ -1570,7 +1572,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, err
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"enabled", "system", "decayProfiles", "decayBindings", "promotionProfiles", "promotionPolicies", "configuredVia"},
+		Columns: columnNames(kpInfoColumns),
 		Rows: [][]interface{}{
 			{
 				enabled,
@@ -1608,7 +1610,7 @@ func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"nodeLabel", "propertyName", "propertyType"},
+		Columns: columnNames(dbSchemaNodePropertiesColumns),
 		Rows:    [][]interface{}{},
 	}
 
@@ -1636,7 +1638,7 @@ func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"relType", "propertyName", "propertyType"},
+		Columns: columnNames(dbSchemaRelPropertiesColumns),
 		Rows:    [][]interface{}{},
 	}
 
@@ -1666,7 +1668,7 @@ func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"propertyKey"},
+		Columns: columnNames(dbPropertyKeysColumns),
 		Rows:    make([][]interface{}, 0, len(propSet)),
 	}
 	for _, prop := range collection.SortedKeys(propSet) {
@@ -1685,7 +1687,7 @@ func (e *StorageExecutor) callDbmsProcedures() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "description", "mode", "signature"},
+		Columns: columnNames(dbmsProceduresColumns),
 		Rows:    procedures,
 	}, nil
 }
@@ -1717,7 +1719,7 @@ func (e *StorageExecutor) callDbmsFunctions() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "description", "category"},
+		Columns: columnNames(dbmsFunctionsColumns),
 		Rows:    functions,
 	}, nil
 }

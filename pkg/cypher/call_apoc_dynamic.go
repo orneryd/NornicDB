@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"fmt"
@@ -36,7 +38,7 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 	// Transform result to match APOC format (YIELD value)
 	// Each row becomes a map under the "value" column
 	result := &ExecuteResult{
-		Columns: []string{"value"},
+		Columns: columnNames(valueMapColumns),
 		Rows:    make([][]interface{}, 0, len(innerResult.Rows)),
 		Stats:   innerResult.Stats,
 	}
@@ -104,7 +106,7 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 	queries := e.splitBySemicolon(statements)
 
 	result := &ExecuteResult{
-		Columns: []string{"row", "result"},
+		Columns: columnNames(apocCypherRunManyColumns),
 		Rows:    make([][]interface{}, 0),
 		Stats:   &QueryStats{},
 	}

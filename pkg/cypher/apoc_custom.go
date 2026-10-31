@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers are the declared values in procedure_result_headers.go.
+
 import (
 	"context"
 	"encoding/base64"
@@ -217,7 +219,7 @@ func (e *StorageExecutor) callApocCustomDrop(ctx context.Context, args []interfa
 // callApocCustomList lists the custom procedures installed in the current
 // database, in APOC's columns: apoc.custom.list() and apoc.custom.show().
 func (e *StorageExecutor) callApocCustomList(ctx context.Context) (*ExecuteResult, error) {
-	result := &ExecuteResult{Columns: []string{"type", "name", "description", "mode", "statement", "inputs", "outputs", "forceSingle"}, Rows: [][]interface{}{}}
+	result := &ExecuteResult{Columns: columnNames(apocCustomListColumns), Rows: [][]interface{}{}}
 	nodes, err := e.getStorage(ctx).GetNodesByLabel(procedureCatalogLabel)
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCatalogReadFailed(err), err)

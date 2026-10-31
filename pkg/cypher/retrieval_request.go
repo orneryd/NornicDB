@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"github.com/orneryd/nornicdb/pkg/search"
 	"strings"
@@ -34,11 +36,16 @@ func (r retrievalContinuation) requested() bool {
 	return r.qid != "" || r.discard || r.nPresent || r.mode != "" || r.groupBy != "" || r.rankedLimitPresent
 }
 
-// retrievalResultSchemas is the shared row/page header contract for retrieval.
-func retrievalResultSchemas(graph bool) [][]string {
-	columns := []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"}
-	if graph {
-		columns = append([]string{"kind", "node", "relationship", "start", "end"}, columns[1:]...)
+// retrievalResultSchemas splits a retrieval procedure's declared columns
+// into its two closed headers: the result rows, and the page alone.
+func retrievalResultSchemas(returns []ProcedureColumn) [][]string {
+	var rows, page []string
+	for _, column := range returns {
+		if column.Name == "page" {
+			page = append(page, column.Name)
+		} else {
+			rows = append(rows, column.Name)
+		}
 	}
-	return [][]string{columns, {"page"}}
+	return [][]string{rows, page}
 }

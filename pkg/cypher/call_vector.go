@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"errors"
@@ -69,7 +71,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 		if !input.hasValue {
 			params := getParamsFromContext(ctx)
 			if params == nil {
-				return &ExecuteResult{Columns: []string{"node", "score"}, Rows: [][]interface{}{}}, nil
+				return &ExecuteResult{Columns: columnNames(nodeScoreColumns), Rows: [][]interface{}{}}, nil
 			}
 			var exists bool
 			paramValue, exists = params[input.paramName]
@@ -130,7 +132,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"node", "score"},
+		Columns: columnNames(nodeScoreColumns),
 		Rows:    [][]interface{}{},
 	}
 
@@ -284,7 +286,7 @@ func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, args []int
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"embedding"},
+		Columns: columnNames(dbIndexVectorEmbedColumns),
 		Rows:    [][]interface{}{{embedding}},
 	}, nil
 }
