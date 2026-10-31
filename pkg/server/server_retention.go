@@ -55,7 +55,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 	case retentionPoliciesRoute:
 		switch r.Method {
 		case http.MethodGet:
-			httpresponse.WriteJSON(w, http.StatusOK, rm.ListPolicies())
+			httpresponse.WritePropertyJSON(w, http.StatusOK, rm.ListPolicies())
 		case http.MethodPost:
 			var policy retention.Policy
 			if err := s.readJSON(r, &policy); err != nil {
@@ -66,7 +66,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 				s.writeBoundaryError(w, r, http.StatusBadRequest, err, err)
 				return
 			}
-			httpresponse.WriteJSON(w, http.StatusCreated, policy)
+			httpresponse.WritePropertyJSON(w, http.StatusCreated, policy)
 		default:
 			s.writeGetOrPostRequired(w, r)
 		}
@@ -84,7 +84,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 				s.writeBoundaryError(w, r, http.StatusNotFound, err, err)
 				return
 			}
-			httpresponse.WriteJSON(w, http.StatusOK, policy)
+			httpresponse.WritePropertyJSON(w, http.StatusOK, policy)
 		case http.MethodPut:
 			var policy retention.Policy
 			if err := s.readJSON(r, &policy); err != nil {
@@ -96,13 +96,13 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 				s.writeBoundaryError(w, r, http.StatusBadRequest, err, err)
 				return
 			}
-			httpresponse.WriteJSON(w, http.StatusOK, policy)
+			httpresponse.WritePropertyJSON(w, http.StatusOK, policy)
 		case http.MethodDelete:
 			if err := rm.DeletePolicy(id); err != nil {
 				s.writeBoundaryError(w, r, http.StatusNotFound, err, err)
 				return
 			}
-			httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.RetentionPolicyDeleted()), "id": id})
+			httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.RetentionPolicyDeleted()), "id": id})
 		default:
 			s.writeGetPutOrDeleteRequired(w, r)
 		}
@@ -128,7 +128,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 		if len(loadErrs) > 0 {
 			status = http.StatusInternalServerError
 		}
-		httpresponse.WriteJSON(w, status, map[string]any{
+		httpresponse.WritePropertyJSON(w, status, map[string]any{
 			"loaded":  loaded,
 			"skipped": skipped,
 			"errors":  loadErrs,
@@ -137,7 +137,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 	case retentionHoldsRoute:
 		switch r.Method {
 		case http.MethodGet:
-			httpresponse.WriteJSON(w, http.StatusOK, rm.ListLegalHolds())
+			httpresponse.WritePropertyJSON(w, http.StatusOK, rm.ListLegalHolds())
 		case http.MethodPost:
 			var hold retention.LegalHold
 			if err := s.readJSON(r, &hold); err != nil {
@@ -148,7 +148,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 				s.writeBoundaryError(w, r, http.StatusBadRequest, err, err)
 				return
 			}
-			httpresponse.WriteJSON(w, http.StatusCreated, hold)
+			httpresponse.WritePropertyJSON(w, http.StatusCreated, hold)
 		default:
 			s.writeGetOrPostRequired(w, r)
 		}
@@ -166,11 +166,11 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 			s.writeBoundaryError(w, r, http.StatusNotFound, err, err)
 			return
 		}
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.RetentionHoldReleased()), "id": id})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.RetentionHoldReleased()), "id": id})
 	case retentionErasuresRoute:
 		switch r.Method {
 		case http.MethodGet:
-			httpresponse.WriteJSON(w, http.StatusOK, rm.ListErasureRequests())
+			httpresponse.WritePropertyJSON(w, http.StatusOK, rm.ListErasureRequests())
 		case http.MethodPost:
 			var req struct {
 				SubjectID    string `json:"subject_id"`
@@ -185,7 +185,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 				s.writeBoundaryError(w, r, http.StatusBadRequest, err, err)
 				return
 			}
-			httpresponse.WriteJSON(w, http.StatusCreated, erasureReq)
+			httpresponse.WritePropertyJSON(w, http.StatusCreated, erasureReq)
 		default:
 			s.writeGetOrPostRequired(w, r)
 		}
@@ -218,20 +218,20 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operati
 			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, err)
 			return
 		}
-		httpresponse.WriteJSON(w, http.StatusOK, updated)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, updated)
 	case retentionSweepRoute:
 		if r.Method != http.MethodPost {
 			s.writePostRequired(w, r)
 			return
 		}
 		s.db.RunRetentionSweep(r.Context())
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.RetentionSweepTriggered())})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.RetentionSweepTriggered())})
 	case retentionStatusRoute:
 		if r.Method != http.MethodGet {
 			s.writeGetRequired(w, r)
 			return
 		}
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]any{
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]any{
 			"enabled":       true,
 			"policy_count":  len(rm.ListPolicies()),
 			"hold_count":    len(rm.ListLegalHolds()),

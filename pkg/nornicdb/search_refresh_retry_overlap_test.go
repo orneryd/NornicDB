@@ -79,8 +79,8 @@ func openRetryOwnerOverlapFixture(t *testing.T, kind, namespace, word string) *r
 	vector := make([]float32, db.config.Memory.EmbeddingDimensions)
 	vector[0] = 1
 	require.NoError(t, tenant.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}))
-	require.NoError(t, svc.RefreshNode("a"))
-	require.NoError(t, svc.RefreshEdge("r"))
+	require.NoError(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()))
+	require.NoError(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 	settleQueuedRefreshes()
 	if kind == "node" {
 		require.NoError(t, svc.RemoveNode("a"))
@@ -104,9 +104,9 @@ func (f *retryOwnerOverlapFixture) startStaleRefresh(t *testing.T, pauseAtBarrie
 	f.fault.pause.Store(pauseAtBarrier)
 	go func() {
 		if f.kind == "node" {
-			f.readDone <- f.svc.RefreshNode("a")
+			f.readDone <- f.svc.RefreshNode("a", storage.CaptureVectorWorkOrigin())
 		} else {
-			f.readDone <- f.svc.RefreshEdge("r")
+			f.readDone <- f.svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin())
 		}
 	}()
 }
@@ -125,9 +125,9 @@ func (f *retryOwnerOverlapFixture) waitForStaleFailure(t *testing.T, what string
 // reserveNewer takes a mutation reservation for the fixture's entity.
 func (f *retryOwnerOverlapFixture) reserveNewer() search.RefreshRetry {
 	if f.kind == "node" {
-		return search.RefreshRetry{Node: f.svc.ReserveNodeMutation("a")}
+		return search.RefreshRetry{Node: f.svc.ReserveNodeMutation("a", storage.CaptureVectorWorkOrigin())}
 	}
-	return search.RefreshRetry{Edge: f.svc.ReserveEdgeMutation("r")}
+	return search.RefreshRetry{Edge: f.svc.ReserveEdgeMutation("r", storage.CaptureVectorWorkOrigin())}
 }
 
 // visible reports whether the fixture's entity is currently searchable.

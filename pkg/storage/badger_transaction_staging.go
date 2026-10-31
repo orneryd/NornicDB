@@ -258,3 +258,13 @@ func (tx *BadgerTransaction) abortCommitLocked(err error) error {
 	tx.closeLocked(TxStatusRolledBack, true, nil)
 	return err
 }
+
+// recordOperationLocked is the staged operation admission into publication.
+// An operation recorded before write admission bound the transaction keeps no
+// origin rather than a zero one.
+func (tx *BadgerTransaction) recordOperationLocked(operation Operation) {
+	if tx.vectorOriginBound {
+		operation.bindVectorWorkOrigin(tx.vectorWorkOrigin)
+	}
+	tx.operations = append(tx.operations, operation)
+}

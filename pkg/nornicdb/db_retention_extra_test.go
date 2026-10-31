@@ -224,3 +224,40 @@ func TestRetentionSweep_BudgetAndStartBranches(t *testing.T) {
 	db.closed = true
 	db.startRetentionSweep(context.Background())
 }
+
+// TestRetentionSweepKeepsRequestAdmission: a sweep requested with an admitted
+// context deletes under that admission; a sweep without one is admitted once,
+// at the sweep, so every delete of that sweep shares one origin.
+func TestRetentionSweepKeepsRequestAdmission(t *testing.T) {
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+	t.Cleanup(func() { _ = engine.Close() })
+	namespaced := storage.NewNamespacedEngine(engine, "nornic")
+	manager := retention.NewManager()
+	require.NoError(t, manager.AddPolicy(&retention.Policy{ID: "user-short", Category: retention.CategoryUser, RetentionPeriod: retention.RetentionPeriod{Duration: time.Hour}, Active: true}))
+	var origins []uint64
+	manager.SetDeleteCallbackContext(func(ctx context.Context, record *retention.DataRecord) error {
+		origin, admitted := storage.VectorWorkOrigin(ctx)
+		require.True(t, admitted, "every retention delete runs admitted")
+		origins = append(origins, origin)
+		return namespaced.DeleteNode(storage.NodeID(record.ID))
+	})
+	db := &DB{storage: namespaced, baseStorage: engine, config: &Config{}, retentionManager: manager, searchServices: make(map[string]*dbSearchService)}
+	db.SetDbSearchFlagsResolver(func(dbName string) (bool, bool, string, string) { return false, false, "startup", "startup" })
+	seed := func(ids ...string) {
+		for _, id := range ids {
+			_, err := namespaced.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"User"}, CreatedAt: time.Now().Add(-2 * time.Hour), Properties: map[string]any{"owner_id": id}})
+			require.NoError(t, err)
+		}
+	}
+
+	seed("a", "b")
+	request := storage.CaptureVectorWorkOrigin() + 1000
+	db.RunRetentionSweep(storage.WithVectorWorkOrigin(context.Background(), request))
+	require.Equal(t, []uint64{request, request}, origins, "a requested sweep keeps the request's admission")
+
+	origins = nil
+	seed("c", "d")
+	db.RunRetentionSweep(context.Background())
+	require.Len(t, origins, 2)
+	require.Equal(t, origins[0], origins[1], "an unadmitted sweep is admitted once, at the sweep")
+}

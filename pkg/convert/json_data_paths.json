@@ -1,0 +1,785 @@
+{
+  "apoc/convert/convert.go:FromJsonList": {
+    "read_domain": "input",
+    "contract": "Explicit Cypher conversion reads external JSON; serialization writes an existing value document.",
+    "calls": {
+      "input.Unmarshal": 1
+    }
+  },
+  "apoc/convert/convert.go:FromJsonMap": {
+    "read_domain": "input",
+    "contract": "Explicit Cypher conversion reads external JSON; serialization writes an existing value document.",
+    "calls": {
+      "input.Unmarshal": 1
+    }
+  },
+  "apoc/convert/convert.go:ToJson": {
+    "write_domain": "property",
+    "contract": "Explicit Cypher conversion reads external JSON; serialization writes an existing value document.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "apoc/export/export.go:Json": {
+    "write_domain": "property",
+    "contract": "Native graph export document.",
+    "calls": {
+      "property.MarshalIndent": 1
+    }
+  },
+  "apoc/import/import.go:JsonData": {
+    "read_domain": "property",
+    "contract": "Persisted graph import/JSONL record.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/import/import.go:ParseJsonLine": {
+    "read_domain": "property",
+    "contract": "Persisted graph import/JSONL record.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Compact": {
+    "read_domain": "property",
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Marshal": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Delete": {
+    "read_domain": "property",
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Marshal": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Filter": {
+    "read_domain": "property",
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Marshal": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Flatten": {
+    "read_domain": "property",
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Marshal": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Keys": {
+    "read_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Map": {
+    "read_domain": "property",
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Marshal": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Merge": {
+    "read_domain": "property",
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Marshal": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Parse": {
+    "read_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Path": {
+    "read_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Pretty": {
+    "read_domain": "property",
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.MarshalIndent": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Reduce": {
+    "read_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Set": {
+    "read_domain": "property",
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Marshal": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Size": {
+    "read_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Stringify": {
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "apoc/json/json.go:Type": {
+    "read_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Unflatten": {
+    "read_domain": "property",
+    "write_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Marshal": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Validate": {
+    "read_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/json/json.go:Values": {
+    "read_domain": "property",
+    "contract": "Existing JSON document inspection/transformation; preserve property integers and FLOATs.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "apoc/load/load.go:GraphQL": {
+    "read_domain": "property",
+    "write_domain": "input",
+    "contract": "Existing GraphQL/REST result properties are persisted-data documents; outgoing GraphQL variables remain external input.",
+    "calls": {
+      "input.Marshal": 1,
+      "property.NewDecoder": 1
+    }
+  },
+  "apoc/load/load.go:JsonParams": {
+    "read_domain": "input",
+    "contract": "Neo4j-compatible external JSON loading; GraphQL request parameters use the input domain.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "apoc/load/load.go:loadJsonFromFile": {
+    "read_domain": "input",
+    "contract": "Neo4j-compatible external JSON loading; GraphQL request parameters use the input domain.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "apoc/load/load.go:loadJsonFromURL": {
+    "read_domain": "input",
+    "contract": "Neo4j-compatible external JSON loading; GraphQL request parameters use the input domain.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "apoc/load/load.go:Rest": {
+    "read_domain": "property",
+    "contract": "Existing GraphQL/REST result properties are persisted-data documents; outgoing GraphQL variables remain external input.",
+    "calls": {
+      "property.NewDecoder": 1
+    }
+  },
+  "internal/transactionalcalltest/matrix.go:normalize": {
+    "read_domain": "input",
+    "contract": "Author: #1665 implementation lane (Claude Opus 5.5). The call-harness oracle numbers are read by the external-number policy.",
+    "calls": {
+      "input.Numbers": 1
+    }
+  },
+  "pkg/cypher/apoc_load_export.go:StorageExecutor.callApocExportCsvAll": {
+    "write_domain": "property",
+    "contract": "Persisted graph export and JSON property fragments.",
+    "calls": {
+      "property.Marshal": 2
+    }
+  },
+  "pkg/cypher/apoc_load_export.go:StorageExecutor.callApocExportCsvQuery": {
+    "write_domain": "property",
+    "contract": "Persisted graph export and JSON property fragments.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/cypher/apoc_load_export.go:StorageExecutor.callApocExportJsonAll": {
+    "write_domain": "property",
+    "contract": "Persisted graph export and JSON property fragments.",
+    "calls": {
+      "property.MarshalIndent": 1
+    }
+  },
+  "pkg/cypher/apoc_load_export.go:StorageExecutor.callApocExportJsonQuery": {
+    "write_domain": "property",
+    "contract": "Persisted graph export and JSON property fragments.",
+    "calls": {
+      "property.MarshalIndent": 1
+    }
+  },
+  "pkg/cypher/apoc_load_export.go:StorageExecutor.callApocImportJson": {
+    "calls": {
+      "property.NewDecoder": 1
+    },
+    "contract": "Public APOC graph import decodes persisted property JSON directly; source opening cannot inject a decoder policy.",
+    "read_domain": "property"
+  },
+  "pkg/cypher/apoc_load_export.go:StorageExecutor.loadJsonFromFile": {
+    "read_domain": "input",
+    "contract": "Neo4j-compatible external JSON loading; GraphQL request parameters use the input domain.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "pkg/cypher/apoc_load_export.go:StorageExecutor.loadJsonFromURL": {
+    "read_domain": "input",
+    "contract": "Neo4j-compatible external JSON loading; GraphQL request parameters use the input domain.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "pkg/cypher/call_rag.go:StorageExecutor.callDbInfer": {
+    "read_domain": "input",
+    "contract": "Externally generated structured model input.",
+    "calls": {
+      "input.Unmarshal": 1
+    }
+  },
+  "pkg/cypher/json_values.go:apocConvertFromJSON": {
+    "read_domain": "input",
+    "contract": "Explicit Cypher conversion reads external JSON; serialization writes an existing value document.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "pkg/cypher/json_values.go:apocConvertToJSON": {
+    "write_domain": "property",
+    "contract": "Explicit Cypher conversion reads external JSON; serialization writes an existing value document.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/cypher/json_values.go:JSONNumbers": {
+    "read_domain": "input",
+    "contract": "Explicit Cypher conversion reads external JSON; serialization writes an existing value document.",
+    "calls": {
+      "input.Numbers": 1
+    }
+  },
+  "pkg/graphql/models/models.go:FloatArray.MarshalGQL": {
+    "write_domain": "property",
+    "contract": "External GraphQL scalar input and existing result/embedding JSON output, classified separately by direction.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/graphql/models/models.go:FloatArray.UnmarshalGQL": {
+    "read_domain": "input",
+    "contract": "Author: #1665 implementation lane (Claude Opus 5.5). GraphQL vector input reads its external JSON numbers by the external-number policy before the float32 conversion.",
+    "calls": {
+      "input.Numbers": 1,
+      "input.Unmarshal": 1
+    }
+  },
+  "pkg/graphql/models/models.go:JSON.MarshalGQL": {
+    "write_domain": "property",
+    "contract": "External GraphQL scalar input and existing result/embedding JSON output, classified separately by direction.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/graphql/models/models.go:JSON.UnmarshalGQL": {
+    "read_domain": "input",
+    "contract": "External GraphQL scalar input and existing result/embedding JSON output, classified separately by direction.",
+    "calls": {
+      "input.Numbers": 1,
+      "input.Unmarshal": 1
+    }
+  },
+  "pkg/heimdall/bifrost.go:encodeBifrostMessage": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/heimdall/handler.go:buildPassThroughToolCall": {
+    "write_domain": "input",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "input.Marshal": 1
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.defaultFormatResponse": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.MarshalIndent": 1
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleAutocomplete": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.NewEncoder": 2
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleModels": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleNonStreamingResponse": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.NewEncoder": 2
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleStatus": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleStreamingResponse": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.Marshal": 8
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleStreamingWithTools": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.Marshal": 3
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.sendCancellationResponse": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.sendStreamNotifications": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/heimdall/handler.go:parseActionEnvelope": {
+    "read_domain": "input",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "input.Unmarshal": 1
+    }
+  },
+  "pkg/heimdall/plugin.go:FormatActionResultForModel": {
+    "write_domain": "property",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/heimdall/plugin.go:tryParseActionResponse": {
+    "read_domain": "input",
+    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
+    "calls": {
+      "input.Unmarshal": 1
+    }
+  },
+  "pkg/nornicdb/db_admin.go:DB.Backup": {
+    "write_domain": "property",
+    "contract": "New JSON backups use version 2.0 and exact PropertyJSON, preserving whole FLOAT kind and negative zero.",
+    "calls": {
+      "property.MarshalIndent": 1
+    }
+  },
+  "pkg/nornicdb/db_admin.go:DB.ExportUserData": {
+    "write_domain": "property",
+    "contract": "Persisted JSON backup/restore, retention archive or subject export.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/nornicdb/db_admin.go:DB.Restore": {
+    "read_domain": "property",
+    "contract": "JSON backup imports intentionally preserve integer token digits for every backup version; old untagged whole FLOAT kind/sign cannot be recovered.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "pkg/nornicdb/db.go:Open": {
+    "write_domain": "property",
+    "contract": "Persisted JSON backup/restore, retention archive or subject export.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/server/server_db.go:decodeTransactionRequest": {
+    "read_domain": "input",
+    "contract": "External HTTP request values and persisted/native result values, classified separately by direction.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "pkg/server/server_db.go:transactionHTTPFloat": {
+    "write_domain": "property",
+    "contract": "External HTTP request values and persisted/native result values, classified separately by direction.",
+    "calls": {
+      "property.Float": 1
+    }
+  },
+  "pkg/server/server_helpers.go:Server.readJSON": {
+    "read_domain": "input",
+    "contract": "External HTTP request values and persisted/native result values, classified separately by direction.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "pkg/server/server_nornicdb.go:Server.writeSearchContinuationPage": {
+    "write_domain": "property",
+    "contract": "External HTTP request values and persisted/native result values, classified separately by direction.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/server/transaction_http_ordered_map.go:transactionHTTPOrderedMap.MarshalJSON": {
+    "write_domain": "property",
+    "contract": "External HTTP request values and persisted/native result values, classified separately by direction.",
+    "calls": {
+      "property.Marshal": 2
+    }
+  },
+  "pkg/storage/badger_schema.go:BadgerEngine.loadPersistedSchemas": {
+    "read_domain": "schema",
+    "contract": "Engine startup and native restore read persisted schemas through the sole version-aware schema codec.",
+    "calls": {
+      "schema.Decode": 1
+    }
+  },
+  "pkg/storage/badger_schema.go:BadgerEngine.persistSchemaDefinition": {
+    "write_domain": "schema",
+    "contract": "Engine schema mutations write exact version 2 through the schema codec.",
+    "calls": {
+      "schema.Encode": 1
+    }
+  },
+  "pkg/storage/loader.go:GenericSaveToNeo4jExport": {
+    "write_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/storage/loader.go:LoadFromNeo4jExport": {
+    "read_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.NewDecoder": 1
+    }
+  },
+  "pkg/storage/loader.go:loadNodesFromReader": {
+    "read_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "pkg/storage/loader.go:loadRelationshipsFromReader": {
+    "read_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "pkg/storage/loader.go:SaveToNeo4jExport": {
+    "write_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/storage/remote_engine.go:httpTransport.openTransaction": {
+    "write_domain": "input",
+    "contract": "External remote request parameters and existing remote graph/result properties, classified by direction.",
+    "calls": {
+      "input.Marshal": 1
+    }
+  },
+  "pkg/storage/remote_engine.go:httpTransport.doRequestToURL": {
+    "read_domain": "property",
+    "write_domain": "input",
+    "contract": "External remote request parameters and existing remote graph/result properties, classified by direction.",
+    "calls": {
+      "input.Marshal": 1,
+      "property.Unmarshal": 1
+    }
+  },
+  "pkg/storage/remote_entity_value.go:RemoteEntityValue.MarshalJSON": {
+    "write_domain": "property",
+    "contract": "External remote request parameters and existing remote graph/result properties, classified by direction.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/storage/remote_http_values.go:remoteHTTPRESTEntity": {
+    "read_domain": "property",
+    "contract": "External remote request parameters and existing remote graph/result properties, classified by direction.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "pkg/storage/types.go:Node.MarshalNeo4jJSON": {
+    "write_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/storage/wal_jsonbuf.go:marshalJSONCompact": {
+    "write_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/storage/wal.go:NewWAL": {
+    "write_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/storage/wal.go:WAL.reopenWAL": {
+    "write_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/storage/wal.go:WAL.rotateSegmentLocked": {
+    "write_domain": "property",
+    "contract": "Persisted property JSON import/export or legacy/WAL recovery.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "scripts/migrate_neo4j_to_nornic.go:clearNornicDB": {
+    "write_domain": "input",
+    "contract": "Existing source graph properties and external destination/query parameters, classified by direction.",
+    "calls": {
+      "input.Marshal": 1
+    }
+  },
+  "scripts/migrate_neo4j_to_nornic.go:fetchNodesFromNeo4j": {
+    "read_domain": "property",
+    "write_domain": "input",
+    "contract": "Existing source graph properties and external destination/query parameters, classified by direction.",
+    "calls": {
+      "input.Marshal": 1,
+      "property.NewDecoder": 1
+    }
+  },
+  "scripts/migrate_neo4j_to_nornic.go:insertNodesIntoNornic": {
+    "write_domain": "input",
+    "contract": "Existing source graph properties and external destination/query parameters, classified by direction.",
+    "calls": {
+      "input.Marshal": 1
+    }
+  },
+  "scripts/migrate_neo4j_to_nornic.go:runQuery": {
+    "write_domain": "input",
+    "contract": "Existing source graph properties and external destination/query parameters, classified by direction.",
+    "calls": {
+      "input.Marshal": 1
+    }
+  },
+  "scripts/migrate_neo4j_to_nornic.go:verifyMigration": {
+    "read_domain": "property",
+    "write_domain": "input",
+    "contract": "Existing source graph properties and external destination/query parameters, classified by direction.",
+    "calls": {
+      "input.Marshal": 1,
+      "property.NewDecoder": 1
+    }
+  },
+  "pkg/storage/remote_parameters.go:remoteHTTPWriter.date": {
+    "write_domain": "input",
+    "calls": {
+      "input.AppendInteger": 3
+    },
+    "contract": "Remote date constructor components retain exact integer JSON fields."
+  },
+  "pkg/storage/remote_parameters.go:remoteHTTPWriter.dateTime": {
+    "write_domain": "input",
+    "calls": {
+      "input.AppendInteger": 2
+    },
+    "contract": "Remote DateTime constructor fields use exact shared integer JSON leaves."
+  },
+  "pkg/storage/remote_parameters.go:remoteHTTPWriter.float": {
+    "write_domain": "input",
+    "calls": {
+      "input.AppendFloat": 1
+    },
+    "contract": "Finite remote FLOATs use the shared numeric text owner; special FLOATs retain the existing toFloat constructor transport."
+  },
+  "pkg/storage/remote_parameters.go:remoteHTTPWriter.localDateTime": {
+    "write_domain": "input",
+    "calls": {
+      "input.AppendInteger": 7
+    },
+    "contract": "Remote local DateTime constructor components retain exact integer JSON fields."
+  },
+  "pkg/storage/remote_parameters.go:remoteHTTPWriter.point": {
+    "write_domain": "input",
+    "calls": {
+      "input.AppendFloat": 3,
+      "input.AppendUnsigned": 1
+    },
+    "contract": "Remote point constructor uses shared exact SRID and FLOAT leaves."
+  },
+  "pkg/storage/remote_parameters.go:remoteHTTPWriter.timeOfDay": {
+    "write_domain": "input",
+    "calls": {
+      "input.AppendInteger": 4
+    },
+    "contract": "Remote time constructor components retain exact integer JSON fields."
+  },
+  "pkg/storage/remote_parameters.go:remoteHTTPWriter.value": {
+    "write_domain": "input",
+    "calls": {
+      "input.AppendInteger": 7,
+      "input.Marshal": 2,
+      "input.AppendUnsigned": 1
+    },
+    "contract": "Remote external parameters: ordinary numeric leaves and opaque value envelopes use the shared input writer; typed constructors retain their separate adapter."
+  },
+  "pkg/storage/schema_codec.go:EncodeSchemaDefinition": {
+    "write_domain": "property",
+    "contract": "Sole schema writer: version 2 preserves exact INTEGERs and FLOAT tokens from decoded values.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/storage/schema_codec.go:DecodeSchemaDefinition": {
+    "read_domain": "property",
+    "contract": "Sole schema reader: typed version header, legacy v0/v1 FLOAT meaning, exact v2 values; also owns persisted deep-copy decoding.",
+    "calls": {
+      "property.Unmarshal": 2,
+      "property.UnmarshalLegacyState": 1
+    }
+  },
+  "pkg/storage/badger_transaction_knowledge_schema.go:BadgerTransaction.Schema": {
+    "read_domain": "schema",
+    "write_domain": "schema",
+    "contract": "Ordinary Cypher DDL and knowledge-policy transactions read, write and deep-copy the complete schema through the same version-aware codec as the engine.",
+    "calls": {
+      "schema.Decode": 2,
+      "schema.Encode": 1
+    }
+  },
+  "pkg/adminimport/importer.go:applySchemaDefinition": {
+    "read_domain": "schema",
+    "contract": "Schema sidecar imports read the same versioned schema format as engine startup.",
+    "calls": {
+      "schema.Decode": 1
+    }
+  },
+  "pkg/adminimport/neo4j_csv.go:exportNornicSchemaDefinition": {
+    "write_domain": "schema",
+    "contract": "Schema sidecar exports write exact version 2 through the schema codec.",
+    "calls": {
+      "schema.Encode": 1
+    }
+  },
+  "internal/httpresponse/json.go:WritePropertyJSON": {
+    "calls": {
+      "property.Prepare": 1
+    },
+    "contract": "Author: #1665 implementation lane (Codex). Binds PropertyJSON.Prepare once before TJ shared HTTP framing; no separate response writer.",
+    "write_domain": "property"
+  },
+  "pkg/storage/remote_http_json.go:remoteHTTPNumber": {
+    "calls": {
+      "input.Numbers": 1
+    },
+    "contract": "Author: #1665 implementation lane (Codex). Legacy Neo4j metadata number normalization delegates to the existing Cypher-input compatibility policy.",
+    "read_domain": "input"
+  },
+  "pkg/storage/legacy_recovery_json.go:decodeLegacyRecoveryJSON": {
+    "read_domain": "property",
+    "contract": "Legacy WAL/snapshot recovery records hold persisted property numbers; they take the one property-number decision (L6 / #1665 lane, Claude Opus 5.5).",
+    "calls": {
+      "property.Numbers": 1
+    }
+  },
+  "pkg/storage/remote_http_json.go:remoteHTTPNumbers": {
+    "calls": {
+      "input.Numbers": 1
+    },
+    "contract": "Author: #1665 implementation lane (Codex). Recursive legacy metadata normalization delegates to the same input Numbers owner; property images arrive through PropertyJSON.",
+    "read_domain": "input"
+  },
+  "pkg/storage/remote_http_json.go:unmarshalRemoteHTTPJSON": {
+    "calls": {
+      "property.Unmarshal": 1
+    },
+    "contract": "Author: #1665 implementation lane (Codex). Remote property envelope admission uses exact property numbers over TJ canonical strings and framing.",
+    "read_domain": "property"
+  },
+  "pkg/storage/remote_http_values.go:decodeRemoteHTTPValue": {
+    "calls": {
+      "property.Unmarshal": 1
+    },
+    "contract": "Author: #1665 implementation lane (Codex). Numeric property leaves use PropertyJSON; retained raw token traversal preserves map/list/REST positions without a second numeric parser.",
+    "read_domain": "property"
+  }
+}

@@ -89,7 +89,7 @@ func (r *RoleStore) CreateRole(ctx context.Context, name string) error {
 			"name": name,
 		},
 	}
-	_, err := r.storage.CreateNode(node)
+	_, err := systemStoreEngine(r.storage).CreateNode(node)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func (r *RoleStore) LockRoleForGrant(ctx context.Context, name string) (bool, er
 		if label == roleLabel {
 			// The role record is written back exactly as read, so the read
 			// image is both the immutable Before and the After.
-			return true, r.storage.UpdateNode(storage.NodeUpdateRequest{Before: node, After: node})
+			return true, systemStoreEngine(r.storage).UpdateNode(storage.NodeUpdateRequest{Before: node, After: node})
 		}
 	}
 	return false, nil

@@ -16,6 +16,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/vektah/gqlparser/v2/ast"
 )
 
@@ -64,6 +65,8 @@ func newHandler(db *nornicdb.DB, dbManager *multidb.DatabaseManager, policy *mem
 		srv.Use(extension.AutomaticPersistedQuery{Cache: lru.New[string](100)})
 	}
 
+	srv.Use(searchOriginAdmission{})
+
 	return &Handler{
 		server:           srv,
 		policy:           policy,
@@ -73,6 +76,8 @@ func newHandler(db *nornicdb.DB, dbManager *multidb.DatabaseManager, policy *mem
 
 // ServeHTTP handles GraphQL requests using gqlgen.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	admitted, _ := storage.AdmitVectorWork(r.Context())
+	r = r.WithContext(admitted)
 	if h.policy == nil {
 		h.server.ServeHTTP(w, r)
 		return

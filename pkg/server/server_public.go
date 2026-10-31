@@ -67,7 +67,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		response["default_database"] = s.dbManager.DefaultDatabaseName()
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +76,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"status": "healthy",
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +153,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"embeddings": embedInfo,
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleMetrics serves the legacy :7474/metrics endpoint by translating

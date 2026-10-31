@@ -20,7 +20,7 @@ type roleFailureEngine struct {
 	failRoleDelete  bool
 }
 
-func (e *roleFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *roleFailureEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	if strings.HasPrefix(string(id), "proc_priv:") {
 		e.grantDeletes++
 		if e.grantDeletes == e.failGrantDelete {
@@ -30,7 +30,7 @@ func (e *roleFailureEngine) DeleteNode(id storage.NodeID) error {
 	if e.failRoleDelete && id == "role:ops" {
 		return errRoleMutation
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(id, origins...)
 }
 
 func (e *roleFailureEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
@@ -44,11 +44,11 @@ type roleFailureView struct {
 	failure *roleFailureEngine
 }
 
-func (v *roleFailureView) DeleteNode(id storage.NodeID) error {
+func (v *roleFailureView) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	original := v.failure.Engine
 	v.failure.Engine = v.Engine
 	defer func() { v.failure.Engine = original }()
-	return v.failure.DeleteNode(id)
+	return v.failure.DeleteNode(id, origins...)
 }
 
 func TestDeleteRoleFailureChangesNothing(t *testing.T) {

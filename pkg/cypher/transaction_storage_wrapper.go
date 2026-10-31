@@ -105,8 +105,8 @@ type transactionStorageWrapper struct {
 	// changed for search. Search reads them back once the commit makes them
 	// visible (refreshSearchAfterCommit), and never after a rollback.
 	searchRefreshMu     sync.Mutex
-	searchNodeRefreshes map[storage.NodeID]struct{}
-	searchEdgeRefreshes map[storage.EdgeID]struct{}
+	searchNodeRefreshes map[storage.NodeID]uint64
+	searchEdgeRefreshes map[storage.EdgeID]uint64
 
 	// txNodeLookupCache scopes the executor's MERGE/MATCH lookup cache to
 	// this single transaction. Concurrent transactions get distinct
@@ -192,24 +192,24 @@ func (w *transactionStorageWrapper) markMutatedNodeID(id storage.NodeID) {
 	w.mutatedNodeIDsMu.Unlock()
 }
 
-func (w *transactionStorageWrapper) deferSearchRefresh(node storage.NodeID, edge storage.EdgeID) {
+func (w *transactionStorageWrapper) deferSearchRefresh(node storage.NodeID, edge storage.EdgeID, origin uint64) {
 	w.searchRefreshMu.Lock()
 	defer w.searchRefreshMu.Unlock()
 	if node != "" {
 		if w.searchNodeRefreshes == nil {
-			w.searchNodeRefreshes = make(map[storage.NodeID]struct{})
+			w.searchNodeRefreshes = make(map[storage.NodeID]uint64)
 		}
-		w.searchNodeRefreshes[node] = struct{}{}
+		w.searchNodeRefreshes[node] = origin
 	}
 	if edge != "" {
 		if w.searchEdgeRefreshes == nil {
-			w.searchEdgeRefreshes = make(map[storage.EdgeID]struct{})
+			w.searchEdgeRefreshes = make(map[storage.EdgeID]uint64)
 		}
-		w.searchEdgeRefreshes[edge] = struct{}{}
+		w.searchEdgeRefreshes[edge] = origin
 	}
 }
 
-func (w *transactionStorageWrapper) takeSearchRefreshes() (map[storage.NodeID]struct{}, map[storage.EdgeID]struct{}) {
+func (w *transactionStorageWrapper) takeSearchRefreshes() (map[storage.NodeID]uint64, map[storage.EdgeID]uint64) {
 	w.searchRefreshMu.Lock()
 	defer w.searchRefreshMu.Unlock()
 	nodes, edges := w.searchNodeRefreshes, w.searchEdgeRefreshes
@@ -277,7 +277,7 @@ func (w *transactionStorageWrapper) UpdateNode(updateRequest storage.NodeUpdateR
 	return err
 }
 
-func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID) error {
+func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID, _ ...uint64) error {
 	return w.tx.DeleteGraphNode(w.prefixNodeID(id), storage.CascadeEdges)
 }
 
@@ -319,7 +319,7 @@ func (w *transactionStorageWrapper) EdgeCreateWasNoOp(id storage.EdgeID) bool {
 	return w.tx.EdgeCreateWasNoOp(w.prefixEdgeID(id))
 }
 
-func (w *transactionStorageWrapper) DeleteEdge(id storage.EdgeID) error {
+func (w *transactionStorageWrapper) DeleteEdge(id storage.EdgeID, _ ...uint64) error {
 	return w.tx.DeleteEdge(w.prefixEdgeID(id))
 }
 
@@ -865,7 +865,7 @@ func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bo
 	return w.tx.BulkCreateEdges(namespaced)
 }
 
-func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error {
+func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID, _ ...uint64) error {
 	for _, id := range ids {
 		if err := w.tx.DeleteGraphNode(w.prefixNodeID(id), storage.CascadeEdges); err != nil {
 			return err
@@ -877,7 +877,7 @@ func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error 
 // BulkDeleteEdges deletes ids in the transaction. Like the engines'
 // BulkDeleteEdges, it skips IDs that do not exist, those the transaction
 // already deleted included (#827).
-func (w *transactionStorageWrapper) BulkDeleteEdges(ids []storage.EdgeID) error {
+func (w *transactionStorageWrapper) BulkDeleteEdges(ids []storage.EdgeID, _ ...uint64) error {
 	for _, id := range ids {
 		if err := w.tx.DeleteEdge(w.prefixEdgeID(id)); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err

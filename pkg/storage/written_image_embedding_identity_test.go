@@ -29,7 +29,7 @@ func TestWrittenImageKeepsRuntimeEmbeddingIdentity(t *testing.T) {
 					engine.OnNodeUpdated(func(node *Node) { updated <- node })
 					writer, err := engine.GetNode("test:n")
 					require.NoError(t, err)
-					attempt := NewEmbeddingAttempt(1, 1, writer.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) {})
+					attempt := NewEmbeddingAttempt(CaptureVectorWorkOrigin(), 1, 1, writer.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) {})
 					writer.SetEmbeddingAttempt(attempt)
 					writer.Properties = map[string]any{"v": value}
 					if explicit {

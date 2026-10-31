@@ -63,11 +63,12 @@ import (
 
 // deferredIndexWrite is one operation prepared for the build sequence.
 type deferredIndexWrite struct {
-	node   *storage.Node // IndexNode
-	nodeID string        // RemoveNode
-	edge   *storage.Edge // IndexEdge
-	edgeID string        // RemoveEdge
-	apply  func()        // an administrative operation (orderWithBuild)
+	propertyVectorGeneration uint64
+	node                     *storage.Node // IndexNode
+	nodeID                   string        // RemoveNode
+	edge                     *storage.Edge // IndexEdge
+	edgeID                   string        // RemoveEdge
+	apply                    func()        // an administrative operation (orderWithBuild)
 	// dims marks an administrative operation that can change the dimension
 	// decision (orderDimensionChange).
 	dims bool
@@ -526,11 +527,11 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 		case write.relationship:
 			s.updateRelationshipNow(write)
 		case write.node != nil:
-			err = s.indexNodeOwned(write.node, &write.current)
+			err = s.indexNodeOwned(write.node, &write.current, write.propertyVectorGeneration)
 		case write.nodeID != "":
 			s.removeNodeOwned(storage.NodeID(write.nodeID))
 		case write.edge != nil:
-			err = s.indexEdgeOwned(write.edge)
+			err = s.indexEdgeOwned(write.edge, write.propertyVectorGeneration)
 		case write.edgeID != "":
 			s.removeEdgeOwned(storage.EdgeID(write.edgeID))
 		case write.apply != nil:

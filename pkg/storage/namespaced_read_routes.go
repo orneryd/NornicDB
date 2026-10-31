@@ -42,19 +42,6 @@ func relationshipEndpointVisibility(engine Engine, id NodeID) (bool, bool) {
 	return false, false
 }
 
-// updatePendingEmbedding binds the two supported work transitions while
-// preserving partial optional providers: an engine may implement only one.
-func (n *NamespacedEngine) updatePendingEmbedding(id NodeID, pending bool) {
-	id = n.PrefixNodeID(id)
-	if pending {
-		if provider, ok := n.inner.(interface{ AddToPendingEmbeddings(NodeID) }); ok {
-			provider.AddToPendingEmbeddings(id)
-		}
-	} else if provider, ok := n.inner.(interface{ MarkNodeEmbedded(NodeID) }); ok {
-		provider.MarkNodeEmbedded(id)
-	}
-}
-
 type namespacedCountEntity interface{ Node | Edge }
 
 // namespacedPrefixCount owns provider-first prefix statistics and the filtered

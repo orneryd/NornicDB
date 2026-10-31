@@ -11,13 +11,14 @@ var ErrEventSubscriptionUnsupported = errors.New("storage: engine does not deliv
 // EventHandlers are the consumers of one subscription. A nil handler is not
 // registered.
 type EventHandlers struct {
-	NodeCreated    NodeEventCallback
-	NodeUpdated    NodeEventCallback
-	NodeDeleted    NodeDeleteCallback
-	EdgeCreated    EdgeEventCallback
-	EdgeUpdated    EdgeEventCallback
-	EdgeDeleted    EdgeDeleteCallback
-	NamespaceReset NamespaceResetCallback
+	EntityCommitted EntityCommitCallback
+	NodeCreated     NodeEventCallback
+	NodeUpdated     NodeEventCallback
+	NodeDeleted     NodeDeleteCallback
+	EdgeCreated     EdgeEventCallback
+	EdgeUpdated     EdgeEventCallback
+	EdgeDeleted     EdgeDeleteCallback
+	NamespaceReset  NamespaceResetCallback
 }
 
 // EventSubscriber delivers every storage event, entity changes and namespace
@@ -42,6 +43,9 @@ func SubscribeEvents(engine Engine, handlers EventHandlers) error {
 
 // SubscribeEvents registers handlers with the commit-ordered callbacks.
 func (b *BadgerEngine) SubscribeEvents(handlers EventHandlers) error {
+	if handlers.EntityCommitted != nil {
+		b.subscribeEntityCommit(handlers.EntityCommitted)
+	}
 	b.OnNodeCreated(handlers.NodeCreated)
 	b.OnNodeUpdated(handlers.NodeUpdated)
 	b.OnNodeDeleted(handlers.NodeDeleted)
@@ -68,6 +72,9 @@ func (t *TracedEngine) SubscribeEvents(handlers EventHandlers) error {
 func (n *NamespacedEngine) SubscribeEvents(handlers EventHandlers) error {
 	var translated EventHandlers
 	views := []*NamespacedEngine{n}
+	if handler := handlers.EntityCommitted; handler != nil {
+		translated.EntityCommitted = scopeStorageEvent(handler, views)
+	}
 	if handler := handlers.NodeCreated; handler != nil {
 		translated.NodeCreated = scopeStorageEvent(handler, views)
 	}

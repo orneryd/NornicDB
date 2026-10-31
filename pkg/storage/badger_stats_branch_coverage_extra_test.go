@@ -130,7 +130,7 @@ func TestBadgerStats_UnexpectedClosedDBErrorBranches(t *testing.T) {
 
 	_, _ = engine.NodeCountByPrefix("test:")
 	_, _ = engine.EdgeCountByPrefix("test:")
-	_, _ = engine.ClearAllEmbeddingsForPrefix("test:")
+	_, _ = engine.ClearAllEmbeddingsForPrefix("test:", CaptureVectorWorkOrigin())
 }
 
 func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
@@ -225,7 +225,7 @@ func TestBadgerStats_ClearAllEmbeddingsPrefixAdditionalBranches(t *testing.T) {
 		return nil
 	}))
 
-	cleared, err := engine.ClearAllEmbeddingsForPrefix("tenant:")
+	cleared, err := engine.ClearAllEmbeddingsForPrefix("tenant:", CaptureVectorWorkOrigin())
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, cleared, 1)
 }

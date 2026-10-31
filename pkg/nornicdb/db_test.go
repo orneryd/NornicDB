@@ -2208,7 +2208,7 @@ func TestRestoreNativeRebuildsLiveSchemaAndSearch(t *testing.T) {
 	require.Error(t, err)
 	buildCtx, cancelBuild := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelBuild()
-	require.NoError(t, target.ensureSearchIndexesBuilt(buildCtx, target.defaultDatabaseName()))
+	require.NoError(t, target.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(buildCtx, storage.CaptureVectorWorkOrigin()), target.defaultDatabaseName()))
 	service, err := target.GetOrCreateSearchService(target.defaultDatabaseName(), target.storage)
 	require.NoError(t, err)
 	require.True(t, service.GetBuildProgress().Ready)

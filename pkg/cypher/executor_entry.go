@@ -100,6 +100,7 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	return e.execute(ctx, cypher, params, nil, true)
 }
 

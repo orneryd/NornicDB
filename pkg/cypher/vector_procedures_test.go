@@ -486,7 +486,7 @@ func TestCallDbIndexVectorQueryNodesServiceWiring(t *testing.T) {
 				searchSvc := search.NewService(engine, 4, nil)
 				var warmCalls int32
 				var warmErr atomic.Value
-				searchSvc.SetLazyWarming(true, search.WarmFunc(func() {
+				searchSvc.SetLazyWarming(true, search.WarmFunc(func(context.Context) {
 					atomic.AddInt32(&warmCalls, 1)
 					if err := searchSvc.BuildIndexes(context.Background()); err != nil {
 						warmErr.Store(err)

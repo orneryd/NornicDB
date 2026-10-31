@@ -1316,8 +1316,8 @@ func (e *StorageExecutor) GetDefaultEmbeddingDimensions() int {
 //
 // Search reads the node itself after reserving the refresh, so a later write or
 // delete that commits first is not overwritten by this notification.
-func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
-	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(nodeID)})
+func (e *StorageExecutor) notifyNodeMutated(ctx context.Context, nodeID string) {
+	_ = search.RefreshIndexes(ctx, cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(nodeID)})
 	if e.onNodeMutated != nil {
 		e.onNodeMutated(nodeID)
 	}
@@ -1327,8 +1327,8 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 // mutation so relationship vector queries can use client-supplied vectors before
 // a full search warmup/build has run. Call it after deleting one too, so its
 // vectors leave search.
-func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
-	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
+func (e *StorageExecutor) notifyEdgeMutated(ctx context.Context, edgeID string) {
+	_ = search.RefreshIndexes(ctx, cypherRefreshScope{executor: e}, search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
 }
 
 // refreshSearchAfterCommit refreshes what the committed transaction changed.
@@ -1338,11 +1338,11 @@ func (e *StorageExecutor) refreshSearchAfterCommit(tx *transactionStorageWrapper
 	nodes, edges := tx.takeSearchRefreshes()
 	service := e.search()
 	scope := cypherRefreshScope{executor: e}
-	for id := range nodes {
-		_ = search.RefreshIndexes(context.Background(), scope, search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
+	for id, origin := range nodes {
+		_ = search.RefreshIndexes(storage.WithVectorWorkOrigin(context.Background(), origin), scope, search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
 	}
-	for id := range edges {
-		_ = search.RefreshIndexes(context.Background(), scope, search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
+	for id, origin := range edges {
+		_ = search.RefreshIndexes(storage.WithVectorWorkOrigin(context.Background(), origin), scope, search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
 	}
 }
 
@@ -1350,12 +1350,12 @@ func (e *StorageExecutor) refreshSearchAfterCommit(tx *transactionStorageWrapper
 // indexes), which removes it. Call after successfully deleting a node via Cypher so
 // embeddings are not left orphaned.
 // nodeID may be prefixed (e.g. "nornic:xyz") or local ("xyz"); the search service expects local ID.
-func (e *StorageExecutor) removeNodeFromSearch(nodeID string) {
+func (e *StorageExecutor) removeNodeFromSearch(ctx context.Context, nodeID string) {
 	localID := nodeID
 	if _, unprefixed, ok := storage.ParseDatabasePrefix(nodeID); ok {
 		localID = unprefixed
 	}
-	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(localID)})
+	_ = search.RefreshIndexes(ctx, cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(localID)})
 }
 
 // Flush persists all pending writes to storage.
@@ -1580,7 +1580,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 			}
 		}
 	}
-	tx, err := beginTransactionSnapshot(txEngine)
+	tx, err := beginTransactionSnapshot(ctx, txEngine)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
 	}
@@ -1812,7 +1812,10 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	if embedder == nil {
 		return localizedError(localization.CypherCoreEmbeddingConfiguredRequired(), nil)
 	}
-	store := e.getStorage(ctx)
+	store, err := admittedStatementWriter(ctx, e.getStorage(ctx))
+	if err != nil {
+		return err
+	}
 	typedEmbedder, hasTypedEmbedder := embedder.(typedQueryEmbedder)
 	for id := range ids {
 		node, err := store.GetNode(storage.NodeID(id))

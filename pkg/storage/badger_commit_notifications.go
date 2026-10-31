@@ -7,6 +7,9 @@ import "sync"
 // A reentrant write enqueues behind its caller instead of waiting for itself.
 type commitNotification struct {
 	ops []Operation
+	// origin is the admission of the write that queued ops, when it supplied one.
+	origin      uint64
+	originBound bool
 	// reset, when set, reports a DeleteByPrefix of this prefix instead of ops.
 	reset *string
 	// consumed, when set, is closed once the notification was dispatched.
@@ -70,7 +73,9 @@ const (
 // queueCommitOperations owns payload creation, queue admission and direct
 // completion. At-commit payloads are reserved by the commit writer and become
 // ready only after their caller releases storage and accounting locks.
-func (b *BadgerEngine) queueCommitOperations(ops []Operation, direct *Operation, admission notificationAdmission) *commitNotification {
+// origins carries the write's admission; without one the operations already
+// carry theirs (transaction staging, recovery) and nothing is bound here.
+func (b *BadgerEngine) queueCommitOperations(ops []Operation, direct *Operation, admission notificationAdmission, origins ...uint64) *commitNotification {
 	// Immediate notifications describe an already visible mutation. Keep its
 	// revision and deletion cleanup in the same canonical operation owner.
 	// At-commit writes perform these effects inside ordered publication.
@@ -98,7 +103,19 @@ func (b *BadgerEngine) queueCommitOperations(ops []Operation, direct *Operation,
 	if n == nil {
 		n = &commitNotification{}
 	}
-	n.ops = ops
+	if len(origins) > 0 {
+		n.origin, n.originBound = origins[0], true
+	}
+	if direct == nil {
+		// Own the operation values as well as their snapshot payloads. A
+		// caller retaining ops must not observe notification admission writes.
+		capturePublicationOperations(n, ops)
+	} else {
+		n.ops = ops // the private singleCommitNotification backing array
+		if n.originBound {
+			n.ops[0].bindVectorWorkOrigin(n.origin)
+		}
+	}
 	if admission == notificationAwaited {
 		n.consumed = make(chan struct{})
 	}
@@ -264,20 +281,20 @@ func (b *BadgerEngine) drainCommitNotifications() {
 				for _, op := range n.ops {
 					switch op.Type {
 					case OpCreateNode:
-						b.dispatchNodeCreated(op.Node)
+						b.dispatchNodeCreated(op.Node, op.vectorWorkOrigin)
 					case OpUpdateNode:
-						b.dispatchNodeUpdatedOutcome(op.Node, op.embeddingOutcome)
+						b.dispatchNodeUpdatedOutcome(op.Node, op.embeddingOutcome, op.vectorWorkOrigin)
 					case OpDeleteNode:
 						for _, id := range op.DeletedEdgeIDs {
-							b.dispatchEdgeDeleted(id)
+							b.dispatchEdgeDeleted(id, op.vectorWorkOrigin)
 						}
-						b.dispatchNodeDeleted(op.NodeID)
+						b.dispatchNodeDeleted(op.NodeID, op.vectorWorkOrigin)
 					case OpCreateEdge:
-						b.dispatchEdgeCreated(op.Edge)
+						b.dispatchEdgeCreated(op.Edge, op.vectorWorkOrigin)
 					case OpUpdateEdge:
-						b.dispatchEdgeUpdated(op.Edge)
+						b.dispatchEdgeUpdated(op.Edge, op.vectorWorkOrigin)
 					case OpDeleteEdge:
-						b.dispatchEdgeDeleted(op.EdgeID)
+						b.dispatchEdgeDeleted(op.EdgeID, op.vectorWorkOrigin)
 					}
 				}
 			}

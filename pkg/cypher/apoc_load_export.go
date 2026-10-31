@@ -4,7 +4,6 @@ package cypher
 import (
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	securitypkg "github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -309,46 +309,53 @@ func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface
 	}, nil
 }
 
-func (e *StorageExecutor) loadJsonFromURL(url string) (interface{}, error) {
+// Open sources without choosing a numeric policy. The load and import data
+// paths decode their own domain; a decoder factory cannot cross this boundary.
+func (e *StorageExecutor) openAPOCJSONURL(url string) (io.ReadCloser, error) {
 	req, err := e.newAPOCRemoteRequest(context.Background(), url)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := e.apocHTTPClient().Do(req)
+	response, err := e.apocHTTPClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP error: %s", resp.Status)
+	if response.StatusCode != http.StatusOK {
+		_ = response.Body.Close()
+		return nil, fmt.Errorf("HTTP error: %s", response.Status)
 	}
-
-	var data interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
+	return response.Body, nil
 }
-
+func (e *StorageExecutor) openAPOCJSONFile(path string) (io.ReadCloser, error) {
+	path, err := e.resolveAPOCLocalImportFilePath(path)
+	if err != nil {
+		return nil, err
+	}
+	return securitypkg.OpenRootedFile(path, os.O_RDONLY, 0)
+}
+func (e *StorageExecutor) loadJsonFromURL(url string) (interface{}, error) {
+	reader, err := e.openAPOCJSONURL(url)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	var value interface{}
+	if err := valueconvert.CypherInputJSON.NewDecoder(reader).Decode(&value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
 func (e *StorageExecutor) loadJsonFromFile(path string) (interface{}, error) {
-	resolvedPath, err := e.resolveAPOCLocalImportFilePath(path)
+	reader, err := e.openAPOCJSONFile(path)
 	if err != nil {
 		return nil, err
 	}
-	file, err := securitypkg.OpenRootedFile(resolvedPath, os.O_RDONLY, 0)
-	if err != nil {
+	defer reader.Close()
+	var value interface{}
+	if err := valueconvert.CypherInputJSON.NewDecoder(reader).Decode(&value); err != nil {
 		return nil, err
 	}
-	defer file.Close()
-
-	var data interface{}
-	if err := json.NewDecoder(file).Decode(&data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
+	return value, nil
 }
 
 // =============================================================================
@@ -491,7 +498,7 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 		"relationships": e.edgesToExportFormat(edges),
 	}
 
-	jsonData, err := json.MarshalIndent(export, "", "  ")
+	jsonData, err := valueconvert.PropertyJSON.MarshalIndent(export, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
@@ -551,7 +558,7 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []in
 		"data":    result.Rows,
 	}
 
-	jsonData, err := json.MarshalIndent(export, "", "  ")
+	jsonData, err := valueconvert.PropertyJSON.MarshalIndent(export, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
@@ -604,7 +611,7 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	csvContent.WriteString("# Nodes\n")
 	csvContent.WriteString("_id,_labels,properties\n")
 	for _, node := range nodes {
-		props, _ := json.Marshal(node.Properties)
+		props, _ := valueconvert.PropertyJSON.Marshal(node.Properties)
 		csvContent.WriteString(fmt.Sprintf("%s,\"%s\",\"%s\"\n",
 			node.ID,
 			strings.Join(node.Labels, ";"),
@@ -614,7 +621,7 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	csvContent.WriteString("\n# Relationships\n")
 	csvContent.WriteString("_id,_type,_start,_end,properties\n")
 	for _, edge := range edges {
-		props, _ := json.Marshal(edge.Properties)
+		props, _ := valueconvert.PropertyJSON.Marshal(edge.Properties)
 		csvContent.WriteString(fmt.Sprintf("%s,%s,%s,%s,\"%s\"\n",
 			edge.ID,
 			edge.Type,
@@ -690,7 +697,7 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 			case nil:
 				values[i] = ""
 			default:
-				jsonVal, _ := json.Marshal(v)
+				jsonVal, _ := valueconvert.PropertyJSON.Marshal(v)
 				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(string(jsonVal), "\"", "\"\""))
 			}
 		}
@@ -842,18 +849,20 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 		return nil, fmt.Errorf("apoc.import.json requires a URL or file path")
 	}
 
-	var data interface{}
-
+	var reader io.ReadCloser
 	if isHTTPSource(urlOrFile) {
-		data, err = e.loadJsonFromURL(urlOrFile)
+		reader, err = e.openAPOCJSONURL(urlOrFile)
 	} else {
-		data, err = e.loadJsonFromFile(urlOrFile)
+		reader, err = e.openAPOCJSONFile(urlOrFile)
 	}
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to load JSON: %w", err)
 	}
-
+	defer reader.Close()
+	var data interface{}
+	if err := valueconvert.PropertyJSON.NewDecoder(reader).Decode(&data); err != nil {
+		return nil, fmt.Errorf("failed to load JSON: %w", err)
+	}
 	// Import the data
 	nodesImported := 0
 	relsImported := 0

@@ -248,7 +248,7 @@ func (e *StorageExecutor) handleBegin(ctx context.Context) (*ExecuteResult, erro
 			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 		}
 	}
-	tx, err := beginTransactionSnapshot(txEngine)
+	tx, err := beginTransactionSnapshot(ctx, txEngine)
 	if err != nil {
 		return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 	}

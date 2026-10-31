@@ -345,7 +345,7 @@ func (r *mutationResolver) mutationTriggerEmbedding(ctx context.Context, regener
 
 	// Clear and regenerate if requested
 	if regen {
-		_, _ = r.DB.ClearAllEmbeddings()
+		_, _ = r.DB.ClearAllEmbeddingsContext(ctx)
 		_ = r.DB.ResetEmbedWorker()
 	}
 
