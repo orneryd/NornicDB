@@ -47,6 +47,7 @@ func RefreshIndexes[Scope RefreshScope](ctx context.Context, scope Scope, reques
 	if request.Node == "" && request.Edge == "" {
 		return nil
 	}
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	svc, deferred, err := scope.PrepareSearchRefresh(ctx, request)
 	if err != nil {
 		return err
@@ -56,10 +57,10 @@ func RefreshIndexes[Scope RefreshScope](ctx context.Context, scope Scope, reques
 	}
 	var nodeErr error
 	if request.Node != "" {
-		nodeErr = svc.RefreshNode(request.Node)
+		nodeErr = svc.RefreshNode(request.Node, origin)
 	}
 	if request.Edge != "" {
-		if edgeErr := svc.RefreshEdge(request.Edge); edgeErr != nil && nodeErr == nil {
+		if edgeErr := svc.RefreshEdge(request.Edge, origin); edgeErr != nil && nodeErr == nil {
 			nodeErr = edgeErr
 		}
 	}

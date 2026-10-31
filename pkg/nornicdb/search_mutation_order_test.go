@@ -98,7 +98,7 @@ func TestSearchMutationDrainsPreserveNewerMutations(t *testing.T) {
 			old := &storage.Node{ID: "source", Properties: map[string]any{"content": "obsolete"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 			_, err := store.CreateNode(old)
 			require.NoError(t, err)
-			db.queueSearchRefreshEvent(searchNodeWrite, "test:source")
+			db.queueSearchRefreshEvent(searchNodeWrite, "test:source", storage.CaptureVectorWorkOrigin())
 			stale, _ := entry.drainPending()
 			newer := storage.CopyNode(old)
 			newer.Properties["content"] = "current"
@@ -106,16 +106,16 @@ func TestSearchMutationDrainsPreserveNewerMutations(t *testing.T) {
 			require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: newer}))
 			switch newerPath {
 			case "event":
-				db.indexNodeFromEvent(&storage.Node{ID: "test:source"})
+				db.indexNodeFromEvent(&storage.Node{ID: "test:source"}, storage.CaptureVectorWorkOrigin())
 				applyQueued(t, entry)
 			case "direct":
-				require.NoError(t, entry.svc.RefreshNode("source"))
+				require.NoError(t, entry.svc.RefreshNode("source", storage.CaptureVectorWorkOrigin()))
 			case "embedded":
-				require.True(t, db.publishEmbeddedNode(&storage.Node{ID: "test:source"}))
+				require.True(t, db.publishEmbeddedNode(&storage.Node{ID: "test:source"}, storage.CaptureVectorWorkOrigin()))
 			}
 			require.Equal(t, 1, entry.svc.EmbeddingCount())
 			require.NoError(t, store.DeleteNode("source"))
-			db.queueSearchRefreshEvent(searchNodeDelete, "test:source")
+			db.queueSearchRefreshEvent(searchNodeDelete, "test:source", storage.CaptureVectorWorkOrigin())
 			applyQueued(t, entry)
 			require.NoError(t, entry.svc.RefreshNodeWithMutation(stale["source"]))
 			require.Zero(t, entry.svc.EmbeddingCount(), "an old drain resurrected a deleted vector")
@@ -126,7 +126,7 @@ func TestSearchMutationDrainsPreserveNewerMutations(t *testing.T) {
 		db, entry, _, _ := newMutationOrderDB(t)
 		entry.retire()
 		for _, kind := range []searchRefreshEventKind{searchNodeWrite, searchNodeDelete, searchRelationshipChange} {
-			db.queueSearchRefreshEvent(kind, "test:source")
+			db.queueSearchRefreshEvent(kind, "test:source", storage.CaptureVectorWorkOrigin())
 		}
 		require.False(t, entry.hasPending())
 		entry.pendingFlushMu.Lock()
@@ -148,10 +148,12 @@ func runStaleRefreshRace(t *testing.T, newerWrite func(node *storage.Node, store
 	barrier.observed = storedContent("alpha")
 	barrier.armed.Store(true)
 	done := make(chan bool, 1)
-	go func() { done <- db.publishEmbeddedNode(&storage.Node{ID: "test:source"}) }()
+	go func() {
+		done <- db.publishEmbeddedNode(&storage.Node{ID: "test:source"}, storage.CaptureVectorWorkOrigin())
+	}()
 	barrier.wait(t)
 	require.NoError(t, newerWrite(node, store))
-	db.indexNodeFromEvent(&storage.Node{ID: "test:source"})
+	db.indexNodeFromEvent(&storage.Node{ID: "test:source"}, storage.CaptureVectorWorkOrigin())
 	applyQueued(t, entry)
 	barrier.open()
 	require.True(t, <-done)
@@ -200,11 +202,11 @@ func TestSearchMutationConcurrentPublicationAndDrains(t *testing.T) {
 				node := &storage.Node{ID: id, Properties: map[string]any{"content": fmt.Sprintf("payload %d %d", worker, i)}, ChunkEmbeddings: [][]float32{{1, 0}}}
 				_ = store.UpdateNode(storage.NodeUpdateRequest{After: node})
 				qualified := &storage.Node{ID: "test:" + id}
-				db.indexNodeFromEvent(qualified)
+				db.indexNodeFromEvent(qualified, storage.CaptureVectorWorkOrigin())
 				stale, _ := entry.drainPending()
-				_ = db.publishEmbeddedNode(qualified)
+				_ = db.publishEmbeddedNode(qualified, storage.CaptureVectorWorkOrigin())
 				if i%2 == 0 {
-					_ = entry.svc.RefreshNode(id)
+					_ = entry.svc.RefreshNode(id, storage.CaptureVectorWorkOrigin())
 				}
 				for _, mutation := range stale {
 					_ = entry.svc.RefreshNodeWithMutation(mutation)
@@ -217,7 +219,7 @@ func TestSearchMutationConcurrentPublicationAndDrains(t *testing.T) {
 	for i := range 8 {
 		id := storage.NodeID(fmt.Sprintf("n%d", i))
 		require.NoError(t, store.DeleteNode(id))
-		db.queueSearchRefreshEvent(searchNodeDelete, "test:"+string(id))
+		db.queueSearchRefreshEvent(searchNodeDelete, "test:"+string(id), storage.CaptureVectorWorkOrigin())
 	}
 	applyQueued(t, entry)
 	for _, mutation := range stale {

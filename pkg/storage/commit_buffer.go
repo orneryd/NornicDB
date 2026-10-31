@@ -224,6 +224,13 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil && op.Node.ID != "" {
+				// The caller has handed this payload to the buffer and no
+				// overlay reader can see it until AppendCommit releases mu.
+				// Bind provenance here with the revision, then keep the body
+				// immutable through ACK, replay and notification capture.
+				if op.vectorOriginBound {
+					op.Node.bindEmbeddingWorkOrigin(op.vectorWorkOrigin)
+				}
 				if c.version.CommitSequence != 0 {
 					state := op.Node.runtimeState()
 					state.embeddingRevision = EmbeddingBodyRevision{bufferedSequence: c.version.CommitSequence}

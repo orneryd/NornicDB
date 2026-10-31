@@ -25,13 +25,13 @@ func BenchmarkSearchMutationReservation(b *testing.B) {
 			for index := 0; index < b.N; index++ {
 				id := ids[counter.Add(1)%uint64(len(ids))]
 				if kind == "node" {
-					mutation := svc.ReserveNodeMutation(storage.NodeID(id))
+					mutation := svc.ReserveNodeMutation(storage.NodeID(id), storage.CaptureVectorWorkOrigin())
 					if !mutation.mutation.retire() {
 						mutation.mutation.discard()
 					}
 					continue
 				}
-				mutation := svc.ReserveEdgeMutation(storage.EdgeID(id))
+				mutation := svc.ReserveEdgeMutation(storage.EdgeID(id), storage.CaptureVectorWorkOrigin())
 				if !mutation.mutation.retire() {
 					mutation.mutation.discard()
 				}

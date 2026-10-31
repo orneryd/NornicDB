@@ -87,9 +87,9 @@ var clusterOwnerCallers = map[string][]string{
 	// Admission entries (the admission boundary, indexMu).
 	"Service.admitClusterVectorLocked":     {"Service.indexNodeAsLocked"},
 	"Service.admitClusterVectorsLocked":    {"Service.reconcileClusterPopulation"},
-	"Service.retireClusterVectorLocked":    {"Service.removePropertyVectorIndexOwned", "Service.removeNodeEntriesLocked"},
-	"Service.beginClusterNodeChangeLocked": {"Service.removePropertyVectorIndexOwned", "Service.indexNodeAsLocked", "Service.removeNodeLocked"},
-	"Service.endClusterNodeChangeLocked":   {"Service.removePropertyVectorIndexOwned", "Service.indexNodeAsLocked", "Service.removeNodeLocked"},
+	"Service.retireClusterVectorLocked":    {"Service.removeNodePropertyVectorLocked", "Service.removeNodeEntriesLocked"},
+	"Service.beginClusterNodeChangeLocked": {"Service.removeNodePropertyVectorLocked", "Service.indexNodeAsLocked", "Service.removeNodeLocked"},
+	"Service.endClusterNodeChangeLocked":   {"Service.removeNodePropertyVectorLocked", "Service.indexNodeAsLocked", "Service.removeNodeLocked"},
 	// Generation construction and publication.
 	"newClusterGeneration":             {"Service.buildClusterGeneration"},
 	"Service.openClusterStaging":       {"Service.triggerClustering", "Service.tryRestoreClusteredWarmupFromDisk"},

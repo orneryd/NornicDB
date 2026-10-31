@@ -60,7 +60,7 @@ func NewConsumerBarrier(engine storage.Engine) *ConsumerBarrier {
 	}
 }
 
-func (b *ConsumerBarrier) DeleteNode(id storage.NodeID) error {
+func (b *ConsumerBarrier) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	b.Pause(&b.DeleteArm, b.DeleteEntered)
-	return b.Engine.DeleteNode(id)
+	return b.Engine.DeleteNode(id, origins...)
 }

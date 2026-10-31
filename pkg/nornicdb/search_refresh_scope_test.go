@@ -101,7 +101,7 @@ func TestDBRefreshScopeNeverDefers(t *testing.T) {
 	require.NotNil(t, svc)
 	_, err = ns.CreateNode(&storage.Node{ID: "node", Labels: []string{"Doc"}, Properties: map[string]any{"content": "deleteword"}})
 	require.NoError(t, err)
-	require.NoError(t, svc.RefreshNode("node"))
+	require.NoError(t, svc.RefreshNode("node", storage.CaptureVectorWorkOrigin()))
 	require.Equal(t, 1, svc.FulltextDocCount())
 	require.NoError(t, ns.DeleteNode("node"))
 	require.NoError(t, search.RefreshIndexes(ctx, dbRefreshScope{db: db, dbName: "nornic", storage: ns}, search.RefreshRequest{Node: "node"}))

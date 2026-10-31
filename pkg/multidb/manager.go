@@ -353,6 +353,10 @@ func (m *DatabaseManager) cleanupLeakedSystemNodes() {
 			continue
 		}
 		engine := storage.NewNamespacedEngine(m.inner, dbName)
+		writer, err := startupWriter(engine)
+		if err != nil {
+			continue
+		}
 		candidateIDs := make(map[storage.NodeID]struct{})
 		scanFailed := false
 		for _, prefix := range candidatePrefixes {
@@ -371,7 +375,7 @@ func (m *DatabaseManager) cleanupLeakedSystemNodes() {
 			continue
 		}
 		for id := range candidateIDs {
-			if err := engine.DeleteNode(id); err == nil {
+			if err := writer.DeleteNode(id); err == nil {
 				removed++
 			}
 		}
@@ -1207,4 +1211,11 @@ func (m *DatabaseManager) readStorageSize(databaseName string, engine storage.En
 	info.sizeMu.RLock()
 	defer info.sizeMu.RUnlock()
 	return info.totalSize, info.nodeSize, info.edgeSize, err
+}
+
+// startupWriter admits the manager's own startup work (legacy migration and
+// leaked-node cleanup) at its boundary; no request carries it.
+func startupWriter(engine storage.Engine) (storage.Engine, error) {
+	_, origin := storage.AdmitVectorWork(context.Background())
+	return storage.EngineWithVectorWorkOrigin(engine, origin)
 }

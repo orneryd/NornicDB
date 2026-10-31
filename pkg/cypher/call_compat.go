@@ -951,7 +951,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 			if err := mutateEdgeWithObservation(store, before, edge); err != nil {
 				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 			}
-			e.notifyEdgeMutated(string(edge.ID))
+			e.notifyEdgeMutated(ctx, string(edge.ID))
 		} else {
 			// Preserve the typed vector in the returned row without a storage
 			// write or mutation of an earlier observation's property map.
@@ -984,7 +984,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		if err := mutateNodeWithObservation(store, before, node); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
-		e.notifyNodeMutated(string(node.ID))
+		e.notifyNodeMutated(ctx, string(node.ID))
 	} else {
 		// Keep result values typed while leaving the stored image untouched.
 		node.Properties = cloneStringAnyMap(node.Properties)
