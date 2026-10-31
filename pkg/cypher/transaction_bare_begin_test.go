@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -63,7 +64,7 @@ func TestBareBegin_StatementsRunInTheTransactionBeginOpened(t *testing.T) {
 				openedID := session.txContext.txID
 				t.Cleanup(func() {
 					if session.txContext != nil && session.txContext.active {
-						_, _ = session.handleRollback()
+						_, _ = session.handleRollback(context.Background(), nil)
 					}
 				})
 
@@ -138,7 +139,7 @@ func TestBareBegin_FailedStatementThenRollbackLeavesNothing(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if session.txContext != nil && session.txContext.active {
-			_, _ = session.handleRollback()
+			_, _ = session.handleRollback(context.Background(), nil)
 		}
 	})
 	_, err = session.Execute(ctx, "CREATE (:BareTx {k: 'before-failure'})", nil)

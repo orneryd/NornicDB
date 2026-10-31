@@ -211,6 +211,18 @@ type freelistClaim struct {
 	key []byte
 }
 
+// txnWork observes what COMMIT will write from txn's staged state here, for
+// CommitWorkMark. It is 0 when there is none.
+func (d *idDictionary) txnWork(txn *badger.Txn) uint64 {
+	d.txnMu.Lock()
+	defer d.txnMu.Unlock()
+	state := d.txnCounters[txn]
+	if state == nil {
+		return 0
+	}
+	return state.nodeMax ^ state.edgeMax<<20 ^ uint64(len(state.nodes))<<40 ^ uint64(len(state.edges))<<48 ^ uint64(len(state.claims))<<56
+}
+
 func newIDDictionary() *idDictionary {
 	d := &idDictionary{
 		freelistTTL:   defaultIDFreelistTTL,

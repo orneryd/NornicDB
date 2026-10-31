@@ -41,6 +41,10 @@ type snapshotLabelCacheKey struct {
 //   - Durability: Badger's WAL ensures persistence
 type BadgerTransaction struct {
 	clientDetached                 atomic.Bool
+	// effects sees commit work changed in place; CommitWorkMark reads it.
+	effects atomic.Uint64
+	// openedWork is the commit work's hash when the transaction finished opening.
+	openedWork uint64
 	commitLogicalID                string
 	commitReleaseAcceptedAuthority func()
 	mu                             trackedRWMutex
@@ -3064,6 +3068,7 @@ func (tx *BadgerTransaction) SetMetadata(metadata map[string]interface{}) error 
 		return localizedError(localization.StorageTransactionMetadataTooLarge(totalSize, 2048), nil)
 	}
 
+	tx.effects.Add(1)
 	// Merge through the one per-entry ownership owner. Each merged value is
 	// owned here, so the retained map is the image CDC encodes later.
 	tx.Metadata = ownedEntries(tx.Metadata, metadata)
@@ -3080,6 +3085,10 @@ func (tx *BadgerTransaction) GetMetadata() map[string]interface{} {
 	// replace retained metadata state.
 	return ownedEntries(nil, tx.Metadata)
 }
+
+// NoteEffect records an effect that staged nothing here but took place, for
+// CommitWorkMark.
+func (tx *BadgerTransaction) NoteEffect() { tx.effects.Add(1) }
 
 // OperationCount returns the number of buffered operations.
 func (tx *BadgerTransaction) OperationCount() int {

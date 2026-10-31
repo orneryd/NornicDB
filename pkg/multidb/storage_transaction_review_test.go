@@ -159,8 +159,9 @@ func TestTransactionQuotaWireStatus(t *testing.T) {
 			require.NoError(t, tracker.CommitTransaction(context.Background(), stagedQuotaNode(t, manager, db, "first")))
 			err = tracker.CommitTransaction(context.Background(), stagedQuotaNode(t, manager, db, "rejected"))
 			require.Error(t, err)
-			for _, mapper := range []func(error) (string, string){nornicerrors.Neo4jStatus, nornicerrors.Neo4jCommitStatus} {
-				code, _ := mapper(err)
+			// The commit producer's classification keeps the quota rejection's own status.
+			for _, failure := range []error{err, nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err)} {
+				code, _ := nornicerrors.Neo4jStatus(failure)
 				require.Equal(t, tc.code, code)
 			}
 			require.True(t, nornicerrors.IsCommitRolledBack(err))

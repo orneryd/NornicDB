@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal WAL outcome propagation, 2026-10-26.
 package cypher
 
 import (
@@ -127,6 +128,31 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		e.txContext = member.transaction
 	}
 
+	// Every rejection of the caller's statement, at any stage, fails its explicit
+	// transaction here. A client statement that ends without having executed
+	// through a terminal below has no facts, so its transaction is mixed.
+	var mergeRetryTx *TransactionContext
+	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
+		// The statement is one of the transaction's: its UNIQUE violation is
+		// classified by the same MERGE retry rule as the transaction's COMMIT.
+		mergeRetryTx = e.txContext
+		recordedBefore := mergeRetryTx.mergeRetry.recorded()
+		defer func() {
+			if cause := recover(); cause != nil {
+				e.failTransaction(ctx, fmt.Errorf("statement panicked: %v", cause))
+				panic(cause)
+			}
+			// Transparent routing (USE, PROFILE) records through its own entry.
+			if clientText && mergeRetryTx.mergeRetry.recorded() == recordedBefore {
+				mergeRetryTx.mergeRetry = mixedMergeRetry
+			}
+			mergeRetryTx.settleMergeRetry()
+			retErr = classifyMergeRetry(ctx, e.analyzer, mergeRetryTx.mergeRetry, retErr)
+			e.failTransaction(ctx, retErr)
+		}()
+	}
+
+	var statement *statementExecutionContext
 	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		if invalid, ok := source.Err.(*cyphertext.UnicodeSourceError); ok {
@@ -136,7 +162,17 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	// Retain the original credential context across admission and routing errors.
 	defer func(original string) {
-		redactAdminCommandErrorSource(source, original, &retErr, statementCredentials(ctx))
+		var owner context.Context
+		if statement != nil {
+			owner = statement
+		}
+		completeStatementTerminalOutcome(owner, &result, &retErr, func() {
+			redactAdminCommandErrorSource(source, original, &retErr, statementCredentials(ctx))
+			retErr = nornicerrors.ProjectTerminalOutcomeMessages(retErr, func(display error) error {
+				redactAdminCommandErrorSource(source, original, &display, statementCredentials(ctx))
+				return display
+			})
+		})
 	}(cypher)
 	// One classification decides both the credential context and the
 	// collected statistics: an administration command carries the caller's
@@ -159,17 +195,6 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			retErr = nornicerrors.MarkStatementTimeout(retErr, context.Cause(deadlineCtx))
 		}
 	}()
-	// Every rejection of the caller's statement fails its explicit transaction,
-	// including errors before parsing, routing or the system statement policy.
-	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
-		defer func() {
-			if cause := recover(); cause != nil {
-				e.failTransaction(ctx, fmt.Errorf("statement panicked: %v", cause))
-				panic(cause)
-			}
-			e.failTransaction(ctx, retErr)
-		}()
-	}
 	defer func() {
 		if result != nil && retErr == nil && result.MapKeyOrders == nil {
 			if orders := snapshotMapKeyOrders(ctx); len(orders) > 0 {
@@ -210,7 +235,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if elapsed == nil {
 		elapsed = time.Since
 	}
-	statement := e.newStatementExecutionContext(ctx, slowStart.UTC(), outcome)
+	statement = e.newStatementExecutionContext(ctx, slowStart.UTC(), outcome)
 	embeddingState := statement.state
 	var embeddingGeneration uint64
 	if embeddingState != nil {
@@ -236,13 +261,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 				}
 			}
 		}
-		if err := running.memoryFailure(); err != nil && !statement.outcome.committed.Load() {
+		if err := running.memoryFailure(); err != nil && !statement.outcome.committed() {
 			if statementErr != nil && (statementErr == context.Canceled || statementErr == context.DeadlineExceeded) {
-				result, retErr = nil, statementErr
+				result, retErr = nil, statement.outcome.retainTerminalFailures(statementErr)
 			} else {
-				result, retErr = nil, err
+				result, retErr = nil, statement.outcome.retainTerminalFailures(err)
 			}
-		} else if retErr == nil && result != nil && running.memory != nil && !statement.outcome.committed.Load() {
+		} else if retErr == nil && result != nil && running.memory != nil && !statement.outcome.committed() {
 			// A nested execution hands its retained rows to its parent scope.
 			if err := running.memory.handOver(running.memoryMark, result.Rows); err != nil {
 				result, retErr = nil, err
@@ -250,9 +275,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			running.memory = nil
 		}
 		terminated := running.done()
-		if !statement.outcome.committed.Load() {
+		if !statement.outcome.committed() {
 			if terminated {
-				result, retErr = nil, transactionTerminatedError()
+				result, retErr = nil, statement.outcome.retainTerminalFailures(transactionTerminatedError())
 			} else if retErr == nil && statementErr != nil {
 				result, retErr = nil, statementErr
 			}
@@ -267,6 +292,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 	}()
 	defer func() {
+		// Author: Codex, NOR-180. The producer already recorded every failed
+		// terminal append, before a callback or aggregate could discard it.
+		// Restore those outcomes before rejection logs and completion statistics.
+		if statement.outcome.hasTerminalFailures() {
+			retErr = statement.outcome.retainTerminalFailures(retErr)
+			result = nil
+		}
 		executionDuration = elapsed(slowStart)
 		dur := executionDuration
 		redactAdminCommandError(originalCypher, &retErr, statementCredentials(ctx))
@@ -471,6 +503,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			return routed.executeRouted(ctx, cypher, params)
 		}
 	}
+	// An administration statement may have just replaced the transaction.
+	if mergeRetryTx != nil {
+		mergeRetryTx = e.txContext
+	}
 
 	// A cached per-database executor is shared by every auto-commit client of
 	// its database. A bare transaction command must not open a transaction on
@@ -582,6 +618,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 
 		// The gateway alone selects the existing coordinator or rejects a native owner.
+		recordMergeRetryExecution(ctx, mergeRetryTx, cypher)
 		result, execErr := e.executeViaFabricWithTx(ctx, cypher, mergedParams, nil, true, preparedFabric)
 		if execErr != nil {
 			return nil, execErr
@@ -699,9 +736,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
 			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
 				if metadataErr := applyTransactionMetadata(ctx, tx); metadataErr != nil {
-					_, _ = e.handleRollback()
-					return nil, metadataErr
+					_, cleanup := e.handleRollback(ctx, metadataErr)
+					return nil, nornicerrors.CombineTerminalOutcomes(metadataErr, cleanup)
 				}
+				tx.MarkCommitWorkOpened()
 			}
 		}
 		if err == nil && e.txContext != nil && e.txContext.active && e.txContext.running == nil {
@@ -741,8 +779,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	if e.txContext != nil && e.txContext.active {
 		if runErr := registerStatement(); runErr != nil {
-			_, _ = e.handleRollback()
-			return nil, runErr
+			_, cleanup := e.handleRollback(ctx, runErr)
+			return nil, nornicerrors.CombineTerminalOutcomes(runErr, cleanup)
 		}
 	}
 
@@ -968,6 +1006,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if e.txContext != nil && e.txContext.active {
 		ctx = withExpressionFailureSlot(ctx)
 		ctx = withStatementClausePlans(ctx, cypher)
+		recordMergeRetryExecution(ctx, mergeRetryTx, cypher)
 		result, err := e.executeInTransaction(ctx, cypher, upperQuery)
 		if failure := getExpressionFailure(ctx); failure != nil {
 			return result, failure

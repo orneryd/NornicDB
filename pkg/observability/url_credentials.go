@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -168,7 +169,7 @@ func redactClientError(err error, credentials []string) error {
 		for _, cause := range causes {
 			safe = append(safe, redactClientError(cause, credentials))
 		}
-		safeCause = errors.Join(safe...)
+		safeCause = compose.Outcomes(nil, safe...)
 	} else if cause := errors.Unwrap(err); cause != nil {
 		safeCause = redactClientError(cause, credentials)
 	}
