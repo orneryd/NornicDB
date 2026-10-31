@@ -25,7 +25,7 @@ checker remains informative and unchanged; full `make verify` is not claimed.
   fail-first test reproduced `context canceled` from native owner completion.
   Submission must arbitrate its current context exactly once; an accepted
   owner's native completion must not retain the preparation waiter's context.
-- [ ] Publish rebased head and update PR/Linear AC, test matrix and evidence.
+- [x] Publish rebased head and update PR/Linear AC, test matrix and evidence.
 - [x] Correct generic entity/diagnostic copies without changing Go scalar/list
   types or nil container identity; remove redundant prepared diagnostic cloning.
 - [x] Remove the unnecessary per-candidate projected-scan copy. Its callback is
@@ -34,7 +34,8 @@ checker remains informative and unchanged; full `make verify` is not claimed.
 - [x] Distinguish storage-cache warm-up from stream retention in the existing
   memory test. The limit remains 16 MiB; an out-of-tree retaining-row mutation
   still fails at about 38 MB. Three integrated repetitions pass.
-- [ ] Complete workspace cleanup after verification and preserve required logs.
+- [x] Complete scoped workspace cleanup after verification, preserve required logs
+  and report the active-work/cache/Docker/immutable cleanup deferrals below.
 
 Original failing evidence is retained outside the worktree in
 `~/.local/share/nornicdb-pr-readiness/next-after1655/release-projected-red.log`.
@@ -169,3 +170,20 @@ Final gate: full `make test` exit 0 in 677.4 seconds, source unchanged, tree
 125 Go-cached). The qualification report records fingerprints, measured ownership
 costs, cached/unexecuted checks, negative controls and the incomplete final remote
 scan. Documentation below the gate records results; runtime/test source is unchanged.
+
+Published implementation commit `7189928a86e153e0d92aba72f2f9e317cc4f676b` to
+PR #1548 with an exact lease on the old remote head. PR description/AC evidence
+is updated and NOR-34 is Test Complete (not Merged/Released), assigned to Tim on
+v1.4.4. The normal unchanged advisory commit hook also reached its comparison
+deadline; the authorized completed-inventory fallback remains explicit.
+
+Cleanup: five expanded extraction snapshots and 28 obsolete experiment binaries
+were compressed and CRC-verified before original copies were removed. Raw logs,
+profiles, reproduction sources and final release/current benchmark binaries remain.
+Evidence footprint decreased from about 11 GiB to 3.1 GiB. The managed baseline
+worktree archive was rejected because another active task still uses it; preserve
+that checkout and the shared Go cache. Other active worktrees and the open PR
+branch remain. Docker is unavailable (no images were created by this PR). No
+matching task-prefix files remain in /private/tmp. The previously immutable old
+archive residual remains untouched; no flag change was authorized. Deferrals are
+recorded in the external cleanup receipt, not bypassed.

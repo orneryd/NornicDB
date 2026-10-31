@@ -116,3 +116,21 @@ External reproducibility evidence: `~/.local/share/nornicdb-pr-readiness/next-af
 contains source/binary receipts, ABBA raw samples, CPU profiles, initial and refreshed
 candidate ledgers, fail-first release controls, final gate full output and hub-scan
 mutation/restoration receipts. Logs from canceled/interrupted runs are not passes.
+
+
+## Publication and evidence retention
+
+Implementation commit `7189928a86e153e0d92aba72f2f9e317cc4f676b` is pushed to
+PR #1548. Its normal unchanged advisory hook reached the comparison deadline;
+that additional attempt is incomplete, not a clean result. NOR-34 is Test Complete
+pending review/merge and release. Final documentation records only this evidence;
+qualified runtime/test inputs are unchanged.
+
+Expanded snapshot and retired experiment-binary artifacts are now compressed
+under the external `cleanup/` directory, verified before originals were removed.
+Raw results, profiles, repro sources, ledgers and final release/current benchmark
+binaries remain directly accessible. Restore a referenced retired artifact from
+its named cleanup archive if needed. Active worktrees/shared Go cache are
+preserved after the app rejected baseline archival as still in use. Docker was
+unavailable; no image/container was created for this PR. No remote branch or
+merge policy was changed, and the PR is not merged.

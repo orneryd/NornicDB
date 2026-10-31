@@ -300,3 +300,9 @@ Result/error assertions remain, and the existing short-mode skip was removed.
 This proves sensitivity to the original allocating hub scan; it is not a general
 CPU bound against arbitrary allocation-free alternative algorithms. The subsequent full make test passes on unchanged source, including this
 correction; its exact inputs and cache usage are in the qualification report.
+
+
+The normal commit hook on implementation commit `7189928a8` also ended with
+`Duplicate comparison deadline reached` in advisory mode. It did not emit a clean
+result. The complete inventories and concrete dispositions above remain the
+explicitly authorized guide; no hook or analyzer was altered to commit.
