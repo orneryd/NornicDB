@@ -5,10 +5,12 @@
 // walks back from every function whose source overlaps a changed line range to
 // the Test functions that reach it. A closure counts as reached by the function
 // that declares it, so subtests passed to t.Run belong to their Test. Edges
-// whose caller is a standard-library dispatch hub are cut, as in the JSON escape
-// census: package testing (tRunner calls every subtest body through one function
-// value), log and log/slog (they dispatch to every handler type), and go-logr
-// (its slog bridge does the same).
+// whose caller is outside this module are cut: the standard library and third
+// party code dispatch through interfaces (fmt to every Stringer and error,
+// testing's tRunner to every subtest, slog to every handler), which joins
+// unrelated code. So reach through such a dispatch alone is not seen. A test
+// whose package does not depend on a changed package cannot reach a change; the
+// report counts any such selection, and the tool's controls require none.
 //
 // Usage: nor160-testselect <ranges file> <package pattern>...
 // A ranges line is: <module-relative file> <first line> <last line>.
@@ -32,17 +34,20 @@ import (
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
+const modulePath = "github.com/orneryd/nornicdb"
+
 const storagePkg = "github.com/orneryd/nornicdb/pkg/storage"
 
 type span struct{ first, last int }
 
 type report struct {
-	ChangedFunctions int                 `json:"changed_functions"`
-	UnmatchedRanges  []string            `json:"unmatched_ranges"`
-	Tests            map[string][]string `json:"tests"`
-	TestCounts       map[string][2]int   `json:"selected_of_total"`
-	Runs             map[string]string   `json:"run_regex"`
-	Controls         map[string]bool     `json:"controls"`
+	ChangedFunctions     int                 `json:"changed_functions"`
+	UnmatchedRanges      []string            `json:"unmatched_ranges"`
+	Tests                map[string][]string `json:"tests"`
+	TestCounts           map[string][2]int   `json:"selected_of_total"`
+	Runs                 map[string]string   `json:"run_regex"`
+	Controls             map[string]bool     `json:"controls"`
+	ImpossibleSelections []string            `json:"impossible_selections"`
 }
 
 func main() {
@@ -67,6 +72,33 @@ func main() {
 	pkgs, err := packages.Load(cfg, os.Args[2:]...)
 	if err != nil {
 		panic(err)
+	}
+	// The compiled import graph, for the dependency control.
+	imports := map[string]map[string]bool{}
+	packages.Visit(pkgs, nil, func(p *packages.Package) {
+		path := strings.TrimSuffix(p.PkgPath, "_test")
+		if imports[path] == nil {
+			imports[path] = map[string]bool{}
+		}
+		for _, dep := range p.Imports {
+			imports[path][strings.TrimSuffix(dep.PkgPath, "_test")] = true
+		}
+	})
+	var dependsOn func(from, to string, seen map[string]bool) bool
+	dependsOn = func(from, to string, seen map[string]bool) bool {
+		if from == to {
+			return true
+		}
+		if seen[from] {
+			return false
+		}
+		seen[from] = true
+		for dep := range imports[from] {
+			if dependsOn(dep, to, seen) {
+				return true
+			}
+		}
+		return false
 	}
 	prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
 	prog.Build()
@@ -175,6 +207,24 @@ func main() {
 	for _, name := range []string{"TestNOR160SelectControlDirect", "TestNOR160SelectControlInterface", "TestNOR160SelectControlSubtest"} {
 		r.Controls["selected: "+name] = exists[name] && has(name)
 	}
+	// A selected test's package must depend on a package holding a changed function.
+	changedPkgs := map[string]bool{}
+	for name := range ranges {
+		changedPkgs[modulePath+"/"+strings.TrimSuffix(filepath.ToSlash(filepath.Dir(name)), "/")] = true
+	}
+	for pkg := range r.Tests {
+		reaches := false
+		for target := range changedPkgs {
+			if dependsOn(pkg, target, map[string]bool{}) {
+				reaches = true
+			}
+		}
+		if !reaches {
+			r.ImpossibleSelections = append(r.ImpossibleSelections, pkg)
+		}
+	}
+	sort.Strings(r.ImpossibleSelections)
+	r.Controls["no selected test in a package without a dependency on a changed package"] = len(r.ImpossibleSelections) == 0
 	r.Controls["not selected: TestNOR160SelectControlUnrelated"] = exists["TestNOR160SelectControlUnrelated"] && !has("TestNOR160SelectControlUnrelated")
 	out, err := json.MarshalIndent(r, "", " ")
 	if err != nil {
@@ -185,15 +235,10 @@ func main() {
 
 func cutCaller(f *ssa.Function) bool {
 	if f == nil || f.Pkg == nil {
-		return false
-	}
-	switch path := f.Pkg.Pkg.Path(); {
-	case path == "testing", path == "log", path == "log/slog":
-		return true
-	case path == "github.com/go-logr/logr" || strings.HasPrefix(path, "github.com/go-logr/logr/"):
 		return true
 	}
-	return false
+	path := f.Pkg.Pkg.Path()
+	return path != modulePath && !strings.HasPrefix(path, modulePath+"/")
 }
 
 func dedupe(names []string) []string {
