@@ -2,11 +2,11 @@ package search
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -203,7 +203,7 @@ func (s *Service) preparePopulationArtifacts() error {
 }
 
 func (s *Service) finishPopulationPersistence(ctx context.Context, buildErr error, pending, tailChanged bool) error {
-	buildErr = errors.Join(buildErr, s.populationContextError(ctx))
+	buildErr = compose.Outcomes(buildErr, s.populationContextError(ctx))
 	w := s.population.work
 	if w == nil {
 		return buildErr
@@ -219,7 +219,7 @@ func (s *Service) finishPopulationPersistence(ctx context.Context, buildErr erro
 	}
 	s.persistRunMu.Lock()
 	defer s.persistRunMu.Unlock()
-	buildErr = errors.Join(buildErr, s.populationContextError(ctx))
+	buildErr = compose.Outcomes(buildErr, s.populationContextError(ctx))
 	defer func() {
 		s.mu.Lock()
 		s.population.paths = [3]string{}
@@ -278,14 +278,14 @@ func (s *Service) publishPopulationArtifacts(ctx context.Context, w *populationA
 		if resultErr == nil && vfs != nil && newVectorFile {
 			var err error
 			vfs.file, err = security.OpenRootedFile(w.canonical[1]+".vec", os.O_RDWR|os.O_APPEND, 0o644)
-			resultErr = errors.Join(resultErr, err)
+			resultErr = compose.Outcomes(resultErr, err)
 		}
 		if resultErr != nil {
 			for i := len(moves) - 1; i >= 0; i-- {
 				m := moves[i]
-				resultErr = errors.Join(resultErr, m.root.Rename(m.target, m.staged))
+				resultErr = compose.Outcomes(resultErr, m.root.Rename(m.target, m.staged))
 				if m.hadPrevious {
-					resultErr = errors.Join(resultErr, m.root.Rename(m.backup, m.target))
+					resultErr = compose.Outcomes(resultErr, m.root.Rename(m.backup, m.target))
 				}
 			}
 		}
@@ -298,7 +298,7 @@ func (s *Service) publishPopulationArtifacts(ctx context.Context, w *populationA
 				if vfs.file == nil {
 					var err error
 					vfs.file, err = security.OpenRootedFile(path, os.O_RDWR|os.O_APPEND, 0o644)
-					resultErr = errors.Join(resultErr, err)
+					resultErr = compose.Outcomes(resultErr, err)
 				}
 				vfs.vecPath = path
 			}

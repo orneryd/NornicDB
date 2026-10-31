@@ -7,6 +7,7 @@ type StatementEffects struct{ data *statementSyntaxData }
 
 type statementEffectsData struct {
 	writes            bool
+	merges            bool
 	calls             []statementCallData
 	remoteReadOnly    bool
 	readOnly          bool
@@ -38,6 +39,11 @@ func (syntax StatementSyntax) Effects() StatementEffects { return StatementEffec
 // Writes reports an updating clause or command, independent of procedure modes.
 func (effects StatementEffects) Writes() bool {
 	return effects.data != nil && effects.data.effects.writes
+}
+
+// Merges reports a MERGE clause anywhere in the statement.
+func (effects StatementEffects) Merges() bool {
+	return effects.data != nil && effects.data.effects.merges
 }
 
 // CallCount returns the number of procedure invocations, including nested calls.
@@ -120,6 +126,9 @@ func (syntax StatementSyntax) collectEffects() statementEffectsData {
 			if explained == 0 && hasBody {
 				result.executableQueries = append(result.executableQueries, node.id)
 			}
+		}
+		if node.Rule() == CypherParserRULE_mergeSt {
+			result.merges = true
 		}
 		switch node.Rule() {
 		case CypherParserRULE_updatingStatement, CypherParserRULE_schemaCommand, CypherParserRULE_administrationCommand, CypherParserRULE_privilegeCommand, CypherParserRULE_terminateCommand:
