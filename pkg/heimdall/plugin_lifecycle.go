@@ -21,7 +21,7 @@ func (p *LoadedHeimdallPlugin) signalStop() error {
 func (p *LoadedHeimdallPlugin) dispose() error {
 	return p.disposeOnce.Do(func() error {
 		if queue := globalEventDispatcher.detachPluginQueue(p); queue != nil {
-			<-queue.done
+			<-queue.worker.Done()
 		}
 		if err := p.Plugin.Shutdown(); err != nil {
 			return fmt.Errorf("failed to shutdown %s: %w", p.Plugin.Name(), err)

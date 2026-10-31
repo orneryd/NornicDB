@@ -2067,13 +2067,14 @@ type dbEventDispatcher struct {
 	// lifecycleMu keeps restart out until Stop has joined and swept its generation.
 	lifecycleMu sync.Mutex
 
-	mu           sync.RWMutex
-	running      bool
-	events       chan databaseEventWork
-	done         chan struct{}
+	mu      sync.RWMutex
+	running bool
+	events  chan databaseEventWork
+	// gen is the current dispatcher generation's owner: its pointer is the
+	// generation identity, its cancellation is the stop signal and the
+	// ingress loop is its accepted work, which stop joins.
+	gen          *lifecycle.WorkLifetime
 	pluginQueues map[string]*pluginEventQueue
-
-	ingressDone chan struct{}
 
 	// afterQueueSnapshot is a test barrier, set before starting publishers.
 	afterQueueSnapshot func()
@@ -2081,7 +2082,7 @@ type dbEventDispatcher struct {
 
 var globalEventDispatcher = &dbEventDispatcher{
 	events:       make(chan databaseEventWork, 1000), // Buffer up to 1000 events
-	done:         make(chan struct{}),
+	gen:          &lifecycle.WorkLifetime{},
 	pluginQueues: make(map[string]*pluginEventQueue),
 }
 
@@ -2094,7 +2095,8 @@ type pluginEventQueue struct {
 	hook  DatabaseEventHook
 	ch    *eventchannel.Channel[databaseEventWork]
 	owner *LoadedHeimdallPlugin
-	done  chan struct{}
+	// worker is the queue worker's one completion; disposal joins it.
+	worker lifecycle.OnceCompletion
 }
 
 // Retain transport work separately from the published event. Every subscriber
@@ -2121,15 +2123,18 @@ func (d *dbEventDispatcher) start() {
 		return
 	}
 
+	generation := &lifecycle.WorkLifetime{}
+	if !generation.Enter() {
+		return
+	}
 	d.running = true
 	d.events = make(chan databaseEventWork, 1000)
-	d.done = make(chan struct{})
-	d.ingressDone = make(chan struct{})
+	d.gen = generation
 	d.pluginQueues = make(map[string]*pluginEventQueue)
-	events, generation, ingressDone := d.events, d.done, d.ingressDone
+	events, stopped := d.events, generation.Context().Done()
 
 	go func() {
-		defer close(ingressDone)
+		defer generation.Leave()
 		defer func() {
 			// stop excludes publishers before closing this generation. Release
 			// retained ingress work that will no longer be dispatched.
@@ -2148,7 +2153,7 @@ func (d *dbEventDispatcher) start() {
 			select {
 			case event := <-events:
 				d.dispatchEventToPlugins(event, generation)
-			case <-generation:
+			case <-stopped:
 				return
 			}
 		}
@@ -2171,12 +2176,12 @@ func (d *dbEventDispatcher) stop() {
 	}
 
 	d.running = false
-	close(d.done)
-	ingressDone := d.ingressDone
+	generation := d.gen
 	d.mu.Unlock()
-	// Retire the producer before sweeping its queues. An in-flight dispatch
+	// Retire the producer before sweeping its queues: the generation's stop
+	// seals and cancels it, then joins the ingress loop. An in-flight dispatch
 	// can finish, but its generation can no longer create a queue.
-	<-ingressDone
+	<-generation.BeginStop(nil)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, queue := range d.pluginQueues {
@@ -2186,7 +2191,7 @@ func (d *dbEventDispatcher) stop() {
 }
 
 // dispatchEventToPlugins sends an event to all plugins that implement DatabaseEventHook.
-func (d *dbEventDispatcher) dispatchEventToPlugins(work databaseEventWork, generation <-chan struct{}) {
+func (d *dbEventDispatcher) dispatchEventToPlugins(work databaseEventWork, generation *lifecycle.WorkLifetime) {
 	if work.release != nil {
 		defer work.release()
 	}
@@ -2209,17 +2214,17 @@ func (d *dbEventDispatcher) ensurePluginQueueForPlugin(lp *LoadedHeimdallPlugin)
 	}
 	if hook, ok := lp.Plugin.(DatabaseEventHook); ok {
 		d.mu.RLock()
-		generation := d.done
+		generation := d.gen
 		d.mu.RUnlock()
 		d.ensurePluginQueue(lp.Plugin.Name(), hook, generation, lp)
 	}
 }
 
-func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHook, generation <-chan struct{}, owners ...*LoadedHeimdallPlugin) *pluginEventQueue {
+func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHook, generation *lifecycle.WorkLifetime, owners ...*LoadedHeimdallPlugin) *pluginEventQueue {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if !d.running || generation != d.done {
+	if !d.running || generation != d.gen {
 		return nil
 	}
 	var owner *LoadedHeimdallPlugin
@@ -2241,44 +2246,42 @@ func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHoo
 		hook:  hook,
 		ch:    eventchannel.New[databaseEventWork](defaultDatabaseEventQueue),
 		owner: owner,
-		done:  make(chan struct{}),
 	}
 	d.pluginQueues[name] = queue
 	if owner != nil {
 		owner.eventQueue = queue
 	}
 
-	go func(q *pluginEventQueue) {
-		defer close(q.done)
-		for work := range q.ch.Events() {
+	go q.worker.Run(func() {
+		for work := range queue.ch.Events() {
 			func() {
 				if work.release != nil {
 					defer work.release()
 				}
 				defer func() {
 					if r := recover(); r != nil {
-						logHeimdallPrintf(slog.LevelError, "[Heimdall] DatabaseEventHook panic in %s: %v", q.name, r)
+						logHeimdallPrintf(slog.LevelError, "[Heimdall] DatabaseEventHook panic in %s: %v", queue.name, r)
 					}
 				}()
-				q.hook.OnDatabaseEvent(work.event)
+				queue.hook.OnDatabaseEvent(work.event)
 			}()
 		}
-	}(queue)
+	})
 	return queue
 }
 
 func (d *dbEventDispatcher) enqueueEvent(name string, hook DatabaseEventHook, event *DatabaseEvent) {
 	d.mu.RLock()
-	generation := d.done
+	generation := d.gen
 	d.mu.RUnlock()
 	d.enqueueEventForGeneration(name, hook, event, generation)
 }
 
-func (d *dbEventDispatcher) enqueueEventForGeneration(name string, hook DatabaseEventHook, event *DatabaseEvent, generation <-chan struct{}) {
+func (d *dbEventDispatcher) enqueueEventForGeneration(name string, hook DatabaseEventHook, event *DatabaseEvent, generation *lifecycle.WorkLifetime) {
 	d.enqueueEventWorkForGeneration(name, hook, event, context.Background(), generation)
 }
 
-func (d *dbEventDispatcher) enqueueEventWorkForGeneration(name string, hook DatabaseEventHook, event *DatabaseEvent, parent context.Context, generation <-chan struct{}, owners ...*LoadedHeimdallPlugin) {
+func (d *dbEventDispatcher) enqueueEventWorkForGeneration(name string, hook DatabaseEventHook, event *DatabaseEvent, parent context.Context, generation *lifecycle.WorkLifetime, owners ...*LoadedHeimdallPlugin) {
 	queue := d.ensurePluginQueue(name, hook, generation, owners...)
 	if queue == nil {
 		return

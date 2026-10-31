@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/pluginbuild"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -309,7 +310,7 @@ func setupHeimdallCoverageGlobals(t *testing.T) {
 	globalPostExecutePool = &postExecuteWorkerPool{}
 	globalEventDispatcher = &dbEventDispatcher{
 		events:       make(chan databaseEventWork, 1000),
-		done:         make(chan struct{}),
+		gen:          &lifecycle.WorkLifetime{},
 		pluginQueues: make(map[string]*pluginEventQueue),
 	}
 }
