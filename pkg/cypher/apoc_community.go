@@ -1,6 +1,8 @@
 // Package cypher implements APOC community detection algorithms.
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 
@@ -35,7 +37,7 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 	rows := graphAlgorithmRows(nodes, communities)
 
 	return &ExecuteResult{
-		Columns: []string{"node", "community"},
+		Columns: columnNames(nodeCommunityColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -107,7 +109,7 @@ func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args
 	rows := graphAlgorithmRows(nodes, communities)
 
 	return &ExecuteResult{
-		Columns: []string{"node", "community"},
+		Columns: columnNames(nodeCommunityColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -190,7 +192,7 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{
 	rows := graphAlgorithmRows(nodes, components)
 
 	return &ExecuteResult{
-		Columns: []string{"node", "componentId"},
+		Columns: columnNames(apocAlgoWccColumns),
 		Rows:    rows,
 	}, nil
 }

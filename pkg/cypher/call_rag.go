@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers are the declared values in procedure_result_headers.go.
+
 import (
 	"context"
 	"encoding/json"
@@ -66,7 +68,7 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) 
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"id", "content", "original_rank", "new_rank", "bi_score", "cross_score", "final_score"},
+		Columns: columnNames(dbRerankColumns),
 		Rows:    make([][]interface{}, 0, len(reranked)),
 	}
 	for _, r := range reranked {
@@ -170,7 +172,7 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"text", "structured", "model", "usage", "latencyMs", "finishReason"},
+		Columns: columnNames(dbInferColumns),
 		Rows: [][]interface{}{{
 			text,
 			structured,
@@ -448,7 +450,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 
 	result := &ExecuteResult{
-		Columns: retrievalResultSchemas(false)[0],
+		Columns: retrievalResultSchemas(retrievalColumns)[0],
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
 	// Of a query split into chunks, how many were searched; 0 and 0 for a
@@ -534,7 +536,7 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage, database
 		pageMap["query_chunks_total"] = int64(page.QueryChunksTotal)
 	}
 	result := &ExecuteResult{
-		Columns: retrievalResultSchemas(false)[1],
+		Columns: retrievalResultSchemas(retrievalColumns)[1],
 		Rows:    [][]interface{}{{pageMap}},
 	}
 	metadata := continuationResultMetadata(page.SearchResponse())

@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"fmt"
 )
@@ -62,7 +64,7 @@ func (e *StorageExecutor) callDbClearQueryCaches() (*ExecuteResult, error) {
 	e.ClearQueryCaches()
 
 	return &ExecuteResult{
-		Columns: []string{"value"},
+		Columns: columnNames(dbClearQueryCachesColumns),
 		Rows: [][]interface{}{
 			{"Query caches cleared"},
 		},
