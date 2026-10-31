@@ -4,7 +4,7 @@
 // with the underlying graph database storage engine.
 package storage
 
-import "maps"
+import "github.com/orneryd/nornicdb/pkg/callerowned"
 
 // Storage defines the interface for graph database operations.
 type Storage interface {
@@ -96,7 +96,47 @@ func NewInMemoryStorage() *InMemoryStorage {
 	}
 }
 
+// CallerCopy is the APOC node shell of the single ownership implementation
+// (pkg/callerowned): labels and every property value are the caller's.
+func (n *Node) CallerCopy() any { return n.callerOwned() }
+
+func (n *Node) callerOwned() *Node {
+	if n == nil {
+		return nil
+	}
+	return &Node{ID: n.ID, Labels: callerowned.Strings(n.Labels), Properties: callerowned.Map(n.Properties)}
+}
+
+// CallerCopy is the APOC relationship shell of the single ownership
+// implementation: every property value is the caller's.
+func (r *Relationship) CallerCopy() any { return r.callerOwned() }
+
+func (r *Relationship) callerOwned() *Relationship {
+	if r == nil {
+		return nil
+	}
+	copied := *r
+	copied.Properties = callerowned.Map(r.Properties)
+	return &copied
+}
+
+func (p *Path) callerOwned() *Path {
+	if p == nil {
+		return nil
+	}
+	return &Path{Nodes: callerowned.Each(p.Nodes, (*Node).callerOwned), Relationships: callerowned.Each(p.Relationships, (*Relationship).callerOwned), Length: p.Length}
+}
+
+// GetNode returns a caller-owned copy; the stored node changes only through
+// the update operations, which use the private node accessor.
 func (s *InMemoryStorage) GetNode(id int64) (*Node, error) {
+	node, err := s.node(id)
+	return node.callerOwned(), err
+}
+
+// node is the private retained authority for reads and mutations inside this
+// storage. Its result never leaves the package uncopied.
+func (s *InMemoryStorage) node(id int64) (*Node, error) {
 	if node, ok := s.nodes[id]; ok {
 		return node, nil
 	}
@@ -104,22 +144,21 @@ func (s *InMemoryStorage) GetNode(id int64) (*Node, error) {
 }
 
 func (s *InMemoryStorage) CreateNode(labels []string, properties map[string]interface{}) (*Node, error) {
-	node := &Node{
-		ID:         s.nextNodeID,
-		Labels:     labels,
-		Properties: properties,
-	}
+	// The store keeps its own image of the caller's labels and properties.
+	node := (&Node{ID: s.nextNodeID, Labels: labels, Properties: properties}).callerOwned()
 	s.nodes[node.ID] = node
 	s.nextNodeID++
-	return node, nil
+	return node.callerOwned(), nil
 }
 
 func (s *InMemoryStorage) UpdateNode(id int64, properties map[string]interface{}) error {
-	node, err := s.GetNode(id)
+	node, err := s.node(id)
 	if err != nil {
 		return err
 	}
-	maps.Copy(node.Properties, properties)
+	for k, v := range properties {
+		node.Properties[k] = callerowned.Value(v)
+	}
 	return nil
 }
 
@@ -133,7 +172,7 @@ func (s *InMemoryStorage) DeleteNode(id int64) error {
 }
 
 func (s *InMemoryStorage) AddLabels(id int64, labels []string) error {
-	node, err := s.GetNode(id)
+	node, err := s.node(id)
 	if err != nil {
 		return err
 	}
@@ -146,7 +185,7 @@ func (s *InMemoryStorage) AddLabels(id int64, labels []string) error {
 }
 
 func (s *InMemoryStorage) RemoveLabels(id int64, labels []string) error {
-	node, err := s.GetNode(id)
+	node, err := s.node(id)
 	if err != nil {
 		return err
 	}
@@ -164,7 +203,14 @@ func (s *InMemoryStorage) RemoveLabels(id int64, labels []string) error {
 	return nil
 }
 
+// GetRelationship returns a caller-owned copy.
 func (s *InMemoryStorage) GetRelationship(id int64) (*Relationship, error) {
+	rel, err := s.relationship(id)
+	return rel.callerOwned(), err
+}
+
+// relationship is the private retained authority for this storage.
+func (s *InMemoryStorage) relationship(id int64) (*Relationship, error) {
 	if rel, ok := s.relationships[id]; ok {
 		return rel, nil
 	}
@@ -172,38 +218,35 @@ func (s *InMemoryStorage) GetRelationship(id int64) (*Relationship, error) {
 }
 
 func (s *InMemoryStorage) CreateRelationship(startID, endID int64, relType string, properties map[string]interface{}) (*Relationship, error) {
-	if _, err := s.GetNode(startID); err != nil {
+	if _, err := s.node(startID); err != nil {
 		return nil, err
 	}
-	if _, err := s.GetNode(endID); err != nil {
+	if _, err := s.node(endID); err != nil {
 		return nil, err
 	}
 
-	rel := &Relationship{
-		ID:         s.nextRelID,
-		Type:       relType,
-		StartNode:  startID,
-		EndNode:    endID,
-		Properties: properties,
-	}
+	// The store keeps its own image of the caller's properties.
+	rel := (&Relationship{ID: s.nextRelID, Type: relType, StartNode: startID, EndNode: endID, Properties: properties}).callerOwned()
 	s.relationships[rel.ID] = rel
 	s.nodeRels[startID] = append(s.nodeRels[startID], rel)
 	s.nodeRels[endID] = append(s.nodeRels[endID], rel)
 	s.nextRelID++
-	return rel, nil
+	return rel.callerOwned(), nil
 }
 
 func (s *InMemoryStorage) UpdateRelationship(id int64, properties map[string]interface{}) error {
-	rel, err := s.GetRelationship(id)
+	rel, err := s.relationship(id)
 	if err != nil {
 		return err
 	}
-	maps.Copy(rel.Properties, properties)
+	for k, v := range properties {
+		rel.Properties[k] = callerowned.Value(v)
+	}
 	return nil
 }
 
 func (s *InMemoryStorage) DeleteRelationship(id int64) error {
-	rel, err := s.GetRelationship(id)
+	rel, err := s.relationship(id)
 	if err != nil {
 		return err
 	}
@@ -221,15 +264,15 @@ func (s *InMemoryStorage) AllNodes() ([]*Node, error) {
 	for _, node := range s.nodes {
 		nodes = append(nodes, node)
 	}
-	return nodes, nil
+	return callerowned.Each(nodes, (*Node).callerOwned), nil
 }
 
 func (s *InMemoryStorage) UpdateNodeLabels(id int64, labels []string) error {
-	node, err := s.GetNode(id)
+	node, err := s.node(id)
 	if err != nil {
 		return err
 	}
-	node.Labels = labels
+	node.Labels = callerowned.Strings(labels)
 	return nil
 }
 
@@ -238,11 +281,11 @@ func (s *InMemoryStorage) AllRelationships() ([]*Relationship, error) {
 	for _, rel := range s.relationships {
 		rels = append(rels, rel)
 	}
-	return rels, nil
+	return callerowned.Each(rels, (*Relationship).callerOwned), nil
 }
 
 func (s *InMemoryStorage) UpdateRelationshipType(id int64, newType string) error {
-	rel, err := s.GetRelationship(id)
+	rel, err := s.relationship(id)
 	if err != nil {
 		return err
 	}
@@ -250,8 +293,14 @@ func (s *InMemoryStorage) UpdateRelationshipType(id int64, newType string) error
 	return nil
 }
 
+// GetNodeRelationships returns caller-owned copies.
 func (s *InMemoryStorage) GetNodeRelationships(nodeID int64, relType string, direction Direction) ([]*Relationship, error) {
-	if _, err := s.GetNode(nodeID); err != nil {
+	rels, err := s.nodeRelationships(nodeID, relType, direction)
+	return callerowned.Each(rels, (*Relationship).callerOwned), err
+}
+
+func (s *InMemoryStorage) nodeRelationships(nodeID int64, relType string, direction Direction) ([]*Relationship, error) {
+	if _, err := s.node(nodeID); err != nil {
 		return nil, err
 	}
 
@@ -282,8 +331,14 @@ func (s *InMemoryStorage) GetNodeRelationships(nodeID int64, relType string, dir
 	return result, nil
 }
 
+// GetNodeNeighbors returns caller-owned copies.
 func (s *InMemoryStorage) GetNodeNeighbors(nodeID int64, relType string, direction Direction) ([]*Node, error) {
-	rels, err := s.GetNodeRelationships(nodeID, relType, direction)
+	neighbors, err := s.nodeNeighbors(nodeID, relType, direction)
+	return callerowned.Each(neighbors, (*Node).callerOwned), err
+}
+
+func (s *InMemoryStorage) nodeNeighbors(nodeID int64, relType string, direction Direction) ([]*Node, error) {
+	rels, err := s.nodeRelationships(nodeID, relType, direction)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +355,7 @@ func (s *InMemoryStorage) GetNodeNeighbors(nodeID int64, relType string, directi
 		}
 
 		if !seen[neighborID] {
-			if neighbor, err := s.GetNode(neighborID); err == nil {
+			if neighbor, err := s.node(neighborID); err == nil {
 				neighbors = append(neighbors, neighbor)
 				seen[neighborID] = true
 			}
@@ -311,16 +366,22 @@ func (s *InMemoryStorage) GetNodeNeighbors(nodeID int64, relType string, directi
 }
 
 func (s *InMemoryStorage) GetNodeDegree(nodeID int64, relType string, direction Direction) (int, error) {
-	rels, err := s.GetNodeRelationships(nodeID, relType, direction)
+	rels, err := s.nodeRelationships(nodeID, relType, direction)
 	if err != nil {
 		return 0, err
 	}
 	return len(rels), nil
 }
 
+// FindShortestPath returns a caller-owned path.
 func (s *InMemoryStorage) FindShortestPath(startID, endID int64, relType string, maxHops int) (*Path, error) {
+	path, err := s.shortestPath(startID, endID, relType, maxHops)
+	return path.callerOwned(), err
+}
+
+func (s *InMemoryStorage) shortestPath(startID, endID int64, relType string, maxHops int) (*Path, error) {
 	if startID == endID {
-		start, err := s.GetNode(startID)
+		start, err := s.node(startID)
 		if err != nil {
 			return nil, err
 		}
@@ -353,13 +414,13 @@ func (s *InMemoryStorage) FindShortestPath(startID, endID int64, relType string,
 			continue
 		}
 
-		neighbors, _ := s.GetNodeNeighbors(currentID, relType, DirectionBoth)
+		neighbors, _ := s.nodeNeighbors(currentID, relType, DirectionBoth)
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				visited[neighbor.ID] = true
 
 				// Find the relationship
-				rels, _ := s.GetNodeRelationships(currentID, relType, DirectionBoth)
+				rels, _ := s.nodeRelationships(currentID, relType, DirectionBoth)
 				for _, rel := range rels {
 					if (rel.StartNode == currentID && rel.EndNode == neighbor.ID) ||
 						(rel.EndNode == currentID && rel.StartNode == neighbor.ID) {
@@ -403,11 +464,11 @@ func (s *InMemoryStorage) FindAllPaths(startID, endID int64, relType string, max
 
 		visited[currentID] = true
 
-		neighbors, _ := s.GetNodeNeighbors(currentID, relType, DirectionBoth)
+		neighbors, _ := s.nodeNeighbors(currentID, relType, DirectionBoth)
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				// Find relationship
-				rels, _ := s.GetNodeRelationships(currentID, relType, DirectionBoth)
+				rels, _ := s.nodeRelationships(currentID, relType, DirectionBoth)
 				for _, rel := range rels {
 					if (rel.StartNode == currentID && rel.EndNode == neighbor.ID) ||
 						(rel.EndNode == currentID && rel.StartNode == neighbor.ID) {
@@ -430,7 +491,7 @@ func (s *InMemoryStorage) FindAllPaths(startID, endID int64, relType string, max
 		visited[currentID] = false
 	}
 
-	start, err := s.GetNode(startID)
+	start, err := s.node(startID)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +504,7 @@ func (s *InMemoryStorage) FindAllPaths(startID, endID int64, relType string, max
 
 	dfs(startID, initialPath, 0)
 
-	return paths, nil
+	return callerowned.Each(paths, (*Path).callerOwned), nil
 }
 
 func (s *InMemoryStorage) BFS(startID int64, relType string, maxDepth int, visitor func(*Node) bool) error {
@@ -455,12 +516,12 @@ func (s *InMemoryStorage) BFS(startID int64, relType string, maxDepth int, visit
 		current := queue[0]
 		queue = queue[1:]
 
-		node, err := s.GetNode(current.nodeID)
+		node, err := s.node(current.nodeID)
 		if err != nil {
 			continue
 		}
 
-		if !visitor(node) {
+		if !visitor(node.callerOwned()) {
 			return nil
 		}
 
@@ -468,7 +529,7 @@ func (s *InMemoryStorage) BFS(startID int64, relType string, maxDepth int, visit
 			continue
 		}
 
-		neighbors, _ := s.GetNodeNeighbors(current.nodeID, relType, DirectionBoth)
+		neighbors, _ := s.nodeNeighbors(current.nodeID, relType, DirectionBoth)
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				visited[neighbor.ID] = true
@@ -487,12 +548,12 @@ func (s *InMemoryStorage) DFS(startID int64, relType string, maxDepth int, visit
 	dfs = func(nodeID int64, depth int) bool {
 		visited[nodeID] = true
 
-		node, err := s.GetNode(nodeID)
+		node, err := s.node(nodeID)
 		if err != nil {
 			return true
 		}
 
-		if !visitor(node) {
+		if !visitor(node.callerOwned()) {
 			return false
 		}
 
@@ -500,7 +561,7 @@ func (s *InMemoryStorage) DFS(startID int64, relType string, maxDepth int, visit
 			return true
 		}
 
-		neighbors, _ := s.GetNodeNeighbors(nodeID, relType, DirectionBoth)
+		neighbors, _ := s.nodeNeighbors(nodeID, relType, DirectionBoth)
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				if !dfs(neighbor.ID, depth+1) {
@@ -535,7 +596,7 @@ func (s *InMemoryStorage) reconstructPath(startID, endID int64, parent map[int64
 
 	currentID := endID
 	for currentID != startID {
-		node, err := s.GetNode(currentID)
+		node, err := s.node(currentID)
 		if err != nil {
 			return nil, err
 		}
@@ -549,7 +610,7 @@ func (s *InMemoryStorage) reconstructPath(startID, endID int64, parent map[int64
 		}
 	}
 
-	start, err := s.GetNode(startID)
+	start, err := s.node(startID)
 	if err != nil {
 		return nil, err
 	}
