@@ -18,7 +18,6 @@ func TestExtractNamespaceFromID_Variants(t *testing.T) {
 
 func TestBadgerEngine_IsDecayEnabled_Toggle(t *testing.T) {
 	be := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = be.Close() })
 
 	// Default: decay is off until explicitly enabled.
 	require.False(t, be.IsDecayEnabled())
@@ -32,7 +31,6 @@ func TestBadgerEngine_IsDecayEnabled_Toggle(t *testing.T) {
 
 func TestBadgerEngine_IsEmbeddingsEnabled_Toggle(t *testing.T) {
 	be := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = be.Close() })
 
 	// Default false on a fresh engine.
 	require.False(t, be.IsEmbeddingsEnabled())
@@ -46,7 +44,6 @@ func TestBadgerEngine_IsEmbeddingsEnabled_Toggle(t *testing.T) {
 
 func TestBadgerEngine_DB_HandleNonNil(t *testing.T) {
 	be := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = be.Close() })
 	require.NotNil(t, be.DB(), "DB() should return the live badger handle")
 }
 
@@ -57,7 +54,6 @@ func TestBytesMetricsSweeper_NameStable(t *testing.T) {
 
 func TestBadgerEngine_InvalidatePendingEmbeddingsIndex_Noop(t *testing.T) {
 	be := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = be.Close() })
 	require.NotPanics(t, func() {
 		be.InvalidatePendingEmbeddingsIndex()
 	})
@@ -71,7 +67,6 @@ func TestBadgerTransaction_HasPendingNodeMutations(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			be := newTestMemoryEngine(t)
-			t.Cleanup(func() { _ = be.Close() })
 			if deletion {
 				// Seed a committed node so we can stage a delete in a fresh tx.
 				_, err := be.CreateNode(&Node{ID: "test:committed", Labels: []string{"L"}})
@@ -95,7 +90,6 @@ func TestBadgerTransaction_HasPendingNodeMutations(t *testing.T) {
 
 func TestReadNodeLabelsInTxn_ReturnsLabels(t *testing.T) {
 	be := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = be.Close() })
 
 	_, err := be.CreateNode(&Node{
 		ID:     "test:ln",
@@ -113,7 +107,6 @@ func TestReadNodeLabelsInTxn_ReturnsLabels(t *testing.T) {
 
 func TestReadNodeLabelsInTxn_MissingNode(t *testing.T) {
 	be := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = be.Close() })
 
 	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
 		_, err := be.readNodeLabelsInTxn(txn, "test:doesnotexist")

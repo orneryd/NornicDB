@@ -33,7 +33,7 @@ func TestBufferedCommitPublicationBeforeReplayListener(t *testing.T) {
 	require.NoError(t, err)
 	var flushErr error
 	require.NoError(t, tx.PublishCommit(context.Background(), CommitPublication{AfterPublication: func() {
-		flushErr = engine.FlushWriteBehind()
+		flushErr = engine.FlushWriteBehind(nil)
 		published = true
 	}}))
 	require.NoError(t, flushErr)
@@ -82,7 +82,7 @@ func TestRejectedBufferedCommitAllowsLaterPublication(t *testing.T) {
 	_, err = accepted.CreateNode(&Node{ID: "test:accepted-publication"})
 	require.NoError(t, err)
 	require.NoError(t, accepted.PublishCommit(context.Background(), CommitPublication{AfterPublication: func() { published = true }}))
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.Equal(t, []NodeID{"test:accepted-publication"}, observed)
 	require.Zero(t, policy.Reserved())
 }

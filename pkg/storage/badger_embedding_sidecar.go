@@ -120,7 +120,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		if hook := embeddingSourceCheckedHook.Load(); hook != nil {
 			(*hook)()
 		}
-		write, releaseWrite, err = b.beginEntityWrite(string(node.ID), false, nil)
+		write, releaseWrite, err = b.beginEntityWrite(context.Background(), string(node.ID), false, nil)
 		if err != nil {
 			return err
 		}
@@ -163,7 +163,7 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node, notification *com
 		// newest body, and no replay of an older one lands over it. The
 		// commits its drain replays are delivered once the order is released.
 		var order orderHold
-		if _, err := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}}); err != nil {
+		if _, err := b.orderAfterBufferedCommits(write.ctx, &order, writtenEntities{nodes: []NodeID{node.ID}}); err != nil {
 			return err
 		}
 		defer order.release()
@@ -173,12 +173,11 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node, notification *com
 	// vectors, write or delete the metadata record at its reserved chunk
 	// index, and remove the pending-embeddings marker. Readers see the old
 	// embedding state or the new one — never a mix.
-	err := b.commitEngineWrite(func(cw *commitWriter) error {
+	err := b.commitEngineWrite(write.ctx, func(cw *commitWriter) error {
 		cw.embeddingOutcome = node
 		cw.notification = notification
-		cw.publishKeys = []any{node.ID}
-		cw.publish = func() {
-			b.cacheDeleteNode(node.ID, nodeCacheAllForms)
+		cw.publishKeys = []any{node.ID, AffectedFact{NodeID: node.ID}}
+		cw.publish = func(images *commitCacheImages) {
 			b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
 		}
 		if err := write.stagePublication(cw); err != nil {

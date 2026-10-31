@@ -12,17 +12,15 @@ import (
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
-// coverageProgram keeps the regression on the analyzer's real typed SSA path.
-func coverageProgram(t *testing.T, source string, packagePaths ...string) (*program, *ssa.Package) {
+// ssaFixture is the one typed-SSA fixture builder: it parses source as a
+// standalone package on the analyzer's real path, with mode selecting the
+// builder features a given fixture needs.
+func ssaFixture(t *testing.T, source, packagePath string, mode ssa.BuilderMode) (*program, *ssa.Package) {
 	t.Helper()
 	set := token.NewFileSet()
 	file, err := parser.ParseFile(set, "coverage.go", source, 0)
 	require.NoError(t, err)
-	packagePath := "pkg/storage"
-	if len(packagePaths) > 0 {
-		packagePath = packagePaths[0]
-	}
-	pkg, _, err := ssautil.BuildPackage(&types.Config{}, set, types.NewPackage(Module+packagePath, file.Name.Name), []*ast.File{file}, ssa.SanityCheckFunctions)
+	pkg, _, err := ssautil.BuildPackage(&types.Config{}, set, types.NewPackage(Module+packagePath, file.Name.Name), []*ast.File{file}, mode)
 	require.NoError(t, err)
 	return &program{fset: set, ssa: pkg.Prog}, pkg
 }
@@ -51,7 +49,7 @@ func TestCallbackCoverageRequiresActualNonemptyArgument(t *testing.T) {
  func alias(b *BadgerEngine)error{callback:=func()error{return b.noop()};other:=callback;if err:=b.withUpdate(other,writtenEntities{});err!=nil{return err};return callback()}
  func separate(b *BadgerEngine)error{if err:=b.withUpdate(func()error{return b.noop()},writtenEntities{});err!=nil{return err};return b.withUpdate(func()error{return b.noop()})}
  `
-	p, pkg := coverageProgram(t, source)
+	p, pkg := ssaFixture(t, source, "pkg/storage", ssa.SanityCheckFunctions)
 	a := &analysis{p: p, acq: &acquirer{p: p, cache: map[flowKey]*flow{}}}
 	for _, tc := range []struct {
 		name string
@@ -75,24 +73,26 @@ func TestCallbackCoverageRequiresActualNonemptyArgument(t *testing.T) {
 }
 
 func TestBoundLockHelperRequiresOriginalReceiverMethod(t *testing.T) {
-	p, pkg := coverageProgram(t, `package storage
+	p, pkg := ssaFixture(t, `package storage
  type BadgerTransaction struct{}
  type Other struct{}
- func(tx *BadgerTransaction) acquireCommitPublicationLocked(){}
+ func(tx *BadgerTransaction) acquireCommitPublicationLocked()error{return nil}
  func(tx *BadgerTransaction) releaseEdgeTypeCountLockLocked(){}
- func(tx *Other) acquireCommitPublicationLocked(){}
+ func(tx *Other) acquireCommitPublicationLocked()error{return nil}
  func sink(){}
- func direct(tx *BadgerTransaction){tx.acquireCommitPublicationLocked();sink()}
- func bound(tx *BadgerTransaction){take:=tx.acquireCommitPublicationLocked;take();sink()}
- func wrongReceiver(tx *Other){take:=tx.acquireCommitPublicationLocked;take();sink()}
+ func direct(tx *BadgerTransaction)error{if err:=tx.acquireCommitPublicationLocked();err!=nil{return err};sink();return nil}
+ func bound(tx *BadgerTransaction)error{take:=tx.acquireCommitPublicationLocked;if err:=take();err!=nil{return err};sink();return nil}
+ func wrongReceiver(tx *Other)error{take:=tx.acquireCommitPublicationLocked;if err:=take();err!=nil{return err};sink();return nil}
  func unused(tx *BadgerTransaction){_ =tx.acquireCommitPublicationLocked;sink()}
- func released(tx *BadgerTransaction){take:=tx.acquireCommitPublicationLocked;take();tx.releaseEdgeTypeCountLockLocked();sink()}
- `)
+ func released(tx *BadgerTransaction)error{take:=tx.acquireCommitPublicationLocked;if err:=take();err!=nil{return err};tx.releaseEdgeTypeCountLockLocked();sink();return nil}
+ func ignored(tx *BadgerTransaction){_ = tx.acquireCommitPublicationLocked();sink()}
+ func failed(tx *BadgerTransaction){if err:=tx.acquireCommitPublicationLocked();err!=nil{sink()}}
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	q := &acquirer{p: p, cache: map[flowKey]*flow{}}
 	for _, tc := range []struct {
 		name string
 		held bool
-	}{{"direct", true}, {"bound", true}, {"wrongReceiver", false}, {"unused", false}, {"released", false}} {
+	}{{"direct", true}, {"bound", true}, {"wrongReceiver", false}, {"unused", false}, {"released", false}, {"ignored", false}, {"failed", false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			fn := pkg.Func(tc.name)
 			found := false
@@ -110,12 +110,12 @@ func TestBoundLockHelperRequiresOriginalReceiverMethod(t *testing.T) {
 }
 
 func TestKeyBuilderPhiRetainsEveryArm(t *testing.T) {
-	p, pkg := coverageProgram(t, `package storage
+	p, pkg := ssaFixture(t, `package storage
  func label(ns,name string)[]byte{return []byte{1}}
  func edge(ns,name string)[]byte{return []byte{2}}
  func known(kind byte)[]byte { builder:=label;if kind==2{builder=edge};return builder("ns","name") }
  func unknown(kind byte, other func(string,string)[]byte)[]byte { builder:=label;if kind==2{builder=other};return builder("ns","name") }
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	for _, tc := range []struct {
 		name        string
 		wantUnknown bool
@@ -149,7 +149,7 @@ func TestKeyBuilderPhiRetainsEveryArm(t *testing.T) {
 }
 
 func TestSelectorFactRequiresDominatingBranch(t *testing.T) {
-	_, pkg := coverageProgram(t, `package storage
+	_, pkg := ssaFixture(t, `package storage
  func sink(){}
  func bypass(kind byte,bypass bool){
   if bypass {goto joined}
@@ -159,7 +159,7 @@ func TestSelectorFactRequiresDominatingBranch(t *testing.T) {
   sink()
  }
  func dominated(kind byte){if kind==2{sink()}}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	for _, tc := range []struct {
 		name string
 		want int
@@ -181,10 +181,10 @@ func TestSelectorFactRequiresDominatingBranch(t *testing.T) {
 }
 
 func TestConditionalShapeIdentityRetainsDistinctSSAValues(t *testing.T) {
-	_, pkg := coverageProgram(t, `package storage
+	_, pkg := ssaFixture(t, `package storage
  func first(kind byte){}
  func second(kind byte){}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	first, second := pkg.Func("first").Params[0], pkg.Func("second").Params[0]
 	require.Equal(t, first.String(), second.String(), "this regression requires same printed SSA names")
 	a := bytesShape([]byteSrc{{known: true, val: 1, param: -1}})

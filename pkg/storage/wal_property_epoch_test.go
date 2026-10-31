@@ -57,7 +57,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 				_, err := source.CreateNode(node)
 				require.NoError(t, err)
 			}
-			require.NoError(t, source.FlushWriteBehind())
+			require.NoError(t, source.FlushWriteBehind(nil))
 			baselinePath := filepath.Join(t.TempDir(), "before.snapshot")
 			require.NoError(t, SaveSnapshot(baseline, baselinePath))
 			cfg := DefaultWALConfig()
@@ -166,7 +166,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			check("a2", "b2") // retained entries keep their original epoch
 			update("epoch:a", map[string]any{"alpha": "a3", "beta": "b3"})
 			check("a3", "b3") // first steady append after truncation
-			require.NoError(t, source.FlushWriteBehind())
+			require.NoError(t, source.FlushWriteBehind(nil))
 			assertPropertyDictionaryBijection(t, source)
 		})
 	}

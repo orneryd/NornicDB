@@ -2013,8 +2013,8 @@ func TestCypherHelpers_VectorRelationshipQuery_AdditionalBranches(t *testing.T) 
 	}))
 
 	schema := exec.storage.GetSchema()
-	require.NoError(t, schema.AddVectorIndex("idx_euclid", "LINKS", "emb", 2, "euclidean"))
-	require.NoError(t, schema.AddVectorIndex("idx_dot", "LINKS", "emb", 2, "dot"))
+	require.NoError(t, schema.AddVectorIndex("idx_euclid", "LINKS", "emb", 2, "euclidean", storage.ConstraintEntityNode))
+	require.NoError(t, schema.AddVectorIndex("idx_dot", "LINKS", "emb", 2, "dot", storage.ConstraintEntityNode))
 
 	// Euclidean branch + k limiting branch.
 	res, err := exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_euclid', 1, [1,0])")

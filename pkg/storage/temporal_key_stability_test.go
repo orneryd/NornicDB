@@ -33,7 +33,7 @@ func TestTemporalIndexFormat_CleanStartRebuildsOldFormat(t *testing.T) {
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{factWindow}))
 	commitNodes(t, engine, temporalFact("a", int64(1), 0, 10))
 	// Simulate an old store: no format marker, an entry under a foreign hash.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(temporalIndexFormatKey); err != nil {
 			return err
 		}

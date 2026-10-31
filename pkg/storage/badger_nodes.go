@@ -40,7 +40,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 	if node != nil {
 		entityID = string(node.ID)
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, inherited)
+	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), entityID, false, inherited)
 	if barrierErr != nil {
 		return "", barrierErr
 	}
@@ -54,7 +54,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 
 	// The constraint keys' commit locks cover the check, the write and the
 	// publication to the constraint cache, as for a transaction's commit.
-	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node, write.owner)
+	releaseUniqueLocks, lockErr := lockEngineWriteKeys(write.ctx, schema, node, write.owner)
 	if lockErr != nil {
 		return "", lockErr
 	}
@@ -66,7 +66,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 	// (orderAfterBufferedCommits), so their replay cannot undo it.
 	var order orderHold
 	if b.writeBehind != nil {
-		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}})
+		_, orderErr := b.orderAfterBufferedCommits(write.ctx, &order, writtenEntities{nodes: []NodeID{node.ID}})
 		if orderErr != nil {
 			return "", orderErr
 		}
@@ -75,13 +75,15 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 	// Capture before physical assembly can acquire the commit gate.
 	constraints := capturePublicationConstraintView(schema)
 	var publicationOps []Operation
-	publish := func() { b.publishCommitOperations(dbName, schema, publicationOps, true, true) }
+	publish := func(images *commitCacheImages) {
+		b.publishCommitOperations(dbName, schema, publicationOps, true, true, images)
+	}
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpCreateNode, Node: image}}
 		capturePublicationOperations(notification, publicationOps)
 		return appendNodePublicationKeys(nil, &constraints, node.ID, nil, image)
 	}
-	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
+	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
@@ -261,6 +263,10 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 	// for this key remains to capture, and no decode closure is built on a hit.
 	view, err := b.captureReadView(nil, readViewOptions{scope: namespaceForNodeID(id), cached: cached})
 	loaded := view != nil
+	var sourceTs uint64
+	if view != nil {
+		sourceTs = view.readTs
+	}
 	if err == nil && view != nil {
 		err = view.readAndClose(func(txn *badger.Txn) error {
 			item, err := txn.Get(nodeKey(id))
@@ -307,7 +313,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 		atomic.AddInt64(&b.cacheHits, 1)
 	}
 	if loaded && cacheMode != nodeReadCacheProjection {
-		b.cacheFillNode(gen, node, cacheMode)
+		b.cacheFillNode(gen, node, cacheMode, sourceTs)
 	}
 	if hitCopy == nil {
 		// The immutable cached/overlay pointer must not escape an existence read.
@@ -469,7 +475,7 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	if node != nil {
 		entityID = string(node.ID)
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, nil)
+	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), entityID, false, nil)
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -498,7 +504,7 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 
 	// The constraint keys' commit locks cover the check, the write and the
 	// publication to the constraint cache, as for a transaction's commit.
-	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node, write.owner)
+	releaseUniqueLocks, lockErr := lockEngineWriteKeys(write.ctx, schema, node, write.owner)
 	if lockErr != nil {
 		return lockErr
 	}
@@ -516,7 +522,7 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	// (orderAfterBufferedCommits), so their replay cannot undo it.
 	var order orderHold
 	if b.writeBehind != nil {
-		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}})
+		_, orderErr := b.orderAfterBufferedCommits(write.ctx, &order, writtenEntities{nodes: []NodeID{node.ID}})
 		if orderErr != nil {
 			return orderErr
 		}
@@ -525,7 +531,9 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	// Capture before physical assembly can acquire the commit gate.
 	constraints := capturePublicationConstraintView(schema)
 	var publicationOps []Operation
-	publish := func() { b.publishCommitOperations(dbName, schema, publicationOps, true, true) }
+	publish := func(images *commitCacheImages) {
+		b.publishCommitOperations(dbName, schema, publicationOps, true, true, images)
+	}
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpUpdateNode, Node: image, OldNode: existingNode}}
 		if wasInsert {
@@ -534,7 +542,7 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 		capturePublicationOperations(notification, publicationOps)
 		return appendNodePublicationKeys(nil, &constraints, node.ID, existingNode, image)
 	}
-	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
+	err := b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
@@ -743,12 +751,12 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 // (commitEngineWrite repeatable units). Readers see the old chunks or the new ones, never a mix
 // (#703).
 func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32, inherited *entityWriteContext) error {
-	write, releaseWrite, err := b.beginEntityWrite(string(nodeID), false, inherited)
+	write, releaseWrite, err := b.beginEntityWrite(context.Background(), string(nodeID), false, inherited)
 	if err != nil {
 		return err
 	}
 	defer releaseWrite()
-	return b.commitEngineWrite(func(cw *commitWriter) error {
+	return b.commitEngineWrite(write.ctx, func(cw *commitWriter) error {
 		if err := cw.replaceEmbeddingRange(nodeID, embeddings, nil); err != nil {
 			return err
 		}
@@ -765,7 +773,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	write, releaseWrite, barrierErr := b.beginEntityWrite(string(id), false, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), false) }})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), string(id), false, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), false) }})
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -790,7 +798,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	// (orderAfterBufferedCommits), so their replay cannot undo it.
 	var order orderHold
 	if b.writeBehind != nil {
-		if err := b.orderCovering(&order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {
+		if err := b.orderCovering(write.ctx, &order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {
 			return err
 		}
 		defer order.release()
@@ -799,8 +807,8 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	schema := b.schemaForNodeID(id)
 	// Capture before physical assembly can acquire the commit gate.
 	constraints := capturePublicationConstraintView(schema)
-	publish := func() {
-		b.publishCommitOperations(namespaceForNodeID(id), schema, publicationOps, true, true)
+	publish := func(images *commitCacheImages) {
+		b.publishCommitOperations(namespaceForNodeID(id), schema, publicationOps, true, true, images)
 	}
 	keys := func() []any {
 		publicationOps = []Operation{result.operation(id)}
@@ -808,7 +816,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
 	}
 
-	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
+	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		var err error
 		result, err = b.executeNodeDeletion(txn, id, nil)
 		return err
@@ -838,6 +846,6 @@ func (b *BadgerEngine) removeNodeRecordKeys(w kvWriter, node *Node) error {
 
 // lockEngineWriteKeys takes node's constraint key locks for a direct engine
 // write, under an owner of its own (a variable so tests can make it fail).
-var lockEngineWriteKeys = func(schema *SchemaManager, node *Node, owner string) (func(), error) {
-	return schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, schema.appendConstraintValueKeys(nil, []*Node{node}, nil))
+var lockEngineWriteKeys = func(ctx context.Context, schema *SchemaManager, node *Node, owner string) (func(), error) {
+	return schema.acquireUniqueConstraintCommitLocks(ctx, owner, schema.appendConstraintValueKeys(nil, []*Node{node}, nil))
 }

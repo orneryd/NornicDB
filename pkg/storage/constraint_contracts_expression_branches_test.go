@@ -36,7 +36,6 @@ func (e *constraintExprEngine) GetNode(id NodeID) (*Node, error) {
 
 func TestConstraintContracts_ExpressionEngineBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	_, _ = base.CreateNode(&Node{ID: "test:a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "A", "age": int64(10)}})
 	_, _ = base.CreateNode(&Node{ID: "test:b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "A", "age": int64(12)}})
 	_ = base.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(3), "kind": "friend"}})

@@ -13,7 +13,6 @@ import (
 
 func TestBadgerEngine_DeleteByPrefix_DropsOnlyMatchingNamespace(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(&Node{ID: "db1:n1", Labels: []string{"Person"}})
 	require.NoError(t, err)
@@ -166,7 +165,6 @@ func TestBadgerEngine_DeleteByPrefix_RemovesNumericHistoryAndDictionary(t *testi
 
 func TestBadgerEngine_DeleteByPrefix_UpdatesLabelCounts(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(&Node{ID: "db1:n1", Labels: []string{"Person", "Employee"}})
 	require.NoError(t, err)
@@ -194,7 +192,6 @@ func TestBadgerEngine_DeleteByPrefix_UpdatesLabelCounts(t *testing.T) {
 
 func TestBadgerEngine_DeleteByPrefix_UpdatesLabelCountsForPartialPrefix(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(&Node{ID: "db1:temp-1", Labels: []string{"Person", "Temporary"}})
 	require.NoError(t, err)
@@ -220,7 +217,6 @@ func TestBadgerEngine_DeleteByPrefix_UpdatesLabelCountsForPartialPrefix(t *testi
 
 func TestBadgerEngine_DeleteByPrefix_AdvancesRevisionForEdgeOnlyDelete(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(&Node{ID: "keep:n1"})
 	require.NoError(t, err)
@@ -244,7 +240,6 @@ func TestBadgerEngine_DeleteByPrefix_AdvancesRevisionForEdgeOnlyDelete(t *testin
 func TestBadgerEngine_DeleteByPrefix_EdgeCases(t *testing.T) {
 	t.Run("empty prefix rejected", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = engine.Close() })
 
 		_, _, err := engine.DeleteByPrefix("")
 		require.ErrorContains(t, err, "prefix cannot be empty")
@@ -252,7 +247,6 @@ func TestBadgerEngine_DeleteByPrefix_EdgeCases(t *testing.T) {
 
 	t.Run("missing namespace returns zero counts", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = engine.Close() })
 
 		_, err := engine.CreateNode(&Node{ID: "db1:n1", Labels: []string{"Person"}})
 		require.NoError(t, err)

@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"errors"
-	"slices"
 	"sync"
 )
 
@@ -23,7 +22,7 @@ type PreparedEntityCommit struct {
 	markRecoveryPending  func()
 	hooksMu              sync.Mutex
 	appliedHooks         []func()
-	retainAuthority      func() (func(), error)
+	retainAuthority      func(context.Context) (func(), error)
 	engine               *BadgerEngine
 	terminal             CommitOutcome
 	afterPublication     func()
@@ -49,7 +48,6 @@ func (p *PreparedEntityCommit) Operations() []Operation {
 		op.Edge = copyEdge(op.Edge)
 		op.OldNode = copyNode(op.OldNode)
 		op.OldEdge = copyEdge(op.OldEdge)
-		detachPreparedPropertyMaps([]*Node{op.Node, op.OldNode}, []*Edge{op.Edge, op.OldEdge})
 		if op.DeletedEdgeIDs != nil {
 			ids := make([]EdgeID, len(op.DeletedEdgeIDs))
 			copy(ids, op.DeletedEdgeIDs)
@@ -76,6 +74,9 @@ func (p *PreparedEntityCommit) Changes() []StoredEntityChange {
 	return changes
 }
 func (p *PreparedEntityCommit) startCommit(afterPublication func()) error {
+	// The command owner chooses this native completion. Submission arbitrates
+	// its own context before this handoff; the preparation waiter's cancellation
+	// cannot discard a command that an outer owner has already accepted.
 	selected := false
 	p.once.Do(func() {
 		selected = true
@@ -122,7 +123,9 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		return nil, ErrInvalidID
 	}
 	applied, receiptErr := func() (bool, error) {
-		tx.mu.Lock()
+		if err := tx.mu.LockContext(ctx); err != nil {
+			return false, err
+		}
 		defer tx.mu.Unlock()
 		if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 			return false, err
@@ -153,7 +156,9 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		return nil, receiptErr
 	}
 	if applied {
-		tx.mu.Lock()
+		if err := tx.mu.LockContext(ctx); err != nil {
+			return nil, err
+		}
 		namespace := tx.namespace
 		engine := tx.engine
 		mode := tx.commitMode
@@ -172,7 +177,9 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			return nil, err
 		}
 	}
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		tx.mu.Unlock()
 		return nil, err
@@ -204,8 +211,8 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
 			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
-			prepared.retainAuthority = func() (func(), error) {
-				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, endpoints))
+			prepared.retainAuthority = func(admission context.Context) (func(), error) {
+				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, entityCommitKeys(nodes, edges, endpoints))
 				if err != nil {
 					return nil, err
 				}
@@ -225,7 +232,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 						edgeImages = append(edgeImages, op.OldEdge)
 					}
 				}
-				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
+				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
 				if err != nil {
 					releaseEntities()
 					return nil, err
@@ -275,11 +282,14 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 // command owner. Applied publication releases it before native listeners;
 // recovery-pending commands retain it after an inner native rollback.
 // The returned release is only for definite pre-record/log discard.
-func (p *PreparedEntityCommit) RetainAcceptedAuthority() (func(), error) {
+//
+// The retention is cancellable only while acceptance is still abortable; a nil
+// ctx retains non-cancellably. Accepted continuations use their own lifetime.
+func (p *PreparedEntityCommit) RetainAcceptedAuthority(ctx context.Context) (func(), error) {
 	if p.retainAuthority == nil {
 		return func() {}, nil
 	}
-	release, err := p.retainAuthority()
+	release, err := p.retainAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +312,7 @@ func (p *PreparedEntityCommit) MarkRecoveryPending() {
 // drainReleaseCallbacks retires a release set under its actual owner mutex,
 // then invokes every callback after unlocking. Prepared ownership deliberately
 // uses its own mutex: accepted publication must never wait on client tx.mu.
-func drainReleaseCallbacks[C []func() | map[uniqueConstraintLockKey]func()](mu *sync.Mutex, slot *C) {
+func drainReleaseCallbacks[C []func() | map[uniqueConstraintLockKey]func()](mu sync.Locker, slot *C) {
 	mu.Lock()
 	callbacks := *slot
 	var empty C
@@ -321,71 +331,3 @@ func drainReleaseCallbacks[C []func() | map[uniqueConstraintLockKey]func()](mu *
 }
 
 func (p *PreparedEntityCommit) Mode() EntityCommitMode { return p.mode }
-
-// detachPreparedPropertyMaps completes the caller-owned diagnostic copy. Native
-// storage copies intentionally retain property values; diagnostic consumers may
-// mutate supported list/map values without changing accepted commit images.
-// This is never used by the canonical prepared encoder or commit path.
-func detachPreparedPropertyMaps(nodes []*Node, edges []*Edge) {
-	detach := func(properties map[string]any) {
-		for key, value := range properties {
-			if value != nil {
-				properties[key] = clonePreparedPropertyValue(value)
-			}
-		}
-	}
-	for _, node := range nodes {
-		if node != nil {
-			detach(node.Properties)
-			detach(node.EmbedMeta)
-		}
-	}
-	for _, edge := range edges {
-		if edge != nil {
-			detach(edge.Properties)
-		}
-	}
-}
-
-// clonePreparedPropertyValue preserves the concrete list/map types supported
-// by prepared wire images and nil containers. Scalars and strings are immutable.
-func clonePreparedPropertyValue(value any) any {
-	switch value := value.(type) {
-	case []byte:
-		return slices.Clone(value)
-	case []string:
-		return slices.Clone(value)
-	case []int:
-		return slices.Clone(value)
-	case []int32:
-		return slices.Clone(value)
-	case []int64:
-		return slices.Clone(value)
-	case []float32:
-		return slices.Clone(value)
-	case []float64:
-		return slices.Clone(value)
-	case []bool:
-		return slices.Clone(value)
-	case []any:
-		if value == nil {
-			return value
-		}
-		copied := make([]any, len(value))
-		for index, item := range value {
-			copied[index] = clonePreparedPropertyValue(item)
-		}
-		return copied
-	case map[string]any:
-		if value == nil {
-			return value
-		}
-		copied := make(map[string]any, len(value))
-		for key, item := range value {
-			copied[key] = clonePreparedPropertyValue(item)
-		}
-		return copied
-	default:
-		return value
-	}
-}

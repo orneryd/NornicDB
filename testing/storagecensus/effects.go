@@ -5,7 +5,6 @@ import (
 	"go/token"
 	"go/types"
 	"os"
-	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/ssa"
@@ -73,7 +72,6 @@ type analysis struct {
 	paramCovers map[parameterCoverKey]cover       // see paramCover
 	syncMemo    map[*ssa.Parameter]int
 	syncClosure map[*ssa.MakeClosure]bool
-	siteCallees map[ssa.CallInstruction][]*ssa.Function
 	callers     map[*ssa.Function]map[*ssa.Function]bool
 }
 
@@ -146,21 +144,7 @@ func (a *analysis) callees(fn *ssa.Function, site ssa.CallInstruction) []*ssa.Fu
 	if !c.IsInvoke() {
 		return nil
 	}
-	if a.siteCallees == nil {
-		a.siteCallees = map[ssa.CallInstruction][]*ssa.Function{}
-		for _, node := range a.p.cg.Nodes {
-			for _, e := range node.Out {
-				if e.Site != nil && e.Callee.Func != nil && e.Site.Common().IsInvoke() {
-					a.siteCallees[e.Site] = append(a.siteCallees[e.Site], e.Callee.Func)
-				}
-			}
-		}
-		for s, out := range a.siteCallees {
-			sort.Slice(out, func(i, j int) bool { return a.p.funcName(out[i]) < a.p.funcName(out[j]) })
-			a.siteCallees[s] = out
-		}
-	}
-	return a.siteCallees[site]
+	return a.p.callTargets(site)
 }
 
 // traceOrigin, from NORNICDB_CENSUS_TRACE (a Badger call's file:line), prints

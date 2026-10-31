@@ -135,7 +135,7 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 				for round := 0; round < 2; round++ {
 					r.write(t, engine, round)
 					published := read()
-					require.NoError(t, engine.FlushWriteBehind())
+					require.NoError(t, engine.FlushWriteBehind(nil))
 					engine.invalidateCachesAfterRestore()
 					decoded := read()
 					require.Equal(t, decoded, published, "round %d: published body differs from the stored one", round)

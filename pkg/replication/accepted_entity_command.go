@@ -103,7 +103,7 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	if err != nil {
 		return nil, err
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthority()
+	releaseAuthority, err := prepared.RetainAcceptedAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -115,14 +115,19 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	}
 	queueCtx, cancelQueue := context.WithTimeout(ctx, e.timeout)
 	defer cancelQueue()
-	receipt, err := submitter.SubmitAcceptedCommand(queueCtx, cmd, func(outcome storage.CommitOutcome) {
-		if outcome.State != storage.CommitRecoveryPending {
-			cmd.accepted.prepared.Retire()
-			releaseAuthority()
-		}
-		if settle != nil {
-			settle(outcome)
-		}
+	var receipt *storage.CommitReceipt
+	err = storage.DecidePublication(ctx, func() error {
+		var submitErr error
+		receipt, submitErr = submitter.SubmitAcceptedCommand(queueCtx, cmd, func(outcome storage.CommitOutcome) {
+			if outcome.State != storage.CommitRecoveryPending {
+				cmd.accepted.prepared.Retire()
+				releaseAuthority()
+			}
+			if settle != nil {
+				settle(outcome)
+			}
+		})
+		return submitErr
 	})
 	if err != nil {
 		releaseAuthority()

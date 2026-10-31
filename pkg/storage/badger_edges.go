@@ -41,7 +41,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 		entityID = string(edge.ID)
 		endpoints = []NodeID{edge.StartNode, edge.EndNode}
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, true, inherited, entityWritePlan{known: writtenEntities{nodes: endpoints}})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), entityID, true, inherited, entityWritePlan{known: writtenEntities{nodes: endpoints}})
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -58,7 +58,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 		return err
 	}
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID))
-	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(context.Background(), write.owner, schema.appendConstraintValueKeys(nil, nil, []*Edge{edge}))
+	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, schema.appendConstraintValueKeys(nil, nil, []*Edge{edge}))
 	if constraintErr != nil {
 		return constraintErr
 	}
@@ -76,7 +76,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 	// and its endpoints exist, so it sees them and their replay cannot undo it.
 	var order orderHold
 	if b.writeBehind != nil {
-		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}})
+		_, orderErr := b.orderAfterBufferedCommits(write.ctx, &order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}})
 		if orderErr != nil {
 			return orderErr
 		}
@@ -131,15 +131,15 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 
 	// Capture before physical assembly can acquire the commit gate.
 	constraints := capturePublicationConstraintView(schema)
-	publish := func() {
-		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true)
+	publish := func(images *commitCacheImages) {
+		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true, images)
 	}
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpCreateEdge, Edge: image}}
 		capturePublicationOperations(notification, publicationOps)
 		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
 	}
-	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
+	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		// Validate relationship constraints before writing
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
 		schema := b.GetSchemaForNamespace(dbName)
@@ -330,7 +330,7 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		entityID = string(edge.ID)
 		endpoints = []NodeID{edge.StartNode, edge.EndNode}
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, true, nil, entityWritePlan{known: writtenEntities{nodes: endpoints}, read: func() (writtenEntities, error) {
+	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), entityID, true, nil, entityWritePlan{known: writtenEntities{nodes: endpoints}, read: func() (writtenEntities, error) {
 		stored, err := b.GetStoredEdge(EdgeID(entityID))
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return writtenEntities{}, err
@@ -356,7 +356,7 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		return err
 	}
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID))
-	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(context.Background(), write.owner, schema.appendConstraintValueKeys(nil, nil, []*Edge{edge}))
+	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, schema.appendConstraintValueKeys(nil, nil, []*Edge{edge}))
 	if constraintErr != nil {
 		return constraintErr
 	}
@@ -377,7 +377,7 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	var order orderHold
 	if b.writeBehind != nil {
 		// The relationship's former endpoints too: a move rewrites their adjacency.
-		if err := b.orderCovering(&order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}}, b.storedEdgeEndpoints(edge.ID, nil)); err != nil {
+		if err := b.orderCovering(write.ctx, &order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}}, b.storedEdgeEndpoints(edge.ID, nil)); err != nil {
 			return err
 		}
 		defer order.release()
@@ -385,15 +385,15 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	var publicationOps []Operation
 	// Capture before physical assembly can acquire the commit gate.
 	constraints := capturePublicationConstraintView(schema)
-	publish := func() {
-		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true)
+	publish := func(images *commitCacheImages) {
+		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true, images)
 	}
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpUpdateEdge, Edge: image, OldEdge: oldEdge}}
 		capturePublicationOperations(notification, publicationOps)
 		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
 	}
-	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
+	err := b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
 		if err != nil {
 			return err
@@ -592,7 +592,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	write, releaseWrite, barrierErr := b.beginEntityWrite(string(id), true, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), true) }})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), string(id), true, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), true) }})
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -617,7 +617,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	var edge *Edge
 	if b.writeBehind != nil {
 		// The stored image the order read last, after the order: the newest.
-		if err := b.orderCovering(&order, writtenEntities{edges: []EdgeID{id}}, b.storedEdgeEndpoints(id, &edge)); err != nil {
+		if err := b.orderCovering(write.ctx, &order, writtenEntities{edges: []EdgeID{id}}, b.storedEdgeEndpoints(id, &edge)); err != nil {
 			return err
 		}
 		defer order.release()
@@ -629,15 +629,15 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(id))
 	// Capture before physical assembly can acquire the commit gate.
 	constraints := capturePublicationConstraintView(schema)
-	publish := func() {
-		b.publishCommitOperations(namespaceForEdgeID(id), schema, publicationOps, true, true)
+	publish := func(images *commitCacheImages) {
+		b.publishCommitOperations(namespaceForEdgeID(id), schema, publicationOps, true, true, images)
 	}
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpDeleteEdge, EdgeID: id, OldEdge: edge}}
 		capturePublicationOperations(notification, publicationOps)
 		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
 	}
-	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
+	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
 		if err != nil {
 			return err

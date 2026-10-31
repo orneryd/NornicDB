@@ -88,7 +88,7 @@ func TestTypedListPropertyCoercionAndValidKinds(t *testing.T) {
 func TestTypedListPropertyExplicitTransactionRollsBack(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "list_props_tx"))
 	ctx := context.Background()
-	if _, err := exec.handleBegin(); err != nil {
+	if _, err := exec.handleBegin(nil); err != nil {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, err := exec.Execute(ctx, "CREATE (n:T {id: 1})", nil); err != nil {

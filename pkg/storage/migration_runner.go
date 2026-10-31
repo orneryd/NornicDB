@@ -166,7 +166,7 @@ func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPh
 	// has no write-behind buffer yet and nothing else holds it; called on an
 	// engine that serves, it also applies every acknowledged commit first and
 	// keeps every write out.
-	lifecycle, err := b.beginMaintenanceWrite(nil)
+	lifecycle, err := b.beginMaintenanceWrite(context.Background(), nil)
 	if err != nil {
 		return err
 	}

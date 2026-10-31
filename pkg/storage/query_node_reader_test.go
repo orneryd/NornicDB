@@ -45,7 +45,7 @@ func lazyEmbeddingCases() []lazyEmbeddingCase {
 // value no reader can decode, so any read of it fails.
 func corruptFirstEmbeddingChunk(t *testing.T, b *BadgerEngine, id NodeID) {
 	t.Helper()
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(embeddingKey(id, 0), []byte{0xc1})
 	}))
 }

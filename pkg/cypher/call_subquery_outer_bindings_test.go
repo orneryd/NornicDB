@@ -272,7 +272,7 @@ func TestCallSubqueryRefreshesOuterNodeAfterWrite(t *testing.T) {
 			require.NoError(t, err)
 
 			if explicitTx {
-				_, err = exec.handleBegin()
+				_, err = exec.handleBegin(nil)
 				require.NoError(t, err)
 			}
 			result, err := exec.Execute(ctx, "MATCH (n:C648Refresh {id:'a'}) CALL (n) { SET n.y = 2 } RETURN n.y AS y", nil)

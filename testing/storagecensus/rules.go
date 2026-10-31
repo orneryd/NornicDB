@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/collection"
 	"go/types"
-	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/ssa"
@@ -126,7 +125,7 @@ func (a *analysis) checkRules(r *Report, names map[string]*ssa.Function) {
 				}
 				// A write callback the call graph cannot resolve.
 				_, builtin := c.Value.(*ssa.Builtin)
-				if !builtin && c.StaticCallee() == nil && passesWriter(c) && len(a.dynamicCallees(fn, call)) == 0 && !a.paramValue(c.Value) && !note(name) {
+				if !builtin && c.StaticCallee() == nil && passesWriter(c) && len(a.p.callTargets(call)) == 0 && !a.paramValue(c.Value) && !note(name) {
 					r.Violations = append(r.Violations, fmt.Sprintf("unresolved write callback: %s at %s calls a function value that receives a write transaction and that nothing in the module provides", name, a.p.pos(ins.Pos())))
 				}
 			}
@@ -226,22 +225,6 @@ func passesWriter(c *ssa.CallCommon) bool {
 		}
 	}
 	return false
-}
-
-// dynamicCallees are the call graph's callees of a dynamic call.
-func (a *analysis) dynamicCallees(fn *ssa.Function, site ssa.CallInstruction) []*ssa.Function {
-	node := a.p.cg.Nodes[fn]
-	if node == nil {
-		return nil
-	}
-	var out []*ssa.Function
-	for _, e := range node.Out {
-		if e.Site == site && e.Callee.Func != nil {
-			out = append(out, e.Callee.Func)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return a.p.funcName(out[i]) < a.p.funcName(out[j]) })
-	return out
 }
 
 // paramValue reports whether a called function value is a parameter or a

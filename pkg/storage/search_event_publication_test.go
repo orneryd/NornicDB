@@ -62,7 +62,6 @@ func requirePublished(t *testing.T, events *publishedEvents, event, why string) 
 // round 3). A mutator added without its event fails here.
 func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	events := recordEvents(engine)
 
 	_, err := engine.CreateNode(&Node{ID: "test:a"})
@@ -175,7 +174,6 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 // as an update in both directions.
 func TestDecayFlipsPublishUpdates(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetDecayEnabled(true)
 	schema := engine.GetSchemaForNamespace("test")
 	require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{Name: "node_decay", Scope: knowledgepolicy.ScopeNode, Function: knowledgepolicy.DecayFunctionExponential, HalfLifeSeconds: 1, VisibilityThreshold: 0.1, ScoreFrom: knowledgepolicy.ScoreFromCreated, Enabled: true, DecayEnabled: true}))

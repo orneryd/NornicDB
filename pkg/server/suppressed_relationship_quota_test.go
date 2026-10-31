@@ -40,25 +40,6 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 								h.shutdown(t)
 							}
 						})
-						run := func(query string) hiddenDeleteOutcome {
-							t.Helper()
-							outcome := h.run(t, query)
-							require.Empty(t, outcome.code, query)
-							return outcome
-						}
-						flush := func() {
-							t.Helper()
-							engine := h.db.GetBaseStorageForManager()
-							for {
-								if badger, ok := engine.(*storage.BadgerEngine); ok {
-									require.NoError(t, badger.FlushWriteBehind())
-									return
-								}
-								wrapper, ok := engine.(storage.EngineUnwrapper)
-								require.True(t, ok)
-								engine = wrapper.GetInnerEngine()
-							}
-						}
 						storedEdge := func() *storage.Edge {
 							t.Helper()
 							store, err := h.server.dbManager.GetStorage("nornic")
@@ -69,14 +50,14 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 							return edges[0]
 						}
 
-						run("CREATE (:Source {id: 'a'}), (:Target {id: 'b'})")
+						h.requireSuccess(t, "CREATE (:Source {id: 'a'}), (:Target {id: 'b'})")
 						const merge = "MATCH (a:Source {id: 'a'}), (b:Target {id: 'b'}) MERGE (a)-[r:INGEST {id: 'same'}]->(b)"
 						const identical = merge + " ON CREATE SET r.payload = 'stable'"
-						created := run(identical)
+						created := h.requireSuccess(t, identical)
 						require.Equal(t, 1, created.relationshipsCreated)
-						flush()
-						run("MATCH ()-[r:INGEST]->() CALL kp.suppress(r)")
-						flush()
+						h.flush(t)
+						h.requireSuccess(t, "MATCH ()-[r:INGEST]->() CALL kp.suppress(r)")
+						h.flush(t)
 						beforeBody := storedEdge()
 						store, err := h.server.dbManager.GetStorage("nornic")
 						require.NoError(t, err)
@@ -90,22 +71,22 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 						}
 						require.NoError(t, h.server.dbManager.SetDatabaseLimits(t.Context(), "nornic", limits))
 
-						noOp := run(identical)
+						noOp := h.requireSuccess(t, identical)
 						require.Zero(t, noOp.relationshipsCreated)
 						require.Zero(t, noOp.propertiesSet, "an identical final image publishes no SET work")
-						flush()
+						h.flush(t)
 						require.Equal(t, beforeBody, storedEdge(), "the authoritative stored body and suppression survive")
 						total, nodes, edges := h.server.dbManager.GetStorageSize("nornic")
 						require.Equal(t, beforeTotal, total)
 						require.Equal(t, beforeNodes, nodes)
 						require.Equal(t, beforeEdges, edges)
-						require.Equal(t, [][]interface{}{{int64(0)}}, run("MATCH ()-[r:INGEST]->() RETURN count(r)").rows)
-						require.Equal(t, [][]interface{}{{"same", "stable"}}, run("MATCH ()-[r:INGEST]->() WHERE reveal(r) IS NOT NULL RETURN r.id, r.payload").rows,
+						require.Equal(t, [][]interface{}{{int64(0)}}, h.requireSuccess(t, "MATCH ()-[r:INGEST]->() RETURN count(r)").rows)
+						require.Equal(t, [][]interface{}{{"same", "stable"}}, h.requireSuccess(t, "MATCH ()-[r:INGEST]->() WHERE reveal(r) IS NOT NULL RETURN r.id, r.payload").rows,
 							"type/property/search-facing reads retain the original indexed image")
 
 						different := h.run(t, merge+" ON CREATE SET r.payload = 'different'")
 						require.True(t, strings.HasPrefix(different.code, "Neo.ClientError."), "a different final image is one permanent client error: %#v", different)
-						flush()
+						h.flush(t)
 						require.Equal(t, beforeBody, storedEdge(), "the rejected final image publishes nothing")
 
 						fresh := h.run(t, "MATCH (a:Source {id: 'a'}), (b:Target {id: 'b'}) MERGE (a)-[:INGEST {id: 'fresh'}]->(b)")
@@ -115,7 +96,7 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 						h.shutdown(t)
 						h = openHiddenDeleteServer(t, dir, buffered, route)
 						require.Equal(t, beforeBody, storedEdge(), "reopen keeps the no-op post-image")
-						require.Equal(t, [][]interface{}{{int64(0)}}, run("MATCH ()-[r:INGEST]->() RETURN count(r)").rows)
+						require.Equal(t, [][]interface{}{{int64(0)}}, h.requireSuccess(t, "MATCH ()-[r:INGEST]->() RETURN count(r)").rows)
 					})
 				}
 			}
@@ -134,43 +115,24 @@ func TestSuppressedRelationshipRepeatedMergeIsNoOp(t *testing.T) {
 						config.SetParserType(parser)
 						h := openHiddenDeleteServer(t, t.TempDir(), buffered, route)
 						t.Cleanup(func() { h.shutdown(t) })
-						run := func(query string) hiddenDeleteOutcome {
-							t.Helper()
-							outcome := h.run(t, query)
-							require.Empty(t, outcome.code, query)
-							return outcome
-						}
-						flush := func() {
-							t.Helper()
-							engine := h.db.GetBaseStorageForManager()
-							for {
-								if badger, ok := engine.(*storage.BadgerEngine); ok {
-									require.NoError(t, badger.FlushWriteBehind())
-									return
-								}
-								wrapper, ok := engine.(storage.EngineUnwrapper)
-								require.True(t, ok)
-								engine = wrapper.GetInnerEngine()
-							}
-						}
 
-						run("CREATE (:A {id:'a'}), (:B {id:'b'})")
+						h.requireSuccess(t, "CREATE (:A {id:'a'}), (:B {id:'b'})")
 						const merge = "MATCH (a:A), (b:B) MERGE (a)-[r:LINK {key:'same'}]->(b)"
-						run(merge + " ON CREATE SET r.payload=" + payload)
-						flush()
-						run("MATCH ()-[r:LINK]->() CALL kp.suppress(r)")
-						flush()
+						h.requireSuccess(t, merge+" ON CREATE SET r.payload="+payload)
+						h.flush(t)
+						h.requireSuccess(t, "MATCH ()-[r:LINK]->() CALL kp.suppress(r)")
+						h.flush(t)
 						store, err := h.server.dbManager.GetStorage("nornic")
 						require.NoError(t, err)
 						before, err := storage.CollectStoredEdges(context.Background(), store)
 						require.NoError(t, err)
 						require.Len(t, before, 1)
 
-						outcome := run("UNWIND [1,2] AS i " + merge +
-							" ON CREATE SET r.payload=" + payload + " ON MATCH SET r.payload='MATCH-FIRED'")
+						outcome := h.requireSuccess(t, "UNWIND [1,2] AS i "+merge+
+							" ON CREATE SET r.payload="+payload+" ON MATCH SET r.payload='MATCH-FIRED'")
 						require.Zero(t, outcome.relationshipsCreated)
 						require.Zero(t, outcome.propertiesSet, "the second row must not treat the hidden candidate as an ON MATCH target")
-						flush()
+						h.flush(t)
 						after, err := storage.CollectStoredEdges(context.Background(), store)
 						require.NoError(t, err)
 						require.Len(t, after, 1)

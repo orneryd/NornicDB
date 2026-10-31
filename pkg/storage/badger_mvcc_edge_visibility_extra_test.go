@@ -25,7 +25,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_FallbackAndTombstoneBranches(t *testing
 
 	// Ensure an explicit version record exists at head.Version, then remove primary key
 	// so GetEdgeLatestVisible/GetEdgeVisibleAt must resolve via MVCC fallback paths.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		edge, gErr := engine.GetEdge(edgeID)
 		require.NoError(t, gErr)
 		require.NoError(t, engine.writeEdgeMVCCVersionInTxn(txn, edge, head.Version))
@@ -101,7 +101,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 		edgeID := EdgeID("test:hs-edge")
 		v1 := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-time.Second), CommitSequence: 10}
 		v2 := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 11}
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			if err := engine.writeEdgeMVCCVersionInTxn(txn, &Edge{ID: edgeID, StartNode: "test:hs-a", EndNode: "test:hs-b", Type: "REL", VisibilitySuppressed: true}, v1); err != nil {
 				return err
 			}
@@ -126,14 +126,14 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 		v1, err := engine.GetEdgeCurrentHead(edgeID)
 		require.NoError(t, err)
 		// A complete archived record, as an earlier version or a delete writes.
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			return engine.writeEdgeMVCCVersionInTxn(txn, &Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(1)}}, v1.Version)
 		}))
 		require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}}))
 		v2, err := engine.GetEdgeCurrentHead(edgeID)
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Delete(edgeKey(edgeID))
 		}))
 
@@ -156,7 +156,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 		require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: "test:hu-a", EndNode: "test:hu-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}}))
 		v2, err := engine.GetEdgeCurrentHead(edgeID)
 		require.NoError(t, err)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Delete(edgeKey(edgeID))
 		}))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {

@@ -19,7 +19,7 @@ func TestBadgerEngine_RebuildMVCCHeads_ContextCancelledAndClosedEngine(t *testin
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	err = engine.rebuildNodeMVCCHeadsFromVersions(cancelled)
+	err = rebuildMVCCHeadsFromVersionsOf[NodeID, nodeMVCCRebuildKind](engine, cancelled)
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
 
@@ -36,7 +36,7 @@ func TestBadgerEngine_PruneMVCCKeyspaceInTxn_UnsupportedPrefixAndCanceled(t *tes
 	require.NoError(t, err)
 	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}}))
 
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 11}
 		customKey := make([]byte, 0, 1+8+16)
 		customKey = append(customKey, 0x7f)
@@ -51,7 +51,7 @@ func TestBadgerEngine_PruneMVCCKeyspaceInTxn_UnsupportedPrefixAndCanceled(t *tes
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported mvcc prune prefix")
 
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 77}
 		vk, keyErr := engine.mvccNodeVersionKeyString(txn, nodeID, v)
 		if keyErr != nil {

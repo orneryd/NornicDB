@@ -15,7 +15,7 @@ import (
 func TestWriteBehindAdjacencyGapPublicCypherProbe(t *testing.T) {
 	b, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), LowMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour, WriteBehindMaxOps: 100000}))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, b.FlushWriteBehind()); require.NoError(t, b.Close()) })
+	t.Cleanup(func() { require.NoError(t, b.FlushWriteBehind(nil)); require.NoError(t, b.Close()) })
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(b, "probe"), cypher.QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	run := func(query string) *cypher.ExecuteResult {
@@ -24,7 +24,7 @@ func TestWriteBehindAdjacencyGapPublicCypherProbe(t *testing.T) {
 		return result
 	}
 	run("CREATE (:ScopeStart:ScopeProbe {key:'a'}), (:ScopeEnd {key:'b'})")
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	b.GapProbeStopWorker()
 	run("MATCH (a:ScopeStart), (b:ScopeEnd) CREATE (a)-[:SCOPE]->(b)")
 	require.Equal(t, [][]interface{}{{int64(1)}}, run("MATCH ()-[r:SCOPE]->() RETURN count(r) AS n").Rows)

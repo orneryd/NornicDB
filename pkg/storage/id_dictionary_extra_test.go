@@ -17,7 +17,6 @@ import (
 func idDictTestEngine(t *testing.T) *MemoryEngine {
 	t.Helper()
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	return e
 }
 

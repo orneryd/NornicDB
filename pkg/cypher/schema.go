@@ -413,7 +413,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(e.storage, ptc); err != nil {
 			return nil, err
 		}
-		if err := e.storage.GetSchema().AddPropertyTypeConstraintWithOptions(constraintName, parsed.label, parsed.property, parsed.expectedType, opts); err != nil {
+		if err := e.storage.GetSchema().AddPropertyTypeConstraint(constraintName, parsed.label, parsed.property, parsed.expectedType, opts); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -2236,13 +2236,13 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 	}
 
 	if parsed.isRelationship {
-		if err := schema.AddFulltextRelationshipIndex(parsed.indexName, parsed.relationshipTypes, parsed.properties); err != nil {
+		if err := schema.AddFulltextIndex(parsed.indexName, parsed.relationshipTypes, parsed.properties, storage.ConstraintEntityRelationship); err != nil {
 			return nil, localizedError(localization.CypherSchemaAddFulltextRelationshipIndexFailed(err), err)
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 
-	if err := schema.AddFulltextIndex(parsed.indexName, parsed.labels, parsed.properties); err != nil {
+	if err := schema.AddFulltextIndex(parsed.indexName, parsed.labels, parsed.properties, storage.ConstraintEntityNode); err != nil {
 		return nil, localizedError(localization.CypherSchemaAddFulltextIndexFailed(err), err)
 	}
 

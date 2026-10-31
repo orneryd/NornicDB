@@ -10,7 +10,6 @@ import (
 
 func TestBadgerEngine_GetEntityMeta_NodeRoundTrip(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{
 		ID:     "test:n",
@@ -43,7 +42,6 @@ func TestBadgerEngine_GetEntityMeta_NodeRoundTrip(t *testing.T) {
 
 func TestBadgerEngine_GetEntityMeta_EdgeRoundTrip(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{ID: "test:a", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
@@ -67,7 +65,6 @@ func TestBadgerEngine_GetEntityMeta_EdgeRoundTrip(t *testing.T) {
 
 func TestBadgerEngine_GetEntityMeta_NotFoundReturnsError(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.GetEntityMeta("test:nonexistent")
 	require.Error(t, err, "missing entity must error (looked up as edge after node miss)")
