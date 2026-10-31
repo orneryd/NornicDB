@@ -1,3 +1,4 @@
+// Author: Codex, NOR-160 shared benchmark fixture support, 2026-10-26.
 package bolt
 
 import (
@@ -17,7 +18,7 @@ import (
 // so BEGIN/RUN/COMMIT messages route to a real explicit BadgerTransaction
 // instead of being protocol-acknowledged-but-ignored. This matches the
 // runtime shape neo4j-go-driver session.ExecuteWrite emits from Eshu.
-func startBoltIntegrationServerWithExplicitTx(t *testing.T, store storage.Engine) (*Server, int) {
+func startBoltIntegrationServerWithExplicitTx(t testing.TB, store storage.Engine) (*Server, int) {
 	t.Helper()
 	executor := newTxCapableCypherQueryExecutor(store)
 	server := New(&Config{
