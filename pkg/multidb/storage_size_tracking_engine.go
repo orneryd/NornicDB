@@ -424,7 +424,11 @@ func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, crea
 			if err != nil {
 				return err
 			}
-			if err := owner.route.ForwardDirect(context.Background(), qualified, mode); err != nil {
+			ctx, err := storage.AcceptedWorkContext(t.Engine)
+			if err != nil {
+				return err
+			}
+			if err := owner.route.ForwardDirect(ctx, qualified, mode); err != nil {
 				return err
 			}
 			if createResult != nil {
@@ -473,18 +477,24 @@ func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, crea
 		}
 	}
 
-	prepared, settle, err := t.prepareManagedDirect(context.Background(), ops, mode)
+	// The public entity API carries no context: the managed write takes the
+	// applying engine's work context, so that engine's Close bounds it.
+	ctx, err := storage.AcceptedWorkContext(t.Engine)
+	if err != nil {
+		return err
+	}
+	prepared, settle, err := t.prepareManagedDirect(ctx, ops, mode)
 	if err != nil {
 		return err
 	}
 	if prepared != nil {
-		receipt, err := owner.route.Submitter.SubmitEntityCommit(context.Background(), prepared, settle)
+		receipt, err := owner.route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
 		if err != nil {
 			prepared.Abort()
 			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
 			return nornicerrors.MarkCommitRolledBack(err)
 		}
-		outcome := receipt.WaitOutcome(context.Background())
+		outcome := receipt.WaitOutcome(ctx)
 		if outcome.State == storage.CommitDiscarded {
 			return nornicerrors.MarkCommitRolledBack(outcome.Err)
 		}
@@ -535,12 +545,17 @@ func (t *sizeTrackingEngine) qualifyEntityOperations(ops []storage.Operation, ow
 
 // prepareManagedDirect is also registered for leader raw-command admission.
 // It stages and admits once; its caller owns submission and terminal settlement.
+// The engine's write decider (BeginEntityTransaction) refuses a closing
+// engine before ctx is consulted, so a closed engine reports itself closed
+// rather than the cancellation of its own work context.
 func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []storage.Operation, mode storage.EntityCommitMode) (prepared *storage.PreparedEntityCommit, settle func(storage.CommitOutcome), prepareErr error) {
 	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
+		// A caller without a context gets the applying engine's lifetime.
+		owned, err := storage.AcceptedWorkContext(t.Engine)
+		if err != nil {
+			return nil, nil, err
+		}
+		ctx = owned
 	}
 	owner := managedEntityOwnerFor(t.Engine)
 	if owner.route.CheckAdmission != nil {
@@ -567,6 +582,9 @@ func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []sto
 			prepareErr = nornicerrors.MarkCommitRolledBack(prepareErr)
 		}
 	}()
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if err := tx.SetNamespace(t.dbName); err != nil {
 		return nil, nil, err
 	}

@@ -230,7 +230,7 @@ func TestStorageSizeReconciliationStreamsEntities(t *testing.T) {
 	require.NoError(t, err)
 
 	manager := &DatabaseManager{}
-	nodeSize, edgeSize, err := manager.calculateStorageSizeFromEngine(engine)
+	nodeSize, edgeSize, err := manager.calculateStorageSizeFromEngine(context.Background(), engine)
 	require.NoError(t, err)
 	require.Equal(t, wantNodeSize, nodeSize)
 	require.Equal(t, wantEdgeSize, edgeSize)
@@ -290,7 +290,7 @@ func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) 
 	require.Zero(t, engine.snapshotNodeScans)
 	require.Zero(t, engine.snapshotEdgeScans)
 
-	total, _, _ := restarted.GetStorageSize(restarted.DefaultDatabaseName())
+	total, _, _ := restarted.GetStorageSize(context.Background(), restarted.DefaultDatabaseName())
 	require.Positive(t, total)
 	require.Equal(t, 1, engine.snapshotNodeScans)
 	require.Equal(t, 1, engine.snapshotEdgeScans)

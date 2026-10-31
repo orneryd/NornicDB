@@ -9,6 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// requireReceiptOutcome compares an outcome a receipt's waits return with the
+// published one by state and cause: a wait presents an accepted (non-discarded)
+// outcome as an AcceptedCommitError whose cause is reached through Cause().
+func requireReceiptOutcome(t *testing.T, want, got storage.CommitOutcome) {
+	t.Helper()
+	require.Equal(t, want.State, got.State)
+	if want.Err == nil || want.State == storage.CommitDiscarded {
+		require.ErrorIs(t, got.Err, want.Err)
+		return
+	}
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, got.Err, &accepted)
+	require.ErrorIs(t, accepted.Cause(), want.Err)
+}
+
 func TestFinishPreparedReceipt(t *testing.T) {
 	for _, test := range []struct {
 		name           string
@@ -52,17 +67,19 @@ func TestFinishPreparedReceipt(t *testing.T) {
 				}
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				require.ErrorIs(t, receipt.Wait(ctx), context.Canceled)
+				var accepted *storage.AcceptedCommitError
+				require.ErrorAs(t, receipt.Wait(ctx), &accepted)
+				require.ErrorIs(t, accepted.Cause(), context.Canceled)
 			} else {
 				require.NoError(t, err)
-				require.Equal(t, outcome, receipt.Outcome())
-				require.Equal(t, outcome, receipt.WaitPhysicalOutcome(t.Context()))
+				require.Equal(t, outcome, receipt.Outcome()) // Outcome and settle carry the published outcome itself
+				requireReceiptOutcome(t, outcome, receipt.WaitPhysicalOutcome(t.Context()))
 				if test.state == storage.CommitRecoveryPending {
 					require.Empty(t, settled)
-					require.Equal(t, outcome, receipt.WaitOutcome(t.Context()))
+					requireReceiptOutcome(t, outcome, receipt.WaitOutcome(t.Context()))
 				} else {
 					require.Equal(t, []storage.CommitOutcome{outcome}, settled)
-					require.ErrorIs(t, receipt.Wait(t.Context()), storage.ErrConflict)
+					requireReceiptOutcome(t, outcome, storage.CommitOutcome{State: outcome.State, Err: receipt.Wait(t.Context())})
 				}
 			}
 			node, readErr := base.GetStoredNode("test:receipt")

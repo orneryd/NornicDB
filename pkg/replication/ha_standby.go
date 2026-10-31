@@ -644,7 +644,7 @@ func (r *HAStandbyReplicator) Promote(ctx context.Context) error {
 // promote runs one promotion; Promote ensures only one runs at a time.
 func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 	// Flush any pending WAL
-	if err := r.walApplier.Flush(); err != nil {
+	if err := r.walApplier.Flush(ctx); err != nil {
 		return localizedError(localization.ReplicationHAFlushWALFailed(err), err)
 	}
 
@@ -665,8 +665,14 @@ func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 	return r.startPrimary(ctx)
 }
 
-// Apply applies a command to storage.
+// Apply applies a command to storage. Its native submission observes this
+// replicator's work context.
 func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.applyEnrolled(r.work.Context(), cmd, timeout)
+}
+
+// applyEnrolled is Apply with the caller's work context.
+func (r *HAStandbyReplicator) applyEnrolled(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 		return err
 	}
@@ -682,7 +688,7 @@ func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
 	}
 	traceWrites := os.Getenv("NORNICDB_CLUSTER_TRACE_WRITES") != ""
 	start := time.Now()
-	if err := r.storage.ApplyCommand(cmd); err != nil {
+	if err := r.storage.ApplyCommand(ctx, cmd); err != nil {
 		return err
 	}
 	applyDur := time.Since(start)
@@ -734,7 +740,7 @@ func (r *HAStandbyReplicator) waitForReplicationAck(target uint64, timeout time.
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(r.work.Context(), timeout)
 	defer cancel()
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -910,7 +916,7 @@ func (r *HAStandbyReplicator) HandleWALBatch(entries []*WALEntry) (*WALBatchResp
 	r.primaryHealthy.Store(true)
 	r.mu.Unlock()
 
-	lastApplied, err := r.walApplier.ApplyBatch(entries)
+	lastApplied, err := r.walApplier.ApplyBatch(r.work.Context(), entries)
 	if err != nil {
 		return nil, err
 	}
@@ -1025,8 +1031,8 @@ func NewWALApplier(storage Storage) *WALApplier {
 	return &WALApplier{storage: storage}
 }
 
-// ApplyBatch applies a batch of WAL entries.
-func (a *WALApplier) ApplyBatch(entries []*WALEntry) (uint64, error) {
+// ApplyBatch applies a batch of WAL entries; ctx is the caller's work context.
+func (a *WALApplier) ApplyBatch(ctx context.Context, entries []*WALEntry) (uint64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -1036,7 +1042,7 @@ func (a *WALApplier) ApplyBatch(entries []*WALEntry) (uint64, error) {
 			continue // Already applied
 		}
 
-		if err := a.storage.ApplyCommand(entry.Command); err != nil {
+		if err := a.storage.ApplyCommand(ctx, entry.Command); err != nil {
 			return lastApplied, err
 		}
 
@@ -1047,13 +1053,14 @@ func (a *WALApplier) ApplyBatch(entries []*WALEntry) (uint64, error) {
 	return lastApplied, nil
 }
 
-// Flush ensures all pending entries are applied.
-func (a *WALApplier) Flush() error {
+// Flush ensures all pending entries are applied; ctx is the caller's work
+// context.
+func (a *WALApplier) Flush(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	for _, entry := range a.pendingBatch {
-		if err := a.storage.ApplyCommand(entry.Command); err != nil {
+		if err := a.storage.ApplyCommand(ctx, entry.Command); err != nil {
 			return err
 		}
 	}

@@ -49,7 +49,7 @@ func (m *testDatabaseRegistry[T]) DropDatabase(ctx context.Context, name string)
 		return err
 	}
 	if !m.Exists(name) {
-		return fmt.Errorf("database '%s' does not exist", name)
+		return fmt.Errorf("database '%s' does not exist: %w", name, multidb.ErrDatabaseNotFound)
 	}
 	delete(m.databases, name)
 	return nil

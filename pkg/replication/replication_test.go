@@ -28,7 +28,7 @@ func NewMockStorage() *MockStorage {
 	}
 }
 
-func (m *MockStorage) ApplyCommand(cmd *Command) error {
+func (m *MockStorage) ApplyCommand(_ context.Context, cmd *Command) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1210,7 +1210,7 @@ func TestWALStreamer_GetPendingEntries(t *testing.T) {
 
 	// Add some WAL entries
 	for i := 0; i < 5; i++ {
-		storage.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte{byte(i)}})
+		storage.ApplyCommand(context.Background(), &Command{Type: CmdCreateNode, Data: []byte{byte(i)}})
 	}
 
 	streamer := NewWALStreamer(storage, 100)
@@ -1226,7 +1226,7 @@ func TestWALStreamer_AcknowledgePosition(t *testing.T) {
 
 	// Add some WAL entries
 	for i := 0; i < 5; i++ {
-		storage.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte{byte(i)}})
+		storage.ApplyCommand(context.Background(), &Command{Type: CmdCreateNode, Data: []byte{byte(i)}})
 	}
 
 	streamer := NewWALStreamer(storage, 100)
@@ -1259,7 +1259,7 @@ func TestWALApplier_ApplyBatch(t *testing.T) {
 		{Position: 3, Command: &Command{Type: CmdCreateNode, Data: []byte("3")}},
 	}
 
-	lastApplied, err := applier.ApplyBatch(entries)
+	lastApplied, err := applier.ApplyBatch(context.Background(), entries)
 	require.NoError(t, err)
 
 	assert.Equal(t, uint64(3), lastApplied)
@@ -1276,7 +1276,7 @@ func TestWALApplier_ApplyBatch_SkipAlreadyApplied(t *testing.T) {
 		{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("2")}},
 	}
 
-	_, err := applier.ApplyBatch(entries1)
+	_, err := applier.ApplyBatch(context.Background(), entries1)
 	require.NoError(t, err)
 	assert.Equal(t, 2, storage.GetApplyCount())
 
@@ -1286,7 +1286,7 @@ func TestWALApplier_ApplyBatch_SkipAlreadyApplied(t *testing.T) {
 		{Position: 3, Command: &Command{Type: CmdCreateNode, Data: []byte("3")}},
 	}
 
-	_, err = applier.ApplyBatch(entries2)
+	_, err = applier.ApplyBatch(context.Background(), entries2)
 	require.NoError(t, err)
 	assert.Equal(t, 3, storage.GetApplyCount()) // Only one new command applied
 }

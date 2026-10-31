@@ -109,7 +109,7 @@ func TestPR1655ObservedWALPreservesAcceptedFailure(t *testing.T) {
 	err = owner.UpdateNode(NodeUpdateRequest{Before: before, After: &Node{ID: before.ID, Properties: map[string]any{"v": "accepted"}}})
 	var accepted *AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
-	require.ErrorIs(t, accepted, physicalErr)
+	require.ErrorIs(t, accepted.Cause(), physicalErr)
 	require.Equal(t, CommitRecoveryPending, accepted.State)
 	require.NotEmpty(t, accepted.LogicalID)
 	_, pending := owner.pendingEntityCommits.Load(accepted.LogicalID)

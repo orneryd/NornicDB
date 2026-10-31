@@ -16,10 +16,10 @@ type blockingApplyStorage struct {
 	entered, release chan struct{}
 }
 
-func (s *blockingApplyStorage) ApplyCommand(cmd *Command) error {
+func (s *blockingApplyStorage) ApplyCommand(ctx context.Context, cmd *Command) error {
 	close(s.entered)
 	<-s.release
-	return s.MockStorage.ApplyCommand(cmd)
+	return s.MockStorage.ApplyCommand(ctx, cmd)
 }
 
 // Shutdown matrix S1, StandaloneReplicator: Shutdown waits for an accepted

@@ -8,18 +8,21 @@ import (
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 type managedRouteReplicator struct {
 	Replicator
-	peer         *StorageAdapter
-	reject       bool
-	calls        int
-	delay        bool
-	pending      *Command
-	pendingOwner storage.CommitReceiptOwner
+	peer           *StorageAdapter
+	reject         bool
+	calls          int
+	delay          bool
+	pending        *Command
+	pendingOwner   storage.CommitReceiptOwner
+	pendingReceipt *storage.CommitReceipt
+	work           lifecycle.WorkLifetime
 }
 
 func (r *managedRouteReplicator) Apply(cmd *Command, timeout time.Duration) error {
@@ -35,7 +38,7 @@ func (r *managedRouteReplicator) Apply(cmd *Command, timeout time.Duration) erro
 		return err
 	}
 	// Only wire fields cross to the peer, as with replication transport/WAL.
-	return r.peer.ApplyCommand(&Command{Type: cmd.Type, Data: cmd.Data, Timestamp: cmd.Timestamp, RequestID: cmd.RequestID})
+	return r.peer.ApplyCommand(context.Background(), &Command{Type: cmd.Type, Data: cmd.Data, Timestamp: cmd.Timestamp, RequestID: cmd.RequestID})
 }
 
 func TestManagedReplicationLateApplyUsesAccountingOwner(t *testing.T) {
@@ -59,23 +62,28 @@ func TestManagedReplicationLateApplyUsesAccountingOwner(t *testing.T) {
 	require.NoError(t, err)
 	_, err = view.CreateNode(&storage.Node{ID: "n", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	before, _, _ := manager.GetStorageSize("late_apply")
+	before, _, _ := manager.GetStorageSize(context.Background(), "late_apply")
 	r.delay = true
 	err = view.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: map[string]any{"payload": "late committed body"}}})
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	// Author: NOR-288 lane, 2026-10-29. This is an accepted wait outcome,
+	// rather than a new-command rejection with a retryable deadline identity.
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, err, &accepted)
+	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+	requireAcceptedDiagnosticCause(t, err, context.DeadlineExceeded)
 	require.False(t, nornicerrors.IsCommitRolledBack(err), "replication timeout cannot certify logical rollback")
 	require.NotNil(t, r.pending)
-	unchanged, _, _ := manager.GetStorageSize("late_apply")
+	unchanged, _, _ := manager.GetStorageSize(context.Background(), "late_apply")
 	require.Equal(t, before, unchanged)
 	// Consensus can apply after the originating caller has returned.
 	require.NoError(t, r.applyPending(adapter, r.pending))
 	node, err := view.GetNode("n")
 	require.NoError(t, err)
 	require.Equal(t, "late committed body", node.Properties["payload"])
-	tracked, _, _ := manager.GetStorageSize("late_apply")
+	tracked, _, _ := manager.GetStorageSize(context.Background(), "late_apply")
 	recount, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	exact, _, _ := recount.GetStorageSize("late_apply")
+	exact, _, _ := recount.GetStorageSize(context.Background(), "late_apply")
 	require.Equal(t, exact, tracked)
 	require.Greater(t, tracked, before)
 }
@@ -91,7 +99,7 @@ func (r *managedRouteReplicator) SubmitAcceptedCommand(ctx context.Context, cmd 
 		r.calls++
 		r.pending = cmd
 		receipt, owner := storage.NewCommitReceipt(settle)
-		r.pendingOwner = owner
+		r.pendingOwner, r.pendingReceipt = owner, receipt
 		if err := owner.Resolve(storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: context.DeadlineExceeded}); err != nil {
 			return nil, err
 		}
@@ -102,16 +110,20 @@ func (r *managedRouteReplicator) SubmitAcceptedCommand(ctx context.Context, cmd 
 			return ErrNotLeader
 		}
 		return nil
-	}, r.Apply, 0)
+	}, &r.work, func(_ context.Context, c *Command, d time.Duration) error { return r.Apply(c, d) }, 0)
 }
 func (r *managedRouteReplicator) applyPending(adapter *StorageAdapter, cmd *Command) error {
-	err := adapter.ApplyCommand(cmd)
+	err := adapter.ApplyCommand(context.Background(), cmd)
 	if err == nil {
-		err = r.peer.ApplyCommand(&Command{Type: cmd.Type, Data: cmd.Data, Timestamp: cmd.Timestamp, RequestID: cmd.RequestID})
+		err = r.peer.ApplyCommand(context.Background(), &Command{Type: cmd.Type, Data: cmd.Data, Timestamp: cmd.Timestamp, RequestID: cmd.RequestID})
 	}
-	outcome := acceptedCommandOutcome(cmd, err)
-	if resolveErr := r.pendingOwner.Resolve(outcome); resolveErr != nil {
-		return resolveErr
+	// The accepted owner joins the late application; accounting is published
+	// by the terminal settlement the caller observes next.
+	cmd.accepted.Settle(r.pendingOwner, err)
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return r.pendingReceipt.Wait(ctx)
 	}
 	return err
 }

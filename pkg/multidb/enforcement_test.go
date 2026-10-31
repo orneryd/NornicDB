@@ -95,10 +95,10 @@ func TestDatabaseLimitChecker_CheckStorageLimits_NoLimits(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should not error with no limits
-	err = checker.CheckStorageLimits("create_node", nil, nil)
+	err = checker.CheckStorageLimits(context.Background(), "create_node", nil, nil)
 	assert.NoError(t, err)
 
-	err = checker.CheckStorageLimits("create_edge", nil, nil)
+	err = checker.CheckStorageLimits(context.Background(), "create_edge", nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -130,7 +130,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxNodes(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should fail when at limit
-	err = checker.CheckStorageLimits("create_node", nil, nil)
+	err = checker.CheckStorageLimits(context.Background(), "create_node", nil, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 	assert.Contains(t, err.Error(), "max_nodes limit")
@@ -165,7 +165,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxNodes_UnderLimit(t *testing.
 	require.NoError(t, err)
 
 	// Should succeed when under limit
-	err = checker.CheckStorageLimits("create_node", nil, nil)
+	err = checker.CheckStorageLimits(context.Background(), "create_node", nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -241,7 +241,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxEdgesCapacity(t *testing.T) 
 			require.NoError(t, err)
 			require.NotNil(t, checker)
 
-			err = checker.CheckStorageLimits("create_edge", nil, nil)
+			err = checker.CheckStorageLimits(context.Background(), "create_edge", nil, nil)
 			if !tc.wantErr {
 				assert.NoError(t, err)
 				return
@@ -269,7 +269,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_InvalidOperation(t *testing.T) 
 	require.NoError(t, err)
 
 	// Invalid operation should not error (just not checked)
-	err = checker.CheckStorageLimits("invalid_op", nil, nil)
+	err = checker.CheckStorageLimits(context.Background(), "invalid_op", nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -304,7 +304,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Node(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get current size
-	currentSize, _, _ := manager.GetStorageSize(dbName)
+	currentSize, _, _ := manager.GetStorageSize(context.Background(), dbName)
 
 	// Create a large node that would exceed the limit
 	largeNode := &storage.Node{
@@ -316,7 +316,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Node(t *testing.T) {
 	}
 
 	// Should fail with clear error message
-	err = checker.CheckStorageLimits("create_node", largeNode, nil)
+	err = checker.CheckStorageLimits(context.Background(), "create_node", largeNode, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 	assert.Contains(t, err.Error(), "max_bytes limit")
@@ -369,7 +369,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Edge(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get current size
-	currentSize, _, _ := manager.GetStorageSize(dbName)
+	currentSize, _, _ := manager.GetStorageSize(context.Background(), dbName)
 
 	// Create a large edge that would exceed the limit
 	largeEdge := &storage.Edge{
@@ -383,7 +383,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Edge(t *testing.T) {
 	}
 
 	// Should fail with clear error message
-	err = checker.CheckStorageLimits("create_edge", nil, largeEdge)
+	err = checker.CheckStorageLimits(context.Background(), "create_edge", nil, largeEdge)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 	assert.Contains(t, err.Error(), "max_bytes limit")
@@ -436,7 +436,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_UnderLimit(t *testing.
 	}
 
 	// Should succeed when under limit
-	err = checker.CheckStorageLimits("create_node", smallNode, nil)
+	err = checker.CheckStorageLimits(context.Background(), "create_node", smallNode, nil)
 	assert.NoError(t, err)
 }
 
@@ -467,7 +467,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_ErrorMessages_AllLimits(t *test
 		manager.mu.Unlock()
 		require.NoError(t, err)
 
-		err = checker.CheckStorageLimits("create_node", nil, nil)
+		err = checker.CheckStorageLimits(context.Background(), "create_node", nil, nil)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 		assert.Contains(t, err.Error(), "max_nodes limit")
@@ -511,7 +511,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_ErrorMessages_AllLimits(t *test
 		manager.mu.Unlock()
 		require.NoError(t, err)
 
-		err = checker.CheckStorageLimits("create_edge", nil, nil)
+		err = checker.CheckStorageLimits(context.Background(), "create_edge", nil, nil)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 		assert.Contains(t, err.Error(), "max_edges limit")
@@ -543,7 +543,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_ErrorMessages_AllLimits(t *test
 			},
 		}
 
-		err = checker.CheckStorageLimits("create_node", largeNode, nil)
+		err = checker.CheckStorageLimits(context.Background(), "create_node", largeNode, nil)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 		assert.Contains(t, err.Error(), "max_bytes limit")
@@ -877,7 +877,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_StorageError(t *testing.T) {
 	require.NoError(t, err)
 
 	// CheckStorageLimits should fail because GetStorage will fail
-	err = checker.CheckStorageLimits("create_node", nil, nil)
+	err = checker.CheckStorageLimits(context.Background(), "create_node", nil, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "database is offline")
 }
@@ -1416,7 +1416,7 @@ func TestCalculateCurrentStorageSize(t *testing.T) {
 				require.NoError(t, err)
 
 			}
-			nodeSize, edgeSize, calcErr := manager.calculateStorageSizeFromEngine(store)
+			nodeSize, edgeSize, calcErr := manager.calculateStorageSizeFromEngine(context.Background(), store)
 			require.NoError(t, calcErr)
 			if populated {
 				assert.Greater(t, nodeSize, int64(0), "node size must be > 0")

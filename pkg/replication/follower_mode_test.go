@@ -21,7 +21,7 @@ type producerModeLeaderStorage struct {
 func (s *producerModeLeaderStorage) PrepareEntityCommand(ctx context.Context, c *Command) (*Command, func(storage.CommitOutcome), bool, error) {
 	return s.Storage.(*StorageAdapter).PrepareEntityCommand(ctx, c)
 }
-func (s *producerModeLeaderStorage) ApplyCommand(c *Command) error {
+func (s *producerModeLeaderStorage) ApplyCommand(_ context.Context, c *Command) error {
 	if c.Type == CmdCommitTransaction {
 		e, _, err := storage.DecodeEntityTransaction(c.Data)
 		if err != nil {
@@ -31,7 +31,7 @@ func (s *producerModeLeaderStorage) ApplyCommand(c *Command) error {
 		s.modes = append(s.modes, e.Mode)
 		s.mu.Unlock()
 	}
-	return s.Storage.ApplyCommand(c)
+	return s.Storage.ApplyCommand(context.Background(), c)
 }
 
 type producerModeFollower struct {

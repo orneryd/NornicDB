@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func TestDirectHiddenUpdateByteQuota(t *testing.T) {
 				}
 				require.ErrorIs(t, err, storage.ErrNotFound, "the prior entity must really be hidden")
 
-				total, nodeBytes, edgeBytes := manager.GetStorageSize(db)
+				total, nodeBytes, edgeBytes := manager.GetStorageSize(context.Background(), db)
 				require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxBytes: total}}))
 				if entity == "node" {
 					prior, err := storage.GetStoredNode(engine, "n")
@@ -79,11 +80,11 @@ func TestDirectHiddenUpdateByteQuota(t *testing.T) {
 					require.Equal(t, prior, after)
 					require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: prior}))
 				}
-				got, gotNodes, gotEdges := manager.GetStorageSize(db)
+				got, gotNodes, gotEdges := manager.GetStorageSize(context.Background(), db)
 				require.Equal(t, total, got)
 				require.Equal(t, nodeBytes, gotNodes)
 				require.Equal(t, edgeBytes, gotEdges)
-				wantNodes, wantEdges, err := tracker.manager.calculateStorageSizeFromEngine(tracker.Engine)
+				wantNodes, wantEdges, err := tracker.manager.calculateStorageSizeFromEngine(context.Background(), tracker.Engine)
 				require.NoError(t, err)
 				require.Equal(t, wantNodes, gotNodes)
 				require.Equal(t, wantEdges, gotEdges)

@@ -135,9 +135,9 @@ type raftHealthCallbackStorage struct {
 	inspect func()
 }
 
-func (s *raftHealthCallbackStorage) ApplyCommand(cmd *Command) error {
+func (s *raftHealthCallbackStorage) ApplyCommand(_ context.Context, cmd *Command) error {
 	s.inspect()
-	return s.MockStorage.ApplyCommand(cmd)
+	return s.MockStorage.ApplyCommand(context.Background(), cmd)
 }
 
 func TestRaftApplicationCallbackCanInspectHealth(t *testing.T) {

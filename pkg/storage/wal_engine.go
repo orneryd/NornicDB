@@ -3,6 +3,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -41,8 +42,6 @@ func (w *WALEngine) logger() *slog.Logger {
 //     unbounded WAL growth.
 type WALEngine struct {
 	pendingEntityCommits sync.Map
-	entityWaitCtx        context.Context
-	stopEntityWait       context.CancelFunc
 	engine               Engine
 	// keyRegistry is engine's PropertyKeyRegistry, nil when it keeps none.
 	keyRegistry PropertyKeyRegistry
@@ -289,10 +288,8 @@ func (w *WALEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 
 // NewWALEngine creates a WAL-backed storage engine.
 func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
-	waitCtx, stopWait := context.WithCancel(context.Background())
 	w := &WALEngine{
-		mutationMu:    trackedRWMutex{crossGoroutine: true},
-		entityWaitCtx: waitCtx, stopEntityWait: stopWait,
+		mutationMu: trackedRWMutex{crossGoroutine: true},
 		engine: engine,
 		wal:    wal,
 	}
@@ -1185,12 +1182,13 @@ func (w *WALEngine) Close() error {
 // underneath closes.
 func (w *WALEngine) signalStop() {
 	w.work.RecordError("", w.wal.Close())
-	w.stopEntityWait()
 	w.pendingEntityCommits.Range(func(_, value any) bool {
 		accepted := value.(*walAcceptedEntityCommit)
-		accepted.prepared.CloseNative()
 		accepted.releaseMutation()
-		_ = accepted.resolve.Resolve(CommitOutcome{State: CommitRecoveryPending, Err: ErrStorageClosed})
+		// Author: NOR-288 lane (Codex), 2026-10-27. Closing staging cannot
+		// certify rejection of a command already recorded in this WAL; its
+		// accepted owner releases its staging and keeps it pending.
+		accepted.handle.Close(accepted.resolve, ErrStorageClosed)
 		return true
 	})
 	w.DisableAutoCompaction()
@@ -1366,8 +1364,20 @@ func (w *WALEngine) commitObservedEntityChange(namespace string, operation Opera
 			releaseMutation()
 		}
 	}()
-	ctx := context.Background()
+	// An observed change has no caller context: its accepted commit and outcome
+	// wait run under the applying engine's lifetime, which Close settles with
+	// the closed cause before it ends.
+	ctx, err := AcceptedWorkContext(w.engine)
+	if err != nil {
+		return err
+	}
+	// That lifetime ends only at the engine's Close: a step it cut reports the
+	// closed store, not the ended lifetime.
+	closed := func(err error) bool { return err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) }
 	prepared, settle, err := PrepareEntityChanges(ctx, w.engine, namespace, []Operation{operation}, CommitModeDirect)
+	if closed(err) {
+		return ErrStorageClosed
+	}
 	if err != nil || prepared == nil {
 		return err
 	}
@@ -1378,11 +1388,22 @@ func (w *WALEngine) commitObservedEntityChange(namespace string, operation Opera
 		if settle != nil {
 			settle(CommitOutcome{State: CommitDiscarded, Err: err})
 		}
+		if closed(err) {
+			return ErrStorageClosed
+		}
 		return err
 	}
 	outcome := receipt.WaitOutcome(ctx)
 	if outcome.Err == nil || outcome.State == CommitDiscarded {
 		return outcome.Err
 	}
-	return &AcceptedCommitError{State: outcome.State, LogicalID: prepared.LogicalID(), Err: outcome.Err}
+	// The receipt's accepted view converts once; this names the command.
+	cause := outcome.Err
+	if accepted, ok := cause.(*AcceptedCommitError); ok {
+		cause = accepted.Cause()
+	}
+	if closed(cause) {
+		cause = ErrStorageClosed
+	}
+	return AcceptedOutcome(outcome.State, prepared.LogicalID(), cause)
 }

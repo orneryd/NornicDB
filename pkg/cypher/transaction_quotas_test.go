@@ -108,10 +108,10 @@ func TestTransactionQuotasByteAccounting(t *testing.T) {
 	exec, engine, manager := quotaExecutor(t, nil)
 	run := func(query string) error { _, err := exec.Execute(context.Background(), query, nil); return err }
 	// Initialize the cache before any transactional write.
-	initial, _, _ := manager.GetStorageSize("quota")
+	initial, _, _ := manager.GetStorageSize(context.Background(), "quota")
 	require.Zero(t, initial)
 	require.NoError(t, run("CREATE (a:Quota {id: 1})-[:R {payload: 'small'}]->(b:Quota {id: 2})"))
-	created, _, _ := manager.GetStorageSize("quota")
+	created, _, _ := manager.GetStorageSize(context.Background(), "quota")
 	require.Positive(t, created)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: created}}))
 	for _, query := range []string{
@@ -119,17 +119,17 @@ func TestTransactionQuotasByteAccounting(t *testing.T) {
 		"MATCH (:Quota)-[r:R]->(:Quota) SET r.payload = '" + strings.Repeat("x", 2048) + "'",
 	} {
 		require.Error(t, run(query))
-		size, _, _ := manager.GetStorageSize("quota")
+		size, _, _ := manager.GetStorageSize(context.Background(), "quota")
 		require.Equal(t, created, size)
 	}
 	// Neither rollback nor a rejected commit consumes storage capacity.
 	require.NoError(t, run("BEGIN"))
 	require.NoError(t, run("MATCH (n:Quota) DETACH DELETE n"))
 	require.NoError(t, run("ROLLBACK"))
-	size, _, _ := manager.GetStorageSize("quota")
+	size, _, _ := manager.GetStorageSize(context.Background(), "quota")
 	require.Equal(t, created, size)
 	require.NoError(t, run("MATCH (n:Quota) DETACH DELETE n"))
-	size, _, _ = manager.GetStorageSize("quota")
+	size, _, _ = manager.GetStorageSize(context.Background(), "quota")
 	require.Zero(t, size, "cascade deletes must release node and edge bytes exactly once")
 	require.NoError(t, run("CREATE (:Quota {id: 3})"))
 	count, err := engine.NodeCount()

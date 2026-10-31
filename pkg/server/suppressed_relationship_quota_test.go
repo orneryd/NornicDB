@@ -63,7 +63,7 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 						require.NoError(t, err)
 						_, err = store.GetEdge(beforeBody.ID)
 						require.ErrorIs(t, err, storage.ErrNotFound, "the authoritative visibility state hides the stored relationship")
-						beforeTotal, beforeNodes, beforeEdges := h.server.dbManager.GetStorageSize("nornic")
+						beforeTotal, beforeNodes, beforeEdges := h.server.dbManager.GetStorageSize(context.Background(), "nornic")
 						require.Positive(t, beforeEdges)
 						limits := &multidb.Limits{Storage: multidb.StorageLimits{MaxEdges: 1}}
 						if quota == "bytes" {
@@ -76,7 +76,7 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 						require.Zero(t, noOp.propertiesSet, "an identical final image publishes no SET work")
 						h.flush(t)
 						require.Equal(t, beforeBody, storedEdge(), "the authoritative stored body and suppression survive")
-						total, nodes, edges := h.server.dbManager.GetStorageSize("nornic")
+						total, nodes, edges := h.server.dbManager.GetStorageSize(context.Background(), "nornic")
 						require.Equal(t, beforeTotal, total)
 						require.Equal(t, beforeNodes, nodes)
 						require.Equal(t, beforeEdges, edges)

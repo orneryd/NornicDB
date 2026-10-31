@@ -258,7 +258,7 @@ func TestSizeTrackingEngine_NodePublicationIgnoresMalformedLatestReadback(t *tes
 	require.False(t, storageSizeInitialized(t, manager, dbName))
 
 	inner.badNodeOnGet = false
-	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
+	require.NoError(t, manager.ensureStorageSizeInitialized(context.Background(), dbName, base))
 	require.True(t, storageSizeInitialized(t, manager, dbName))
 	inner.badNodeOnGet = true
 	require.NoError(t, wrapped.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: id, Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "new"}}}))
@@ -299,7 +299,7 @@ func TestSizeTrackingEngine_EdgePublicationIgnoresMalformedLatestReadback(t *tes
 	require.False(t, storageSizeInitialized(t, manager, dbName))
 
 	inner.badEdgeOnGet = false
-	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
+	require.NoError(t, manager.ensureStorageSizeInitialized(context.Background(), dbName, base))
 	require.True(t, storageSizeInitialized(t, manager, dbName))
 	inner.badEdgeOnGet = true
 	require.NoError(t, wrapped.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: edgeID, StartNode: idA, EndNode: idB, Type: "LIKES"}}))
@@ -310,7 +310,7 @@ func TestSizeTrackingEngine_EdgePublicationIgnoresMalformedLatestReadback(t *tes
 	assertPublicationUsage(t, manager, dbName, base)
 
 	inner.badEdgeOnGet = false
-	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
+	require.NoError(t, manager.ensureStorageSizeInitialized(context.Background(), dbName, base))
 	require.True(t, storageSizeInitialized(t, manager, dbName))
 	inner.badEdgeOnGet = true
 	require.NoError(t, wrapped.DeleteEdge(edgeID))
@@ -373,9 +373,9 @@ func TestSizeTrackingEnginePublicationDeduplicatesSelfLoop(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, want, -delta.edgeBytes)
 	require.EqualValues(t, -1, delta.edges)
-	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
+	require.NoError(t, manager.ensureStorageSizeInitialized(context.Background(), dbName, base))
 	require.NoError(t, wrapper.DeleteNode(nodeID))
-	total, nodeBytes, edgeBytes := manager.GetStorageSize(dbName)
+	total, nodeBytes, edgeBytes := manager.GetStorageSize(context.Background(), dbName)
 	require.Zero(t, total)
 	require.Zero(t, nodeBytes)
 	require.Zero(t, edgeBytes)
@@ -557,11 +557,11 @@ func TestSizeTrackingStoredPairFoldRejectsMalformedEdge(t *testing.T) {
 func TestApplyStorageSizeDeltaClampsBelowZero(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 	base := manager.inner.(*storage.MemoryEngine)
-	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
+	require.NoError(t, manager.ensureStorageSizeInitialized(context.Background(), dbName, base))
 
 	manager.applyStorageSizeDelta(dbName, -1_000_000, -1_000_000)
 
-	nodeBytes, edgeBytes, totalBytes := manager.GetStorageSize(dbName)
+	nodeBytes, edgeBytes, totalBytes := manager.GetStorageSize(context.Background(), dbName)
 	require.Zero(t, nodeBytes)
 	require.Zero(t, edgeBytes)
 	require.Zero(t, totalBytes)
@@ -590,7 +590,7 @@ func TestSizeTrackingEngineUpdatesUsePublicationImages(t *testing.T) {
 	require.NoError(t, err)
 	edgeID := storage.EdgeID(dbName + ":second-read-edge")
 	require.NoError(t, base.CreateEdge(&storage.Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "KNOWS"}))
-	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
+	require.NoError(t, manager.ensureStorageSizeInitialized(context.Background(), dbName, base))
 
 	inner := &flipAfterGetEngine{Engine: base}
 	wrapper := newSizeTrackingEngine(inner, manager, dbName).(*sizeTrackingEngine)
@@ -601,7 +601,7 @@ func TestSizeTrackingEngineUpdatesUsePublicationImages(t *testing.T) {
 	require.True(t, storageSizeInitialized(t, manager, dbName))
 	assertPublicationUsage(t, manager, dbName, base)
 
-	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
+	require.NoError(t, manager.ensureStorageSizeInitialized(context.Background(), dbName, base))
 	inner.edgeCalls = 0
 	require.NoError(t, wrapper.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "LIKES"}}))
 	storedEdge, err := base.GetStoredEdge(edgeID)
@@ -617,18 +617,18 @@ func TestDatabaseManagerCalculateStorageSizeFromEngineErrors(t *testing.T) {
 	manager, _ := setupTestManager(t)
 	base := manager.inner.(*storage.MemoryEngine)
 
-	_, _, err := manager.calculateStorageSizeFromEngine(&storageSizingErrorEngine{Engine: base, nodesErr: errors.New("nodes unavailable")})
+	_, _, err := manager.calculateStorageSizeFromEngine(context.Background(), &storageSizingErrorEngine{Engine: base, nodesErr: errors.New("nodes unavailable")})
 	require.ErrorContains(t, err, "failed to get all nodes")
 
 	badNode := &storage.Node{ID: "testdb:bad-node", Properties: map[string]interface{}{"bad": make(chan int)}}
-	_, _, err = manager.calculateStorageSizeFromEngine(&storageSizingErrorEngine{Engine: base, nodes: []*storage.Node{badNode}})
+	_, _, err = manager.calculateStorageSizeFromEngine(context.Background(), &storageSizingErrorEngine{Engine: base, nodes: []*storage.Node{badNode}})
 	require.ErrorContains(t, err, "failed to calculate node size")
 
-	_, _, err = manager.calculateStorageSizeFromEngine(&storageSizingErrorEngine{Engine: base, edgesErr: errors.New("edges unavailable")})
+	_, _, err = manager.calculateStorageSizeFromEngine(context.Background(), &storageSizingErrorEngine{Engine: base, edgesErr: errors.New("edges unavailable")})
 	require.ErrorContains(t, err, "failed to get all edges")
 
 	badEdge := &storage.Edge{ID: "testdb:bad-edge", Type: "BAD", Properties: map[string]interface{}{"bad": make(chan int)}}
-	_, _, err = manager.calculateStorageSizeFromEngine(&storageSizingErrorEngine{Engine: base, edges: []*storage.Edge{badEdge}})
+	_, _, err = manager.calculateStorageSizeFromEngine(context.Background(), &storageSizingErrorEngine{Engine: base, edges: []*storage.Edge{badEdge}})
 	require.ErrorContains(t, err, "failed to calculate edge size")
 }
 
@@ -661,9 +661,9 @@ func (e *storageSizingErrorEngine) StreamNodesWithOptions(_ context.Context, _ s
 
 func assertPublicationUsage(t *testing.T, manager *DatabaseManager, database string, base *storage.MemoryEngine) {
 	t.Helper()
-	nodes, edges, err := manager.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(base, database))
+	nodes, edges, err := manager.calculateStorageSizeFromEngine(context.Background(), storage.NewNamespacedEngine(base, database))
 	require.NoError(t, err)
-	total, actualNodes, actualEdges := manager.GetStorageSize(database)
+	total, actualNodes, actualEdges := manager.GetStorageSize(context.Background(), database)
 	require.Equal(t, nodes, actualNodes)
 	require.Equal(t, edges, actualEdges)
 	require.Equal(t, nodes+edges, total)

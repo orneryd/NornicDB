@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -52,8 +53,8 @@ func TestEmbeddingPendingCounterPublicWrappers(t *testing.T) {
 			}{{"namespace", one, 2}, {"wal", wal, 2}, {"composite", composite, 3}}
 			for _, view := range views {
 				t.Run(view.name, func(t *testing.T) {
-					require.Equal(t, view.count, CountPendingEmbeddingIDs(view.store, nil))
-					require.Equal(t, 1, CountPendingEmbeddingIDs(view.store, func(id []byte) bool { return string(id) != "a" }),
+					require.Equal(t, view.count, CountPendingEmbeddingIDs(context.Background(), view.store, nil))
+					require.Equal(t, 1, CountPendingEmbeddingIDs(context.Background(), view.store, func(id []byte) bool { return string(id) != "a" }),
 						"IDs owned by claims or DLQ must not also count in MAIN")
 				})
 			}
@@ -61,7 +62,7 @@ func TestEmbeddingPendingCounterPublicWrappers(t *testing.T) {
 			require.NoError(t, one.DeleteNode("b"))
 			require.NoError(t, two.DeleteNode("a"))
 			for _, view := range views {
-				require.Zero(t, CountPendingEmbeddingIDs(view.store, nil), view.name+": deletion must drain every representation")
+				require.Zero(t, CountPendingEmbeddingIDs(context.Background(), view.store, nil), view.name+": deletion must drain every representation")
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"bytes"
 	"testing"
 
@@ -40,11 +41,11 @@ func TestReplicationPropertyBindingsUseNames(t *testing.T) {
 		node, err := source.GetNode(storage.NodeID(ns + ":a"))
 		require.NoError(t, err)
 		node.Properties = want
-		require.NoError(t, follower.ApplyCommand(&Command{Type: CmdUpdateNode, Data: fixtureowner.Encode(t, storage.EncodeNodePayload, node)}))
+		require.NoError(t, follower.ApplyCommand(context.Background(), &Command{Type: CmdUpdateNode, Data: fixtureowner.Encode(t, storage.EncodeNodePayload, node)}))
 		edge, err := source.GetEdge(storage.EdgeID(ns + ":r"))
 		require.NoError(t, err)
 		edge.Properties = want
-		require.NoError(t, follower.ApplyCommand(&Command{Type: CmdUpdateEdge, Data: fixtureowner.Encode(t, storage.EncodeEdgePayload, edge)}))
+		require.NoError(t, follower.ApplyCommand(context.Background(), &Command{Type: CmdUpdateEdge, Data: fixtureowner.Encode(t, storage.EncodeEdgePayload, edge)}))
 		got, err := destination.GetNode(node.ID)
 		require.NoError(t, err)
 		require.Equal(t, want, got.Properties)

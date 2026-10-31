@@ -36,7 +36,7 @@ type IDDictionaryReport struct {
 func (b *BadgerEngine) CheckIDDictionary() (*IDDictionaryReport, error) {
 	report := &IDDictionaryReport{}
 	var unlabelled []NodeID
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		labelled := numIDsInKeys(txn, prefixLabelIndex)
 		linked := numIDsInKeys(txn, prefixOutgoingIndex)
 		for _, prefix := range []byte{prefixNode, prefixEdge} {

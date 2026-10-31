@@ -77,7 +77,7 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 									wantEdges, err := engine.EdgeCount()
 									require.NoError(t, err)
 									for attempt := 0; attempt < 2; attempt++ {
-										before, _, _ := manager.GetStorageSize(db)
+										before, _, _ := manager.GetStorageSize(context.Background(), db)
 										limits := &Limits{Storage: StorageLimits{MaxNodes: wantNodes, MaxEdges: wantEdges}}
 										if quota == "bytes" {
 											limits = &Limits{Storage: StorageLimits{MaxBytes: before}}
@@ -139,9 +139,9 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 										count, err = engine.EdgeCount()
 										require.NoError(t, err)
 										require.Equal(t, wantEdges, count)
-										nodes, edges, err := tracker.manager.calculateStorageSizeFromEngine(tracker.Engine)
+										nodes, edges, err := tracker.manager.calculateStorageSizeFromEngine(context.Background(), tracker.Engine)
 										require.NoError(t, err)
-										total, gotNodes, gotEdges := manager.GetStorageSize(db)
+										total, gotNodes, gotEdges := manager.GetStorageSize(context.Background(), db)
 										require.Equal(t, nodes, gotNodes)
 										require.Equal(t, edges, gotEdges)
 										require.Equal(t, nodes+edges, total)

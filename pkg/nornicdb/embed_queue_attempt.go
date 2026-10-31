@@ -135,7 +135,7 @@ func (ew *EmbedWorker) PendingEmbeddingsCount() int {
 			return !claimed && !queued
 		}
 	}
-	count += storage.CountPendingEmbeddingIDs(ew.storage, accept)
+	count += storage.CountPendingEmbeddingIDs(ew.ctx, ew.storage, accept) // the worker's own lifetime
 	return count
 }
 

@@ -249,9 +249,11 @@ func TestHandleCommitPanicRollsBackBeforePreservingPanic(t *testing.T) {
 }
 
 func TestTransactionLifecycleCommitWithoutExecutor(t *testing.T) {
+	// A nil parent is refused: the rollback base must be the session's context.
+	require.Error(t, (&transactionLifecycle{}).begin(nil, 0, "neo4j", nil, nil, nil)) //nolint:staticcheck // nil parent is the case under test.
 	lifecycle := &transactionLifecycle{}
 	observed := 0
-	require.NoError(t, lifecycle.begin(nil, 0, "neo4j", nil, nil, //nolint:staticcheck // Exercises the nil-parent fallback.
+	require.NoError(t, lifecycle.begin(context.Background(), 0, "neo4j", nil, nil,
 		func(reason transactionTerminalReason, database string, _ time.Duration, err error) {
 			observed++
 			require.Equal(t, transactionTerminalCommit, reason)

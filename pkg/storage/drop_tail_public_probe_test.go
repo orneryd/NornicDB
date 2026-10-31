@@ -45,11 +45,16 @@ func TestReview1406FailedDropTailRetainsNamespaceFence(t *testing.T) {
 				return injected
 			})
 			if route == "managed-drop" {
+				// An applied DROP is accepted work: its failed cleanup is
+				// reported as an accepted outcome whose cause is the failure.
 				err = manager.DropDatabase(t.Context(), "tenant")
+				var accepted *storage.AcceptedCommitError
+				require.ErrorAs(t, err, &accepted)
+				require.ErrorIs(t, accepted.Cause(), injected)
 			} else {
 				_, _, err = base.DeleteByPrefix("tenant:")
+				require.ErrorIs(t, err, injected)
 			}
-			require.ErrorIs(t, err, injected)
 			require.Equal(t, 1, calls)
 			for _, entity := range []struct {
 				kind storage.StoredEntityKind

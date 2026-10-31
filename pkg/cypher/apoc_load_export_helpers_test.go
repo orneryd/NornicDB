@@ -179,12 +179,12 @@ func TestApocLoadExportHelpers_LoadJsonFromURL_AndQueryExports(t *testing.T) {
 			}
 		}),
 	}
-	data, err := e.loadJsonFromURL("https://example.com/ok")
+	data, err := e.loadJsonFromURL(context.Background(), "https://example.com/ok")
 	require.NoError(t, err)
 	require.NotNil(t, data)
-	_, err = e.loadJsonFromURL("https://example.com/bad")
+	_, err = e.loadJsonFromURL(context.Background(), "https://example.com/bad")
 	require.Error(t, err)
-	_, err = e.loadJsonFromURL("https://example.com/malformed")
+	_, err = e.loadJsonFromURL(context.Background(), "https://example.com/malformed")
 	require.Error(t, err)
 
 	// File loader branches: missing file and malformed JSON.
@@ -344,7 +344,7 @@ func TestApocLoadExportHelpers_RemoteURLLoadsRequireAllowlistedHost(t *testing.T
 	exec.SetAllowRemoteAPOCURLAccess(true)
 	ctx := context.Background()
 
-	_, err := exec.loadJsonFromURL("https://example.com/ok")
+	_, err := exec.loadJsonFromURL(context.Background(), "https://example.com/ok")
 	require.ErrorIs(t, err, errAPOCRemoteURLHostNotAllowed)
 
 	exec.SetAPOCRemoteURLAllowlist([]string{"api.example.com"})
@@ -516,4 +516,41 @@ func TestApocLoadExportHelpers_CallApocExportJsonAll_WriteError(t *testing.T) {
 	require.NoError(t, os.WriteFile(parent, []byte("file"), 0o600))
 	_, err = exec.callApocExportJsonAll(ctx, []interface{}{filepath.Join(parent, "subdir", "out.json"), map[string]interface{}{}})
 	require.Error(t, err)
+}
+
+// Author: NOR-288 lane (Claude), 2026-10-30. A remote APOC load runs under the
+// query's context: its host resolution and its HTTP request both see it, and a
+// cancelled query neither resolves nor fetches.
+func TestApocLoadJsonRemoteUsesQueryContext(t *testing.T) {
+	type marker struct{}
+	base := newTestMemoryEngine(t)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "test"))
+	exec.SetAllowRemoteAPOCURLAccess(true)
+	exec.SetAPOCRemoteURLAllowlist([]string{"example.com"})
+	var resolved, fetched []bool
+	exec.apocRemoteHostResolver = func(ctx context.Context, _ string) ([]net.IPAddr, error) {
+		resolved = append(resolved, ctx.Value(marker{}) == "query")
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+	}
+	exec.apocRemoteHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		fetched = append(fetched, req.Context().Value(marker{}) == "query")
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"x":1}`)), Header: make(http.Header), Request: req}, nil
+	})}
+
+	ctx := context.WithValue(context.Background(), marker{}, "query")
+	res, err := exec.Execute(ctx, "CALL apoc.load.json('https://example.com/ok') YIELD value RETURN value", nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, []bool{true}, resolved, "host resolution runs under the query's context")
+	require.Equal(t, []bool{true}, fetched, "the HTTP request runs under the query's context")
+
+	resolved, fetched = nil, nil
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = exec.Execute(cancelled, "CALL apoc.load.json('https://example.com/ok') YIELD value RETURN value", nil)
+	require.Error(t, err, "a cancelled query does not load")
+	require.Empty(t, fetched, "a cancelled query does not fetch")
 }

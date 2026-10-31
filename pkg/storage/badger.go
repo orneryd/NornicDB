@@ -173,6 +173,11 @@ const (
 //	engine.CreateNode(node)
 type BadgerEngine struct {
 	durableCaches durableCacheState
+	// Author: NOR-288 lane (Codex), 2026-10-26. One native application owner
+	// per live accepted logical command; terminal publication retires the entry.
+	acceptedApplications map[acceptedApplicationKey]*acceptedEntityApplication // guarded by mu
+	// nativeSyncHook is nil in production; tests fence the real Sync boundary.
+	nativeSyncHook func()
 	// dropPrefixTailHook is nil in production and held under the lifecycle barrier.
 	dropPrefixTailHook    func(string) error
 	storedEntityObservers atomic.Pointer[storedEntityObserverRegistry]
@@ -490,6 +495,8 @@ func (b *BadgerEngine) IsInMemory() bool {
 // (see managedBadgerDB): transactions and writes must go through the
 // engine, never through this handle.
 func (b *BadgerEngine) DB() *badger.DB {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	if b.db == nil {
 		return nil
 	}
@@ -1366,7 +1373,12 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 	encodedSeq := make([]byte, 8)
 	binary.BigEndian.PutUint64(encodedSeq, seq)
 	persistKey := state.persistKey
-	_ = b.db.updateMetadataContext(context.Background(), func(txn *badger.Txn) error {
+	db, err := b.beginHelperTxn()
+	if err != nil {
+		return
+	}
+	defer b.work.Leave()
+	_ = db.updateMetadataContext(b.work.Context(), func(txn *badger.Txn) error {
 		return txn.Set(persistKey, encodedSeq)
 	})
 }

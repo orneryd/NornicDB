@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -241,7 +242,9 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 		}
 		go func() {
 			defer b.work.Leave()
-			if err := b.endSuppressions(nil); err != nil && !util.ErrorIsOnly(err, ErrStorageClosed) {
+			// Close's own pass, before it cancels the owner, ended what this
+			// worker was still waiting to end.
+			if err := b.endSuppressions(nil); err != nil && !util.ErrorIsOnly(err, ErrStorageClosed) && !errors.Is(err, context.Canceled) {
 				b.work.RecordError("", fmt.Errorf("manual-suppression retirement: %w", err))
 			}
 		}()
@@ -271,7 +274,7 @@ func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) error {
 			}
 		}
 		b.manualSuppressionMu.Unlock()
-		write, releaseWrite, err := b.beginEntityWrite(context.Background(), first[1:], first[0] == manualSuppressionEdge, inherited, entityWritePlan{batches: suppressionEndFootprints(ends)})
+		write, releaseWrite, err := b.beginEntityWrite(b.work.Context(), first[1:], first[0] == manualSuppressionEdge, inherited, entityWritePlan{batches: suppressionEndFootprints(ends)})
 		if err != nil {
 			b.manualSuppressionMu.Lock()
 			b.suppressionEnding = false
