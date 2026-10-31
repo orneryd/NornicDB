@@ -19,14 +19,20 @@ type engineWorker struct {
 // handle, or nil once the engine sealed admission. run returns when ctx ends:
 // at its stop, when parent ends, or when the engine owner stops.
 func (b *BadgerEngine) startEngineWorker(parent context.Context, run func(ctx context.Context)) *engineWorker {
-	if !b.work.Enter() {
+	return startOwnedWorker(&b.work, parent, run)
+}
+
+// startOwnedWorker launches run as accepted work of owner: a storage
+// component's background loop. It returns nil once owner sealed admission.
+func startOwnedWorker(owner *lifecycle.WorkLifetime, parent context.Context, run func(ctx context.Context)) *engineWorker {
+	if !owner.Enter() {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(parent)
-	unlink := context.AfterFunc(b.work.Context(), cancel)
+	unlink := context.AfterFunc(owner.Context(), cancel)
 	w := &engineWorker{stop: cancel}
 	go func() {
-		defer b.work.Leave()
+		defer owner.Leave()
 		defer unlink()
 		defer cancel()
 		w.done.Run(func() { run(ctx) })

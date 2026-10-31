@@ -74,7 +74,7 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	handle := NewAcceptedEntityCommitHandle(prepared)
 	// The existing WAL mutex joins registration to its closed admission cut.
 	w.wal.mu.Lock()
-	if w.wal.closed.Load() {
+	if w.wal.work.Closing() {
 		w.wal.mu.Unlock()
 		releaseMutation()
 		releaseAuthority()
