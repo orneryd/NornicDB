@@ -4787,25 +4787,20 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 	if hook := getUniqueConstraintScanHook(); hook != nil {
 		hook()
 	}
-	existingEdges, err := tx.engine.GetStoredEdgesByType(edge.Type)
-	if err != nil {
-		return err
-	}
 	nsPrefix := namespace + ":"
-	for _, existingEdge := range existingEdges {
+	return tx.engine.StreamStoredEdgesByType(context.Background(), edge.Type, func(existingEdge *Edge) error {
 		if existingEdge.ID == edge.ID || tx.committedEdgeSupersededLocked(existingEdge.ID) {
-			continue
+			return nil
 		}
 		// Filter to same namespace to avoid cross-database false positives
 		if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
-			continue
+			return nil
 		}
 		if err := collides(existingEdge); err != nil {
 			return err
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // checkEdgeTemporalConstraint checks temporal no-overlap constraints for an edge in a transaction.
@@ -4862,32 +4857,27 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 	}
 
 	// Check against committed edges (filtered by namespace)
-	existingEdges, err := tx.engine.GetStoredEdgesByType(edge.Type)
-	if err != nil {
-		return err
-	}
-	for _, existingEdge := range existingEdges {
+	return tx.engine.StreamStoredEdgesByType(context.Background(), edge.Type, func(existingEdge *Edge) error {
 		if existingEdge.ID == edge.ID || tx.committedEdgeSupersededLocked(existingEdge.ID) {
-			continue
+			return nil
 		}
 		if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
-			continue
+			return nil
 		}
 		if !edgeTemporalCompositeKeyMatch(existingEdge, keyProps, keyVals) {
-			continue
+			return nil
 		}
 		existingStart, ok := CoerceTemporalTime(existingEdge.Properties[startProp])
 		if !ok {
-			continue
+			return nil
 		}
 		existingEnd, existingHasEnd := CoerceTemporalTime(existingEdge.Properties[endProp])
 		if intervalsOverlap(newInterval, temporalInterval{start: existingStart, end: existingEnd, hasEnd: existingHasEnd}) {
 			message := localization.StorageValidationTemporalEdgeOverlap(string(existingEdge.ID), keyVals)
 			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // checkEdgeCardinality enforces cardinality constraints within a transaction.
