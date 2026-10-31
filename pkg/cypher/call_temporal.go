@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"fmt"
@@ -84,7 +86,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"ok"},
+		Columns: columnNames(dbTemporalAssertNoOverlapColumns),
 		Rows:    [][]interface{}{{true}},
 	}, nil
 }
@@ -136,7 +138,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 		}
 		if node != nil {
 			return &ExecuteResult{
-				Columns: []string{"node"},
+				Columns: columnNames(nodeColumns),
 				Rows:    [][]interface{}{{node}},
 			}, nil
 		}
@@ -178,13 +180,13 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 
 	if bestNode == nil {
 		return &ExecuteResult{
-			Columns: []string{"node"},
+			Columns: columnNames(nodeColumns),
 			Rows:    [][]interface{}{},
 		}, nil
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"node"},
+		Columns: columnNames(nodeColumns),
 		Rows:    [][]interface{}{{bestNode}},
 	}, nil
 }

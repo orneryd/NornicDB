@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers are the declared values in procedure_result_headers.go.
+
 import (
 	"context"
 
@@ -59,7 +61,7 @@ func (e *StorageExecutor) graphSearchEntity(result *search.SearchResult) (kind s
 // query split into chunks were searched (0 and 0 for a query searched whole).
 func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *ExecuteResult {
 	result := &ExecuteResult{
-		Columns: retrievalResultSchemas(true)[0],
+		Columns: retrievalResultSchemas(retrievalGraphColumns)[0],
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
 	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
@@ -102,5 +104,5 @@ func (e *StorageExecutor) graphSearchPage(response *search.SearchResponse) *Exec
 		page["query_chunks_searched"] = int64(response.QueryChunksSearched)
 		page["query_chunks_total"] = int64(response.QueryChunksTotal)
 	}
-	return &ExecuteResult{Columns: retrievalResultSchemas(true)[1], Rows: [][]interface{}{{page}}}
+	return &ExecuteResult{Columns: retrievalResultSchemas(retrievalGraphColumns)[1], Rows: [][]interface{}{{page}}}
 }

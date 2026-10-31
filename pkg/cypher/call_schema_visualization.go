@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/collection"
@@ -77,7 +79,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 		}
 	}
 	return &ExecuteResult{
-		Columns: []string{"nodes", "relationships"},
+		Columns: columnNames(graphColumns),
 		Rows:    [][]interface{}{{virtualNodes, virtualEdges}},
 	}, nil
 }

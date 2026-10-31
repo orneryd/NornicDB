@@ -1,6 +1,8 @@
 // Package cypher implements APOC data import/export procedures.
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"encoding/csv"
@@ -304,7 +306,7 @@ func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"value"},
+		Columns: columnNames(valueMapColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -418,7 +420,7 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, args []interface{
 
 	if len(records) == 0 {
 		return &ExecuteResult{
-			Columns: []string{"lineNo", "list", "map"},
+			Columns: columnNames(apocLoadCsvColumns),
 			Rows:    [][]interface{}{},
 		}, nil
 	}
@@ -457,7 +459,7 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, args []interface{
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"lineNo", "list", "map"},
+		Columns: columnNames(apocLoadCsvColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -794,7 +796,7 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"value"},
+		Columns: columnNames(valueMapColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -925,7 +927,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"source", "nodes", "relationships"},
+		Columns: legacyProcedureColumns("apoc.import.json"),
 		Rows: [][]interface{}{{
 			urlOrFile,
 			nodesImported,

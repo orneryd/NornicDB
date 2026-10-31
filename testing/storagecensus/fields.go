@@ -30,6 +30,23 @@ type fieldRow struct {
 // usage, suppression state or runtime publication order: only their owners change them.
 var ownedFieldClasses = map[string]bool{"entity-count": true, "derived-count": true, "quota": true, "suppression": true, "publication-order": true}
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: one row per
+// ownership group that several fields share.
+var (
+	// Acknowledged write-behind counts not yet applied.
+	bufferedCardinalityRow = fieldRow{class: "entity-count", owners: []string{"pkg/storage.bufferedCardinalityDeltas.add"}, readers: []string{"pkg/storage.bufferedCardinalityDeltas.count"}}
+	// The cached stored bytes of each database.
+	storageSizeQuotaRow = fieldRow{class: "quota", owners: []string{
+		"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.managedDatabaseRuntime.initializeStorageUsage",
+		"pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{
+		"pkg/multidb.DatabaseManager.readStorageSize", "pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo", "pkg/multidb.DatabaseInfo.reserveStorageUsage"}}
+	// The actual entity counts each database's allowances are checked against.
+	storageUsageQuotaRow = fieldRow{class: "quota", owners: []string{
+		"pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage"}}
+	// Accepted allowances: their identities and their reserved amounts.
+	reservationQuotaRow = fieldRow{class: "quota", owners: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage", "pkg/multidb.DatabaseInfo.removeReservationLocked"}}
+)
+
 // fieldClasses classifies, by field, every numeric field of a state package
 // that the module writes (a field of integer, float or atomic integer type,
 // or a map, slice or array of them), and the non-numeric fields that hold
@@ -63,10 +80,10 @@ var fieldClasses = map[string]fieldRow{
 		"pkg/storage.BadgerEngine.cacheOnEdgesDeleted", "pkg/storage.BadgerEngine.cacheOnNodesDeleted", "pkg/storage.BadgerEngine.initializeCounts",
 		"pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.NewBadgerEngineWithOptions"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
 	// Counts of acknowledged write-behind commits not yet applied.
-	"pkg/storage.bufferedCardinalityDeltas.nodes":     {class: "entity-count", owners: []string{"pkg/storage.bufferedCardinalityDeltas.add"}, readers: []string{"pkg/storage.bufferedCardinalityDeltas.count"}},
-	"pkg/storage.bufferedCardinalityDeltas.edges":     {class: "entity-count", owners: []string{"pkg/storage.bufferedCardinalityDeltas.add"}, readers: []string{"pkg/storage.bufferedCardinalityDeltas.count"}},
-	"pkg/storage.bufferedCardinalityDeltas.nodeTotal": {class: "entity-count", owners: []string{"pkg/storage.bufferedCardinalityDeltas.add"}, readers: []string{"pkg/storage.bufferedCardinalityDeltas.count"}},
-	"pkg/storage.bufferedCardinalityDeltas.edgeTotal": {class: "entity-count", owners: []string{"pkg/storage.bufferedCardinalityDeltas.add"}, readers: []string{"pkg/storage.bufferedCardinalityDeltas.count"}},
+	"pkg/storage.bufferedCardinalityDeltas.nodes":     bufferedCardinalityRow,
+	"pkg/storage.bufferedCardinalityDeltas.edges":     bufferedCardinalityRow,
+	"pkg/storage.bufferedCardinalityDeltas.nodeTotal": bufferedCardinalityRow,
+	"pkg/storage.bufferedCardinalityDeltas.edgeTotal": bufferedCardinalityRow,
 	"pkg/storage.CommitBuffer.edgeCreateCount":        {class: "entity-count", owners: []string{"pkg/storage.CommitBuffer.AddCommit", "pkg/storage.CommitBuffer.addEdge"}},
 	"pkg/storage.CommitBuffer.edgeDeleteCount":        {class: "entity-count", owners: []string{"pkg/storage.CommitBuffer.AddCommit"}},
 	// Derived counts a transaction stages until it commits.
@@ -78,20 +95,20 @@ var fieldClasses = map[string]fieldRow{
 		"pkg/storage.BadgerEngine.dropManualSuppressions", "pkg/storage.BadgerEngine.forgetManualSuppression",
 		"pkg/storage.BadgerEngine.loadManualSuppressions", "pkg/storage.BadgerEngine.markManualSuppression"}, readers: []string{"pkg/storage.BadgerEngine.manuallySuppressed", "pkg/storage.BadgerEngine.visibilityFiltered", "pkg/storage.BadgerEngine.HasManualSuppressions"}},
 	// Quota usage: the cached stored bytes of each database.
-	"pkg/multidb.DatabaseInfo.nodeSize":  {class: "quota", owners: []string{"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseManager.readStorageSize", "pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo", "pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
-	"pkg/multidb.DatabaseInfo.edgeSize":  {class: "quota", owners: []string{"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseManager.readStorageSize", "pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo", "pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
-	"pkg/multidb.DatabaseInfo.totalSize": {class: "quota", owners: []string{"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseManager.readStorageSize", "pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo", "pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
+	"pkg/multidb.DatabaseInfo.nodeSize":  storageSizeQuotaRow,
+	"pkg/multidb.DatabaseInfo.edgeSize":  storageSizeQuotaRow,
+	"pkg/multidb.DatabaseInfo.totalSize": storageSizeQuotaRow,
 
 	// Accepted allowance identities are quota state even though their map values
 	// are structs, so numeric-field discovery alone cannot classify this map.
-	"pkg/multidb.DatabaseInfo.pending": {class: "quota", owners: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage", "pkg/multidb.DatabaseInfo.removeReservationLocked"}},
+	"pkg/multidb.DatabaseInfo.pending": reservationQuotaRow,
 
 	// Shared actual counts and accepted allowances use the existing byte-cache mutex.
-	"pkg/multidb.DatabaseInfo.usageNodes":      {class: "quota", owners: []string{"pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
-	"pkg/multidb.DatabaseInfo.usageEdges":      {class: "quota", owners: []string{"pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
-	"pkg/multidb.reservedUsage.nodes":          {class: "quota", owners: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage", "pkg/multidb.DatabaseInfo.removeReservationLocked"}},
-	"pkg/multidb.reservedUsage.edges":          {class: "quota", owners: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage", "pkg/multidb.DatabaseInfo.removeReservationLocked"}},
-	"pkg/multidb.reservedUsage.bytes":          {class: "quota", owners: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage", "pkg/multidb.DatabaseInfo.removeReservationLocked"}},
+	"pkg/multidb.DatabaseInfo.usageNodes":      storageUsageQuotaRow,
+	"pkg/multidb.DatabaseInfo.usageEdges":      storageUsageQuotaRow,
+	"pkg/multidb.reservedUsage.nodes":          reservationQuotaRow,
+	"pkg/multidb.reservedUsage.edges":          reservationQuotaRow,
+	"pkg/multidb.reservedUsage.bytes":          reservationQuotaRow,
 	"pkg/multidb.storageUsage.nodes":           {class: "local stored-image accounting delta"},
 	"pkg/multidb.storageUsage.edges":           {class: "local stored-image accounting delta"},
 	"pkg/multidb.storageUsage.nodeBytes":       {class: "local stored-image accounting delta"},

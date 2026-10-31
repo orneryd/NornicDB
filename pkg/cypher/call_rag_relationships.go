@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers are the declared values in procedure_result_headers.go.
+
 import (
 	"context"
 
@@ -32,7 +34,7 @@ func (e *StorageExecutor) callDbRetrieveRelationships(ctx context.Context, args 
 // the same scores and search metadata as node results (#1065).
 func (e *StorageExecutor) relationshipSearchResult(response *search.SearchResponse) *ExecuteResult {
 	result := &ExecuteResult{
-		Columns: []string{"relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason"},
+		Columns: columnNames(dbRetrieveRelationshipsColumns),
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
 	endpoint := func(id storage.NodeID) interface{} {

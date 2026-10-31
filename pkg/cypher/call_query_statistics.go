@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"fmt"
@@ -143,14 +145,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "StatisticsUnavailable", "query statistics collector is unavailable")
 	}
 	if collector.system {
-		columns := []string{"section", "success", "message"}
-		switch action {
-		case "retrieve":
-			columns = []string{"section", "data"}
-		case "status":
-			columns = []string{"section", "status", "data"}
-		}
-		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}}, nil
+		return &ExecuteResult{Columns: columnNames(queryStatisticsColumns(action)), Rows: [][]interface{}{}}, nil
 	}
 	section := "QUERIES"
 	if len(arguments) > 0 {
@@ -190,7 +185,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 	if !collector.deadline.IsZero() && !time.Now().Before(collector.deadline) {
 		collector.active.Store(false)
 	}
-	result := &ExecuteResult{Columns: []string{"section", "success", "message"}, Rows: [][]interface{}{}}
+	result := &ExecuteResult{Columns: columnNames(queryStatisticsColumns(action)), Rows: [][]interface{}{}}
 	switch action {
 	case "collect":
 		durationSeconds := int64(-1)
@@ -228,7 +223,6 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 		if collector.active.Load() {
 			status = "collecting"
 		}
-		result.Columns = []string{"section", "status", "data"}
 		result.Rows = [][]interface{}{{section, status, map[string]interface{}{}}}
 	case "retrieve":
 		maximum := int64(100)
@@ -238,7 +232,6 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 			}
 			maximum = toInt64(value)
 		}
-		result.Columns = []string{"section", "data"}
 		for _, query := range collector.order {
 			record := collector.queries[query]
 			invocations := record.invocations
