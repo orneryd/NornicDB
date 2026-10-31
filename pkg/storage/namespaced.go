@@ -302,10 +302,26 @@ func (n *NamespacedEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 }
 
 func (n *NamespacedEngine) DeleteNode(id NodeID) error {
+	return n.deleteNode(id, 0, false)
+}
+
+// DeleteNodeWithVectorWorkOrigin deletes under the caller's admission.
+func (n *NamespacedEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
+	return n.deleteNode(id, origin, true)
+}
+
+func (n *NamespacedEngine) deleteNode(id NodeID, origin uint64, admitted bool) error {
 	prefixedID := n.PrefixNodeID(id)
 
 	// Delete the node (this will remove it from pending embeddings index)
-	err := n.inner.DeleteNode(prefixedID)
+	var err error
+	handled := false
+	if admitted {
+		handled, err = deleteNodeAdmitted(n.inner, prefixedID, origin)
+	}
+	if !handled {
+		err = n.inner.DeleteNode(prefixedID)
+	}
 
 	// Remove from pending embeddings index (with namespace prefix)
 	// ALL node IDs in the index must be prefixed
@@ -343,6 +359,14 @@ func (n *NamespacedEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 }
 
 func (n *NamespacedEngine) DeleteEdge(id EdgeID) error {
+	return n.inner.DeleteEdge(n.PrefixEdgeID(id))
+}
+
+// DeleteEdgeWithVectorWorkOrigin deletes under the caller's admission.
+func (n *NamespacedEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
+	if handled, err := deleteEdgeAdmitted(n.inner, n.PrefixEdgeID(id), origin); handled {
+		return err
+	}
 	return n.inner.DeleteEdge(n.PrefixEdgeID(id))
 }
 
@@ -703,8 +727,28 @@ func (n *NamespacedEngine) BulkDeleteNodes(ids []NodeID) error {
 	return n.inner.BulkDeleteNodes(materializedIDs(ids, func(id NodeID) NodeID { return n.PrefixNodeID(id) }))
 }
 
+// BulkDeleteNodesWithVectorWorkOrigin forwards an admitted bulk deletion to
+// the inner engine's own bulk deletion.
+func (n *NamespacedEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []NodeID, origin uint64) error {
+	prefixed := materializedIDs(ids, func(id NodeID) NodeID { return n.PrefixNodeID(id) })
+	if handled, err := bulkDeleteNodesAdmitted(n.inner, prefixed, origin); handled {
+		return err
+	}
+	return n.inner.BulkDeleteNodes(prefixed)
+}
+
 func (n *NamespacedEngine) BulkDeleteEdges(ids []EdgeID) error {
 	return n.inner.BulkDeleteEdges(materializedIDs(ids, func(id EdgeID) EdgeID { return n.PrefixEdgeID(id) }))
+}
+
+// BulkDeleteEdgesWithVectorWorkOrigin forwards an admitted bulk deletion to
+// the inner engine's own bulk deletion.
+func (n *NamespacedEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []EdgeID, origin uint64) error {
+	prefixed := materializedIDs(ids, func(id EdgeID) EdgeID { return n.PrefixEdgeID(id) })
+	if handled, err := bulkDeleteEdgesAdmitted(n.inner, prefixed, origin); handled {
+		return err
+	}
+	return n.inner.BulkDeleteEdges(prefixed)
 }
 
 // ============================================================================
@@ -1066,9 +1110,9 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 		// Check if node needs embedding
 		if (len(node.ChunkEmbeddings) == 0 || len(node.ChunkEmbeddings[0]) == 0) && NodeNeedsEmbedding(node) {
 			// Found one! Add it to the pending index if not already there
-			if mgr, ok := n.inner.(interface{ AddToPendingEmbeddings(NodeID) }); ok {
+			if mgr, ok := n.inner.(interface{ RecoverPendingEmbedding(NodeID) }); ok {
 				prefixedID := n.PrefixNodeID(node.ID)
-				mgr.AddToPendingEmbeddings(prefixedID)
+				mgr.RecoverPendingEmbedding(prefixedID)
 			}
 			return node
 		}
@@ -1105,7 +1149,7 @@ func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 
 	// Get underlying engine's pending index manager
 	mgr, ok := n.inner.(interface {
-		AddToPendingEmbeddings(NodeID)
+		RecoverPendingEmbedding(NodeID)
 		MarkNodeEmbedded(NodeID)
 		GetNode(NodeID) (*Node, error)
 	})
@@ -1131,7 +1175,7 @@ func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 		if (len(node.ChunkEmbeddings) == 0 || len(node.ChunkEmbeddings[0]) == 0) && NodeNeedsEmbedding(node) {
 			// Add to pending index (with namespace prefix)
 			prefixedID := n.PrefixNodeID(node.ID)
-			mgr.AddToPendingEmbeddings(prefixedID)
+			mgr.RecoverPendingEmbedding(prefixedID)
 			added++
 		} else if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 			// Node has embedding - remove from pending index if present
@@ -1163,12 +1207,25 @@ func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 // MarkNodeEmbedded marks a node as embedded (removes from pending index).
 // The node ID should be unprefixed (without namespace).
 func (n *NamespacedEngine) MarkNodeEmbedded(nodeID NodeID) {
-	n.updatePendingEmbedding(nodeID, false)
+	if provider, ok := n.inner.(interface{ MarkNodeEmbedded(NodeID) }); ok {
+		provider.MarkNodeEmbedded(n.PrefixNodeID(nodeID))
+	}
 }
 
-// AddToPendingEmbeddings adds a node back to the pending embeddings index (e.g. after a failed embed so it can be retried).
-func (n *NamespacedEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	n.updatePendingEmbedding(nodeID, true)
+// RecoverPendingEmbedding records scanned pending membership without an
+// admission (BadgerEngine.RecoverPendingEmbedding).
+func (n *NamespacedEngine) RecoverPendingEmbedding(nodeID NodeID) {
+	if provider, ok := n.inner.(interface{ RecoverPendingEmbedding(NodeID) }); ok {
+		provider.RecoverPendingEmbedding(n.PrefixNodeID(nodeID))
+	}
+}
+
+// AddToPendingEmbeddingsWithOrigin returns admitted work to the pending index
+// (e.g. after a failed embed so it can be retried). The origin is required.
+func (n *NamespacedEngine) AddToPendingEmbeddingsWithOrigin(nodeID NodeID, origin uint64) {
+	if provider, ok := n.inner.(interface{ AddToPendingEmbeddingsWithOrigin(NodeID, uint64) }); ok {
+		provider.AddToPendingEmbeddingsWithOrigin(n.PrefixNodeID(nodeID), origin)
+	}
 }
 
 // RecordMaterializedAccess records a result-materialization access against the

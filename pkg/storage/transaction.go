@@ -112,6 +112,9 @@ type Operation struct {
 	embeddingOutcome   bool
 	nodeImagePolicy    EntityImagePolicy
 	nodeObservedBefore *Node
+	// The vector-work admission the operation's work carries.
+	vectorWorkOrigin  uint64
+	vectorOriginBound bool
 }
 
 // Transaction is the public closure-facing transaction type used by DB.Update and DB.View.
@@ -203,6 +206,8 @@ func copyEdge(edge *Edge) *Edge {
 	}
 
 	edgeCopy := &Edge{
+		entityWorkOrigin:     edge.entityWorkOrigin,
+		entityOriginBound:    edge.entityOriginBound,
 		Database:             edge.Database,
 		ID:                   edge.ID,
 		StartNode:            edge.StartNode,

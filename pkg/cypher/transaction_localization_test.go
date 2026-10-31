@@ -24,7 +24,7 @@ func requireCypherTransactionsLocalizedError(t *testing.T, err error, messageID 
 func TestCypherTransactionsLocalizedErrorsHaveTypedIdentityAndExactEnglish(t *testing.T) {
 	t.Run("transaction lifecycle", func(t *testing.T) {
 		exec := &StorageExecutor{}
-		_, err := exec.handleBegin()
+		_, err := exec.handleBegin(admittedTestContext())
 		requireCypherTransactionsLocalizedError(t, err, localization.MessageCypherTransactionsEngineUnsupported, "engine does not support transactions")
 	})
 

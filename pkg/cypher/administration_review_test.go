@@ -39,7 +39,7 @@ func administrationReviewExecutor(t *testing.T, database string) (*StorageExecut
 func TestRejectedSystemStatementFailsTransaction(t *testing.T) {
 	ctx := context.Background()
 	exec, system := administrationReviewExecutor(t, "system")
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer", nil)
 	require.NoError(t, err)
@@ -86,7 +86,7 @@ func TestSystemStatementPolicyExecutionModes(t *testing.T) {
 func TestAdministrationTransactionRoutesToSystem(t *testing.T) {
 	ctx := context.Background()
 	exec, system := administrationReviewExecutor(t, "nornic")
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer", nil)
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestAdministrationAndDataStatementsDoNotMix(t *testing.T) {
 		t.Run(database, func(t *testing.T) {
 			ctx := context.Background()
 			exec, system := administrationReviewExecutor(t, database)
-			_, err := exec.handleBegin()
+			_, err := exec.handleBegin(admittedTestContext())
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.a ON DBMS TO viewer", nil)
 			require.NoError(t, err)
@@ -133,7 +133,7 @@ func TestTransactionStatementTypeMessages(t *testing.T) {
 		t.Run(c.first+" then "+c.second, func(t *testing.T) {
 			ctx := context.Background()
 			exec, _ := administrationReviewExecutor(t, c.database)
-			_, err := exec.handleBegin()
+			_, err := exec.handleBegin(admittedTestContext())
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, c.first, nil)
 			require.NoError(t, err)
@@ -153,7 +153,7 @@ func TestUseBeforeAdministrationCommandIsSyntaxError(t *testing.T) {
 			ctx := context.Background()
 			exec, _ := administrationReviewExecutor(t, "nornic")
 			if tx {
-				_, err := exec.handleBegin()
+				_, err := exec.handleBegin(admittedTestContext())
 				require.NoError(t, err)
 				_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
 				require.NoError(t, err)

@@ -134,11 +134,11 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			return nil, true, err
 		}
 		stats.NodesDeleted++
-		e.removeNodeFromSearch(string(nodeID))
+		e.removeNodeFromSearch(ctx, string(nodeID))
 	}
 	// Incident relationships of detached nodes were deleted with them.
 	for edgeID := range deletedEdges {
-		e.notifyEdgeMutated(string(edgeID))
+		e.notifyEdgeMutated(ctx, string(edgeID))
 	}
 	deleted := contextslot.Get[deletedEntities](ctx)
 	if deleted == nil {
@@ -208,7 +208,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				before := cloneStringAnyMap(node.Properties)
 				written := simplePropertyWrites(node.Properties, simpleProperty, value)
 				setNodeProperty(node, simpleProperty, value)
-				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, wrapSetError); err != nil {
+				if err := e.persistSetEntities(ctx, store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -221,7 +221,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				before := cloneStringAnyMap(relationship.Properties)
 				written := simplePropertyWrites(relationship.Properties, simpleProperty, value)
 				setRelationshipProperty(relationship, simpleProperty, value)
-				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, wrapSetError); err != nil {
+				if err := e.persistSetEntities(ctx, store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -234,7 +234,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 		if !handled || err != nil {
 			return nil, handled, err
 		}
-		if err := e.persistSetEntities(store, states, stats, wrapSetError); err != nil {
+		if err := e.persistSetEntities(ctx, store, states, stats, wrapSetError); err != nil {
 			return nil, true, err
 		}
 	}

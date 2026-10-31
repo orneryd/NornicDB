@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"golang.org/x/text/language"
 )
@@ -65,7 +66,7 @@ func parseActionEnvelope(response string) *ParsedAction {
 		return nil
 	}
 	var parsed ParsedAction
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+	if err := valueconvert.CypherInputJSON.Unmarshal([]byte(jsonStr), &parsed); err != nil {
 		return nil
 	}
 	if strings.TrimSpace(parsed.Action) == "" {
@@ -116,7 +117,7 @@ func looksLikeActionEnvelopePrefix(response string) bool {
 func buildPassThroughToolCall(action *ParsedAction) ChatToolCallWire {
 	arguments := "{}"
 	if action != nil && action.Params != nil {
-		if data, err := json.Marshal(action.Params); err == nil {
+		if data, err := valueconvert.CypherInputJSON.Marshal(action.Params); err == nil {
 			arguments = string(data)
 		}
 	}
@@ -321,7 +322,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "ok",
 		"model":  h.announcedModel(),
 		"heimdall": map[string]interface{}{
@@ -340,7 +341,7 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 
 	model := h.announcedModel()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(map[string]interface{}{
 		"object": "list",
 		"data": []map[string]interface{}{
 			{
@@ -638,7 +639,7 @@ Complete Cypher query (one line only):`,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		valueconvert.PropertyJSON.NewEncoder(w).Encode(map[string]interface{}{
 			"suggestion": suggestion,
 			"schema":     schema,
 		})
@@ -647,7 +648,7 @@ Complete Cypher query (one line only):`,
 
 	// Fallback response
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(map[string]interface{}{
 		"suggestion": "",
 		"schema":     map[string]interface{}{},
 	})
@@ -688,7 +689,7 @@ func (h *Handler) sendCancellationResponse(w http.ResponseWriter, requestID, pha
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(resp)
 }
 
 // handleChatCompletions handles OpenAI-compatible chat completion requests via Bifrost.
@@ -874,7 +875,7 @@ func (h *Handler) sendStreamNotifications(lifecycle *requestLifecycle, notifs []
 				},
 			},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(lifecycle.StreamWriter, "data: %s\n\n", data)
 		lifecycle.StreamFlusher.Flush()
 	}
@@ -1182,7 +1183,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.
 					}},
 				}
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
+				valueconvert.PropertyJSON.NewEncoder(w).Encode(resp)
 				return
 			}
 		}
@@ -1209,7 +1210,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(resp)
 }
 
 // handleStreamingWithTools runs the agentic loop (tools path) and streams the final response.
@@ -1245,7 +1246,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 				Delta: &ChatMessage{Content: fmt.Sprintf("Error: %v", err)},
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	} else if finalResponse != "" {
@@ -1260,7 +1261,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 				Delta: &ChatMessage{Content: finalResponse},
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
@@ -1270,7 +1271,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 		ID: lifecycle.requestID, Object: "chat.completion.chunk", Model: model, Created: time.Now().Unix(),
 		Choices: []ChatChoice{{Index: 0, Delta: &ChatMessage{}, FinishReason: "stop"}},
 	}
-	data, _ := json.Marshal(doneChunk)
+	data, _ := valueconvert.PropertyJSON.Marshal(doneChunk)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
@@ -1351,7 +1352,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					},
 				},
 			}
-			data, _ := json.Marshal(notifChunk)
+			data, _ := valueconvert.PropertyJSON.Marshal(notifChunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -1391,7 +1392,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 				Delta: &ChatMessage{Content: response},
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
@@ -1414,7 +1415,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 						FinishReason: "tool_calls",
 					}},
 				}
-				data, _ := json.Marshal(chunk)
+				data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				fmt.Fprintf(w, "data: [DONE]\n\n")
 				flusher.Flush()
@@ -1470,7 +1471,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					},
 				},
 			}
-			data, _ := json.Marshal(cancelChunk)
+			data, _ := valueconvert.PropertyJSON.Marshal(cancelChunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -1505,7 +1506,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 						},
 					},
 				}
-				data, _ := json.Marshal(notifChunk)
+				data, _ := valueconvert.PropertyJSON.Marshal(notifChunk)
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				flusher.Flush()
 			}
@@ -1599,7 +1600,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 							},
 						},
 					}
-					data, _ := json.Marshal(notifChunk)
+					data, _ := valueconvert.PropertyJSON.Marshal(notifChunk)
 					fmt.Fprintf(w, "data: %s\n\n", data)
 					flusher.Flush()
 				}
@@ -1644,7 +1645,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					},
 				},
 			}
-			data, _ := json.Marshal(resultChunk)
+			data, _ := valueconvert.PropertyJSON.Marshal(resultChunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -1664,7 +1665,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 			},
 		},
 	}
-	data, _ := json.Marshal(doneChunk)
+	data, _ := valueconvert.PropertyJSON.Marshal(doneChunk)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	// OpenAI sends [DONE] to signal stream end
 	fmt.Fprintf(w, "data: [DONE]\n\n")
@@ -1691,7 +1692,7 @@ func (h *Handler) defaultFormatResponse(result *ActionResult) string {
 	}
 
 	// Simple format: message + JSON data
-	dataJSON, err := json.MarshalIndent(result.Data, "", "  ")
+	dataJSON, err := valueconvert.PropertyJSON.MarshalIndent(result.Data, "", "  ")
 	if err != nil {
 		return result.Message
 	}

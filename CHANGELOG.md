@@ -174,6 +174,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry or reopen completes interrupted cleanup without reopening an empty
   database as live. Preserve accepted write outcomes when acknowledgement fails.
 
+- Prevent work admitted before DROP INDEX from restoring its property vectors after queued notifications, refreshes or index builds resume. Keep unrelated node and relationship descriptors intact.
+
 - Keep a failed database DROP unavailable until durable cleanup completes, with
   recovery on retry, reopen and Restore. Refresh attached quota accounting before
   writes resume after Restore, preserving configured limits and accepted reservations.
@@ -271,6 +273,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Correct legacy Bolt DateTime seconds for clients that do not negotiate the `utc` patch, including properties on relationships inside paths. Named-zone parameters share the temporal constructor's DST resolution: choose the earlier overlap instant and shift gaps forward. Offset and named-zone values, nanoseconds and nested lists/maps retain their proper representation. UTC-patched Bolt 4.4 and Bolt 5.x retain their existing encodings.
 
 - Concurrent identical `MERGE` statements on a uniquely constrained key now all succeed when they write the node they match (`ON MATCH SET`, or a later `SET`/`REMOVE`/`DELETE` of it), as in Neo4j: a later writer waits for the earlier one and writes on top of its commit, instead of failing with a UNIQUE violation. MERGEs that only read the node do not wait.
+- Preserve large JSON integers and nested decimal types across JSON loading,
+  backup restore, imports and HTTP property inputs. Keep accepted native CDC
+  values exact and match numerically equal INTEGER and FLOAT selector keys.
+  Shared JSON writers preserve whole FLOATs such as `2.0` through exports,
+  responses and remote parameters; graph imports retain timestamp/confidence
+  metadata. Bolt emits native unsigned values above MaxInt64 as exact decimal
+  strings, since PackStream has no unsigned integer type. The shared JSON owner
+  writes borrowed values directly and normalizes only interface-bearing fields,
+  avoiding copied envelopes, maps and typed-vector walks. Old JSON documents
+  that already wrote a whole FLOAT as an integer cannot recover that lost type.
+  Bind persisted JSON and external Cypher input to separate domain APIs and
+  enforce both readers and writers against the data-path registry. Keep exact
+  unsigned integers through APOC document transforms and JSONL parsing, and
+  retain shortest float32 text inside nested envelopes. Encode borrowed values
+  directly through cached field metadata instead of cloning property containers
+  or materializing proxy envelopes before JSON encoding.
 - Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Preserve node properties and source metadata in retrieval procedure rows, graph
   hits and continuation pages when property decay is enabled.

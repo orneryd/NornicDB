@@ -73,8 +73,12 @@ func (m *DatabaseManager) migrateLegacyData() error {
 
 	log.Printf("⚠️  Legacy (unprefixed) data detected; attempting one-time migration into default database %q", m.config.DefaultDatabase)
 
-	// Perform migration
-	if err := m.performMigration(engine); err != nil {
+	// Perform migration: startup work, admitted here at its own boundary.
+	writer, err := startupWriter(engine)
+	if err != nil {
+		return err
+	}
+	if err := m.performMigration(writer); err != nil {
 		// IMPORTANT: Migration is written to avoid deleting legacy records unless the
 		// full copy step succeeds. If we fail here, the user's existing data should
 		// still be intact (though some prefixed copies may have been created).
@@ -117,7 +121,7 @@ func (m *DatabaseManager) isMigrationComplete() bool {
 // from running again on subsequent startups. The status includes the
 // target database name for reference.
 func (m *DatabaseManager) markMigrationComplete() error {
-	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
+	systemEngine := storage.SystemStoreEngine(storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase))
 
 	node := &storage.Node{
 		ID:     storage.NodeID(migrationStatusKey),

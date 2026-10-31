@@ -105,8 +105,8 @@ type transactionStorageWrapper struct {
 	// changed for search. Search reads them back once the commit makes them
 	// visible (refreshSearchAfterCommit), and never after a rollback.
 	searchRefreshMu     sync.Mutex
-	searchNodeRefreshes map[storage.NodeID]struct{}
-	searchEdgeRefreshes map[storage.EdgeID]struct{}
+	searchNodeRefreshes map[storage.NodeID]uint64
+	searchEdgeRefreshes map[storage.EdgeID]uint64
 
 	// txNodeLookupCache scopes the executor's MERGE/MATCH lookup cache to
 	// this single transaction. Concurrent transactions get distinct
@@ -192,24 +192,24 @@ func (w *transactionStorageWrapper) markMutatedNodeID(id storage.NodeID) {
 	w.mutatedNodeIDsMu.Unlock()
 }
 
-func (w *transactionStorageWrapper) deferSearchRefresh(node storage.NodeID, edge storage.EdgeID) {
+func (w *transactionStorageWrapper) deferSearchRefresh(node storage.NodeID, edge storage.EdgeID, origin uint64) {
 	w.searchRefreshMu.Lock()
 	defer w.searchRefreshMu.Unlock()
 	if node != "" {
 		if w.searchNodeRefreshes == nil {
-			w.searchNodeRefreshes = make(map[storage.NodeID]struct{})
+			w.searchNodeRefreshes = make(map[storage.NodeID]uint64)
 		}
-		w.searchNodeRefreshes[node] = struct{}{}
+		w.searchNodeRefreshes[node] = origin
 	}
 	if edge != "" {
 		if w.searchEdgeRefreshes == nil {
-			w.searchEdgeRefreshes = make(map[storage.EdgeID]struct{})
+			w.searchEdgeRefreshes = make(map[storage.EdgeID]uint64)
 		}
-		w.searchEdgeRefreshes[edge] = struct{}{}
+		w.searchEdgeRefreshes[edge] = origin
 	}
 }
 
-func (w *transactionStorageWrapper) takeSearchRefreshes() (map[storage.NodeID]struct{}, map[storage.EdgeID]struct{}) {
+func (w *transactionStorageWrapper) takeSearchRefreshes() (map[storage.NodeID]uint64, map[storage.EdgeID]uint64) {
 	w.searchRefreshMu.Lock()
 	defer w.searchRefreshMu.Unlock()
 	nodes, edges := w.searchNodeRefreshes, w.searchEdgeRefreshes

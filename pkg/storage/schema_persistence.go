@@ -63,7 +63,9 @@ type SchemaRangeIndexDef struct {
 	OwningConstraint string               `json:"owning_constraint,omitempty"`
 }
 
-const schemaDefinitionVersion = 1
+// Version 1 used encoding/json's untagged numbers and float64 decoding.
+// Version 2 preserves exact INTEGERs and FLOAT tokens through PropertyJSON.
+const schemaDefinitionVersion = 2
 
 // ExportDefinition returns a stable, persisted representation of the schema.
 // The returned object is safe to serialize and does not include runtime caches.
@@ -324,7 +326,12 @@ func (sm *SchemaManager) ReplaceFromDefinition(def *SchemaDefinition) error {
 
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.replaceFromDefinitionLocked(def)
+	previous := sm.vectorIndexes
+	if err := sm.replaceFromDefinitionLocked(def); err != nil {
+		return err
+	}
+	sm.retireChangedVectorIndexesLocked(previous, sm.vectorIndexes, nil)
+	return nil
 }
 
 func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) error {

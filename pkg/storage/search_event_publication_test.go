@@ -142,13 +142,13 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 
 	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", ChunkEmbeddings: [][]float32{{1, 0}}}}))
 	events.reset()
-	cleared, err := engine.ClearAllEmbeddings()
+	cleared, err := engine.ClearAllEmbeddings(CaptureVectorWorkOrigin())
 	require.NoError(t, err)
 	require.Positive(t, cleared)
 	requirePublished(t, events, "node updated test:a", "ClearAllEmbeddings")
 	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", ChunkEmbeddings: [][]float32{{1, 0}}}}))
 	events.reset()
-	_, err = engine.ClearAllEmbeddingsForPrefix("test:")
+	_, err = engine.ClearAllEmbeddingsForPrefix("test:", CaptureVectorWorkOrigin())
 	require.NoError(t, err)
 	requirePublished(t, events, "node updated test:a", "ClearAllEmbeddingsForPrefix")
 
@@ -165,6 +165,25 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 	requirePublished(t, events, "edge deleted test:r", "DeleteEdge")
 	require.NoError(t, engine.DeleteNode("test:b"))
 	requirePublished(t, events, "node deleted test:b", "DeleteNode")
+
+	// Admitted deletions are the same owner paths under the caller's admission,
+	// and publish as the plain ones do.
+	origin := CaptureVectorWorkOrigin()
+	for _, id := range []NodeID{"test:wo-a", "test:wo-b", "test:wo-c", "test:wo-d"} {
+		_, err = engine.CreateNode(&Node{ID: id})
+		require.NoError(t, err)
+	}
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:wo-r", Type: "R", StartNode: "test:wo-a", EndNode: "test:wo-b"}))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:wo-s", Type: "R", StartNode: "test:wo-c", EndNode: "test:wo-d"}))
+	events.reset()
+	require.NoError(t, engine.DeleteEdgeWithVectorWorkOrigin("test:wo-r", origin))
+	requirePublished(t, events, "edge deleted test:wo-r", "DeleteEdgeWithVectorWorkOrigin")
+	require.NoError(t, engine.BulkDeleteEdgesWithVectorWorkOrigin([]EdgeID{"test:wo-s"}, origin))
+	requirePublished(t, events, "edge deleted test:wo-s", "BulkDeleteEdgesWithVectorWorkOrigin")
+	require.NoError(t, engine.DeleteNodeWithVectorWorkOrigin("test:wo-a", origin))
+	requirePublished(t, events, "node deleted test:wo-a", "DeleteNodeWithVectorWorkOrigin")
+	require.NoError(t, engine.BulkDeleteNodesWithVectorWorkOrigin([]NodeID{"test:wo-c"}, origin))
+	requirePublished(t, events, "node deleted test:wo-c", "BulkDeleteNodesWithVectorWorkOrigin")
 
 	_, _, err = engine.DeleteByPrefix("test:")
 	require.NoError(t, err)

@@ -22,12 +22,13 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	return b.createNodeWithWriteContext(node, nil)
 }
 
-func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityWriteContext) (NodeID, error) {
+func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityWriteContext, origins ...uint64) (NodeID, error) {
+	node, origins = takeNodeArgument(node, origins)
 	if node != nil {
 		if handled, err := b.inMutationTransaction(string(node.ID), false, func(tx *BadgerTransaction) error {
 			_, err := tx.CreateNode(node)
 			return err
-		}); handled {
+		}, origins...); handled {
 			if err != nil {
 				return "", err
 			}
@@ -40,11 +41,11 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 	if node != nil {
 		entityID = string(node.ID)
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, inherited)
+	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, inherited, (entityWritePlan{}).withVectorWorkOrigin(origins))
 	if barrierErr != nil {
 		return "", barrierErr
 	}
-	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit, write.vectorWorkOrigin)
 	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	dbName, err := b.admitCreatedNode(node, nil)
 	if err != nil {
@@ -119,7 +120,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 			return localizedError(localization.StorageClientNodeIndexCatalogWriteFailed(err), err)
 		}
 		if b.shouldIndexPendingEmbed(node) {
-			if err := b.setPendingEmbeddingInTxn(txn, node.ID); err != nil {
+			if err := b.setPendingEmbeddingInTxn(txn, node.ID, write.vectorWorkOrigin); err != nil {
 				return localizedError(localization.StorageClientNodePendingEmbedIndexWriteFailed(err), err)
 			}
 		}
@@ -348,7 +349,11 @@ func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisib
 		copyImage = nil
 	}
 	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
+		node, err := b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
+		if err == nil && node != nil && force {
+			err = readPendingEmbeddingOrigin(txn, id, node)
+		}
+		return node, err
 	}, copyImage, mode)
 }
 
@@ -455,11 +460,16 @@ func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
 func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
-	node := updateRequest.After
+	return b.updateNodeWithWriteContext(updateRequest, nil)
+}
+
+func (b *BadgerEngine) updateNodeWithWriteContext(updateRequest NodeUpdateRequest, inherited *entityWriteContext, origins ...uint64) error {
+	node, origins := takeNodeArgument(updateRequest.After, origins)
+	updateRequest.After = node
 	if node != nil {
 		if handled, err := b.inMutationTransaction(string(node.ID), updateRequest.Before != nil || updateRequest.Policy == StoredNodeImages, func(tx *BadgerTransaction) error {
 			return ApplyNodeUpdate(tx, updateRequest)
-		}); handled {
+		}, origins...); handled {
 			return err
 		}
 	}
@@ -469,11 +479,15 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	if node != nil {
 		entityID = string(node.ID)
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, nil)
+	var plans []entityWritePlan
+	if len(origins) > 0 {
+		plans = []entityWritePlan{{vectorWorkOrigin: origins[0], vectorOriginBound: true}}
+	}
+	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, inherited, plans...)
 	if barrierErr != nil {
 		return barrierErr
 	}
-	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit, write.vectorWorkOrigin)
 	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	if node == nil {
 		return ErrInvalidData
@@ -581,7 +595,7 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 			}
 			// Add to pending embeddings index if needed (same as CreateNode)
 			if b.shouldIndexPendingEmbed(node) {
-				if err := b.setPendingEmbeddingInTxn(txn, node.ID); err != nil {
+				if err := b.setPendingEmbeddingInTxn(txn, node.ID, write.vectorWorkOrigin); err != nil {
 					return err
 				}
 			}
@@ -695,7 +709,7 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 			txn.Delete(pendingEmbedKey(node.ID))
 		} else if b.shouldIndexPendingEmbed(node) {
 			// Node needs embedding - ensure it's in pending index
-			b.setPendingEmbeddingInTxn(txn, node.ID)
+			b.setPendingEmbeddingInTxn(txn, node.ID, write.vectorWorkOrigin)
 		} else {
 			// Never embed system database nodes.
 			txn.Delete(pendingEmbedKey(node.ID))
@@ -757,19 +771,28 @@ func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings 
 }
 
 // DeleteNode removes a node and all its edges.
+// DeleteNodeWithVectorWorkOrigin deletes under the caller's admission.
+func (b *BadgerEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
+	return b.deleteNodeWithOrigin(id, origin)
+}
+
 func (b *BadgerEngine) DeleteNode(id NodeID) error {
+	return b.deleteNodeWithOrigin(id)
+}
+
+func (b *BadgerEngine) deleteNodeWithOrigin(id NodeID, origins ...uint64) error {
 	if handled, err := b.inMutationTransaction(string(id), false, func(tx *BadgerTransaction) error {
 		return tx.DeleteGraphNode(id, CascadeEdges)
-	}); handled {
+	}, origins...); handled {
 		return err
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	write, releaseWrite, barrierErr := b.beginEntityWrite(string(id), false, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), false) }})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(string(id), false, nil, (entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), false) }}).withVectorWorkOrigin(origins))
 	if barrierErr != nil {
 		return barrierErr
 	}
-	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit, write.vectorWorkOrigin)
 	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	if id == "" {
 		return ErrInvalidID

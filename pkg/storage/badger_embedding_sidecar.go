@@ -76,7 +76,7 @@ type EmbeddingFailureStreamer interface {
 //   - chunk vectors under embeddingKey (old chunks replaced atomically, #703)
 //   - EmbedMeta under embedMetaKey, stamped with the body UpdatedAt the
 //     embedding was generated from
-//   - the pending-embeddings index entry is removed
+//   - pending work is removed, or retained with its admission for a worker reset
 //
 // The node record (nodeKey, MVCC head, version history) is never written and
 // no MVCC version is created. The commit first reads the stored node in its
@@ -99,7 +99,15 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		}
 	}
 	defer release()
-	notification := b.queueCommitOperations(nil, &Operation{embeddingOutcome: true}, notificationAtCommit)
+	// The selected attempt carries the work's admission; a sidecar write
+	// without one (an offline or legacy writer) is admitted here and counted.
+	var origin uint64
+	if attempt := node.EmbeddingAttempt(); attempt != nil {
+		origin = attempt.vectorWorkOrigin
+	} else {
+		origin = fallbackVectorWorkOrigin("storage.embedding-sidecar")
+	}
+	notification := b.queueCommitOperations(nil, &Operation{embeddingOutcome: true}, notificationAtCommit, origin)
 	err := commitEmbeddingOutcome(node, func() error {
 		if node.ID == "" {
 			return ErrInvalidID
@@ -204,7 +212,14 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node, notification *com
 			return err
 		}
 
-		if err := cw.write(func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) }); err != nil {
+		if err := cw.write(func(txn *badger.Txn) error {
+			if attempt := node.EmbeddingAttempt(); attempt != nil && !writeMeta && len(node.ChunkEmbeddings) == 0 && b.embeddingLabelsAllowed(node) {
+				// An accepted administrative reset returns this same admission
+				// to MAIN atomically; a later wakeup must not mint its identity.
+				return b.setPendingEmbeddingInTxn(txn, node.ID, attempt.vectorWorkOrigin)
+			}
+			return txn.Delete(pendingEmbedKey(node.ID))
+		}); err != nil {
 			return err
 		}
 		return nil

@@ -119,7 +119,11 @@ func (a *StorageAdapter) loadWALPosition() error {
 	return nil
 }
 
+// ApplyCommand admits a command against this process's runtime schema: an
+// admission the command already carries locally is kept, a wire command is
+// admitted here.
 func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
+	_, origin := storage.ContinueVectorWork(commandVectorContext(context.Background(), cmd), "replication.apply-command")
 	if cmd == nil {
 		return localizedError(localization.ReplicationStorageCommandRequired(), nil)
 	}
@@ -197,7 +201,7 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 			execErr = cmd.accepted.apply()
 			break
 		}
-		receipt, err := storage.SubmitAcceptedEntityTransaction(context.Background(), a.engine, envelope, operations, nil)
+		receipt, err := storage.SubmitAcceptedEntityTransaction(storage.WithVectorWorkOrigin(context.Background(), origin), a.engine, envelope, operations, nil)
 		if err != nil {
 			execErr = err
 		} else {
@@ -205,7 +209,7 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		}
 	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
 		CmdDeleteEdge, CmdBulkCreateNodes, CmdBulkCreateEdges, CmdBulkDeleteNodes, CmdBulkDeleteEdges:
-		execErr = applyDirectEntityCommand(a.engine, cmd.Type, operations)
+		execErr = applyDirectEntityCommand(a.engine, cmd.Type, operations, origin)
 	case CmdDeleteByPrefix:
 		_, _, execErr = a.engine.DeleteByPrefix(prefix)
 	}
@@ -589,6 +593,7 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 
 // RestoreSnapshot restores state from a snapshot.
 func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
+	origin := storage.AdmitUnrequestedVectorWork("replication.restore-snapshot")
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageReadSnapshotFailed(err), err)
@@ -599,17 +604,24 @@ func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 	if err := storage.DecodeCommandPayload(data, &snapshot); err != nil {
 		return localizedError(localization.ReplicationStorageDecodeSnapshotFailed(err), err)
 	}
+	engine := a.engine
+	if len(snapshot.Nodes) != 0 || len(snapshot.Edges) != 0 {
+		engine, err = storage.EngineWithVectorWorkOrigin(engine, origin)
+		if err != nil {
+			return err
+		}
+	}
 
 	// Restore nodes
 	for _, node := range snapshot.Nodes {
-		if _, err := a.engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(node); err != nil {
 			return localizedError(localization.ReplicationStorageRestoreNodeFailed(err), err)
 		}
 	}
 
 	// Restore edges
 	for _, edge := range snapshot.Edges {
-		if err := a.engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(edge); err != nil {
 			return localizedError(localization.ReplicationStorageRestoreEdgeFailed(err), err)
 		}
 	}

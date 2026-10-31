@@ -57,7 +57,7 @@ func TestPendingCandidatesStaleMarkerDrain(t *testing.T) {
 						return err
 					}
 				}
-				return e.setPendingEmbeddingInTxn(txn, staleID)
+				return e.recoverPendingEmbeddingInTxn(txn, staleID)
 			}))
 			_, err := e.CreateNode(pendingCandidateNode(0))
 			require.NoError(t, err)

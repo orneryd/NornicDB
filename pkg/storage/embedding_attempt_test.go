@@ -17,7 +17,7 @@ func TestEmbeddingAttemptRuntimeIdentityNeverEncoded(t *testing.T) {
 	node := &Node{ID: "identity:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "body"}}
 	state := node.runtimeState()
 	state.embeddingRevision = EmbeddingBodyRevision{physical: 91, bufferedSequence: 7}
-	state.embeddingAttempt = NewEmbeddingAttempt(3, 5, state.embeddingRevision, func() (func(), bool) {
+	state.embeddingAttempt = NewEmbeddingAttempt(CaptureVectorWorkOrigin(), 3, 5, state.embeddingRevision, func() (func(), bool) {
 		t.Fatal("serialization must not call the attempt owner")
 		return nil, false
 	}, func(*Node) { t.Fatal("serialization must not publish") })
@@ -83,7 +83,7 @@ func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 			payload.EmbedMeta = map[string]any{"embedding_failed": true}
 			published := 0
 			state := payload.runtimeState()
-			state.embeddingAttempt = NewEmbeddingAttempt(1, 1, state.embeddingRevision, func() (func(), bool) { return func() {}, true }, func(*Node) { published++ })
+			state.embeddingAttempt = NewEmbeddingAttempt(CaptureVectorWorkOrigin(), 1, 1, state.embeddingRevision, func() (func(), bool) { return func() {}, true }, func(*Node) { published++ })
 			payload.setRuntimeState(state)
 			if updated {
 				current, err := disk.GetNode("test:doc")
@@ -132,7 +132,7 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 			}
 			published := 0
 			state := payload.runtimeState()
-			state.embeddingAttempt = NewEmbeddingAttempt(7, 11, state.embeddingRevision, func() (func(), bool) { return func() {}, true }, func(node *Node) {
+			state.embeddingAttempt = NewEmbeddingAttempt(CaptureVectorWorkOrigin(), 7, 11, state.embeddingRevision, func() (func(), bool) { return func() {}, true }, func(node *Node) {
 				published++
 				require.Equal(t, "current", node.Properties["text"])
 				require.NotEmpty(t, node.ChunkEmbeddings)

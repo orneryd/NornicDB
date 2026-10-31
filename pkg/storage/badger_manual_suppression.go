@@ -117,7 +117,7 @@ func manualSuppressionKind(kind StoredEntityKind) (byte, error) {
 // deleting its data. Hidden entities remain available under reveal(). Changes
 // publish an update for search consumers, whether or not decay is enabled.
 // Unknown kinds return ErrInvalidData; missing entities return ErrNotFound.
-func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id string, suppressed bool) error {
+func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id string, suppressed bool, origins ...uint64) error {
 	kind, err := manualSuppressionKind(entityKind)
 	if err != nil {
 		return err
@@ -145,11 +145,11 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	write, releaseWrite, err := b.beginEntityWrite(id, kind == manualSuppressionEdge, nil)
+	write, releaseWrite, err := b.beginEntityWrite(id, kind == manualSuppressionEdge, nil, (entityWritePlan{}).withVectorWorkOrigin(origins))
 	if err != nil {
 		return err
 	}
-	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit, write.vectorWorkOrigin)
 	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	var ops []Operation
 	publish := func() {
@@ -326,11 +326,11 @@ func (b *BadgerEngine) dropManualSuppressions(prefix string) {
 // ManualSuppressionEngine hides and shows nodes and relationships on demand
 // (kp.suppress / unsuppress, #1064).
 type ManualSuppressionEngine interface {
-	SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error
+	SetManualSuppression(kind StoredEntityKind, id string, suppressed bool, origins ...uint64) error
 }
 
 // SetManualSuppression hides or shows an entity within this namespace.
-func (n *NamespacedEngine) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error {
+func (n *NamespacedEngine) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool, origins ...uint64) error {
 	if _, err := manualSuppressionKind(kind); err != nil {
 		return err
 	}
@@ -338,12 +338,12 @@ func (n *NamespacedEngine) SetManualSuppression(kind StoredEntityKind, id string
 	if !ok {
 		return ErrNotImplemented
 	}
-	return inner.SetManualSuppression(kind, qualifyEntityID(n.scope, id), suppressed)
+	return inner.SetManualSuppression(kind, qualifyEntityID(n.scope, id), suppressed, origins...)
 }
 
 // SetManualSuppression passes storage metadata through to the wrapped
 // capability without adding a graph-write WAL record.
-func (w *WALEngine) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error {
+func (w *WALEngine) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool, origins ...uint64) error {
 	if _, err := manualSuppressionKind(kind); err != nil {
 		return err
 	}
@@ -351,5 +351,5 @@ func (w *WALEngine) SetManualSuppression(kind StoredEntityKind, id string, suppr
 	if !ok {
 		return ErrNotImplemented
 	}
-	return inner.SetManualSuppression(kind, id, suppressed)
+	return inner.SetManualSuppression(kind, id, suppressed, origins...)
 }

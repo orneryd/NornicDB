@@ -238,7 +238,7 @@ func TestTransactionStatementHandlers_AdditionalBranches(t *testing.T) {
 	require.NotNil(t, exec.txContext)
 	assert.True(t, exec.txContext.active)
 
-	_, err = exec.handleBegin()
+	_, err = exec.handleBegin(admittedTestContext())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transaction already active")
 
@@ -307,7 +307,7 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 
@@ -338,7 +338,7 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) 
 	store := storage.NewNamespacedEngine(walEngine, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err = exec.handleBegin()
+	_, err = exec.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 	require.NotNil(t, exec.txContext.wal)
@@ -359,7 +359,7 @@ func TestTransactionHandleRollback_ErrorBranchAfterClosedTx(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 
@@ -379,7 +379,7 @@ func TestExecuteInTransaction_SuccessPath(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 	defer func() {
@@ -401,7 +401,7 @@ func TestExecuteInTransaction_SuccessPath_NoNamespace(t *testing.T) {
 	exec := NewStorageExecutor(base)
 	ctx := context.Background()
 
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 	defer func() {
@@ -420,7 +420,7 @@ func TestExecuteInTransaction_SuccessPath_NoNamespace(t *testing.T) {
 
 func TestTransactionHandleBegin_NoTransactionEngine(t *testing.T) {
 	exec := &StorageExecutor{} // no storage engine configured
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(admittedTestContext())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "engine does not support transactions")
 }

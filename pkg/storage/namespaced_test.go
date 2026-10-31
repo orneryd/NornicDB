@@ -211,7 +211,11 @@ func (e *namespacedHelperEngine) RefreshPendingEmbeddingsIndex() int {
 	return e.refreshCount
 }
 
-func (e *namespacedHelperEngine) AddToPendingEmbeddings(nodeID NodeID) {
+func (e *namespacedHelperEngine) AddToPendingEmbeddingsWithOrigin(nodeID NodeID, _ uint64) {
+	e.addedIDs = append(e.addedIDs, nodeID)
+}
+
+func (e *namespacedHelperEngine) RecoverPendingEmbedding(nodeID NodeID) {
 	e.addedIDs = append(e.addedIDs, nodeID)
 }
 
@@ -804,7 +808,7 @@ func TestNamespacedEngine_EmbeddingWrappersAndLastWriteTime(t *testing.T) {
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
 	// Wrapper methods should prefix transparently and not panic.
-	tenantA.AddToPendingEmbeddings("n1")
+	tenantA.AddToPendingEmbeddingsWithOrigin("n1", CaptureVectorWorkOrigin())
 	tenantA.MarkNodeEmbedded("n1")
 
 	removed := tenantA.RefreshPendingEmbeddingsIndex()

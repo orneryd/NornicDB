@@ -85,7 +85,7 @@ func TestPendingCandidatesCommittedWriters(t *testing.T) {
 	require.Equal(t, "updated before claim", next.Properties["content"])
 	e.MarkNodeEmbedded(pendingCandidateNode(0).ID)
 	require.Nil(t, e.FindNodeNeedingEmbedding())
-	e.AddToPendingEmbeddings(pendingCandidateNode(0).ID)
+	e.AddToPendingEmbeddingsWithOrigin(pendingCandidateNode(0).ID, CaptureVectorWorkOrigin())
 	require.Equal(t, pendingCandidateNode(0).ID, e.FindNodeNeedingEmbedding().ID)
 }
 
@@ -97,7 +97,7 @@ func TestPendingCandidatesFailedEngineWrite(t *testing.T) {
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	sentinel := errors.New("abort pending-marker write")
 	err = e.withUpdate(func(txn *badger.Txn) error {
-		require.NoError(t, e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID))
+		require.NoError(t, e.recoverPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID))
 		return sentinel
 	})
 	require.ErrorIs(t, err, sentinel)
@@ -105,7 +105,7 @@ func TestPendingCandidatesFailedEngineWrite(t *testing.T) {
 	leaked := 0
 	e.pendingEmbeddingAdds.Range(func(_, _ any) bool { leaked++; return true })
 	require.Zero(t, leaked)
-	e.AddToPendingEmbeddings(pendingCandidateNode(0).ID)
+	e.AddToPendingEmbeddingsWithOrigin(pendingCandidateNode(0).ID, CaptureVectorWorkOrigin())
 	require.NotNil(t, e.FindNodeNeedingEmbedding())
 }
 
@@ -188,7 +188,7 @@ func TestPendingCandidatesLargeCommitPublication(t *testing.T) {
 				i := i
 				units[i] = func(txn *badger.Txn) error {
 					if i%4999 == 0 {
-						if err := e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(i/4999).ID); err != nil {
+						if err := e.recoverPendingEmbeddingInTxn(txn, pendingCandidateNode(i/4999).ID); err != nil {
 							return err
 						}
 					}
@@ -311,7 +311,7 @@ func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	txn, readTs, err := e.db.beginTxn(true)
 	require.NoError(t, err)
-	require.NoError(t, e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID))
+	require.NoError(t, e.recoverPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID))
 	require.NoError(t, e.db.commit(txn))
 	txn.Discard()
 	e.db.endRead(readTs)
@@ -366,7 +366,7 @@ func TestPendingCandidatesInvalidationAndFailedHints(t *testing.T) {
 	require.NoError(t, err)
 	txn.Discard()
 	e.db.endRead(readTs)
-	require.Error(t, e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(1).ID))
+	require.Error(t, e.recoverPendingEmbeddingInTxn(txn, pendingCandidateNode(1).ID))
 	require.NoError(t, e.Close())
 	e.InvalidatePendingEmbeddingsIndex()
 	require.ErrorIs(t, e.pendingCandidates.load(e), ErrStorageClosed)

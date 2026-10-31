@@ -42,7 +42,7 @@ func TestPendingCandidatesReviewLostHint(t *testing.T) {
 	e.MarkNodeEmbedded(pendingCandidateNode(0).ID)
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	require.NoError(t, e.withUpdate(func(txn *badger.Txn) error {
-		if err := e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID); err != nil {
+		if err := e.recoverPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID); err != nil {
 			return err
 		}
 		e.pendingEmbeddingAdds.Delete(txn) // lose only the volatile hint
@@ -72,7 +72,7 @@ func TestPendingCandidatesLostHintAfterDrain(t *testing.T) {
 	e.MarkNodeEmbedded(pendingCandidateNode(2).ID)
 	require.Equal(t, pendingCandidateNode(0).ID, e.FindNodeNeedingEmbedding().ID)
 	require.NoError(t, e.withUpdate(func(txn *badger.Txn) error {
-		if err := e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(2).ID); err != nil {
+		if err := e.recoverPendingEmbeddingInTxn(txn, pendingCandidateNode(2).ID); err != nil {
 			return err
 		}
 		e.pendingEmbeddingAdds.Delete(txn)

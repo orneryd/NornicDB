@@ -95,7 +95,7 @@ func TestStorageExtraMVCCConstructorAndPendingNoop(t *testing.T) {
 	require.NotNil(t, engine)
 
 	badger := newIsolatedBadgerEngine(t)
-	badger.AddToPendingEmbeddings("nornic:n1")
+	badger.AddToPendingEmbeddingsWithOrigin("nornic:n1", CaptureVectorWorkOrigin())
 	require.Equal(t, 1, badger.PendingEmbeddingsCount())
 	badger.InvalidatePendingEmbeddingsIndex()
 	require.Equal(t, 1, badger.PendingEmbeddingsCount())

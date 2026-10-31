@@ -82,7 +82,7 @@ func BenchmarkSearchRefreshEventDrain(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		for _, node := range nodes {
-			db.indexNodeFromEvent(node)
+			db.indexNodeFromEvent(node, storage.CaptureVectorWorkOrigin())
 		}
 		for !drained() {
 			runtime.Gosched()

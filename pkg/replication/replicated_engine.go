@@ -150,6 +150,18 @@ func (e *ReplicatedEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
 	return e.applyEntityCommand(CmdBulkDeleteEdges, ids)
 }
 
+// BulkDeleteNodesWithVectorWorkOrigin replicates a bulk deletion under the
+// caller's admission.
+func (e *ReplicatedEngine) BulkDeleteNodesWithVectorWorkOrigin(ids []storage.NodeID, origin uint64) error {
+	return e.applyAdmittedEntityCommand(CmdBulkDeleteNodes, ids, origin)
+}
+
+// BulkDeleteEdgesWithVectorWorkOrigin replicates a bulk deletion under the
+// caller's admission.
+func (e *ReplicatedEngine) BulkDeleteEdgesWithVectorWorkOrigin(ids []storage.EdgeID, origin uint64) error {
+	return e.applyAdmittedEntityCommand(CmdBulkDeleteEdges, ids, origin)
+}
+
 func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	payload, err := storage.EncodeCommandPayload(struct {
 		Prefix string `json:"prefix"`
@@ -181,11 +193,31 @@ func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error
 	return storage.SubscribeEvents(e.Engine, handlers)
 }
 
-// applyEntityCommand keeps native direct/bulk wire kinds and their producer policy.
+// applyEntityCommand keeps native direct/bulk wire kinds and their producer
+// policy. It is the admission of a public replicated write: an admission the
+// arguments already carry is kept, otherwise the write is admitted here.
 func (e *ReplicatedEngine) applyEntityCommand(kind CommandType, value any) error {
+	origin, admitted := storage.VectorWorkOriginFromArguments(context.Background(), value)
+	if !admitted {
+		origin = storage.AdmitUnrequestedVectorWork("replication.replicated-write")
+	}
+	return e.applyAdmittedEntityCommand(kind, value, origin)
+}
+
+// DeleteNodeWithVectorWorkOrigin replicates a deletion under the caller's admission.
+func (e *ReplicatedEngine) DeleteNodeWithVectorWorkOrigin(id storage.NodeID, origin uint64) error {
+	return e.applyAdmittedEntityCommand(CmdDeleteNode, id, origin)
+}
+
+// DeleteEdgeWithVectorWorkOrigin replicates a deletion under the caller's admission.
+func (e *ReplicatedEngine) DeleteEdgeWithVectorWorkOrigin(id storage.EdgeID, origin uint64) error {
+	return e.applyAdmittedEntityCommand(CmdDeleteEdge, id, origin)
+}
+
+func (e *ReplicatedEngine) applyAdmittedEntityCommand(kind CommandType, value any, origin uint64) error {
 	data, err := encodeEntityCommandPayload(kind, value)
 	if err != nil {
 		return err
 	}
-	return e.replicator.Apply(&Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
+	return e.replicator.Apply(&Command{Type: kind, Data: data, Timestamp: time.Now(), vectorWorkOrigin: origin, vectorOriginBound: true}, e.timeout)
 }

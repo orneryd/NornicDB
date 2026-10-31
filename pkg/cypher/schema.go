@@ -590,6 +590,7 @@ func parseDropSchemaName(rest string) (name string, ifExists, ok bool) {
 // and the db.index.vector.drop / db.index.fulltext.drop procedures. A missing
 // index is a Neo.DatabaseError.Schema.IndexDropFailed error unless ifExists is set.
 func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
+	origin := storage.CaptureVectorWorkOrigin()
 	// Look up the schema entry BEFORE dropping it so we can also tear down
 	// any in-memory index data the schema entry was the only handle for.
 	// Vector indexes carry their declared (label, property) — when the user
@@ -620,7 +621,7 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 	if droppedVectorIndex != nil {
 		if err := e.afterCommit(context.Background(), func() error {
 			if svc := e.search(); svc != nil && droppedVectorIndex.Property != "" {
-				svc.RemovePropertyVectorIndex(droppedVectorIndex.Property)
+				svc.RemoveVectorIndex(*droppedVectorIndex, origin)
 			}
 			e.unregisterVectorSpace(name)
 			return nil

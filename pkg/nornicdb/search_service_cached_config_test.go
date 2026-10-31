@@ -147,11 +147,11 @@ func TestDisabledSearchEventsDoNotQueueAndRebuildAfterEnable(t *testing.T) {
 	require.NoError(t, err)
 	var resolutions atomic.Int64
 	db.SetRerankerResolver(func(string) search.Reranker { resolutions.Add(1); return nil })
-	db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored")
+	db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored", storage.CaptureVectorWorkOrigin())
 	require.True(t, db.GetDatabaseSearchStatus(name).Initialized, "disabled service still exists for readiness reporting")
 	require.EqualValues(t, 1, resolutions.Load(), "the first event creates one service")
 	for range 10 {
-		db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored")
+		db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored", storage.CaptureVectorWorkOrigin())
 	}
 	require.EqualValues(t, 1, resolutions.Load(), "disabled cached events do not resolve or queue search work")
 	db.searchServicesMu.RLock()
@@ -191,7 +191,7 @@ func TestSearchEventUsesCachedServiceAndQueryRefreshesReranker(t *testing.T) {
 	_, err = db.storage.CreateNode(&storage.Node{ID: "stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "indexed quartz"}})
 	require.NoError(t, err)
 	for range 5 {
-		db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored")
+		db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored", storage.CaptureVectorWorkOrigin())
 	}
 	require.Equal(t, before, resolutions.Load(), "indexing events must not resolve query-only reranker configuration")
 	require.Eventually(t, func() bool { return svc.FulltextDocCount() == 1 }, 3*time.Second, 10*time.Millisecond, "cached service still indexes the latest stored document")

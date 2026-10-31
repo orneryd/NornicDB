@@ -212,7 +212,7 @@ func TestExplicitTransactionSeesAcknowledgedWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, created.Stats.NodesCreated)
 
-	_, err = executor.handleBegin()
+	_, err = executor.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if executor.txContext != nil && executor.txContext.active {
@@ -233,7 +233,7 @@ func TestExplicitTransactionCreatesDependentWritesFromAcknowledgedState(t *testi
 	_, err := executor.Execute(context.Background(),
 		"CREATE (:Account {accountID: 'source'})", nil)
 	require.NoError(t, err)
-	_, err = executor.handleBegin()
+	_, err = executor.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 
 	created, err := executor.Execute(context.Background(), `
@@ -258,7 +258,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
-	_, err := first.handleBegin()
+	_, err := first.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	firstOpen := true
 	t.Cleanup(func() {
@@ -279,7 +279,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 
 	beginDone := make(chan error, 1)
 	go func() {
-		_, beginErr := second.handleBegin()
+		_, beginErr := second.handleBegin(admittedTestContext())
 		beginDone <- beginErr
 	}()
 
@@ -313,7 +313,7 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
-	_, err := first.handleBegin()
+	_, err := first.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if first.txContext != nil && first.txContext.active {
@@ -332,7 +332,7 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 
 	beginDone := make(chan error, 1)
 	go func() {
-		_, beginErr := second.handleBegin()
+		_, beginErr := second.handleBegin(admittedTestContext())
 		beginDone <- beginErr
 	}()
 

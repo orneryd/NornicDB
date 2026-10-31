@@ -35,7 +35,8 @@ var buildSequenceCacheWriters = map[string]string{
 
 // buildSequenceExempt are writers that need no ordering with the sequence.
 var buildSequenceExempt = map[string]string{
-	"BuildIndexes":             "the build itself, the sequence's owner",
+	"BuildIndexes":             "immediate entry to buildIndexes, the sequence's owner",
+	"PrepareIndexBuild":        "captures the schema epoch without writing index state; its returned work calls buildIndexes, the same sequence owner as BuildIndexes",
 	"ClearVectorIndex":         "takes buildMu exclusively, after the build installed its sequence",
 	"ClearIndexes":             "takes buildMu exclusively, after the build installed its sequence",
 	"Close":                    "shutdown cancels lifecycle work and joins HNSW construction before releasing sources",
