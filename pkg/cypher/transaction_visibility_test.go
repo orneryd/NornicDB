@@ -215,7 +215,7 @@ func acknowledgedWriteTransaction(t *testing.T, namespace, write string) (*Stora
 
 	acknowledged, err := executor.Execute(context.Background(), write, nil)
 	require.NoError(t, err)
-	_, err = executor.handleBegin(nil)
+	_, err = executor.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	return executor, acknowledged
 }
@@ -263,7 +263,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
-	_, err := first.handleBegin(nil)
+	_, err := first.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	firstOpen := true
 	t.Cleanup(func() {
@@ -284,7 +284,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 
 	beginDone := make(chan error, 1)
 	go func() {
-		_, beginErr := second.handleBegin(nil)
+		_, beginErr := second.handleBegin(admittedTestContext())
 		beginDone <- beginErr
 	}()
 
@@ -318,7 +318,7 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
-	_, err := first.handleBegin(nil)
+	_, err := first.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if first.txContext != nil && first.txContext.active {
@@ -337,7 +337,7 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 
 	beginDone := make(chan error, 1)
 	go func() {
-		_, beginErr := second.handleBegin(nil)
+		_, beginErr := second.handleBegin(admittedTestContext())
 		beginDone <- beginErr
 	}()
 

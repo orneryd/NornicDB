@@ -24,7 +24,7 @@ func TestSearchFlushKeepsEmbeddingOverAnOlderEventCopy(t *testing.T) {
 	defer cancel()
 	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
 	require.NoError(t, err)
-	require.NoError(t, db.ensureSearchIndexesBuilt(ctx, db.defaultDatabaseName()))
+	require.NoError(t, db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(ctx, storage.CaptureVectorWorkOrigin()), db.defaultDatabaseName()))
 
 	embedded := &storage.Node{
 		ID:              "late",
@@ -37,8 +37,8 @@ func TestSearchFlushKeepsEmbeddingOverAnOlderEventCopy(t *testing.T) {
 	require.Eventually(t, func() bool { return svc.EmbeddingCount() == 1 }, 5*time.Second, 10*time.Millisecond)
 
 	qualified := storage.NodeID(db.defaultDatabaseName() + ":late")
-	db.indexNodeFromEvent(&storage.Node{ID: qualified, Labels: embedded.Labels, Properties: embedded.Properties, ChunkEmbeddings: embedded.ChunkEmbeddings})
-	db.indexNodeFromEvent(&storage.Node{ID: qualified, Labels: embedded.Labels, Properties: embedded.Properties})
+	db.indexNodeFromEvent(&storage.Node{ID: qualified, Labels: embedded.Labels, Properties: embedded.Properties, ChunkEmbeddings: embedded.ChunkEmbeddings}, storage.CaptureVectorWorkOrigin())
+	db.indexNodeFromEvent(&storage.Node{ID: qualified, Labels: embedded.Labels, Properties: embedded.Properties}, storage.CaptureVectorWorkOrigin())
 
 	require.Eventually(t, func() bool {
 		entry := db.searchServices[db.defaultDatabaseName()]

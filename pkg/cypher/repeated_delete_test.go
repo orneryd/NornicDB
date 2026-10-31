@@ -79,7 +79,7 @@ type failingDeleteEdgeEngine struct {
 	err error
 }
 
-func (e *failingDeleteEdgeEngine) DeleteEdge(storage.EdgeID) error { return e.err }
+func (e *failingDeleteEdgeEngine) DeleteEdge(storage.EdgeID, ...uint64) error { return e.err }
 
 // A relationship delete that fails for any reason other than the
 // relationship being gone fails the statement.

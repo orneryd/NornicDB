@@ -3113,7 +3113,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 		_, err := engine.CreateNode(&Node{ID: "test:embed", Labels: []string{"Doc"}, Properties: map[string]any{"text": "embed me"}})
 		require.NoError(t, err)
-		walEngine.AddToPendingEmbeddings("test:embed")
+		walEngine.AddToPendingEmbeddingsWithOrigin("test:embed", CaptureVectorWorkOrigin())
 		assert.Equal(t, 1, walEngine.PendingEmbeddingsCount())
 
 		found := walEngine.FindNodeNeedingEmbedding()
@@ -3140,7 +3140,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		assert.Nil(t, noIter.FindNodeNeedingEmbedding())
 		assert.Equal(t, 0, noIter.RefreshPendingEmbeddingsIndex())
 		assert.Equal(t, 0, noIter.PendingEmbeddingsCount())
-		noIter.AddToPendingEmbeddings("test:none")
+		noIter.AddToPendingEmbeddingsWithOrigin("test:none", CaptureVectorWorkOrigin())
 		noIter.MarkNodeEmbedded("test:none")
 	})
 

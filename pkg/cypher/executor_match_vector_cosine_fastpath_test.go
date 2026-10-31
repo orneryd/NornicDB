@@ -439,7 +439,7 @@ func TestMatchVectorCosineFastPath_LazyWiredServiceUsesLiveIndexWithoutWarmup(t 
 
 	searchSvc := search.NewService(ns, 4, nil)
 	var warmCalls int32
-	searchSvc.SetLazyWarming(true, search.WarmFunc(func() {
+	searchSvc.SetLazyWarming(true, search.WarmFunc(func(context.Context) {
 		atomic.AddInt32(&warmCalls, 1)
 		_ = searchSvc.BuildIndexes(context.Background())
 	}))

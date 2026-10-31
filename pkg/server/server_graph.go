@@ -213,7 +213,7 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
+	httpresponse.WritePropertyJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
 		Database:      dbName,
 		GeneratedFrom: "node",
 		Depth:         req.Depth,
@@ -267,7 +267,7 @@ func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
+	httpresponse.WritePropertyJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
 		Database:      dbName,
 		GeneratedFrom: "query",
 	}))
@@ -320,7 +320,7 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
+	httpresponse.WritePropertyJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
 		Database:      dbName,
 		GeneratedFrom: "node",
 		AsOf:          version.CommitTimestamp.UTC().Format(time.RFC3339Nano),
@@ -417,7 +417,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	diff := diffGraphCollections(baseline, target)
-	httpresponse.WriteJSON(w, http.StatusOK, diff.payload(graphMetaPayload{
+	httpresponse.WritePropertyJSON(w, http.StatusOK, diff.payload(graphMetaPayload{
 		Database:      dbName,
 		GeneratedFrom: "diff",
 		AsOf:          targetVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano),

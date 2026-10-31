@@ -20,11 +20,11 @@ func TestSol1482R4BuildSkipsSupersededRefresh(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(edge))
 	built := startGatedBuild(t, engine, svc)
 	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: buildWriteNode("nornic:a", "staleword", []float32{0, 0, 1})}))
-	requireReturnsDuringBuild(t, "node refresh", func() error { return svc.RefreshNode("nornic:a") })
+	requireReturnsDuringBuild(t, "node refresh", func() error { return svc.RefreshNode("nornic:a", storage.CaptureVectorWorkOrigin()) })
 	require.NoError(t, engine.DeleteEdge("nornic:r"))
-	requireReturnsDuringBuild(t, "edge removal", func() error { return svc.RefreshEdge("nornic:r") })
-	newerNode := svc.ReserveNodeMutation("nornic:a")
-	newerEdge := svc.ReserveEdgeMutation("nornic:r")
+	requireReturnsDuringBuild(t, "edge removal", func() error { return svc.RefreshEdge("nornic:r", storage.CaptureVectorWorkOrigin()) })
+	newerNode := svc.ReserveNodeMutation("nornic:a", storage.CaptureVectorWorkOrigin())
+	newerEdge := svc.ReserveEdgeMutation("nornic:r", storage.CaptureVectorWorkOrigin())
 	// The newer refresh has reserved but has not read yet. A skipped queued
 	// refresh must not mark its ID written and remove the build's own copy.
 	require.NoError(t, engine.CreateEdge(edge))

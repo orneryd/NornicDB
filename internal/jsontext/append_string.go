@@ -7,13 +7,19 @@ import (
 
 // AppendString appends one JSON string without HTML escaping, preserving exact
 // UTF16 units and retaining allocation-free appends when capacity permits.
-func AppendString(buf []byte, s string) []byte {
+func AppendString(buf []byte, s string) []byte { return appendString(buf, s, false) }
+
+// AppendHTMLEscapedString has AppendString's exact UTF16 identity with the
+// standard JSON HTML escaping selection used by property and request writers.
+func AppendHTMLEscapedString(buf []byte, s string) []byte { return appendString(buf, s, true) }
+
+func appendString(buf []byte, s string, escapeHTML bool) []byte {
 	const hex = "0123456789abcdef"
 	buf = append(buf, '"')
 	start := 0
 	for i := 0; i < len(s); {
 		if c := s[i]; c < utf8.RuneSelf {
-			if c >= 0x20 && c != '"' && c != '\\' {
+			if c >= 0x20 && c != '"' && c != '\\' && (!escapeHTML || c != '<' && c != '>' && c != '&') {
 				i++
 				continue
 			}

@@ -93,6 +93,13 @@ func (s *dlqPublicStore) MarkNodeEmbedded(id storage.NodeID) {
 		}
 	}
 }
+
+// AddToPendingEmbeddingsWithOrigin is the storage requeue capability; the
+// fixture records the ID and ignores the admission.
+func (s *dlqPublicStore) AddToPendingEmbeddingsWithOrigin(id storage.NodeID, _ uint64) {
+	s.AddToPendingEmbeddings(id)
+}
+
 func (s *dlqPublicStore) AddToPendingEmbeddings(id storage.NodeID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

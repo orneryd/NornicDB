@@ -195,7 +195,7 @@ func TestSearchFlagsE2E_MultiDB_NoRaceWithBootOrchestrator(t *testing.T) {
 			ID:         storage.NodeID(fmt.Sprintf("d3_demo:n%d", i)),
 			Labels:     []string{"Star"},
 			Properties: map[string]any{"name": fmt.Sprintf("star-%d", i)},
-		})
+		}, storage.CaptureVectorWorkOrigin())
 	}
 
 	// Allow boot orchestrator + any pendingFlush goroutine to run.

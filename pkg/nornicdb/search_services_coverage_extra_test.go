@@ -44,7 +44,8 @@ func TestSearchServices_Coverage_StartBuildGuardsAndNilContext(t *testing.T) {
 	svc := search.NewService(engine, 3, nil)
 	entry := &dbSearchService{dbName: "tenant-build", svc: svc, buildDone: make(chan struct{})}
 
-	db.startSearchIndexBuild(entry, nil)
+	// A nil caller context still builds; the test admits the build it starts.
+	db.startSearchIndexBuild(entry, storage.WithVectorWorkOrigin(nil, storage.CaptureVectorWorkOrigin()))
 	select {
 	case <-entry.buildDone:
 	case <-time.After(2 * time.Second):
@@ -92,7 +93,7 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 			svc:               svc,
 			pendingFlushDelay: 5 * time.Millisecond,
 			pendingOps: map[string]search.NodeMutation{
-				"n1": svc.ReserveNodeMutation("n1"),
+				"n1": svc.ReserveNodeMutation("n1", storage.CaptureVectorWorkOrigin()),
 			},
 		}
 
@@ -139,13 +140,13 @@ func TestSearchServices_Coverage_EnsureBuildStartedUsesBackgroundWhenBuildCtxNil
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 
-	require.NoError(t, db.ensureSearchIndexesBuilt(context.Background(), "tenant-startup"))
+	require.NoError(t, db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(context.Background(), storage.CaptureVectorWorkOrigin()), "tenant-startup"))
 }
 
 func TestSearchServices_Coverage_EventAndClusteringNilContextBranches(t *testing.T) {
 	db := newCoverageSearchDB(t)
 	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
-	db.indexNodeFromEvent(nil)
+	db.indexNodeFromEvent(nil, storage.CaptureVectorWorkOrigin())
 	db.runClusteringOnceAllDatabases(context.Background())
 }

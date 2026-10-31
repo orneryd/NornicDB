@@ -16,6 +16,7 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -493,7 +494,7 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 	}
 	var reader io.Reader
 	if body != nil {
-		raw, err := jsontext.Marshal(body)
+		raw, err := valueconvert.CypherInputJSON.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
@@ -519,7 +520,7 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 		return nil, err
 	}
 	var txResp remoteTxResponse
-	if err := unmarshalRemoteHTTPJSON(respBody, &txResp); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal(respBody, &txResp); err != nil {
 		return nil, localizedError(localization.StorageRemoteTransactionDecodeFailed(resp.StatusCode, err), err)
 	}
 	if len(txResp.Errors) > 0 {
@@ -533,11 +534,15 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 				return nil, localizedError(localization.StorageRemoteRESTRowLengthMismatch(), nil)
 			}
 			for _, entry := range data.Meta {
-				remoteHTTPNumbers(entry)
+				if _, err := remoteHTTPNumbers(entry); err != nil {
+					return nil, err
+				}
 			}
 			for _, entities := range [][]jsontext.NumberMap{data.Graph.Nodes, data.Graph.Relationships} {
 				for _, entity := range entities {
-					remoteHTTPNumbers(map[string]interface{}(entity))
+					if _, err := remoteHTTPNumbers(map[string]interface{}(entity)); err != nil {
+						return nil, err
+					}
 				}
 			}
 			entities := make(map[string]interface{})
@@ -601,7 +606,7 @@ func (h *httpTransport) openTransaction(ctx context.Context, mode RemoteAccessMo
 	if mode == RemoteAccessRead {
 		openBody.AccessMode = "READ"
 	}
-	raw, err := jsontext.Marshal(openBody)
+	raw, err := valueconvert.CypherInputJSON.Marshal(openBody)
 	if err != nil {
 		return "", "", err
 	}
@@ -976,7 +981,7 @@ func (r *RemoteEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	return err
 }
 
-func (r *RemoteEngine) DeleteNode(id NodeID) error {
+func (r *RemoteEngine) DeleteNode(id NodeID, _ ...uint64) error {
 	return r.mutateRemoteEntity("MATCH (n) WHERE n.id = $id DETACH DELETE n", string(id), nil, false)
 }
 
@@ -1033,7 +1038,7 @@ func (r *RemoteEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	return err
 }
 
-func (r *RemoteEngine) DeleteEdge(id EdgeID) error {
+func (r *RemoteEngine) DeleteEdge(id EdgeID, _ ...uint64) error {
 	return r.mutateRemoteEntity("MATCH ()-[r]->() WHERE r.id = $id DELETE r", string(id), nil, false)
 }
 
@@ -1243,7 +1248,7 @@ func (r *RemoteEngine) BulkCreateEdges(edges []*Edge) error {
 	return nil
 }
 
-func (r *RemoteEngine) BulkDeleteNodes(ids []NodeID) error {
+func (r *RemoteEngine) BulkDeleteNodes(ids []NodeID, _ ...uint64) error {
 	ctx, cancel := defaultCtx()
 	defer cancel()
 	for i := 0; i < len(ids); i += remoteBulkChunkSize {
@@ -1265,7 +1270,7 @@ func (r *RemoteEngine) BulkDeleteNodes(ids []NodeID) error {
 	return nil
 }
 
-func (r *RemoteEngine) BulkDeleteEdges(ids []EdgeID) error {
+func (r *RemoteEngine) BulkDeleteEdges(ids []EdgeID, _ ...uint64) error {
 	ctx, cancel := defaultCtx()
 	defer cancel()
 	for i := 0; i < len(ids); i += remoteBulkChunkSize {

@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -40,7 +39,7 @@ func (tx *BadgerTransaction) Schema(purpose SchemaPurpose) (*SchemaManager, erro
 		return nil, err
 	}
 	if err == nil {
-		if err := item.Value(func(value []byte) error { return json.Unmarshal(value, definition) }); err != nil {
+		if err := item.Value(func(value []byte) error { return DecodeSchemaDefinition(value, definition) }); err != nil {
 			return nil, err
 		}
 	}
@@ -59,12 +58,12 @@ func (tx *BadgerTransaction) Schema(purpose SchemaPurpose) (*SchemaManager, erro
 		if err := tx.admitWriteLocked(); err != nil {
 			return err
 		}
-		blob, err := json.Marshal(updated)
+		blob, err := EncodeSchemaDefinition(updated)
 		if err != nil {
 			return err
 		}
 		persisted := &SchemaDefinition{}
-		if err := json.Unmarshal(blob, persisted); err != nil {
+		if err := DecodeSchemaDefinition(blob, persisted); err != nil {
 			return err
 		}
 		if err := tx.badgerTx.Set(schemaKey(tx.namespace), blob); err != nil {

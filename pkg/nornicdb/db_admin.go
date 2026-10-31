@@ -3,7 +3,6 @@ package nornicdb
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -549,6 +549,7 @@ func (db *DB) GetNode(ctx context.Context, id string) (*Node, error) {
 
 // CreateNode creates a new node.
 func (db *DB) CreateNode(ctx context.Context, labels []string, properties map[string]interface{}) (*Node, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	return db.createNode(ctx, generateID(), labels, properties, false)
 }
 
@@ -559,16 +560,30 @@ func (db *DB) CreateNodeWithID(ctx context.Context, id string, labels []string, 
 	if strings.TrimSpace(id) == "" {
 		return nil, localizedError(localization.NornicDBCoreNodeIDRequired(), nil)
 	}
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	return db.createNode(ctx, id, labels, properties, true)
 }
 
+// admittedStorage is the one write handle for a request on this database: it
+// carries the request's admitted vector-work origin into every native write.
+func (db *DB) admittedStorage(ctx context.Context) (storage.Engine, error) {
+	_, origin := storage.ContinueVectorWork(ctx, "nornicdb.admitted-storage")
+	return storage.EngineWithVectorWorkOrigin(db.storage, origin)
+}
+
 func (db *DB) createNode(ctx context.Context, id string, labels []string, properties map[string]interface{}, rejectExisting bool) (*Node, error) {
+	_, origin := storage.ContinueVectorWork(ctx, "nornicdb.create-node")
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return nil, writerErr
+	}
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 	if rejectExisting {
@@ -591,7 +606,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 		CreatedAt:  now,
 	}
 
-	actualID, err := storageEngine.CreateNode(node)
+	actualID, err := writer.CreateNode(node)
 	if err != nil {
 		return nil, err
 	}
@@ -605,7 +620,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 	// Storage event callbacks still provide eventual consistency for external writers.
 	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		if indexErr := svc.RefreshNode(actualID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(actualID, origin); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -620,12 +635,18 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 
 // UpdateNode updates a node's properties.
 func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]interface{}) (*Node, error) {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return nil, writerErr
+	}
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 
@@ -658,7 +679,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		embeddingutil.InvalidateManagedEmbeddings(n)
 	}
 
-	if err := storageEngine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: n}); err != nil {
+	if err := writer.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: n}); err != nil {
 		return nil, err
 	}
 
@@ -671,7 +692,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	// Keep search results immediately consistent after updates.
 	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		if indexErr := svc.RefreshNode(n.ID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(n.ID, origin); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -689,17 +710,23 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 
 // DeleteNode deletes a node.
 func (db *DB) DeleteNode(ctx context.Context, id string) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return writerErr
+	}
 	embedQueue := db.embedQueue
 	defaultDB := db.defaultDatabaseName()
 	db.mu.RUnlock()
 
-	if err := storageEngine.DeleteNode(storage.NodeID(id)); err != nil {
+	if err := writer.DeleteNode(storage.NodeID(id)); err != nil {
 		return err
 	}
 	if embedQueue != nil {
@@ -846,12 +873,18 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
 
 // CreateEdge creates a new edge.
 func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, properties map[string]interface{}) (*GraphEdge, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return nil, writerErr
+	}
 	db.mu.RUnlock()
 
 	// Verify nodes exist
@@ -874,7 +907,7 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 		CreatedAt:  now,
 	}
 
-	if err := storageEngine.CreateEdge(edge); err != nil {
+	if err := writer.CreateEdge(edge); err != nil {
 		return nil, err
 	}
 
@@ -890,15 +923,20 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 
 // DeleteEdge deletes an edge.
 func (db *DB) DeleteEdge(ctx context.Context, id string) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
-	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return writerErr
+	}
 	db.mu.RUnlock()
 
-	return storageEngine.DeleteEdge(storage.EdgeID(id))
+	return writer.DeleteEdge(storage.EdgeID(id))
 }
 
 // SearchResult holds a search result with score.
@@ -989,12 +1027,14 @@ func mapSingleSearchResult(r search.SearchResult) *SearchResult {
 // Search performs full-text BM25 search.
 // For hybrid vector+text search, use HybridSearch with pre-computed query embedding.
 func (db *DB) Search(ctx context.Context, query string, labels []string, limit int) ([]*SearchResult, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	return db.SearchDatabase(ctx, db.defaultDatabaseName(), db.storage, query, labels, limit)
 }
 
 // SearchDatabase is Search over one database: database names it and engine
 // is its storage (the caller has resolved and authorized both).
 func (db *DB) SearchDatabase(ctx context.Context, database string, engine storage.Engine, query string, labels []string, limit int) ([]*SearchResult, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -1030,6 +1070,7 @@ func (db *DB) SearchDatabase(ctx context.Context, database string, engine storag
 // The queryEmbedding should be pre-computed by the caller.
 // This is the primary search method for semantic search with ranking fusion.
 func (db *DB) HybridSearch(ctx context.Context, query string, queryEmbedding []float32, labels []string, limit int) ([]*SearchResult, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	opts := search.GetAdaptiveRRFConfig(query)
 	opts.Limit = limit
 	if len(labels) > 0 {
@@ -1042,6 +1083,7 @@ func (db *DB) HybridSearch(ctx context.Context, query string, queryEmbedding []f
 // It is intended for callers that need reproducible retrieval settings, such as
 // offline benchmark runners.
 func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEmbedding []float32, opts *search.SearchOptions) ([]*SearchResult, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -1454,13 +1496,13 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 	}
 
 	backup := map[string]interface{}{
-		"version":    "1.0",
+		"version":    "2.0", // Exact PropertyJSON numbers, including whole FLOATs and -0.
 		"created_at": time.Now().Format(time.RFC3339),
 		"nodes":      nodes,
 		"edges":      edges,
 	}
 
-	data, err := json.MarshalIndent(backup, "", "  ")
+	data, err := valueconvert.PropertyJSON.MarshalIndent(backup, "", "  ")
 	if err != nil {
 		return localizedError(localization.NornicDBCoreBackupMarshalFailed(err), err)
 	}
@@ -1485,6 +1527,7 @@ const restoreEmbeddingDrainTimeout = 30 * time.Second
 //
 //	err := db.Restore(ctx, "backup-20241201.json")
 func (db *DB) Restore(ctx context.Context, path string) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
@@ -1558,7 +1601,7 @@ legacyJSONRestore:
 		Edges     []*storage.Edge `json:"edges"`
 	}
 
-	if err := json.Unmarshal(data, &backup); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal(data, &backup); err != nil {
 		return localizedError(localization.NornicDBCoreBackupParseFailed(err), err)
 	}
 
@@ -1567,13 +1610,18 @@ legacyJSONRestore:
 		db.mu.Unlock()
 		return ErrClosed
 	}
+	writer, err := db.admittedStorage(ctx)
+	if err != nil {
+		db.mu.Unlock()
+		return err
+	}
 
 	// Restore nodes
 	for _, node := range backup.Nodes {
-		_, err := db.storage.CreateNode(node)
+		_, err := writer.CreateNode(node)
 		if err != nil {
 			// Try update if node exists
-			if updateErr := db.storage.UpdateNode(storage.NodeUpdateRequest{After: node}); updateErr != nil {
+			if updateErr := writer.UpdateNode(storage.NodeUpdateRequest{After: node}); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreNodeFailed(string(node.ID), err), err)
 			}
@@ -1582,9 +1630,9 @@ legacyJSONRestore:
 
 	// Restore edges
 	for _, edge := range backup.Edges {
-		if err := db.storage.CreateEdge(edge); err != nil {
+		if err := writer.CreateEdge(edge); err != nil {
 			// Try update if edge exists
-			if updateErr := db.storage.UpdateEdge(storage.EdgeUpdateRequest{After: edge}); updateErr != nil {
+			if updateErr := writer.UpdateEdge(storage.EdgeUpdateRequest{After: edge}); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreEdgeFailed(string(edge.ID), err), err)
 			}
@@ -1624,6 +1672,7 @@ func isJSONBackupFile(path string) (bool, error) {
 }
 
 func (db *DB) restartSearchAfterRestore() {
+	origin := storage.CaptureVectorWorkOrigin()
 	// Restart search indexing after releasing the DB write lock; starting the
 	// background search build while Restore still holds db.mu deadlocks via
 	// startBackgroundTask's read lock. A restore replaces every database, so
@@ -1642,7 +1691,7 @@ func (db *DB) restartSearchAfterRestore() {
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			db.startSearchIndexBuild(entry, ctx)
+			db.startSearchIndexBuild(entry, storage.WithVectorWorkOrigin(ctx, origin))
 		}
 	} else if err != nil {
 		log.Printf("⚠️  Warning: failed to restart search indexing after restore: %v", err)
@@ -1683,7 +1732,7 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
 	}
 
 	// Default to JSON
-	return json.Marshal(map[string]interface{}{
+	return valueconvert.PropertyJSON.Marshal(map[string]interface{}{
 		"user_id":     userID,
 		"data":        userData,
 		"exported_at": time.Now(),
@@ -1803,12 +1852,18 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 // AnonymizeUserData anonymizes all data for a user (GDPR compliance).
 // Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return writerErr
+	}
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 
@@ -1829,7 +1884,7 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 
 	// Now update the collected nodes
 	for _, request := range toUpdate {
-		if err := storageEngine.UpdateNode(request); err != nil {
+		if err := writer.UpdateNode(request); err != nil {
 			return err
 		}
 		if embedQueue != nil {
