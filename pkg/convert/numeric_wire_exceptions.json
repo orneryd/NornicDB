@@ -593,7 +593,7 @@
   },
   "pkg/observability/logging.go:appendValue": {
     "reason": "Structured slog diagnostics, including duration and nonfinite log conventions; not persisted graph properties or external Cypher parameters.",
-    "sha256": "e27962834c2f7756ea988c7bd0a305f6c08b29420bd676a70e2705092cf30e0e"
+    "sha256": "e5a684cda4864cce02383b521156541925ed8cf756d55505239c96f190e2dad3"
   },
   "pkg/observability/redaction_display.go:RedactText": {
     "reason": "Author: #1665 implementation lane (Codex). Diagnostic credential projection reads lexemes with the lossless owner, redacts values, then serializes a safe display copy. It never writes the result back into entity properties.",
