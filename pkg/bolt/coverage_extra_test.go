@@ -1075,7 +1075,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			expectCode  string
 		}{
 			{name: "success", rollbackErr: nil, expectCode: ""},
-			{name: "failure", rollbackErr: io.ErrClosedPipe, expectCode: "Neo.ClientError.Transaction.TransactionRollbackFailed"},
+			{name: "failure", rollbackErr: io.ErrClosedPipe, expectCode: "Neo.DatabaseError.Transaction.TransactionRollbackFailed"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				serverConn, clientConn := net.Pipe()

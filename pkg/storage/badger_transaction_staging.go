@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -103,6 +104,7 @@ func (tx *BadgerTransaction) physicalOperationsLocked() []Operation {
 // Set stages key = value. Like Badger's Txn.Set, it keeps value without
 // copying it; the caller must not modify it afterwards.
 func (s *stagedKV) Set(key, value []byte) error {
+	s.effects.Add(1)
 	tx := (*BadgerTransaction)(s)
 	keyStr := string(key)
 	delete(tx.pendingDeletes, keyStr)
@@ -112,6 +114,7 @@ func (s *stagedKV) Set(key, value []byte) error {
 
 // Delete stages the deletion of key.
 func (s *stagedKV) Delete(key []byte) error {
+	s.effects.Add(1)
 	(*BadgerTransaction)(s).bufferDelete(key)
 	return nil
 }
@@ -250,7 +253,7 @@ func (tx *BadgerTransaction) abortCommitLocked(err error) error {
 				slog.Any("commit_error", err),
 				slog.Any("rollback_error", abortErr),
 			)
-			err = fmt.Errorf("%w (%w)", err, abortErr)
+			err = compose.Outcomes(err, abortErr)
 		}
 		tx.commitW = nil
 	}

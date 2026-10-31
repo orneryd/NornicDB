@@ -195,6 +195,18 @@ func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespac
 	return id, nil
 }
 
+// txnWork observes what COMMIT will write from txn's staged state here, for
+// CommitWorkMark. It is 0 when there is none.
+func (d *propertyKeyDictionary) txnWork(txn *badger.Txn) uint64 {
+	d.txnMu.Lock()
+	defer d.txnMu.Unlock()
+	work := uint64(len(d.txnPendingForward[txn])) << 40
+	for _, id := range d.txnCounters[txn] {
+		work += id
+	}
+	return work
+}
+
 // recordTxnPendingPersist stages a (namespace, name, id) tuple on the
 // txn so the user's commit can later flush them via flushTxnCounters
 // (which drains BOTH the per-namespace counter high-water marks AND the
