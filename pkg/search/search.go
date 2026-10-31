@@ -101,6 +101,7 @@ import (
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"hash/fnv"
 	"log/slog"
+	"maps"
 	"os"
 	"reflect"
 	"sort"
@@ -110,6 +111,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -670,20 +672,16 @@ func (c *searchResultCache) Put(key string, response *SearchResponse) {
 }
 
 // cloneSearchResponse gives the cache and each reader independent ownership of
-// the response and result slice. Published cache entries are never transformed
-// in place; adapters such as Kalman may safely update only their private copy.
+// the response through the single ownership implementation: every exported
+// field, its results (each hit's own copier) and metrics included, plus the
+// private rerank exclusions. Published cache entries are never transformed in
+// place; adapters such as Kalman may safely update only their private copy.
 func cloneSearchResponse(response *SearchResponse) *SearchResponse {
 	if response == nil {
 		return nil
 	}
-	clone := *response
-	clone.Results = append([]SearchResult(nil), response.Results...)
-	if response.rerankExcluded != nil {
-		clone.rerankExcluded = make(map[string]struct{}, len(response.rerankExcluded))
-		for id := range response.rerankExcluded {
-			clone.rerankExcluded[id] = struct{}{}
-		}
-	}
+	clone := callerowned.Of(*response)
+	clone.rerankExcluded = maps.Clone(response.rerankExcluded)
 	return &clone
 }
 

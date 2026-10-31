@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
@@ -1007,7 +1008,7 @@ func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey inter
 	w.ensurePendingValueTracked(label, property)
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.keyCandidatesLocked(label, property, valueKey)
+	return callerowned.Each(w.keyCandidatesLocked(label, property, valueKey), copyNode)
 }
 
 func (w *WriteBehindBuffer) keyCandidatesLocked(label, property string, valueKey interface{}) []*Node {
@@ -1142,11 +1143,15 @@ func (w *WriteBehindBuffer) Close() {
 
 // GetNode resolves the latest buffered state for id across generations,
 // newest first. Returns (value, found, deleted).
+//
+// Every exported getter returns caller-owned copies of buffered images; the
+// unexported *Locked selectors borrow them for readers that copy what they
+// hand out (NOR-160).
 func (w *WriteBehindBuffer) GetNode(id NodeID) (*Node, bool, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	state := w.entityStateLocked(bufferedNodeEntity, string(id))
-	return state.node, state.found, state.deleted
+	return copyNode(state.node), state.found, state.deleted
 }
 
 // GetEdge resolves the latest buffered state for id across generations,
@@ -1155,7 +1160,7 @@ func (w *WriteBehindBuffer) GetEdge(id EdgeID) (*Edge, bool, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	state := w.entityStateLocked(bufferedEdgeEntity, string(id))
-	return state.edge, state.found, state.deleted
+	return copyEdge(state.edge), state.found, state.deleted
 }
 
 // LabelNodes returns buffered nodes carrying label, newest generation first,
@@ -1170,12 +1175,12 @@ func (w *WriteBehindBuffer) LabelNodes(label string) []*Node {
 // the label (IDs the buffer deleted are excluded), newest generation first;
 // touched holds every ID the buffer created, updated or deleted for the
 // label. Callers merge over committed rows: drop committed rows whose ID is
-// in touched and append the returned nodes. The returned node pointers are
-// buffer-owned; callers must copy before handing them out.
+// in touched and append the returned nodes, which are caller-owned copies.
 func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.labelOverlayLocked(label)
+	nodes, touched := w.labelOverlayLocked(label)
+	return callerowned.Each(nodes, copyNode), touched
 }
 
 // Keep closure-backed selection behind the nil check: captured result locals
@@ -1208,7 +1213,8 @@ func (w *WriteBehindBuffer) selectLabelOverlayLocked(label string, prefixes ...s
 func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.typeOverlayLocked(edgeType)
+	edges, touched := w.typeOverlayLocked(edgeType)
+	return callerowned.Each(edges, copyEdge), touched
 }
 
 func (w *WriteBehindBuffer) typeOverlayLocked(edgeType string, prefixes ...string) ([]*Edge, map[EdgeID]bool) {
@@ -1232,11 +1238,12 @@ func (w *WriteBehindBuffer) typeOverlayLocked(edgeType string, prefixes ...strin
 }
 
 // LookupNode resolves the newest buffered version of id, if the buffer has
-// one. The returned pointer is buffer-owned; callers must copy it.
+// one, as a caller-owned copy.
 func (w *WriteBehindBuffer) LookupNode(id NodeID) (*Node, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.nodeLocked(id)
+	node, ok := w.nodeLocked(id)
+	return copyNode(node), ok
 }
 
 // NodeDeleted reports whether the buffer's newest state for id is a delete.
@@ -1247,12 +1254,12 @@ func (w *WriteBehindBuffer) NodeDeleted(id NodeID) bool {
 }
 
 // LookupEdge resolves the newest buffered version of id, if the buffer has
-// one. The returned pointer is buffer-owned; callers must copy it.
+// one, as a caller-owned copy.
 func (w *WriteBehindBuffer) LookupEdge(id EdgeID) (*Edge, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	state := w.entityStateLocked(bufferedEdgeEntity, string(id))
-	return state.edge, state.found && !state.deleted
+	return copyEdge(state.edge), state.found && !state.deleted
 }
 
 // EdgeDeleted reports whether the buffer's newest state for id is a delete.
@@ -1267,11 +1274,12 @@ func (w *WriteBehindBuffer) EdgeDeleted(id EdgeID) bool {
 // (deleted IDs excluded), newest generation first; touched holds every node
 // ID the buffer created, updated or deleted. Callers merge over committed
 // rows: drop committed rows whose ID is in touched and append the returned
-// nodes. The returned pointers are buffer-owned; callers must copy them.
+// nodes, which are caller-owned copies.
 func (w *WriteBehindBuffer) AllNodesOverlay() ([]*Node, map[NodeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.allNodesOverlayLocked()
+	nodes, touched := w.allNodesOverlayLocked()
+	return callerowned.Each(nodes, copyNode), touched
 }
 
 func (w *WriteBehindBuffer) allNodesOverlayLocked(prefixes ...string) ([]*Node, map[NodeID]bool) {
@@ -1301,7 +1309,8 @@ func (w *WriteBehindBuffer) selectAllNodesOverlayLocked(prefixes ...string) ([]*
 func (w *WriteBehindBuffer) AllEdgesOverlay() ([]*Edge, map[EdgeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.allEdgesOverlayLocked()
+	edges, touched := w.allEdgesOverlayLocked()
+	return callerowned.Each(edges, copyEdge), touched
 }
 
 func (w *WriteBehindBuffer) allEdgesOverlayLocked(prefixes ...string) ([]*Edge, map[EdgeID]bool) {
@@ -1467,11 +1476,12 @@ func (w *WriteBehindBuffer) NodeDeletedOverlay(nodeID NodeID) bool {
 // scans must suppress, including live IDs shadowed by the buffer.
 // nodeDeleted reports that a buffered delete
 // hides the node itself, which hides all of its committed adjacency too.
-// The returned edge pointers are buffer-owned; callers must copy them.
+// The returned edges are caller-owned copies.
 func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.edgeAdjacencyOverlayLocked(nodeID, outgoing)
+	live, suppressed, nodeDeleted = w.edgeAdjacencyOverlayLocked(nodeID, outgoing)
+	return callerowned.Each(live, copyEdge), suppressed, nodeDeleted
 }
 
 func (w *WriteBehindBuffer) edgeAdjacencyOverlayLocked(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
@@ -1513,7 +1523,8 @@ func (w *WriteBehindBuffer) selectEdgeAdjacencyOverlayLocked(nodeID NodeID, outg
 func (w *WriteBehindBuffer) EdgesBetweenOverlay(source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.edgesBetweenOverlayLocked(source, target)
+	live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(source, target)
+	return callerowned.Each(live, copyEdge), suppressed, sourceDeleted, targetDeleted
 }
 
 func (w *WriteBehindBuffer) edgesBetweenOverlayLocked(source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {

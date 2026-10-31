@@ -24,7 +24,7 @@ func TestProjectedNodeCopyPreservesSelectionAndIsolation(t *testing.T) {
 				ID: "db:node", Labels: []string{"Person"}, Properties: map[string]any{"id": int64(1), "name": "Ada"},
 				EmbedMeta: map[string]any{"source": "text"}, ChunkEmbeddings: [][]float32{{1}},
 				NamedEmbeddings: map[string][]float32{"v": {2}}, CreatedAt: now, UpdatedAt: now}
-			got := projectCachedNodeForRead(node, test.properties, true)
+			got := copyShaped(node, test.properties, true)
 			require.Equal(t, test.want, got.Properties)
 			require.Equal(t, node.ID, got.ID)
 			require.Equal(t, node.CreatedAt, got.CreatedAt)
@@ -54,7 +54,7 @@ func BenchmarkProjectedNodeCopy(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				benchmarkProjectedNode = projectCachedNodeForRead(node, selected, true)
+				benchmarkProjectedNode = copyShaped(node, selected, true)
 			}
 		})
 	}

@@ -258,25 +258,30 @@ func labelHasNoNodes(engine Engine, label string) (bool, error) {
 // temporalKeyHistoryNodesLatest returns the stored nodes in the history of
 // node's key under c, read at the latest committed state (the state the label
 // scan reads). Nodes whose entry outlived them (a rebuild racing a delete)
-// are skipped. ok is false when node has no complete key or start.
-func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namespace string, c Constraint, node *Node) (nodes []*Node, ok bool, err error) {
+// are skipped. ok is false when node has no complete key or start. keep, when
+// set, is the caller's selection: only the nodes it keeps are returned, and a
+// buffered node it rejects is never copied (NOR-160).
+func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namespace string, c Constraint, node *Node, keep func(*Node) bool) (nodes []*Node, ok bool, err error) {
 	target, _, ok := temporalTargetForNode(namespace, node, c)
 	if !ok {
 		return nil, false, nil
 	}
-	var overlay []*Node
-	var touched map[NodeID]bool
+	var overlay bufferedEntityResult
 	err = b.withReadView(func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
-		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		overlay = b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
 	}, func(txn *badger.Txn) error {
-		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, touched: touched, latest: func(node *Node) (bool, error) { nodes = append(nodes, node); return true, nil }})
+		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, touched: overlay.nodesTouched, latest: func(node *Node) (bool, error) {
+			if keep == nil || keep(node) {
+				nodes = append(nodes, node)
+			}
+			return true, nil
+		}})
 		return err
 	})
-	for _, n := range overlay {
-		if namespace == "" || nodeIDInScope(n.ID, namespace+":") {
-			nodes = append(nodes, copyNode(n))
-		}
+	if err != nil {
+		return nil, true, err
 	}
-	return nodes, true, err
+	return append(nodes, overlay.ownedNodes(func(n *Node) bool {
+		return (namespace == "" || nodeIDInScope(n.ID, namespace+":")) && (keep == nil || keep(n))
+	}, nil, false)...), true, nil
 }
