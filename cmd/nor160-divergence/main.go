@@ -36,7 +36,7 @@ func main() {
 	slots := flag.Int("slots", 2, "analysis slots (1..2); shared measured maximum is two")
 	// NOR-160 lab vendoring (lane, 31 Oct): a lab job returns only its output,
 	// so print the completed report and receipt there.
-	printReport := flag.Bool("print-report", false, "after a completed run, print report.json and receipt.json from --out to stdout")
+	printReport := flag.Bool("print-report", false, "after a completed run, print the receipt and one compact line per report finding to stdout")
 	parseErr := flag.CommandLine.Parse(os.Args[1:])
 	failureOutputRoot = *out
 	if parseErr != nil {
@@ -74,18 +74,8 @@ func main() {
 		fatal(err)
 	}
 	if *printReport {
-		for _, name := range []string{"receipt.json", "report.json"} {
-			_ = filepath.WalkDir(*out, func(path string, entry os.DirEntry, walkErr error) error {
-				if walkErr != nil || entry.IsDir() || entry.Name() != name {
-					return nil
-				}
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return err
-				}
-				fmt.Printf("NOR160_DIVERGENCE_BEGIN %s\n%s\nNOR160_DIVERGENCE_END %s\n", path, data, path)
-				return nil
-			})
+		if err := printCompactReport(*out); err != nil {
+			fatal(err)
 		}
 	}
 }
