@@ -583,10 +583,11 @@ func (w *transactionStorageWrapper) MatchEdgesBetween(startID, endID storage.Nod
 		return w.tx.MatchEdgesBetween(startID, endID, edgeType, properties, match)
 	}
 	edges, err := w.tx.MatchEdgesBetween(w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType, properties, func(edge *storage.Edge) bool {
-		// Storage hands each predicate its own candidate; show it unprefixed.
-		edge.ID = w.unprefixEdgeID(edge.ID)
-		edge.StartNode, edge.EndNode = startID, endID
-		return match(edge)
+		// The candidate is read-only: show it unprefixed on a shallow copy.
+		view := *edge
+		view.ID = w.unprefixEdgeID(edge.ID)
+		view.StartNode, view.EndNode = startID, endID
+		return match(&view)
 	})
 	if err != nil {
 		return nil, err

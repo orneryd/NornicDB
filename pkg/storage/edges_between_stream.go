@@ -16,9 +16,10 @@ import (
 // identity properties, and Neo4j's Expand(Into) reads just those.
 //
 // match sees each candidate with its ID, Type, StartNode, EndNode and at
-// least the listed properties it has. Every matcher hands match its own
-// candidate image (edgeMatchCandidate), so match may rewrite it, as the
-// namespacing wrappers do with its IDs, but must not keep it past the call.
+// least the listed properties it has. The candidate is read-only and may share
+// its values with a cache or the transaction (edgeMatchCandidate): match must
+// not change it or keep it past the call. A wrapper that shows it with other
+// IDs does so on its own shallow copy.
 // The edges it accepts are returned whole, as GetEdgesBetween returns them,
 // from the same read.
 type EdgesBetweenMatcher interface {
@@ -53,16 +54,17 @@ func filterEdgesBetween(edges []*Edge, startID, endID NodeID, edgeType string, p
 	return matched
 }
 
-// edgeMatchCandidate is the image a MatchEdgesBetween predicate inspects: the
-// requested properties (all of them for nil), selected by the result
-// projection and detached by the caller-copy owner, so a predicate that
-// mutates its candidate changes neither the source nor the accepted result
-// (NOR-160).
+// edgeMatchCandidate is the read-only image a MatchEdgesBetween predicate
+// inspects: the requested properties (all of them for nil), selected by the
+// result projection. Nothing is copied for a candidate; only an accepted edge
+// is, once, when it is delivered (NOR-160).
 func edgeMatchCandidate(edge *Edge, properties []string) *Edge {
 	if properties == nil {
-		return copyEdge(edge)
+		return edge
 	}
-	return copyEdge((QueryResultProjection{}).Edge(edge, properties))
+	view := *edge
+	view.Properties = (QueryResultProjection{}).EdgeProperties(edge, properties)
+	return &view
 }
 
 // MatchEdgesBetween matches the engine's edges between two nodes. Under
@@ -265,11 +267,11 @@ func (n *NamespacedEngine) MatchEdgesBetween(startID, endID NodeID, edgeType str
 		if !n.hasEdgePrefix(edge.ID) {
 			return false
 		}
-		// The candidate is caller-owned (edgeMatchCandidate): show it with
-		// this namespace's IDs without another copy.
-		edge.ID = EdgeID(strings.TrimPrefix(string(edge.ID), n.scope))
-		edge.StartNode, edge.EndNode = startID, endID
-		return match(edge)
+		// The candidate is read-only: show this namespace's IDs on a shallow copy.
+		view := *edge
+		view.ID = EdgeID(strings.TrimPrefix(string(edge.ID), n.scope))
+		view.StartNode, view.EndNode = startID, endID
+		return match(&view)
 	})
 	if err != nil {
 		return nil, err

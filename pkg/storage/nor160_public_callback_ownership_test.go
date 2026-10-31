@@ -10,8 +10,9 @@ import (
 )
 
 // Callbacks are public read results too. Keep their actual returned containers
-// until the entire operation finishes, and mutate a predicate's selected image
-// while requiring accepted full images and subsequent reads to stay unchanged.
+// until the entire operation finishes. A predicate's candidate is read-only: it
+// must show the selected values, and accepted full images and subsequent reads
+// must stay unchanged. Predicates may not mutate it (NOR-160).
 func TestNOR160CallerOwnedPublicCallbackResults(t *testing.T) {
 	for _, kind := range []string{"badger", "memory", "namespaced", "wal", "traced", "composite"} {
 		t.Run(kind, func(t *testing.T) {
@@ -37,13 +38,12 @@ func TestNOR160CallerOwnedPublicCallbackResults(t *testing.T) {
 						} else {
 							require.Equal(t, candidateImage, image, "a previous predicate changed the next candidate")
 						}
-						readownership.Mutate(candidate)
 						return true
 					})
 					require.NoError(t, err)
 					require.Equal(t, 1, calls)
 					require.Len(t, matched, 1)
-					require.Equal(t, want, readownership.Capture(matched[0]), "predicate mutation changed the full accepted image")
+					require.Equal(t, want, readownership.Capture(matched[0]), "the predicate's candidate changed the full accepted image")
 				}
 			})
 			t.Run("StreamNodeChunks/retained-container", func(t *testing.T) {
