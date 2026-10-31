@@ -2267,6 +2267,33 @@ func (tx *BadgerTransaction) GetEdge(edgeID EdgeID) (*Edge, error) {
 func (tx *BadgerTransaction) ReadEdges(request TransactionEdgeRead) ([]*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
+	include := transactionEdgeReadIncludes(request)
+	committed, err := tx.edgeReadImagesLocked(request, include)
+	if err != nil {
+		return nil, err
+	}
+	return tx.mergePendingAdjacentEdgesLocked(committed, request.Node, include), nil
+}
+
+// transactionEdgeReadIncludes is the read's direction as a selection.
+func transactionEdgeReadIncludes(request TransactionEdgeRead) func(*Edge) bool {
+	return func(edge *Edge) bool {
+		switch request.Kind {
+		case TransactionReadOutgoing:
+			return edge.StartNode == request.Node
+		case TransactionReadIncoming:
+			return edge.EndNode == request.Node
+		default:
+			return edge.StartNode == request.Node && edge.EndNode == request.Other
+		}
+	}
+}
+
+// edgeReadImagesLocked selects the committed edges of a native adjacency read.
+// The whole selection over committed edges (the transaction's own writes, the
+// read's selection) is decided by the producers, before any retained body is
+// copied (NOR-160).
+func (tx *BadgerTransaction) edgeReadImagesLocked(request TransactionEdgeRead, include func(*Edge) bool) ([]edgeImage, error) {
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
@@ -2288,42 +2315,37 @@ func (tx *BadgerTransaction) ReadEdges(request TransactionEdgeRead) ([]*Edge, er
 			return nil, err
 		}
 	}
-	include := func(edge *Edge) bool {
-		switch request.Kind {
-		case TransactionReadOutgoing:
-			return edge.StartNode == request.Node
-		case TransactionReadIncoming:
-			return edge.EndNode == request.Node
-		default:
-			return edge.StartNode == request.Node && edge.EndNode == request.Other
-		}
-	}
-	// The whole selection over committed edges (the transaction's own writes,
-	// the read's direction) is decided by the producers, before any retained
-	// body is copied (NOR-160).
 	keep := func(edge *Edge) bool { return tx.committedEdgeKeptLocked(edge) && include(edge) }
-	var committed []edgeImage
-	var err error
 	if request.Kind == TransactionReadBetween {
-		committed, err = tx.engine.edgesBetweenImages(request.Node, request.Other, keep)
-	} else {
-		committed, err = tx.getCommittedAdjacentEdgesLocked(request.Node, direction, keep)
+		return tx.engine.edgesBetweenImages(request.Node, request.Other, keep)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return tx.mergePendingAdjacentEdgesLocked(committed, request.Node, include), nil
+	return tx.getCommittedAdjacentEdgesLocked(request.Node, direction, keep)
 }
 
 // GetEdgeBetween returns a matching edge including pending transaction writes.
+// Only the edge it returns is copied; committed edges come before pending ones,
+// as in ReadEdges.
 func (tx *BadgerTransaction) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	edges, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: startID, Other: endID})
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	request := TransactionEdgeRead{Kind: TransactionReadBetween, Node: startID, Other: endID}
+	between := transactionEdgeReadIncludes(request)
+	include := func(edge *Edge) bool {
+		return between(edge) && (edgeType == "" || edge.Type == edgeType)
+	}
+	committed, err := tx.edgeReadImagesLocked(request, include)
 	if err != nil {
 		return nil
 	}
-	for _, edge := range edges {
-		if edgeType == "" || edge.Type == edgeType {
-			return edge
+	if len(committed) > 0 {
+		return deliverEdge(committed[0])
+	}
+	if len(tx.pendingEdges) == 0 {
+		return nil
+	}
+	for _, edge := range tx.pendingAdjacencyLocked(startID) {
+		if _, gone := tx.deletedEdges[edge.ID]; !gone && include(edge) {
+			return copyEdge(edge)
 		}
 	}
 	return nil
