@@ -112,7 +112,7 @@ func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
 						_, err = writer.Execute(ctx, "COMMIT", nil)
 					}
 					require.ErrorIs(t, err, storage.ErrConflict)
-					code, _ := nornicerrors.Neo4jCommitStatus(err)
+					code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
 					require.Equal(t, nornicerrors.TransientOutdated, code)
 					if tc.edge {
 						_, err = store.GetEdge("target")
@@ -201,7 +201,7 @@ func TestPR1655ExecuteNewlyObservedTargetDisappears(t *testing.T) {
 				require.Equal(t, 1, deleted)
 				require.ErrorIs(t, err, storage.ErrConflict, "the actual post-BEGIN observation must reach storage")
 				require.NotErrorIs(t, err, storage.ErrNotFound)
-				code, _ := nornicerrors.Neo4jCommitStatus(err)
+				code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
 				require.Equal(t, nornicerrors.TransientOutdated, code)
 				markers, err := store.GetNodesByLabel("Marker")
 				require.NoError(t, err)

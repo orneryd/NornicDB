@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 // Stats and Lifecycle
@@ -318,7 +320,7 @@ func (b *BadgerEngine) Close() error {
 	if db == nil {
 		return nil
 	}
-	return errors.Join(propertyErr, db.Close())
+	return compose.Outcomes(propertyErr, db.Close())
 }
 
 // releaseClosedStateLocked drops large heap graphs that are not needed after

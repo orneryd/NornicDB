@@ -18,6 +18,21 @@ func AuthorizeReadOnlyQuery(ctx context.Context, query string) error {
 	if err != nil {
 		return syntaxAdmissionError(ctx, query, RawSource, err)
 	}
+	allowed := statementProvenReadOnly(ctx, syntax)
+	if canceled := ctx.Err(); canceled != nil {
+		return canceled
+	}
+	if !allowed {
+		return &PermissionDeniedError{Permission: permissionReadOnlyConstituent}
+	}
+	return nil
+}
+
+// statementProvenReadOnly proves from the statement's structure and the live
+// procedure registry that it writes nothing: every executable scope is structurally
+// read-only, including a continuation of SHOW, every procedure it calls is a fixed,
+// nonadministrative READ, and no scope needs more. Anything else has no proof.
+func statementProvenReadOnly(ctx context.Context, syntax cypherantlr.StatementSyntax) bool {
 	ensureBuiltInProceduresRegistered()
 	allowed := syntax.Effects().ReadOnly(func(call cypherantlr.StatementCall) bool {
 		procedure, known := globalProcedureRegistry.Get(call.Name())
@@ -27,20 +42,11 @@ func AuthorizeReadOnlyQuery(ctx context.Context, query string) error {
 		spec := procedure.Spec
 		return spec.Mode == ProcedureModeRead && !spec.Admin && !spec.ExecutesStatements
 	})
-	if canceled := ctx.Err(); canceled != nil {
-		return canceled
+	if !allowed || ctx.Err() != nil {
+		return false
 	}
-	if allowed {
-		allowed = syntax.Effects().AllowsExecutableQueries(func(source string) bool {
-			requirements := QueryPermissionRequirements(ctx, source, RawSource)
-			return !requirements.Write && !requirements.Schema && !requirements.Admin
-		})
-	}
-	if canceled := ctx.Err(); canceled != nil {
-		return canceled
-	}
-	if !allowed {
-		return &PermissionDeniedError{Permission: permissionReadOnlyConstituent}
-	}
-	return nil
+	return syntax.Effects().AllowsExecutableQueries(func(source string) bool {
+		requirements := QueryPermissionRequirements(ctx, source, RawSource)
+		return !requirements.Write && !requirements.Schema && !requirements.Admin
+	})
 }
