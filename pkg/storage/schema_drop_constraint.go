@@ -20,8 +20,8 @@ import (
 //	// CREATE CONSTRAINT person_contract FOR (n:Person) REQUIRE { n.id IS UNIQUE ... }
 //	err := schema.DropConstraint("person_contract") // removes the contract and person_contract__entry_01
 func (sm *SchemaManager) DropConstraint(name string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 
 	var restore func()
 	if contract, ok := sm.constraintContracts[name]; ok {
@@ -77,7 +77,7 @@ func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 		var droppedPropertyIndex *PropertyIndex
 
 		delete(sm.constraints, name)
-		sm.forgetTemporalIndexCompleteLocked(c)
+		temporalCompleteness := sm.forgetTemporalIndexCompleteLocked(c)
 
 		if constraintPropertyIndexKey(c) != "" {
 			if idx, ok := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); ok && idx.OwningConstraint == name {
@@ -110,6 +110,7 @@ func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 
 		return func() {
 			sm.constraints[name] = c
+			sm.restoreTemporalIndexCompletenessLocked(temporalCompleteness)
 			if droppedUnique != nil {
 				sm.uniqueConstraints[droppedUniqueKey] = droppedUnique
 			}

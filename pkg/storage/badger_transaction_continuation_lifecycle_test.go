@@ -68,7 +68,7 @@ func TestIndependentContinuationPreservesLifecycleConflict(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, tx.Commit())
 				}
-				require.NoError(t, b.FlushWriteBehind())
+				require.NoError(t, b.FlushWriteBehind(nil))
 				stored, err := b.GetStoredNode("test:retained")
 				require.NoError(t, err)
 				require.Equal(t, want, stored.Properties["v"], "a refused continuation must not publish the pending mutation")

@@ -1,8 +1,6 @@
 package storagecensus
 
 import (
-	"github.com/orneryd/nornicdb/internal/lockeffect"
-	"go/constant"
 	"go/token"
 	"go/types"
 	"sort"
@@ -98,14 +96,15 @@ func (q *acquirer) bufferStore(st *ssa.Store) bool {
 // the lock runs only under that condition. A call of one counts as taking
 // or releasing the lock there.
 type lockHelper struct {
-	lock   string
-	takes  bool
-	reason string
+	lock     string
+	takes    bool
+	fallible bool
+	reason   string
 }
 
 var lockHelpers = map[string]lockHelper{
 	"pkg/storage.BadgerTransaction.acquireCommitPublicationLocked": {
-		lock: "pkg/storage.BadgerEngine.edgeTypeCountWriteMu", takes: true,
+		lock: "pkg/storage.BadgerEngine.edgeTypeCountWriteMu", takes: true, fallible: true,
 		reason: "takes the lock whenever the transaction has positional count deltas; applyEdgeTypeLabelCountDeltasLocked writes nothing without them, and the commit's count repair runs only when that write failed",
 	},
 	"pkg/storage.BadgerTransaction.releaseEdgeTypeCountLockLocked": {
@@ -215,14 +214,24 @@ func (q *acquirer) flow(fn *ssa.Function, kind int, assumption flowAssumption) *
 		field := lockNames[kind-1]
 		for _, call := range calls {
 			callee := call.Common().StaticCallee()
-			if callee != nil && callee.Pkg != nil && callee.Pkg.Pkg.Path() == "sync" && len(call.Common().Args) > 0 {
-				action, exclusive := lockeffect.Classify(callee.Name(), false)
+			if receiver, action, exclusive, fallible := q.mutexCallEffect(call); receiver != nil {
 				takes := action == "lock" && exclusive
-				releases := action == "unlock" && callee.Name() == "Unlock"
+				releases := action == "unlock"
+				if call.Common().IsInvoke() {
+					releases = releases && call.Common().Method.Name() == "Unlock"
+				} else {
+					releases = releases && callee.Name() == "Unlock"
+				}
 				if takes || releases {
-					if name := q.mutexField(call.Common().Args[0], assumption, 0); name == field {
+					if name := q.mutexField(receiver, assumption, 0); name == field {
 						if takes {
-							f.genAt[call] = true
+							if fallible {
+								if iff, succ := successEdge(call, 0); succ != nil {
+									f.gen[[2]*ssa.BasicBlock{iff.Block(), succ}] = true
+								}
+							} else {
+								f.genAt[call] = true
+							}
 						} else {
 							f.kills[call] = true
 						}
@@ -232,7 +241,13 @@ func (q *acquirer) flow(fn *ssa.Function, kind int, assumption flowAssumption) *
 			if callee := call.Common().StaticCallee(); callee != nil {
 				if h, ok := lockHelpers[q.p.methodIdentity(callee)]; ok && h.lock == field {
 					if h.takes {
-						f.genAt[call] = true
+						if h.fallible {
+							if iff, succ := successEdge(call, 0); succ != nil {
+								f.gen[[2]*ssa.BasicBlock{iff.Block(), succ}] = true
+							}
+						} else {
+							f.genAt[call] = true
+						}
 					} else {
 						f.kills[call] = true
 					}
@@ -696,7 +711,7 @@ func (a *analysis) syncParam(site ssa.CallInstruction, c *ssa.CallCommon, i int)
 	} else {
 		// A function value (run(fn), a passed-in runner): every function
 		// the call graph says it can be must keep fn synchronous.
-		callees = a.dynamicCallees(site.Parent(), site)
+		callees = a.p.callTargets(site)
 	}
 	if len(callees) == 0 {
 		return false
@@ -704,6 +719,9 @@ func (a *analysis) syncParam(site ssa.CallInstruction, c *ssa.CallCommon, i int)
 	for _, callee := range callees {
 		if asyncCallees[callee.String()] {
 			return false
+		}
+		if reviewedCallbackBoundary(a.p.funcName(callee), i, callee.Syntax(), a.p.fset) {
+			continue
 		}
 		if callee.Blocks == nil {
 			continue // outside the module and not known to defer it
@@ -781,7 +799,7 @@ func (a *analysis) argCover(fn *ssa.Function, call *ssa.Call, v ssa.Value, nonEm
 	} else if c.IsInvoke() {
 		callees = a.callees(fn, call)
 	} else {
-		callees = a.dynamicCallees(fn, call)
+		callees = a.p.callTargets(call)
 	}
 	inner := ^cover(0)
 	if len(callees) == 0 {
@@ -948,12 +966,8 @@ func sliceNonEmpty(value ssa.Value, parameter *ssa.Parameter) bool {
 	}
 	var high int64
 	if slice.High != nil {
-		c, ok := slice.High.(*ssa.Const)
-		if !ok {
-			return false
-		}
 		var exact bool
-		high, exact = constant.Int64Val(c.Value)
+		high, _, exact = integerConstant(slice.High)
 		if !exact {
 			return false
 		}
@@ -970,12 +984,8 @@ func sliceNonEmpty(value ssa.Value, parameter *ssa.Parameter) bool {
 	}
 	var low int64
 	if slice.Low != nil {
-		c, ok := slice.Low.(*ssa.Const)
-		if !ok {
-			return false
-		}
 		var exact bool
-		low, exact = constant.Int64Val(c.Value)
+		low, _, exact = integerConstant(slice.Low)
 		if !exact {
 			return false
 		}

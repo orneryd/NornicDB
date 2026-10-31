@@ -101,14 +101,14 @@ func TestPR1655BeginPresenceSnapshotModel(t *testing.T) {
 						}
 						open = append(open, &modelTx{tx: tx, begin: begin})
 					default: // flush and retire
-						require.NoError(t, b.FlushWriteBehind())
+						require.NoError(t, b.FlushWriteBehind(nil))
 						for id := range live {
 							persisted[id] = true
 						}
 					}
 				}
 				if rng.Intn(2) == 0 {
-					require.NoError(t, b.FlushWriteBehind())
+					require.NoError(t, b.FlushWriteBehind(nil))
 				}
 				checked := 0
 				for _, m := range open {

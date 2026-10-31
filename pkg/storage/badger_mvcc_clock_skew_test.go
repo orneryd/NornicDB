@@ -25,7 +25,6 @@ import (
 // TestExecuteCypher_SetInvalidatesManagedEmbeddings.
 func TestCurrentMVCCReadVersion_ClampsToHighWater(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	// Force one namespace's high-water mark to a timestamp ~1s in the
 	// future. This simulates a head being stamped with a clock that
@@ -43,7 +42,6 @@ func TestCurrentMVCCReadVersion_ClampsToHighWater(t *testing.T) {
 
 func TestAllocateMVCCVersion_AdvancesHighWater(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	commitAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
@@ -73,7 +71,6 @@ func TestBeginTransaction_DoesNotConflictAfterClockSkew(t *testing.T) {
 	// the clamp, the SET would fail with a "changed after transaction
 	// start" conflict; with it, the tx commits cleanly.
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{
 		ID:         "test:skew",

@@ -30,7 +30,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 		require.NoError(t, e)
 		require.NoError(t, tx.Commit())
 		require.True(t, tx.AcknowledgedBuffered())
-		require.NoError(t, source.FlushWriteBehind())
+		require.NoError(t, source.FlushWriteBehind(nil))
 	}
 	require.NoError(t, w.Close())
 	rebuilt := reviewBindingEngine(t, t.TempDir())
@@ -66,7 +66,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "rebuild:a", Properties: map[string]any{"alpha": int64(2)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	require.NoError(t, rebuilt.FlushWriteBehind())
+	require.NoError(t, rebuilt.FlushWriteBehind(nil))
 	require.NoError(t, continuation.Close())
 	entries, err := ReadWALEntriesFromDir(walDir)
 	require.NoError(t, err)

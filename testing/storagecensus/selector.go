@@ -4,8 +4,6 @@ import (
 	"go/constant"
 	"go/token"
 
-	"github.com/orneryd/nornicdb/internal/lockeffect"
-
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -26,6 +24,18 @@ type flowAssumption struct {
 type conditionPredicate struct {
 	selectorFact
 	assertion *ssa.TypeAssert
+}
+
+// integerConstant distinguishes an integer literal from other SSA values and
+// separately reports whether it fits the signed selector domain. Overflow must
+// not fall back to an assumed argument fact.
+func integerConstant(value ssa.Value) (number int64, integer, fits bool) {
+	literal, ok := value.(*ssa.Const)
+	if !ok || literal == nil || literal.Value == nil || literal.Value.Kind() != constant.Int {
+		return 0, false, false
+	}
+	number, fits = constant.Int64Val(literal.Value)
+	return number, true, fits
 }
 
 // readBranchCondition is the common predicate reader: it normalizes NOT for
@@ -81,13 +91,11 @@ func readBranchCondition(value ssa.Value) (conditionPredicate, bool) {
 			op = token.LEQ
 		}
 	}
-	if !ok || literal.Value == nil || literal.Value.Kind() != constant.Int {
+	number, _, fits := integerConstant(literal)
+	if !ok || !fits {
 		return conditionPredicate{}, false
 	}
-	number, ok := constant.Int64Val(literal.Value)
-	if !ok {
-		return conditionPredicate{}, false
-	}
+
 	switch op {
 	case token.EQL, token.NEQ, token.LSS, token.GTR, token.LEQ, token.GEQ:
 		return conditionPredicate{selectorFact: selectorFact{subject, number, op}}, true
@@ -113,6 +121,29 @@ func compareInteger(value, number int64, op token.Token) bool {
 	return false
 }
 
+// selectorImplies is the one owner of selector implication: it reports
+// whether every value the known fact accepts also satisfies required, and
+// whether that fact decides required at all. A known equality decides every
+// comparison; a known inequality decides the same number only, and every
+// other value or comparison stays unknown.
+func selectorImplies(known, required selectorFact) (holds, decided bool) {
+	if known.value == nil || known.value != required.value {
+		return false, false
+	}
+	if known.op == token.EQL {
+		return compareInteger(known.number, required.number, required.op), true
+	}
+	if known.op == token.NEQ && known.number == required.number {
+		switch required.op {
+		case token.EQL:
+			return false, true
+		case token.NEQ:
+			return true, true
+		}
+	}
+	return false, false
+}
+
 func conditionKnown(value ssa.Value, assumption flowAssumption) (bool, bool) {
 	test, ok := readBranchCondition(value)
 	if !ok || test.assertion != nil {
@@ -128,22 +159,7 @@ func conditionKnown(value ssa.Value, assumption flowAssumption) (bool, bool) {
 			}
 		}
 	}
-	known := assumption.selector
-	if known.value == nil || known.value != test.value {
-		return false, false
-	}
-	if known.op == token.EQL {
-		return compareInteger(known.number, test.number, test.op), true
-	}
-	if known.op == token.NEQ && known.number == test.number {
-		switch test.op {
-		case token.EQL:
-			return false, true
-		case token.NEQ:
-			return true, true
-		}
-	}
-	return false, false
+	return selectorImplies(assumption.selector, test.selectorFact)
 }
 
 // blockSelectors records predicates implied by reaching block (or its edge
@@ -205,14 +221,11 @@ func (q *acquirer) selectedValues(fn *ssa.Function) map[ssa.Value]bool {
 			if !ok {
 				continue
 			}
-			callee := call.Common().StaticCallee()
-			if callee == nil || callee.Pkg == nil || callee.Pkg.Pkg.Path() != "sync" || len(call.Common().Args) == 0 {
+			receiver, action, exclusive, _ := q.mutexCallEffect(call)
+			if receiver == nil || !exclusive || action != "lock" {
 				continue
 			}
-			if action, exclusive := lockeffect.Classify(callee.Name(), false); !exclusive || action != "lock" {
-				continue
-			}
-			source, ok := call.Common().Args[0].(*ssa.Call)
+			source, ok := receiver.(*ssa.Call)
 			if !ok {
 				continue
 			}
@@ -228,11 +241,32 @@ func (q *acquirer) selectedValues(fn *ssa.Function) map[ssa.Value]bool {
 	return values
 }
 
+// knownArgument is the exact value a call's argument has at this site: an
+// integer constant, or the caller's own selector fact about that same value.
+// An argument neither describes stays unknown.
+func knownArgument(argument ssa.Value, assumption flowAssumption) (selectorFact, bool) {
+	if number, integer, fits := integerConstant(argument); integer {
+		if !fits {
+			return selectorFact{}, false
+		}
+		return selectorFact{number: number, op: token.EQL}, true
+	}
+
+	known := assumption.selector
+	if known.value == nil || known.value != argument {
+		return selectorFact{}, false
+	}
+	return known, true
+}
+
 // mutexField resolves only returns consistent with the caller's predicate.
 // Ambiguous fields, interface calls and unknown return values grant no lock.
 func (q *acquirer) mutexField(value ssa.Value, assumption flowAssumption, depth int) string {
 	if depth > 8 {
 		return ""
+	}
+	if wrapped, ok := value.(*ssa.MakeInterface); ok {
+		return q.mutexField(wrapped.X, assumption, depth+1)
 	}
 	if field, ok := value.(*ssa.FieldAddr); ok {
 		name, _ := q.p.field(field.X.Type(), field.Field)
@@ -268,20 +302,15 @@ func (q *acquirer) mutexField(value ssa.Value, assumption flowAssumption, depth 
 			if index < 0 || index >= len(call.Common().Args) {
 				continue
 			}
-			argument := call.Common().Args[index]
-			if literal, ok := argument.(*ssa.Const); ok && literal.Value != nil && literal.Value.Kind() == constant.Int {
-				number, ok := constant.Int64Val(literal.Value)
-				if ok && !compareInteger(number, predicate.number, predicate.op) {
-					possible = false
-				}
-			} else if argument == assumption.selector.value && assumption.selector.value != nil {
-				known := assumption.selector
-				if known.op == token.EQL && !compareInteger(known.number, predicate.number, predicate.op) {
-					possible = false
-				}
-				if known.op == token.NEQ && known.number == predicate.number && predicate.op == token.EQL {
-					possible = false
-				}
+			// The predicate is about the callee's parameter; what the
+			// caller knows exactly is the argument it passes for it.
+			known, ok := knownArgument(call.Common().Args[index], assumption)
+			if !ok {
+				continue
+			}
+			known.value = predicate.value
+			if holds, decided := selectorImplies(known, predicate); decided && !holds {
+				possible = false
 			}
 		}
 		if !possible {

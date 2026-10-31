@@ -93,7 +93,7 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 				}
 				require.NoError(t, err)
 				require.NoError(t, tx.Commit())
-				require.NoError(t, source.FlushWriteBehind())
+				require.NoError(t, source.FlushWriteBehind(nil))
 			}
 			entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 			require.NoError(t, err)

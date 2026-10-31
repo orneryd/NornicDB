@@ -436,73 +436,11 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 		return finishMixedArray(dec, out[:i], nil, len(out), err)
 	}
 
-	// Decode the first element to learn the homogeneous kind candidate.
-	first, err := decodeStrictTypedValue(dec)
-	if err != nil {
-		return nil, err
-	}
-	switch first.(type) {
-	case float64:
-		out := make([]float64, n)
-		out[0] = first.(float64)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			f, ok := next.(float64)
-			if !ok {
-				// Mixed array. Rebuild as []interface{}, keeping previously
-				// decoded values, and decode the remainder loosely.
-				return finishMixedArray(dec, out[:i], next, n)
-			}
-			out[i] = f
-		}
-		return out, nil
-	case string:
-		out := make([]string, n)
-		out[0] = first.(string)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			s, ok := next.(string)
-			if !ok {
-				return finishMixedArray(dec, out[:i], next, n)
-			}
-			out[i] = s
-		}
-		return out, nil
-	case bool:
-		out := make([]bool, n)
-		out[0] = first.(bool)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			b, ok := next.(bool)
-			if !ok {
-				return finishMixedArray(dec, out[:i], next, n)
-			}
-			out[i] = b
-		}
-		return out, nil
-	}
-	// First element was a complex type (map, nested array). Fall back to
-	// loose decoding for the rest — there's no useful homogeneous slice
-	// type for these.
-	out := make([]interface{}, n)
-	out[0] = first
-	for i := 1; i < n; i++ {
-		next, err := decodeStrictTypedValue(dec)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = next
-	}
-	return out, nil
+	// Wire tags above select efficient primitive readers. The representation
+	// of complex and mixed lists is shared with owned ingress values.
+	return canonicalPropertyList(n, func(int) (any, error) {
+		return decodeStrictTypedValue(dec)
+	})
 }
 
 func decodeFloat64Array(dec *msgpack.Decoder, n int) (any, error) {

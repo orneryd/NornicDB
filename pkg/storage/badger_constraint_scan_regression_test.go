@@ -79,7 +79,7 @@ func TestBadgerConstraintScansRecordErrors(t *testing.T) {
 					if !record.missing {
 						require.Error(t, decodeErr)
 					}
-					require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+					require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 						if record.missing {
 							return txn.Delete(key)
 						}
@@ -124,7 +124,7 @@ func TestBadgerConstraintPolicyOtherNodeRecordErrors(t *testing.T) {
 						anchor, other = "test:source", "test:target"
 						prefix = engine.outgoingIndexPrefixString(anchor)
 					}
-					require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+					require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 						if missing {
 							return txn.Delete(nodeKey(other))
 						}
@@ -171,7 +171,7 @@ func TestBadgerConstraintEdgePolicyEndpointRecordErrors(t *testing.T) {
 								Name: "rel_policy", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship,
 								Label: "REL", SourceLabel: "Account", TargetLabel: "Account", PolicyMode: mode,
 							}))
-							require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+							require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 								if record.missing {
 									return txn.Delete(nodeKey(endpoint))
 								}
@@ -204,7 +204,7 @@ func TestBadgerCreateNodeNodeKeyCorruptionDoesNotCommit(t *testing.T) {
 	properties := map[string]interface{}{"tenant": "tenant", "key": "duplicate"}
 	_, err := engine.CreateNode(&Node{ID: "test:original", Labels: []string{"Account"}, Properties: properties})
 	require.NoError(t, err)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(nodeKey("test:original"), []byte("corrupt-record"))
 	}))
 

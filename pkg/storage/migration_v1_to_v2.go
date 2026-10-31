@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
@@ -35,7 +36,7 @@ func (b *BadgerEngine) migrateV1ToV2() error {
 	}
 
 	nodesStart := time.Now()
-	nodeStats, err := b.migrateV1ToV2Nodes()
+	nodeStats, err := migrateV1ToV2Bodies[nodeV1ToV2Body](b, "nodes")
 	if err != nil {
 		return fmt.Errorf("rewriting nodes: %w", err)
 	}
@@ -48,7 +49,7 @@ func (b *BadgerEngine) migrateV1ToV2() error {
 	}
 
 	edgesStart := time.Now()
-	edgeStats, err := b.migrateV1ToV2Edges()
+	edgeStats, err := migrateV1ToV2Bodies[edgeV1ToV2Body](b, "edges")
 	if err != nil {
 		return fmt.Errorf("rewriting edges: %w", err)
 	}
@@ -152,7 +153,7 @@ func (b *BadgerEngine) rebuildSecondaryIndexesForV2() (v1ToV2IndexStats, error) 
 		if err := b.ensureOpen(false); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
-		if err := b.db.DropPrefix(prefixDropOptions{}, []byte{p}); err != nil {
+		if err := b.db.DropPrefix(context.Background(), prefixDropOptions{}, []byte{p}); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
 	}
@@ -208,7 +209,7 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		err = b.withUpdate(func(txn *badger.Txn) error {
+		err = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			for _, item := range batch {
 				nodeID := NodeID(string(item.key[1:]))
 				namespace, _, ok := ParseDatabasePrefix(string(nodeID))
@@ -296,7 +297,7 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		err = b.withUpdate(func(txn *badger.Txn) error {
+		err = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			for _, item := range batch {
 				edgeID := EdgeID(string(item.key[1:]))
 				edge, err := b.decodeEdgeBodyByID(item.value, edgeID)
@@ -408,102 +409,98 @@ func (b *BadgerEngine) compactAfterMigration() {
 	}
 }
 
-// migrateV1ToV2Nodes walks prefixNode in batches. Each batch opens its
-// own *badger.Txn so it commits atomically and the property-key
-// dictionary's per-txn counter flush runs at the right time. Returns
-// pass stats so the caller can roll them into a single end-of-pass log
-// line.
-func (b *BadgerEngine) migrateV1ToV2Nodes() (v1ToV2PassStats, error) {
-	stats := v1ToV2PassStats{}
-	const progressEvery = 25_000
-	lastLogged := 0
-
-	for {
-		batch, err := b.collectBatch(prefixNode, migrationV1ToV2BatchSize, nodeFormatTokenizedV1)
-		if err != nil {
-			return stats, err
-		}
-		if len(batch) == 0 {
-			break
-		}
-		err = b.withUpdate(func(txn *badger.Txn) error {
-			for _, item := range batch {
-				stats.scanned++
-				nodeID := NodeID(string(item.key[1:]))
-				namespace, _, ok := ParseDatabasePrefix(string(nodeID))
-				if !ok {
-					return fmt.Errorf("v1→v2: node id %q lacks namespace prefix", nodeID)
-				}
-
-				node, err := decodeNodeV1(item.value)
-				if err != nil {
-					return fmt.Errorf("decoding v1 node %q: %w", nodeID, err)
-				}
-				node.ID = nodeID
-
-				newBody, _, err := b.encodeNodeInTxn(txn, namespace, node)
-				if err != nil {
-					return fmt.Errorf("re-encoding node %q: %w", nodeID, err)
-				}
-				if err := txn.Set(append([]byte{prefixNode}, []byte(nodeID)...), newBody); err != nil {
-					return fmt.Errorf("writing v2 node %q: %w", nodeID, err)
-				}
-				stats.converted++
-			}
-			return nil
-		})
-		if err != nil {
-			return stats, err
-		}
-		if b.log != nil && stats.converted-lastLogged >= progressEvery {
-			b.log.Info("v1→v2 nodes progress",
-				"scanned", stats.scanned,
-				"converted", stats.converted,
-			)
-			lastLogged = stats.converted
-		}
-		if len(batch) < migrationV1ToV2BatchSize {
-			break
-		}
-	}
-	return stats, nil
+// v1ToV2BodyKind is the per-entity-kind specialization for the V1→V2 body
+// rewrite sweep. The batching, per-batch commit transaction, resumable
+// remaining-count loop, progress cadence and error propagation in
+// migrateV1ToV2Bodies are one implementation; a kind supplies only the codec
+// arm and its exact error wrapping.
+type v1ToV2BodyKind interface {
+	keyspacePrefix() byte
+	skipFormatByte() byte
+	rewrite(b *BadgerEngine, txn *badger.Txn, key, value []byte) error
 }
 
-func (b *BadgerEngine) migrateV1ToV2Edges() (v1ToV2PassStats, error) {
+type nodeV1ToV2Body struct{}
+
+func (nodeV1ToV2Body) keyspacePrefix() byte { return prefixNode }
+
+func (nodeV1ToV2Body) skipFormatByte() byte { return nodeFormatTokenizedV1 }
+
+func (nodeV1ToV2Body) rewrite(b *BadgerEngine, txn *badger.Txn, key, value []byte) error {
+	nodeID := NodeID(string(key[1:]))
+	namespace, _, ok := ParseDatabasePrefix(string(nodeID))
+	if !ok {
+		return fmt.Errorf("v1→v2: node id %q lacks namespace prefix", nodeID)
+	}
+
+	node, err := decodeNodeV1(value)
+	if err != nil {
+		return fmt.Errorf("decoding v1 node %q: %w", nodeID, err)
+	}
+	node.ID = nodeID
+
+	newBody, _, err := b.encodeNodeInTxn(txn, namespace, node)
+	if err != nil {
+		return fmt.Errorf("re-encoding node %q: %w", nodeID, err)
+	}
+	if err := txn.Set(append([]byte{prefixNode}, []byte(nodeID)...), newBody); err != nil {
+		return fmt.Errorf("writing v2 node %q: %w", nodeID, err)
+	}
+	return nil
+}
+
+type edgeV1ToV2Body struct{}
+
+func (edgeV1ToV2Body) keyspacePrefix() byte { return prefixEdge }
+
+func (edgeV1ToV2Body) skipFormatByte() byte { return edgeFormatCompactV2 }
+
+func (edgeV1ToV2Body) rewrite(b *BadgerEngine, txn *badger.Txn, key, value []byte) error {
+	edgeID := EdgeID(string(key[1:]))
+
+	edge, startNum, endNum, err := decodeEdgeAnyV1(b, txn, value, edgeID)
+	if err != nil {
+		return fmt.Errorf("decoding v1 edge %q: %w", edgeID, err)
+	}
+	edge.ID = edgeID
+
+	namespace := edgeNamespace(edge)
+	if namespace == "" {
+		return fmt.Errorf("v1→v2: edge %q endpoints lack namespace prefix", edgeID)
+	}
+
+	newBody, err := b.encodeEdgeCompactV2(txn, namespace, edge, startNum, endNum)
+	if err != nil {
+		return fmt.Errorf("re-encoding edge %q: %w", edgeID, err)
+	}
+	if err := txn.Set(append([]byte{prefixEdge}, []byte(edgeID)...), newBody); err != nil {
+		return fmt.Errorf("writing v2 edge %q: %w", edgeID, err)
+	}
+	return nil
+}
+
+// migrateV1ToV2Bodies walks one entity kind's primary keyspace in batches.
+// Each batch opens its own *badger.Txn so it commits atomically and the
+// property-key dictionary's per-txn counter flush runs at the right time.
+func migrateV1ToV2Bodies[M v1ToV2BodyKind](b *BadgerEngine, label string) (v1ToV2PassStats, error) {
+	var kind M
 	stats := v1ToV2PassStats{}
 	const progressEvery = 25_000
 	lastLogged := 0
 
 	for {
-		batch, err := b.collectBatch(prefixEdge, migrationV1ToV2BatchSize, edgeFormatCompactV2)
+		batch, err := b.collectBatch(kind.keyspacePrefix(), migrationV1ToV2BatchSize, kind.skipFormatByte())
 		if err != nil {
 			return stats, err
 		}
 		if len(batch) == 0 {
 			break
 		}
-		err = b.withUpdate(func(txn *badger.Txn) error {
+		err = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			for _, item := range batch {
 				stats.scanned++
-				edgeID := EdgeID(string(item.key[1:]))
-
-				edge, startNum, endNum, err := decodeEdgeAnyV1(b, txn, item.value, edgeID)
-				if err != nil {
-					return fmt.Errorf("decoding v1 edge %q: %w", edgeID, err)
-				}
-				edge.ID = edgeID
-
-				namespace := edgeNamespace(edge)
-				if namespace == "" {
-					return fmt.Errorf("v1→v2: edge %q endpoints lack namespace prefix", edgeID)
-				}
-
-				newBody, err := b.encodeEdgeCompactV2(txn, namespace, edge, startNum, endNum)
-				if err != nil {
-					return fmt.Errorf("re-encoding edge %q: %w", edgeID, err)
-				}
-				if err := txn.Set(append([]byte{prefixEdge}, []byte(edgeID)...), newBody); err != nil {
-					return fmt.Errorf("writing v2 edge %q: %w", edgeID, err)
+				if err := kind.rewrite(b, txn, item.key, item.value); err != nil {
+					return err
 				}
 				stats.converted++
 			}
@@ -513,7 +510,7 @@ func (b *BadgerEngine) migrateV1ToV2Edges() (v1ToV2PassStats, error) {
 			return stats, err
 		}
 		if b.log != nil && stats.converted-lastLogged >= progressEvery {
-			b.log.Info("v1→v2 edges progress",
+			b.log.Info("v1→v2 "+label+" progress",
 				"scanned", stats.scanned,
 				"converted", stats.converted,
 			)

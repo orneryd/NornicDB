@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -26,10 +27,16 @@ import (
 // reference them (ordinary commit: one separate commit before it; large
 // commit: a batch of their own ahead of each batch).
 type commitWriter struct {
-	publish      func()
-	stored       *storedEntityCommit
-	publishKeys  []any
-	notification *commitNotification
+	ctx            context.Context
+	durableVersion uint64
+	cacheImages    commitCacheImages
+	rawCache       physicalCacheProjection
+	metadata       bool
+	declaredCache  *cacheWriteScope
+	publish        func(*commitCacheImages)
+	stored         *storedEntityCommit
+	publishKeys    []any
+	notification   *commitNotification
 	batchWriter
 	engine              *BadgerEngine
 	embeddingOutcome    *Node
@@ -41,13 +48,13 @@ type commitWriter struct {
 	prev *badger.Txn
 	// beforeLarge, when set, runs once before the commit becomes large,
 	// i.e. before the exclusive commit gate is taken.
-	beforeLarge func()
+	beforeLarge func() error
 	// onBatch, when set, is told about every batch the writer opens.
 	onBatch func(next *badger.Txn)
 }
 
-func (b *BadgerEngine) newCommitWriter(db *managedBadgerDB, txn *badger.Txn) *commitWriter {
-	cw := &commitWriter{engine: b, db: db}
+func (b *BadgerEngine) newCommitWriter(ctx context.Context, db *managedBadgerDB, txn *badger.Txn) *commitWriter {
+	cw := &commitWriter{ctx: ctx, engine: b, db: db}
 	cw.batchWriter = batchWriter{txn: txn, to: cw}
 	return cw
 }
@@ -58,13 +65,16 @@ func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 	cw.collectPendingEmbeddingAdds(txn)
 	if cw.large == nil {
 		if cw.beforeLarge != nil {
-			cw.beforeLarge()
+			if err := cw.beforeLarge(); err != nil {
+				return err
+			}
 		}
-		lc, err := cw.db.beginLargeCommit(cw.reserveNotification)
+		lc, err := cw.db.beginLargeCommitContext(cw.ctx, cw.reserveNotification)
 		if err != nil {
 			return err
 		}
 		lc.originalReadTs = txn.ReadTs()
+		lc.cacheScope = cw.cacheScope
 		cw.large = lc
 	}
 	if err := cw.commitTokens(txn); err != nil {
@@ -89,20 +99,9 @@ func (cw *commitWriter) openBatch() *badger.Txn {
 // (rollbackSince).
 func (cw *commitWriter) commitTokens(txn *badger.Txn) error {
 	dict := cw.engine.propKeyDict
-	drain := dict.flushTxnCounters(txn)
-	if drain.empty() {
-		return nil
-	}
-	tokens := &batchWriter{to: cw.large}
-	defer tokens.discard()
-	err := drain.writeTo(tokens)
-	if err == nil {
-		err = tokens.flush()
-	}
-	if err != nil {
+	if err := dict.persistTxnCounters(cw.large, dict.flushTxnCounters(txn)); err != nil {
 		return fmt.Errorf("%w: %w", errPersistingTokens, err)
 	}
-	dict.markPersisted(drain)
 	return nil
 }
 
@@ -113,7 +112,7 @@ func (cw *commitWriter) finish() error {
 	cw.collectPendingEmbeddingAdds(cw.txn)
 	if cw.large == nil {
 		dict := cw.engine.propKeyDict
-		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
+		if err := dict.persistTxnCounters(metadataBatches{db: cw.db, ctx: cw.ctx}, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
 		if err := cw.commitOutcome(); err != nil {
@@ -151,19 +150,37 @@ func (cw *commitWriter) abort() error {
 var errPersistingTokens = errors.New("persisting property key dictionary")
 
 func (cw *commitWriter) commitOutcomeBatch() (uint64, error) {
-	return cw.db.commitShared(cw.txn, cw.publication())
+	return cw.db.commitShared(cw.ctx, cw.txn, cw.publication())
 }
 
 // publication is the memory-only delta associated with this physical commit.
 func (cw *commitWriter) publication() *commitPublication {
-	if cw.publish == nil && cw.notification == nil && len(cw.pendingEmbeddingIDs)+len(cw.publishKeys) == 0 {
+	if cw.publish == nil && cw.notification == nil && cw.declaredCache == nil && !cw.metadata && len(cw.rawCache.facts) == 0 && len(cw.pendingEmbeddingIDs)+len(cw.publishKeys) == 0 {
 		return nil
 	}
 	keys := cw.publishKeys
 	for id := range cw.pendingEmbeddingIDs {
 		keys = append(keys, id)
 	}
-	return &commitPublication{keys: keys, owner: cw, run: cw.runPublication}
+	return &commitPublication{keys: keys, owner: cw, run: cw.runPublication, metadata: cw.metadata}
+}
+
+func (cw *commitWriter) cacheScope() cacheWriteScope {
+	known := cw.metadata || len(cw.publishKeys) > 0 || len(cw.rawCache.facts) > 0
+	if cw.declaredCache != nil {
+		known = cw.declaredCache.complete()
+	}
+	return cacheWriteScope{known: known && !cw.rawCache.unknown, facts: writerCacheFacts{cw: cw}}
+}
+
+type writerCacheFacts struct{ cw *commitWriter }
+
+func (facts writerCacheFacts) VisitAffectedFacts(visit func(AffectedFact)) {
+	publicationKeys(facts.cw.publishKeys).VisitAffectedFacts(visit)
+	facts.cw.rawCache.VisitAffectedFacts(visit)
+	if scope := facts.cw.declaredCache; scope != nil && scope.facts != nil {
+		scope.facts.VisitAffectedFacts(visit)
+	}
 }
 
 func (cw *commitWriter) runPublication() {
@@ -172,8 +189,9 @@ func (cw *commitWriter) runPublication() {
 	}
 	cw.publishPendingEmbeddingAdds()
 	if cw.publish != nil {
-		cw.publish()
+		cw.publish(&cw.cacheImages)
 	}
+	cw.publishCacheImages()
 }
 
 func (cw *commitWriter) reserveNotification() { cw.engine.reserveCommitNotification(cw.notification) }

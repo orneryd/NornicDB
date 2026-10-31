@@ -12,7 +12,6 @@ import (
 // unchanged (#963).
 func TestTransactionLabelReadsAreIsolated(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(&Node{ID: "test:scan", Labels: []string{"Doc"}, Properties: map[string]any{"text": "stored"}})
 	require.NoError(t, err)
 

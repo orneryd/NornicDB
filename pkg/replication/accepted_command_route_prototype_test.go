@@ -43,21 +43,33 @@ func (s *acceptedMirrorStorage) ApplyCommand(cmd *Command) error {
 	}
 	return s.ackError
 }
+
+// newAcceptedReplicationFixture owns the WAL adapters and running replicator.
+// A nil peer retains the standalone route without allocating a second adapter.
+func newAcceptedReplicationFixture(t *testing.T, base, peer storage.Engine, config *Config) (*StandaloneReplicator, *acceptedMirrorStorage) {
+	t.Helper()
+	local, err := NewStorageAdapterWithWAL(base, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, local.Close()) })
+	mirror := &acceptedMirrorStorage{Storage: local}
+	if peer != nil {
+		remote, err := NewStorageAdapterWithWAL(peer, t.TempDir())
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, remote.Close()) })
+		mirror.peer = remote
+	}
+	r := NewStandaloneReplicator(config, mirror)
+	require.NoError(t, r.Start(context.Background()))
+	t.Cleanup(func() { require.NoError(t, r.Shutdown()) })
+	return r, mirror
+}
+
 func TestAcceptedStandaloneExplicitTransactionReplicatesOriginalSnapshot(t *testing.T) {
 	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	peer, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	localAdapter, err := NewStorageAdapterWithWAL(base, t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = localAdapter.Close() })
-	peerAdapter, err := NewStorageAdapterWithWAL(peer, t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = peerAdapter.Close() })
-	mirror := &acceptedMirrorStorage{Storage: localAdapter, peer: peerAdapter}
-	r := NewStandaloneReplicator(&Config{}, mirror)
-	require.NoError(t, r.Start(context.Background()))
-	t.Cleanup(func() { _ = r.Shutdown() })
+	r, mirror := newAcceptedReplicationFixture(t, base, peer, &Config{})
 	engine := NewReplicatedEngine(base, r, time.Second)
 	tx, err := base.BeginTransaction()
 	require.NoError(t, err)
@@ -115,13 +127,7 @@ func TestAcceptedFollowerRejectsBeforePreparationOrRecord(t *testing.T) {
 func TestDatabaseDropPreservesAcceptedCatalogAcknowledgementError(t *testing.T) {
 	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	adapter, err := NewStorageAdapterWithWAL(base, t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = adapter.Close() })
-	mirror := &acceptedMirrorStorage{Storage: adapter}
-	r := NewStandaloneReplicator(&Config{}, mirror)
-	require.NoError(t, r.Start(context.Background()))
-	t.Cleanup(func() { _ = r.Shutdown() })
+	r, mirror := newAcceptedReplicationFixture(t, base, nil, &Config{})
 	engine := NewReplicatedEngine(base, r, time.Second)
 	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)

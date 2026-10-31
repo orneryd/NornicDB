@@ -72,7 +72,6 @@ func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {
 
 	t.Run("returns ErrNotImplemented when wrapped engine is not MVCC-capable", func(t *testing.T) {
 		baseInner := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = baseInner.Close() })
 		wal := newLoggedMVCCDelegationWAL(t, &nonMVCCEngine{Engine: baseInner})
 
 		version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}

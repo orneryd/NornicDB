@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -42,7 +43,7 @@ func MigrateBadgerToMsgpack(dataDir string, opts SerializerMigrationOptions) (Se
 	}
 	defer db.Close()
 
-	return migrateBadgerToMsgpack(db, func() migrationBatch { return db.NewWriteBatch() }, dataDir, opts)
+	return migrateBadgerToMsgpack(db, func() migrationBatch { return db.NewWriteBatch(context.Background()) }, dataDir, opts)
 }
 
 // MigrateBadgerToMsgpackWithDB is MigrateBadgerToMsgpack against an

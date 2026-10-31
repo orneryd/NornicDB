@@ -58,7 +58,7 @@ func codecRoundTripNode(t *testing.T, n *Node) (*Node, error) {
 	eng := newTestEngine(t)
 	namespace := namespaceForNodeID(n.ID)
 	var data []byte
-	err := eng.withUpdate(func(txn *badger.Txn) error {
+	err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		data, _, encErr = eng.encodeNodeInTxn(txn, namespace, n)
 		if encErr != nil {
@@ -81,7 +81,7 @@ func buildV2NodeBody(t *testing.T, engine *BadgerEngine, n *Node) ([]byte, error
 	t.Helper()
 	namespace := namespaceForNodeID(n.ID)
 	var data []byte
-	err := engine.withUpdate(func(txn *badger.Txn) error {
+	err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		data, _, encErr = engine.encodeNodeInTxn(txn, namespace, n)
 		if encErr != nil {
@@ -101,7 +101,7 @@ func codecRoundTripEdge(t *testing.T, e *Edge) (*Edge, error) {
 	eng := newTestEngine(t)
 	namespace := namespaceForEdgeID(e.ID)
 	var data []byte
-	err := eng.withUpdate(func(txn *badger.Txn) error {
+	err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		data, encErr = eng.encodeEdgeInTxn(txn, namespace, e)
 		if encErr != nil {
@@ -855,7 +855,7 @@ func TestBadgerEngine_GetEdgeBetweenHeadIndexSelfHealsFromLegacyScan(t *testing.
 
 	edge := testEdge("edge-head-heal-e1", n1.ID, n2.ID, "KNOWS")
 	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(n1.ID, n2.ID, "KNOWS")); err != nil {
 			return err
 		}
@@ -914,7 +914,7 @@ func TestBadgerEngine_GetEdgesBetweenSelfHealIsBounded(t *testing.T) {
 			fmt.Sprintf("REL_%03d", i),
 		)
 		require.NoError(t, engine.CreateEdge(edge))
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(edge.StartNode, edge.EndNode, edge.Type)); err != nil {
 				return err
 			}
@@ -944,7 +944,7 @@ func TestBadgerEngine_EdgeBetweenIndexBackfill(t *testing.T) {
 	edge := testEdge("edge-index-backfill-e1", n1.ID, n2.ID, "KNOWS")
 	staleEdgeID := EdgeID(prefixTestID("edge-index-backfill-stale"))
 	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(engine.edgeBetweenIndexKeyFromStringIDs(n1.ID, n2.ID, "KNOWS", edge.ID)); err != nil {
 			return err
 		}
@@ -1001,7 +1001,7 @@ func TestBadgerEngine_EdgeBetweenIndexBackfillRepairsStoreAsynchronously(t *test
 	require.NoError(t, err)
 	edge := testEdge("edge-index-async-e1", n1.ID, n2.ID, "KNOWS")
 	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(edge.StartNode, edge.EndNode, edge.Type)); err != nil {
 			return err
 		}

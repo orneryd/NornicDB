@@ -56,6 +56,7 @@ func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked() ([]NodeID, []Edg
 // entityWriteContext transfers one outer entity write's authority and lifecycle
 // admission through native helper calls without recursive barrier acquisition.
 type entityWriteContext struct {
+	ctx    context.Context
 	engine *BadgerEngine
 	owner  string
 	writeRelease[entityAuthorityResources]
@@ -63,7 +64,7 @@ type entityWriteContext struct {
 
 type entityAuthorityResources struct {
 	keysOnce         sync.Once
-	ordered          orderedWrite
+	ordered          writeBarrierLease
 	releaseAuthority func()
 	once             sync.Once
 }
@@ -77,10 +78,10 @@ type entityWritePlan struct {
 	batches map[string]writtenEntities
 }
 
-func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entityWriteContext, plans ...entityWritePlan) (*entityWriteContext, func(), error) {
+func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge bool, inherited *entityWriteContext, plans ...entityWritePlan) (*entityWriteContext, func(), error) {
 	// Key admission belongs to this lifecycle owner; inherited and new writes
 	// use the same footprint acquisition without a separately callable entry.
-	acquireKeys := func(owner string) (func(), error) {
+	acquireKeys := func(admission context.Context, owner string) (func(), error) {
 		if len(plans) > 0 && len(plans[0].batches) > 0 {
 			batches := plans[0].batches
 			namespaces := make([]string, 0, len(batches))
@@ -96,7 +97,7 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 			}
 			for _, ns := range namespaces {
 				entities := batches[ns]
-				release, err := b.GetSchemaForNamespace(ns).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(entities.nodes, entities.edges, nil))
+				release, err := b.GetSchemaForNamespace(ns).acquireUniqueConstraintCommitLocks(admission, owner, entityCommitKeys(entities.nodes, entities.edges, nil))
 				if err != nil {
 					releaseAll()
 					return nil, err
@@ -136,7 +137,7 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 		} else {
 			nodes = append(nodes, NodeID(id))
 		}
-		return b.GetSchemaForNamespace(namespace).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, nil))
+		return b.GetSchemaForNamespace(namespace).acquireUniqueConstraintCommitLocks(admission, owner, entityCommitKeys(nodes, edges, nil))
 	}
 	if inherited != nil {
 		if inherited.engine != b {
@@ -147,11 +148,11 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 		}
 		// Close lends its existing lifecycle lease. Each batch still claims its
 		// complete footprint once, without normal admission or recursive RLock.
-		release, err := acquireKeys(inherited.owner)
+		release, err := acquireKeys(inherited.ctx, inherited.owner)
 		if err != nil {
 			return nil, nil, err
 		}
-		child := &entityWriteContext{engine: b, owner: inherited.owner, writeRelease: writeRelease[entityAuthorityResources]{resources: entityAuthorityResources{releaseAuthority: release}}}
+		child := &entityWriteContext{ctx: inherited.ctx, engine: b, owner: inherited.owner, writeRelease: writeRelease[entityAuthorityResources]{resources: entityAuthorityResources{releaseAuthority: release}}}
 		return child, child.resources.releaseKeys, nil
 	}
 	if err := b.ensureOpen(false); err != nil {
@@ -164,16 +165,16 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 		}
 		sort.Strings(namespaces)
 		for _, ns := range namespaces {
-			if err := b.initializeManagedEntityNamespace(context.Background(), ns); err != nil {
+			if err := b.initializeManagedEntityNamespace(ctx, ns); err != nil {
 				return nil, nil, err
 			}
 		}
 	} else if ns, _, valid := ParseDatabasePrefix(id); valid {
-		if err := b.initializeManagedEntityNamespace(context.Background(), ns); err != nil {
+		if err := b.initializeManagedEntityNamespace(ctx, ns); err != nil {
 			return nil, nil, err
 		}
 	}
-	ordered, err := b.beginOrderedWrite()
+	ordered, err := b.beginBarrierWrite(ctx, false, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -192,12 +193,12 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 		}
 	}
 	owner := newEngineWriteLockOwner()
-	release, err := acquireKeys(owner)
+	release, err := acquireKeys(ctx, owner)
 	if err != nil {
 		ordered.finish()
 		return nil, nil, err
 	}
-	write := &entityWriteContext{engine: b, owner: owner, writeRelease: writeRelease[entityAuthorityResources]{resources: entityAuthorityResources{ordered: ordered, releaseAuthority: release}}}
+	write := &entityWriteContext{ctx: ctx, engine: b, owner: owner, writeRelease: writeRelease[entityAuthorityResources]{resources: entityAuthorityResources{ordered: ordered, releaseAuthority: release}}}
 	return write, write.release, nil
 }
 
@@ -213,9 +214,9 @@ func (w *entityAuthorityResources) releaseKeys() {
 }
 func (w *entityWriteContext) stagePublication(cw *commitWriter) error {
 	publish := cw.publish
-	cw.publish = func() {
+	cw.publish = func(images *commitCacheImages) {
 		if publish != nil {
-			publish()
+			publish(images)
 		}
 		w.resources.releaseKeys()
 	}

@@ -116,7 +116,7 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 					require.NoError(t, engine.CreateEdge(edge))
 				}
 				if buffered {
-					require.NoError(t, engine.FlushWriteBehind())
+					require.NoError(t, engine.FlushWriteBehind(nil))
 				}
 				require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:hidden-node", true))
 				require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:identical", true))
@@ -248,7 +248,7 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 				require.Zero(t, updatedCallbacks, "no UPDATE callback/search publication")
 				require.Zero(t, deletedCallbacks, "no DELETE callback/search publication")
 				if buffered {
-					require.NoError(t, engine.FlushWriteBehind())
+					require.NoError(t, engine.FlushWriteBehind(nil))
 					check("flushed")
 				}
 				require.NoError(t, engine.Close())
@@ -285,7 +285,7 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 			}
 			require.NoError(t, engine.CreateEdge(stored))
 			if buffered {
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 			}
 			require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(stored.ID), true))
 			before, err := engine.GetStoredEdge(stored.ID)
@@ -337,7 +337,7 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 			require.Equal(t, "Neo.ClientError.Schema.ConstraintValidationFailed", conflict.BoltErrorCode())
 
 			if buffered {
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 			}
 			after, err := engine.GetStoredEdge(stored.ID)
 			require.NoError(t, err)
@@ -539,7 +539,7 @@ func TestHiddenEdgeIdentityUsesStoredValueRepresentation(t *testing.T) {
 					return tx
 				}
 				if mode.flushed {
-					require.NoError(t, engine.FlushWriteBehind())
+					require.NoError(t, engine.FlushWriteBehind(nil))
 				} else {
 					rewrite := implicit()
 					require.NoError(t, rewrite.UpdateEdge(EdgeUpdateRequest{After: edge(tc.same())}))
@@ -559,7 +559,7 @@ func TestHiddenEdgeIdentityUsesStoredValueRepresentation(t *testing.T) {
 				var conflict *HiddenEdgeIdentityConflictError
 				require.ErrorAs(t, err, &conflict, "a different value is a permanent conflict")
 
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 				after, err := engine.GetStoredEdge("test:r")
 				require.NoError(t, err)
 				require.Equal(t, before, comparableStoredEdge(after), "the overlay served the body storage holds")

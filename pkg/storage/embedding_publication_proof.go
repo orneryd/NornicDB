@@ -26,7 +26,7 @@ func (cw *commitWriter) commitOutcome() error {
 	if err != nil {
 		return err
 	}
-	if err := cw.db.oracle.waitPublished(ts); err != nil {
+	if err := cw.db.oracle.waitPublished(nil, ts); err != nil {
 		return err
 	}
 	cw.db.oracle.stage.apply(ts)

@@ -20,7 +20,6 @@ import (
 // wrappers must not blow up when otel.Tracer returns the noop tracer.
 func TestTracedEngine_DelegatesAllMethods(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 
 	traced := NewTracedEngine(inner)
 	require.NotNil(t, traced)
@@ -143,7 +142,6 @@ func TestTracedEngine_DelegatesAllMethods(t *testing.T) {
 
 func TestTracedEngine_DefaultContextIsBackground(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 
 	traced := NewTracedEngine(inner)
 	// Constructor seeds ctx with context.Background; getCtx must

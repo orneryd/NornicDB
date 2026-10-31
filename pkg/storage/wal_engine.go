@@ -48,7 +48,7 @@ type WALEngine struct {
 	wal         *WAL
 	// mutationMu serializes auto-compaction snapshots against in-flight mutating
 	// operations to avoid WAL/engine state skew during snapshot truncation.
-	mutationMu sync.RWMutex
+	mutationMu trackedRWMutex
 
 	// Automatic snapshot and compaction
 	snapshotDir       string
@@ -288,6 +288,7 @@ func (w *WALEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
 	waitCtx, stopWait := context.WithCancel(context.Background())
 	w := &WALEngine{
+		mutationMu:    trackedRWMutex{crossGoroutine: true},
 		entityWaitCtx: waitCtx, stopEntityWait: stopWait,
 		engine: engine,
 		wal:    wal,
@@ -458,8 +459,8 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 	// OpBufferedCommit entries while their data still lives only in the
 	// in-memory buffer: the snapshot reads committed Badger state, and the
 	// truncation would otherwise delete the only durable copy.
-	if flusher, ok := w.engine.(interface{ FlushWriteBehind() error }); ok {
-		if err := flusher.FlushWriteBehind(); err != nil {
+	if flusher, ok := w.engine.(interface{ FlushWriteBehind(context.Context) error }); ok {
+		if err := flusher.FlushWriteBehind(nil); err != nil {
 			return fmt.Errorf("failed to flush write-behind before snapshot: %w", err)
 		}
 	}

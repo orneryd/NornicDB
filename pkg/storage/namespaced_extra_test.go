@@ -14,7 +14,6 @@ import (
 func nsTestEngine(t *testing.T) (*MemoryEngine, *NamespacedEngine) {
 	t.Helper()
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	return base, NewNamespacedEngine(base, "ns")
 }
 

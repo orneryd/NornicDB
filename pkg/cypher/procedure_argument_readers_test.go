@@ -37,11 +37,11 @@ func TestProcedureArgumentErrors(t *testing.T) {
 	_, err = exec.callApocPeriodicCommit(ctx, []interface{}{"MATCH (n) RETURN n", int64(1)})
 	require.ErrorContains(t, err, "argument params must be MAP")
 
-	_, err = exec.callDbIndexFulltextCreateNodeIndex(ctx, []interface{}{"ft", []interface{}{"Doc"}, nil})
+	_, err = exec.callDbIndexFulltextCreateIndex(ctx, []interface{}{"ft", []interface{}{"Doc"}, nil}, storage.ConstraintEntityNode)
 	require.ErrorContains(t, err, "argument properties is null")
-	_, err = exec.callDbIndexFulltextCreateRelationshipIndex(ctx, []interface{}{nil, []interface{}{"R"}, []interface{}{"p"}})
+	_, err = exec.callDbIndexFulltextCreateIndex(ctx, []interface{}{nil, []interface{}{"R"}, []interface{}{"p"}}, storage.ConstraintEntityRelationship)
 	require.ErrorContains(t, err, "argument indexName is null")
-	_, err = exec.callDbIndexFulltextCreateRelationshipIndex(ctx, []interface{}{"ft", int64(3), []interface{}{"p"}})
+	_, err = exec.callDbIndexFulltextCreateIndex(ctx, []interface{}{"ft", int64(3), []interface{}{"p"}}, storage.ConstraintEntityRelationship)
 	require.ErrorContains(t, err, "argument relationshipTypes must be LIST<STRING>")
 
 	result, err := exec.Execute(ctx, "CALL apoc.periodic.commit('MATCH (n:Nothing) RETURN n', {limit: 5}) YIELD updates RETURN updates", nil)

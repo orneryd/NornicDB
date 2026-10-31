@@ -213,11 +213,22 @@ func (sm *SchemaManager) GetConstraintContractsForTarget(entityType ConstraintEn
 	return contracts
 }
 
+// AddConstraintContractBundle admits the contract name and its IF NOT EXISTS
+// no-op, then applies the primitives the contract compiles and the contract
+// itself, persisting the definition once.
+//
+// Only the families this bundle can change are staged before the first change:
+// the contract family, the constraint/index/temporal families when it compiles
+// constraints, and the property-type family when it compiles types. A compiled
+// primitive whose admission fails, or a rejected persist, restores exactly
+// those families, so every other rule keeps its live allocation, runtime value
+// cache and filled index and the compiled binding table is not recompiled.
+// Staging happens even without a persister, because a later compiled primitive
+// can still reject. An IF NOT EXISTS match costs the name check alone: it
+// exports, clones, persists and replaces nothing.
 func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract, compiledConstraints []Constraint, compiledTypes []PropertyTypeConstraint, ifNotExists bool) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	snapshot := sm.exportDefinitionLocked()
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 
 	if existing, exists := sm.constraintContracts[contract.Name]; exists {
 		if ifNotExists && constraintContractEqual(existing, contract) {
@@ -232,15 +243,17 @@ func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract
 		return localizedError(localization.StorageSchemaConstraintContractNameConflict(contract.Name), nil)
 	}
 
+	rollback := sm.stageConstraintContractBundle(compiledConstraints, compiledTypes)
+
 	for _, compiled := range compiledConstraints {
 		if _, err := sm.addConstraintLocked(compiled, false); err != nil {
-			sm.replaceFromDefinitionLocked(snapshot)
+			rollback()
 			return err
 		}
 	}
 	for _, compiled := range compiledTypes {
 		if _, err := sm.addPropertyTypeConstraintValueLocked(compiled, false); err != nil {
-			sm.replaceFromDefinitionLocked(snapshot)
+			rollback()
 			return err
 		}
 	}
@@ -250,12 +263,27 @@ func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract
 	if sm.persist != nil {
 		def := sm.exportDefinitionLocked()
 		if err := sm.persist(def); err != nil {
-			sm.replaceFromDefinitionLocked(snapshot)
+			rollback()
 			return err
 		}
 	}
 
 	return nil
+}
+
+// stageConstraintContractBundle stages the schema families one contract bundle
+// can change, so a bundle that admission or persistence rejects restores those
+// entries instead of replacing the whole definition, which would discard every
+// other family's runtime caches and recompile the binding table.
+func (sm *SchemaManager) stageConstraintContractBundle(compiledConstraints []Constraint, compiledTypes []PropertyTypeConstraint) schemaRuleRollback {
+	rollbacks := []schemaRuleRollback{stageSchemaFamily(&sm.constraintContracts)}
+	if len(compiledConstraints) > 0 {
+		rollbacks = append(rollbacks, sm.stageConstraintFamilies())
+	}
+	if len(compiledTypes) > 0 {
+		rollbacks = append(rollbacks, sm.stagePropertyTypeConstraintFamily())
+	}
+	return combineSchemaRuleRollbacks(rollbacks...)
 }
 
 func ValidateConstraintContractOnCreationForEngine(engine Engine, contract ConstraintContract) error {

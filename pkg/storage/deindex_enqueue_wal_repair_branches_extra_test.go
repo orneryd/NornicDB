@@ -15,7 +15,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 	engine.SetDecayEnabled(true)
 
 	t.Run("evaluate node suppression handles missing and corrupt node payload", func(t *testing.T) {
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			evaluation1, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: "test:missing", isEdge: false})
 			changed, node, edge := evaluation1.suppressed, evaluation1.node, evaluation1.edge
 			require.NoError(t, err)
@@ -25,7 +25,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 			return nil
 		}))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			const badNodeID = NodeID("test:bad-node")
 			require.NoError(t, txn.Set(nodeKey(badNodeID), []byte("not-a-node")))
 			evaluation2, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: string(badNodeID), isEdge: false})
@@ -43,7 +43,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			evaluation3, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: string(node.ID), isEdge: false})
 			changed, node, edge := evaluation3.suppressed, evaluation3.node, evaluation3.edge
 			require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		_, err = engine.CreateNode(&Node{ID: NodeID("test:edge-b")})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			evaluation4, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: "test:missing-edge", isEdge: true})
 			changed, node, edge := evaluation4.suppressed, evaluation4.node, evaluation4.edge
 			require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 			return nil
 		}))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			const badEdgeID = EdgeID("test:bad-edge")
 			require.NoError(t, txn.Set(edgeKey(badEdgeID), []byte("not-an-edge")))
 			evaluation5, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: string(badEdgeID), isEdge: true})
@@ -98,7 +98,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		}
 		require.NoError(t, engine.CreateEdge(edge))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			evaluation6, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: string(edge.ID), isEdge: true})
 			changed, node, edge := evaluation6.suppressed, evaluation6.node, evaluation6.edge
 			require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 	t.Run("evaluate node suppression swallows a missing entity on the edge flag", func(t *testing.T) {
 		// The entity flag selects the key space and decoder; a node ID
 		// evaluated as an edge finds no edge body and decides nothing.
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			evaluation7, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: "test:node-unsuppress", isEdge: true})
 			changed, node, edge := evaluation7.suppressed, evaluation7.node, evaluation7.edge
 			require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		require.NoError(t, err)
 
 		engine.SetDecayEnabled(false)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			evaluation8, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{staged: true, node: node})
 			rewritten := evaluation8.written
 			require.Nil(t, rewritten, "decay disabled rewrites nothing")
@@ -143,7 +143,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		}))
 
 		engine.SetDecayEnabled(true)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			evaluation9, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{staged: true, node: nil})
 			rewritten := evaluation9.written
 			require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		node2 := &Node{ID: NodeID("test:rescore-no-change"), Labels: []string{"L"}}
 		_, err = engine.CreateNode(node2)
 		require.NoError(t, err)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			evaluation11, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{staged: true, node: node2})
 			rewritten := evaluation11.written
 			require.Nil(t, rewritten, "an unchanged flag keeps the written body")

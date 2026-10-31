@@ -1,7 +1,6 @@
 package replication
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -69,16 +68,8 @@ func TestPR1655ObservedRequestsNormalizeBeforeReplicaApply(t *testing.T) {
 		}
 		require.NoError(t, engine.CreateEdge(pr1655Edge("test:r", "test:a", "test:b", map[string]any{"v": "before"})))
 	}
-	localAdapter, err := NewStorageAdapterWithWAL(base, t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, localAdapter.Close()) })
-	peerAdapter, err := NewStorageAdapterWithWAL(peer, t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, peerAdapter.Close()) })
-	mirror := &acceptedMirrorStorage{Storage: localAdapter, peer: peerAdapter}
-	replicator := NewStandaloneReplicator(DefaultConfig(), mirror)
-	require.NoError(t, replicator.Start(context.Background()))
-	t.Cleanup(func() { require.NoError(t, replicator.Shutdown()) })
+	replicator, mirror := newAcceptedReplicationFixture(t, base, peer, DefaultConfig())
+	localAdapter, peerAdapter := mirror.Storage.(*StorageAdapter), mirror.peer
 	engine := NewReplicatedEngine(base, replicator, 5*time.Second)
 	beforeNode, err := engine.GetNode("test:a")
 	require.NoError(t, err)

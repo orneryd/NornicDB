@@ -8,7 +8,7 @@ import (
 )
 
 func TestErrorPropagationRequiresExactNonescapingReturn(t *testing.T) {
-	_, pkg := coverageProgram(t, `package storage
+	_, pkg := ssaFixture(t, `package storage
  func source()error{return nil};func release(){};var state int;func body(){state++}
  func direct()error{err:=source();if err!=nil{return err};body();return nil}
  func directStore(p *int)error{err:=source();if err!=nil{*p=1;return err};return nil}
@@ -30,7 +30,7 @@ func TestErrorPropagationRequiresExactNonescapingReturn(t *testing.T) {
  func filteredOtherError()error{defer release();other:=source();err:=source();if other!=nil{if err!=sentinel{return err}};body();return nil}
  func filteredJoin(choice bool)error{defer release();err:=source();if choice{if err==nil{return nil}};if err!=sentinel{return err};body();return nil}
  func filteredSwallowed()error{defer release();err:=source();if err!=nil{if err!=sentinel{return nil}};body();return nil}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	for _, tc := range []struct {
 		name string
 		want bool

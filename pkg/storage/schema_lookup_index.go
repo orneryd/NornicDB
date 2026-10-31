@@ -55,8 +55,8 @@ func (sm *SchemaManager) AddLookupIndex(name string, entityType ConstraintEntity
 	if name == "" {
 		name = defaultLookupIndexes()[entityType]
 	}
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 	if _, ok := sm.constraints[name]; ok {
 		return newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(name))
 	}

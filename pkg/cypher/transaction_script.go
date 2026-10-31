@@ -100,7 +100,7 @@ func splitTransactionScriptTailAction(script string) (string, string, bool) {
 }
 
 func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, queryBody string, action string) (*ExecuteResult, error) {
-	if _, err := e.handleBegin(); err != nil {
+	if _, err := e.handleBegin(ctx); err != nil {
 		return nil, err
 	}
 
@@ -139,7 +139,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	conditionExpr := strings.TrimSpace(matches[1])
 	returnExpr := strings.TrimSpace(matches[2])
 
-	if _, err := e.handleBegin(); err != nil {
+	if _, err := e.handleBegin(ctx); err != nil {
 		return nil, err
 	}
 

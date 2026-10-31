@@ -10,6 +10,15 @@ type publicationConstraintView struct {
 	nodeRules int
 }
 
+// ruleAt addresses the inline-first rule sequence without copying rule strings
+// or allocating a callback iterator. Index -1 names the inline slot.
+func (v *publicationConstraintView) ruleAt(index int) *publicationConstraintRule {
+	if index < 0 {
+		return &v.first
+	}
+	return &v.rest[index]
+}
+
 type publicationConstraintRule struct {
 	label       string
 	property    string

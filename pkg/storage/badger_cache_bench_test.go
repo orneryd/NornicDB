@@ -18,7 +18,7 @@ func BenchmarkNodeBodyCacheStoreAndEvict(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		node.ID = NodeID(itoaBench(i % 128))
-		engine.cacheStoreNodeBody(node.ID, uint64(i+1), node)
+		engine.cacheStoreNodeBody(node.ID, uint64(i+1), node, uint64(i+1))
 	}
 }
 
