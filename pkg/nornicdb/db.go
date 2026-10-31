@@ -1311,7 +1311,9 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	// This ensures search is ready before first query and k-means runs after indexes exist.
 	// Use a context cancelled on DB close so the build stops when the process is killed.
 	defaultDBName := db.defaultDatabaseName()
-	db.buildCtx, db.buildCancel = context.WithCancel(context.Background())
+	// The database lifetime context is the DB owner's: stopping the DB, or a
+	// signalled stop, cancels it.
+	db.buildCtx, db.buildCancel = context.WithCancel(db.work.Context())
 	if db.accessFlusher != nil {
 		db.accessFlusher.Start(db.buildCtx)
 	}

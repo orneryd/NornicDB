@@ -87,7 +87,7 @@ func TestRelationshipEmbeddingSupersededByALaterWrite(t *testing.T) {
 	}
 	svc := startRelationshipService(t, engine, embed, nil)
 	rs := svc.relationshipSearch()
-	<-rs.ready
+	<-rs.loaded.Done()
 
 	edge, err := engine.GetEdge("r1")
 	require.NoError(t, err)
