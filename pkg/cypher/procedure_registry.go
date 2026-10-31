@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"fmt"

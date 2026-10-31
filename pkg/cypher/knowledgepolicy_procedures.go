@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"strconv"
 	"strings"
@@ -105,7 +107,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult,
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"kind", "Name", "HalfLifeSeconds", "VisibilityThreshold", "ScoreFloor", "Function", "Scope", "DecayEnabled", "ScoreFrom", "ScoreFromProperty", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "ProfileRef", "NoDecay", "Order", "Apply"},
+		Columns: columnNames(kpProfilesColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -156,7 +158,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult,
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"kind", "Name", "Scope", "Multiplier", "ScoreFloor", "ScoreCap", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "Apply"},
+		Columns: columnNames(kpPoliciesColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -332,7 +334,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"TargetID", "TargetScope", "ResolvedDecayProfileID", "ResolvedScoreFrom", "ResolutionSourceChain", "AppliedDecayProfileNames", "AppliedPromotionPolicyName", "AppliedPromotionProfileName", "EffectiveRate", "EffectiveThreshold", "EffectiveMultiplier", "BaseScore", "FinalScore", "NoDecay", "SuppressionEligible", "Explanation"},
+		Columns: columnNames(kpResolveColumns),
 		Rows: [][]interface{}{{
 			resolution.TargetID,
 			string(resolution.TargetScope),
@@ -355,7 +357,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyDeindexStatus() (*ExecuteResult, error) {
-	columns := []string{"pending_count", "supported", "message", "workItemId", "targetId", "targetScope", "enqueuedAt", "status"}
+	columns := columnNames(kpDeindexStatusColumns)
 	be := unwrapBadgerEngine(e.storage)
 	if be == nil {
 		return &ExecuteResult{

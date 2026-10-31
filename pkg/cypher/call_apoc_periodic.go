@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"fmt"
@@ -93,7 +95,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"batches", "total", "timeTaken", "committedOperations", "failedOperations", "failedBatches", "retries", "errorMessages", "batch", "operations", "wasTerminated", "failedParams", "updateStatistics"},
+		Columns: columnNames(periodicIterateColumns),
 		Rows: [][]interface{}{
 			{
 				int64(batches),           // batches
@@ -199,7 +201,7 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"updates", "executions", "runtime", "batches"},
+		Columns: columnNames(apocPeriodicCommitColumns),
 		Rows: [][]interface{}{
 			{totalUpdates, executions, int64(0), executions},
 		},

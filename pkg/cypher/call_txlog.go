@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"errors"
@@ -31,9 +33,6 @@ import (
 // display owner: a typed (MessagePack) record is decoded through the same
 // decoder recovery uses, never printed as raw bytes. A payload that cannot be
 // decoded and rendered is an error, so no row invents data.
-
-// txlogColumns are the columns both txlog procedures yield.
-var txlogColumns = []string{"txId", "db", "kind", "seq", "timestamp", "payload"}
 
 // txlogRecentEntries is how many of the most recent entries
 // db.txlog.entries() returns when called without a range.
@@ -182,5 +181,5 @@ func (e *StorageExecutor) callDBTxlog(ctx context.Context, args []interface{}, s
 	if recent && len(rows) > txlogRecentEntries {
 		rows = rows[len(rows)-txlogRecentEntries:]
 	}
-	return &ExecuteResult{Columns: txlogColumns, Rows: rows}, nil
+	return &ExecuteResult{Columns: columnNames(txlogColumns), Rows: rows}, nil
 }

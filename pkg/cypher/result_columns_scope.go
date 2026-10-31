@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
@@ -176,9 +178,5 @@ func projectedProcedureNodeNames(clause cypherantlr.SyntaxNode) resultmetadata.N
 	if !found {
 		return resultmetadata.Unknown()
 	}
-	var columns []string
-	for _, output := range procedureDeclaredReturns(procedure.Spec) {
-		columns = append(columns, output.Name)
-	}
-	return resultmetadata.Known(columns)
+	return resultmetadata.Known(columnNames(procedureDeclaredReturns(procedure.Spec)))
 }

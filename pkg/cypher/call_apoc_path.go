@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
@@ -684,17 +686,17 @@ func (e *StorageExecutor) apocExpansionFromArguments(args []interface{}, procedu
 	return x, nil
 }
 
-func (e *StorageExecutor) apocPathRows(ctx context.Context, x *apocExpansion, row func(*apocStep) []interface{}, columns ...string) (*ExecuteResult, error) {
+func (e *StorageExecutor) apocPathRows(ctx context.Context, x *apocExpansion, row func(*apocStep) []interface{}, columns []ProcedureColumn) (*ExecuteResult, error) {
 	ends, err := e.runApocExpansion(ctx, x)
 	if err != nil {
 		return nil, err
 	}
-	result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(ends))}
+	result := &ExecuteResult{Columns: columnNames(columns), Rows: make([][]interface{}, 0, len(ends))}
 	for _, end := range ends {
 		result.Rows = append(result.Rows, row(end))
 	}
 	if len(result.Rows) == 0 && x.optional {
-		nulls := make([]interface{}, len(columns))
+		nulls := make([]interface{}, len(result.Columns))
 		result.Rows = append(result.Rows, nulls)
 	}
 	return result, nil
@@ -710,7 +712,7 @@ func (e *StorageExecutor) callApocPathExpandConfig(ctx context.Context, args []i
 	}
 	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} {
 		return []interface{}{e.pathToMap(graphIdentityPathValue(end.path()))}
-	}, "path")
+	}, pathColumns)
 }
 
 // callApocPathExpand implements apoc.path.expand(start, relationshipFilter,
@@ -734,7 +736,7 @@ func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interfa
 	}
 	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} {
 		return []interface{}{e.pathToMap(graphIdentityPathValue(end.path()))}
-	}, "path")
+	}, pathColumns)
 }
 
 // callApocPathSubgraphNodes implements apoc.path.subgraphNodes(start,
@@ -745,7 +747,7 @@ func (e *StorageExecutor) callApocPathSubgraphNodes(ctx context.Context, args []
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{graphIdentityNodeValue(end.node)} }, "node")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{graphIdentityNodeValue(end.node)} }, nodeColumns)
 }
 
 // callApocPathSpanningTree implements apoc.path.spanningTree(start, config)
@@ -758,7 +760,7 @@ func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []i
 	}
 	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} {
 		return []interface{}{e.pathToMap(graphIdentityPathValue(end.path()))}
-	}, "path")
+	}, pathColumns)
 }
 
 // callApocPathSubgraphAll implements apoc.path.subgraphAll(start, config) ::
@@ -800,5 +802,5 @@ func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []in
 	for i, edge := range relationships {
 		relationships[i] = graphIdentityEdgeValue(edge.(*storage.Edge))
 	}
-	return &ExecuteResult{Columns: []string{"nodes", "relationships"}, Rows: [][]interface{}{{nodes, relationships}}}, nil
+	return &ExecuteResult{Columns: columnNames(graphColumns), Rows: [][]interface{}{{nodes, relationships}}}, nil
 }

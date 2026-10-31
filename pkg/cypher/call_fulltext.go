@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -58,7 +60,7 @@ func requireFulltextIndex(indexName string, declared bool) error {
 
 func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
-		Columns: []string{"node", "score"},
+		Columns: columnNames(nodeScoreColumns),
 		Rows:    [][]interface{}{},
 	}
 	indexName, query, opts, err := fulltextQueryArguments("db.index.fulltext.queryNodes", args)

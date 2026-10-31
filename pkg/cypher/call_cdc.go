@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"encoding/base64"
 	"encoding/binary"
@@ -115,7 +117,7 @@ func (e *StorageExecutor) callDbCdcCurrent() (*ExecuteResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"id"}, Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), current)}}}, nil
+	return &ExecuteResult{Columns: columnNames(cdcPositionColumns), Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), current)}}}, nil
 }
 
 // callDbCdcEarliest is db.cdc.earliest(): the identifier just before the
@@ -129,7 +131,7 @@ func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"id"}, Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), earliest)}}}, nil
+	return &ExecuteResult{Columns: columnNames(cdcPositionColumns), Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), earliest)}}}, nil
 }
 
 // callDbCdcQuery is db.cdc.query(from = "", selectors = [], limit = null):
@@ -185,7 +187,7 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
 		databaseID, _ = provider.DatabaseIdentity(database)
 	}
-	result := &ExecuteResult{Columns: []string{"id", "txId", "seq", "metadata", "event"}, Rows: [][]interface{}{}}
+	result := &ExecuteResult{Columns: columnNames(dbCdcQueryColumns), Rows: [][]interface{}{}}
 	// Events are read a page at a time, so a large backlog isn't decoded at
 	// once, until the limit is reached or the events end.
 	const page = 1000

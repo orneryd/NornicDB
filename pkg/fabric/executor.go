@@ -1,5 +1,7 @@
 package fabric
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: one join projection result header.
+
 import (
 	"context"
 	"encoding/binary"
@@ -1447,8 +1449,10 @@ func executeRowsGroupedJoinProjection(input *ResultStream) *ResultStream {
 	rowsIdx, okRows := colIdx["rows"]
 	keyIdx, okK := colIdx["k"]
 	textsIdx, okTexts := colIdx["texts"]
+	// out is the one result header of every return path.
+	out := &ResultStream{Columns: []string{"textKey", "textKey128", "texts"}, Rows: [][]interface{}{}}
 	if !okRows || !okK || !okTexts || len(input.Rows) == 0 {
-		return &ResultStream{Columns: []string{"textKey", "textKey128", "texts"}, Rows: [][]interface{}{}}
+		return out
 	}
 
 	// Build grouped lookup from k -> texts.
@@ -1462,7 +1466,7 @@ func executeRowsGroupedJoinProjection(input *ResultStream) *ResultStream {
 	// Use rows list from first row (prefix projection result is identical across rows).
 	first := input.Rows[0]
 	if rowsIdx >= len(first) {
-		return &ResultStream{Columns: []string{"textKey", "textKey128", "texts"}, Rows: [][]interface{}{}}
+		return out
 	}
 	var rowsAny []interface{}
 	switch v := first[rowsIdx].(type) {
@@ -1474,13 +1478,10 @@ func executeRowsGroupedJoinProjection(input *ResultStream) *ResultStream {
 			rowsAny = append(rowsAny, it)
 		}
 	default:
-		return &ResultStream{Columns: []string{"textKey", "textKey128", "texts"}, Rows: [][]interface{}{}}
+		return out
 	}
 
-	out := &ResultStream{
-		Columns: []string{"textKey", "textKey128", "texts"},
-		Rows:    make([][]interface{}, 0, len(rowsAny)),
-	}
+	out.Rows = make([][]interface{}, 0, len(rowsAny))
 	for _, it := range rowsAny {
 		rm, ok := it.(map[string]interface{})
 		if !ok {

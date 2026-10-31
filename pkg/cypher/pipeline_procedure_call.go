@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"strings"
@@ -100,11 +102,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			yielded = append(yielded, item.column())
 		}
 		if len(procedure.Spec.Returns) > 0 {
-			columns := make([]string, len(procedure.Spec.Returns))
-			for index, column := range procedure.Spec.Returns {
-				columns[index] = column.Name
-			}
-			if _, err := e.applyYieldFilter(ctx, &ExecuteResult{Columns: columns, Rows: [][]interface{}{}}, &yieldClause{items: yield.items}); err != nil {
+			if _, err := e.applyYieldFilter(ctx, &ExecuteResult{Columns: columnNames(procedureDeclaredReturns(procedure.Spec)), Rows: [][]interface{}{}}, &yieldClause{items: yield.items}); err != nil {
 				return nil, nil, true, err
 			}
 		}

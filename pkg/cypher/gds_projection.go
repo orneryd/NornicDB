@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"errors"
@@ -184,7 +186,7 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResul
 	projectionsMu.Unlock()
 
 	return &ExecuteResult{
-		Columns: []string{"nodeProjection", "relationshipProjection", "graphName", "nodeCount", "relationshipCount", "projectMillis"},
+		Columns: columnNames(gdsGraphProjectColumns),
 		Rows: [][]any{{
 			projection.NodeProjection, projection.RelationshipProjection, graphName,
 			int64(projection.NodeCount), int64(projection.RelationshipCount), time.Since(started).Milliseconds(),
@@ -858,13 +860,6 @@ func gdsGraphInfo(projection *GraphProjection) map[string]interface{} {
 	}
 }
 
-// gdsDropColumns are gds.graph.drop's columns; gds.graph.list's add
-// degreeDistribution first.
-var gdsDropColumns = []string{
-	"graphName", "database", "databaseLocation", "memoryUsage", "sizeInBytes", "nodeCount", "relationshipCount",
-	"configuration", "density", "creationTime", "modificationTime", "schema", "schemaWithOrientation",
-}
-
 // gdsDegreeDistribution is the projection's out-degree distribution as GDS
 // reports it: min, max, mean and percentiles.
 func gdsDegreeDistribution(projection *GraphProjection) map[string]interface{} {
@@ -931,7 +926,7 @@ func (e *StorageExecutor) callGdsGraphList(args []interface{}) (*ExecuteResult, 
 	if err != nil {
 		return nil, err
 	}
-	columns := append([]string{"degreeDistribution"}, gdsDropColumns...)
+	columns := columnNames(gdsGraphListColumns)
 	rows := make([][]any, 0)
 	for _, projection := range databaseProjections(e.databaseName()) {
 		if name != "" && projection.Name != name {
@@ -1006,6 +1001,7 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 			}
 		}
 	}
+	columns := columnNames(gdsGraphDropColumns)
 	rows := make([][]any, 0, len(names))
 	for _, name := range names {
 		key := gdsCatalogKey(database, name)
@@ -1015,13 +1011,13 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 		}
 		delete(graphProjections, key)
 		info := gdsGraphInfo(projection)
-		row := make([]any, len(gdsDropColumns))
-		for i, column := range gdsDropColumns {
+		row := make([]any, len(columns))
+		for i, column := range columns {
 			row[i] = info[column]
 		}
 		rows = append(rows, row)
 	}
-	return &ExecuteResult{Columns: gdsDropColumns, Rows: rows}, nil
+	return &ExecuteResult{Columns: columns, Rows: rows}, nil
 }
 
 // callGdsGraphExists implements CALL gds.graph.exists(graphName) (#1161).
@@ -1031,7 +1027,7 @@ func (e *StorageExecutor) callGdsGraphExists(args []interface{}) (*ExecuteResult
 		return nil, err
 	}
 	_, missing := e.graphProjection(name)
-	return &ExecuteResult{Columns: []string{"graphName", "exists"}, Rows: [][]any{{name, missing == nil}}}, nil
+	return &ExecuteResult{Columns: columnNames(gdsGraphExistsColumns), Rows: [][]any{{name, missing == nil}}}, nil
 }
 
 // gdsConfig is a GDS configuration map, read as GDS reads it: keys match
