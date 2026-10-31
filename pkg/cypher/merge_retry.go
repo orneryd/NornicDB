@@ -48,16 +48,12 @@ func recordMergeRetry(retry **mergeRetryStatements, analyzer *QueryAnalyzer, que
 		(*retry).others = (*retry).firstOthers[:0]
 	}
 	record := *retry
-	if info := analyzer.Analyze(context.Background(), query); info != nil && !info.HasMerge && !info.HasCall {
-		if len(record.others) == mergeRetryOtherLimit || record.otherBytes+len(query) > mergeRetryOtherBytes {
-			*retry = mixedMergeRetry
-			return
-		}
-		record.others = append(record.others, query)
-		record.otherBytes += len(query)
+	if len(record.others) == mergeRetryOtherLimit || record.otherBytes+len(query) > mergeRetryOtherBytes {
+		*retry = mixedMergeRetry
 		return
 	}
-	record.statements = append(record.statements, CommitStatement{Query: query, Params: params})
+	record.others = append(record.others, query)
+	record.otherBytes += len(query)
 }
 
 // classifyMergeRetry is the one MERGE retry classification, for implicit and
