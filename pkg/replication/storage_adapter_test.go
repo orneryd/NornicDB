@@ -911,3 +911,30 @@ func TestStorageAdapter_RestoreSnapshot(t *testing.T) {
 		assert.Equal(t, []string{"Test"}, node.Labels)
 	})
 }
+
+func vectorWorkFallbackCount(site string) int64 {
+	for _, fallback := range storage.VectorWorkFallbacks() {
+		if fallback.Site == site {
+			return fallback.Count
+		}
+	}
+	return 0
+}
+
+// TestApplyCommandCountsWireAdmission: an apply that carries no local
+// admission (a wire command) is admitted at its replication site and counted,
+// so the request-root censuses can see it; a command admitted on receipt is
+// counted once, at the receipt, and its apply continues that admission.
+func TestApplyCommandCountsWireAdmission(t *testing.T) {
+	adapter := setupTestAdapter(t).adapter
+	apply, wire := vectorWorkFallbackCount("replication.apply-command"), vectorWorkFallbackCount("replication.wire-command")
+
+	_ = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte("not a node")})
+	require.Equal(t, apply+1, vectorWorkFallbackCount("replication.apply-command"), "an unadmitted apply is counted")
+	require.Equal(t, wire, vectorWorkFallbackCount("replication.wire-command"))
+
+	received := admittedVectorCommand(&Command{Type: CmdCreateNode, Data: []byte("not a node")})
+	require.Equal(t, wire+1, vectorWorkFallbackCount("replication.wire-command"), "a received command is counted at receipt")
+	_ = adapter.ApplyCommand(received)
+	require.Equal(t, apply+1, vectorWorkFallbackCount("replication.apply-command"), "the apply continues the receipt's admission")
+}

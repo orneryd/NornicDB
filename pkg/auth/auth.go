@@ -740,7 +740,8 @@ func (a *Authenticator) saveUser(user *User, transaction storage.Engine) error {
 		return view.UpdateNode(storage.NodeUpdateRequest{Before: existing, After: node})
 	}
 	if transaction != nil {
-		return mutate(transaction)
+		// A joined transaction writes the user record as system work.
+		return mutate(systemStoreView(transaction))
 	}
 	return WithStoreTransaction(context.Background(), a.storage, mutate)
 }

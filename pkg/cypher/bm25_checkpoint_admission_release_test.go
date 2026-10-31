@@ -268,7 +268,7 @@ func nor283ReleaseCase(t *testing.T, traversal, lifecycle, kind, entry string) {
 	} else {
 		// Release's database owner wires the lazy build at first search, rather
 		// than develop's first-mutation population owner. Use that public hook.
-		service.SetLazyWarming(true, func() { lazyErr = service.BuildIndexes(ctx) })
+		service.SetLazyWarming(true, func(warmCtx context.Context) { lazyErr = service.BuildIndexes(warmCtx) })
 	}
 	if kind != "valid" {
 		// Preserve #1344's live-before-build dimension: a live write is present

@@ -6,11 +6,12 @@ package apocexport
 
 import (
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // Node represents a graph node.
@@ -40,7 +41,7 @@ func Json(nodes []*Node, rels []*Relationship) (string, error) {
 		"relationships": rels,
 	}
 
-	bytes, err := json.MarshalIndent(data, "", "  ")
+	bytes, err := valueconvert.PropertyJSON.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return "", err
 	}

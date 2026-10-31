@@ -104,11 +104,11 @@ func (e *MutationFailureEngine) UpdateNode(updateRequest storage.NodeUpdateReque
 	return e.Engine.UpdateNode(updateRequest)
 }
 
-func (e *MutationFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *MutationFailureEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	if e.Fails(MutationDelete, id) {
 		return e.Failure
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(id, origins...)
 }
 
 func (e *MutationFailureEngine) GetNode(id storage.NodeID) (*storage.Node, error) {

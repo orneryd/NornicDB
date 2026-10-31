@@ -480,7 +480,14 @@ func PrepareEntityChanges(ctx context.Context, engine Engine, namespace string, 
 			}
 		}
 	}
-	tx, err := BeginEntityTransaction(engine, mode)
+	// The prepared commit carries the admission its context or operations
+	// carry (a request's write); otherwise its first write admits at the
+	// transaction's counted owner site.
+	var origins []uint64
+	if origin, admitted := VectorWorkOriginFromArguments(ctx, operations); admitted {
+		origins = append(origins, origin)
+	}
+	tx, err := BeginEntityTransaction(engine, mode, origins...)
 	if err != nil {
 		return nil, nil, err
 	}

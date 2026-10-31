@@ -44,7 +44,7 @@ func TestEmbeddingPublicationProofPublicDelivery(t *testing.T) {
 				require.Zero(t, allocs, "uncontended publication must not create a managed read transaction")
 			})
 			if bound {
-				node.SetEmbeddingAttempt(NewEmbeddingAttempt(1, 1, node.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) { workers++ }))
+				node.SetEmbeddingAttempt(NewEmbeddingAttempt(CaptureVectorWorkOrigin(), 1, 1, node.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) { workers++ }))
 			}
 			require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
 			require.Equal(t, 1, listeners)

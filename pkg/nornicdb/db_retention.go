@@ -51,8 +51,10 @@ func (db *DB) startRetentionSweep(ctx context.Context) {
 	}
 }
 
+// runRetentionSweep is an entry: a sweep requested over HTTP keeps that
+// request's admission, and a scheduled sweep is admitted here.
 func (db *DB) runRetentionSweep(ctx context.Context) {
-	ctx = db.retentionContext(ctx)
+	ctx, _ = storage.AdmitVectorWork(db.retentionContext(ctx))
 	rm := db.retentionManager
 	if rm == nil {
 		return

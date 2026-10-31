@@ -281,3 +281,32 @@ func TestEmbedWorker_NewEmbedWorker_MultiWorkerStartupBranch(t *testing.T) {
 	})
 	t.Cleanup(func() { w.Close() })
 }
+
+// TestEmbeddingAttemptAdmissionIsCarriedOrCounted: an attempt keeps the
+// admission it is given; a claimed body without any (no retry, no pending
+// marker) is admitted at the attempt and counted, never relabelled silently.
+func TestEmbeddingAttemptAdmissionIsCarriedOrCounted(t *testing.T) {
+	counted := func() int64 {
+		for _, fallback := range storage.VectorWorkFallbacks() {
+			if fallback.Site == "nornicdb.embedding-attempt" {
+				return fallback.Count
+			}
+		}
+		return 0
+	}
+	ew := &EmbedWorker{ctx: context.Background()}
+	before := counted()
+
+	carried := ew.selectEmbeddingProvider()
+	carried.vectorWorkOrigin, carried.vectorOriginBound = 4242, true
+	ew.claimMu.Lock()
+	ew.bindNodeAttemptLocked(&storage.Node{ID: "carried"}, carried)
+	ew.claimMu.Unlock()
+	require.Equal(t, uint64(4242), ew.claimedNodes["carried"].selection.vectorWorkOrigin)
+	require.Equal(t, before, counted(), "a carried admission is not counted")
+
+	ew.claimMu.Lock()
+	ew.bindNodeAttemptLocked(&storage.Node{ID: "unmarked"}, ew.selectEmbeddingProvider())
+	ew.claimMu.Unlock()
+	require.Equal(t, before+1, counted(), "an attempt without any admission is counted")
+}

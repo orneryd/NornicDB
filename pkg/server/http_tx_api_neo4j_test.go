@@ -1692,7 +1692,9 @@ func TestDecodeTransactionRequestKeepsIntegerParameters(t *testing.T) {
 	require.Equal(t, 1.5, params["f"])
 	require.Equal(t, float64(100), params["e"])
 	require.Equal(t, int64(-3), params["neg"])
-	require.Equal(t, "1e400", params["huge"], "a number outside float64 range is kept as its text")
+	// Neo4j 5.26 reads an out-of-range FLOAT parameter as Infinity (reference
+	// probe 1c, one HTTP request per value).
+	require.Equal(t, math.Inf(1), params["huge"], "a FLOAT outside float64 range is Infinity, as in Neo4j")
 	require.Equal(t, []interface{}{int64(1), 2.5, []interface{}{int64(3)}}, params["l"])
 	require.Equal(t, map[string]interface{}{"k": int64(7), "f": 0.5}, params["m"])
 	require.Error(t, decodeTransactionRequest(strings.NewReader(`{"statements":[`), &req, transactionRequestLimit{}))

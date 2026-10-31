@@ -53,9 +53,9 @@ func (e *legacyTestEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) e
 	}
 	return writeLegacySeed(e, e.nodes, node.ID, node, legacyReplace, storage.CopyNode)
 }
-func (e *legacyTestEngine) DeleteNode(id storage.NodeID) error {
+func (e *legacyTestEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	if strings.Contains(string(id), ":") {
-		return e.MemoryEngine.DeleteNode(id)
+		return e.MemoryEngine.DeleteNode(id, origins...)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -95,9 +95,9 @@ func (e *legacyTestEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) e
 	}
 	return writeLegacySeed(e, e.edges, edge.ID, edge, legacyReplace, storage.CopyEdge)
 }
-func (e *legacyTestEngine) DeleteEdge(id storage.EdgeID) error {
+func (e *legacyTestEngine) DeleteEdge(id storage.EdgeID, origins ...uint64) error {
 	if strings.Contains(string(id), ":") {
-		return e.MemoryEngine.DeleteEdge(id)
+		return e.MemoryEngine.DeleteEdge(id, origins...)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -260,11 +260,11 @@ func (e *legacyTestEngine) BulkCreateNodes(nodes []*storage.Node) error {
 func (e *legacyTestEngine) BulkCreateEdges(edges []*storage.Edge) error {
 	return applyLegacyCreates(edges, e.CreateEdge)
 }
-func (e *legacyTestEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	return applyLegacyDeletes(ids, e.DeleteNode)
+func (e *legacyTestEngine) BulkDeleteNodes(ids []storage.NodeID, origins ...uint64) error {
+	return applyLegacyDeletes(ids, func(id storage.NodeID) error { return e.DeleteNode(id, origins...) })
 }
-func (e *legacyTestEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	return applyLegacyDeletes(ids, e.DeleteEdge)
+func (e *legacyTestEngine) BulkDeleteEdges(ids []storage.EdgeID, origins ...uint64) error {
+	return applyLegacyDeletes(ids, func(id storage.EdgeID) error { return e.DeleteEdge(id, origins...) })
 }
 func (e *legacyTestEngine) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	result := map[storage.NodeID]*storage.Node{}

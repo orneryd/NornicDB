@@ -12,10 +12,11 @@ import (
 // Like the existing MAIN index it has one small record per failed node.
 // DLQ deadlines/order are process-local; terminal failure sidecars are durable.
 type nodeEmbeddingRetry struct {
-	revision storage.EmbeddingBodyRevision
-	retryAt  time.Time
-	order    uint64
-	failures int
+	vectorWorkOrigin uint64
+	revision         storage.EmbeddingBodyRevision
+	retryAt          time.Time
+	order            uint64
+	failures         int
 }
 
 func (ew *EmbedWorker) dropNodeEmbeddingRetryLocked(id storage.NodeID) {
@@ -34,7 +35,8 @@ func (ew *EmbedWorker) validNodeClaimLocked(id storage.NodeID) bool {
 	return claimed && attempt.token.ProviderGeneration == ew.embeddingEpoch.Load() && !attempt.invalidated
 }
 
-// Enqueue only journals IDs; it never waits for a storage claim to finish.
+// Enqueue journals IDs without waiting for a storage claim. Work admission
+// remains in the durable pending marker or DLQ, not in the wakeup's timestamp.
 // The retry owner consumes notifications before selection and result validity.
 func (ew *EmbedWorker) embeddingSnapshot(id storage.NodeID) (*storage.Node, error) {
 	node, err := ew.storage.GetNode(id)
@@ -105,7 +107,8 @@ func (ew *EmbedWorker) applyNodeUpdatesLocked() {
 		}
 		if ew.observeNodeRevisionLocked(node) {
 			if _, claimed := ew.claimedNodes[string(id)]; !claimed {
-				ew.addNodeToPendingEmbeddings(id)
+				origin, _ := node.EmbeddingWorkOrigin()
+				ew.addNodeToPendingEmbeddings(id, origin)
 			}
 		}
 	}
@@ -127,6 +130,9 @@ func (ew *EmbedWorker) recordNodeFailureLocked(node *storage.Node, failure error
 	state := ew.nodeRetries[node.ID]
 	if state == nil {
 		state = &nodeEmbeddingRetry{revision: node.EmbeddingRevision()}
+		if attempt := ew.claimedNodes[string(node.ID)]; attempt != nil {
+			state.vectorWorkOrigin = attempt.selection.vectorWorkOrigin
+		}
 		ew.nodeRetries[node.ID] = state
 	}
 	state.failures++
@@ -185,11 +191,11 @@ func (ew *EmbedWorker) invalidateNodeEmbeddingRetries() {
 }
 
 func (ew *EmbedWorker) clearNodeEmbeddingRetriesLocked() {
-	for id := range ew.nodeRetries {
+	for id, state := range ew.nodeRetries {
 		if _, claimed := ew.claimedNodes[string(id)]; claimed {
 			continue
 		} // release owns its requeue
-		ew.addNodeToPendingEmbeddings(id)
+		ew.addNodeToPendingEmbeddings(id, state.vectorWorkOrigin)
 	}
 	ew.nodeRetries = nil
 }
@@ -290,7 +296,7 @@ func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duratio
 }
 
 // Every claim goes through the ordinary provider dispatch. No rejected-save
-// payload survives into a retry; the DLQ owns only revision and scheduling.
+// payload survives into a retry; the DLQ owns revision, origin and scheduling.
 func (ew *EmbedWorker) claimNextNodeResult(selections ...embeddingSelection) (*storage.Node, bool) {
 	return ew.claimNextNodeResultFrom(false, ew.embeddingSelection(selections))
 }

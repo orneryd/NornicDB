@@ -150,11 +150,11 @@ func (db *DB) wakeRelationshipEmbedding() {
 // event reports as written, in its database's search service if that exists.
 // The refresh reads the stored relationship and updates both its property
 // vectors and, when that is on, relationship search.
-func (db *DB) indexRelationshipFromEvent(edge *storage.Edge) {
+func (db *DB) indexRelationshipFromEvent(edge *storage.Edge, origin uint64) {
 	if edge == nil {
 		return
 	}
-	db.queueSearchRefreshEvent(searchRelationshipChange, string(edge.ID))
+	db.queueSearchRefreshEvent(searchRelationshipChange, string(edge.ID), origin)
 }
 
 // relationshipSearchService is dbName's search service if it exists and
@@ -167,4 +167,9 @@ func (db *DB) relationshipSearchService(dbName string) *search.Service {
 		return nil
 	}
 	return entry.svc
+}
+
+// removeRelationshipFromEvent carries a committed delete into the same queue.
+func (db *DB) removeRelationshipFromEvent(id storage.EdgeID, origin uint64) {
+	db.queueSearchRefreshEvent(searchRelationshipChange, string(id), origin)
 }

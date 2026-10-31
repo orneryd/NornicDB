@@ -56,9 +56,10 @@ func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked() ([]NodeID, []Edg
 // entityWriteContext transfers one outer entity write's authority and lifecycle
 // admission through native helper calls without recursive barrier acquisition.
 type entityWriteContext struct {
-	ctx    context.Context
-	engine *BadgerEngine
-	owner  string
+	ctx              context.Context
+	engine           *BadgerEngine
+	vectorWorkOrigin uint64
+	owner            string
 	writeRelease[entityAuthorityResources]
 }
 
@@ -73,9 +74,18 @@ type entityAuthorityResources struct {
 // Readers execute only after the existing lifecycle lease is owned. Static
 // batches are for suppression maintenance and may span ordered namespaces.
 type entityWritePlan struct {
-	known   writtenEntities
-	read    func() (writtenEntities, error)
-	batches map[string]writtenEntities
+	vectorWorkOrigin  uint64
+	vectorOriginBound bool
+	known             writtenEntities
+	read              func() (writtenEntities, error)
+	batches           map[string]writtenEntities
+}
+
+func (p entityWritePlan) withVectorWorkOrigin(origins []uint64) entityWritePlan {
+	if len(origins) > 0 {
+		p.vectorWorkOrigin, p.vectorOriginBound = origins[0], true
+	}
+	return p
 }
 
 func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge bool, inherited *entityWriteContext, plans ...entityWritePlan) (*entityWriteContext, func(), error) {
@@ -139,6 +149,14 @@ func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge b
 		}
 		return b.GetSchemaForNamespace(namespace).acquireUniqueConstraintCommitLocks(admission, owner, entityCommitKeys(nodes, edges, nil))
 	}
+	var origin uint64
+	if inherited == nil {
+		if len(plans) > 0 && plans[0].vectorOriginBound {
+			origin = plans[0].vectorWorkOrigin
+		} else {
+			origin = fallbackVectorWorkOrigin("storage.entity-write")
+		}
+	}
 	if inherited != nil {
 		if inherited.engine != b {
 			return nil, nil, ErrInvalidData
@@ -152,7 +170,7 @@ func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge b
 		if err != nil {
 			return nil, nil, err
 		}
-		child := &entityWriteContext{ctx: inherited.ctx, engine: b, owner: inherited.owner, writeRelease: writeRelease[entityAuthorityResources]{resources: entityAuthorityResources{releaseAuthority: release}}}
+		child := &entityWriteContext{ctx: inherited.ctx, engine: b, vectorWorkOrigin: inherited.vectorWorkOrigin, owner: inherited.owner, writeRelease: writeRelease[entityAuthorityResources]{resources: entityAuthorityResources{releaseAuthority: release}}}
 		return child, child.resources.releaseKeys, nil
 	}
 	if err := b.ensureOpen(false); err != nil {
@@ -198,7 +216,7 @@ func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge b
 		ordered.finish()
 		return nil, nil, err
 	}
-	write := &entityWriteContext{ctx: ctx, engine: b, owner: owner, writeRelease: writeRelease[entityAuthorityResources]{resources: entityAuthorityResources{ordered: ordered, releaseAuthority: release}}}
+	write := &entityWriteContext{ctx: ctx, engine: b, vectorWorkOrigin: origin, owner: owner, writeRelease: writeRelease[entityAuthorityResources]{resources: entityAuthorityResources{ordered: ordered, releaseAuthority: release}}}
 	return write, write.release, nil
 }
 

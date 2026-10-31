@@ -60,7 +60,7 @@ func TestFloatArrayMarshalAndUnmarshal(t *testing.T) {
 
 	buf.Reset()
 	FloatArray{1.5, 2}.MarshalGQL(&buf)
-	if got := buf.String(); got != "[1.5,2]" {
+	if got := buf.String(); got != "[1.5,2.0]" {
 		t.Fatalf("expected marshaled float array, got %q", got)
 	}
 

@@ -63,7 +63,11 @@ func decodeEntityCommandOperations(kind CommandType, data []byte) ([]storage.Ope
 	}
 	return nil, false, nil
 }
-func applyDirectEntityCommand(engine storage.Engine, kind CommandType, ops []storage.Operation) error {
+func applyDirectEntityCommand(target storage.Engine, kind CommandType, ops []storage.Operation, origin uint64) error {
+	engine, err := storage.EngineWithVectorWorkOrigin(target, origin)
+	if err != nil {
+		return err
+	}
 	switch kind {
 	case CmdBulkCreateNodes:
 		nodes := make([]*storage.Node, len(ops))
@@ -93,7 +97,7 @@ func applyDirectEntityCommand(engine storage.Engine, kind CommandType, ops []sto
 	if len(ops) != 1 {
 		return storage.ErrInvalidData
 	}
-	return storage.ApplyEntityChange(engine, ops[0], engine.UpdateNode, engine.DeleteNode)
+	return storage.ApplyEntityChange(engine, ops[0], engine.UpdateNode, func(id storage.NodeID) error { return engine.DeleteNode(id) })
 }
 
 // encodeEntityCommandPayload is the legacy entity wire construction owner.

@@ -76,12 +76,12 @@ func TestStorageExecutor_NodeMutatedAndUseDatabaseContext(t *testing.T) {
 	exec.SetNodeMutatedCallback(func(nodeID string) {
 		got = nodeID
 	})
-	exec.notifyNodeMutated("node-123")
+	exec.notifyNodeMutated(context.Background(), "node-123")
 	assert.Equal(t, "node-123", got)
 
 	// No callback should be safe
 	exec.SetNodeMutatedCallback(nil)
-	exec.notifyNodeMutated("node-456")
+	exec.notifyNodeMutated(context.Background(), "node-456")
 	assert.Equal(t, "node-123", got)
 
 	// Context extraction helper

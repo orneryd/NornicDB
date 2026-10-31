@@ -300,7 +300,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			if err := edge.SetEndpoints(mergeStartNode, mergeEndNode); err != nil {
 				return nil, err
 			}
-			createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties)
+			createdEdge, created, createErr := createRelationshipForMerge(e, e.writeStorage(ctx), edge, parsedPattern.properties)
 			if createErr != nil {
 				return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
 			}
@@ -315,10 +315,10 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			if created {
 				result.Stats.RelationshipsCreated = 1
 				countCreatedEntity(result.Stats, nil, edge.Properties)
-				e.notifyEdgeMutated(string(edge.ID))
-				e.notifyNodeMutated(string(edge.StartNode))
+				e.notifyEdgeMutated(ctx, string(edge.ID))
+				e.notifyNodeMutated(ctx, string(edge.StartNode))
 				if edge.EndNode != edge.StartNode {
-					e.notifyNodeMutated(string(edge.EndNode))
+					e.notifyNodeMutated(ctx, string(edge.EndNode))
 				}
 			}
 		}
@@ -372,7 +372,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := validatePropertyValues(node.Properties); err != nil {
 			return nil, err
 		}
-		actualID, err := createMintedNode(store, node)
+		actualID, err := createMintedNode(e.writeStorage(ctx), node)
 		if err != nil {
 			if !mergeCreateConflict(err) {
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
@@ -388,7 +388,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			node = recoveredNode
 		} else {
 			node.ID = actualID
-			e.notifyNodeMutated(string(node.ID))
+			e.notifyNodeMutated(ctx, string(node.ID))
 			result.Stats.NodesCreated = 1
 			countCreatedEntity(result.Stats, node.Labels, node.Properties)
 		}

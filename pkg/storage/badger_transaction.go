@@ -40,6 +40,8 @@ type snapshotLabelCacheKey struct {
 //   - Isolation: Changes invisible until commit
 //   - Durability: Badger's WAL ensures persistence
 type BadgerTransaction struct {
+	vectorWorkOrigin               uint64
+	vectorOriginBound              bool
 	clientDetached                 atomic.Bool
 	commitLogicalID                string
 	commitReleaseAcceptedAuthority func()
@@ -657,7 +659,12 @@ func (tx *BadgerTransaction) ensureOperationAllowedLocked(operation transactionO
 		if tx.schemaTransaction {
 			return mixedSchemaAndDataError(false)
 		}
-		return tx.admitWriteLocked()
+		if err := tx.admitWriteLocked(); err != nil {
+			return err
+		}
+		if !tx.vectorOriginBound {
+			tx.bindVectorWorkOriginLocked(fallbackVectorWorkOrigin("storage.transaction-write"))
+		}
 	case transactionSchemaWrite:
 		if len(tx.operations) > 0 {
 			return mixedSchemaAndDataError(true)
@@ -829,6 +836,7 @@ func (tx *BadgerTransaction) CreateMintedNode(node *Node) (NodeID, error) {
 }
 
 func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error) {
+	node, origins := takeNodeArgument(node, nil)
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
@@ -891,7 +899,11 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 
 	// Add to pending embeddings index if needed
 	if tx.engine.shouldIndexPendingEmbed(node) {
-		tx.bufferSet(pendingEmbedKey(node.ID), []byte{})
+		marker, err := encodePendingEmbeddingOrigin(tx.operationOriginLocked(origins))
+		if err != nil {
+			return "", err
+		}
+		tx.bufferSet(pendingEmbedKey(node.ID), marker)
 	}
 
 	// Track for read-your-writes and constraint validation
@@ -900,7 +912,7 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 	tx.pendingNodes[node.ID] = nodeCopy
 	delete(tx.deletedNodes, node.ID)
 
-	tx.operations = append(tx.operations, Operation{
+	tx.recordOperationLocked(Operation{
 		Type:      OpCreateNode,
 		Timestamp: time.Now(),
 		NodeID:    node.ID,
@@ -913,7 +925,7 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 		// ID, so a stable imported UUID cannot bypass a hidden predecessor.
 		// Once the ID is known absent, retain the generated-ID commit fast path.
 		FreshID: tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(node.ID)),
-	})
+	}, origins)
 
 	return node.ID, nil
 }
@@ -922,7 +934,9 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 // ClientNodeEdits reconciles managed embeddings; StoredNodeImages installs a
 // complete authoritative image. Policies may differ between operations in one frame.
 func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) error {
-	node, policy := updateRequest.After, updateRequest.Policy
+	node, origins := takeNodeArgument(updateRequest.After, nil)
+	updateRequest.After = node
+	policy := updateRequest.Policy
 	if policy > StoredNodeImages {
 		return ErrInvalidData
 	}
@@ -1089,7 +1103,11 @@ func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) er
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 		tx.bufferDelete(pendingEmbedKey(node.ID))
 	} else if tx.engine.shouldIndexPendingEmbed(node) {
-		tx.bufferSet(pendingEmbedKey(node.ID), []byte{})
+		marker, err := encodePendingEmbeddingOrigin(tx.operationOriginLocked(origins))
+		if err != nil {
+			return err
+		}
+		tx.bufferSet(pendingEmbedKey(node.ID), marker)
 	} else {
 		tx.bufferDelete(pendingEmbedKey(node.ID))
 	}
@@ -1100,14 +1118,14 @@ func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) er
 		return nil
 	}
 
-	tx.operations = append(tx.operations, Operation{
+	tx.recordOperationLocked(Operation{
 		Type:               OpUpdateNode,
 		Timestamp:          time.Now(),
 		NodeID:             node.ID,
 		Node:               nodeCopy,
 		OldNode:            oldNode,
 		nodeObservedBefore: updateRequest.Before,
-	})
+	}, origins)
 
 	return nil
 }
@@ -1389,7 +1407,7 @@ func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, del
 //
 //	tx.DeleteGraphNode(id, CascadeEdges) // DETACH DELETE
 //	tx.DeleteGraphNode(id, RejectConnected) // DELETE
-func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMode) error {
+func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMode, origins ...uint64) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
@@ -1445,7 +1463,7 @@ func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMod
 	if err != nil {
 		return err
 	}
-	tx.recordNodeDeletionLocked(nodeID, result)
+	tx.recordNodeDeletionLocked(origins, nodeID, result)
 	return nil
 }
 
@@ -1464,13 +1482,13 @@ func (tx *BadgerTransaction) enrollCommittedWriteLocked(key []byte, kind string)
 
 // recordNodeDeletionLocked owns the staged deletion's pending-state and
 // Operation publication after the common physical/staged kernel succeeds.
-func (tx *BadgerTransaction) recordNodeDeletionLocked(nodeID NodeID, result nodeDeletionResult) {
+func (tx *BadgerTransaction) recordNodeDeletionLocked(origins []uint64, nodeID NodeID, result nodeDeletionResult) {
 	tx.pendingNodeChangedLocked(tx.pendingNodes[nodeID], nil)
 	delete(tx.pendingNodes, nodeID)
 	tx.deletedNodes[nodeID] = struct{}{}
 	operation := result.operation(nodeID)
 	operation.Timestamp = time.Now()
-	tx.operations = append(tx.operations, operation)
+	tx.recordOperationLocked(operation, origins)
 }
 
 // IncidentEdges lists every relationship that connects nodeID as the
@@ -1768,10 +1786,11 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, startLabels, endLabels, 1)
 
 	// Track for read-your-writes
+	edge, origins := takeEdgeArgument(edge, nil)
 	edgeCopy := copyEdge(edge)
 	delete(tx.deletedEdges, edge.ID)
 	tx.setPendingEdgeLocked(edgeCopy)
-	tx.operations = append(tx.operations, Operation{
+	tx.recordOperationLocked(Operation{
 		Type:      OpCreateEdge,
 		Timestamp: time.Now(),
 		EdgeID:    edge.ID,
@@ -1779,7 +1798,7 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 		// As for nodes, a minted ID or the stored-inclusive read has already
 		// ruled out a hidden predecessor before this generated-ID optimization.
 		FreshID: tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(edge.ID)),
-	})
+	}, origins)
 	return nil
 }
 
@@ -1800,7 +1819,8 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 //     Neo.TransientError.Transaction.Outdated) should retry on a fresh
 //     snapshot.
 func (tx *BadgerTransaction) UpdateEdge(updateRequest EdgeUpdateRequest) error {
-	edge := updateRequest.After
+	edge, origins := takeEdgeArgument(updateRequest.After, nil)
+	updateRequest.After = edge
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
@@ -1933,13 +1953,13 @@ func (tx *BadgerTransaction) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		return err
 	}
 
-	tx.operations = append(tx.operations, Operation{
+	tx.recordOperationLocked(Operation{
 		Type:      OpUpdateEdge,
 		Timestamp: time.Now(),
 		EdgeID:    edge.ID,
 		Edge:      edgeCopy,
 		OldEdge:   oldEdge,
-	})
+	}, origins)
 
 	return nil
 }
@@ -1984,7 +2004,7 @@ func (tx *BadgerTransaction) bufferEdgeReplacementCountDeltasLocked(oldEdge, edg
 }
 
 // DeleteEdge deletes an edge from the transaction.
-func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
+func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID, origins ...uint64) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
@@ -2067,12 +2087,12 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 	}
 	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edgeID), edge.Type, startLabels, endLabels, -1)
 
-	tx.operations = append(tx.operations, Operation{
+	tx.recordOperationLocked(Operation{
 		Type:      OpDeleteEdge,
 		Timestamp: time.Now(),
 		EdgeID:    edgeID,
 		OldEdge:   edge,
-	})
+	}, origins)
 
 	return nil
 }

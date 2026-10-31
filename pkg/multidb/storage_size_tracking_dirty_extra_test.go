@@ -165,11 +165,11 @@ func (e *dirtyBranchEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) 
 	edge := updateRequest.After
 	return e.WithEntityChange(storage.Operation{Type: storage.OpUpdateEdge, Edge: edge}, func() error { return e.Engine.UpdateEdge(updateRequest) })
 }
-func (e *dirtyBranchEngine) DeleteNode(id storage.NodeID) error {
-	return e.WithEntityChange(storage.Operation{Type: storage.OpDeleteNode, NodeID: id}, func() error { return e.Engine.DeleteNode(id) })
+func (e *dirtyBranchEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
+	return e.WithEntityChange(storage.Operation{Type: storage.OpDeleteNode, NodeID: id}, func() error { return e.Engine.DeleteNode(id, origins...) })
 }
-func (e *dirtyBranchEngine) DeleteEdge(id storage.EdgeID) error {
-	return e.WithEntityChange(storage.Operation{Type: storage.OpDeleteEdge, EdgeID: id}, func() error { return e.Engine.DeleteEdge(id) })
+func (e *dirtyBranchEngine) DeleteEdge(id storage.EdgeID, origins ...uint64) error {
+	return e.WithEntityChange(storage.Operation{Type: storage.OpDeleteEdge, EdgeID: id}, func() error { return e.Engine.DeleteEdge(id, origins...) })
 }
 
 // Explicit stored-reader capabilities keep this fixture's legacy point and

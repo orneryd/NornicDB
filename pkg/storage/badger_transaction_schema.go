@@ -82,6 +82,11 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 			staged.mu.RUnlock()
 		}
 	}
+	// Carry retirements even when DROP and CREATE leave identical definitions.
+	snapshot.vectorPropertyRetired = make(map[vectorDescriptor]uint64, len(view.vectorPropertyRetired))
+	for property, generation := range view.vectorPropertyRetired {
+		snapshot.vectorPropertyRetired[property] = generation
+	}
 	tx.schemaRuntime = snapshot
 	return nil
 }
@@ -122,6 +127,7 @@ func (sm *SchemaManager) installTransactionSchemaLocked(snapshot *SchemaManager)
 	sm.propertyTypeConstraints = snapshot.propertyTypeConstraints
 	sm.compositeIndexes = snapshot.compositeIndexes
 	sm.fulltextIndexes = snapshot.fulltextIndexes
+	sm.retireChangedVectorIndexesLocked(sm.vectorIndexes, snapshot.vectorIndexes, snapshot.vectorPropertyRetired)
 	sm.vectorIndexes = snapshot.vectorIndexes
 	sm.rangeIndexes = snapshot.rangeIndexes
 	sm.lookupIndexes = snapshot.lookupIndexes
@@ -131,4 +137,12 @@ func sameRangeIndexDefinition(first, second *RangeIndex) bool {
 	return first.Name == second.Name && first.Kind == second.Kind && first.Label == second.Label &&
 		first.Property == second.Property && first.EntityType == second.EntityType &&
 		first.OwningConstraint == second.OwningConstraint && reflect.DeepEqual(first.Properties, second.Properties)
+}
+
+// Caller owns tx.mu (or exclusively owns the newly created transaction).
+func (tx *BadgerTransaction) bindVectorWorkOriginLocked(origin uint64) {
+	if tx.vectorOriginBound {
+		return
+	}
+	tx.vectorWorkOrigin, tx.vectorOriginBound = origin, true
 }
