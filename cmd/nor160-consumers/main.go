@@ -82,6 +82,14 @@ func (c *NOR160ControlCache) GetCapturedLent(id NodeID) *Node {
 	return out
 }
 
+type nor160ControlLent struct{ node *Node }
+
+func (c *NOR160ControlCache) GetCapturedLentField(id NodeID) *Node {
+	var r nor160ControlLent
+	nor160ControlCapture(nor160ControlView{cached: func() bool { r.node = c.nodes[id]; return true }})
+	return r.node
+}
+
 func (c *NOR160ControlCache) GetCapturedLentAll(ids []NodeID) []*Node {
 	var out []*Node
 	nor160ControlCapture(nor160ControlView{cached: func() bool {
@@ -1085,6 +1093,7 @@ type control struct {
 var controls = []control{
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLent", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLentAll", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLentField", false},
 	{"K0", "(*" + module + "/internal/testfixture/storagefault.NOR160ControlFixtureCache).GetShared", true},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetShared", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetWrapShared", false},
@@ -2218,8 +2227,12 @@ func (a *analysis) summarize(fn *ssa.Function, s *fnState) *summary {
 	for _, b := range fn.Blocks {
 		for _, ins := range b.Instrs {
 			if st, ok := ins.(*ssa.Store); ok {
+				// A store into the captured variable itself or into one of
+				// its fields (reader.cachedOut = ...) writes what the
+				// enclosing function holds there.
+				base := capturedBase(st.Addr)
 				for i, fv := range fn.FreeVars {
-					if st.Addr == fv {
+					if base == fv {
 						sum.FreeStores[i] = sum.FreeStores[i].or(s.val(st.Val))
 					}
 				}
@@ -3251,11 +3264,11 @@ func emptyReslice(x *ssa.Slice) bool {
 // there; what the callee hands the closure is not known here.
 func (a *analysis) callbackWrites(call ssa.CallInstruction) map[memKey]org {
 	var out map[memKey]org
+	var closures []*ssa.MakeClosure
 	for _, arg := range callArgs(call.Common()) {
-		mc := closureOf(arg)
-		if mc == nil {
-			continue
-		}
+		closures = append(closures, closuresIn(arg)...)
+	}
+	for _, mc := range closures {
 		g, _ := mc.Fn.(*ssa.Function)
 		sg := a.sums[g]
 		if sg == nil {
@@ -3291,6 +3304,61 @@ func (a *analysis) callbackCopyCells(call ssa.CallInstruction) []ssa.Value {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Pos() < out[j].Pos() })
+	return out
+}
+
+// capturedBase: the captured variable an address is, or is a field of
+// (through any depth of field selections); nil otherwise.
+func capturedBase(addr ssa.Value) *ssa.FreeVar {
+	for {
+		switch x := addr.(type) {
+		case *ssa.FreeVar:
+			return x
+		case *ssa.FieldAddr:
+			addr = x.X
+		default:
+			return nil
+		}
+	}
+}
+
+// closuresIn: the closures a call argument hands the callee: the argument
+// itself (closureOf), or the closures stored into the fields of a local
+// struct the argument is or is loaded from (an options struct such as
+// readViewOptions{cached: func...}), which the callee may run.
+func closuresIn(v ssa.Value) []*ssa.MakeClosure {
+	if mc := closureOf(v); mc != nil {
+		return []*ssa.MakeClosure{mc}
+	}
+	var al *ssa.Alloc
+	switch x := v.(type) {
+	case *ssa.Alloc:
+		al = x
+	case *ssa.UnOp:
+		if x.Op == token.MUL {
+			al, _ = x.X.(*ssa.Alloc)
+		}
+	}
+	if al == nil || al.Referrers() == nil {
+		return nil
+	}
+	if _, st := structOf(pointee(al.Type())); st == nil {
+		return nil
+	}
+	var out []*ssa.MakeClosure
+	for _, r := range *al.Referrers() {
+		fa, ok := r.(*ssa.FieldAddr)
+		if !ok || fa.X != al || fa.Referrers() == nil {
+			continue
+		}
+		for _, fr := range *fa.Referrers() {
+			if st, ok := fr.(*ssa.Store); ok && st.Addr == fa {
+				if mc := closureOf(st.Val); mc != nil {
+					out = append(out, mc)
+				}
+			}
+		}
+	}
 	return out
 }
 
