@@ -1580,12 +1580,12 @@ func TestIPRateLimiter_ResetAndCleanupLoopBranches(t *testing.T) {
 		perHour:         10,
 		burst:           1,
 		cleanupInterval: 5 * time.Millisecond,
-		stopCleanup:     make(chan struct{}),
 	}
 	manual.counters["stale"] = &ipRateLimitCounter{
 		hourReset:   time.Now().Add(-time.Second),
 		minuteReset: time.Now().Add(time.Minute),
 	}
+	require.True(t, manual.work.Enter()) // the loop is the limiter's accepted work
 	go manual.cleanupLoop()
 	require.Eventually(t, func() bool {
 		manual.mu.RLock()

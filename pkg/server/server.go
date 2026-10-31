@@ -916,7 +916,9 @@ type IPRateLimiter struct {
 	perHour         int
 	burst           int
 	cleanupInterval time.Duration
-	stopCleanup     chan struct{}
+	// work is the limiter's one owner: the cleanup loop is its accepted
+	// work and Stop is its one stop.
+	work lifecycle.WorkLifetime
 }
 
 type ipRateLimitCounter struct {
@@ -935,10 +937,11 @@ func NewIPRateLimiter(perMinute, perHour, burst int) *IPRateLimiter {
 		perHour:         perHour,
 		burst:           burst,
 		cleanupInterval: 10 * time.Minute,
-		stopCleanup:     make(chan struct{}),
 	}
 	// Start background cleanup of stale entries
-	go rl.cleanupLoop()
+	if rl.work.Enter() {
+		go rl.cleanupLoop()
+	}
 	return rl
 }
 
@@ -989,14 +992,15 @@ func (rl *IPRateLimiter) Allow(ip string) bool {
 
 // cleanupLoop periodically removes stale IP entries to prevent memory leaks.
 func (rl *IPRateLimiter) cleanupLoop() {
+	defer rl.work.Leave()
 	ticker := time.NewTicker(rl.cleanupInterval)
 	defer ticker.Stop()
-
+	stop := rl.work.Context().Done()
 	for {
 		select {
 		case <-ticker.C:
 			rl.cleanup()
-		case <-rl.stopCleanup:
+		case <-stop:
 			return
 		}
 	}
@@ -1017,9 +1021,10 @@ func (rl *IPRateLimiter) cleanup() {
 	}
 }
 
-// Stop stops the cleanup goroutine.
+// Stop stops the cleanup goroutine and joins its actual return; repeated and
+// concurrent calls join the same stop.
 func (rl *IPRateLimiter) Stop() {
-	close(rl.stopCleanup)
+	<-rl.work.BeginStop(nil)
 }
 
 // New creates a new HTTP server with the given database, authenticator, and configuration.
