@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"context"
 	"errors"
@@ -266,9 +268,13 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	}
 	var overlay []*Node
 	var touched map[NodeID]bool
-	err = b.withReadView(func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
+	err = b.withReadView(ctx, func(w *WriteBehindBuffer) error {
+		pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
+		if err != nil {
+			return err
+		}
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		return nil
 	}, func(txn *badger.Txn) error {
 		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, touched: touched, latest: func(node *Node) (bool, error) { nodes = append(nodes, node); return true, nil }})
 		return err

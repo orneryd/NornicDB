@@ -1,0 +1,92 @@
+{
+  "author": "storage-format-owners lane (Claude), #1693, 30 October 2026",
+  "note": "Reviewed per-site exceptions for in-family nil-context flows the census model cannot prove non-nil. Key: witness root (origin and first hop, positions stripped). Value: Reason (why it is non-nil), Reviewer, and Uses: the exact approved uses, one per physical call site (call position relative to the module root as path:line:column, then caller -> target: whole witness with its own positions stripped). A moved or added call is a new use. A flow from the root at any other use fails. Each entry is approved by Nornic2 (orchestrator). The census fails an entry, or an approved use, that matches no current flow.",
+  "dispositions": {},
+  "detached": {
+    "nil context.Context": {
+      "Reason": "#1548's deliberate convention: nil means detached. Readers on this path tolerate nil: each tests it, or passes it to one that does. TJ's code, unchanged; listed and counted, never cleared.",
+      "Reviewer": "Nornic2 ruling (31 October 2026)",
+      "Uses": [
+        "pkg/storage/badger_backup.go:24:30 (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).Backup -> (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind: nil context.Context",
+        "pkg/storage/badger_managed.go:1034:32 (*github.com/orneryd/nornicdb/pkg/storage.restoreBatches).commitBatch -> (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitDurableWrite: nil context.Context",
+        "pkg/storage/badger_managed.go:222:31 (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commit -> (*github.com/orneryd/nornicdb/pkg/storage.commitOracle).waitPublished: nil context.Context",
+        "pkg/storage/badger_stats.go:254:31 (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).Close -> (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind: nil context.Context",
+        "pkg/storage/badger_write_behind.go:329:25 (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication -> (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter: nil context.Context",
+        "pkg/storage/commit_buffer.go:1065:23 (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).flush -> (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).flushContext: nil context.Context",
+        "pkg/storage/embedding_publication_proof.go:29:38 (*github.com/orneryd/nornicdb/pkg/storage.commitWriter).commitOutcome -> (*github.com/orneryd/nornicdb/pkg/storage.commitOracle).waitPublished: nil context.Context",
+        "pkg/storage/wal_engine.go:463:37 (*github.com/orneryd/nornicdb/pkg/storage.WALEngine).createSnapshotAndCompact -> a dynamic call to (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind: nil context.Context",
+        "pkg/storage/write_admission_mutex.go:75:85 (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).Lock -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext: nil context.Context",
+        "pkg/storage/write_admission_mutex.go:76:86 (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLock -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLockContext: nil context.Context"
+      ]
+    },
+    "nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter": {
+      "Reason": "#1548's deliberate convention: nil means detached. Readers on this path tolerate nil: each tests it, or passes it to one that does. TJ's code, unchanged; listed and counted, never cleared.",
+      "Reviewer": "Nornic2 ruling (31 October 2026)",
+      "Uses": [
+        "pkg/storage/badger_commit_writer.go:153:27 (*github.com/orneryd/nornicdb/pkg/storage.commitWriter).commitOutcomeBatch -> (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitShared: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx",
+        "pkg/storage/badger_commit_writer.go:72:43 (*github.com/orneryd/nornicdb/pkg/storage.commitWriter).commitBatch -> (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> after a write that may reach field ctx",
+        "pkg/storage/badger_managed.go:226:37 (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitShared -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLockContext: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitShared",
+        "pkg/storage/badger_managed.go:257:38 (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitShared -> github.com/orneryd/nornicdb/pkg/storage.WithPublicationDecision: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitShared",
+        "pkg/storage/badger_managed.go:259:32 (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitShared -> (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitDurableWrite: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitShared",
+        "pkg/storage/badger_managed.go:549:36 (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> after a write that may reach field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext",
+        "pkg/storage/badger_managed.go:564:98 (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext -> github.com/orneryd/nornicdb/pkg/storage.WithPublicationDecision: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> after a write that may reach field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext",
+        "pkg/storage/badger_managed.go:599:32 (*github.com/orneryd/nornicdb/pkg/storage.largeCommit).commitBatch -> github.com/orneryd/nornicdb/pkg/storage.WithPublicationDecision: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> after a write that may reach field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext -> stored in field ctx -> after a write that may reach field ctx",
+        "pkg/storage/badger_managed.go:603:36 (*github.com/orneryd/nornicdb/pkg/storage.largeCommit).commitBatch -> (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitDurableWrite: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> after a write that may reach field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext -> stored in field ctx -> after a write that may reach field ctx",
+        "pkg/storage/durable_cache_scope.go:55:24 (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitDurableWrite -> (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).durableAction: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> after a write that may reach field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext -> stored in field ctx -> after a write that may reach field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitDurableWrite",
+        "pkg/storage/durable_cache_scope.go:61:26 (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).durableAction -> github.com/orneryd/nornicdb/pkg/storage.DecidePublication: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter -> stored in field ctx -> after a write that may reach field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext -> stored in field ctx -> after a write that may reach field ctx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitDurableWrite -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).durableAction"
+      ]
+    },
+    "zero field commitCtx -> after a write that may reach field commitCtx": {
+      "Reason": "#1548's deliberate convention: nil means detached. Readers on this path tolerate nil: each tests it, or passes it to one that does. TJ's code, unchanged; listed and counted, never cleared.",
+      "Reviewer": "Nornic2 ruling (31 October 2026)",
+      "Uses": [
+        "pkg/storage/badger_transaction_publication.go:233:54 (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit -> (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).orderAfterBufferedCommits: zero field commitCtx -> after a write that may reach field commitCtx",
+        "pkg/storage/badger_transaction_publication.go:298:33 (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit -> (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter: zero field commitCtx -> after a write that may reach field commitCtx",
+        "pkg/storage/badger_transaction_publication.go:345:85 (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit -> (*github.com/orneryd/nornicdb/pkg/storage.SchemaManager).beginSchemaPublication: zero field commitCtx -> after a write that may reach field commitCtx",
+        "pkg/storage/badger_write_behind.go:120:56 (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).commitBufferedLocked -> (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockMixedContext: zero field commitCtx -> after a write that may reach field commitCtx",
+        "pkg/storage/badger_write_behind.go:235:29 (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).commitBufferedLocked -> github.com/orneryd/nornicdb/pkg/storage.DecidePublication: zero field commitCtx -> after a write that may reach field commitCtx",
+        "pkg/storage/buffered_write_order.go:104:27 (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockContext -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext: zero field commitCtx -> after a write that may reach field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).orderAfterBufferedCommits -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockContext",
+        "pkg/storage/buffered_write_order.go:106:28 (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockContext -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLockContext: zero field commitCtx -> after a write that may reach field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).orderAfterBufferedCommits -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockContext",
+        "pkg/storage/buffered_write_order.go:127:27 (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockMixedContext -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext: zero field commitCtx -> after a write that may reach field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockMixedContext",
+        "pkg/storage/buffered_write_order.go:129:28 (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockMixedContext -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLockContext: zero field commitCtx -> after a write that may reach field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockMixedContext",
+        "pkg/storage/buffered_write_order.go:281:31 (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).orderAfterBufferedCommits -> (*github.com/orneryd/nornicdb/pkg/storage.writeOrder).lockContext: zero field commitCtx -> after a write that may reach field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).orderAfterBufferedCommits",
+        "pkg/storage/buffered_write_order.go:285:27 (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).orderAfterBufferedCommits -> (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).flushContext: zero field commitCtx -> after a write that may reach field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).orderAfterBufferedCommits",
+        "pkg/storage/change_capture.go:295:30 (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).beginChangeCaptureLocked -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext: zero field commitCtx -> after a write that may reach field commitCtx",
+        "pkg/storage/schema.go:616:42 (*github.com/orneryd/nornicdb/pkg/storage.SchemaManager).beginSchemaPublication -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext: zero field commitCtx -> after a write that may reach field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.SchemaManager).beginSchemaPublication"
+      ]
+    },
+    "zero field commitCtx": {
+      "Reason": "#1548's deliberate convention: nil means detached. Readers on this path tolerate nil: each tests it, or passes it to one that does. TJ's code, unchanged; listed and counted, never cleared.",
+      "Reviewer": "Nornic2 ruling (31 October 2026)",
+      "Uses": [
+        "pkg/storage/badger_transaction_staging.go:184:55 (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).acquireCommitPublicationLocked -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext: zero field commitCtx"
+      ]
+    },
+    "nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind": {
+      "Reason": "#1548's deliberate convention: nil means detached. Readers on this path tolerate nil: each tests it, or passes it to one that does. TJ's code, unchanged; listed and counted, never cleared.",
+      "Reviewer": "Nornic2 ruling (31 October 2026)",
+      "Uses": [
+        "pkg/storage/badger_write_behind.go:713:39 (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLockContext: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind",
+        "pkg/storage/badger_write_behind.go:733:35 (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind -> (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).flushContext: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind",
+        "pkg/storage/commit_buffer.go:1118:28 (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).flushContext -> github.com/orneryd/nornicdb/pkg/storage.observeWriteAdmissionWait: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).flushContext",
+        "pkg/storage/write_admission_mutex.go:74:84 (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLockContext -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).acquire: nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FlushWriteBehind -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLockContext"
+      ]
+    },
+    "zero field ctx -> after a write that may reach field ctx": {
+      "Reason": "#1548's deliberate convention: nil means detached. Readers on this path tolerate nil: each tests it, or passes it to one that does. TJ's code, unchanged; listed and counted, never cleared.",
+      "Reviewer": "Nornic2 ruling (31 October 2026)",
+      "Uses": [
+        "pkg/storage/metadata_batches.go:19:35 (github.com/orneryd/nornicdb/pkg/storage.metadataBatches).commitBatch -> (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitShared: zero field ctx -> after a write that may reach field ctx",
+        "pkg/storage/metadata_batches.go:23:39 (github.com/orneryd/nornicdb/pkg/storage.metadataBatches).commitBatch -> (*github.com/orneryd/nornicdb/pkg/storage.commitOracle).waitPublished: zero field ctx -> after a write that may reach field ctx"
+      ]
+    },
+    "zero field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext": {
+      "Reason": "#1548's deliberate convention: nil means detached. Readers on this path tolerate nil: each tests it, or passes it to one that does. TJ's code, unchanged; listed and counted, never cleared.",
+      "Reviewer": "Nornic2 ruling (31 October 2026)",
+      "Uses": [
+        "pkg/storage/write_admission_mutex.go:53:28 (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).acquire -> github.com/orneryd/nornicdb/pkg/storage.observeWriteAdmissionWait: zero field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).acquire",
+        "pkg/storage/write_admission_mutex.go:73:84 (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).acquire: zero field commitCtx -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext"
+      ]
+    }
+  }
+}

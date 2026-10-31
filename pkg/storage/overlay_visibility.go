@@ -1,5 +1,9 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
+import "context"
+
 // The write-behind overlay serves acknowledged bodies until the flush lands
 // them, so every read that merges it with storage must leave out what the
 // visibility layer hides from that read, exactly as its storage path does.
@@ -71,31 +75,39 @@ type bufferedEntityResult struct {
 // readBufferedEntities is the sole indexed-overlay capture/filter owner. The
 // caller holds w's read lock; touched IDs and deletion masks remain unfiltered
 // so hidden buffered bodies cannot reveal their older committed predecessors.
-func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult) {
+// Every selection observes the request in ctx; a cancelled request returns its
+// error with no partial candidates or masks.
+func (b *BadgerEngine) readBufferedEntities(ctx context.Context, w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult, err error) {
+	if err = ctx.Err(); err != nil {
+		return result, err
+	}
 	switch request.kind {
 	case bufferedNodes:
-		result.nodes, result.nodesTouched = w.allNodesOverlayLocked(request.prefix)
+		result.nodes, result.nodesTouched, err = w.allNodesOverlayLocked(ctx, request.prefix)
 	case bufferedLabel:
-		result.nodes, result.nodesTouched = w.labelOverlayLocked(request.label, request.prefix)
+		result.nodes, result.nodesTouched, err = w.labelOverlayLocked(ctx, request.label, request.prefix)
 	case bufferedKey:
 		result.nodes = w.keyCandidatesLocked(request.label, request.property, request.valueKey)
 	case bufferedEdges:
-		result.edges, result.edgesTouched = w.allEdgesOverlayLocked(request.prefix)
+		result.edges, result.edgesTouched, err = w.allEdgesOverlayLocked(ctx, request.prefix)
 	case bufferedType:
-		result.edges, result.edgesTouched = w.typeOverlayLocked(request.edgeType, request.prefix)
+		result.edges, result.edgesTouched, err = w.typeOverlayLocked(ctx, request.edgeType, request.prefix)
 	case bufferedAdjacency:
-		result.edges, result.suppressed, result.sourceDeleted = w.edgeAdjacencyOverlayLocked(request.source, request.outgoing)
+		result.edges, result.suppressed, result.sourceDeleted, err = w.edgeAdjacencyOverlayLocked(ctx, request.source, request.outgoing)
 	case bufferedLiveAdjacency:
 		result.edges = w.liveAdjacencyLocked(request.source, request.outgoing)
 	case bufferedBetween:
-		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted = w.edgesBetweenOverlayLocked(request.source, request.target)
+		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted, err = w.edgesBetweenOverlayLocked(ctx, request.source, request.target)
+	}
+	if err != nil {
+		return bufferedEntityResult{}, err
 	}
 	if request.kind <= bufferedKey {
 		result.nodes = visibleBufferedEntities(b, v, result.nodes)
 	} else {
 		result.edges = visibleBufferedEntities(b, v, result.edges)
 	}
-	return result
+	return result, nil
 }
 
 // commitsSince visits the operations of each commit the buffer acknowledged

@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"context"
 	"errors"
@@ -182,6 +184,13 @@ func deliveringToListeners() {
 	}
 }
 
+// writeOrderContext is the context of the buffer's write-ordering check: a
+// decision about shared buffer state that no request may cut short (a
+// cancelled read would report the entities as not held and misorder the
+// write), so it is never cancelled. The capture census admits it only on
+// holdsEntities's own work.
+func writeOrderContext() context.Context { return context.Background() }
+
 // holdsEntities reports whether a generation not yet applied holds a body or
 // deletion of one of e's entities, or a relationship of a node e deletes.
 func (w *WriteBehindBuffer) holdsEntities(e writtenEntities) bool {
@@ -207,7 +216,8 @@ func (w *WriteBehindBuffer) holdsEntities(e writtenEntities) bool {
 	}
 	for _, id := range e.deletedNodes {
 		for _, outgoing := range [...]bool{true, false} {
-			if live, touched, _ := w.edgeAdjacencyOverlayLocked(id, outgoing); len(live) > 0 || len(touched) > 0 {
+			// Write ordering is decided for the buffer, not for one request.
+			if live, touched, _, _ := w.edgeAdjacencyOverlayLocked(writeOrderContext(), id, outgoing); len(live) > 0 || len(touched) > 0 {
 				return true
 			}
 		}
@@ -632,7 +642,7 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
 				checked = make(map[NodeID]struct{})
 			}
 			checked[id] = struct{}{}
-			if _, err := tx.engine.getNodeSnapshotForRead(id, false, storedRead, true); errors.Is(err, ErrNotFound) {
+			if _, err := tx.engine.getNodeSnapshotForRead(tx.requestContextLocked(), id, false, storedRead, true); errors.Is(err, ErrNotFound) {
 				return errEndpointChanged
 			} else if err != nil {
 				return err
@@ -640,11 +650,11 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
 		}
 	}
 	for id := range tx.deletedNodes {
-		out, err := tx.engine.GetStoredOutgoingEdges(id)
+		out, err := tx.engine.outgoingEdges(tx.requestContextLocked(), id, storedRead)
 		if err != nil {
 			return err
 		}
-		in, err := tx.engine.GetStoredIncomingEdges(id)
+		in, err := tx.engine.incomingEdges(tx.requestContextLocked(), id, storedRead)
 		if err != nil {
 			return err
 		}

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func BenchmarkEndpointStoredNodeExistenceRead(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var err error
-		endpointBorrowSink, err = engine.getNodeSnapshotForRead(id, false, storedRead, true)
+		endpointBorrowSink, err = engine.getNodeSnapshotForRead(context.Background(), id, false, storedRead, true)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -71,7 +72,7 @@ func BenchmarkEndpointStoredNodeExistenceReadBuffered(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				var err error
-				endpointBorrowSink, err = engine.getNodeSnapshotForRead(id, false, storedRead, true)
+				endpointBorrowSink, err = engine.getNodeSnapshotForRead(context.Background(), id, false, storedRead, true)
 				if err != nil {
 					b.Fatal(err)
 				}

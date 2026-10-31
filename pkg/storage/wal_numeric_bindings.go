@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sort"
@@ -418,8 +419,10 @@ func (b *BadgerEngine) rebindBufferedNumericIDs(txn *badger.Txn, c *bufferedComm
 		}
 		return tokens[i].id < tokens[j].id
 	})
+	// Replay serves no request.
 	staged := &BadgerTransaction{
 		badgerTx: txn, pendingWrites: make(map[string][]byte), pendingDeletes: make(map[string]bool),
+		request: context.Background(),
 	}
 	mapped := make(map[walNumericToken]uint64, len(bindings))
 	for _, token := range tokens {

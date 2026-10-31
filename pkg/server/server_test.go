@@ -1192,7 +1192,7 @@ func TestIsMutationQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
-			result := isMutationQuery(tt.query)
+			result := isMutationQuery(context.Background(), tt.query)
 			if result != tt.expected {
 				t.Errorf("isMutationQuery(%q) = %v, want %v", tt.query, result, tt.expected)
 			}

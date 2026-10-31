@@ -136,7 +136,7 @@ func seedStateUser(t *testing.T, users *Authenticator, disabled bool, failed int
 	user.Email = "worker@example.com"
 	user.Roles = []Role{RoleEditor, RoleViewer}
 	user.Metadata = map[string]string{"team": "ops"}
-	require.NoError(t, users.saveUser(user, nil))
+	require.NoError(t, users.saveUser(context.Background(), user, nil))
 	return cloneStoredUser(user)
 }
 

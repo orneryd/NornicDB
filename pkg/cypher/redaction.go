@@ -102,7 +102,7 @@ const RedactedPlaceholder = "<REDACTED>"
 // grammar verdict for the statement text, so the output is the same on both
 // parsers.
 func RedactLiterals(query string) string {
-	return redactLiterals(query, redactGrammarAccepts)
+	return redactLiterals(context.Background(), query, redactGrammarAccepts)
 }
 
 // redactGrammarCheckMaxBytes is the largest statement RedactLiterals checks
@@ -154,8 +154,8 @@ func (e *StorageExecutor) redactGrammarAccepts(ctx context.Context, query string
 
 // redactLiterals is RedactLiterals with the grammar verdict supplied by the
 // caller; grammarAccepts runs only after the lexer checks passed.
-func redactLiterals(query string, grammarAccepts func(string) bool) string {
-	return redactLiteralsContext(context.Background(), query, false, grammarAccepts)
+func redactLiterals(ctx context.Context, query string, grammarAccepts func(string) bool) string {
+	return redactLiteralsContext(ctx, query, false, grammarAccepts)
 }
 
 func redactLiteralsContext(ctx context.Context, query string, stripComments bool, grammarAccepts func(string) bool) string {

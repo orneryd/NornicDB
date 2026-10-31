@@ -950,7 +950,7 @@ func (c closers) Close() error {
 
 func applySchema(ctx context.Context, engine storage.Engine, path string) error {
 	if strings.EqualFold(filepath.Ext(path), ".json") {
-		return applySchemaDefinition(engine, path)
+		return applySchemaDefinition(ctx, engine, path)
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -968,7 +968,7 @@ func applySchema(ctx context.Context, engine storage.Engine, path string) error 
 	return nil
 }
 
-func applySchemaDefinition(engine storage.Engine, path string) error {
+func applySchemaDefinition(ctx context.Context, engine storage.Engine, path string) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -981,7 +981,7 @@ func applySchemaDefinition(engine storage.Engine, path string) error {
 	if err := schema.ReplaceFromDefinition(&def); err != nil {
 		return err
 	}
-	if err := rebuildSchemaDerivedState(engine, schema); err != nil {
+	if err := rebuildSchemaDerivedState(ctx, engine, schema); err != nil {
 		return err
 	}
 	for _, constraint := range schema.GetAllConstraints() {
@@ -1002,13 +1002,13 @@ func applySchemaDefinition(engine storage.Engine, path string) error {
 	return nil
 }
 
-func rebuildSchemaDerivedState(engine storage.Engine, schema *storage.SchemaManager) error {
+func rebuildSchemaDerivedState(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager) error {
 	if err := storage.RefreshUniqueConstraintValuesForEngine(engine, schema); err != nil {
 		return err
 	}
 	// Every stored node, those the visibility layer hides from reads
 	// included: the indexes are trusted to hold every matching node.
-	if err := storage.StreamStoredNodes(context.Background(), engine, storage.StreamNodesOptions{}, func(node *storage.Node) error {
+	if err := storage.StreamStoredNodes(ctx, engine, storage.StreamNodesOptions{}, func(node *storage.Node) error {
 		for _, label := range node.Labels {
 			for _, idx := range schema.GetCompositeIndexesForLabel(label) {
 				if idx == nil {

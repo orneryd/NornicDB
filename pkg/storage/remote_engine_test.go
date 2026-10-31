@@ -1128,6 +1128,9 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 		t.Fatalf("unexpected query result cols=%v rows=%v", cols, rows)
 	}
 
+	// A nil stream context takes the bounded default instead of panicking.
+	_ = engine.StreamNodesWithOptions(nilCtx, StreamNodesOptions{}, func(*Node) error { return nil })
+
 	count, err := engine.NodeCount()
 	if err != nil || count != 42 {
 		t.Fatalf("CRUD consumer of the column-bearing result failed: count=%d err=%v", count, err)

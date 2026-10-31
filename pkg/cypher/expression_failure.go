@@ -67,11 +67,17 @@ func withExpressionFailureSlot(ctx context.Context) context.Context {
 }
 
 type expressionFailure struct {
-	mu               sync.Mutex
-	err              error
-	readScopeEngine  *storage.BadgerEngine
-	readScopeContext context.Context
-	mapKeyOrders     map[uintptr][]string
+	mu           sync.Mutex
+	err          error
+	readScope    *revealReadScope
+	mapKeyOrders map[uintptr][]string
+}
+
+// revealReadScope is the engine whose reveal read scope a query opened, with
+// the context that carries it; both are set and cleared together.
+type revealReadScope struct {
+	engine *storage.BadgerEngine
+	ctx    context.Context
 }
 
 func (failure *expressionFailure) recordMapKeyOrder(value map[string]interface{}, keys []string) {

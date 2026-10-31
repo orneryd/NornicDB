@@ -56,6 +56,8 @@ func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked() ([]NodeID, []Edg
 // entityWriteContext transfers one outer entity write's authority and lifecycle
 // admission through native helper calls without recursive barrier acquisition.
 type entityWriteContext struct {
+	// ctx is the write's context: key admission and namespace initialization
+	// observe it. Inherited writes run under their outer write's context.
 	ctx    context.Context
 	engine *BadgerEngine
 	owner  string
@@ -78,6 +80,9 @@ type entityWritePlan struct {
 	batches map[string]writtenEntities
 }
 
+// beginEntityWrite admits one entity write under ctx: the caller's request,
+// or, for a caller with none, the context it supplies at its own boundary. An
+// inherited write runs under its outer write's context instead.
 func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge bool, inherited *entityWriteContext, plans ...entityWritePlan) (*entityWriteContext, func(), error) {
 	// Key admission belongs to this lifecycle owner; inherited and new writes
 	// use the same footprint acquisition without a separately callable entry.

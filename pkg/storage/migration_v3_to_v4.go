@@ -18,7 +18,7 @@ func (b *BadgerEngine) migrateV3ToV4(ctx context.Context, replayCurrent bool) er
 		return err
 	}
 	migrated, changed := false, false
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.db.update(ctx, func(txn *badger.Txn) error {
 		version, err := accessSchemaVersionInTxn(txn, loadSchemaVersion, 0)
 		if err != nil {
 			return err
@@ -98,7 +98,7 @@ func (b *BadgerEngine) migrateV3ToV4(ctx context.Context, replayCurrent bool) er
 		}
 		migrated = version != storageVersionCatalogV4 || changed
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		return err
 	}

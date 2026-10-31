@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
@@ -114,11 +115,12 @@ func (generation *CommitBuffer) releaseMemoryLeases() {
 // under the existing retirement lock; failure releases both resources. BEGIN
 // does not read any entity population, so its empty ID scope leaves admission
 // to each subsequent bound, prefix-scoped or global operation.
-func (b *BadgerEngine) beginTransactionSnapshot(db *managedBadgerDB) (*badger.Txn, uint64, *transactionBeginPresence, error) {
+func (b *BadgerEngine) beginTransactionSnapshot(ctx context.Context, db *managedBadgerDB) (*badger.Txn, uint64, *transactionBeginPresence, error) {
 	var presence *transactionBeginPresence
 	var captureErr error
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+	view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) error {
 		presence, captureErr = w.pinTransactionBeginLocked()
+		return nil
 	}, readViewOptions{longLived: true, scopeKind: readNodeIDsScope})
 	if err == nil {
 		err = captureErr

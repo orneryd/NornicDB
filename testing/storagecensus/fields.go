@@ -52,6 +52,10 @@ var (
 // or a map, slice or array of them), and the non-numeric fields that hold
 // suppression state. A written numeric field with no row is a violation.
 var fieldClasses = map[string]fieldRow{
+	// Author: #1667 implementation lane (Codex). This is the dictionary
+	// number returned in a caller-owned snapshot reference, not stored count,
+	// quota, suppression or publication state. Future fields need their own row.
+	"pkg/storage.nodeRef.num":                    {class: "snapshot dictionary numeric reference (local value)"},
 	"pkg/storage.bufferedOrderResources.stripes": {class: "write-order stripes (the acquisition itself)"},
 	// Pending destructive cleanup is published by one lifecycle transition;
 	// point/scan/write owners consult the same scope fence.

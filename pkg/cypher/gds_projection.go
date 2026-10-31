@@ -148,7 +148,7 @@ func (spec gdsElementSpec) merges() bool {
 // '|' ('Person:User', 'KNOWS|REFERENCES'): NornicDB's kept form. Labels,
 // types and properties no stored element has, and a name already in use,
 // are refused with GDS's messages.
-func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphProject(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "gds.graph.project"
 	started := time.Now()
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
@@ -167,7 +167,7 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResul
 	if err != nil {
 		return nil, err
 	}
-	projection, err := e.buildGraphProjection(graphName, nodeSpecs, relSpecs, configuration["validateRelationships"] == true)
+	projection, err := e.buildGraphProjection(ctx, graphName, nodeSpecs, relSpecs, configuration["validateRelationships"] == true)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +455,7 @@ func readGDSPropertySpecs(value interface{}, aggregation string, elementKinds ..
 
 // buildGraphProjection reads the projected nodes and relationships from
 // storage, streaming both.
-func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
+func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
 	projection := &GraphProjection{
 		Name:                     name,
 		Database:                 e.databaseName(),
@@ -468,7 +468,6 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		RelationshipProjection:   make(map[string]interface{}),
 		CreatedAt:                time.Now(),
 	}
-	ctx := context.Background()
 
 	labelsSeen := make(map[string]bool)
 	nodePropertySeen := make(map[string]bool)

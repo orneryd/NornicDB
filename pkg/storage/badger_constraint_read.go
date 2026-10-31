@@ -1,11 +1,18 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
+import (
+	"context"
+
+	"github.com/dgraph-io/badger/v4"
+)
 
 // keyConstraintNodes captures the committed equality-index candidates and the
 // pending key candidates together, then resolves bodies in the captured view.
 // A replay cannot move a holder between those candidate sets during the capture.
-func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property string, values []interface{}) ([]*Node, error) {
+// ctx is the validating request's context.
+func (b *BadgerEngine) keyConstraintNodes(ctx context.Context, idx *CompositeIndex, label, property string, values []interface{}) ([]*Node, error) {
 	var ids []NodeID
 	var pending []*Node
 	var states map[NodeID]bufferedEntityState
@@ -13,21 +20,29 @@ func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property s
 		w.ensurePendingValueTracked(label, property)
 	}
 	var nodes []*Node
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) error {
 		ids = idx.LookupFull(values...)
 		if w == nil {
-			return
+			return nil
 		}
 		if valueKey, ok := indexValueKey(values[0]); ok {
-			pending = b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedKey, label: label, property: property, valueKey: valueKey}).nodes
+			pendingKey, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedKey, label: label, property: property, valueKey: valueKey})
+			if err != nil {
+				return err
+			}
+			pending = pendingKey.nodes
 		} else {
-			pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})
+			pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})
+			if err != nil {
+				return err
+			}
 			pending, _ = pendingNodes.nodes, pendingNodes.nodesTouched
 		}
 		states = make(map[NodeID]bufferedEntityState, len(ids))
 		for _, id := range ids {
 			states[id] = w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
 		}
+		return nil
 	}, func(txn *badger.Txn) error {
 		seen := make(map[NodeID]bool, len(ids)+len(pending))
 		for _, id := range ids {

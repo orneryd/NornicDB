@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ func TestEndpointExistenceReadUsesStoredReadContract(t *testing.T) {
 	check := func(id NodeID) {
 		t.Helper()
 		_, want := engine.GetStoredNode(id)
-		image, got := engine.getNodeSnapshotForRead(id, false, storedRead, true)
+		image, got := engine.getNodeSnapshotForRead(context.Background(), id, false, storedRead, true)
 		require.Nil(t, image, "existence reads must never expose an internal cache image")
 		if want == nil {
 			require.NoError(t, got)
@@ -25,7 +26,7 @@ func TestEndpointExistenceReadUsesStoredReadContract(t *testing.T) {
 		require.Equal(t, errors.Is(want, ErrNotFound), errors.Is(got, ErrNotFound))
 	}
 	check("nornic:absent")
-	_, err := engine.getNodeSnapshotForRead("nornic:absent", false, visibleRead, true)
+	_, err := engine.getNodeSnapshotForRead(context.Background(), "nornic:absent", false, visibleRead, true)
 	require.ErrorIs(t, err, ErrInvalidData)
 	writeBehindCommit(t, engine, func(tx *BadgerTransaction) error {
 		_, err := tx.CreateNode(&Node{ID: "nornic:pending", Properties: map[string]any{"title": "value"}})

@@ -1,6 +1,12 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
+import (
+	"context"
+
+	"github.com/dgraph-io/badger/v4"
+)
 
 // EmbeddingBodyRevision is an opaque snapshot identity. A durable read uses
 // Badger's body-key version. An acknowledged buffered read uses its existing
@@ -18,7 +24,12 @@ func (revision EmbeddingBodyRevision) isZero() bool {
 // MatchesNode is the common body-change decision for claims, DLQ recovery and
 // publication. A buffered ACK and its materialized body are the same revision;
 // caller timestamps and notification delivery are not revision evidence.
+// It has no request; a caller with one uses matchesNode.
 func (revision EmbeddingBodyRevision) MatchesNode(node *Node) (bool, error) {
+	return revision.matchesNode(context.Background(), node)
+}
+
+func (revision EmbeddingBodyRevision) matchesNode(ctx context.Context, node *Node) (bool, error) {
 	if node == nil {
 		return false, nil
 	}
@@ -31,7 +42,7 @@ func (revision EmbeddingBodyRevision) MatchesNode(node *Node) (bool, error) {
 		return false, nil
 	}
 	var same bool
-	err := state.embeddingOwner.withReadView(nil, func(txn *badger.Txn) error {
+	err := state.embeddingOwner.withReadView(ctx, nil, func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(state.embeddingOwnerID))
 		if err != nil {
 			return err
@@ -59,10 +70,10 @@ func (revision EmbeddingBodyRevision) matches(b *BadgerEngine, txn *badger.Txn, 
 // Publication needs only the identity, not a decoded body or hydrated vectors.
 // The ordered event drainer supplies the publication boundary; an acknowledged
 // buffered body takes precedence over the physical body, as in snapshot reads.
-func (b *BadgerEngine) embeddingRevisionIsCurrent(id NodeID, revision EmbeddingBodyRevision, proof ...embeddingPublicationProof) (bool, error) {
+func (b *BadgerEngine) embeddingRevisionIsCurrent(ctx context.Context, id NodeID, revision EmbeddingBodyRevision, proof ...embeddingPublicationProof) (bool, error) {
 	var buffered *Node
 	proven := false
-	view, err := b.captureReadView(nil, readViewOptions{scope: namespaceForNodeID(id), cached: func(w *WriteBehindBuffer) (bool, error) {
+	view, err := b.captureReadView(ctx, nil, readViewOptions{scope: namespaceForNodeID(id), cached: func(w *WriteBehindBuffer) (bool, error) {
 		state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
 		if !state.found {
 			if len(proof) != 0 && proof[0].matches(b, id, revision) {
@@ -84,7 +95,7 @@ func (b *BadgerEngine) embeddingRevisionIsCurrent(id NodeID, revision EmbeddingB
 		if proven {
 			return true, nil
 		}
-		return revision.MatchesNode(buffered)
+		return revision.matchesNode(ctx, buffered)
 	}
 	var same bool
 	err = view.readAndClose(func(txn *badger.Txn) error {

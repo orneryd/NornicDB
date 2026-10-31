@@ -1860,7 +1860,7 @@ func (e *StorageExecutor) findPaths(
 		edges = e.traversalEdges(ctx, lookupID, false)
 	case "both":
 		var err error
-		edges, err = undirectedIncidentEdges(e.storage, lookupID)
+		edges, err = undirectedIncidentEdges(ctx.cancelCtx, e.storage, lookupID)
 		if err != nil && ctx.cancelCtx != nil {
 			recordExpressionFailure(ctx.cancelCtx, err)
 			return results

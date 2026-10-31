@@ -137,7 +137,7 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	for _, node := range candidates {
 		input.Rows = append(input.Rows, []interface{}{node})
 	}
-	e.applyDeleteReturnProjection(result, cypher, deleteVar, deleteProjectionInfo{ctx: ctx, input: input})
+	e.applyDeleteReturnProjection(ctx, result, cypher, deleteVar, deleteProjectionInfo{input: input})
 	return result, true, getExpressionFailure(ctx)
 }
 
@@ -318,7 +318,6 @@ const (
 )
 
 type deleteProjectionInfo struct {
-	ctx   context.Context
 	input *ExecuteResult
 }
 
@@ -357,17 +356,15 @@ func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
 	return deleteTargetValue{}
 }
 
-func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
+// applyDeleteReturnProjection projects a DELETE's RETURN under ctx, the
+// statement's context.
+func (e *StorageExecutor) applyDeleteReturnProjection(ctx context.Context, result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
 	if result == nil {
 		return
 	}
 	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
 	if returnIdx <= 0 {
 		return
-	}
-	ctx := info.ctx
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	rows := []pipelineRow{}
 	nodeIDs := []storage.NodeID{}

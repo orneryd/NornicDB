@@ -973,7 +973,7 @@ func TestApplySchemaDefinition_ErrorsOnMissingAndInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 
 	t.Run("missing file returns os error", func(t *testing.T) {
-		err := applySchemaDefinition(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+		err := applySchemaDefinition(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			filepath.Join(dir, "missing.json"))
 		require.Error(t, err)
 		require.True(t, os.IsNotExist(err) || errors.Is(err, os.ErrNotExist))
@@ -982,7 +982,7 @@ func TestApplySchemaDefinition_ErrorsOnMissingAndInvalidJSON(t *testing.T) {
 	t.Run("malformed JSON returns decode error", func(t *testing.T) {
 		path := filepath.Join(dir, "bad.json")
 		require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o600))
-		err := applySchemaDefinition(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), path)
+		err := applySchemaDefinition(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), path)
 		require.Error(t, err)
 	})
 }
@@ -1247,7 +1247,7 @@ func TestRebuildSchemaDerivedState_IndexesExistingNodes(t *testing.T) {
 	require.NoError(t, schema.AddPropertyIndex("person_email_idx", "Person", []string{"email"}))
 	require.NoError(t, schema.AddCompositeIndex("person_location_idx", "Person", []string{"country", "city"}))
 
-	require.NoError(t, rebuildSchemaDerivedState(ns, schema))
+	require.NoError(t, rebuildSchemaDerivedState(context.Background(), ns, schema))
 
 	// After rebuild the property index should resolve both seeded nodes.
 	got := ns.GetSchema().PropertyIndexLookup("Person", "email", "alice@example.com")

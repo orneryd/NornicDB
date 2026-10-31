@@ -8,12 +8,13 @@ import (
 // undirectedIncidentEdges returns each incident relationship once. Storage
 // correctly exposes a self-relationship as both incoming and outgoing, but an
 // undirected Cypher expansion has only one orientation for that relationship.
-func undirectedIncidentEdges(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	outgoing, incoming, err := incidentEdgeLists(store, nodeID)
+// ctx is the request's context.
+func undirectedIncidentEdges(ctx context.Context, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	outgoing, incoming, err := incidentEdgeListsContext(ctx, store, nodeID, "both")
 	if err != nil {
 		return nil, err
 	}
-	return combineIncidentEdges(context.Background(), nodeID, outgoing, incoming)
+	return combineIncidentEdges(ctx, nodeID, outgoing, incoming)
 }
 
 func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, incoming []*storage.Edge) ([]*storage.Edge, error) {
@@ -37,13 +38,6 @@ func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, 
 		edges = append(edges, edge)
 	}
 	return edges, nil
-}
-
-// incidentEdgeLists returns a node's outgoing and incoming relationships
-// (a self-relationship is in both). A store that reads both directions at
-// once (storage.AdjacentEdgesEngine) is read with one call.
-func incidentEdgeLists(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
-	return incidentEdgeListsContext(context.Background(), store, nodeID, "both")
 }
 
 // incidentEdgeListsContext is the single storage reader for selected paths.

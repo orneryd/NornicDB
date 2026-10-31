@@ -246,7 +246,7 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	res := &ExecuteResult{Stats: &QueryStats{}}
 	input := &ExecuteResult{Columns: []string{"p"}, Rows: [][]interface{}{{map[string]interface{}{
 		"nodes": []interface{}{gone, "x"}, "rels": []interface{}{edge, int64(1)}}}}}
-	exec.applyDeleteReturnProjection(res, "MATCH p = ()-->() DELETE p RETURN size(nodes(p)) AS n", "p", deleteProjectionInfo{ctx: context.Background(), input: input})
+	exec.applyDeleteReturnProjection(context.Background(), res, "MATCH p = ()-->() DELETE p RETURN size(nodes(p)) AS n", "p", deleteProjectionInfo{input: input})
 	require.Equal(t, [][]interface{}{{int64(2)}}, res.Rows)
 }
 

@@ -323,10 +323,12 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 	minSimilarity := -1.0
 	resolved.MinSimilarity = &minSimilarity
 	normalizedQuery := vector.Normalize(queryEmbedding)
-	ctx, err = withQuantizationOptions(ctx, resolved)
+	// The request context is kept when the options are invalid.
+	quantizedCtx, err := withQuantizationOptions(ctx, resolved)
 	if err != nil {
 		return nil, err
 	}
+	ctx = quantizedCtx
 	var quantizedIndex *HNSWIndex
 	if h, ok := pipeline.candidateGen.(*HNSWCandidateGen); ok && h.quantizationActive(ctx) && !quantizationOptions(ctx).rescore {
 		quantizedIndex = h.hnswIndex

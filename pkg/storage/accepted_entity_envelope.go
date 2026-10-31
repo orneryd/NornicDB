@@ -113,16 +113,28 @@ const (
 // BeginEntityTransaction obtains one native frame through the actual wrapper
 // chain and binds its durability mode before exposing it to a caller.
 func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
+	return beginEntityTransaction(context.Background(), engine, mode)
+}
+
+// beginEntityTransaction is BeginEntityTransaction for the request ctx: a
+// native engine begins the frame under it (beginTransaction).
+func beginEntityTransaction(ctx context.Context, engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
 	if !mode.valid() {
 		return nil, ErrInvalidData
 	}
 	visited := map[Engine]bool{}
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
-		if starter, ok := engine.(interface {
+		var begin func() (*BadgerTransaction, error)
+		if native, ok := engine.(*BadgerEngine); ok {
+			begin = func() (*BadgerTransaction, error) { return native.beginTransaction(ctx) }
+		} else if starter, ok := engine.(interface {
 			BeginTransaction() (*BadgerTransaction, error)
 		}); ok {
-			tx, err := starter.BeginTransaction()
+			begin = starter.BeginTransaction
+		}
+		if begin != nil {
+			tx, err := begin()
 			if err != nil {
 				return nil, err
 			}

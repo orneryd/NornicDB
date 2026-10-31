@@ -1,0 +1,631 @@
+{
+  "author": "storage-format-owners lane (Claude), #1693, 30 October 2026",
+  "note": "Read-based census outcomes outside Contract A, each ruled by Nornic2. outOfContract: a function whose fresh context reaches no storage function that reads it while a request is in scope (the census's call graph over-approximates that reach). excludedPackages: tooling and test packages outside the product contract; the rule is a package no product package imports (no non-test file outside the package imports it), checked at each listed head. trackedDefects: a real defect filed for Linear (sig/handoff/linear-pending-issues.md), listed and counted until fixed. deferredPublicAPI: NOT an exclusion. Contract A is unfulfilled wherever a request holder reaches a substitution only across the public API (a caller in another package, or dynamic dispatch into an exported method, Engine or any other interface); each such site is listed and counted as unfulfilled-contract-a against this tracked deferral, never as a pass. Each entry is logged and counted; an entry that matches nothing fails. publicPackages: packages whose exported API, like storage's, is the deferred public boundary (Nornic2, 31 October 2026: exported auth APIs). publicEntries: single exported functions that are the same deferred boundary (Nornic2, 31 October 2026: cypher.RedactLiterals).",
+  "outOfContract": {
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).publishDirectStatementCommit": {
+      "Reason": "the fresh context feeds only QueryPermissionRequirements, a static check of the query text (did the statement write?), which reaches no storage function; the request context is passed to publishStatementCommit",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/pkg/lifecycle.Run": {
+      "Reason": "the shutdown drain is deliberately fresh (OBS-09): it must outlive the cancelled run context.",
+      "Approver": "Nornic2 ruling (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+18 in github.com/orneryd/nornicdb/pkg/lifecycle.Run)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistMVCCSequence": {
+      "Reason": "MVCC sequence persistence after the commit point: a request cancellation must not cut it short, and no request context is replaced.",
+      "Approver": "Nornic2 ruling (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+15 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistMVCCSequence)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).updateMetadata": {
+      "Reason": "ID counter persistence after the commit point: a request cancellation must not cut it short, and no request context is replaced.",
+      "Approver": "Nornic2 ruling (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).updateMetadata)"
+      ]
+    }
+  },
+  "excludedPackages": {
+    "github.com/orneryd/nornicdb/cmd/recall-bench": {
+      "Reason": "benchmark tool, outside the product contract",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/internal/streamretrytest": {
+      "Reason": "test helper package, outside the product contract",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/testing/search/contract": {
+      "Reason": "test contract package, outside the product contract",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/internal/transactionalcalltest": {
+      "Reason": "test helper package (the shared Execute checks of the fixture and Cypher tests); no product package imports it",
+      "Approver": "Nornic2 (31 October 2026)"
+    }
+  },
+  "trackedDefects": {
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).graphFunctionStorage": {
+      "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md)",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/pkg/cypher.rowStatementContextOrBackground": {
+      "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md): the row-evaluation fallback (temporal_values.go)",
+      "Approver": "Nornic2 (31 October 2026)"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).evaluateRowValueText": {
+      "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md): the shortest-path row branch (row_expression.go)",
+      "Approver": "Nornic2 (31 October 2026)"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).endSuppressions": {
+      "Reason": "owned by #1691 obligation 3; the decision lands with #1691 in the stack.",
+      "Approver": "Nornic2 (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+17 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).endSuppressions)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition": {
+      "Reason": "#1548's context.Background() on ReconcileDecaySuppression's path; kept as merged. It is the same never-cancelled value as namespaceMaintenanceContext, and its owner context arrives with U-1636.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Occurrences": [
+        "call context.Background (+18 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition)"
+      ]
+    }
+  },
+  "deferredPublicAPI": {
+    "Reason": "the exported storage API (Engine and the optional interfaces) the exported auth API (publicPackages) and cypher.RedactLiterals (publicEntries) take no request context (no new or changed exported API in 1.4.4), so a caller holding one loses it there; 1.5.0 design, tracked as the pending Linear entry 'the exported storage API has no request context, so callers that hold one lose it (reads and writes)' (sig/handoff/linear-pending-issues.md). A 1.4.4 release scope decision, not proof that these paths carry no request.",
+    "Approver": "Nornic2 (30 October 2026), corrected by audit #33"
+  },
+  "publicPackages": [
+    "github.com/orneryd/nornicdb/pkg/auth"
+  ],
+  "publicEntries": [
+    "github.com/orneryd/nornicdb/pkg/cypher.RedactLiterals"
+  ],
+  "reviewedHeldValues": {
+    "github.com/orneryd/nornicdb/pkg/bolt.extractTraceparent": {
+      "Held": [
+        "call (go.opentelemetry.io/otel/propagation.TraceContext).Extract (+18 in github.com/orneryd/nornicdb/pkg/bolt.extractTraceparent)"
+      ],
+      "Sources": {
+        "github.com/orneryd/nornicdb/pkg/bolt.extractTraceparent": "f996ba2ed3eb1dbd89e7cbd8dc80f02d42a39b2aebdef30f20763c53eea04b92"
+      },
+      "Modules": [
+        "go.opentelemetry.io/otel v1.46.0",
+        "go.opentelemetry.io/otel/trace v1.46.0"
+      ],
+      "Reason": "the propagator's Extract(ctx, carrier) on the function's own parameter after its nil fallback returns that ctx or trace.ContextWithRemoteSpanContext(ctx, sc), a context.WithValue on it (otel v1.46.0, propagation/trace_context.go and trace/context.go); the census does not load library bodies",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "783ccd00dcc46c126340aa0110ece98220f2d3f775c2d3d3db941c9b04d85153"
+    },
+    "github.com/orneryd/nornicdb/pkg/cypher.withParams": {
+      "Held": [
+        "call github.com/orneryd/nornicdb/pkg/cypher.withQueryParams (+13 in github.com/orneryd/nornicdb/pkg/cypher.withParams)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/cypher.queryParamsContext).Value": "6a636226be0179460cabc02a2521bc82203eeea9568e48a091f7bf8e0d161e2f",
+        "github.com/orneryd/nornicdb/pkg/cypher.withParams": "f07efcbfe3cd19c69b7d55a22381dc5536eed75fd4f8767de57e02786a74db7b",
+        "github.com/orneryd/nornicdb/pkg/cypher.withQueryParams": "bedddc04d25ad7a42b7cc2b0d7408621a473db698edd693c9c3a015aaf4808fb"
+      },
+      "FieldWriters": {
+        "github.com/orneryd/nornicdb/pkg/cypher.queryParamsContext.Context": [
+          "github.com/orneryd/nornicdb/pkg/cypher.withQueryParams"
+        ]
+      },
+      "Methods": {
+        "github.com/orneryd/nornicdb/pkg/cypher.queryParamsContext": [
+          "Deadline promoted",
+          "Done promoted",
+          "Err promoted",
+          "Value declared"
+        ]
+      },
+      "Reason": "withQueryParams(ctx, params) on the function's own parameter after its nil fallback returns &queryParamsContext{Context: ctx, params}, whose only writer is withQueryParams and whose only declared method, Value, adds the query parameters; cancellation and deadline are the embedded ctx's",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "0d2b0f408d6709fa25197e55ddb48ba23035c50a234f0391ccaa84dfad89460e"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/fabric.FabricTransaction).BindContext": {
+      "Held": [
+        "call github.com/orneryd/nornicdb/pkg/fabric.transactionLifetime (+7 in (*github.com/orneryd/nornicdb/pkg/fabric.FabricTransaction).BindContext)",
+        "load of field lifetimeCtx of *github.com/orneryd/nornicdb/pkg/fabric.FabricTransaction (+3 in (*github.com/orneryd/nornicdb/pkg/fabric.FabricTransaction).BindContext)",
+        "load of field lifetimeCtx of *github.com/orneryd/nornicdb/pkg/fabric.FabricTransaction (+9 in (*github.com/orneryd/nornicdb/pkg/fabric.FabricTransaction).BindContext)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/fabric.FabricTransaction).BindContext": "f968d9b91f993b542312215740df6c544a7d61212477ad4b8852b069889020bd",
+        "(github.com/orneryd/nornicdb/pkg/fabric.transactionLifetimeValues).AfterFunc": "e97f76106de229811eac22a452d1f1c481ae4dd0ce011b250f635cc98e1d9084",
+        "(github.com/orneryd/nornicdb/pkg/fabric.transactionLifetimeValues).Deadline": "7a18de1e24f263e8b81b6da55580f889ef9f9eb6d53196745152d41a1598822b",
+        "(github.com/orneryd/nornicdb/pkg/fabric.transactionLifetimeValues).Done": "0d4bbb8646bc5ce0d40d9eaaedf7a521aef0304ecb9744d1db3b5be958d63865",
+        "(github.com/orneryd/nornicdb/pkg/fabric.transactionLifetimeValues).Err": "1d24236b65fbb87b4d502bbe58010b61531ac004b91fc0e90bc47d9de58715fa",
+        "github.com/orneryd/nornicdb/pkg/fabric.WithTransactionLifetime": "d65e5e81e0408f15ed3b19bfe8c6fa616dda135e03c49c60c323400bdcca6ecb",
+        "github.com/orneryd/nornicdb/pkg/fabric.transactionLifetime": "6143a56f4740b96f93edc234d91f7ba7fb8f8fe47b3a28ff3ba6b6994a1c4c2c"
+      },
+      "FieldWriters": {
+        "github.com/orneryd/nornicdb/pkg/fabric.transactionLifetimeValues.Context": [
+          "github.com/orneryd/nornicdb/pkg/fabric.transactionLifetime"
+        ],
+        "github.com/orneryd/nornicdb/pkg/fabric.transactionLifetimeValues.lifetime": [
+          "github.com/orneryd/nornicdb/pkg/fabric.transactionLifetime"
+        ]
+      },
+      "Methods": {
+        "github.com/orneryd/nornicdb/pkg/fabric.transactionLifetimeValues": [
+          "AfterFunc declared",
+          "Deadline declared",
+          "Done declared",
+          "Err declared",
+          "Value promoted"
+        ]
+      },
+      "Reason": "under t.mu the fresh context is created only when the slot t.lifetimeCtx, just tested, is nil; the slot then holds context.WithCancel(transactionLifetime(ctx)) on the function's own parameter after its nil fallback, and transactionLifetime returns ctx or transactionLifetimeValues{Context: context.WithoutCancel(ctx), lifetime}, where lifetime is the protocol-owned transaction lifetime carried in ctx's values by WithTransactionLifetime (an owner lifetime, not a request); transactionLifetime is the only writer of both fields",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "d9539ff74d689332cd9f7859e4174387a66e47ac5f464d9afbc741c9541e071f"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).candidatePopulation": {
+      "Held": [
+        "call (*github.com/orneryd/nornicdb/pkg/search.clusterServing).open result #0 (+0 in (*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).candidatePopulation)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/search.GPUKMeansCandidateGen).SetServing": "c0f5467c3fc1467466bbc2aa80bb8bccddc79070b382f0b21160f1f861f8d34d",
+        "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).SetServing": "0a6e2cee7ef3f85a96b8720fa086fff98c0a44663fd5e5a6f4107f7c530068c0",
+        "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).candidatePopulation": "16c9af27ba066a455729bb7407bbd7e8accfa6724d9a31dd2ea573092d9e7ce7",
+        "(*github.com/orneryd/nornicdb/pkg/search.KMeansCandidateGen).SetServing": "b9f5a4f8ca0fdca0d950de715c28160ba02e409a3faecf244ab6481035519787",
+        "(*github.com/orneryd/nornicdb/pkg/search.Service).acquireClusterSnapshot": "7692d737c9f45b4a5f984bd8b810bd91366fe48f5ac29bf2f7fbd5409779807f",
+        "(*github.com/orneryd/nornicdb/pkg/search.Service).clusterQueryView": "f19bff23f1843bdb4523b3cb3bacd062f583e7c159dd6ef1faeb00ce88bed5e7",
+        "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy": "968e106c668410858d7001083c1b62b4e68c29918315e341a4778e4033da4e9c",
+        "(*github.com/orneryd/nornicdb/pkg/search.clusterServing).open": "c3edc42566c8cf625161e4dca9600cc4a830d765d52db529354ebed05386786e"
+      },
+      "Callers": {
+        "(*github.com/orneryd/nornicdb/pkg/search.GPUKMeansCandidateGen).SetServing": [
+          "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).SetServing": [
+          "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/search.KMeansCandidateGen).SetServing": [
+          "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy"
+        ]
+      },
+      "FieldWriters": {
+        "github.com/orneryd/nornicdb/pkg/search.clusterServing.view": [
+          "(*github.com/orneryd/nornicdb/pkg/search.GPUKMeansCandidateGen).SetServing",
+          "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).SetServing",
+          "(*github.com/orneryd/nornicdb/pkg/search.KMeansCandidateGen).SetServing"
+        ]
+      },
+      "Reason": "the only other context held is the first result of g.serving.open(ctx, ...) (discarded), which is ctx when no serving source is set, else the serving view callback's result for ctx; the serving view callback is bound only by the three SetServing methods, whose only caller, resolveClusteredVectorStrategy, passes s.clusterQueryView; it returns its ctx or acquireClusterSnapshot(ctx), a context.WithValue on that ctx, so the context it returns is built only from the function's own parameter after its nil fallback",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "3cf5191fbf4eb1f0ee251dfe2a7192b096cce40a2c388ff0ba7f86dd09258465"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).searchCandidatesWithEvidence": {
+      "Held": [
+        "call (*github.com/orneryd/nornicdb/pkg/search.clusterServing).open result #0 (+0 in (*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).searchCandidatesWithEvidence)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/search.GPUKMeansCandidateGen).SetServing": "c0f5467c3fc1467466bbc2aa80bb8bccddc79070b382f0b21160f1f861f8d34d",
+        "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).SetServing": "0a6e2cee7ef3f85a96b8720fa086fff98c0a44663fd5e5a6f4107f7c530068c0",
+        "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).searchCandidatesWithEvidence": "91adeffd4d86037a450fc95ca2b32e930c0947374c2573e11e665b9fda8ae21d",
+        "(*github.com/orneryd/nornicdb/pkg/search.KMeansCandidateGen).SetServing": "b9f5a4f8ca0fdca0d950de715c28160ba02e409a3faecf244ab6481035519787",
+        "(*github.com/orneryd/nornicdb/pkg/search.Service).acquireClusterSnapshot": "7692d737c9f45b4a5f984bd8b810bd91366fe48f5ac29bf2f7fbd5409779807f",
+        "(*github.com/orneryd/nornicdb/pkg/search.Service).clusterQueryView": "f19bff23f1843bdb4523b3cb3bacd062f583e7c159dd6ef1faeb00ce88bed5e7",
+        "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy": "968e106c668410858d7001083c1b62b4e68c29918315e341a4778e4033da4e9c",
+        "(*github.com/orneryd/nornicdb/pkg/search.clusterServing).open": "c3edc42566c8cf625161e4dca9600cc4a830d765d52db529354ebed05386786e"
+      },
+      "Callers": {
+        "(*github.com/orneryd/nornicdb/pkg/search.GPUKMeansCandidateGen).SetServing": [
+          "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).SetServing": [
+          "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/search.KMeansCandidateGen).SetServing": [
+          "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy"
+        ]
+      },
+      "FieldWriters": {
+        "github.com/orneryd/nornicdb/pkg/search.clusterServing.view": [
+          "(*github.com/orneryd/nornicdb/pkg/search.GPUKMeansCandidateGen).SetServing",
+          "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).SetServing",
+          "(*github.com/orneryd/nornicdb/pkg/search.KMeansCandidateGen).SetServing"
+        ]
+      },
+      "Reason": "the only other context held is the first result of g.serving.open(ctx, ...), assigned over ctx and forwarded to routing and search: ctx when no serving source is set, else the serving view callback's result for ctx; the serving view callback is bound only by the three SetServing methods, whose only caller, resolveClusteredVectorStrategy, passes s.clusterQueryView; it returns its ctx or acquireClusterSnapshot(ctx), a context.WithValue on that ctx, so the context it returns is built only from the function's own parameter after its nil fallback",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "1518456608c1d1771422cfb58d6176a8b95d40e1ad483c6b5b2c2f50d2c67210"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/search.clusterServing).population": {
+      "Held": [
+        "dynamic call of field view of *github.com/orneryd/nornicdb/pkg/search.clusterServing result #0 (+0 in (*github.com/orneryd/nornicdb/pkg/search.clusterServing).population)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/search.GPUKMeansCandidateGen).SetServing": "c0f5467c3fc1467466bbc2aa80bb8bccddc79070b382f0b21160f1f861f8d34d",
+        "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).SetServing": "0a6e2cee7ef3f85a96b8720fa086fff98c0a44663fd5e5a6f4107f7c530068c0",
+        "(*github.com/orneryd/nornicdb/pkg/search.KMeansCandidateGen).SetServing": "b9f5a4f8ca0fdca0d950de715c28160ba02e409a3faecf244ab6481035519787",
+        "(*github.com/orneryd/nornicdb/pkg/search.Service).acquireClusterSnapshot": "7692d737c9f45b4a5f984bd8b810bd91366fe48f5ac29bf2f7fbd5409779807f",
+        "(*github.com/orneryd/nornicdb/pkg/search.Service).clusterQueryView": "f19bff23f1843bdb4523b3cb3bacd062f583e7c159dd6ef1faeb00ce88bed5e7",
+        "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy": "968e106c668410858d7001083c1b62b4e68c29918315e341a4778e4033da4e9c",
+        "(*github.com/orneryd/nornicdb/pkg/search.clusterServing).population": "342bfeb7c9690735d8e152970bdad02ce259dbe7e891255b4868d530552a6bc3"
+      },
+      "Callers": {
+        "(*github.com/orneryd/nornicdb/pkg/search.GPUKMeansCandidateGen).SetServing": [
+          "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).SetServing": [
+          "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/search.KMeansCandidateGen).SetServing": [
+          "(*github.com/orneryd/nornicdb/pkg/search.Service).resolveClusteredVectorStrategy"
+        ]
+      },
+      "FieldWriters": {
+        "github.com/orneryd/nornicdb/pkg/search.clusterServing.view": [
+          "(*github.com/orneryd/nornicdb/pkg/search.GPUKMeansCandidateGen).SetServing",
+          "(*github.com/orneryd/nornicdb/pkg/search.IVFHNSWCandidateGen).SetServing",
+          "(*github.com/orneryd/nornicdb/pkg/search.KMeansCandidateGen).SetServing"
+        ]
+      },
+      "Reason": "the only other context held is the first result of c.view(ctx), the serving view callback, discarded (_); the serving view callback is bound only by the three SetServing methods, whose only caller, resolveClusteredVectorStrategy, passes s.clusterQueryView; it returns its ctx or acquireClusterSnapshot(ctx), a context.WithValue on that ctx, so the context it returns is built only from the function's own parameter after its nil fallback",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "1e62b3e0896c75bfa3e908d820b9f8e44d3ed73c1e9282c592939e2619187c3c"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle).commitContext": {
+      "Held": [
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle (+3 in (*github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle).commitContext)",
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle (+4 in (*github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle).commitContext)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle).commitContext": "d48c12db38e9bf4a19ceb8dcea75eddcce527bef5a12396acbc6e8868fe1705e",
+        "(*github.com/orneryd/nornicdb/pkg/bolt.Session).handleCommit": "16a46cad0c26f5c32ab827a57e7c26f38ec71a2e480929a6efb62ca98e7cb5e7"
+      },
+      "Reason": "under l.mu the fresh context is returned only when the slot l.ctx, just tested, is nil; otherwise the slot itself, the explicit transaction's own context, is returned: the fallback replaces nothing handleCommit is its only caller and holds this call result. U-1636 note: the Bolt session lifetime above handleCommit is not threaded here and belongs to #1636.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "76f152201774a86eb5d967afe82257dc5f9a47538cb5776b3312c60aa33b3bb1",
+      "EndsRouteAt": [
+        "(*github.com/orneryd/nornicdb/pkg/bolt.Session).handleCommit"
+      ],
+      "Callers": {
+        "(*github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle).commitContext": [
+          "(*github.com/orneryd/nornicdb/pkg/bolt.Session).handleCommit"
+        ]
+      }
+    },
+    "(*github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle).begin": {
+      "Held": [
+        "call github.com/orneryd/nornicdb/pkg/fabric.WithTransactionLifetime (+30 in (*github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle).begin)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/bolt.transactionLifecycle).begin": "03e8d105f2ac499a055c86551411f4049e6f95b1130fa113599363763d1780f0",
+        "github.com/orneryd/nornicdb/pkg/fabric.WithTransactionLifetime": "d65e5e81e0408f15ed3b19bfe8c6fa616dda135e03c49c60c323400bdcca6ecb"
+      },
+      "Reason": "WithTransactionLifetime(txCtx, parent) is context.WithValue(txCtx, key, parent), where txCtx is context.WithCancel(parent) and parent is the function's own parameter after its nil fallback: built only from that parameter",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "1a4efc8a15500264fd08e4d11e152ec9ac066a9bc8a1ddc35cee1da505c31864"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).evaluateCaseExpressionFromValues": {
+      "Held": [
+        "call github.com/orneryd/nornicdb/pkg/cypher.withValueBindings (+4 in (*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).evaluateCaseExpressionFromValues)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).evaluateCaseExpressionFromValues": "d0291ebab0e7e0f8905d77c17a549b7a472ed43957a97b27498ada346bc596b2",
+        "github.com/orneryd/nornicdb/pkg/cypher.withValueBindings": "a9ddbc59047366d481ee017a390adeee565dab50b8dfb237c6d37eec38f5c647"
+      },
+      "Reason": "withValueBindings(context.Background(), values) is context.WithValue on that fresh context: built only from it",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "6d127dde8602804e3cc6692db442ba8e6b33ee69faed3e6e767f054e89b65fec"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).evaluateConditionFromValues": {
+      "Held": [
+        "call github.com/orneryd/nornicdb/pkg/cypher.withValueBindings (+1 in (*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).evaluateConditionFromValues)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).evaluateConditionFromValues": "010c7fecf951ad304f6a23b3ec01b9bd36fa05042e1938e5d19f4a0f439f433b",
+        "github.com/orneryd/nornicdb/pkg/cypher.withValueBindings": "a9ddbc59047366d481ee017a390adeee565dab50b8dfb237c6d37eec38f5c647"
+      },
+      "Reason": "withValueBindings(context.Background(), values) is context.WithValue on that fresh context: built only from it",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "8ebbfcfdd111f80d82c01e120a46d1653fe2597c0aa0e399c8c8dcc295ce979b"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).TriggerSearchClustering": {
+      "Held": [
+        "load of field buildCtx of *github.com/orneryd/nornicdb/pkg/nornicdb.DB (+12 in (*github.com/orneryd/nornicdb/pkg/nornicdb.DB).TriggerSearchClustering)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).TriggerSearchClustering": "e3d059394f0e07ca72967e1c3092b50aa5513922bb9d447c451dfc9184f52b2b"
+      },
+      "Reason": "the fresh context replaces db.buildCtx, read into ctx, only when it is nil; db.buildCtx is the database's lifetime context (set once by Open), not a request",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "ff85de86776945c6d7e168724bcca974155b3a44fe0018797ef49e926a9486fa"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).retentionContext": {
+      "Held": [
+        "load of field buildCtx of *github.com/orneryd/nornicdb/pkg/nornicdb.DB (+5 in (*github.com/orneryd/nornicdb/pkg/nornicdb.DB).retentionContext)",
+        "load of field buildCtx of *github.com/orneryd/nornicdb/pkg/nornicdb.DB (+4 in (*github.com/orneryd/nornicdb/pkg/nornicdb.DB).retentionContext)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).retentionContext": "0fb9161e60efd584704a191875ce763f3ea37186cc4e4539e2fdb8a9b3491310"
+      },
+      "Reason": "the fresh context is returned only when db or db.buildCtx is nil; db.buildCtx is the database's lifetime context (set once by Open), not a request",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "b8f6d4249cbe91f3aacfdaf24a948a4cc27563103ba23948b997201fecdbd617"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage/lifecycle.MVCCLifecycleManager).SetLifecycleSchedule": {
+      "Held": [
+        "load of field parentCtx of *github.com/orneryd/nornicdb/pkg/storage/lifecycle.MVCCLifecycleManager (+7 in (*github.com/orneryd/nornicdb/pkg/storage/lifecycle.MVCCLifecycleManager).SetLifecycleSchedule)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage/lifecycle.MVCCLifecycleManager).SetLifecycleSchedule": "ee4f7f6ee631875bf77ff3889a97cf6de1aa4d92fef3c4ff0e6738f933fc410f"
+      },
+      "Reason": "the fresh context replaces m.parentCtx, read into parentCtx under m.mu, only when it is nil (the lifecycle was never started); otherwise the lifecycle restarts under the context it was started with",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Closure": "3aaa3dabf703f4aab30f12cadcf157cfdcf59e3b2b01d77f274578fcd05c11fd"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).createEdgeWithWriteContext": {
+      "Held": [
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+40 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).createEdgeWithWriteContext)",
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+58 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).createEdgeWithWriteContext)",
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+121 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).createEdgeWithWriteContext)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).beginEntityWrite": "9bc46b0f4b0049367f849c5bc3683dbf3a05d0f42f3e5c7271fe6f7f10e687ea",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).createEdgeWithWriteContext": "701a3a223b6fcc969d3ed09463ff97142d231b058fed62e4789d45b6a7a7f360"
+      },
+      "Closure": "f1969252298fee0848ff88f4559a33e66c54ccc216ef4e645839c9cd118c3356",
+      "Callers": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).createEdgeWithWriteContext": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).CreateEdge"
+        ]
+      },
+      "Reason": "the only other contexts held are loads of write.ctx; write comes from beginEntityWrite(context.Background(), ...) in this function with the inherited parameter, nil at its only caller (Callers pin), and beginEntityWrite gives a new write the context it was passed, so every load is that Background. It stays reported here so that a caller's request threaded later shows up as a change to this record.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).UpdateEdge": {
+      "Held": [
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+43 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).UpdateEdge)",
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+64 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).UpdateEdge)",
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+80 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).UpdateEdge)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).beginEntityWrite": "9bc46b0f4b0049367f849c5bc3683dbf3a05d0f42f3e5c7271fe6f7f10e687ea",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).UpdateEdge": "7d1d6bd146a5266d4609a06cba51b9b69b69677d8575c6098423366225df85f1"
+      },
+      "Closure": "3c9a492cfbc10f01bfee880462cec479b0d1928995461425491def905a57b647",
+      "Reason": "the only other contexts held are loads of write.ctx; write comes from beginEntityWrite(context.Background(), ...) in this function with no inherited write, and beginEntityWrite gives a new write the context it was passed, so every load is that Background. It stays reported here so that a caller's request threaded later shows up as a change to this record.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).DeleteEdge": {
+      "Held": [
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+35 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).DeleteEdge)",
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+55 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).DeleteEdge)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).beginEntityWrite": "9bc46b0f4b0049367f849c5bc3683dbf3a05d0f42f3e5c7271fe6f7f10e687ea",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).DeleteEdge": "013314aa380465a9326a772152e2abd168f48d7ff4c096d5d485f893677735b0"
+      },
+      "Closure": "67093c4001c284e03461306d5b5f34ee5a5991fd1bc64fae23df8cb7fbe2a706",
+      "Reason": "the only other contexts held are loads of write.ctx; write comes from beginEntityWrite(context.Background(), ...) in this function with no inherited write, and beginEntityWrite gives a new write the context it was passed, so every load is that Background. It stays reported here so that a caller's request threaded later shows up as a change to this record.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).SetManualSuppression": {
+      "Held": [
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+66 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).SetManualSuppression)",
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+58 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).SetManualSuppression)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).beginEntityWrite": "9bc46b0f4b0049367f849c5bc3683dbf3a05d0f42f3e5c7271fe6f7f10e687ea",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).SetManualSuppression": "0f42bb9cf12681da8db6e30cf2e5b1584d67cb9d663d1a8a44ce21bb069dc81e"
+      },
+      "Closure": "866c1b66f5fb82d82de931dc148c789490182751079e6f4b280ea7981fa15e28",
+      "Reason": "the only other contexts held are loads of write.ctx; write comes from beginEntityWrite(context.Background(), ...) in this function with no inherited write, and beginEntityWrite gives a new write the context it was passed, so every load is that Background. It stays reported here so that a caller's request threaded later shows up as a change to this record.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replaceSeparateEmbeddingChunks": {
+      "Held": [
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.entityWriteContext (+6 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replaceSeparateEmbeddingChunks)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).beginEntityWrite": "9bc46b0f4b0049367f849c5bc3683dbf3a05d0f42f3e5c7271fe6f7f10e687ea",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replaceSeparateEmbeddingChunks": "e84f852d2189d9789f3d746eb019f45efd57b2c88924a3e484991fd1bda95815"
+      },
+      "Closure": "f1981b8afcdb5cd8caca8970e070a287b48d49f31e1c55402d8e459bf4cce90c",
+      "Callers": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replaceSeparateEmbeddingChunks": []
+      },
+      "Reason": "the only other contexts held are loads of write.ctx; write comes from beginEntityWrite(context.Background(), ...) in this function with the inherited parameter, with no production caller (Callers pin), and beginEntityWrite gives a new write the context it was passed, so every load is that Background. It stays reported here so that a caller's request threaded later shows up as a change to this record.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).withUpdate": {
+      "Held": [
+        "load of field ctx of *github.com/orneryd/nornicdb/pkg/storage.updateRequest (+1 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).withUpdate)"
+      ],
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).withUpdate": "b04f12171789834da4fb143f1f3d4f7dceebf3c872792e4c3c079c3e42ace0f5",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildRelationshipIndexes": "42c6b65a61b50aed3d5492ccd30706b7c460db57065dcdfec6a6ded26b15da6b",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).PruneMVCCVersions": "d12ef301c1ee2c0777e13b6417bec70e51335a6513eed7b39f927d4ce07b8395",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).markIndexBackfillReady": "ab8b0d180e4960d3aebccbc0c3e63c8f4284178cdec5e51fab180593b94a4df4",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).forEachStoredRecordInChunks": "e3b376eb5cacee104ef0fcfd4db202b875798482351a417f45aa95cdef246b04",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).DeleteMVCCVersion": "9e139f74bb448a39dc1fa86e02d53ef68727512c4d1ea032d0c4b3844d9f60ba",
+        "github.com/orneryd/nornicdb/pkg/storage.applyMVCCHeadBatch": "53603a8350453e43cbf4b0a01917de07e50dce28087b78d994e1a43fc48cec00",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).WriteMVCCHead": "6d83ad210daa738a46183aa494377e7be6809e3f54d8b8ae5e55e6878177512d",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).RebuildTemporalIndexes": "28f4944366db72468e386d726228e41c6d1fa568f893ff5e85196d86117978d2",
+        "github.com/orneryd/nornicdb/pkg/storage.applyMVCCBootstrapBatch": "0884eaa68608ba7d24a38987fdd7f157e4cdc780897b06089aa22b6b4952d0cf"
+      },
+      "Closure": "7e77e8da366f0d20d452a95d722a6c24137a1dc18a1ade0c595cf3a9a1325def",
+      "Reason": "ctx := request.ctx, and the fallback replaces it only when it is nil: on that branch the held value is nil, so the fresh context replaces no request. Named callers pass their own ctx on every call, so the fallback does not run for them; every other caller is walked. Not named: rebuildLabelIndexForV2, rebuildEdgeIndexesForV2 and migrateV1ToV2Bodies, reached only from runOnStartMigrations with no context on the path; any holder above them stays reported. Count callers (applyWriteBehindCountDeltasLocked, applyCountDeltas, rebuildLabelCounts, rebuildEdgeTypeCountsSnapshot) end their routes as over-reports: the write-behind drain route runs queued commits for no single request, and PublishCommit applies counts after the physical commit. id_dictionary_repair's call of the rebuild functions has no holder (d38). Two caller levels are pinned, so a new route stales this record.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "EndsRouteAt": [
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).DeleteMVCCVersion",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).PruneMVCCVersions",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).RebuildTemporalIndexes",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).WriteMVCCHead",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyWriteBehindCountDeltasLocked",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).forEachStoredRecordInChunks",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).markIndexBackfillReady",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildEdgeTypeCountsSnapshot",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildLabelCounts",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildRelationshipIndexes",
+        "github.com/orneryd/nornicdb/pkg/storage.applyCountDeltas",
+        "github.com/orneryd/nornicdb/pkg/storage.applyMVCCBootstrapBatch",
+        "github.com/orneryd/nornicdb/pkg/storage.applyMVCCHeadBatch"
+      ],
+      "Callers": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).withUpdate": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).AppendEdgeTombstone",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).AppendEdgeVersion",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).AppendNodeTombstone",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).AppendNodeVersion",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).DeleteIndexEntryCatalog",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).DeleteMVCCVersion",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FindNodeNeedingEmbedding",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).PruneChangeEvents",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).PruneMVCCVersions",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).PutIndexEntryCatalog",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).RebuildTemporalIndexes",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).RefreshPendingEmbeddingsIndex",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).SetIndexTombstones",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).UpdateEdgeCurrentHead",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).UpdateNodeCurrentHead",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).WriteMVCCHead",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyWriteBehindCountDeltasLocked",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).backfillTemporalIndexForLabel",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).compactDeletedEntries",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).foldCountDeltaKeys",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).forEachStoredRecordInChunks",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).markIndexBackfillReady",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).migrateV2ToV3",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildEdgeIndexesForV2",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildEdgeTypeCountsSnapshot",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildLabelCounts",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildLabelIndexForV2",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildRelationshipIndexes",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).repairArchivedEdgeAdjacency",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).repairNamedCountLocked",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).selfHealEdgeBetweenIndexes",
+          "github.com/orneryd/nornicdb/pkg/storage.applyCountDeltas",
+          "github.com/orneryd/nornicdb/pkg/storage.applyMVCCBootstrapBatch",
+          "github.com/orneryd/nornicdb/pkg/storage.applyMVCCHeadBatch",
+          "github.com/orneryd/nornicdb/pkg/storage.migrateV1ToV2Bodies"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyWriteBehindCountDeltasLocked": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommits",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replayWriteBehind"
+        ],
+        "github.com/orneryd/nornicdb/pkg/storage.applyCountDeltas": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyEdgeTypeCountDeltasLocked",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyEdgeTypeLabelCountDeltasLocked",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyLabelCountDeltasLocked",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).decrementEdgeTypeCounts",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).decrementEdgeTypeLabelCounts",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).decrementLabelCounts"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyEdgeTypeCountDeltasLocked": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyEdgeTypeLabelCountDeltasLocked": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).decrementEdgeTypeCounts": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).deleteByPrefixHeld"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).decrementEdgeTypeLabelCounts": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).deleteByPrefixHeld"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyLabelCountDeltasLocked": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).decrementLabelCounts": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).deleteByPrefixHeld"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildLabelCounts": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).ensureLabelCounts",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildAuthoritativeLabelCountsLocked"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).ensureLabelCounts": [
+          "github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions",
+          "github.com/orneryd/nornicdb/pkg/storage.recoverAcceptedCommits"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildAuthoritativeLabelCountsLocked": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).RepairIDDictionary",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildEdgeTypeCountsSnapshot": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).ensureEdgeTypeCounts",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildAuthoritativeEdgeTypeCountsLocked"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).ensureEdgeTypeCounts": [
+          "github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions",
+          "github.com/orneryd/nornicdb/pkg/storage.recoverAcceptedCommits"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildAuthoritativeEdgeTypeCountsLocked": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).RepairIDDictionary",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).selfHealEdgeBetweenIndexes": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).committedEdgeBetween",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).committedEdgesBetween",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).committedMatchEdgesBetween"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).committedEdgeBetween": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetEdgeBetween"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).committedEdgesBetween": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).edgesBetween"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).committedMatchEdgesBetween": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).MatchEdgesBetween"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).repairNamedCountLocked": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).namedCountInNamespace"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).namedCountInNamespace": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).EdgeCountByTypeInNamespace",
+          "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).NodeCountByLabelInNamespace"
+        ]
+      },
+      "TrackedRoutes": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).selfHealEdgeBetweenIndexes": "Finding F1 (1693-d38-findings.md): a relationship lookup's index repair runs under Background(), so a cancelled read waits for it. Predates #1548; for the user and TJ; unfixed in #1693.",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).repairNamedCountLocked": "Finding F2 (1693-d38-findings.md): a label or relationship-type count read's repair runs under Background(), so a cancelled stream waits for it. For the user and TJ; unfixed in #1693."
+      },
+      "RouteSources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyWriteBehindCountDeltasLocked": "31f8f31e95f8cf96a2bfe80d95ce7371ad1f1ed2816c947a160b59ccb4500fae",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication": "388d839f7b5b24d02ad83531e5b9f6b537d0ca284f9b12cafd326e17063e185a",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommits": "0656de472413b5665d980f9ec5b3f315a34039bacba06a78af372d2b6f246564",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replayWriteBehind": "f71f711333cd0361d82cb9e27148628045541f32db20554ad7ba6a59db0f8fcc",
+        "github.com/orneryd/nornicdb/pkg/storage.applyCountDeltas": "6e7ed4c19cc97570b9806570cb5164062d4f241ed88c707347eca50af3bf21c9",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyEdgeTypeCountDeltasLocked": "c811c3a16340fea2eca7c34fae4b58b09561457dc4683b075e5bf94a87745aa7",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyEdgeTypeLabelCountDeltasLocked": "b497b4e9c416a8002f0758bfe62da32bf260ef38a6ce1973f6051a2f0bc5c389",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit": "bf50d16716288f3404d6eab05455999b23cb8d56bca6c0454ea8a79f7ad031b1",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).decrementEdgeTypeCounts": "cd9b5adfdd5f581fc79be4c7060359d7dd53618680b1055bccd83b23da4c6f49",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).deleteByPrefixHeld": "c34dbb7e0f51653f64eb3b0ae2074c473b7094e1ae6195d41b6257ebff88ddea",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).decrementEdgeTypeLabelCounts": "7ed7e1831f9485da81dc47f62a93efa117c41049c95ec76ff116ca3b0e1f428b",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyLabelCountDeltasLocked": "35255ad8ceeef44919529b0113fd6ce45b6942fe12274e07fe4aee5a5e63b714",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).decrementLabelCounts": "c200c9b7204bd2fc169f1ada03e96abb0a7d42e69cf278c7523656ac09fc04b1",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildLabelCounts": "44ac5d1ee9b55b2446aa98ddf86d0044105fe9f8e9de263c567b0d5bcc8de372",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).ensureLabelCounts": "978b17e0528c1b4247810ac70a58b52f3c2df84202f73acf5d4b182844bb884d",
+        "github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions": "a6ca32d9ed6e0ae1f1045baf258477e45cd89f6308c50b464564f9ff51476fa4",
+        "github.com/orneryd/nornicdb/pkg/storage.recoverAcceptedCommits": "5134ab02ce328e155221deab20cc7cb913c168a35d2317281870c5246e6ae7e9",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildAuthoritativeLabelCountsLocked": "f2e84de371ac254789332b82da8b809cfe862eec966d2aff0db7f3c31c588304",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).RepairIDDictionary": "33199d4aad387ea9ae412becc71b212326e7104daeaa52a6397ea73f7599d100",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildEdgeTypeCountsSnapshot": "bcbd5202d34d86da0fed4d9dcb04a9b94f126c3a784587d83523c8b4ada7b0a3",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).ensureEdgeTypeCounts": "8a1cad6cace2e19ecc9a5cdacad523ce0364511616e53c99b3890f100388e67d",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebuildAuthoritativeEdgeTypeCountsLocked": "ef616f8dbf7773b92e4016be635f59e4618b316144508f6bbb3e245ebc3fff9d",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).selfHealEdgeBetweenIndexes": "648e968a28efd88d7a1568ddc6a0c62457c87c897ed78eb965b7fb8fd49d8b7a",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).committedEdgeBetween": "2697c5f24b4bbd99fec75a1f1afb3d77d184ce0905924e99633c0889b6179ea0",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetEdgeBetween": "7e14167f15d016b3d212bb4fe8820ab9b64dc842c9c13cd0b86f7c1de9b41bc8",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).committedEdgesBetween": "7ff0072cd8cc638f47bc34a9a9445523ebc1be7df812ecf785393067770b181f",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).edgesBetween": "9f4ffc4be80ecf0f1250e2a1c8e1d27dc42608492268ebda3dd0a94daaac5cbe",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).committedMatchEdgesBetween": "a885cb75cc623aa9292edc85a6933d9b1fc2f43c720fc458b4b6009283377464",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).MatchEdgesBetween": "97021e05bc4cf23b1fa4fe6177b7af656f76c1fd0329db9ce86e8c310eee188b",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).repairNamedCountLocked": "3742670c45b8f4e5242b3dd25d0c0f78c43818e1e5788a6fd1f3ed65ccfa2429",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).namedCountInNamespace": "36afdbb9a4a30cf86281d633dd7f8be2f2e1777c886b948acad08fda0cb9708c",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).EdgeCountByTypeInNamespace": "08e63fba5fb2610d4412a6ec04a07478f4552e6bc05746c0b9768d357b522b38",
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).NodeCountByLabelInNamespace": "349e2549da950326e58e51a3a1e962c0f22367c71d98351e0ccb23f2d2bef786"
+      }
+    }
+  }
+}

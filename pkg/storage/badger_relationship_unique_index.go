@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -89,7 +90,8 @@ func (idx *relationshipUniqueIndex) put(edge *Edge) {
 // complete scan, rather than trusting an incomplete index miss. The index is
 // built from every stored relationship of the type: one hidden from reads
 // still holds its value.
-func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, namespace string) ([]NodeID, bool, error) {
+// relationshipUniqueCandidates scans for candidates under ctx, the read's context.
+func (b *BadgerEngine) relationshipUniqueCandidates(ctx context.Context, edge *Edge, c Constraint, namespace string) ([]NodeID, bool, error) {
 	if b.writeBehind != nil || b.decayEnabled || namespace == "" || len(c.Properties) == 0 {
 		return nil, false, nil
 	}
@@ -106,7 +108,7 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 		if hook := getUniqueConstraintScanHook(); hook != nil {
 			hook()
 		}
-		edges, err := b.GetStoredEdgesByType(edge.Type)
+		edges, err := b.getEdgesByType(ctx, edge.Type, storedRead)
 		if err != nil {
 			set.active.Store(len(set.entries) > 0)
 			return nil, false, err

@@ -94,7 +94,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	}
 	if len(sources) == 0 {
 		result := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-		e.applyDeleteReturnProjection(result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
+		e.applyDeleteReturnProjection(ctx, result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
 		return result, true, nil
 	}
 
@@ -175,7 +175,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 			e.notifyEdgeMutated(string(edgeID))
 		}
 	}
-	e.applyDeleteReturnProjection(result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
+	e.applyDeleteReturnProjection(ctx, result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
 	return result, true, nil
 }
 

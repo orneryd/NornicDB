@@ -1,6 +1,9 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"bytes"
@@ -186,7 +189,7 @@ func TestEmbeddingRevisionIdentityAcrossFlush(t *testing.T) {
 	acknowledged, err := disk.GetNode("test:doc")
 	require.NoError(t, err)
 	revision := acknowledged.EmbeddingRevision()
-	same, err := disk.embeddingRevisionIsCurrent("test:doc", revision)
+	same, err := disk.embeddingRevisionIsCurrent(context.Background(), "test:doc", revision)
 	require.NoError(t, err)
 	require.True(t, same, "the acknowledged body is current before flush")
 	require.NoError(t, disk.FlushWriteBehind(nil))
@@ -195,7 +198,7 @@ func TestEmbeddingRevisionIdentityAcrossFlush(t *testing.T) {
 	same, err = revision.MatchesNode(materialized)
 	require.NoError(t, err)
 	require.True(t, same, "flush is not a new body attempt")
-	same, err = disk.embeddingRevisionIsCurrent("test:doc", revision)
+	same, err = disk.embeddingRevisionIsCurrent(context.Background(), "test:doc", revision)
 	require.NoError(t, err)
 	require.True(t, same)
 	stamp := materialized.UpdatedAt
@@ -206,7 +209,7 @@ func TestEmbeddingRevisionIdentityAcrossFlush(t *testing.T) {
 	same, err = revision.MatchesNode(updated)
 	require.NoError(t, err)
 	require.False(t, same, "an idempotent update is a new body revision")
-	same, err = disk.embeddingRevisionIsCurrent("test:doc", revision)
+	same, err = disk.embeddingRevisionIsCurrent(context.Background(), "test:doc", revision)
 	require.NoError(t, err)
 	require.False(t, same)
 }

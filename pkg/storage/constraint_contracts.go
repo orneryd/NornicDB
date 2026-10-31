@@ -1428,7 +1428,7 @@ func (tx *BadgerTransaction) currentEdgeLocked(edgeID EdgeID) (*Edge, error) {
 }
 
 func (tx *BadgerTransaction) currentOutgoingEdgesLocked(nodeID NodeID) ([]*Edge, error) {
-	committed, err := tx.engine.GetStoredOutgoingEdges(nodeID)
+	committed, err := tx.engine.outgoingEdges(tx.requestContextLocked(), nodeID, storedRead)
 	if err != nil {
 		return nil, err
 	}
@@ -1484,7 +1484,7 @@ func constraintContractNamespaceForEdge(edge *Edge) (string, bool) {
 }
 
 func (tx *BadgerTransaction) currentIncomingEdgesLocked(nodeID NodeID) ([]*Edge, error) {
-	committed, err := tx.engine.GetStoredIncomingEdges(nodeID)
+	committed, err := tx.engine.incomingEdges(tx.requestContextLocked(), nodeID, storedRead)
 	if err != nil {
 		return nil, err
 	}

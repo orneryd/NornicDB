@@ -1,124 +1,37 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"path/filepath"
-	"strings"
+	"encoding/json"
+	"os"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/workcensus"
+	"github.com/orneryd/nornicdb/testing/capturecensus"
 	"github.com/stretchr/testify/require"
 )
 
-// The deterministic selector tests prove the capture contract. This guard
-// ensures its public consumers keep using that owner as new read paths arrive.
+// The compiled population determines readers, including optional capabilities
+// and new declarations outside storage. Behavioral tests prove their capture
+// and publication schedules; a source reachability witness alone does not.
 func TestSnapshotOverlayPublicReadsReachCapture(t *testing.T) {
-	files, err := filepath.Glob("*.go")
+	facts, err := capturecensus.Extract(workcensus.Config{Dir: "../..", Patterns: []string{"./..."}, BuildFlags: []string{"-tags=noui,nolocalllm"}, Env: append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")}, capturecensus.StoragePolicy())
 	require.NoError(t, err)
-	calls := map[string][]string{}
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+	require.NotEmpty(t, facts.Reads)
+	require.NotEmpty(t, facts.Consumers)
+	if os.Getenv("PRINT_CAPTURE_CENSUS") == "1" {
+		data, err := json.Marshal(facts)
 		require.NoError(t, err)
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			var receiver string
-			if fn.Recv != nil {
-				recv := fn.Recv.List[0]
-				ptr, ok := recv.Type.(*ast.StarExpr)
-				if !ok {
-					continue
-				}
-				typ, ok := ptr.X.(*ast.Ident)
-				if !ok || typ.Name != "BadgerEngine" {
-					continue
-				}
-				receiver = recv.Names[0].Name
-			} else if fn.Name.Name == "readAdjacency" {
-				// The shared dispatcher calls the native reader only after an
-				// actual *BadgerEngine assertion. Follow that bound receiver,
-				// not arbitrary optional providers with similar method names.
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					assign, ok := n.(*ast.AssignStmt)
-					if !ok || len(assign.Rhs) != 1 || len(assign.Lhs) == 0 {
-						return true
-					}
-					assertion, ok := assign.Rhs[0].(*ast.TypeAssertExpr)
-					if !ok {
-						return true
-					}
-					ptr, ok := assertion.Type.(*ast.StarExpr)
-					if !ok {
-						return true
-					}
-					typ, ok := ptr.X.(*ast.Ident)
-					if !ok || typ.Name != "BadgerEngine" {
-						return true
-					}
-					if name, ok := assign.Lhs[0].(*ast.Ident); ok {
-						receiver = name.Name
-					}
-					return true
-				})
-				require.NotEmpty(t, receiver, "shared adjacency route must bind its native engine")
-			} else {
-				continue
-			}
-			calls[fn.Name.Name] = nil
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if direct, ok := call.Fun.(*ast.Ident); ok && direct.Name == "readAdjacency" {
-					calls[fn.Name.Name] = append(calls[fn.Name.Name], direct.Name)
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				if id, ok := sel.X.(*ast.Ident); ok && id.Name == receiver {
-					calls[fn.Name.Name] = append(calls[fn.Name.Name], sel.Sel.Name)
-				}
-				if owner, ok := sel.X.(*ast.SelectorExpr); ok && owner.Sel.Name == "writeBehind" {
-					for _, forbidden := range []string{"Overlay", "GetNode", "GetEdge", "LookupNode", "LookupEdge", "NodeDeleted", "EdgeDeleted"} {
-						if strings.Contains(sel.Sel.Name, forbidden) {
-							t.Errorf("%s.%s bypasses capture with writeBehind.%s", name, fn.Name.Name, sel.Sel.Name)
-						}
-					}
-				}
-				return true
-			})
-		}
+		t.Log(string(data))
 	}
-	readers := []string{"GetNode", "GetNodeProjected", "GetNodeWithoutEmbeddings", "GetEdge", "BatchGetNodes", "BatchGetNodesWithoutEmbeddings", "HasLabelBatch", "RelationshipEndpointVisible", "GetNodesByLabelInScope", "GetFirstNodeByLabelInScope", "ForEachNodeIDByLabelInScope", "AllNodes", "AllEdges", "GetEdgesByType", "GetOutgoingEdges", "GetIncomingEdges", "GetAdjacentEdges", "OutgoingEdgeHeaders", "IncomingEdgeHeaders", "GetEdgesBetween", "GetEdgeBetween", "MatchEdgesBetween", "StreamNodesWithOptions", "StreamNodesByLabelProjectedInScope", "StreamEdges", "StreamEdgesByTypeInScope", "IterateNodes", "StreamNodeChunks", "GetNodeEmbeddingMeta"}
-	if _, ok := calls["GetQueryNode"]; ok {
-		readers = append(readers, "GetQueryNode")
+	// Every fresh request context reaching the capture owners, with the reason
+	// no caller context exists there; the census fails any other placement.
+	for _, site := range facts.ContextSites {
+		t.Logf("context site %s:%d %s -> %s: %s", site.File, site.Line, site.Function, site.Callee, site.Reason)
 	}
-	for _, reader := range readers {
-		seen := map[string]bool{}
-		var reaches func(string) bool
-		reaches = func(name string) bool {
-			if name == "captureReadView" {
-				return true
-			}
-			if seen[name] {
-				return false
-			}
-			seen[name] = true
-			for _, callee := range calls[name] {
-				if reaches(callee) {
-					return true
-				}
-			}
-			return false
-		}
-		require.True(t, reaches(reader), "%s must reach the shared snapshot/overlay capture", reader)
+	for _, finding := range facts.NilContextsElsewhere {
+		t.Logf("nil context outside the capture family: %s", finding)
 	}
+	require.Empty(t, facts.Violations)
 }

@@ -327,7 +327,7 @@ func TestR2SpanErrorSDKContract(t *testing.T) {
 		reference.RecordError(err)
 		reference.End()
 		_, projected := tracer.Start(context.Background(), "projected")
-		recordSpanError(projected, err)
+		recordSpanError(context.Background(), projected, err)
 		projected.End()
 		spans := recorder.Ended()
 		before, after := spans[len(spans)-2].Events(), spans[len(spans)-1].Events()

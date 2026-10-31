@@ -1,6 +1,9 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -16,7 +19,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	_, err = b.GetOutgoingEdges("test:a")
 	require.NoError(t, err)
 	edgeGen := b.edgeCacheGen.current()
-	view, err := b.captureReadView(nil)
+	view, err := b.captureReadView(context.Background(), nil)
 	require.NoError(t, err)
 	defer view.Close()
 
@@ -55,7 +58,7 @@ func TestSnapshotOverlayBodyCacheHydratesSidecarsAtReadPoint(t *testing.T) {
 	require.NoError(t, b.FlushWriteBehind(nil))
 	node, err := b.GetNode("test:a")
 	require.NoError(t, err)
-	view, err := b.captureReadView(nil)
+	view, err := b.captureReadView(context.Background(), nil)
 	require.NoError(t, err)
 	defer view.Close()
 	node.ChunkEmbeddings = [][]float32{{1, 2}}

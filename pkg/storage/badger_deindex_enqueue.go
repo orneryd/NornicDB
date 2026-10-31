@@ -16,11 +16,17 @@ import (
 // The returned bool is true only when the entity transitioned into the
 // suppressed state during this call.
 func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) (bool, error) {
+	return b.enqueueDeindexIfSuppressed(context.Background(), entityID, isEdge)
+}
+
+// enqueueDeindexIfSuppressed is EnqueueDeindexIfSuppressed with the write's
+// context (see beginEntityWrite).
+func (b *BadgerEngine) enqueueDeindexIfSuppressed(ctx context.Context, entityID string, isEdge bool) (bool, error) {
 	if !b.decayEnabled {
 		return false, nil
 	}
 
-	write, releaseWrite, err := b.beginEntityWrite(context.Background(), entityID, isEdge, nil)
+	write, releaseWrite, err := b.beginEntityWrite(ctx, entityID, isEdge, nil)
 	if err != nil {
 		return false, err
 	}

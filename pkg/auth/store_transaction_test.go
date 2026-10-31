@@ -133,7 +133,7 @@ func TestCoordinatedRoleRenameFailureChangesNothing(t *testing.T) {
 	users := &Authenticator{storage: fault, users: map[string]*User{}}
 	for _, name := range []string{"alice", "bob"} {
 		user := &User{Username: name, Roles: []Role{"ops"}}
-		require.NoError(t, users.saveUser(user, nil))
+		require.NoError(t, users.saveUser(context.Background(), user, nil))
 		users.users[name] = user
 	}
 	fault.Operation, fault.Nth = storagefault.MutationUpdate, 2
@@ -271,7 +271,7 @@ func TestCoordinatedRoleRenameStagedFailuresChangeNothing(t *testing.T) {
 			allowlist := NewAllowlistStore(fault)
 			require.NoError(t, allowlist.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 			users := &Authenticator{storage: fault, users: map[string]*User{"worker": {Username: "worker", Roles: []Role{"ops"}}}}
-			require.NoError(t, users.saveUser(users.users["worker"], nil))
+			require.NoError(t, users.saveUser(context.Background(), users.users["worker"], nil))
 			before, err := system.AllNodes()
 			require.NoError(t, err)
 			fault.Operation, fault.ID, fault.Nth = test.op, test.id, test.nth

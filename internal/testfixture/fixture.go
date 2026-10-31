@@ -1,6 +1,18 @@
 // Package testfixture owns test resources without importing their packages.
 package testfixture
 
+// Bounded fixture close author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
+import (
+	"fmt"
+	"time"
+)
+
+// closeTimeout bounds one fixture close during test cleanup. A resource that
+// cannot close, for example because a crash left its state held, fails the
+// test instead of hanging the test binary until an outer timeout kills it.
+var closeTimeout = 2 * time.Minute
+
 // Owner is the cleanup boundary provided by testing.T, testing.B or Boundary.
 type Owner interface {
 	Helper()
@@ -39,8 +51,21 @@ func own[T Closer](owner Owner, resource T, before []Closer, report func(error))
 	owner.Helper()
 	owner.Cleanup(func() {
 		close := func(resource Closer) {
-			if err := resource.Close(); err != nil && report != nil {
-				report(err)
+			done := make(chan error, 1)
+			go func() { done <- resource.Close() }()
+			select {
+			case err := <-done:
+				if err != nil && report != nil {
+					report(err)
+				}
+			case <-time.After(closeTimeout):
+				stuck := fmt.Sprintf("closing test fixture %T did not finish within %s; its state is still held", resource, closeTimeout)
+				if checked, ok := owner.(CheckedOwner); ok {
+					checked.Helper()
+					checked.Errorf("%s", stuck)
+					return
+				}
+				panic(stuck)
 			}
 		}
 		for _, dependency := range before {

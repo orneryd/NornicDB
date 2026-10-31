@@ -1561,6 +1561,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 				// === Phase 6: PostExecute hooks (optional) ===
 				// Plugins that implement PostExecuteHook get notified
 				postExecCtx := &PostExecuteContext{
+					Context:    ctx,
 					RequestID:  lifecycle.requestID,
 					Action:     parsedAction.Action,
 					Params:     parsedAction.Params,

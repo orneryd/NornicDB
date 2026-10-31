@@ -23,7 +23,7 @@ func seedRoleRename(t *testing.T, engine storage.Engine) *RoleStore {
 	require.NoError(t, NewAllowlistStore(engine).SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 	require.NoError(t, NewRoleEntitlementsStore(engine).Set(ctx, "ops", []string{"read", "write"}))
 	users := &Authenticator{storage: engine}
-	require.NoError(t, users.saveUser(&User{Username: "worker", Roles: []Role{"ops", RoleViewer}}, nil))
+	require.NoError(t, users.saveUser(context.Background(), &User{Username: "worker", Roles: []Role{"ops", RoleViewer}}, nil))
 	return roles
 }
 

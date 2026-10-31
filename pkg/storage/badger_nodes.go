@@ -1,6 +1,8 @@
 // Package storage provides storage engine implementations for NornicDB.
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"context"
 	"fmt"
@@ -19,12 +21,13 @@ import (
 // REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
 // This enforces that all nodes are namespaced at the storage layer.
 func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
-	return b.createNodeWithWriteContext(node, nil)
+	return b.createNodeWithWriteContext(context.Background(), node, nil)
 }
 
-func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityWriteContext) (NodeID, error) {
+// createNodeWithWriteContext is CreateNode under ctx, the write's context.
+func (b *BadgerEngine) createNodeWithWriteContext(ctx context.Context, node *Node, inherited *entityWriteContext) (NodeID, error) {
 	if node != nil {
-		if handled, err := b.inMutationTransaction(string(node.ID), false, func(tx *BadgerTransaction) error {
+		if handled, err := b.inMutationTransaction(ctx, string(node.ID), false, func(tx *BadgerTransaction) error {
 			_, err := tx.CreateNode(node)
 			return err
 		}); handled {
@@ -40,7 +43,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 	if node != nil {
 		entityID = string(node.ID)
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), entityID, false, inherited)
+	write, releaseWrite, barrierErr := b.beginEntityWrite(ctx, entityID, false, inherited)
 	if barrierErr != nil {
 		return "", barrierErr
 	}
@@ -220,7 +223,7 @@ const (
 // copy shape and whether the decoded node is cached. A nil hitCopy is reserved
 // for a stored existence check: it avoids materializing a cache hit and returns
 // no node image, while preserving the same admission, decode, and error behavior.
-func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheMode nodeReadCacheMode) (*Node, error) {
+func (b *BadgerEngine) getNodeByID(ctx context.Context, id NodeID, v readVisibility, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheMode nodeReadCacheMode) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -261,7 +264,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 	// The cached callback resolves the requested buffered key while the owner
 	// holds the retirement lock. Only a miss needs a transaction; no overlay
 	// for this key remains to capture, and no decode closure is built on a hit.
-	view, err := b.captureReadView(nil, readViewOptions{scope: namespaceForNodeID(id), cached: cached})
+	view, err := b.captureReadView(ctx, nil, readViewOptions{scope: namespaceForNodeID(id), cached: cached})
 	loaded := view != nil
 	var sourceTs uint64
 	if view != nil {
@@ -324,24 +327,26 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 
 // GetNode retrieves a node by ID.
 func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
-	return b.getNode(id, visibleRead)
+	return b.getNode(context.Background(), id, visibleRead)
 }
 
 // GetStoredNode returns the physical body through the same captured read view.
 func (b *BadgerEngine) GetStoredNode(id NodeID) (*Node, error) {
-	return b.getNode(id, storedRead)
+	return b.getNode(context.Background(), id, storedRead)
 }
 
-func (b *BadgerEngine) getNode(id NodeID, v readVisibility) (*Node, error) {
-	return b.getNodeSnapshotForRead(id, false, v, false)
+// getNode reads one node; ctx is the read's context.
+func (b *BadgerEngine) getNode(ctx context.Context, id NodeID, v readVisibility) (*Node, error) {
+	return b.getNodeSnapshotForRead(ctx, id, false, v, false)
 }
 
 func (b *BadgerEngine) getNodeSnapshot(id NodeID, force bool) (*Node, error) {
-	return b.getNodeSnapshotForRead(id, force, visibleRead, false)
+	return b.getNodeSnapshotForRead(context.Background(), id, force, visibleRead, false)
 }
 
 // An existence-only stored read never returns an image, even on a cache hit.
-func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisibility, existenceOnly bool) (*Node, error) {
+// ctx is the read's context.
+func (b *BadgerEngine) getNodeSnapshotForRead(ctx context.Context, id NodeID, force bool, v readVisibility, existenceOnly bool) (*Node, error) {
 	mode := nodeReadCacheFull
 	if force {
 		mode = nodeReadCacheSnapshot
@@ -353,7 +358,7 @@ func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisib
 		}
 		copyImage = nil
 	}
-	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+	return b.getNodeByID(ctx, id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
 	}, copyImage, mode)
 }
@@ -365,18 +370,18 @@ func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisib
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
-	return b.readNodeMetadata(id, visibleRead, nodeItemQueryMetadata)
+	return b.readNodeMetadata(context.Background(), id, visibleRead, nodeItemQueryMetadata)
 }
 
 // readNodeMetadata binds hydration, copy ownership and cache publication together.
 // Query metadata keeps its own cache and caller-owned view; body-only reads
 // strip vectors from overlay/cache hits and never publish partial bodies.
-func (b *BadgerEngine) readNodeMetadata(id NodeID, v readVisibility, hydration nodeItemHydration) (*Node, error) {
+func (b *BadgerEngine) readNodeMetadata(ctx context.Context, id NodeID, v readVisibility, hydration nodeItemHydration) (*Node, error) {
 	copyImage, cache := copyNodeForCaller, nodeReadCacheQuery
 	if hydration == nodeItemBodyOnly {
 		copyImage, cache = copyNodeWithoutEmbeddings, nodeReadCacheProjection
 	}
-	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+	return b.getNodeByID(ctx, id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, hydration)
 	}, copyImage, cache)
 }
@@ -395,8 +400,9 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 	}
 	if b.writeBehind != nil {
 		var state bufferedEntityState
-		err := b.withReadView(func(w *WriteBehindBuffer) {
+		err := b.withReadView(context.Background(), func(w *WriteBehindBuffer) error {
 			state = w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
+			return nil
 		}, func(txn *badger.Txn) error {
 			if state.found {
 				if state.deleted {
@@ -438,15 +444,16 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 // back to the full GetNode path; an empty non-nil slice returns no user
 // properties.
 func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
-	return b.getNodeProjected(id, properties, visibleRead)
+	return b.getNodeProjected(context.Background(), id, properties, visibleRead)
 }
 
-func (b *BadgerEngine) getNodeProjected(id NodeID, properties []string, v readVisibility) (*Node, error) {
+// getNodeProjected reads one node's projected properties; ctx is the read's context.
+func (b *BadgerEngine) getNodeProjected(ctx context.Context, id NodeID, properties []string, v readVisibility) (*Node, error) {
 	if properties == nil {
-		return b.getNode(id, v)
+		return b.getNode(ctx, id, v)
 	}
 	include := propertyProjectionSet(properties)
-	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+	return b.getNodeByID(ctx, id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include, nodeBodyDetached)
 	}, func(node *Node) *Node { return projectCachedNodeForRead(node, properties, true) }, nodeReadCacheProjection)
 }
@@ -456,14 +463,19 @@ func (b *BadgerEngine) getNodeProjected(id NodeID, properties []string, v readVi
 // The decoded node is not cached, so an embedding-free read can never poison
 // the cache for later full reads.
 func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
-	return b.readNodeMetadata(id, visibleRead, nodeItemBodyOnly)
+	return b.readNodeMetadata(context.Background(), id, visibleRead, nodeItemBodyOnly)
 }
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
 func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
+	return b.updateNode(context.Background(), updateRequest)
+}
+
+// updateNode is UpdateNode under ctx, the write's context.
+func (b *BadgerEngine) updateNode(ctx context.Context, updateRequest NodeUpdateRequest) error {
 	node := updateRequest.After
 	if node != nil {
-		if handled, err := b.inMutationTransaction(string(node.ID), updateRequest.Before != nil || updateRequest.Policy == StoredNodeImages, func(tx *BadgerTransaction) error {
+		if handled, err := b.inMutationTransaction(ctx, string(node.ID), updateRequest.Before != nil || updateRequest.Policy == StoredNodeImages, func(tx *BadgerTransaction) error {
 			return ApplyNodeUpdate(tx, updateRequest)
 		}); handled {
 			return err
@@ -475,7 +487,7 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	if node != nil {
 		entityID = string(node.ID)
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), entityID, false, nil)
+	write, releaseWrite, barrierErr := b.beginEntityWrite(ctx, entityID, false, nil)
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -766,14 +778,19 @@ func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings 
 
 // DeleteNode removes a node and all its edges.
 func (b *BadgerEngine) DeleteNode(id NodeID) error {
-	if handled, err := b.inMutationTransaction(string(id), false, func(tx *BadgerTransaction) error {
+	return b.deleteNode(context.Background(), id)
+}
+
+// deleteNode is DeleteNode under ctx, the write's context.
+func (b *BadgerEngine) deleteNode(ctx context.Context, id NodeID) error {
+	if handled, err := b.inMutationTransaction(ctx, string(id), false, func(tx *BadgerTransaction) error {
 		return tx.DeleteGraphNode(id, CascadeEdges)
 	}); handled {
 		return err
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), string(id), false, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), false) }})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(ctx, string(id), false, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(ctx, string(id), false) }})
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -845,7 +862,8 @@ func (b *BadgerEngine) removeNodeRecordKeys(w kvWriter, node *Node) error {
 // ============================================================================
 
 // lockEngineWriteKeys takes node's constraint key locks for a direct engine
-// write, under an owner of its own (a variable so tests can make it fail).
+// write, under an owner of its own and the write's context (a variable so
+// tests can make it fail).
 var lockEngineWriteKeys = func(ctx context.Context, schema *SchemaManager, node *Node, owner string) (func(), error) {
 	return schema.acquireUniqueConstraintCommitLocks(ctx, owner, schema.appendConstraintValueKeys(nil, []*Node{node}, nil))
 }

@@ -440,8 +440,9 @@ func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bo
 	}
 }
 
-func isMutationQuery(query string) bool {
-	requirements := cypher.QueryPermissionRequirements(context.Background(), query, cypher.RawSource)
+// isMutationQuery classifies query under ctx, the request's context.
+func isMutationQuery(ctx context.Context, query string) bool {
+	requirements := cypher.QueryPermissionRequirements(ctx, query, cypher.RawSource)
 	return requirements.Write || requirements.Schema
 }
 

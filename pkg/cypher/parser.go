@@ -195,7 +195,13 @@ type SetItem struct {
 
 // Parse parses a Cypher query string into a Query AST.
 func (p *Parser) Parse(cypher string) (*Query, error) {
-	ctx, source := cyphertext.WithSource(context.Background(), cypher)
+	return p.parseContext(context.Background(), cypher)
+}
+
+// parseContext is Parse for a statement processed under ctx, the request's
+// context.
+func (p *Parser) parseContext(ctx context.Context, cypher string) (*Query, error) {
+	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		return nil, source.Err
 	}
@@ -431,7 +437,7 @@ func NewExecutor() *Executor {
 // parses and validates a Cypher query but, does not execute.
 func (e *Executor) ParseAndValidate(ctx context.Context, cypher string, params map[string]any) (*Result, error) {
 	// Parse query
-	query, err := e.parser.Parse(cypher)
+	query, err := e.parser.parseContext(ctx, cypher)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreParseFailed(err), err)
 	}

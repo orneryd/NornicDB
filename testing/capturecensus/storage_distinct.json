@@ -1,0 +1,65 @@
+{
+  "author": "#1667 implementation lane (Codex)",
+  "decisions": {
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FilterPropertyByDecay": {
+      "Digest": "32ad54bbef38ca7834548d366f0f919c2ccdf9a45e922786535998aa6e37221e",
+      "Reason": "Scores a supplied node-property descriptor (ID, labels and timestamps) through filterEntityByDecay; it does not materialize a node or select an overlay body.",
+      "Owners": [
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).filterEntityByDecay"
+      ],
+      "ID": "pkg/storage/badger_decay_filter.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FilterPropertyByDecay/declaration#1"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FilterEdgePropertyByDecay": {
+      "Digest": "3b4409bfce368fbac0db10f8acecfe35eab3c2cc8e9048d456ae56c1c7081d47",
+      "Reason": "Scores a supplied relationship-property descriptor (ID, type and timestamps) through filterEntityByDecay; it does not materialize a relationship or select an overlay body.",
+      "Owners": [
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).filterEntityByDecay"
+      ],
+      "ID": "pkg/storage/badger_decay_filter.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FilterEdgePropertyByDecay/declaration#1"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).StreamParkedEmbeddingFailures": {
+      "Digest": "524b699e65e9aa01f1167ab5537a101dc60d684ad6a3c9365529974728d65f6e",
+      "Reason": "Scans reserved embedding-failure metadata under withView, admitting pending namespace DROP and observing ctx before each key; emits metadata and IDs, never graph bodies or an overlay.",
+      "Owners": [
+        "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).withView"
+      ],
+      "ID": "pkg/storage/badger_embedding_sidecar.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).StreamParkedEmbeddingFailures/declaration#1"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnNodeCreated": {
+      "Digest": "ce17ddc8cb2bb22a6f50f929644097770d791d5aaa8c1485c4099bc7a4c42e09",
+      "Reason": "Registers the node created listener by appending to onNodeCreated under callbackMu; delivery is performed later by the retained ordered notification dispatcher, not by this registration.",
+      "Owners": [],
+      "ID": "pkg/storage/badger.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnNodeCreated/declaration#1"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnNodeUpdated": {
+      "Digest": "02d9f2a097afbb6fe76d5064670cd24de8c8cf9de27ffb0216a70a683d577c82",
+      "Reason": "Registers the node updated listener by appending to onNodeUpdated under callbackMu; delivery is performed later by the retained ordered notification dispatcher, not by this registration.",
+      "Owners": [],
+      "ID": "pkg/storage/badger.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnNodeUpdated/declaration#1"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnNodeDeleted": {
+      "Digest": "b973f52a0e62e430567f1422d4b4b9e0ed79c76371ef04f782d21cfcb3e367b0",
+      "Reason": "Registers the node deleted listener by appending to onNodeDeleted under callbackMu; delivery is performed later by the retained ordered notification dispatcher, not by this registration.",
+      "Owners": [],
+      "ID": "pkg/storage/badger.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnNodeDeleted/declaration#1"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnEdgeCreated": {
+      "Digest": "ad6a4a5f681b8f651d10f5b08c9c0b0032a0262a6347e6ff15d36dc90e6e215b",
+      "Reason": "Registers the edge created listener by appending to onEdgeCreated under callbackMu; delivery is performed later by the retained ordered notification dispatcher, not by this registration.",
+      "Owners": [],
+      "ID": "pkg/storage/badger.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnEdgeCreated/declaration#1"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnEdgeUpdated": {
+      "Digest": "83f864dac2103c04a6e906f32d1df6f4023fda0542b709b1ac8c19a90f8b6410",
+      "Reason": "Registers the edge updated listener by appending to onEdgeUpdated under callbackMu; delivery is performed later by the retained ordered notification dispatcher, not by this registration.",
+      "Owners": [],
+      "ID": "pkg/storage/badger.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnEdgeUpdated/declaration#1"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnEdgeDeleted": {
+      "Digest": "a279fc3ea95207572ab8932e44edc2833738649d4002176521e83777daaae563",
+      "Reason": "Registers the edge deleted listener by appending to onEdgeDeleted under callbackMu; delivery is performed later by the retained ordered notification dispatcher, not by this registration.",
+      "Owners": [],
+      "ID": "pkg/storage/badger.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).OnEdgeDeleted/declaration#1"
+    }
+  }
+}

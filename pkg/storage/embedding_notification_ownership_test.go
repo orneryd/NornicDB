@@ -1,6 +1,9 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"sync"
@@ -130,10 +133,10 @@ func TestEmbeddingRevisionCapturedBufferedUpdates(t *testing.T) {
 	ack, err := b.GetNode("test:doc")
 	require.NoError(t, err)
 	require.True(t, stamp.Equal(ack.UpdatedAt))
-	same, err := b.embeddingRevisionIsCurrent(ack.ID, old.EmbeddingRevision())
+	same, err := b.embeddingRevisionIsCurrent(context.Background(), ack.ID, old.EmbeddingRevision())
 	require.NoError(t, err)
 	require.False(t, same)
-	same, err = b.embeddingRevisionIsCurrent(ack.ID, ack.EmbeddingRevision())
+	same, err = b.embeddingRevisionIsCurrent(context.Background(), ack.ID, ack.EmbeddingRevision())
 	require.NoError(t, err)
 	require.True(t, same)
 	require.NoError(t, b.FlushWriteBehind(nil))
@@ -150,11 +153,11 @@ func TestEmbeddingRevisionCapturedBufferedUpdates(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.DeleteGraphNode(ack.ID, CascadeEdges))
 	require.NoError(t, tx.Commit())
-	same, err = b.embeddingRevisionIsCurrent(ack.ID, ack.EmbeddingRevision())
+	same, err = b.embeddingRevisionIsCurrent(context.Background(), ack.ID, ack.EmbeddingRevision())
 	require.ErrorIs(t, err, ErrNotFound)
 	require.False(t, same)
-	require.NoError(t, b.FlushWriteBehind(nil))
-	same, err = b.embeddingRevisionIsCurrent(ack.ID, ack.EmbeddingRevision())
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	same, err = b.embeddingRevisionIsCurrent(context.Background(), ack.ID, ack.EmbeddingRevision())
 	require.ErrorIs(t, err, ErrNotFound)
 	require.False(t, same)
 }

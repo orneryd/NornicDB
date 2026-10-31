@@ -96,9 +96,9 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked() error {
 	// overlay map and opens one Badger read transaction rather than one per node.
 	var buffered map[NodeID]*Node
 	entered := false
-	err := tx.engine.withReadView(func(buffer *WriteBehindBuffer) {
+	err := tx.engine.withReadView(tx.requestContextLocked(), func(buffer *WriteBehindBuffer) error {
 		if buffer == nil {
-			return
+			return nil
 		}
 		capture := func(id NodeID) {
 			state := buffer.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: tx.engine, visibility: storedRead})
@@ -124,6 +124,7 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked() error {
 				capture(id)
 			}
 		}
+		return nil
 	}, func(view *badger.Txn) error {
 		entered = true
 		// Keep mutation order when several targets conflict, and consume each
