@@ -257,9 +257,10 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog) (sit
 			default:
 				held := ""
 				if len(also) > 0 {
-					held = " (also held at: " + strings.Join(also, ", ") + ")"
+					held = " (also held at: " + strings.Join(also, " | ") + ")"
 				}
-				violations = append(violations, where+": a request context exists up the caller chain "+strings.Join(chain, " <- ")+held+"; thread it")
+				routes := holderRoutes(p, top, policy, pb, digests, where)
+				violations = append(violations, where+": a request context exists up the caller chain "+strings.Join(chain, " <- ")+held+"; thread it [routes: "+strings.Join(routes, " || ")+"]")
 			}
 		}
 		sites = append(sites, site)
@@ -637,7 +638,7 @@ func requestChain(p *workcensus.Program, fn *ssa.Function, policy Policy, pb *pu
 			if holder == nil {
 				holder = caller
 			} else {
-				also = append(also, key)
+				also = append(also, strings.Join(chainTo(caller), " <- "))
 			}
 			return true, false
 		}
@@ -650,6 +651,33 @@ func requestChain(p *workcensus.Program, fn *ssa.Function, policy Policy, pb *pu
 		return nil, nil, allocated, cut
 	}
 	return chainTo(holder), also, allocated, cut
+}
+
+// holderRoutes lists, for each direct caller of a reported site, every holder
+// on or above that caller, each with one chain, so a reviewer can check every
+// route of the report. The walks record nothing: they only read.
+func holderRoutes(p *workcensus.Program, fn *ssa.Function, policy Policy, pb *publicBoundary, digests *sourceDigests, where string) []string {
+	named := policy.ReviewedHeldValues[symbolOf(fn)].EndsRouteAt
+	seen := map[*ssa.Function]bool{}
+	var routes []string
+	for _, site := range p.SourceCallSites(fn) {
+		caller := workcensus.OutermostFunction(site.Parent())
+		if seen[caller] || excludedPackage(caller, policy) || slices.Contains(named, symbolOf(caller)) {
+			continue
+		}
+		seen[caller] = true
+		var holders []string
+		if requestToward(caller, fn) != "" {
+			holders = append(holders, "held here")
+		}
+		chain, also, _, _ := requestChain(p, caller, policy, pb, map[string]bool{}, map[string]bool{}, digests, &acceptanceLog{}, where)
+		if chain != nil {
+			holders = append(append(holders, strings.Join(chain, " <- ")), also...)
+		}
+		routes = append(routes, symbolOf(caller)+": "+strings.Join(holders, " | "))
+	}
+	sort.Strings(routes)
+	return routes
 }
 
 // sourceOf reports a context produced by a call to a named ContextSource.

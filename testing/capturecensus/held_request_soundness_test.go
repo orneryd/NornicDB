@@ -365,7 +365,8 @@ var _ = []any{(*Engine).holdsMixed, (*Engine).holdsPasses}
 
 	// One report lists every holder the walk finds.
 	both := run("func (e *Engine) shared() error { return e.capture(context.Background()) }\nfunc (e *Engine) mid(ctx context.Context) error { _ = ctx; return e.shared() }\nfunc (e *Engine) top(ctx context.Context) error { return e.mid(ctx) }\nvar _ = (*Engine).top\n", nil, nil)
-	require.Contains(t, strings.Join(both.Violations, "\n"), "(*capture.fixture.Engine).shared <- (*capture.fixture.Engine).mid (also held at: (*capture.fixture.Engine).top)")
+	require.Contains(t, strings.Join(both.Violations, "\n"), "(*capture.fixture.Engine).shared <- (*capture.fixture.Engine).mid (also held at: (*capture.fixture.Engine).shared <- (*capture.fixture.Engine).mid <- (*capture.fixture.Engine).top)")
+	require.Contains(t, strings.Join(both.Violations, "\n"), "[routes: (*capture.fixture.Engine).mid: held here | (*capture.fixture.Engine).mid <- (*capture.fixture.Engine).top]", "each direct caller lists every holder on or above it")
 
 	// A holder with its own current reviewed record is listed and walked
 	// past; the holder above it is reported, and a stale record is a holder.
