@@ -2,13 +2,12 @@
 package bolt
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -16,7 +15,6 @@ import (
 
 var errDateTimeSignature = errors.New("DateTime signature is not allowed by the negotiated Bolt temporal format")
 
-var packstreamZero8 [8]byte
 var packstreamFallbackHook func(v any)
 
 // ============================================================================
@@ -131,38 +129,34 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0xC3)
 		}
 		return append(dst, 0xC2)
-	// All integer types - encode as INT64 for Neo4j driver compatibility
+	// Scalar dispatch belongs to this existing structure switch. The typed
+	// owner writes the bytes/policy; nonnumbers never visit numeric reflection.
 	case int:
-		return encodePackStreamIntInto(dst, int64(val))
+		return convert.AppendBoltInteger(dst, int64(val))
 	case int8:
-		return encodePackStreamIntInto(dst, int64(val))
+		return convert.AppendBoltInteger(dst, int64(val))
 	case int16:
-		return encodePackStreamIntInto(dst, int64(val))
+		return convert.AppendBoltInteger(dst, int64(val))
 	case int32:
-		return encodePackStreamIntInto(dst, int64(val))
+		return convert.AppendBoltInteger(dst, int64(val))
 	case int64:
-		return encodePackStreamIntInto(dst, val)
+		return convert.AppendBoltInteger(dst, val)
 	case uint:
-		return encodePackStreamIntInto(dst, int64(val))
+		return convert.AppendBoltUnsigned(dst, uint64(val))
 	case uint8:
-		return encodePackStreamIntInto(dst, int64(val))
+		return convert.AppendBoltUnsigned(dst, uint64(val))
 	case uint16:
-		return encodePackStreamIntInto(dst, int64(val))
+		return convert.AppendBoltUnsigned(dst, uint64(val))
 	case uint32:
-		return encodePackStreamIntInto(dst, int64(val))
+		return convert.AppendBoltUnsigned(dst, uint64(val))
 	case uint64:
-		return encodePackStreamIntInto(dst, int64(val))
-	// Float types
+		return convert.AppendBoltUnsigned(dst, val)
 	case float32:
-		dst = append(dst, 0xC1)
-		dst = append(dst, packstreamZero8[:]...)
-		binary.BigEndian.PutUint64(dst[len(dst)-8:], math.Float64bits(float64(val)))
-		return dst
+		return convert.AppendBoltFloat(dst, float64(val))
 	case float64:
-		dst = append(dst, 0xC1)
-		dst = append(dst, packstreamZero8[:]...)
-		binary.BigEndian.PutUint64(dst[len(dst)-8:], math.Float64bits(val))
-		return dst
+		return convert.AppendBoltFloat(dst, val)
+	case time.Duration:
+		return convert.AppendBoltInteger(dst, val.Milliseconds())
 	case string:
 		return encodePackStreamStringInto(dst, val)
 	case []byte:
@@ -312,9 +306,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 		size := len(val)
 		dst = appendPackStreamListHeader(dst, size)
 		for _, n := range val {
-			dst = append(dst, 0xC1)
-			dst = append(dst, packstreamZero8[:]...)
-			binary.BigEndian.PutUint64(dst[len(dst)-8:], math.Float64bits(n))
+			dst = convert.AppendBoltFloat(dst, n)
 		}
 		return dst
 	case []float32:
@@ -324,9 +316,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 		size := len(val)
 		dst = appendPackStreamListHeader(dst, size)
 		for _, n := range val {
-			dst = append(dst, 0xC1)
-			dst = append(dst, packstreamZero8[:]...)
-			binary.BigEndian.PutUint64(dst[len(dst)-8:], math.Float64bits(float64(n)))
+			dst = convert.AppendBoltFloat(dst, float64(n))
 		}
 		return dst
 	case []map[string]any:
@@ -364,9 +354,19 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 		// Bolt 5 has no structure for these: Neo4j's placeholder map.
 		placeholder, _ := cypher.UnsupportedTypePlaceholder(val)
 		return encodePackStreamMapIntoWithUTC(dst, placeholder, useUTCDateTimeStructs)
-	case time.Duration:
-		// Encode duration as milliseconds (signed).
-		return encodePackStreamIntInto(dst, val.Milliseconds())
+	}
+
+	// Named numeric/list extensions use the generic readers only after the
+	// built-in scalar and graph representations have been dispatched.
+	if encoded, ok := convert.AppendBoltNumber(dst, v); ok {
+		return encoded
+	}
+	if list, ok := convert.ReadList(v); ok {
+		dst = appendPackStreamListHeader(dst, list.Len())
+		for i := 0; i < list.Len(); i++ {
+			dst = encodePackStreamValueIntoWithUTC(dst, list.At(i), useUTCDateTimeStructs)
+		}
+		return dst
 	}
 
 	// Fall back to existing implementation for less common types (nodes, relationships, etc.)
@@ -385,38 +385,32 @@ func encodePackStreamValue(v any) []byte {
 			return []byte{0xC3}
 		}
 		return []byte{0xC2}
-	// All integer types - encode as INT64 for Neo4j driver compatibility
 	case int:
-		return encodePackStreamInt(int64(val))
+		return convert.AppendBoltInteger(nil, int64(val))
 	case int8:
-		return encodePackStreamInt(int64(val))
+		return convert.AppendBoltInteger(nil, int64(val))
 	case int16:
-		return encodePackStreamInt(int64(val))
+		return convert.AppendBoltInteger(nil, int64(val))
 	case int32:
-		return encodePackStreamInt(int64(val))
+		return convert.AppendBoltInteger(nil, int64(val))
 	case int64:
-		return encodePackStreamInt(val)
+		return convert.AppendBoltInteger(nil, val)
 	case uint:
-		return encodePackStreamInt(int64(val))
+		return convert.AppendBoltUnsigned(nil, uint64(val))
 	case uint8:
-		return encodePackStreamInt(int64(val))
+		return convert.AppendBoltUnsigned(nil, uint64(val))
 	case uint16:
-		return encodePackStreamInt(int64(val))
+		return convert.AppendBoltUnsigned(nil, uint64(val))
 	case uint32:
-		return encodePackStreamInt(int64(val))
+		return convert.AppendBoltUnsigned(nil, uint64(val))
 	case uint64:
-		return encodePackStreamInt(int64(val))
-	// Float types
+		return convert.AppendBoltUnsigned(nil, val)
 	case float32:
-		buf := make([]byte, 9)
-		buf[0] = 0xC1
-		binary.BigEndian.PutUint64(buf[1:], math.Float64bits(float64(val)))
-		return buf
+		return convert.AppendBoltFloat(nil, float64(val))
 	case float64:
-		buf := make([]byte, 9)
-		buf[0] = 0xC1
-		binary.BigEndian.PutUint64(buf[1:], math.Float64bits(val))
-		return buf
+		return convert.AppendBoltFloat(nil, val)
+	case time.Duration:
+		return convert.AppendBoltInteger(nil, val.Milliseconds())
 	case time.Time:
 		return encodePackStreamDateTime(val)
 	case cypher.CypherDate:
@@ -502,6 +496,9 @@ func encodePackStreamValue(v any) []byte {
 		}
 		return encodeStorageEdge(val)
 	default:
+		if encoded, ok := convert.AppendBoltNumber(nil, v); ok {
+			return encoded
+		}
 		// Unknown type - encode as null
 		return []byte{0xC0}
 	}
@@ -544,8 +541,7 @@ func encodePackStreamPointInto(dst []byte, point cypher.CypherPoint) []byte {
 	}
 	dst = encodePackStreamIntInto(dst, int64(point.SRID))
 	for _, coordinate := range coordinates {
-		dst = append(dst, 0xC1)
-		dst = binary.BigEndian.AppendUint64(dst, math.Float64bits(coordinate))
+		dst = convert.AppendBoltFloat(dst, coordinate)
 	}
 	return dst
 }
@@ -624,27 +620,7 @@ func encodePackStreamCypherDurationInto(dst []byte, value *cypher.CypherDuration
 }
 
 func encodePackStreamIntInto(dst []byte, val int64) []byte {
-	// Tiny int: -16 to 127 (inline, 1 byte)
-	if val >= -16 && val <= 127 {
-		return append(dst, byte(val))
-	}
-	// INT8: -128 to -17 (marker + 1 byte)
-	if val >= -128 && val < -16 {
-		return append(dst, 0xC8, byte(val))
-	}
-	// INT16: -32768 to 32767 (marker + 2 bytes)
-	if val >= -32768 && val <= 32767 {
-		return append(dst, 0xC9, byte(val>>8), byte(val))
-	}
-	// INT32: -2147483648 to 2147483647
-	if val >= -2147483648 && val <= 2147483647 {
-		return append(dst, 0xCA, byte(val>>24), byte(val>>16), byte(val>>8), byte(val))
-	}
-	// INT64: everything else
-	return append(dst, 0xCB,
-		byte(val>>56), byte(val>>48), byte(val>>40), byte(val>>32),
-		byte(val>>24), byte(val>>16), byte(val>>8), byte(val),
-	)
+	return convert.AppendBoltInteger(dst, val)
 }
 
 // encodeNodeInto encodes a map-based Cypher node as a proper Bolt Node structure (signature 0x4E).
@@ -1372,29 +1348,7 @@ func encodeStorageEdge(edge *storage.Edge) []byte {
 //
 // Since INT32 range is within JS safe range, using INT32 encoding ensures
 // the Neo4j JS driver will return regular Numbers, not BigInts.
-func encodePackStreamInt(val int64) []byte {
-	// Tiny int: -16 to 127 (inline, 1 byte)
-	if val >= -16 && val <= 127 {
-		return []byte{byte(val)}
-	}
-	// INT8: -128 to -17 (marker + 1 byte)
-	if val >= -128 && val < -16 {
-		return []byte{0xC8, byte(val)}
-	}
-	// INT16: -32768 to 32767 (marker + 2 bytes)
-	if val >= -32768 && val <= 32767 {
-		return []byte{0xC9, byte(val >> 8), byte(val)}
-	}
-	// INT32: -2147483648 to 2147483647 (marker + 4 bytes)
-	// This is the largest encoding that Neo4j JS driver decodes as Number (not BigInt)
-	if val >= -2147483648 && val <= 2147483647 {
-		return []byte{0xCA, byte(val >> 24), byte(val >> 16), byte(val >> 8), byte(val)}
-	}
-	// INT64: everything else (marker + 8 bytes)
-	// Neo4j JS driver will decode this as BigInt
-	return []byte{0xCB, byte(val >> 56), byte(val >> 48), byte(val >> 40), byte(val >> 32),
-		byte(val >> 24), byte(val >> 16), byte(val >> 8), byte(val)}
-}
+func encodePackStreamInt(val int64) []byte { return convert.AppendBoltInteger(nil, val) }
 
 // ============================================================================
 // PackStream Decoding
@@ -1499,59 +1453,8 @@ func decodePackStreamValue(data []byte, offset int, utcDateTime ...bool) (any, i
 		return true, 1, nil
 	}
 
-	// Tiny positive int (0x00-0x7F)
-	if marker <= 0x7F {
-		return int64(marker), 1, nil
-	}
-
-	// Tiny negative int (0xF0-0xFF = -16 to -1)
-	if marker >= 0xF0 {
-		return int64(int8(marker)), 1, nil
-	}
-
-	// INT8
-	if marker == 0xC8 {
-		if offset+1 >= len(data) {
-			return nil, 0, fmt.Errorf("incomplete INT8")
-		}
-		return int64(int8(data[offset+1])), 2, nil
-	}
-
-	// INT16
-	if marker == 0xC9 {
-		if offset+2 >= len(data) {
-			return nil, 0, fmt.Errorf("incomplete INT16")
-		}
-		val := int16(data[offset+1])<<8 | int16(data[offset+2])
-		return int64(val), 3, nil
-	}
-
-	// INT32
-	if marker == 0xCA {
-		if offset+4 >= len(data) {
-			return nil, 0, fmt.Errorf("incomplete INT32")
-		}
-		val := int32(data[offset+1])<<24 | int32(data[offset+2])<<16 | int32(data[offset+3])<<8 | int32(data[offset+4])
-		return int64(val), 5, nil
-	}
-
-	// INT64
-	if marker == 0xCB {
-		if offset+8 >= len(data) {
-			return nil, 0, fmt.Errorf("incomplete INT64")
-		}
-		val := int64(data[offset+1])<<56 | int64(data[offset+2])<<48 | int64(data[offset+3])<<40 | int64(data[offset+4])<<32 |
-			int64(data[offset+5])<<24 | int64(data[offset+6])<<16 | int64(data[offset+7])<<8 | int64(data[offset+8])
-		return val, 9, nil
-	}
-
-	// Float64
-	if marker == 0xC1 {
-		if offset+8 >= len(data) {
-			return nil, 0, fmt.Errorf("incomplete Float64")
-		}
-		bits := binary.BigEndian.Uint64(data[offset+1 : offset+9])
-		return math.Float64frombits(bits), 9, nil
+	if value, size, ok, err := convert.DecodeBoltNumber(data[offset:]); ok {
+		return value, size, err
 	}
 
 	// Bytes

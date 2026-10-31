@@ -29,7 +29,7 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
-		httpresponse.WriteJSON(w, http.StatusOK, dbconfig.AllowedKeys())
+		httpresponse.WritePropertyJSON(w, http.StatusOK, dbconfig.AllowedKeys())
 		return
 	}
 	if path == "" {
@@ -88,7 +88,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 	}
 	lce, ok := storageEngine.(storage.MVCCLifecycleEngine)
 	if !ok {
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "database": dbName})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "database": dbName})
 		return
 	}
 	switch suffix {
@@ -99,7 +99,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		}
 		status := lce.LifecycleStatus()
 		status["database"] = dbName
-		httpresponse.WriteJSON(w, http.StatusOK, status)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, status)
 	case "mvcc/prune":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -109,21 +109,21 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
 		}
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCPruneTriggered()), "database": dbName})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCPruneTriggered()), "database": dbName})
 	case "mvcc/pause":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.PauseLifecycle()
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecyclePaused()), "database": dbName})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecyclePaused()), "database": dbName})
 	case "mvcc/resume":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.ResumeLifecycle()
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecycleResumed()), "database": dbName})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecycleResumed()), "database": dbName})
 	case "mvcc/schedule":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -152,7 +152,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		}
 		status := lce.LifecycleStatus()
 		status["database"] = dbName
-		httpresponse.WriteJSON(w, http.StatusOK, status)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, status)
 	case "mvcc/debt":
 		if r.Method != http.MethodGet {
 			s.writeNeo4jGetRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -180,7 +180,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		if keys == nil {
 			keys = []storage.MVCCLifecycleDebtKey{}
 		}
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{
 			"database": dbName,
 			"limit":    limit,
 			"keys":     keys,
@@ -302,7 +302,7 @@ func writeDatabaseConfigResponse(w http.ResponseWriter, overrides, effective map
 	if rebuildTriggered != nil {
 		response["rebuildTriggered"] = *rebuildTriggered
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

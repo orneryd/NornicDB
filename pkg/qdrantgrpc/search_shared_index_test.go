@@ -371,7 +371,7 @@ func TestSharedIndexLazySearchAndQueryWarmBeforeAnswering(t *testing.T) {
 			srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
 				if svc == nil {
 					svc = search.NewService(store, 4, nil)
-					svc.SetLazyWarming(true, func() { require.NoError(t, svc.BuildIndexes(context.Background())); warmed.Store(true) })
+					svc.SetLazyWarming(true, func(context.Context) { require.NoError(t, svc.BuildIndexes(context.Background())); warmed.Store(true) })
 				}
 				return svc, nil
 			})

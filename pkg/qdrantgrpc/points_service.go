@@ -149,6 +149,7 @@ func queryRequestHasText(request any) bool {
 
 // Upsert inserts or overwrites points. If a point exists, its payload/vectors are replaced.
 func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb.PointsOperationResponse, error) {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	start := time.Now()
 
 	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
@@ -241,18 +242,18 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 	}
 
 	if len(nodesToCreate) > 0 {
-		if err := store.BulkCreateNodes(nodesToCreate); err != nil {
+		if err := admittedPointWriter(store, origin).BulkCreateNodes(nodesToCreate); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreatePointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 	}
 	for _, node := range nodesToUpdate {
-		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: existing[node.ID], After: node}); err != nil {
+		if err := admittedPointWriter(store, origin).UpdateNode(storage.NodeUpdateRequest{Before: existing[node.ID], After: node}); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
 
 	for _, node := range append(nodesToCreate, nodesToUpdate...) {
-		if err := indexPoint(searchSvc, node); err != nil {
+		if err := indexPoint(searchSvc, node, origin); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
@@ -308,6 +309,7 @@ func (s *PointsService) Get(ctx context.Context, req *qpb.GetPoints) (*qpb.GetRe
 }
 
 func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb.PointsOperationResponse, error) {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	start := time.Now()
 
 	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
@@ -334,11 +336,11 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 	for _, nodeID := range nodeIDs {
 		// Persist first, as upserts do: population must either see the deletion
 		// or finish before the final shared-index removal can be acknowledged.
-		if err := store.DeleteNode(nodeID); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		if err := admittedPointWriter(store, origin).DeleteNode(nodeID); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantDeletePointFailed(string(nodeID)), grpcresponse.QdrantSourceFallback)
 		}
 		if searchSvc != nil {
-			_ = searchSvc.RefreshNode(nodeID)
+			_ = searchSvc.RefreshNode(nodeID, origin)
 		}
 	}
 
@@ -569,14 +571,17 @@ func (s *PointsService) Scroll(ctx context.Context, req *qpb.ScrollPoints) (*qpb
 }
 
 func (s *PointsService) SetPayload(ctx context.Context, req *qpb.SetPayloadPoints) (*qpb.PointsOperationResponse, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	return s.updatePayload(ctx, req, false)
 }
 
 func (s *PointsService) OverwritePayload(ctx context.Context, req *qpb.SetPayloadPoints) (*qpb.PointsOperationResponse, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	return s.updatePayload(ctx, req, true)
 }
 
 func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPoints, overwrite bool) (*qpb.PointsOperationResponse, error) {
+	_, origin := storage.ContinueVectorWork(ctx, "qdrant.update-payload")
 	start := time.Now()
 
 	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
@@ -622,10 +627,10 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 			}
 		}
 		node.UpdatedAt = time.Now()
-		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+		if err := admittedPointWriter(store, origin).UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
-		if err := indexPoint(searchSvc, node); err != nil {
+		if err := indexPoint(searchSvc, node, origin); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
@@ -637,6 +642,7 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 }
 
 func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloadPoints) (*qpb.PointsOperationResponse, error) {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	start := time.Now()
 
 	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
@@ -674,10 +680,10 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 			delete(node.Properties, k)
 		}
 		node.UpdatedAt = time.Now()
-		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+		if err := admittedPointWriter(store, origin).UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
-		if err := indexPoint(searchSvc, node); err != nil {
+		if err := indexPoint(searchSvc, node, origin); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
@@ -689,6 +695,7 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 }
 
 func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadPoints) (*qpb.PointsOperationResponse, error) {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	start := time.Now()
 
 	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
@@ -723,10 +730,10 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 		before := *node
 		node.Properties = nil
 		node.UpdatedAt = time.Now()
-		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+		if err := admittedPointWriter(store, origin).UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
-		if err := indexPoint(searchSvc, node); err != nil {
+		if err := indexPoint(searchSvc, node, origin); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
@@ -738,6 +745,7 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 }
 
 func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointVectors) (*qpb.PointsOperationResponse, error) {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	start := time.Now()
 
 	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
@@ -787,11 +795,11 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		before.NamedEmbeddings = maps.Clone(node.NamedEmbeddings)
 		upsertNodeVectors(node, names, vecs)
 		node.UpdatedAt = time.Now()
-		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+		if err := admittedPointWriter(store, origin).UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 
-		if err := indexPoint(searchSvc, node); err != nil {
+		if err := indexPoint(searchSvc, node, origin); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
@@ -803,6 +811,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 }
 
 func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointVectors) (*qpb.PointsOperationResponse, error) {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	start := time.Now()
 
 	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
@@ -844,11 +853,11 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 		before.NamedEmbeddings = maps.Clone(node.NamedEmbeddings)
 		deleteNodeVectors(node, req.Vectors.Names)
 		node.UpdatedAt = time.Now()
-		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+		if err := admittedPointWriter(store, origin).UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 
-		if err := indexPoint(searchSvc, node); err != nil {
+		if err := indexPoint(searchSvc, node, origin); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
@@ -1391,11 +1400,11 @@ type searchResult struct {
 // indexed, which is what Search finds. The refresh reads the point back, so a
 // newer write or delete of it wins over this one. A database without a search
 // service (vector search disabled for it) has nothing to index.
-func indexPoint(searchSvc *search.Service, node *storage.Node) error {
+func indexPoint(searchSvc *search.Service, node *storage.Node, origin uint64) error {
 	if searchSvc == nil {
 		return nil
 	}
-	return searchSvc.RefreshNode(node.ID)
+	return searchSvc.RefreshNode(node.ID, origin)
 }
 
 // searchCollection runs a Qdrant vector search on the collection database's
@@ -2095,3 +2104,11 @@ func matchesRange(v any, r *qpb.Range) bool {
 }
 
 func ptrString(v string) *string { return &v }
+
+// admittedPointWriter is the write handle of a points request: it carries the
+// request's admitted vector-work origin into every native write.
+func admittedPointWriter(store storage.Engine, origin uint64) storage.Engine {
+	// Only a nil store fails; its nil writer then fails like the store would.
+	writer, _ := storage.EngineWithVectorWorkOrigin(store, origin)
+	return writer
+}

@@ -356,7 +356,7 @@ type Manager struct {
 	erasures map[string]*ErasureRequest
 
 	// Callbacks
-	onDelete  func(record *DataRecord) error
+	onDelete  func(ctx context.Context, record *DataRecord) error
 	onArchive func(record *DataRecord, archivePath string) error
 
 	// Configuration
@@ -555,6 +555,16 @@ func (m *Manager) SetDefaultPolicy(policy *Policy) error {
 
 // SetDeleteCallback sets the function called when data should be deleted.
 func (m *Manager) SetDeleteCallback(fn func(record *DataRecord) error) {
+	if fn == nil {
+		m.SetDeleteCallbackContext(nil)
+		return
+	}
+	m.SetDeleteCallbackContext(func(_ context.Context, record *DataRecord) error { return fn(record) })
+}
+
+// SetDeleteCallbackContext sets the delete function and passes it the
+// context of the sweep or erasure request that deletes the record.
+func (m *Manager) SetDeleteCallbackContext(fn func(ctx context.Context, record *DataRecord) error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onDelete = fn
@@ -827,7 +837,7 @@ func (m *Manager) ProcessRecord(ctx context.Context, record *DataRecord) error {
 	m.mu.RUnlock()
 
 	if deleteFn != nil {
-		if err := deleteFn(record); err != nil {
+		if err := deleteFn(ctx, record); err != nil {
 			return fmt.Errorf("delete failed (%s): %w", reason, err)
 		}
 	}
@@ -968,7 +978,7 @@ func (m *Manager) ProcessErasure(ctx context.Context, requestID string, records 
 		m.mu.RUnlock()
 
 		if deleteFn != nil {
-			if err := deleteFn(record); err != nil {
+			if err := deleteFn(ctx, record); err != nil {
 				m.updateErasureStatus(requestID, ErasureStatusFailed, erased, retained, err.Error(), retainedReasons)
 				return err
 			}

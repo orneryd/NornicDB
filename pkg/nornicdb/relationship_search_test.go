@@ -94,10 +94,10 @@ func TestRelationshipSearchEmbedAndEventEdges(t *testing.T) {
 	db.mu.Lock()
 	db.embedQueue, db.embedWorkerConfig = nil, nil
 	db.mu.Unlock()
-	db.indexRelationshipFromEvent(nil)
-	db.indexRelationshipFromEvent(&storage.Edge{ID: "unprefixed"})
-	db.indexRelationshipFromEvent(&storage.Edge{ID: "nornic:r", StartNode: "nornic:a", EndNode: "nornic:b"})
-	db.queueSearchRefreshEvent(searchRelationshipChange, "unprefixed")
-	db.queueSearchRefreshEvent(searchRelationshipChange, "nornic:r")
+	db.indexRelationshipFromEvent(nil, storage.CaptureVectorWorkOrigin())
+	db.indexRelationshipFromEvent(&storage.Edge{ID: "unprefixed"}, storage.CaptureVectorWorkOrigin())
+	db.indexRelationshipFromEvent(&storage.Edge{ID: "nornic:r", StartNode: "nornic:a", EndNode: "nornic:b"}, storage.CaptureVectorWorkOrigin())
+	db.queueSearchRefreshEvent(searchRelationshipChange, "unprefixed", storage.CaptureVectorWorkOrigin())
+	db.queueSearchRefreshEvent(searchRelationshipChange, "nornic:r", storage.CaptureVectorWorkOrigin())
 	require.Nil(t, db.relationshipSearchService("nornic"))
 }

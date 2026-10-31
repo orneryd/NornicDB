@@ -148,7 +148,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/cypher/functions_text_locate.go:textLocatePattern":   "builds a regex from decoded function argument text, not Cypher source",
 		"cmd/nornicdb-admin/main.go:runImportFull":                "reads a CSV quote command-line option, not Cypher text",
 		"cmd/nornicdb-admin/main.go:runExportNeo4jCSV":            "reads a CSV quote command-line option, not Cypher text",
-		"internal/jsontext/append_string.go:AppendString":         "canonical JSON string emitter, not Cypher quotation; TestJSONAppendStringExactUnits verifies exact UTF16 units and zero-allocation ASCII",
+		"internal/jsontext/append_string.go:appendString":         "canonical JSON string emitter, not Cypher quotation; TestJSONAppendStringExactUnits verifies exact UTF16 units and zero-allocation ASCII",
 		"internal/jsontext/strings.go:projectJSONStrings":         "canonical JSON string lexical projection for raw, binding, opaque and wire stages, not Cypher quotation; codec tests preserve literal escapes, lone units, pairs and opaque RawMessage",
 	}
 	// These production helpers exist only on one maintained branch. They are

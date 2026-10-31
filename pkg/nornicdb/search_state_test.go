@@ -374,8 +374,8 @@ func TestRefreshAfterTransientReadFailureIsRetried(t *testing.T) {
 				require.NoError(t, svc.RemoveEdge("r"))
 				require.Zero(t, consumerDBHits(t, svc, "retryword"))
 				failing.fails.Store(2)
-				require.ErrorIs(t, svc.RefreshNode("a"), errTransientRead)
-				require.ErrorIs(t, svc.RefreshEdge("r"), errTransientRead)
+				require.ErrorIs(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()), errTransientRead)
+				require.ErrorIs(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()), errTransientRead)
 			}
 			require.Eventually(t, func() bool {
 				return consumerDBHits(t, svc, "retryword") == 1 && svc.HasRelationshipVectorEntries("CITES", "vec")
@@ -402,7 +402,7 @@ func TestResolvedSearchServiceFollowsReset(t *testing.T) {
 	db.searchServicesMu.RUnlock()
 	db.ResetSearchService(name)
 	// The replaced entry takes no further refresh, retried or queued.
-	db.searchRefreshRetry(old)(search.RefreshRetry{Node: svc.ReserveNodeMutation("a")}, errors.New("read failed"))
+	db.searchRefreshRetry(old)(search.RefreshRetry{Node: svc.ReserveNodeMutation("a", storage.CaptureVectorWorkOrigin())}, errors.New("read failed"))
 	require.False(t, old.hasPending(), "a replaced entry still queues refreshes")
 	replaced := resolve(name)
 	require.NotNil(t, replaced)

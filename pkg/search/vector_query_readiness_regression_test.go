@@ -16,7 +16,7 @@ func TestVectorQueryNodesLazyFirstReadBuilds(t *testing.T) {
 			svc := NewService(engine, 4, nil)
 			_, err := engine.CreateNode(&storage.Node{ID: "point", ChunkEmbeddings: [][]float32{{1, 0, 0, 0}}})
 			require.NoError(t, err)
-			svc.SetLazyWarming(true, func() { require.NoError(t, svc.BuildIndexes(context.Background())) })
+			svc.SetLazyWarming(true, func(context.Context) { require.NoError(t, svc.BuildIndexes(context.Background())) })
 			hits, err := svc.VectorQueryNodesWithOptions(context.Background(), []float32{1, 0, 0, 0}, VectorQuerySpec{Similarity: similarity, Limit: 1}, nil)
 			require.NoError(t, err)
 			require.Len(t, hits, 1)

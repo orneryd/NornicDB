@@ -73,10 +73,10 @@ func (t *TracedEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	return t.Engine.UpdateNode(updateRequest)
 }
 
-func (t *TracedEngine) DeleteNode(id NodeID) error {
+func (t *TracedEngine) DeleteNode(id NodeID, origins ...uint64) error {
 	span := t.startOperation("nornicdb.storage.DeleteNode", "node")
 	defer span.End()
-	return t.Engine.DeleteNode(id)
+	return t.Engine.DeleteNode(id, origins...)
 }
 
 func (t *TracedEngine) CreateEdge(edge *Edge) error {
@@ -97,10 +97,10 @@ func (t *TracedEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	return t.Engine.UpdateEdge(updateRequest)
 }
 
-func (t *TracedEngine) DeleteEdge(id EdgeID) error {
+func (t *TracedEngine) DeleteEdge(id EdgeID, origins ...uint64) error {
 	span := t.startOperation("nornicdb.storage.DeleteEdge", "edge")
 	defer span.End()
-	return t.Engine.DeleteEdge(id)
+	return t.Engine.DeleteEdge(id, origins...)
 }
 
 func (t *TracedEngine) GetNodesByLabel(label string) ([]*Node, error) {

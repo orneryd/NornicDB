@@ -24,7 +24,7 @@ func BenchmarkPendingEmbeddingClaim(b *testing.B) {
 				e.SetEmbeddingsEnabled(true)
 				for i := 0; i < deleted; i++ {
 					id := storage.NodeID(fmt.Sprintf("test:deleted-%06d", i))
-					e.AddToPendingEmbeddings(id)
+					e.AddToPendingEmbeddingsWithOrigin(id, storage.CaptureVectorWorkOrigin())
 					e.MarkNodeEmbedded(id)
 				}
 				for i := 0; i < pending; i++ {
@@ -51,7 +51,7 @@ func BenchmarkPendingEmbeddingClaim(b *testing.B) {
 					completed = append(completed, node.ID)
 					if len(completed) == pending {
 						for _, id := range completed {
-							e.AddToPendingEmbeddings(id)
+							e.AddToPendingEmbeddingsWithOrigin(id, storage.CaptureVectorWorkOrigin())
 						}
 						completed = completed[:0]
 					}

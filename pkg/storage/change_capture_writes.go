@@ -4,13 +4,21 @@ import "errors"
 
 // inMutationTransaction uses the native transaction owner when a write must
 // validate an observed predecessor or capture changes. Blind writes without
-// capture retain their direct path. id identifies the target namespace.
-func (b *BadgerEngine) inMutationTransaction(id string, observed bool, write func(tx *BadgerTransaction) error) (handled bool, err error) {
+// capture retain their direct path. id identifies the target namespace. The
+// transaction carries the write's vector-work admission (origins), or one
+// admitted at this counted owner site when the write carries none.
+func (b *BadgerEngine) inMutationTransaction(id string, observed bool, write func(tx *BadgerTransaction) error, origins ...uint64) (handled bool, err error) {
 	namespace, _, ok := ParseDatabasePrefix(id)
 	if !observed && (!ok || b.ChangeCapture(namespace) == ChangeCaptureOff) {
 		return false, nil
 	}
-	tx, err := BeginEntityTransaction(b, CommitModeDirect)
+	var origin uint64
+	if len(origins) > 0 {
+		origin = origins[0]
+	} else {
+		origin = fallbackVectorWorkOrigin("storage.mutation-transaction-write")
+	}
+	tx, err := BeginEntityTransaction(b, CommitModeDirect, origin)
 	if err != nil {
 		return true, err
 	}

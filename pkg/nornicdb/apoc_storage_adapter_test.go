@@ -151,7 +151,7 @@ func (e *apocAdapterTestEngine) UpdateNode(updateRequest storage.NodeUpdateReque
 	return nil
 }
 
-func (e *apocAdapterTestEngine) DeleteNode(id storage.NodeID) error {
+func (e *apocAdapterTestEngine) DeleteNode(id storage.NodeID, origins ...uint64) error {
 	if _, ok := e.nodes[id]; !ok {
 		return storage.ErrNotFound
 	}
@@ -195,7 +195,7 @@ func (e *apocAdapterTestEngine) UpdateEdge(updateRequest storage.EdgeUpdateReque
 	return nil
 }
 
-func (e *apocAdapterTestEngine) DeleteEdge(id storage.EdgeID) error {
+func (e *apocAdapterTestEngine) DeleteEdge(id storage.EdgeID, origins ...uint64) error {
 	if _, ok := e.edges[id]; !ok {
 		return storage.ErrNotFound
 	}
@@ -311,11 +311,11 @@ func (e *apocAdapterTestEngine) BulkCreateNodes(nodes []*storage.Node) error {
 func (e *apocAdapterTestEngine) BulkCreateEdges(edges []*storage.Edge) error {
 	return collection.ApplyInOrder(edges, e.CreateEdge)
 }
-func (e *apocAdapterTestEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	return collection.ApplyInOrder(ids, e.DeleteNode)
+func (e *apocAdapterTestEngine) BulkDeleteNodes(ids []storage.NodeID, origins ...uint64) error {
+	return collection.ApplyInOrder(ids, func(id storage.NodeID) error { return e.DeleteNode(id, origins...) })
 }
-func (e *apocAdapterTestEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	return collection.ApplyInOrder(ids, e.DeleteEdge)
+func (e *apocAdapterTestEngine) BulkDeleteEdges(ids []storage.EdgeID, origins ...uint64) error {
+	return collection.ApplyInOrder(ids, func(id storage.EdgeID) error { return e.DeleteEdge(id, origins...) })
 }
 func (e *apocAdapterTestEngine) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	out := make(map[storage.NodeID]*storage.Node, len(ids))

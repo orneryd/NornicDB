@@ -14,9 +14,13 @@ type rejectingSuppressionEngine struct {
 }
 
 func (e *rejectingSuppressionEngine) GetInnerEngine() storage.Engine { return e.Engine }
-func (e *rejectingSuppressionEngine) SetManualSuppression(storage.StoredEntityKind, string, bool) error {
+func (e *rejectingSuppressionEngine) SetManualSuppression(storage.StoredEntityKind, string, bool, ...uint64) error {
 	return e.cause
 }
+
+// The fixture must implement the capability as the executor looks it up;
+// otherwise the lookup passes it by and the failure is never injected.
+var _ storage.ManualSuppressionEngine = (*rejectingSuppressionEngine)(nil)
 
 func TestCommittedActionsPreserveEveryFailureAndRunOnce(t *testing.T) {
 	first, last := errors.New("first completion failure"), errors.New("last completion failure")

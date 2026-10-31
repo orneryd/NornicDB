@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"github.com/orneryd/nornicdb/internal/localizationboundary"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"net/http"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -67,6 +68,17 @@ func (s *Server) writeNeo4jInvalidRequestBody(w http.ResponseWriter, r *http.Req
 	s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, code, localization.InvalidRequestBody())
 }
 
+// writeNeo4jUnsupportedNumber reports a request parameter outside Neo4j's
+// numeric range as Neo4j 5.26 does, and reports whether it wrote the response.
+func (s *Server) writeNeo4jUnsupportedNumber(w http.ResponseWriter, err error, additional ...QueryError) bool {
+	var unsupported *valueconvert.UnsupportedNumberError
+	if !errors.As(err, &unsupported) {
+		return false
+	}
+	s.writeNeo4jError(w, http.StatusOK, "Neo.DatabaseError.Statement.ExecutionFailed", unsupported.Error(), additional...)
+	return true
+}
+
 func (s *Server) writeNeo4jInvalidTransactionBody(w http.ResponseWriter, r *http.Request, err error, cleanupErrors ...error) {
 	statusCode := http.StatusBadRequest
 	if errors.Is(err, errInvalidTransactionRequestFormat) {
@@ -78,6 +90,9 @@ func (s *Server) writeNeo4jInvalidTransactionBody(w http.ResponseWriter, r *http
 			code, message := mapSessionExecError(cleanupErr)
 			additional = append(additional, QueryError{Code: code, Message: message})
 		}
+	}
+	if s.writeNeo4jUnsupportedNumber(w, err, additional...) {
+		return
 	}
 	s.writeNeo4jError(w, statusCode, "Neo.ClientError.Request.InvalidFormat", s.localizedText(w, r, localization.InvalidRequestBody()), additional...)
 }

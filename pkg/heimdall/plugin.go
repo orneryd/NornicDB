@@ -82,6 +82,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/util/eventchannel"
 )
@@ -441,7 +442,7 @@ func tryParseActionResponse(response string) *parsedActionCmd {
 
 	jsonStr := response[start:end]
 	var action parsedActionCmd
-	if err := json.Unmarshal([]byte(jsonStr), &action); err != nil {
+	if err := valueconvert.CypherInputJSON.Unmarshal([]byte(jsonStr), &action); err != nil {
 		return nil
 	}
 	if action.Action == "" {
@@ -587,7 +588,7 @@ func FormatActionResultForModel(result *ActionResult) string {
 	if result == nil {
 		return `{"success":false,"message":"no result"}`
 	}
-	b, _ := json.Marshal(result)
+	b, _ := valueconvert.PropertyJSON.Marshal(result)
 	return string(b)
 }
 

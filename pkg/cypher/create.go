@@ -339,13 +339,13 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		return localizedError(localization.CypherMutationsCreateRelationshipFailed(edgeErr), edgeErr)
 	}
 	for _, node := range plan.nodes {
-		e.notifyNodeMutated(string(node.ID))
+		e.notifyNodeMutated(ctx, string(node.ID))
 		addOptimisticNodeID(result, node.ID)
 		countCreatedEntity(result.Stats, node.Labels, node.Properties)
 	}
 	result.Stats.NodesCreated += len(plan.nodes)
 	for _, edge := range plan.edges {
-		e.notifyEdgeMutated(string(edge.ID))
+		e.notifyEdgeMutated(ctx, string(edge.ID))
 		addOptimisticRelationshipID(result, edge.ID)
 		countCreatedEntity(result.Stats, nil, edge.Properties)
 	}
