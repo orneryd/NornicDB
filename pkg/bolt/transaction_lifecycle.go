@@ -81,7 +81,9 @@ func (l *transactionLifecycle) begin(
 	executor TransactionalExecutor,
 	metadata map[string]any,
 	observe func(transactionTerminalReason, string, time.Duration, error),
-) error {
+) (retErr error) {
+	// Every failure returned here is a BEGIN failure, classified here.
+	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, retErr) }()
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -130,10 +132,9 @@ func (l *transactionLifecycle) begin(
 		if beginPanic != nil {
 			panic(beginPanic)
 		}
-		if cleanupErr != nil {
-			return fmt.Errorf("BEGIN failed: %w; rollback cleanup failed: %v", beginErr, cleanupErr)
-		}
-		return beginErr
+		// Author: Codex/Claude, NOR-180. The BEGIN failure stays the primary with
+		// its own status; the compensating rollback's failure is retained.
+		return nornicerrors.CombineTerminalOutcomes(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, beginErr), cleanupErr)
 	}
 
 	remaining := timeout - time.Since(startedAt)
@@ -330,7 +331,9 @@ func (l *transactionLifecycle) abortCommitPanic() error {
 
 // rollback either claims synchronous cleanup or joins timeout-owned cleanup;
 // cleanup failure remains sticky for every later waiter.
-func (l *transactionLifecycle) rollback(reason transactionTerminalReason) error {
+func (l *transactionLifecycle) rollback(reason transactionTerminalReason) (retErr error) {
+	// A rollback's own failure is classified here, where it is produced.
+	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalRollback, retErr) }()
 	l.mu.Lock()
 	switch l.state {
 	case transactionStateDefunct:

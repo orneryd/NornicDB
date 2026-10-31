@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 )
@@ -81,7 +82,7 @@ var restoreReadDrainTimeout = 30 * time.Second
 func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	b.stopIndexBackfill(startupEdgeBetweenIndex)
 	b.stopIndexBackfill(startupLabelIndex)
-	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills()) }()
+	defer func() { restoreErr = compose.Outcomes(restoreErr, b.restartIndexBackfills()) }()
 
 	lifecycle, err := b.beginLifecycleWrite(context.Background(), "")
 	if err != nil {
@@ -173,7 +174,7 @@ func (b *BadgerEngine) restartIndexBackfills() error {
 	if b.ensureOpen(false) != nil {
 		return nil
 	}
-	return errors.Join(b.startIndexBackfill(startupEdgeBetweenIndex, initializeIndexBackfill), b.startIndexBackfill(startupLabelIndex, initializeIndexBackfill))
+	return compose.Outcomes(b.startIndexBackfill(startupEdgeBetweenIndex, initializeIndexBackfill), b.startIndexBackfill(startupLabelIndex, initializeIndexBackfill))
 }
 
 func backupEngine(engine Engine, path string) error {

@@ -41,6 +41,7 @@ type snapshotLabelCacheKey struct {
 //   - Durability: Badger's WAL ensures persistence
 type BadgerTransaction struct {
 	clientDetached                 atomic.Bool
+	effects                        atomic.Uint64
 	commitLogicalID                string
 	commitReleaseAcceptedAuthority func()
 	mu                             trackedRWMutex
@@ -651,6 +652,9 @@ func (tx *BadgerTransaction) ensureOperationAllowedLocked(operation transactionO
 			tx.closeLocked(TxStatusRolledBack, true, ErrMVCCSnapshotGracefulCancel)
 			return ErrMVCCSnapshotGracefulCancel
 		}
+	}
+	if operation == transactionDataWrite || operation == transactionSchemaWrite {
+		tx.effects.Add(1)
 	}
 	switch operation {
 	case transactionDataWrite:
@@ -3080,6 +3084,14 @@ func (tx *BadgerTransaction) GetMetadata() map[string]interface{} {
 	// replace retained metadata state.
 	return ownedEntries(nil, tx.Metadata)
 }
+
+// EffectSerial counts what this transaction's statements have done: every write
+// admitted to it, nested bodies included, and every NoteEffect. It only rises, also
+// when a write replaces an earlier one's pending image.
+func (tx *BadgerTransaction) EffectSerial() uint64 { return tx.effects.Load() }
+
+// NoteEffect records an effect that staged nothing here but took place.
+func (tx *BadgerTransaction) NoteEffect() { tx.effects.Add(1) }
 
 // OperationCount returns the number of buffered operations.
 func (tx *BadgerTransaction) OperationCount() int {

@@ -2,7 +2,6 @@ package observability
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +20,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 // Provider is the entry point for all observability surfaces. Plan 03
@@ -276,12 +277,12 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 			Shutdown(context.Context) error
 		}); ok {
 			if err := tp.Shutdown(ctx); err != nil {
-				errs = errors.Join(errs, fmt.Errorf("tracer provider shutdown: %w", err))
+				errs = compose.Outcomes(errs, fmt.Errorf("tracer provider shutdown: %w", err))
 			}
 		}
 		if p.meterProvider != nil {
 			if err := p.meterProvider.Shutdown(ctx); err != nil {
-				errs = errors.Join(errs, fmt.Errorf("meter provider shutdown: %w", err))
+				errs = compose.Outcomes(errs, fmt.Errorf("meter provider shutdown: %w", err))
 			}
 		}
 		// D-09a: opportunistic Sync() against the logger writer. *os.File

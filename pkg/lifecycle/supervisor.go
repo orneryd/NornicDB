@@ -2,13 +2,14 @@ package lifecycle
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 // ShutdownTimeout bounds the total drain budget across every component.
@@ -24,7 +25,7 @@ const ShutdownTimeout = 30 * time.Second
 // Reverse order = drain order (the OBS-08 contract — encoded by the
 // caller's slice order).
 //
-// Run returns errors.Join(runErr, shutdownErr) so callers observe both
+// Run returns compose.Outcomes(runErr, shutdownErr) so callers observe both
 // the trigger and any cleanup failures. A clean signal-driven exit
 // returns nil.
 //
@@ -65,5 +66,5 @@ func Run(parent context.Context, components ...Component) error {
 
 	shutdownErr := DrainReverse(shutdownCtx, components)
 
-	return errors.Join(runErr, shutdownErr)
+	return compose.Outcomes(runErr, shutdownErr)
 }
