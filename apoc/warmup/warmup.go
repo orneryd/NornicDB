@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 )
 
 // Node represents a graph node.
@@ -688,14 +689,15 @@ func Progress() map[string]interface{} {
 	}
 }
 
-// GetCachedNode retrieves a node from cache (increments hit/miss stats).
+// GetCachedNode retrieves a caller-owned copy of a cached node (increments
+// hit/miss stats). Every warmup getter copies through pkg/callerowned.
 func GetCachedNode(id int64) (*Node, bool) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 
 	if node, exists := cache.nodes[id]; exists {
 		cache.stats.Hits++
-		return node, true
+		return callerowned.Of(node), true
 	}
 	cache.stats.Misses++
 	return nil, false
@@ -708,7 +710,7 @@ func GetCachedRelationship(id int64) (*Relationship, bool) {
 
 	if rel, exists := cache.relationships[id]; exists {
 		cache.stats.Hits++
-		return rel, true
+		return callerowned.Of(rel), true
 	}
 	cache.stats.Misses++
 	return nil, false
@@ -720,7 +722,7 @@ func GetNodesByLabel(label string) ([]*Node, bool) {
 	defer cache.mu.RUnlock()
 
 	if nodes, exists := cache.nodesByLabel[label]; exists {
-		return nodes, true
+		return callerowned.Each(nodes, callerowned.Of[*Node]), true
 	}
 	return nil, false
 }
@@ -731,7 +733,7 @@ func GetRelationshipsByType(relType string) ([]*Relationship, bool) {
 	defer cache.mu.RUnlock()
 
 	if rels, exists := cache.relsByType[relType]; exists {
-		return rels, true
+		return callerowned.Each(rels, callerowned.Of[*Relationship]), true
 	}
 	return nil, false
 }

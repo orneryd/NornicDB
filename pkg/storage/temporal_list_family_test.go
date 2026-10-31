@@ -287,7 +287,7 @@ func TestTemporalListFamilyTemporalListEnforcement(t *testing.T) {
 					if scanMode {
 						tlfForceScan(t, inner, engine, c)
 					} else {
-						history, complete, err := inner.temporalKeyHistoryNodesLatest(context.Background(), "test", c, &Node{ID: "test:second", Labels: []string{c.Label}, Properties: probe})
+						history, complete, err := inner.temporalKeyHistoryNodesLatest(context.Background(), "test", c, &Node{ID: "test:second", Labels: []string{c.Label}, Properties: probe}, nil)
 						require.NoError(t, err)
 						require.True(t, complete)
 						t.Logf("TLF_HISTORY current-list authoritative=true entries=%d", len(history))
@@ -542,7 +542,7 @@ func TestTemporalListFamilyTemporalMixedEnforcement(t *testing.T) {
 						if scanMode {
 							tlfForceScan(t, inner, engine, c)
 						} else {
-							history, complete, err := inner.temporalKeyHistoryNodesLatest(context.Background(), "test", c, &Node{ID: "test:second", Labels: []string{c.Label}, Properties: pair[1]})
+							history, complete, err := inner.temporalKeyHistoryNodesLatest(context.Background(), "test", c, &Node{ID: "test:second", Labels: []string{c.Label}, Properties: pair[1]}, nil)
 							require.NoError(t, err)
 							require.True(t, complete)
 							t.Logf("TLF_HISTORY mixed authoritative=true entries=%d", len(history))

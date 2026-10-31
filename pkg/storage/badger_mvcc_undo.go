@@ -106,8 +106,13 @@ func newMVCCNodeUndo(old, next *Node, nextVersion MVCCVersion) *mvccNodeUndo {
 	return &mvccNodeUndo{Next: nextVersion, Meta: meta, Restore: restore, Remove: remove}
 }
 
+// apply rebuilds the older version from next. It takes over u.Meta: an undo
+// is decoded for one read and used once, so its metadata needs no copy (NOR-160).
 func (u *mvccNodeUndo) apply(next *Node) *Node {
-	node := copyNode(u.Meta)
+	node := u.Meta
+	if node.Labels == nil {
+		node.Labels = []string{}
+	}
 	node.Properties = undoProperties(next.Properties, u.Restore, u.Remove)
 	return node
 }
@@ -119,8 +124,9 @@ func newMVCCEdgeUndo(old, next *Edge, nextVersion MVCCVersion) *mvccEdgeUndo {
 	return &mvccEdgeUndo{Next: nextVersion, Meta: meta, Restore: restore, Remove: remove}
 }
 
+// apply is mvccNodeUndo.apply for a relationship.
 func (u *mvccEdgeUndo) apply(next *Edge) *Edge {
-	edge := copyEdge(u.Meta)
+	edge := u.Meta
 	edge.Properties = undoProperties(next.Properties, u.Restore, u.Remove)
 	return edge
 }

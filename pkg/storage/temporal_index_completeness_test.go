@@ -65,7 +65,7 @@ func TestTemporalIndexAuthoritative_Lifecycle(t *testing.T) {
 	require.True(t, engine.temporalIndexAuthoritative(sm, other), "nodes written before the constraint are backfilled")
 	role1, err := engine.GetNode(NodeID(prefixTestID("role-1")))
 	require.NoError(t, err)
-	history, ok, err := engine.temporalKeyHistoryNodesLatest(context.Background(), "test", other, role1)
+	history, ok, err := engine.temporalKeyHistoryNodesLatest(context.Background(), "test", other, role1, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, history, 1, "the backfill writes the pre-existing node's history entry")

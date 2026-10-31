@@ -1041,10 +1041,8 @@ func (ew *EmbedWorker) processNextNode(selections ...embeddingSelection) bool {
 
 	fmt.Printf("🔄 Processing node %s for embedding...\n", node.ID)
 
-	// IMPORTANT: Deep copy properties to avoid race conditions
-	// The node from storage may be accessed by other goroutines (e.g., HTTP handlers)
-	// Modifying the Properties map directly causes "concurrent map iteration and map write"
-	node = copyNodeForEmbedding(node)
+	// The claim hands over the worker's own view (embeddingWorkView): no other
+	// goroutine holds it, so it is processed as is (NOR-160).
 	provider, resolveErr := ew.resolveAttemptEmbedder(node)
 	if resolveErr != nil || provider == nil {
 		if resolveErr == nil {
@@ -1328,7 +1326,10 @@ func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr e
 		ew.claimMu.Unlock()
 		defer ew.releaseNodeClaim(nodeID)
 	}
-	node = copyNodeForEmbedding(node)
+	// The failure marker is written on the worker's view of a node it owns:
+	// the processor's own node (no caller uses it after this call) or a fresh
+	// caller-owned read (NOR-160).
+	node = embeddingWorkView(node)
 	if node.EmbedMeta == nil {
 		node.EmbedMeta = make(map[string]any)
 	}
@@ -1419,7 +1420,10 @@ func (ew *EmbedWorker) claimNextNodeResultFrom(mainOnly bool, selections ...embe
 	ew.observeNodeRevisionLocked(node)
 	ew.bindNodeAttemptLocked(node, selection)
 	ew.markNodeEmbedded(node.ID)
-	return copyNodeForEmbedding(node), false
+	// GetNode and SnapshotNodeForEmbedding both hand out caller-owned nodes,
+	// and the claim keeps only the node's ID and revision: the worker takes its
+	// view of the node it now owns, without a copy (NOR-160).
+	return embeddingWorkView(node), false
 }
 
 func (ew *EmbedWorker) releaseNodeClaim(nodeID storage.NodeID) {
@@ -1661,50 +1665,31 @@ func (s WorkerStats) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// copyNodeForEmbedding creates a deep copy of a node to avoid race conditions.
-// The original node from storage may be accessed by other goroutines (HTTP handlers,
-// search service, etc.) Modifying the Properties map directly while another goroutine
-// iterates over it causes "concurrent map iteration and map write" panic.
-//
-// This function copies:
-//   - All scalar fields (ID, Labels, Embedding, etc.)
-//   - Deep copy of Properties map
-func copyNodeForEmbedding(src *storage.Node) *storage.Node {
-	if src == nil {
+// embeddingWorkView is the embedding worker's view of a node it owns (a
+// caller-owned read; storage reads never share their values, NOR-160): the
+// identity, labels, timestamps, embedding identity, chunk vectors and
+// properties, and nothing else, so an outcome is built on a fresh EmbedMeta
+// and without NamedEmbeddings. It takes those parts over without copying
+// them; the caller must not use node afterwards.
+func embeddingWorkView(node *storage.Node) *storage.Node {
+	if node == nil {
 		return nil
 	}
-
-	// Create a new node with copied scalar fields
-	dst := &storage.Node{
-		ID:        src.ID,
-		Labels:    make([]string, len(src.Labels)),
-		CreatedAt: src.CreatedAt,
-		UpdatedAt: src.UpdatedAt,
+	view := &storage.Node{
+		ID:         node.ID,
+		Labels:     node.Labels,
+		CreatedAt:  node.CreatedAt,
+		UpdatedAt:  node.UpdatedAt,
+		Properties: node.Properties,
 	}
-
-	dst.CopyEmbeddingIdentityFrom(src)
-
-	// Copy labels
-	copy(dst.Labels, src.Labels)
-
-	// Copy chunk embeddings if present (always stored in ChunkEmbeddings, even single chunk = array of 1)
-	if len(src.ChunkEmbeddings) > 0 {
-		dst.ChunkEmbeddings = make([][]float32, len(src.ChunkEmbeddings))
-		for i, emb := range src.ChunkEmbeddings {
-			dst.ChunkEmbeddings[i] = make([]float32, len(emb))
-			copy(dst.ChunkEmbeddings[i], emb)
-		}
+	if view.Labels == nil {
+		view.Labels = []string{}
 	}
-
-	// Deep copy Properties map - this is the critical part to avoid race condition
-	if src.Properties != nil {
-		dst.Properties = make(map[string]any, len(src.Properties))
-		for k, v := range src.Properties {
-			dst.Properties[k] = v // Shallow copy of values is OK for our use case
-		}
+	view.CopyEmbeddingIdentityFrom(node)
+	if len(node.ChunkEmbeddings) > 0 {
+		view.ChunkEmbeddings = node.ChunkEmbeddings
 	}
-
-	return dst
+	return view
 }
 
 // Legacy aliases for compatibility with existing code
