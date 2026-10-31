@@ -29,8 +29,11 @@ func TestHeimdallPluginOnlyStartup(t *testing.T) { testHeimdallPluginStartup(t, 
 
 func TestHeimdallPluginFailedStart(t *testing.T) { testHeimdallPluginStartup(t, true) }
 
-func testHeimdallPluginStartup(t *testing.T, failStart bool) {
+func TestHeimdallPluginBlockedStart(t *testing.T) { testHeimdallPluginStartup(t, true, true) }
+
+func testHeimdallPluginStartup(t *testing.T, failStart bool, blocked ...bool) {
 	t.Helper()
+	blockStart := len(blocked) > 0 && blocked[0]
 	if !pluginTestCGOBuild {
 		t.Skip("Go plugins require CGO")
 	}
@@ -46,18 +49,21 @@ func testHeimdallPluginStartup(t *testing.T, failStart bool) {
 import (
  "fmt"
  "strings"
+ "sync"
+ "time"
  "github.com/orneryd/nornicdb/pkg/heimdall"
  watcher "github.com/orneryd/nornicdb/plugins/heimdall"
 )
 const identity = %q
 const failStart = %t
-type testPlugin struct { watcher.WatcherPlugin; ctx heimdall.SubsystemContext; starts int; stops int; shutdowns int }
+const blockStart = %t
+type testPlugin struct { watcher.WatcherPlugin; ctx heimdall.SubsystemContext; mu sync.Mutex; starts int; stops int; shutdowns int; stop chan struct{} }
 func (*testPlugin) Name() string { return "plugin_only_test" }
 func (p *testPlugin) Initialize(ctx heimdall.SubsystemContext) error { p.ctx=ctx; return p.WatcherPlugin.Initialize(ctx) }
-func (p *testPlugin) Start() error { p.starts++; if failStart { return fmt.Errorf("requested start failure") }; return nil }
-func (p *testPlugin) Stop() error { p.stops++; return nil }
-func (p *testPlugin) Shutdown() error { p.shutdowns++; return nil }
-func (p *testPlugin) Metrics() map[string]interface{} { return map[string]interface{}{"starts":p.starts,"stops":p.stops,"shutdowns":p.shutdowns} }
+func (p *testPlugin) Start() error { p.mu.Lock();p.starts++;p.mu.Unlock();if blockStart {select{case <-p.stop:case <-time.After(2*time.Second):}}; if failStart { return fmt.Errorf("requested start failure") }; return nil }
+func (p *testPlugin) Stop() error { p.mu.Lock();defer p.mu.Unlock();p.stops++;if p.stops==1{close(p.stop)};return nil }
+func (p *testPlugin) Shutdown() error { p.mu.Lock();defer p.mu.Unlock();p.shutdowns++; return nil }
+func (p *testPlugin) Metrics() map[string]interface{} { p.mu.Lock();defer p.mu.Unlock();return map[string]interface{}{"starts":p.starts,"stops":p.stops,"shutdowns":p.shutdowns} }
 func (p *testPlugin) Actions() map[string]heimdall.ActionFunc {
  return map[string]heimdall.ActionFunc{"probe":{External:true, Handler:func(ctx heimdall.ActionContext)(*heimdall.ActionResult,error){
  inference,err:=p.ctx.Heimdall.SendRawPrompt(ctx,"no model should be loaded")
@@ -65,8 +71,8 @@ func (p *testPlugin) Actions() map[string]heimdall.ActionFunc {
  return &heimdall.ActionResult{Success:true,Data:map[string]interface{}{"identity":identity,"enabled":p.ctx.Config.Enabled,"bifrost":p.ctx.Config.BifrostEnabled,"starts":p.starts,"inference":inference.Success,"message":inference.Message,"database":ctx.Params["database"],"api_key_empty":p.ctx.Config.APIKey=="","api_url_credentials_hidden":!strings.Contains(p.ctx.Config.APIURL,"synthetic-user") && !strings.Contains(p.ctx.Config.APIURL,"synthetic-pass") && !strings.Contains(p.ctx.Config.APIURL,"synthetic-query-token")}},nil
  }}}
 }
-var Plugin heimdall.HeimdallPlugin = &testPlugin{}
-`, filepath.Base(dir), failStart)
+var Plugin heimdall.HeimdallPlugin = &testPlugin{stop:make(chan struct{})}
+`, filepath.Base(dir), failStart, blockStart)
 	sourcePath := filepath.Join(dir, "plugin.go")
 	require.NoError(t, os.WriteFile(sourcePath, []byte(source), 0600))
 	buildCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -96,20 +102,38 @@ var Plugin heimdall.HeimdallPlugin = &testPlugin{}
 			HeimdallAPIURL:  "https://synthetic-user:synthetic-pass@provider.invalid/v1?access_token=synthetic-query-token",
 			HeimdallAPIKey:  "synthetic-api-key",
 		}
+		if blockStart {
+			cfg.Features.HeimdallEnabled = true
+			cfg.Features.HeimdallProvider = "openai"
+		}
 	})
 	require.Zero(t, loaderCalls)
 	require.Nil(t, s.getHeimdallHandler())
 	require.NotNil(t, s.mcpServer)
 	if failStart {
 		_, registered := heimdall.GetSubsystemManager().GetPlugin("plugin_only_test")
-		require.False(t, registered)
+		if !blockStart {
+			require.False(t, registered)
+		}
 		loaded, err := goplugin.Open(filepath.Join(dir, "probe.so"))
 		require.NoError(t, err)
 		symbol, err := loaded.Lookup("Plugin")
 		require.NoError(t, err)
 		failedPlugin, ok := symbol.(*heimdall.HeimdallPlugin)
 		require.True(t, ok)
-		require.Equal(t, map[string]interface{}{"starts": 1, "stops": 0, "shutdowns": 1}, (*failedPlugin).Metrics())
+		if blockStart {
+			require.Eventually(t, func() bool { return (*failedPlugin).Metrics()["starts"] == 1 }, time.Second, time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+			defer cancel()
+			_ = s.Stop(ctx)
+			wait, cancelWait := context.WithTimeout(context.Background(), 400*time.Millisecond)
+			defer cancelWait()
+			_ = s.WaitStopped(wait)
+			require.NoError(t, wait.Err(), "the constructed plugin must receive Stop before its Start is joined")
+			_, registered = heimdall.GetSubsystemManager().GetPlugin("plugin_only_test")
+			require.False(t, registered)
+		}
+		require.Equal(t, map[string]interface{}{"starts": 1, "stops": 1, "shutdowns": 1}, (*failedPlugin).Metrics())
 		require.Empty(t, heimdall.GetSubsystemManager().ExternalActions())
 		require.Equal(t, len(mcp.GetToolDefinitions()), len(s.mcpServer.ToolDefinitions()))
 		_, err = s.mcpServer.CallTool(context.Background(), "heimdall_plugin_only_test_probe", nil)
