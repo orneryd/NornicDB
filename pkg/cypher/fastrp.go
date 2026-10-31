@@ -27,6 +27,8 @@
 
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
@@ -56,7 +58,7 @@ const (
 // gdsVersion (#1161); RETURN gds.version() is the same value.
 func (e *StorageExecutor) callGdsVersion() (*ExecuteResult, error) {
 	return &ExecuteResult{
-		Columns: []string{"gdsVersion"},
+		Columns: columnNames(gdsVersionColumns),
 		Rows:    [][]any{{gdsVersion}},
 	}, nil
 }
@@ -100,7 +102,7 @@ func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResul
 	for _, embedding := range embeddings {
 		rows = append(rows, []any{embedding.nodeID, embedding.vector})
 	}
-	return &ExecuteResult{Columns: []string{"nodeId", "embedding"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: columnNames(gdsFastRPStreamColumns), Rows: rows}, nil
 }
 
 // callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config): it
@@ -113,7 +115,7 @@ func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult
 		return nil, err
 	}
 	return &ExecuteResult{
-		Columns: []string{"nodeCount", "preProcessingMillis", "computeMillis", "configuration"},
+		Columns: columnNames(gdsFastRPStatsColumns),
 		Rows:    [][]any{{int64(len(embeddings)), int64(0), time.Since(started).Milliseconds(), config.Configuration}},
 	}, nil
 }
