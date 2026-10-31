@@ -165,8 +165,8 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 				return cached.StartNode == startID && cached.EndNode == endID && cached.Type == edgeType &&
 					!b.filterEntityByDecay(visibleRead, cached, nowNanos) && match(edgeMatchCandidate(cached, properties))
 			}}); hit {
-				if cached.Edge != nil {
-					matched = append(matched, deliverEdge(cached))
+				if cached != nil {
+					matched = append(matched, cached)
 				}
 				continue
 			}

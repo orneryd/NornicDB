@@ -74,8 +74,8 @@ func (tx *BadgerTransaction) committedEdgeKeptLocked(edge *Edge) bool {
 // committed adjacency the producers have already selected (committedEdgeKept
 // and the read's direction): it drops nothing. A selected pending edge is the
 // transaction's retained value, copied here once (NOR-160).
-func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []edgeImage, id NodeID, include func(*Edge) bool) []*Edge {
-	result := deliverEdges(committed)
+func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, id NodeID, include func(*Edge) bool) []*Edge {
+	result := committed
 	if len(tx.pendingEdges) == 0 {
 		return result
 	}

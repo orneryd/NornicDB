@@ -2290,7 +2290,7 @@ func (tx *BadgerTransaction) ReadEdges(request TransactionEdgeRead) ([]*Edge, er
 		if err != nil {
 			return nil, err
 		}
-		return deliverEdges(committed), nil
+		return committed, nil
 	}
 	include := transactionEdgeReadIncludes(request)
 	committed, err := tx.edgeReadImagesLocked(request, include)
@@ -2318,7 +2318,7 @@ func transactionEdgeReadIncludes(request TransactionEdgeRead) func(*Edge) bool {
 // The whole selection over committed edges (the transaction's own writes, the
 // read's selection) is decided by the producers, before any retained body is
 // copied (NOR-160).
-func (tx *BadgerTransaction) edgeReadImagesLocked(request TransactionEdgeRead, include func(*Edge) bool) ([]edgeImage, error) {
+func (tx *BadgerTransaction) edgeReadImagesLocked(request TransactionEdgeRead, include func(*Edge) bool) ([]*Edge, error) {
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
@@ -2366,7 +2366,7 @@ func (tx *BadgerTransaction) GetEdgeBetween(startID, endID NodeID, edgeType stri
 		return nil
 	}
 	if len(committed) > 0 {
-		return deliverEdge(committed[0])
+		return committed[0]
 	}
 	if len(tx.pendingEdges) == 0 {
 		return nil
@@ -2386,9 +2386,9 @@ func (tx *BadgerTransaction) GetEdgeBetween(startID, endID NodeID, edgeType stri
 // retains the global collection contract of AllEdges and GetEdgesByType.
 // The caller supplies the original pending-record filter and holds tx.mu.
 func (tx *BadgerTransaction) getCommittedEdgesByTypeLocked(edgeType string, includePending func(*Edge) bool) ([]*Edge, error) {
-	committed := make([]edgeImage, 0)
+	committed := make([]*Edge, 0)
 	err := tx.engine.streamEdgesByTypeAtSnapshotWithView(context.Background(), "", edgeType, tx.readTS, tx.withSnapshotViewLocked, visibleRead, func(edge *Edge) error {
-		committed = append(committed, decodedEdge(edge))
+		committed = append(committed, edge)
 		return nil
 	})
 	if err != nil {
@@ -3017,13 +3017,13 @@ func (tx *BadgerTransaction) mergePendingNodesLocked(committed []nodeImage, incl
 }
 
 // mergePendingEdgesLocked is mergePendingNodesLocked for relationships.
-func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []edgeImage, includePending func(*Edge) bool) []*Edge {
-	return mergePendingLocked(committed, tx.pendingEdges, tx.deletedEdges, includePending, func(edge edgeImage) EdgeID {
-		if edge.Edge == nil {
+func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includePending func(*Edge) bool) []*Edge {
+	return mergePendingLocked(committed, tx.pendingEdges, tx.deletedEdges, includePending, func(edge *Edge) EdgeID {
+		if edge == nil {
 			return ""
 		}
 		return edge.ID
-	}, func(edge edgeImage) *Edge { return edge.Edge }, deliverEdge, copyEdge)
+	}, func(edge *Edge) *Edge { return edge }, func(edge *Edge) *Edge { return edge }, copyEdge)
 }
 
 // Commit applies all changes atomically with full constraint validation.

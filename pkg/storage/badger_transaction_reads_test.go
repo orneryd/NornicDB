@@ -828,7 +828,7 @@ func TestTxReads_MergePendingEdgesLocked(t *testing.T) {
 		},
 	}
 
-	merged := tx.mergePendingEdgesLocked(decodedEdges([]*Edge{nil, committedEdge, deletedEdge}), func(edge *Edge) bool {
+	merged := tx.mergePendingEdgesLocked([]*Edge{nil, committedEdge, deletedEdge}, func(edge *Edge) bool {
 		return edge != nil && edge.Type == "KNOWS"
 	})
 
@@ -897,7 +897,7 @@ func BenchmarkTxReads_MergePendingEdgesLocked_WithOverlay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := tx.mergePendingEdgesLocked(decodedEdges(committed), include); len(got) != 512 {
+		if got := tx.mergePendingEdgesLocked(committed, include); len(got) != 512 {
 			b.Fatalf("expected 512 edges, got %d", len(got))
 		}
 	}

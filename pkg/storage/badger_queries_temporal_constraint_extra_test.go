@@ -140,7 +140,7 @@ func TestBadgerEngine_ReadIndexedEdge_SourceViewMissAndDecodeError(t *testing.T)
 
 		missing, err := engine.readIndexedEdgeInTxn(txn, "test:e-missing", engine.edgeCacheGen.current(), nil)
 		require.NoError(t, err)
-		require.Nil(t, missing.Edge)
+		require.Nil(t, missing)
 
 		_, err = engine.readIndexedEdgeInTxn(txn, "test:e-corrupt", engine.edgeCacheGen.current(), nil)
 		require.Error(t, err)

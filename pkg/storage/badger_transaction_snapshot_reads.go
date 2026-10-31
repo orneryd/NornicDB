@@ -489,7 +489,7 @@ func (cache *snapshotAdjacencyCache) clear() {
 // keep, when set, is the transaction's selection (its own writes superseding
 // committed edges, the read's direction), decided before any retained body is
 // copied (NOR-160).
-func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, keep func(*Edge) bool) ([]edgeImage, error) {
+func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, keep func(*Edge) bool) ([]*Edge, error) {
 	// Write-behind reads are read-committed: the flusher may land a buffered
 	// commit after the pinned snapshot, and buffered-but-unflushed edges are
 	// invisible to the pinned view. Read the latest overlaid engine view
@@ -522,7 +522,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 		}
 		edges = kept
 	}
-	return decodedEdges(edges), err
+	return edges, err
 }
 
 // readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships visible at
@@ -534,7 +534,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 // snapshot record is read. The adjacency cache is filled only after the whole
 // view succeeds: a partial edge ID list would make a later read of the same
 // node report a truncated adjacency as complete.
-func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool, keep func(*Edge) bool) ([]edgeImage, error) {
+func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool, keep func(*Edge) bool) ([]*Edge, error) {
 	var cache *snapshotAdjacencyCache
 	switch direction {
 	case Outgoing:
@@ -545,7 +545,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 		return nil, ErrInvalidData
 	}
 	edgeIDs, cached := cache.load(nodeID)
-	edges := make([]edgeImage, 0, len(edgeIDs))
+	edges := make([]*Edge, 0, len(edgeIDs))
 	err := tx.withSnapshotViewLocked(func(snapshot *badger.Txn) error {
 		var err error
 		if !cached {
@@ -560,14 +560,14 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 			if err != nil {
 				return err
 			}
-			edges = make([]edgeImage, 0, len(edgeIDs))
+			edges = make([]*Edge, 0, len(edgeIDs))
 		}
 		var headers map[EdgeID]*Edge
 		if headersOnly {
 			headers = tx.engine.adjacencyHeadersInTxn(snapshot, nodeID, direction)
 		}
 		for _, edgeID := range edgeIDs {
-			var edge edgeImage
+			var edge *Edge
 			if cachedEdge, ok := tx.snapshotEdgeByID[edgeID]; ok {
 				// The body is immutable in this view; visibility is not. Reuse
 				// the body and run the same live policy owner on every read.
@@ -579,9 +579,9 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 					continue
 				}
 				// Selected: the read's one copy of the snapshot body.
-				edge = decodedEdge(copyEdge(cachedEdge))
+				edge = copyEdge(cachedEdge)
 			} else if header := tx.snapshotHeaderLocked(snapshot, headers, edgeID); header != nil {
-				edge = decodedEdge(header)
+				edge = header
 			} else {
 				decoded, edgeErr := tx.engine.getEdgeAtInTxn(snapshot, edgeID, tx.readTS, mvccEntityRead{visibility: visibleRead})
 				if edgeErr == ErrNotFound || edgeErr == ErrNotVisibleAtSnapshot {
@@ -591,9 +591,9 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 					return edgeErr
 				}
 				tx.cacheSnapshotEdgeByIDLocked(decoded)
-				edge = decodedEdge(decoded)
+				edge = decoded
 			}
-			if edge.Edge == nil || keep != nil && !keep(edge.Edge) {
+			if edge == nil || keep != nil && !keep(edge) {
 				continue
 			}
 			if direction == Outgoing && edge.StartNode == nodeID || direction == Incoming && edge.EndNode == nodeID {

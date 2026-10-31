@@ -511,7 +511,7 @@ func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error 
 		return err
 	}
 	for _, edge := range edges {
-		if err := yield(deliverEdge(edge)); err != nil {
+		if err := yield(edge); err != nil {
 			return err
 		}
 	}

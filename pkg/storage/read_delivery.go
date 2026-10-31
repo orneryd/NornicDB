@@ -2,7 +2,7 @@ package storage
 
 // The read delivery owner (NOR-160).
 //
-// A read pipeline carries images, not results: an edgeImage or nodeImage is
+// A read pipeline carries images, not results: a nodeImage is
 // either a retained image (a cache, the write-behind buffer or a
 // transaction's snapshot keeps it, so the read may only look at it) or a value
 // decoded for this read alone. Producers (caches, indexed readers,
@@ -16,13 +16,11 @@ package storage
 // decoded value is handed over. So no read path can copy a value it then
 // drops, or copy a value twice: an image has no copy until delivery, and
 // delivery is the last step. The types make a missed delivery a compile
-// error, since an image is not a *Edge or *Node result.
-
-// edgeImage is a relationship on a read path before delivery.
-type edgeImage struct {
-	*Edge
-	retained bool
-}
+// error, since an image is not a *Node result.
+//
+// A relationship needs no image: every edge producer hands over a value private
+// to this read (a decode, or a copy made once the edge is selected), so edge
+// reads carry *Edge from producer to caller.
 
 // nodeImage is a node on a read path before delivery.
 type nodeImage struct {
@@ -30,29 +28,8 @@ type nodeImage struct {
 	retained bool
 }
 
-func decodedEdge(edge *Edge) edgeImage  { return edgeImage{Edge: edge} }
 func borrowedNode(node *Node) nodeImage { return nodeImage{Node: node, retained: true} }
 func decodedNode(node *Node) nodeImage  { return nodeImage{Node: node} }
-
-// deliverEdge is the one place a read hands out a relationship.
-func deliverEdge(image edgeImage) *Edge {
-	if image.Edge == nil || !image.retained {
-		return image.Edge
-	}
-	return copyEdge(image.Edge)
-}
-
-// deliverEdges hands out a chosen population (nil stays nil).
-func deliverEdges(images []edgeImage) []*Edge {
-	if images == nil {
-		return nil
-	}
-	out := make([]*Edge, len(images))
-	for i, image := range images {
-		out[i] = deliverEdge(image)
-	}
-	return out
-}
 
 // deliverNode is the one place a read hands out a node, in its delivered
 // shape: a retained image is copied once straight into that shape, a decoded
@@ -69,18 +46,6 @@ func deliverNodes(images []nodeImage, properties []string, strip bool) []*Node {
 	out := make([]*Node, len(images))
 	for i, image := range images {
 		out[i] = deliverNode(image, properties, strip)
-	}
-	return out
-}
-
-// decodedEdges marks a whole population.
-func decodedEdges(edges []*Edge) []edgeImage {
-	if edges == nil {
-		return nil
-	}
-	out := make([]edgeImage, len(edges))
-	for i, edge := range edges {
-		out[i] = decodedEdge(edge)
 	}
 	return out
 }

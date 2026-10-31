@@ -323,9 +323,9 @@ type edgeCacheRead struct {
 // answered only when it has excluded the buffered edges. Cached bodies are
 // replaced wholesale and never changed in place, so match and the copy run
 // after the lock is released.
-func (b *BadgerEngine) cacheLoadEdge(id EdgeID, read edgeCacheRead) (edgeImage, bool) {
+func (b *BadgerEngine) cacheLoadEdge(id EdgeID, read edgeCacheRead) (*Edge, bool) {
 	if read.version == nil && !read.bufferExcluded && b.writeBehind != nil {
-		return edgeImage{}, false
+		return nil, false
 	}
 	// The durable cache lock comes first, as for every fill and revocation, so
 	// the source is read against the same order. match runs after both are
@@ -347,12 +347,12 @@ func (b *BadgerEngine) cacheLoadEdge(id EdgeID, read edgeCacheRead) (edgeImage, 
 		b.durableCaches.mu.Unlock()
 	}
 	if !ok || cached == nil {
-		return edgeImage{}, false
+		return nil, false
 	}
 	if read.match != nil && !read.match(cached) {
-		return edgeImage{}, true
+		return nil, true
 	}
-	return decodedEdge(copyEdge(cached)), true
+	return copyEdge(cached), true
 }
 
 // edgeCacheList is one list a read asks of the edge body cache: the IDs in

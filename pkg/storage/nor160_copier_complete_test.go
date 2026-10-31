@@ -47,8 +47,8 @@ func deliveredNodes(images []nodeImage, err error) ([]*Node, error) {
 	return deliverNodes(images, nil, false), err
 }
 
-func deliveredEdges(images []edgeImage, err error) ([]*Edge, error) {
-	return deliverEdges(images), err
+func deliveredEdges(images []*Edge, err error) ([]*Edge, error) {
+	return images, err
 }
 
 // deliveredNodesWithOverlay also delivers the buffered nodes an internal
