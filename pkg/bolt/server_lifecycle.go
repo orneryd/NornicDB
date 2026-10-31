@@ -186,18 +186,11 @@ func (c *lifetimeConn) SetWriteDeadline(d time.Time) error {
 // The caller retains its connection ticket until this callback really returns.
 func (s *Server) interruptConnection(conn net.Conn) func() {
 	w := s.lifetime()
-	done := make(chan struct{})
-	stop := context.AfterFunc(w.Context(), func() {
-		defer close(done)
+	return lifecycle.AfterFuncJoined(w.Context(), func() {
 		if err := conn.SetDeadline(time.Now()); !util.ErrorIsOnly(err, net.ErrClosed) {
 			w.RecordError("interrupt Bolt connection", err)
 		}
 	})
-	return func() {
-		if !stop() {
-			<-done
-		}
-	}
 }
 
 func (s *Session) closeConnection() {

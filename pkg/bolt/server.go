@@ -1069,21 +1069,17 @@ func (s *Server) serveListener(ctx context.Context, listener net.Listener) error
 	s.lifecycleMu.Lock()
 	s.listener = listener
 	s.lifecycleMu.Unlock()
-	closed := make(chan struct{})
-	stop := context.AfterFunc(s.lifetime().Context(), func() {
-		defer close(closed)
+	closeListener := func() {
 		if err := s.closeListener(); !util.ErrorIsOnly(err, net.ErrClosed) {
 			s.lifetime().RecordError("close Bolt listener", err)
 		}
-	})
+	}
+	// Stopping closes the listener so Accept returns; the serve loop's exit
+	// settles that callback and closes the listener itself if it never ran.
+	stopClose := lifecycle.AfterFuncJoined(s.lifetime().Context(), closeListener)
 	defer func() {
-		if stop() {
-			if err := s.closeListener(); !util.ErrorIsOnly(err, net.ErrClosed) {
-				s.lifetime().RecordError("close Bolt listener", err)
-			}
-		} else {
-			<-closed
-		}
+		stopClose()
+		closeListener()
 	}()
 
 	announceHost := strings.TrimSpace(s.config.Host)
@@ -1345,17 +1341,14 @@ func (s *Server) handleConnectionOwned(workCtx context.Context, conn net.Conn) {
 
 	sessionCtx := trace.ContextWithSpan(workCtx, sessionSpan)
 	connCtx, connCancel := context.WithCancel(sessionCtx)
-	cancelled := make(chan struct{})
-	stopCancellation := context.AfterFunc(s.lifetime().Context(), func() { connCancel(); close(cancelled) })
+	stopCancellation := lifecycle.AfterFuncJoined(s.lifetime().Context(), connCancel)
 	// Cancel the connection-scoped context the moment handleConnection
 	// returns. This is the load-bearing signal that propagates client
 	// disconnects to in-flight RUN handlers — see Session.connCtx for
 	// the full bug context.
 	defer func() {
 		connCancel()
-		if !stopCancellation() {
-			<-cancelled
-		}
+		stopCancellation()
 	}()
 
 	session := &Session{
