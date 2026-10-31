@@ -1,4 +1,5 @@
 // Package main provides the NornicDB CLI entry point.
+// Author: Codex, NOR-180 shell terminal-outcome diagnostics, 2026-10-27.
 package main
 
 import (
@@ -27,6 +28,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
@@ -1791,6 +1793,12 @@ func runShell(cmd *cobra.Command, args []string) error {
 		result, err := executor.Execute(ctx, query, nil)
 		if err != nil {
 			commandPrintln(cmd, localization.NornicDBCLIShellQueryFailed())
+			if nornicerrors.HasStatusDiagnostic(err) {
+				diagnostic := nornicerrors.AppendStatusDiagnostics(err, "", func(message localization.Message) string {
+					return cli.Render(commandLocalizer(cmd), message)
+				})
+				cmd.Println(strings.TrimPrefix(diagnostic, "\n"))
+			}
 			continue
 		}
 

@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -23,7 +24,7 @@ func TestExplicitTransactionSchemaRollbackIsolation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if executor.txContext != nil && executor.txContext.active {
-			_, _ = executor.handleRollback()
+			_, _ = executor.handleRollback(context.Background(), nil)
 		}
 	})
 	_, err = executor.Execute(ctx, "CREATE INDEX staged_index FOR (n:Account) ON (n.accountID)", nil)
@@ -227,7 +228,7 @@ func TestExplicitTransactionSeesAcknowledgedWrite(t *testing.T) {
 
 	t.Cleanup(func() {
 		if executor.txContext != nil && executor.txContext.active {
-			_, _ = executor.handleRollback()
+			_, _ = executor.handleRollback(context.Background(), nil)
 		}
 	})
 
@@ -268,10 +269,10 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 	firstOpen := true
 	t.Cleanup(func() {
 		if firstOpen {
-			_, _ = first.handleRollback()
+			_, _ = first.handleRollback(context.Background(), nil)
 		}
 		if second.txContext != nil && second.txContext.active {
-			_, _ = second.handleRollback()
+			_, _ = second.handleRollback(context.Background(), nil)
 		}
 	})
 
@@ -298,7 +299,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 
 	// Always release the first transaction before asserting so a regression
 	// cannot strand the second BEGIN goroutine or the async engine cleanup.
-	_, rollbackErr := first.handleRollback()
+	_, rollbackErr := first.handleRollback(context.Background(), nil)
 	require.NoError(t, rollbackErr)
 	firstOpen = false
 	if !beginCompletedPromptly {
@@ -322,10 +323,10 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if first.txContext != nil && first.txContext.active {
-			_, _ = first.handleRollback()
+			_, _ = first.handleRollback(context.Background(), nil)
 		}
 		if second.txContext != nil && second.txContext.active {
-			_, _ = second.handleRollback()
+			_, _ = second.handleRollback(context.Background(), nil)
 		}
 	})
 

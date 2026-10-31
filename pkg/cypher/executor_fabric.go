@@ -107,7 +107,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 							cause = cleanupPanic
 						}
 					}()
-					resultErr = errors.Join(resultErr, tx.Rollback(nil))
+					resultErr = nornicerrors.CombineTerminalOutcomes(resultErr, tx.Rollback(nil))
 				}()
 			}
 			if cause != nil {
@@ -996,8 +996,8 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	registered := false
 	defer func() {
 		if !registered && txExec.txContext != nil && txExec.txContext.active {
-			_, cleanupErr := txExec.handleRollback()
-			resultErr = errors.Join(resultErr, cleanupErr)
+			_, cleanupErr := txExec.handleRollback(beginCtx, nil)
+			resultErr = nornicerrors.CombineTerminalOutcomes(resultErr, cleanupErr)
 		}
 	}()
 
@@ -1027,7 +1027,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	rollbackFn := func(_ *fabric.SubTransaction) error {
 		// Local storage rollback has no context API. Always release its state;
 		// the protocol terminal owner bounds its wait independently.
-		_, err := txExec.handleRollback()
+		_, err := txExec.handleRollback(terminalCtx, nil)
 		return err
 	}
 	if tx := c.fabricTransaction(); tx != nil {

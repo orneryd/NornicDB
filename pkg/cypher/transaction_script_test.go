@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -258,12 +259,12 @@ func TestTransactionStatementHandlers_AdditionalBranches(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown transaction type")
 
 	exec.txContext = &TransactionContext{tx: struct{}{}, active: true}
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown transaction type")
 
 	exec.txContext = nil
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no active transaction")
 }
@@ -367,7 +368,7 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) 
 
 func TestTransactionHandleRollback_ErrorBranchAfterClosedTx(t *testing.T) {
 	requireTransactionHandlerFailsAfterClosedTransaction(t,
-		func(exec *StorageExecutor) (*ExecuteResult, error) { return exec.handleRollback() },
+		func(exec *StorageExecutor) (*ExecuteResult, error) { return exec.handleRollback(context.Background(), nil) },
 		"rollback failed")
 }
 
@@ -385,7 +386,7 @@ func requireExecuteInTransactionSucceeds(t *testing.T, exec *StorageExecutor, cy
 	require.NotNil(t, exec.txContext)
 	t.Cleanup(func() {
 		if exec.txContext != nil {
-			_, _ = exec.handleRollback()
+			_, _ = exec.handleRollback(context.Background(), nil)
 		}
 	})
 

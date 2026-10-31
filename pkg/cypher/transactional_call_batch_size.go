@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -152,7 +153,7 @@ func (e *StorageExecutor) validateTransactionalCallInput(count int) error {
 			detail: "InvalidCallInTransactions",
 		}
 	}
-	return newSemanticError("Neo.DatabaseError.Transaction.TransactionStartFailed", "InvalidCallInTransactions",
+	return newSemanticError(nornicerrors.TransactionStartFailed, "InvalidCallInTransactions",
 		"CALL { ... } IN TRANSACTIONS is not allowed inside an explicit transaction")
 }
 

@@ -68,8 +68,7 @@ func TestTransactionStatementErrorRendersBufferedMemoryIdentity(t *testing.T) {
 	err := fmt.Errorf("commit failed: %w", testBufferedMemoryError{localization.NewLocalizedError(
 		"Neo.TransientError.General.MemoryPoolOutOfMemoryError",
 		localization.ApplicationMemoryPressure(), memory.ErrLimitExceeded)})
-	failure := statementError(err)
-	localizeStatementError(&failure, err, func(message localization.Message) string {
+	failure := statementError(err, func(message localization.Message) string {
 		if message.ID != localization.ApplicationMemoryPressure().ID {
 			t.Fatalf("unexpected localization identity: %s", message.ID)
 		}
