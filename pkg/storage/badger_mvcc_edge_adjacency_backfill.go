@@ -11,11 +11,11 @@ import (
 func (b *BadgerEngine) migrateV2ToV3() error {
 	start := []byte{prefixEdge}
 	for {
-		edges, lastScanned, reachedEnd, err := b.collectEdgeBootstrapBatch(context.Background(), start, mvccRebuildScanBatchSize)
+		edges, lastScanned, reachedEnd, err := collectMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](b, context.Background(), start, mvccRebuildScanBatchSize)
 		if err != nil {
 			return fmt.Errorf("scan edges: %w", err)
 		}
-		if err := b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for _, edge := range edges {
 				head, err := b.loadEdgeMVCCHeadInTxn(txn, edge.ID)
 				if err == ErrNotFound {
@@ -103,7 +103,7 @@ func (b *BadgerEngine) repairArchivedEdgeAdjacency() error {
 			return err
 		}
 		if len(batch) > 0 {
-			if err := b.withUpdate(func(txn *badger.Txn) error {
+			if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 				for _, record := range batch {
 					if err := b.ensureEdgeAdjacencyAtHeadInTxn(txn, record.edge, record.version); err != nil {
 						return err

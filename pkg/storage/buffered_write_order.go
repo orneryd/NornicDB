@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"hash/maphash"
@@ -40,23 +41,7 @@ func (e *writtenEntities) edge(edge *Edge) {
 
 // operationEntities are the entities a transaction's operations write.
 func operationEntities(ops []Operation) writtenEntities {
-	var e writtenEntities
-	for i := range ops {
-		op := &ops[i]
-		switch op.Type {
-		case OpDeleteNode:
-			e.deletedNodes = append(e.deletedNodes, op.NodeID)
-		case OpDeleteEdge:
-			e.edges = append(e.edges, op.EdgeID)
-		}
-		if op.Node != nil {
-			e.node(op.Node.ID)
-		}
-		e.edge(op.Edge)
-		e.edge(op.OldEdge)
-		e.edges = append(e.edges, op.DeletedEdgeIDs...)
-	}
-	return e
+	return affectedEntities(publicationKeys(appendOperationPublicationKeys(nil, nil, ops)))
 }
 
 // writeOrderStripes partitions the write-behind order by entity, so writes of
@@ -89,34 +74,13 @@ func (s *orderStripeSet) entities(e writtenEntities) {
 // operations adds the stripes of the entities ops write, as entities would
 // for operationEntities(ops), without collecting them.
 func (s *orderStripeSet) operations(ops []Operation) {
-	for i := range ops {
-		op := &ops[i]
-		s.add(string(op.NodeID))
-		s.add(string(op.EdgeID))
-		if op.Node != nil && op.Node.ID != op.NodeID {
-			s.add(string(op.Node.ID))
-		}
-		for _, edge := range [...]*Edge{op.Edge, op.OldEdge} {
-			if edge != nil {
-				if edge.ID != op.EdgeID {
-					s.add(string(edge.ID))
-				}
-				s.add(string(edge.StartNode))
-				s.add(string(edge.EndNode))
-			}
-		}
-		for _, id := range op.DeletedEdgeIDs {
-			s.add(string(id))
-		}
-	}
+	s.entities(operationEntities(ops))
 }
 
 // deletions adds the stripes of the nodes ops delete.
 func (s *orderStripeSet) deletions(ops []Operation) {
-	for i := range ops {
-		if ops[i].Type == OpDeleteNode {
-			s.add(string(ops[i].NodeID))
-		}
+	for _, id := range operationEntities(ops).deletedNodes {
+		s.add(string(id))
 	}
 }
 
@@ -126,35 +90,50 @@ func (s *orderStripeSet) deletions(ops []Operation) {
 // always taken in ascending order.
 type writeOrder [writeOrderStripes]trackedRWMutex
 
-func (o *writeOrder) lock(s *orderStripeSet, exclusive bool) {
-	for word, bitsSet := range s {
-		for bitsSet != 0 {
-			i := word*64 + bits.TrailingZeros64(bitsSet)
-			bitsSet &= bitsSet - 1
-			if exclusive {
-				o[i].Lock()
-			} else {
-				o[i].RLock()
-			}
-		}
-	}
-}
-
-// lockMixed takes the stripes of s in ascending order, those also in
-// exclusive exclusively and the others shared.
-func (o *writeOrder) lockMixed(s, exclusive *orderStripeSet) {
+func (o *writeOrder) lockContext(ctx context.Context, s *orderStripeSet, exclusive bool) error {
+	var held orderStripeSet
 	for word, bitsSet := range s {
 		for bitsSet != 0 {
 			bit := bitsSet & -bitsSet
 			i := word*64 + bits.TrailingZeros64(bitsSet)
 			bitsSet &= bitsSet - 1
-			if exclusive[word]&bit != 0 {
-				o[i].Lock()
+			var err error
+			if exclusive {
+				err = o[i].LockContext(ctx)
 			} else {
-				o[i].RLock()
+				err = o[i].RLockContext(ctx)
 			}
+			if err != nil {
+				o.unlock(&held, exclusive)
+				return err
+			}
+			held[word] |= bit
 		}
 	}
+	return nil
+}
+
+func (o *writeOrder) lockMixedContext(ctx context.Context, s, exclusive *orderStripeSet) error {
+	var held orderStripeSet
+	for word, bitsSet := range s {
+		for bitsSet != 0 {
+			bit := bitsSet & -bitsSet
+			i := word*64 + bits.TrailingZeros64(bitsSet)
+			bitsSet &= bitsSet - 1
+			var err error
+			if exclusive[word]&bit != 0 {
+				err = o[i].LockContext(ctx)
+			} else {
+				err = o[i].RLockContext(ctx)
+			}
+			if err != nil {
+				o.unlockMixed(&held, exclusive)
+				return err
+			}
+			held[word] |= bit
+		}
+	}
+	return nil
 }
 
 func (o *writeOrder) unlockMixed(s, exclusive *orderStripeSet) {
@@ -184,38 +163,6 @@ func (o *writeOrder) unlock(s *orderStripeSet, exclusive bool) {
 			}
 		}
 	}
-}
-
-// trackedRWMutex is a sync.RWMutex whose holds tests observe through
-// lockHoldHooks: the write-order stripes and the commit gate.
-type trackedRWMutex struct{ sync.RWMutex }
-
-func (m *trackedRWMutex) Lock() {
-	m.RWMutex.Lock()
-	if lockHoldHooks != nil {
-		lockHoldHooks.held()
-	}
-}
-
-func (m *trackedRWMutex) Unlock() {
-	if lockHoldHooks != nil {
-		lockHoldHooks.released()
-	}
-	m.RWMutex.Unlock()
-}
-
-func (m *trackedRWMutex) RLock() {
-	m.RWMutex.RLock()
-	if lockHoldHooks != nil {
-		lockHoldHooks.held()
-	}
-}
-
-func (m *trackedRWMutex) RUnlock() {
-	if lockHoldHooks != nil {
-		lockHoldHooks.released()
-	}
-	m.RWMutex.RUnlock()
 }
 
 // lockHoldHooks, installed by tests, observe the write-order stripes and the
@@ -295,25 +242,9 @@ func (lease *writeRelease[T]) release() {
 		})
 	case *bufferedOrderResources:
 		if resource.w != nil {
-			resource.b.evictOrderedImages(resource.e)
 			resource.w.order.unlock(&resource.stripes, true)
 			resource.w = nil
 		}
-	}
-}
-
-// evictOrderedImages evicts the cached images of e's entities: their node and
-// relationship bodies and the adjacency of each node (a relationship's
-// endpoints are among e's nodes).
-func (b *BadgerEngine) evictOrderedImages(e writtenEntities) {
-	for _, ids := range [...][]NodeID{e.nodes, e.deletedNodes} {
-		for _, id := range ids {
-			b.cacheDeleteNode(id, nodeCacheAllForms)
-			b.adjCacheInvalidate(id)
-		}
-	}
-	for _, id := range e.edges {
-		b.cacheDeleteEdge(id)
 	}
 }
 
@@ -330,16 +261,18 @@ func (b *BadgerEngine) evictOrderedImages(e writtenEntities) {
 // stripes, so a node delete also waits for the relationships it cascades to.
 // drained reports a drain: those commits landed after any Badger snapshot
 // the caller opened before. Without write-behind there is nothing to order.
-func (b *BadgerEngine) orderAfterBufferedCommits(h *orderHold, e writtenEntities) (drained bool, err error) {
+func (b *BadgerEngine) orderAfterBufferedCommits(ctx context.Context, h *orderHold, e writtenEntities) (drained bool, err error) {
 	w := b.writeBehind
 	if w == nil {
 		return false, nil
 	}
 	h.resources.stripes.entities(e)
 	h.resources.b, h.resources.e = b, e
-	w.order.lock(&h.resources.stripes, true)
+	if err := w.order.lockContext(ctx, &h.resources.stripes, true); err != nil {
+		return false, err
+	}
 	if w.holdsEntities(e) {
-		if err := w.flush(false, true); err != nil {
+		if err := w.flushContext(ctx, false, true); err != nil {
 			w.order.unlock(&h.resources.stripes, true)
 			return false, err
 		}
@@ -356,9 +289,9 @@ func (b *BadgerEngine) orderAfterBufferedCommits(h *orderHold, e writtenEntities
 // adjacency, so a commit of one replayed while it runs would make it read a
 // stale image or fail with a conflict. When reach finds a node the order
 // does not hold, the order is taken again with it; the set only grows.
-func (b *BadgerEngine) orderCovering(h *orderHold, e writtenEntities, reach func() ([]NodeID, error)) error {
+func (b *BadgerEngine) orderCovering(ctx context.Context, h *orderHold, e writtenEntities, reach func() ([]NodeID, error)) error {
 	for {
-		if _, err := b.orderAfterBufferedCommits(h, e); err != nil {
+		if _, err := b.orderAfterBufferedCommits(ctx, h, e); err != nil {
 			return err
 		}
 		reached, err := reach()
@@ -447,6 +380,7 @@ var allOrderStripes = func() (s orderStripeSet) {
 // lifecycleWrite is a write that replaces or removes stored state wholesale
 // (beginLifecycleWrite), kept on the writer's stack.
 type lifecycleWrite struct {
+	ctx     context.Context
 	b       *BadgerEngine
 	held    *commitNotification
 	dropped bool
@@ -465,21 +399,31 @@ type lifecycleWrite struct {
 // (prefixDroppedSince). finish, deferred by the caller, releases everything
 // and then delivers the notifications of the drained commits and of the
 // write itself, after every lock.
-func (b *BadgerEngine) beginLifecycleWrite(dropped string) (lifecycleWrite, error) {
-	b.writeBarrier.Lock()
+func (b *BadgerEngine) beginLifecycleWrite(ctx context.Context, dropped string) (lifecycleWrite, error) {
+	if err := b.writeBarrier.LockContext(ctx); err != nil {
+		return lifecycleWrite{}, err
+	}
 	if err := b.ensureOpen(true); err != nil {
 		b.writeBarrier.Unlock()
 		return lifecycleWrite{}, err
 	}
-	l := lifecycleWrite{b: b, held: b.queueCommitNotification(&commitNotification{})}
+	l := lifecycleWrite{ctx: ctx, b: b, held: b.queueCommitNotification(&commitNotification{})}
 	if w := b.writeBehind; w != nil {
-		w.order.lock(&allOrderStripes, true)
-		if err := w.flush(false, false); err != nil {
+		if err := w.order.lockContext(ctx, &allOrderStripes, true); err != nil {
+			// lockContext already released any partial stripe acquisition.
+			b.writeBarrier.Unlock()
+			b.completeCommitNotification(l.held)
+			return lifecycleWrite{}, err
+		}
+		if err := w.flushContext(ctx, false, false); err != nil {
 			l.finish()
 			return lifecycleWrite{}, err
 		}
 	}
-	b.suppressionWriteMu.Lock()
+	if err := b.suppressionWriteMu.LockContext(ctx); err != nil {
+		l.finish()
+		return lifecycleWrite{}, err
+	}
 	l.suppressions = true
 	if dropped != "" {
 		b.startPrefixDrop(dropped)
@@ -498,8 +442,8 @@ func (b *BadgerEngine) beginLifecycleWrite(dropped string) (lifecycleWrite, erro
 // entries): a transaction open across it that writes in its scope fails its
 // commit with a retryable conflict, as across a prefix delete
 // (prefixDroppedSince).
-func (b *BadgerEngine) beginMaintenanceWrite(scope []string) (lifecycleWrite, error) {
-	l, err := b.beginLifecycleWrite("")
+func (b *BadgerEngine) beginMaintenanceWrite(ctx context.Context, scope []string) (lifecycleWrite, error) {
+	l, err := b.beginLifecycleWrite(ctx, "")
 	if err != nil {
 		return l, err
 	}

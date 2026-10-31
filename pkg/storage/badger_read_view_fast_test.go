@@ -10,7 +10,7 @@ import (
 
 func TestSnapshotOverlayIdleEpochAndNamespace(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	w := b.writeBehind
 	before, idle := w.idleReadEpoch("test")
 	require.True(t, idle)
@@ -33,7 +33,7 @@ func TestSnapshotOverlayIdleEpochAndNamespace(t *testing.T) {
 	require.False(t, idle)
 	_, idle = w.idleReadEpoch("test:")
 	require.True(t, idle)
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	after, idle := w.idleReadEpoch("test")
 	require.True(t, idle)
 	require.NotEqual(t, before, after, "idle publication must detect ABA")
@@ -41,7 +41,7 @@ func TestSnapshotOverlayIdleEpochAndNamespace(t *testing.T) {
 
 func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	calls := 0
 	var value int64
 	view, err := b.captureReadView(nil, readViewOptions{scope: "test", cached: func(w *WriteBehindBuffer) (bool, error) {
@@ -53,7 +53,7 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 			require.NoError(t, tx.SetNamespace("test"))
 			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(9)}}, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			value = 2
 		} else {
 			require.NotNil(t, w)
@@ -75,7 +75,7 @@ func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, view.txn)
 	require.Len(t, overlay, 2)
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	for i := 0; i < 2; i++ {
 		require.NoError(t, view.withView(func(txn *badger.Txn) error {
 			_, err := txn.Get(edgeKey("test:r"))

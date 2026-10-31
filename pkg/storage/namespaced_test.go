@@ -1077,7 +1077,6 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 
 	t.Run("streaming works through the Engine contract on minimal inners", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		inner := &nonStreamingCountEngine{Engine: base}
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 		tenantB := NewNamespacedEngine(inner, "tenant_b")
@@ -1147,7 +1146,6 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		require.ErrorIs(t, err, wantStatsErr)
 
 		streamBase := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = streamBase.Close() })
 		streamInner := &namespacedStreamingOnlyEngine{Engine: streamBase}
 		streamTenantA := NewNamespacedEngine(streamInner, "tenant_a")
 		streamTenantB := NewNamespacedEngine(streamInner, "tenant_b")
@@ -1171,7 +1169,6 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		require.ErrorIs(t, err, wantStreamErr)
 
 		allNodesBase := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = allNodesBase.Close() })
 		allNodesInner := &nonStreamingCountEngine{Engine: allNodesBase}
 		allNodesTenantA := NewNamespacedEngine(allNodesInner, "tenant_a")
 		allNodesTenantB := NewNamespacedEngine(allNodesInner, "tenant_b")
@@ -1222,7 +1219,6 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 	t.Run("node and edge count use prefix stats and propagate errors", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		engine := &namespacedPrefixStatsEngine{
 			Engine:    base,
 			nodeCount: 7,
@@ -1249,7 +1245,6 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 
 	t.Run("node and edge count use streaming and all fallbacks", func(t *testing.T) {
 		streamingBase := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = streamingBase.Close() })
 		streamingInner := &namespacedStreamingOnlyEngine{Engine: streamingBase}
 		tenantA := NewNamespacedEngine(streamingInner, "tenant_a")
 		tenantB := NewNamespacedEngine(streamingInner, "tenant_b")
@@ -1281,7 +1276,6 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		require.ErrorContains(t, err, "stream edges failed")
 
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		fallbackInner := &nonStreamingCountEngine{Engine: base}
 		tenantAFallback := NewNamespacedEngine(fallbackInner, "tenant_a")
 		tenantBFallback := NewNamespacedEngine(fallbackInner, "tenant_b")
@@ -1312,7 +1306,6 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 
 	t.Run("get first falls back when inner first node is foreign", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		_, err := base.CreateNode(&Node{ID: "tenant_a:first", Labels: []string{"Person"}, Properties: map[string]any{"name": "tenant-a"}})
 		require.NoError(t, err)
 		_, err = base.CreateNode(&Node{ID: "tenant_b:first", Labels: []string{"Person"}, Properties: map[string]any{"name": "tenant-b"}})
@@ -1338,7 +1331,6 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 
 	t.Run("get first returns not found when namespace has no matches", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		engine := &firstLabelEngine{
 			Engine: base,
 			node:   &Node{ID: "tenant_b:first", Labels: []string{"Person"}},
@@ -1372,7 +1364,6 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		assert.Equal(t, []NodeID{"one"}, seen)
 
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		fallback := NewNamespacedEngine(&nonStreamingCountEngine{Engine: base}, "tenant_a")
 		other := NewNamespacedEngine(&nonStreamingCountEngine{Engine: base}, "tenant_b")
 		_, err = fallback.CreateNode(&Node{ID: "one", Labels: []string{"Person"}})
@@ -1393,7 +1384,6 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 
 	t.Run("get edge between filters foreign edges and schema uses provider", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 		tenantA := NewNamespacedEngine(base, "tenant_a")
 		tenantB := NewNamespacedEngine(base, "tenant_b")
 
@@ -1422,7 +1412,6 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 
 func TestNamespacedEngine_OptionalDelegateFallbackBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	inner := &nonStreamingCountEngine{Engine: base}
 	ns := NewNamespacedEngine(inner, "tenant_a")
 
@@ -1553,7 +1542,6 @@ func TestNamespacedEngine_UserConversionHelpers(t *testing.T) {
 	assert.Equal(t, NodeID("n2"), shallow.EndNode)
 
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	deep := NewNamespacedEngine(inner, "tenant_a").toUserEdge(&Edge{
 		ID:        "tenant_a:e2",
 		StartNode: "tenant_a:n3",

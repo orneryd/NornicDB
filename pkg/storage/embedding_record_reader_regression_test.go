@@ -9,7 +9,7 @@ import (
 func TestEmbeddingRecordReaderAppendsPersistedAndStagedValues(t *testing.T) {
 	engine := newTestEngine(t)
 	key := []byte("embedding-reader-append")
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error { return txn.Set(key, []byte("disk")) }))
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(key, []byte("disk")) }))
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 		for _, tc := range []struct {
 			name   string
@@ -42,7 +42,7 @@ func TestEmbeddingRecordReaderReassemblesPersistedAndMixedShards(t *testing.T) {
 			require.NoError(t, err)
 			parts := [][]byte{encoded[:len(encoded)/3], encoded[len(encoded)/3 : 2*len(encoded)/3], encoded[2*len(encoded)/3:]}
 			commit := &bufferedCommit{writes: map[string][]byte{}}
-			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				require.NoError(t, txn.Set(embeddingKey(id, 0), makeEmbeddingShardMarker(len(parts))))
 				for i, part := range parts {
 					key := embeddingChunkPartKey(id, 0, i)

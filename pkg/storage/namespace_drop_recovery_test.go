@@ -180,7 +180,7 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 func TestNamespaceDropIntentUsesAtomicLargeWriter(t *testing.T) {
 	b := newTestEngine(t)
 	defer b.Close()
-	lease, err := b.beginLifecycleWrite("")
+	lease, err := b.beginLifecycleWrite(context.Background(), "")
 	require.NoError(t, err)
 	defer lease.finish()
 	intent := &namespaceDropIntent{namespace: "large", nodes: make(map[uint64]struct{}), edges: make(map[uint64]struct{})}

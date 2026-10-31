@@ -203,17 +203,28 @@ func TestExplicitTransactionRejectsMixedSchemaAndData(t *testing.T) {
 	}
 }
 
-func TestExplicitTransactionSeesAcknowledgedWrite(t *testing.T) {
+// acknowledgedWriteTransaction returns an executor over namespace that has had
+// an auto-commit write acknowledged and then opened an explicit transaction: the
+// starting point of the acknowledged-state visibility tests. How that
+// transaction ends stays with the caller, since it is what differs between
+// them: one rolls back on cleanup, the other commits dependent writes.
+func acknowledgedWriteTransaction(t *testing.T, namespace, write string) (*StorageExecutor, *ExecuteResult) {
+	t.Helper()
 	base := newTestMemoryEngine(t)
-	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "visibility"))
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, namespace))
 
-	created, err := executor.Execute(context.Background(),
-		"CREATE (:Account {accountID: 'acknowledged'})", nil)
+	acknowledged, err := executor.Execute(context.Background(), write, nil)
 	require.NoError(t, err)
+	_, err = executor.handleBegin(nil)
+	require.NoError(t, err)
+	return executor, acknowledged
+}
+
+func TestExplicitTransactionSeesAcknowledgedWrite(t *testing.T) {
+	executor, created := acknowledgedWriteTransaction(t, "visibility",
+		"CREATE (:Account {accountID: 'acknowledged'})")
 	require.Equal(t, 1, created.Stats.NodesCreated)
 
-	_, err = executor.handleBegin()
-	require.NoError(t, err)
 	t.Cleanup(func() {
 		if executor.txContext != nil && executor.txContext.active {
 			_, _ = executor.handleRollback()
@@ -227,14 +238,8 @@ func TestExplicitTransactionSeesAcknowledgedWrite(t *testing.T) {
 }
 
 func TestExplicitTransactionCreatesDependentWritesFromAcknowledgedState(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "dependent"))
-
-	_, err := executor.Execute(context.Background(),
-		"CREATE (:Account {accountID: 'source'})", nil)
-	require.NoError(t, err)
-	_, err = executor.handleBegin()
-	require.NoError(t, err)
+	executor, _ := acknowledgedWriteTransaction(t, "dependent",
+		"CREATE (:Account {accountID: 'source'})")
 
 	created, err := executor.Execute(context.Background(), `
 		MATCH (source:Account {accountID: 'source'})
@@ -258,7 +263,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
-	_, err := first.handleBegin()
+	_, err := first.handleBegin(nil)
 	require.NoError(t, err)
 	firstOpen := true
 	t.Cleanup(func() {
@@ -279,7 +284,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 
 	beginDone := make(chan error, 1)
 	go func() {
-		_, beginErr := second.handleBegin()
+		_, beginErr := second.handleBegin(nil)
 		beginDone <- beginErr
 	}()
 
@@ -313,7 +318,7 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
-	_, err := first.handleBegin()
+	_, err := first.handleBegin(nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if first.txContext != nil && first.txContext.active {
@@ -332,7 +337,7 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 
 	beginDone := make(chan error, 1)
 	go func() {
-		_, beginErr := second.handleBegin()
+		_, beginErr := second.handleBegin(nil)
 		beginDone <- beginErr
 	}()
 

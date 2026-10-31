@@ -109,7 +109,7 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 							require.NoError(t, err)
 						}
 						require.NoError(t, b.CreateEdge(edge("initial")))
-						require.NoError(t, b.FlushWriteBehind())
+						require.NoError(t, b.FlushWriteBehind(nil))
 						if op == "hidden delete" {
 							if kind == "node" {
 								require.NoError(t, b.SetManualSuppression(StoredEntityNodeKind, "test:n", true))
@@ -164,7 +164,7 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 							}
 						}
 						read("after the write")
-						require.NoError(t, b.FlushWriteBehind())
+						require.NoError(t, b.FlushWriteBehind(nil))
 						b.invalidateCachesAfterRestore()
 						read("after the flush")
 					})
@@ -187,7 +187,7 @@ func TestSynchronousDeleteRemovesBufferedRelationships(t *testing.T) {
 				_, err := b.CreateNode(&Node{ID: id})
 				require.NoError(t, err)
 			}
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			tx, err := b.BeginTransaction()
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
@@ -216,7 +216,7 @@ func TestSynchronousDeleteRemovesBufferedRelationships(t *testing.T) {
 				require.Zero(t, count, stage)
 			}
 			check("after the delete")
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			b.invalidateCachesAfterRestore()
 			check("after the flush")
 		})

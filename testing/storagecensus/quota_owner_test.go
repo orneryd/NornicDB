@@ -2,13 +2,14 @@ package storagecensus
 
 import (
 	"github.com/stretchr/testify/require"
+	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 	"strings"
 	"testing"
 )
 
 func TestSharedQuotaFieldsRetainExactWriters(t *testing.T) {
-	p, pkg := coverageProgram(t, `package multidb
+	p, pkg := ssaFixture(t, `package multidb
  type DatabaseInfo struct{nodeSize,usageNodes,otherSize int64;pending map[string]reservedUsage}
  type reservedUsage struct{nodes int64}
  type managedDatabaseRuntime struct{info *DatabaseInfo}
@@ -20,7 +21,7 @@ func TestSharedQuotaFieldsRetainExactWriters(t *testing.T) {
  func rogue(i *DatabaseInfo,r *reservedUsage){i.nodeSize++;i.usageNodes++;i.otherSize++;r.nodes++;alias:=i.pending;alias["rogue"]=*r}
  type DatabaseInfoLookalike struct{nodeSize int64}
  func lookalike(i *DatabaseInfoLookalike){i.nodeSize++}
- `, "pkg/multidb")
+ `, "pkg/multidb", ssa.SanityCheckFunctions)
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg == pkg {
 			p.funcs = append(p.funcs, fn)

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -109,7 +110,7 @@ func (b *BadgerEngine) persistPropertyIdentityLocked(db *managedBadgerDB, identi
 		tx := db.newTxnAt(ts, true)
 		defer tx.Discard()
 		if err = write(tx); err == nil {
-			err = db.commit(tx)
+			err = db.commit(context.Background(), tx, nil)
 		}
 	} else {
 		err = db.Update(write)

@@ -62,7 +62,7 @@ func TestV4StartupUpgradeRestoresHistoricalPendingNewIDs(t *testing.T) {
 	engine := reviewBindingEngine(t, dir)
 	_, err := engine.CreateNode(&Node{ID: "legacy:a"})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	engine.writeBehind.Close()
 	engine.writeBehind = NewWriteBehindBuffer(time.Hour, 1000000, engine.replayWriteBehind)
 	require.NoError(t, engine.writeSchemaVersion(storageVersionEdgeAdjacencyV3))

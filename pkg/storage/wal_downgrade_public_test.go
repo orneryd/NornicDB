@@ -75,7 +75,7 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 		}
 		_, err := b.CreateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(1)}})
 		check(err)
-		check(b.FlushWriteBehind())
+		check(b.FlushWriteBehind(nil))
 		check(b.Sync())
 		parkBuffer()
 		if mode == "write-clean-foreign" {
@@ -199,7 +199,7 @@ func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir s
 	source.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	_, err = source.CreateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(0)}})
 	check(err)
-	check(source.FlushWriteBehind())
+	check(source.FlushWriteBehind(nil))
 	wal, err := NewWAL(logDir, DefaultWALConfig())
 	check(err)
 	journal := NewWALEngine(source, wal)

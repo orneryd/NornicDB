@@ -24,7 +24,7 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 	seed := func(b *BadgerEngine, name string) {
 		_, err := b.CreateNode(&Node{ID: NodeID("binding:seed-" + name), Properties: map[string]any{name: "keep-" + name}})
 		require.NoError(t, err)
-		require.NoError(t, b.FlushWriteBehind())
+		require.NoError(t, b.FlushWriteBehind(nil))
 	}
 	seed(source, "alpha")
 	seed(source, "beta")
@@ -52,7 +52,7 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 	node := &Node{ID: "binding:imported", Properties: map[string]any{"alpha": "after-alpha", "beta": "after-beta"}}
 	_, err := source.CreateNode(node)
 	require.NoError(t, err)
-	require.NoError(t, source.FlushWriteBehind())
+	require.NoError(t, source.FlushWriteBehind(nil))
 	var body []byte
 	require.NoError(t, source.db.View(func(tx *badger.Txn) error {
 		item, err := tx.Get(nodeKey(node.ID))

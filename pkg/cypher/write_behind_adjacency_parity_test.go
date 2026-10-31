@@ -104,7 +104,7 @@ func TestWriteBehind_AdjacencyParity(t *testing.T) {
 		buffered[q] = runInt(t, exec, ctx, q)
 	}
 
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 
 	for _, q := range queries {
 		require.Equal(t, buffered[q], runInt(t, exec, ctx, q), "query differs after flush: %s", q)
@@ -144,7 +144,7 @@ func TestWriteBehind_SetBufferedRelationship(t *testing.T) {
 
 	require.Equal(t, int64(999), runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN r.w"))
 
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.Equal(t, int64(999), runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN r.w"))
 }
 
@@ -213,7 +213,7 @@ func TestWriteBehind_DetachDeleteCountConsistency(t *testing.T) {
 				require.Equal(t, int64(48), afterBuffered, "cached whole-type count must be invalidated by the buffered delete")
 			}
 
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			afterFlushed := runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)")
 
 			require.Equal(t, before-2, afterFlushed, "user 14 has exactly two buffered :Friend edges")

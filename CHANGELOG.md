@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Go write-behind mutations use `Append(BufferedMutation)`; index visibility
+  markers use `SetIndexTombstones(keys, present)`. Flushes and retained authority
+  accept the caller context directly. Retired per-kind and context forwarding
+  entry points have migrated canonical callers; see the
+  [transaction guide](docs/development/replicated-entity-commits.md).
+
+- Go full-text and vector index creation use canonical `AddFulltextIndex` and
+  `AddVectorIndex` operations with an explicit entity kind. Property-type
+  creation uses `AddPropertyTypeConstraint` with typed options; parallel
+  forwarding entry points are retired. See the [Go migration guide](docs/development/schema-fulltext-go-api.md).
+
 - Go account state changes use `ChangeUserState(username, UserEnable | UserDisable | UserUnlock)` in place of separate enable/disable/unlock methods. User edits share one durable publication and audit boundary; see the [account mutation guide](docs/development/account-state-api.md).
 
 - Go node runtime provenance and flags use `RuntimeMetadata` / `SetRuntimeMetadata`
@@ -92,6 +103,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Keep durable cache publication scoped to affected entities, publish final
+  relationship images, and detach nested mutable read values. Preserve accepted
+  native commit ownership when a waiting client checks activity or rolls back.
 
 - Classify concurrent non-key updates as ordinary retryable write conflicts,
   preserve genuine unique-key claim violations, and prevent stale cached key

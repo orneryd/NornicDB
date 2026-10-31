@@ -37,11 +37,11 @@ func TestReplayNotificationRetiresGenerationBeforeConcurrentListenerFlush(t *tes
 			return
 		}
 		close(listenerEntered)
-		listenerDone <- b.FlushWriteBehind()
+		listenerDone <- b.FlushWriteBehind(nil)
 	})
 	bufferedCreate(t, b, &Node{ID: "test:notification-retirement"})
 	b.writeBehind.rotate()
-	go func() { defer close(drained); originalFlushDone <- b.FlushWriteBehind() }()
+	go func() { defer close(drained); originalFlushDone <- b.FlushWriteBehind(nil) }()
 	var generation *CommitBuffer
 	select {
 	case generation = <-applied:

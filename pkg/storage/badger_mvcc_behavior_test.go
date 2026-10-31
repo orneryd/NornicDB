@@ -252,7 +252,7 @@ func TestNodeBodyCacheExcludesEmbeddingsAndEvictsByBytes(t *testing.T) {
 			Labels:          []string{"Document"},
 			Properties:      map[string]any{"text": strings.Repeat("x", 500)},
 			ChunkEmbeddings: [][]float32{{1, 2, 3, 4}},
-		})
+		}, engine.db.oracle.published.Load())
 	}
 
 	engine.nodeBodyCacheMu.RLock()
@@ -316,7 +316,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	beforeHead, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		key := engine.mvccNodeHeadKeyStringLookup(nodeID)
 		if key == nil {
 			return nil
@@ -433,7 +433,7 @@ func TestBadgerTransaction_CreateEdge_AllowsReadableNodesWithoutMVCCHead(t *test
 	_, err = engine.CreateNode(&Node{ID: endID, Labels: []string{"Node"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		if key := engine.mvccNodeHeadKeyStringLookup(startID); key != nil {
 			if err := txn.Delete(key); err != nil {
 				return err
@@ -1101,7 +1101,7 @@ func TestBadgerEngine_PruneMVCCVersions_AdjacencyKeyspaceErrorsSurface(t *testin
 		require.NoError(t, err)
 		prefix := engine.mvccOutgoingAdjacencyPrefixString("test:prune-out")
 		require.NotNil(t, prefix)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{0})
 		}))
 		_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
@@ -1114,7 +1114,7 @@ func TestBadgerEngine_PruneMVCCVersions_AdjacencyKeyspaceErrorsSurface(t *testin
 		require.NoError(t, err)
 		prefix := engine.mvccIncomingAdjacencyPrefixString("test:prune-in")
 		require.NotNil(t, prefix)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{0})
 		}))
 		_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
@@ -1213,7 +1213,6 @@ func TestBadgerEngine_DeleteNodeCascade_WritesAdjacencyTombstonesInHeadOnlyMode(
 
 func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.T) {
 	baseInner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = baseInner.Close() })
 	base := &nonMVCCEngine{Engine: baseInner}
 
 	walLog, err := NewWAL(t.TempDir(), nil)

@@ -159,7 +159,7 @@ func (b *BadgerEngine) ForEachNodeIDByLabelInScope(scope, label string, visit fu
 			}
 			if !cachedValid {
 				if scope == "" {
-					b.labelCacheSetFirst(labelGen, label, nodeID)
+					b.labelCacheSetFirst(labelGen, label, nodeID, txn.ReadTs())
 				}
 				cachedValid = true
 			}
@@ -194,6 +194,7 @@ func (b *BadgerEngine) GetStoredNodesByLabel(label string) ([]*Node, error) {
 }
 
 func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibility) ([]*Node, error) {
+	var sourceTs uint64
 	// Single-pass: iterate label index and fetch nodes in same transaction
 	// This reduces transaction overhead compared to two-phase approach
 	var overlay []*Node
@@ -208,6 +209,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope})
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}, func(txn *badger.Txn) error {
+		sourceTs = txn.ReadTs()
 		nodes = nil
 		loaded = nil
 		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
@@ -271,7 +273,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 	// Cache loaded nodes for future label scans.
 	for _, n := range loaded {
 		if n != nil {
-			b.cacheFillNode(gen, n, nodeReadCacheFull)
+			b.cacheFillNode(gen, n, nodeReadCacheFull, sourceTs)
 		}
 	}
 
@@ -516,7 +518,7 @@ func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings b
 	projected.Properties = make(map[string]any, len(properties))
 	for _, property := range properties {
 		if value, ok := node.Properties[property]; ok {
-			projected.Properties[property] = value
+			projected.Properties[property] = canonicalPropertyValue(value)
 		}
 	}
 	return projected
@@ -530,6 +532,7 @@ func (b *BadgerEngine) GetAllNodes() []*Node {
 
 // AllNodes returns all nodes (implements Engine interface).
 func (b *BadgerEngine) AllNodes() ([]*Node, error) {
+	var sourceTs uint64
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
 	var current bool
@@ -544,6 +547,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
+		sourceTs = txn.ReadTs()
 		nodes = nil
 		loaded = nil
 		prefix := []byte{prefixNode}
@@ -596,7 +600,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	}
 	for _, node := range loaded {
 		if node != nil {
-			b.cacheFillNode(gen, node, nodeReadCacheFull)
+			b.cacheFillNode(gen, node, nodeReadCacheFull, sourceTs)
 		}
 	}
 	for _, node := range overlay {
@@ -699,6 +703,7 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 		b.edgeTypeCacheMu.RUnlock()
 	}
 
+	var sourceTs uint64
 	var overlay []*Edge
 	var touched map[EdgeID]bool
 	var edges []*Edge
@@ -708,6 +713,7 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 		pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType})
 		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}, func(txn *badger.Txn) error {
+		sourceTs = txn.ReadTs()
 		prefix := edgeTypeIndexPrefix(edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -772,7 +778,7 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 	}
 
 	if useCache {
-		b.edgeTypeCacheFill(gen, edgeType, edges)
+		b.edgeTypeCacheFill(gen, edgeType, edges, sourceTs)
 	}
 	return edges, nil
 }
@@ -780,7 +786,12 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 // edgeTypeCacheFill caches the edges of edgeType a read captured gen before
 // reading (simple LRU-style: clear if too many types), unless the type cache
 // was written since (cacheGeneration).
-func (b *BadgerEngine) edgeTypeCacheFill(gen uint64, edgeType string, edges []*Edge) {
+func (b *BadgerEngine) edgeTypeCacheFill(gen uint64, edgeType string, edges []*Edge, source uint64) {
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	if source < max(b.durableCaches.all, b.durableCaches.types[edgeType]) {
+		return
+	}
 	b.edgeTypeCacheMu.Lock()
 	defer b.edgeTypeCacheMu.Unlock()
 	if b.edgeTypeCacheGen.current() != gen {
@@ -832,6 +843,7 @@ func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]
 }
 
 func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]*Node, error) {
+	var sourceTs uint64
 	result := make(map[NodeID]*Node, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -886,6 +898,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 			}
 		}
 	}, func(txn *badger.Txn) error {
+		sourceTs = txn.ReadTs()
 		clear(result)
 		loaded = nil
 		for _, id := range ids {
@@ -937,7 +950,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 		result[id] = copyForRead(node)
 	}
 	for _, node := range loaded {
-		b.cacheFillNode(gen, node, nodeReadCacheFull)
+		b.cacheFillNode(gen, node, nodeReadCacheFull, sourceTs)
 	}
 	return result, nil
 }
@@ -1054,7 +1067,7 @@ func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID, v readVisibility) ([]*E
 			}); err != nil {
 				return err
 			}
-			b.cacheFillEdge(gen, edge)
+			b.cacheFillEdgeAtVersion(gen, edge, item.Version(), txn.ReadTs())
 			if b.filterEntityByDecay(v, edge, nowNanos) {
 				continue
 			}
@@ -1291,7 +1304,7 @@ func (b *BadgerEngine) adjacencyHeadersInTxn(txn *badger.Txn, nodeID NodeID, dir
 // cache was written since gen, captured before txn was opened. A missing
 // record returns nil; other read or decode errors are returned.
 func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen uint64) (*Edge, error) {
-	if cached, ok := b.cacheLoadEdge(edgeID); ok && b.writeBehind == nil {
+	if cached, ok := b.cacheLoadEdgeForRead(edgeID, txn.ReadTs()); ok && b.writeBehind == nil {
 		return cached, nil
 	}
 	item, err := txn.Get(edgeKey(edgeID))
@@ -1312,7 +1325,7 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 	}); err != nil {
 		return nil, err
 	}
-	b.cacheFillEdgeAtVersion(gen, edge, item.Version())
+	b.cacheFillEdgeAtVersion(gen, edge, item.Version(), txn.ReadTs())
 	return edge, nil
 }
 
@@ -1715,7 +1728,7 @@ func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
 	for _, edge := range edges {
 		e.edge(edge)
 	}
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for _, edge := range edges {
 			if edge == nil {
 				continue

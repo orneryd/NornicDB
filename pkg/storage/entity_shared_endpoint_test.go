@@ -273,7 +273,7 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 			prepared, err := edgeTx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "edge-held"})
 			require.NoError(t, err)
 			defer prepared.Abort()
-			retain, err := prepared.RetainAcceptedAuthority()
+			retain, err := prepared.RetainAcceptedAuthority(nil)
 			require.NoError(t, err)
 			defer retain()
 			ctx, cancel := context.WithCancel(context.Background())
@@ -340,7 +340,7 @@ func TestSharedEndpointConcurrentBufferedCommitCounts(t *testing.T) {
 		require.NoError(t, <-done)
 		require.NoError(t, <-done)
 	}
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	for i := 0; i < 8; i++ {
 		for j := 0; j < 2; j++ {
 			_, err := b.GetEdge(EdgeID(fmt.Sprintf("test:e-%d-%d", i, j)))

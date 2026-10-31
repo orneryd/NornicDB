@@ -112,7 +112,7 @@ func TestLoadMVCCRecordAtOrBeforeBoundedScan(t *testing.T) {
 
 	// A short key under the prefix, below every version, is the greatest key
 	// at or below an earlier version.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(append(engine.mvccNodeVersionPrefixString(nodeID), 0x01), []byte{0})
 	}))
 	_, _, err = load(MVCCVersion{CommitTimestamp: time.Unix(50, 0).UTC()})
@@ -127,7 +127,7 @@ func TestDescendingPrefixKeys(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	key := func(group byte, n int) []byte { return []byte{0xE0, group, byte(n >> 8), byte(n)} }
 	set := func(keys ...[]byte) {
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			for _, k := range keys {
 				if err := txn.Set(k, []byte{1}); err != nil {
 					return err
@@ -187,7 +187,7 @@ func TestDescendingPrefixKeys(t *testing.T) {
 	for start := 0; start < len(deleted); start += 5000 {
 		set(deleted[start : start+5000]...)
 	}
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for _, k := range deleted {
 			if err := txn.Delete(k); err != nil {
 				return err
@@ -215,7 +215,7 @@ func TestTemporalHistoryLookupsDescending(t *testing.T) {
 	require.NoError(t, err)
 	c := sm.GetConstraintsForLabels([]string{"Role"})[0]
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		target, err := engine.writeTemporalIndexForNodeInTxn(txn, ns, n1, c)
 		require.NoError(t, err)
 		prefix := temporalHistoryPrefix(target.desc)

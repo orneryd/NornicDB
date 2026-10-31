@@ -1020,19 +1020,12 @@ func TestDropPromotionProfile_MissingBranches(t *testing.T) {
 
 func TestSchemaManager_KnowledgePolicyPersistenceHook(t *testing.T) {
 	sm := NewSchemaManager()
-	sm.mu.Lock()
-	require.NoError(t, sm.persistIfSet())
-	sm.mu.Unlock()
-
+	require.NoError(t, sm.CreatePromotionProfile(validPromoProfile("without-hook")))
 	var persisted *SchemaDefinition
-	sm.persist = func(def *SchemaDefinition) error {
-		persisted = def
-		return nil
-	}
-	sm.mu.Lock()
-	require.NoError(t, sm.persistIfSet())
-	sm.mu.Unlock()
+	sm.SetPersister(func(def *SchemaDefinition) error { persisted = def; return nil })
+	require.NoError(t, sm.CreatePromotionProfile(validPromoProfile("with-hook")))
 	require.NotNil(t, persisted)
+	require.Len(t, persisted.PromotionProfiles, 2)
 }
 
 func TestKnowledgePolicyUpdateConversionsAndErrors(t *testing.T) {

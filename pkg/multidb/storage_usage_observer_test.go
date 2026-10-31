@@ -201,7 +201,7 @@ func TestManagedUsageBufferedPublicationRetiresReservationOnce(t *testing.T) {
 	require.Equal(t, wantNodes, nodeBytes)
 	require.Equal(t, wantEdges, edgeBytes)
 	require.Equal(t, wantNodes+wantEdges, total)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	afterTotal, afterNodes, afterEdges := manager.GetStorageSize("test")
 	require.Equal(t, total, afterTotal)
 	require.Equal(t, nodeBytes, afterNodes)

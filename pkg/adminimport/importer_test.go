@@ -252,12 +252,12 @@ func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 
 	schema := source.GetSchema()
 	require.NoError(t, schema.AddUniqueConstraint("person_email_unique", "Person", "email"))
-	require.NoError(t, schema.AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger))
+	require.NoError(t, schema.AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger, storage.PropertyTypeConstraintOptions{}))
 	require.NoError(t, schema.AddPropertyIndex("person_name_idx", "Person", []string{"name"}))
 	require.NoError(t, schema.AddCompositeIndex("person_location_idx", "Person", []string{"country", "city"}))
-	require.NoError(t, schema.AddFulltextIndex("person_search_idx", []string{"Person"}, []string{"name"}))
-	require.NoError(t, schema.AddFulltextRelationshipIndex("knows_note_idx", []string{"KNOWS"}, []string{"note"}))
-	require.NoError(t, schema.AddVectorIndex("person_embedding_idx", "Person", "embedding", 3, "cosine"))
+	require.NoError(t, schema.AddFulltextIndex("person_search_idx", []string{"Person"}, []string{"name"}, storage.ConstraintEntityNode))
+	require.NoError(t, schema.AddFulltextIndex("knows_note_idx", []string{"KNOWS"}, []string{"note"}, storage.ConstraintEntityRelationship))
+	require.NoError(t, schema.AddVectorIndex("person_embedding_idx", "Person", "embedding", 3, "cosine", storage.ConstraintEntityNode))
 	require.NoError(t, schema.AddRangeIndex("person_age_range", "Person", "age"))
 	require.NoError(t, schema.AddConstraintContractBundle(storage.ConstraintContract{
 		Name:              "person_name_contract",
@@ -965,8 +965,8 @@ func TestNeo4jCSVExportSchemaCypher_IncludesRelationshipFulltextAndVectorIndexes
 	}))
 
 	schema := source.GetSchema()
-	require.NoError(t, schema.AddFulltextRelationshipIndex("rel_fact_ft", []string{"RELATES_TO"}, []string{"fact"}))
-	require.NoError(t, schema.AddVectorIndexForEntity("rel_fact_vec", "RELATES_TO", "fact_embedding", 3, "cosine", storage.ConstraintEntityRelationship))
+	require.NoError(t, schema.AddFulltextIndex("rel_fact_ft", []string{"RELATES_TO"}, []string{"fact"}, storage.ConstraintEntityRelationship))
+	require.NoError(t, schema.AddVectorIndex("rel_fact_vec", "RELATES_TO", "fact_embedding", 3, "cosine", storage.ConstraintEntityRelationship))
 
 	outDir := filepath.Join(t.TempDir(), "schema-ddl")
 	require.NoError(t, ExportNeo4jCSV(source, Neo4jCSVExportOptions{OutputDir: outDir}))

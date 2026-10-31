@@ -1,5 +1,11 @@
 package storage
 
+import "sync/atomic"
+
+// Tests can park a captured physical read without holding a cache mutex that
+// durability itself must acquire. The cache-only path does not consult it.
+var adjacencyReadCaptureObserver atomic.Pointer[func(*BadgerEngine)]
+
 type adjacencyRead uint8
 
 const (
@@ -72,6 +78,9 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 			} else {
 				if reader.view != nil {
 					defer reader.view.Close()
+					if observe := adjacencyReadCaptureObserver.Load(); observe != nil {
+						(*observe)(native)
+					}
 				}
 				err = consume(reader.read)
 				// End physical ownership before any namespace copying/projection.

@@ -16,7 +16,7 @@ func TestBadgerMVCC_HelperWriteFunctions_InvalidIDErrors(t *testing.T) {
 	engine := newTestEngine(t)
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 77}
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		// Empty IDs are currently accepted by dictionary-backed key helpers;
 		// this test ensures all helper paths execute without panic.
 		require.NoError(t, engine.writeNodeMVCCVersionInTxn(txn, &Node{ID: "", Labels: []string{"L"}}, v))

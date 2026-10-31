@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -81,7 +82,7 @@ func (b *BadgerEngine) PutAccessMeta(entityID string, entry *knowledgepolicy.Acc
 	if len(entityID) > 0 && entityID[0] == 0 {
 		target = entry.TargetID
 	}
-	return b.withPublishingUpdate(func(txn *badger.Txn) error {
+	return b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		current, err := accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 		if err != nil {
 			return err
@@ -100,7 +101,7 @@ func (b *BadgerEngine) PutAccessMeta(entityID string, entry *knowledgepolicy.Acc
 
 func (b *BadgerEngine) DeleteAccessMeta(entityID string) error {
 	target := entityID
-	return b.withPublishingUpdate(func(txn *badger.Txn) error {
+	return b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		entry, err := accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 		if err != nil {
 			return err

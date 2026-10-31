@@ -25,8 +25,28 @@ func TestRangeValidationDoesNotMaterializeValues(t *testing.T) {
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256*1024))
 }
 
+// unwindRangeFilterQuery filters an UNWIND range before any row is
+// materialized: its WHERE excludes every row the range would produce.
+const unwindRangeFilterQuery = "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
+
+// requireUnwindRangeFiltersBeforeMaterializingRows runs the filter query through
+// run and requires the empty result plus the row-materialization budget only
+// filtering before materializing satisfies. run owns the entry point under test
+// and measures nothing but the execution: the auto-commit path in one caller,
+// an explicit transaction's executeInTransaction in the other.
+func requireUnwindRangeFiltersBeforeMaterializingRows(t *testing.T, run func() (*ExecuteResult, error)) {
+	t.Helper()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	result, err := run()
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*1024*1024))
+}
+
 func TestUnwindRangeFiltersBeforeMaterializingRows(t *testing.T) {
-	const query = "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
+	query := unwindRangeFilterQuery
 	// Isolate row materialization from process-global recognizer initialization.
 	// In a fresh process the first Validate reports the cold parser cost; in a
 	// full suite earlier tests may already have initialized the recognizer.
@@ -44,12 +64,9 @@ func TestUnwindRangeFiltersBeforeMaterializingRows(t *testing.T) {
 
 	// Use a fresh executor and measure its first real Execute, never a cached result.
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	runtime.ReadMemStats(&before)
-	result, err := executor.Execute(context.Background(), query, nil)
-	runtime.ReadMemStats(&after)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
-	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*1024*1024))
+	requireUnwindRangeFiltersBeforeMaterializingRows(t, func() (*ExecuteResult, error) {
+		return executor.Execute(context.Background(), query, nil)
+	})
 }
 
 func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
@@ -74,7 +91,7 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 				t.Logf("grammar setup allocated %d bytes outside row-retention measurement", parserAfter.TotalAlloc-parserBefore.TotalAlloc)
 				executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				if explicit {
-					_, err := executor.handleBegin()
+					_, err := executor.handleBegin(nil)
 					require.NoError(t, err)
 					t.Cleanup(func() { _, _ = executor.handleRollback() })
 				}
@@ -98,17 +115,12 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 
 func TestUnwindRangeExplicitTransactionFiltersBeforeMaterializingRows(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "range_explicit"))
-	_, err := executor.handleBegin()
+	_, err := executor.handleBegin(nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = executor.handleRollback() })
-	query := "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	result, err := executor.executeInTransaction(context.Background(), query, query)
-	runtime.ReadMemStats(&after)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
-	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*1024*1024))
+	requireUnwindRangeFiltersBeforeMaterializingRows(t, func() (*ExecuteResult, error) {
+		return executor.executeInTransaction(context.Background(), unwindRangeFilterQuery, unwindRangeFilterQuery)
+	})
 }
 
 func TestUnwindStreamingAggregateSemantics(t *testing.T) {
@@ -132,7 +144,7 @@ func TestUnwindStreamingAggregateSemantics(t *testing.T) {
 				var result *ExecuteResult
 				var err error
 				if explicit {
-					_, err = executor.handleBegin()
+					_, err = executor.handleBegin(nil)
 					require.NoError(t, err)
 					t.Cleanup(func() { _, _ = executor.handleRollback() })
 					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
@@ -348,7 +360,7 @@ func TestUnwindRangeReportedWorkload(t *testing.T) {
 					var result *ExecuteResult
 					var err error
 					if explicit {
-						_, err = executor.handleBegin()
+						_, err = executor.handleBegin(nil)
 						require.NoError(t, err)
 						t.Cleanup(func() { _, _ = executor.handleRollback() })
 						result, err = executor.executeInTransaction(context.Background(), test.query, test.query)

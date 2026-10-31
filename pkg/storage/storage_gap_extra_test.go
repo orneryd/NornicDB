@@ -311,11 +311,11 @@ func TestSchemaDefinitionPersistenceHelpers(t *testing.T) {
 		sm := NewSchemaManager()
 		require.NoError(t, sm.AddUniqueConstraint("user_email", "User", "email"))
 		require.NoError(t, sm.AddConstraint(Constraint{Name: "user_name_exists", Type: ConstraintExists, Label: "User", Properties: []string{"name"}}))
-		require.NoError(t, sm.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger))
+		require.NoError(t, sm.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}))
 		require.NoError(t, sm.AddPropertyIndex("user_name_idx", "User", []string{"name"}))
 		require.NoError(t, sm.AddCompositeIndex("user_loc_idx", "User", []string{"country", "city"}))
-		require.NoError(t, sm.AddFulltextIndex("user_search_idx", []string{"User"}, []string{"bio"}))
-		require.NoError(t, sm.AddVectorIndex("user_embedding_idx", "User", "embedding", 3, "cosine"))
+		require.NoError(t, sm.AddFulltextIndex("user_search_idx", []string{"User"}, []string{"bio"}, ConstraintEntityNode))
+		require.NoError(t, sm.AddVectorIndex("user_embedding_idx", "User", "embedding", 3, "cosine", ConstraintEntityNode))
 		require.NoError(t, sm.AddRangeIndex("user_age_range", "User", "age"))
 
 		def := sm.ExportDefinition()
@@ -360,16 +360,16 @@ func TestSchemaDefinitionPersistenceHelpers(t *testing.T) {
 			Properties: []string{"name"},
 		}))
 		require.NoError(t, sm.AddUniqueConstraint("a_unique", "User", "email"))
-		require.NoError(t, sm.AddPropertyTypeConstraint("b_type", "User", "age", PropertyTypeInteger))
-		require.NoError(t, sm.AddPropertyTypeConstraint("a_type", "Account", "age", PropertyTypeInteger))
+		require.NoError(t, sm.AddPropertyTypeConstraint("b_type", "User", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}))
+		require.NoError(t, sm.AddPropertyTypeConstraint("a_type", "Account", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}))
 		require.NoError(t, sm.AddPropertyIndex("b_prop_idx", "User", []string{"name"}))
 		require.NoError(t, sm.AddPropertyIndex("a_prop_idx", "Account", []string{"name"}))
 		require.NoError(t, sm.AddCompositeIndex("b_comp_idx", "User", []string{"city", "country"}))
 		require.NoError(t, sm.AddCompositeIndex("a_comp_idx", "Account", []string{"tenant", "email"}))
-		require.NoError(t, sm.AddFulltextIndex("z_fulltext", []string{"User"}, []string{"bio", "title"}))
-		require.NoError(t, sm.AddFulltextIndex("a_fulltext", []string{"Account"}, []string{"notes"}))
-		require.NoError(t, sm.AddVectorIndex("z_vector", "User", "embedding", 3, "cosine"))
-		require.NoError(t, sm.AddVectorIndex("a_vector", "Account", "embedding", 4, "euclidean"))
+		require.NoError(t, sm.AddFulltextIndex("z_fulltext", []string{"User"}, []string{"bio", "title"}, ConstraintEntityNode))
+		require.NoError(t, sm.AddFulltextIndex("a_fulltext", []string{"Account"}, []string{"notes"}, ConstraintEntityNode))
+		require.NoError(t, sm.AddVectorIndex("z_vector", "User", "embedding", 3, "cosine", ConstraintEntityNode))
+		require.NoError(t, sm.AddVectorIndex("a_vector", "Account", "embedding", 4, "euclidean", ConstraintEntityNode))
 		require.NoError(t, sm.AddRangeIndex("z_range", "User", "age"))
 		require.NoError(t, sm.AddRangeIndex("a_range", "Account", "score"))
 
@@ -462,14 +462,14 @@ func TestBadgerSchemaHelpers(t *testing.T) {
 	t.Run("load persisted schema invalid key and invalid json", func(t *testing.T) {
 		engine := newIsolatedBadgerEngine(t)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			require.NoError(t, txn.Set([]byte{prefixSchema, 0}, []byte(`{}`)))
 			return nil
 		}))
 		require.Error(t, engine.loadPersistedSchemas())
 
 		engine2 := newIsolatedBadgerEngine(t)
-		require.NoError(t, engine2.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine2.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			require.NoError(t, txn.Set(schemaKey("broken"), []byte(`{not-json`)))
 			return nil
 		}))
@@ -695,7 +695,6 @@ func TestStreamingFallbackAndCollectionHelpers(t *testing.T) {
 func TestLoaderEmbeddingFinderAndWALDegradedHelpers(t *testing.T) {
 	t.Run("loader embedding finder", func(t *testing.T) {
 		nonExportable := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = nonExportable.Close() })
 		assert.Nil(t, FindNodeNeedingEmbedding(nonExportable))
 
 		exportable := &exportableOnlyEngine{
@@ -771,7 +770,6 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 
 	t.Run("node key helper validates property counts nulls and duplicates", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 
 		err := validateNodeKeyConstraintOnCreationWithEngine(&constraintValidationEngine{Engine: base}, Constraint{
 			Type:       ConstraintNodeKey,
@@ -810,7 +808,6 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 
 	t.Run("temporal helper validates arity scan errors and temporal violations", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = base.Close() })
 
 		err := validateTemporalConstraintOnCreationWithEngine(&constraintValidationEngine{Engine: base}, Constraint{
 			Type:       ConstraintTemporal,
@@ -890,7 +887,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			emb0, err := encodeEmbedding([]float32{1, 2})
 			if err != nil {
 				return err
@@ -926,7 +923,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(embeddingKey(nodeID, 0), []byte("bad-embedding"))
 		}))
 
@@ -966,7 +963,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 				require.NoError(t, err)
 
 				if tc.wantChunks > 0 {
-					require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+					require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 						emb, err := encodeEmbedding([]float32{7, 8})
 						if err != nil {
 							return err
@@ -1013,7 +1010,7 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 	t.Run("replaceSeparateEmbeddingChunks with no embeddings removes every chunk", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("chunk-delete"))
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			for i := 0; i < 260; i++ {
 				emb, err := encodeEmbedding([]float32{float32(i)})
 				if err != nil {
@@ -1033,7 +1030,7 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 	t.Run("replaceSeparateEmbeddingChunks rewrites chunks and supports empty replacement", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("chunk-replace"))
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			oldEmb, err := encodeEmbedding([]float32{1, 2, 3})
 			if err != nil {
 				return err
@@ -1076,9 +1073,9 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 
 	t.Run("validateNodeConstraintsInTxn covers nil malformed and violation branches", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		require.NoError(t, engine.GetSchemaForNamespace("test").AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger))
+		require.NoError(t, engine.GetSchemaForNamespace("test").AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			schema := NewSchemaManager()
 			require.NoError(t, schema.AddConstraint(Constraint{
 				Name:       "ignored_multi_unique",
@@ -1105,7 +1102,7 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			schema := NewSchemaManager()
 			require.NoError(t, schema.AddUniqueConstraint("user_email", "User", "email"))
 			require.NoError(t, schema.AddConstraint(Constraint{
@@ -1126,7 +1123,7 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 				Label:      "User",
 				Properties: []string{"account", "from", "to"},
 			}))
-			require.NoError(t, schema.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger))
+			require.NoError(t, schema.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}))
 
 			err := engine.validateNodeConstraintsInTxn(txn, &Node{
 				ID:         "test:u2",

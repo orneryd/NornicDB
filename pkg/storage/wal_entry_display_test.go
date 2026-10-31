@@ -107,7 +107,7 @@ func TestEntryPayloadJSONRendersCompressedBufferedCommit(t *testing.T) {
 	// Adjacency keys and compact relationship bodies both refer to numeric
 	// dictionary IDs. Allocate the source edge IDs before building the fixture.
 	edgeNumIDs := make(map[EdgeID]uint64, pairs)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for i := 0; i < pairs; i++ {
 			edge := EdgeID(fmt.Sprintf("display:edge%d", i))
 			num, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, EdgeID(edge))

@@ -11,7 +11,7 @@ import (
 )
 
 func TestTypeGuardRequiresConcreteWriterContext(t *testing.T) {
-	p, pkg := coverageProgram(t, `package storage
+	p, pkg := ssaFixture(t, `package storage
  type writer interface{ write() }
  type stagedKV struct{}
  func(*stagedKV)write(){}
@@ -26,7 +26,7 @@ func TestTypeGuardRequiresConcreteWriterContext(t *testing.T) {
  func unknown(w writer){kernel(w)}
  func mixed(choose bool){var w writer=&stagedKV{};if choose{w=&nativeKV{}};kernel(w)}
  func similar(){kernel(&lookalike{})}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg == pkg {
 			p.funcs = append(p.funcs, fn)
@@ -109,13 +109,13 @@ func TestKernelWriterContextsRemainFailClosed(t *testing.T) {
 }
 
 func TestTypeGuardRequiresActualBranchDependence(t *testing.T) {
-	_, pkg := coverageProgram(t, `package storage
+	_, pkg := ssaFixture(t, `package storage
  type writer interface{write()};type stagedKV struct{};func(*stagedKV)write(){}
  func rawWrite(){}
  func before(w writer){rawWrite();if _,s:=w.(*stagedKV);s{return}}
  func joined(w writer){if _,s:=w.(*stagedKV);!s{_ = 7};rawWrite()}
  func loop(w writer,again bool){for again{if _,s:=w.(*stagedKV);s{continue};rawWrite();break}}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	for _, tc := range []struct {
 		name string
 		want int

@@ -185,7 +185,7 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_IgnoresStaleIndexEntries(t
 	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(view *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(view *badger.Txn) error {
 		prefix := engine.outgoingIndexPrefixString("test:a")
 		require.NotNil(t, prefix)
 		if err := view.Set(append(append([]byte{}, prefix...), []byte("bad")...), nil); err != nil {
@@ -211,7 +211,7 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_HeadDecodeErrorBranch(t *t
 	engine := adjacencyConflictFixture(t, "test:e-bad-head", nil)
 
 	// Corrupt the edge MVCC head so loadEdgeMVCCHeadInTxn returns a decode error.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		headKey, err := engine.mvccEdgeHeadKeyString(txn, "test:e-bad-head")
 		if err != nil {
 			return err
@@ -336,7 +336,6 @@ func TestBadgerTransaction_BulkCreateEdges_NodeVisibleDeletedBranch(t *testing.T
 
 func TestBadgerTransaction_PinNamespaceFromIDLocked_RefreshFailureBranch(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	controller := &txLifecycleControllerStub{enabled: true, err: ErrMVCCResourcePressure}
 	engine.SetLifecycleController(controller)
 

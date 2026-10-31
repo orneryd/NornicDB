@@ -84,8 +84,9 @@ type Operation struct {
 	Node    *Node  `json:"node,omitempty"`     // New state (for create/update) or nil
 	OldNode *Node  `json:"old_node,omitempty"` // Old state (for update/delete rollback)
 	// For delete operations that cascade (e.g., DeleteNode deletes edges).
-	EdgesDeleted   int64    `json:"edges_deleted,omitempty"`
-	DeletedEdgeIDs []EdgeID `json:"deleted_edge_ids,omitempty"`
+	EdgesDeleted     int64          `json:"edges_deleted,omitempty"`
+	DeletedEdgeIDs   []EdgeID       `json:"deleted_edge_ids,omitempty"`
+	DeletedEdgeFacts []AffectedFact `json:"deleted_edge_facts,omitempty"`
 
 	// For edge operations
 	EdgeID  EdgeID `json:"edge_id,omitempty"`
@@ -179,17 +180,11 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
 
 	if node.Properties != nil {
-		nodeCopy.Properties = make(map[string]interface{}, len(node.Properties))
-		for k, v := range node.Properties {
-			nodeCopy.Properties[k] = v
-		}
+		nodeCopy.Properties = ownedEntries(nil, node.Properties)
 	}
 
 	if node.EmbedMeta != nil {
-		nodeCopy.EmbedMeta = make(map[string]any, len(node.EmbedMeta))
-		for k, v := range node.EmbedMeta {
-			nodeCopy.EmbedMeta[k] = v
-		}
+		nodeCopy.EmbedMeta = ownedEntries(nil, node.EmbedMeta)
 	}
 
 	return nodeCopy
@@ -216,10 +211,7 @@ func copyEdge(edge *Edge) *Edge {
 	}
 
 	if edge.Properties != nil {
-		edgeCopy.Properties = make(map[string]interface{})
-		for k, v := range edge.Properties {
-			edgeCopy.Properties[k] = v
-		}
+		edgeCopy.Properties = ownedEntries(nil, edge.Properties)
 	}
 
 	return edgeCopy

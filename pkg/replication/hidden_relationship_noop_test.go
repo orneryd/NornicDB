@@ -116,7 +116,7 @@ func TestRepeatedHiddenRelationshipMergeKeepsFollowerConverged(t *testing.T) {
 				const merge = "MATCH (a:A), (b:B) MERGE (a)-[r:LINK {key:'same'}]->(b)"
 				_, err = exec.Execute(ctx, merge+" ON CREATE SET r.payload='stored'", nil)
 				require.NoError(t, err)
-				require.NoError(t, bases[0].FlushWriteBehind())
+				require.NoError(t, bases[0].FlushWriteBehind(nil))
 				leaderEdges, err := storage.CollectStoredEdges(ctx, bases[0])
 				require.NoError(t, err)
 				require.Len(t, leaderEdges, 1)
@@ -127,7 +127,7 @@ func TestRepeatedHiddenRelationshipMergeKeepsFollowerConverged(t *testing.T) {
 					require.NoError(t, bases[1].CreateEdge(storage.CopyEdge(leaderEdges[0])))
 				}
 				for _, base := range bases {
-					require.NoError(t, base.FlushWriteBehind())
+					require.NoError(t, base.FlushWriteBehind(nil))
 					_, err = base.GetStoredEdge(fullID)
 					require.NoError(t, err)
 					require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(fullID), true))
@@ -140,7 +140,7 @@ func TestRepeatedHiddenRelationshipMergeKeepsFollowerConverged(t *testing.T) {
 				require.Zero(t, result.Stats.PropertiesSet)
 
 				for _, base := range bases {
-					require.NoError(t, base.FlushWriteBehind())
+					require.NoError(t, base.FlushWriteBehind(nil))
 					edge, err := base.GetStoredEdge(fullID)
 					require.NoError(t, err)
 					require.Equal(t, map[string]any{"key": "same", "payload": "stored"}, edge.Properties)

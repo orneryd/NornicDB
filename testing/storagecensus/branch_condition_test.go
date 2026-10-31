@@ -10,11 +10,11 @@ import (
 // The common parser normalizes NOT for both predicate kinds, while integer
 // coverage must never treat a type-assertion boolean as a numeric selector.
 func TestBranchConditionKeepsPredicateKinds(t *testing.T) {
-	_, pkg := coverageProgram(t, `package storage
+	_, pkg := ssaFixture(t, `package storage
  type writer interface{write()};type stagedKV struct{};func(*stagedKV)write(){}
  func integer(n int)bool{return !(n<3)}
  func typed(w writer)bool{_,ok:=w.(*stagedKV);return !ok}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	result := func(name string) ssa.Value {
 		fn := pkg.Func(name)
 		for _, b := range fn.Blocks {

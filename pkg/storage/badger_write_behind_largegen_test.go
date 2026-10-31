@@ -1,7 +1,6 @@
 package storage
 
-// Temporary reproduction for the write-behind flush hang observed with very
-// large generations. Delete once the trigger is understood.
+// Regression controls for large-generation write-behind flush and token draining.
 
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -13,25 +12,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWriteBehind_LargeGenerationFlushSpansBadgerBatches(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+// flushLargeWriteBehindGeneration stages one large generation through
+// write-behind and flushes it. Every commit is an implicit, namespaced
+// single-node commit, so both generation cases share the exact staging,
+// flush and drain sequence; nodeFor supplies each case's own node, which is
+// the only difference between them (no properties vs. a fresh property-key
+// token per commit).
+func flushLargeWriteBehindGeneration(t *testing.T, engine *BadgerEngine, n int, nodeFor func(i int) *Node) {
+	t.Helper()
 
-	const n = 25000
 	for i := 0; i < n; i++ {
 		tx, err := engine.BeginTransaction()
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
-		_, err = tx.CreateNode(&Node{
-			ID:         NodeID("test:zz" + strconv.Itoa(i)),
-			Labels:     []string{"ZZ"},
-			Properties: nil,
-		})
+		_, err = tx.CreateNode(nodeFor(i))
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 	}
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.Zero(t, engine.writeBehind.PendingOps())
+}
+
+func TestWriteBehind_LargeGenerationFlushSpansBadgerBatches(t *testing.T) {
+	engine := newWriteBehindTestEngine(t, time.Hour)
+
+	const n = 25000
+	flushLargeWriteBehindGeneration(t, engine, n, func(i int) *Node {
+		return &Node{
+			ID:         NodeID("test:zz" + strconv.Itoa(i)),
+			Labels:     []string{"ZZ"},
+			Properties: nil,
+		}
+	})
 }
 
 // TestWriteBehind_LargeGenerationFlushWithPropertyTokens reproduces the
@@ -44,25 +57,17 @@ func TestWriteBehind_LargeGenerationFlushWithPropertyTokens(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour)
 
 	const n = 25000
-	for i := 0; i < n; i++ {
-		tx, err := engine.BeginTransaction()
-		require.NoError(t, err)
-		require.NoError(t, tx.SetImplicit(true))
-		require.NoError(t, tx.SetNamespace("test"))
+	flushLargeWriteBehindGeneration(t, engine, n, func(i int) *Node {
 		// Each commit introduces a fresh property name: the property-key
 		// drain is non-empty for every commit in the generation.
-		_, err = tx.CreateNode(&Node{
+		return &Node{
 			ID:     NodeID("test:tok" + strconv.Itoa(i)),
 			Labels: []string{"Tok"},
 			Properties: map[string]any{
 				"prop_" + strconv.Itoa(i): int64(i),
 			},
-		})
-		require.NoError(t, err)
-		require.NoError(t, tx.Commit())
-	}
-	require.NoError(t, engine.FlushWriteBehind())
-	require.Zero(t, engine.writeBehind.PendingOps())
+		}
+	})
 }
 
 // Sync-path control: one explicit transaction creating the same 30K nodes,

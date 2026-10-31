@@ -18,7 +18,6 @@ import (
 // (WAL.CreateSnapshot, SaveSnapshot).
 func TestSnapshotRecoveryKeepsHiddenRelationships(t *testing.T) {
 	source := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = source.Close() })
 	source.SetDecayEnabled(true)
 	bindings, err := knowledgepolicy.BuildBindingTable(
 		map[string]*knowledgepolicy.DecayProfileBundle{"stale": {
@@ -66,7 +65,6 @@ func TestSnapshotRecoveryKeepsHiddenRelationships(t *testing.T) {
 	for name, path := range map[string]string{"streaming": streaming, "materialized": materialized} {
 		t.Run(name, func(t *testing.T) {
 			recovered := newTestMemoryEngine(t)
-			t.Cleanup(func() { _ = recovered.Close() })
 			_, _, err := RecoverIntoEngine(recovered, t.TempDir(), path)
 			require.NoError(t, err)
 			for _, id := range []EdgeID{"test:suppressed", "test:decayed", "test:visible"} {

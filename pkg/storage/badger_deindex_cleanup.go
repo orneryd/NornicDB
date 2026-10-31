@@ -113,7 +113,7 @@ func (j *DeindexCleanupJob) processWorkItem(item *DeindexWorkItem) error {
 		return j.engine.DeleteDeindexWorkItem(item.WorkItemID)
 	}
 
-	if err := j.engine.WriteIndexTombstones(cat.IndexKeys); err != nil {
+	if err := j.engine.SetIndexTombstones(cat.IndexKeys, true); err != nil {
 		return fmt.Errorf("write tombstones for %s: %w", item.TargetID, err)
 	}
 

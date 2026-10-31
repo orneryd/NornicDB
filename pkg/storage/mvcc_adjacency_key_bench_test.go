@@ -48,7 +48,7 @@ func BenchmarkMVCCAdjacencyDelta(b *testing.B) {
 			engine := newTestMemoryEngine(b)
 			edge := &Edge{ID: "bench:edge", StartNode: "bench:start", EndNode: "bench:end"}
 			version := MVCCVersion{CommitTimestamp: time.Unix(1700000000, 0).UTC(), CommitSequence: 1}
-			if err := engine.withUpdate(func(txn *badger.Txn) error {
+			if err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				return engine.writeEdgeAdjacencyDeltaInTxn(txn, nil, edge, version)
 			}); err != nil {
 				b.Fatal(err)

@@ -238,7 +238,7 @@ func pr1655AssertFaultFired(t *testing.T, fault *pr1655CommitReadFault) {
 // is physically stored before a transaction pins its snapshot.
 func pr1655DrainWriteBehind(t *testing.T, b *BadgerEngine) {
 	t.Helper()
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 }
 
 // pr1655AssertNoLeaks checks the observable post-commit state: the commit

@@ -233,7 +233,7 @@ func TestRepairArchivedEdgeAdjacencyToleratesLegacyVersionKeys(t *testing.T) {
 
 	// The runtime version scan must yield the legacy entry with its version.
 	found := false
-	_, _, err = engine.withViewEdgeMVCCVersionsFromKey([]byte{prefixMVCCEdge}, 100, func(id EdgeID, version MVCCVersion, tombstoned bool) error {
+	_, _, err = withViewMVCCVersionsFromKey[EdgeID, edgeMVCCRebuildKind](engine, []byte{prefixMVCCEdge}, 100, func(id EdgeID, version MVCCVersion, tombstoned bool) error {
 		if id == edgeID {
 			found = true
 			require.False(t, tombstoned)

@@ -28,7 +28,7 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 					t.Cleanup(func() { b.writeBehind = w })
 				} else if mode == "retired" {
 					bufferedCreate(t, b, &Node{ID: "test:retired"})
-					require.NoError(t, b.FlushWriteBehind())
+					require.NoError(t, b.FlushWriteBehind(nil))
 				} else if mode == "other-namespace" {
 					tx, err := b.BeginTransaction()
 					require.NoError(t, err)
@@ -41,14 +41,14 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 				}
 				_, idle := b.writeBehind.idleReadEpoch("test")
 				require.True(t, idle)
-				b.adjCacheStoreOutgoing(b.adjCacheGen.current(), "test:holder", []EdgeID{"test:r"})
+				b.adjCacheStore(b.adjCacheGen.current(), "test:holder", []EdgeID{"test:r"}, b.db.oracle.published.Load(), true)
 				calls := 0
 				var ids []EdgeID
 				var hit bool
 				view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 					calls++
 					require.Nil(t, w, "only overlay selection is skipped")
-					ids, hit = b.adjCacheLoadOutgoing("test:holder")
+					ids, hit = b.adjCacheLoad("test:holder", true)
 				}, readViewOptions{scope: "test", longLived: longLived})
 				require.NoError(t, err)
 				defer view.Close()
@@ -122,7 +122,7 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 			edge := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R"}
 			if retired {
 				bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.CreateEdge(edge) })
-				require.NoError(t, b.FlushWriteBehind())
+				require.NoError(t, b.FlushWriteBehind(nil))
 			} else {
 				require.NoError(t, b.CreateEdge(edge))
 			}
@@ -137,8 +137,8 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 					return out, err
 				},
 			} {
-				b.adjCacheStoreOutgoing(b.adjCacheGen.current(), "test:a", []EdgeID{edge.ID})
-				b.adjCacheStoreIncoming(b.adjCacheGen.current(), "test:b", []EdgeID{edge.ID})
+				b.adjCacheStore(b.adjCacheGen.current(), "test:a", []EdgeID{edge.ID}, b.db.oracle.published.Load(), true)
+				b.adjCacheStore(b.adjCacheGen.current(), "test:b", []EdgeID{edge.ID}, b.db.oracle.published.Load(), false)
 				b.edgeCacheMu.Lock()
 				delete(b.edgeCache, edge.ID)
 				b.edgeCacheMu.Unlock()

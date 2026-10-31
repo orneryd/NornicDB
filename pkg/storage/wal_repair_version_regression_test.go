@@ -39,7 +39,6 @@ func TestWALUnknownVersionDoesNotTruncateDuringRecovery(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, original, 0600))
 			if streaming {
 				target := newTestMemoryEngine(t)
-				t.Cleanup(func() { _ = target.Close() })
 				_, _, err = RecoverIntoEngine(target, dir, "")
 			} else {
 				var target *MemoryEngine

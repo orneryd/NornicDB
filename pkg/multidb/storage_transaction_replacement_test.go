@@ -71,7 +71,7 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 										_, err = engine.GetEdge("e")
 									}
 									require.ErrorIs(t, err, storage.ErrNotFound, "the prior body is hidden")
-									require.NoError(t, base.FlushWriteBehind())
+									require.NoError(t, base.FlushWriteBehind(nil))
 									wantNodes, err := engine.NodeCount()
 									require.NoError(t, err)
 									wantEdges, err := engine.EdgeCount()
@@ -132,7 +132,7 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 											}
 											require.NoError(t, tracker.CommitTransaction(context.Background(), tx))
 										}
-										require.NoError(t, base.FlushWriteBehind())
+										require.NoError(t, base.FlushWriteBehind(nil))
 										count, err := engine.NodeCount()
 										require.NoError(t, err)
 										require.Equal(t, wantNodes, count)

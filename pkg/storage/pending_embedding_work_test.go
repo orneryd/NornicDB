@@ -23,7 +23,7 @@ func TestPendingClaimPhysicalWork(t *testing.T) {
 			t.Run(fmt.Sprintf("deleted=%d/tail=%t", n, tail), func(t *testing.T) {
 				e := newTestBadgerEngineForPending(t)
 				// Keep deleted markers in the current memtable: no compaction timing dependency.
-				require.NoError(t, e.withUpdate(func(txn *badger.Txn) error {
+				require.NoError(t, e.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 					for i := 0; i < n; i++ {
 						if err := txn.Set(pendingEmbedKey(NodeID(fmt.Sprintf("test:m%06d", i))), nil); err != nil {
 							return err
@@ -31,7 +31,7 @@ func TestPendingClaimPhysicalWork(t *testing.T) {
 					}
 					return nil
 				}))
-				require.NoError(t, e.withUpdate(func(txn *badger.Txn) error {
+				require.NoError(t, e.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 					for i := 0; i < n; i++ {
 						if err := txn.Delete(pendingEmbedKey(NodeID(fmt.Sprintf("test:m%06d", i)))); err != nil {
 							return err

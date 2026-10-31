@@ -79,12 +79,12 @@ func (b *BadgerEngine) indexBackfillReady(kind startupIndexKind) (bool, error) {
 }
 
 // markIndexBackfillReady records the selected family's established marker image.
-func (b *BadgerEngine) markIndexBackfillReady(kind startupIndexKind) error {
+func (b *BadgerEngine) markIndexBackfillReady(ctx context.Context, kind startupIndexKind) error {
 	key, version := labelIndexReadyKey, byte(labelIndexSchemeVersion)
 	if kind == startupEdgeBetweenIndex {
 		key, version = edgeBetweenIndexReadyKey, 1
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return txn.Set(key, []byte{version})
 	})
 }
@@ -131,7 +131,7 @@ func (b *BadgerEngine) startIndexBackfill(kind startupIndexKind, mode indexBackf
 			return err
 		}
 		if !hasStored {
-			return b.markIndexBackfillReady(kind)
+			return b.markIndexBackfillReady(context.Background(), kind)
 		}
 	}
 
@@ -221,7 +221,7 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if err := b.db.DropPrefix(prefixDropOptions{engine: b}, []byte{prefixLabelIndex}); err != nil {
+	if err := b.db.DropPrefix(ctx, prefixDropOptions{engine: b}, []byte{prefixLabelIndex}); err != nil {
 		return 0, fmt.Errorf("clear label index before rebuild: %w", err)
 	}
 	scan := storedRecordScan{
@@ -265,5 +265,5 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return processed, err
 	}
-	return processed, b.markIndexBackfillReady(startupLabelIndex)
+	return processed, b.markIndexBackfillReady(ctx, startupLabelIndex)
 }

@@ -51,14 +51,14 @@ func TestWrittenNodeCachedUnlessAwaitingEmbedding(t *testing.T) {
 		return ok
 	}
 	awaiting := &Node{ID: "test:awaiting", Labels: []string{"Doc"}, Properties: map[string]any{"title": "text"}}
-	b.cacheStoreWrittenNode(awaiting)
+	b.cacheStoreWrittenNode(awaiting, b.db.oracle.published.Load())
 	require.False(t, cached(awaiting.ID))
 
 	embedded := &Node{ID: "test:embedded", Labels: []string{"Doc"}, Properties: map[string]any{"title": "text"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	b.cacheStoreWrittenNode(embedded)
+	b.cacheStoreWrittenNode(embedded, b.db.oracle.published.Load())
 	require.True(t, cached(embedded.ID))
 
 	b.SetEmbeddingsEnabled(false)
-	b.cacheStoreWrittenNode(awaiting)
+	b.cacheStoreWrittenNode(awaiting, b.db.oracle.published.Load())
 	require.True(t, cached(awaiting.ID))
 }

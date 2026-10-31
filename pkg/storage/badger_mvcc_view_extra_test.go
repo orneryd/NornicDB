@@ -61,14 +61,14 @@ var mvccViewVersionsHarnesses = []mvccViewVersionsHarness{
 		},
 		scan: func(engine *BadgerEngine, start []byte, limit int) ([]byte, bool, int, error) {
 			yieldCalls := 0
-			lastScanned, reachedEnd, err := engine.withViewNodeMVCCVersionsFromKey(start, limit, func(NodeID, MVCCVersion, bool) error {
+			lastScanned, reachedEnd, err := withViewMVCCVersionsFromKey[NodeID, nodeMVCCRebuildKind](engine, start, limit, func(NodeID, MVCCVersion, bool) error {
 				yieldCalls++
 				return nil
 			})
 			return lastScanned, reachedEnd, yieldCalls, err
 		},
 		scanWithErr: func(engine *BadgerEngine, start []byte, limit int, wantErr error) ([]byte, bool, error) {
-			return engine.withViewNodeMVCCVersionsFromKey(start, limit, func(NodeID, MVCCVersion, bool) error {
+			return withViewMVCCVersionsFromKey[NodeID, nodeMVCCRebuildKind](engine, start, limit, func(NodeID, MVCCVersion, bool) error {
 				return wantErr
 			})
 		},
@@ -101,14 +101,14 @@ var mvccViewVersionsHarnesses = []mvccViewVersionsHarness{
 		},
 		scan: func(engine *BadgerEngine, start []byte, limit int) ([]byte, bool, int, error) {
 			yieldCalls := 0
-			lastScanned, reachedEnd, err := engine.withViewEdgeMVCCVersionsFromKey(start, limit, func(EdgeID, MVCCVersion, bool) error {
+			lastScanned, reachedEnd, err := withViewMVCCVersionsFromKey[EdgeID, edgeMVCCRebuildKind](engine, start, limit, func(EdgeID, MVCCVersion, bool) error {
 				yieldCalls++
 				return nil
 			})
 			return lastScanned, reachedEnd, yieldCalls, err
 		},
 		scanWithErr: func(engine *BadgerEngine, start []byte, limit int, wantErr error) ([]byte, bool, error) {
-			return engine.withViewEdgeMVCCVersionsFromKey(start, limit, func(EdgeID, MVCCVersion, bool) error {
+			return withViewMVCCVersionsFromKey[EdgeID, edgeMVCCRebuildKind](engine, start, limit, func(EdgeID, MVCCVersion, bool) error {
 				return wantErr
 			})
 		},
@@ -123,7 +123,7 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 			version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
 			unknownKey := h.unknownKey(version)
 			unknownRec := h.unknownRecord(t)
-			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(unknownKey, unknownRec)
 			}))
 
@@ -142,7 +142,7 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 
 			h.createEntity(t, engine)
 			version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(h.versionKey(t, engine, txn, version), []byte("corrupt-"+h.name+"-mvcc-record"))
 			}))
 
@@ -157,7 +157,7 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 			h.createEntity(t, engine)
 			version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 202}
 			record := h.validRecord(t)
-			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(h.versionKey(t, engine, txn, version), record)
 			}))
 

@@ -1,6 +1,8 @@
 package storage
 
-import "sync"
+import (
+	"sync"
+)
 
 // Ordered post-commit publication (F-PUBLISH).
 //
@@ -40,10 +42,12 @@ import "sync"
 // commitPublication is a commit's derived-state publication and the keys it
 // is ordered on.
 type commitPublication struct {
-	keys  []any
-	owner *commitWriter // prepares images and reserves notifications at the physical owner
-	run   func()
-	ts    uint64 // assigned by register, before any publication can run
+	metadata   bool
+	cacheScope *cacheWriteScope
+	keys       []any
+	owner      *commitWriter // prepares images and reserves notifications at the physical owner
+	run        func()
+	ts         uint64 // assigned by register, before any publication can run
 }
 
 type stagedPublication struct {
@@ -75,7 +79,7 @@ type publicationStage struct {
 // registers it after its write and before ts is finished, so every
 // publication of a lower timestamp is registered once ts is published.
 func (s *publicationStage) register(ts uint64, pub *commitPublication) {
-	if pub == nil {
+	if pub == nil || pub.run == nil {
 		return
 	}
 	pub.ts = ts
@@ -229,6 +233,14 @@ type publicationUniqueKey struct {
 // never waits on the schema while the caller may hold the commit gate.
 func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id NodeID, old, written *Node) []any {
 	keys = append(keys, id)
+	keys = append(keys, AffectedFact{NodeID: id, Deleted: written == nil})
+	for _, image := range []*Node{old, written} {
+		if image != nil {
+			for _, label := range image.Labels {
+				keys = append(keys, AffectedFact{NodeID: id, Label: label, Before: image == old, Deleted: written == nil})
+			}
+		}
+	}
 	if view == nil || view.nodeRules == 0 {
 		return keys
 	}
@@ -236,10 +248,7 @@ func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id N
 	// The rules are walked here, not in a callback: a rule is then addressed
 	// through its index and its strings are never copied into a closure.
 	for i := -1; i < len(view.rest); i++ {
-		rule := &view.first
-		if i >= 0 {
-			rule = &view.rest[i]
-		}
+		rule := view.ruleAt(i)
 		if rule.empty() || rule.kind != ConstraintEntityNode {
 			continue
 		}
@@ -273,15 +282,18 @@ func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id N
 // written hold. view supplies every rule, as for nodes.
 func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id EdgeID, old, written *Edge) []any {
 	keys = append(keys, id)
+	keys = append(keys, AffectedFact{EdgeID: id, Deleted: written == nil})
+	for _, image := range []*Edge{old, written} {
+		if image != nil {
+			keys = append(keys, AffectedFact{EdgeID: id, StartNode: image.StartNode, EndNode: image.EndNode, Type: image.Type, Before: image == old, Deleted: written == nil})
+		}
+	}
 	if view == nil {
 		return keys
 	}
 	namespace := namespaceForEdgeID(id)
 	for i := -1; i < len(view.rest); i++ {
-		rule := &view.first
-		if i >= 0 {
-			rule = &view.rest[i]
-		}
+		rule := view.ruleAt(i)
 		if rule.empty() || rule.kind != ConstraintEntityRelationship {
 			continue
 		}
@@ -323,6 +335,10 @@ func appendOperationPublicationKeys(keys []any, view *publicationConstraintView,
 			keys = appendNodePublicationKeys(keys, view, op.NodeID, op.OldNode, nil)
 			for _, edgeID := range op.DeletedEdgeIDs {
 				keys = append(keys, edgeID)
+				keys = append(keys, AffectedFact{EdgeID: edgeID, Deleted: true})
+			}
+			for _, fact := range op.DeletedEdgeFacts {
+				keys = append(keys, fact)
 			}
 		case OpCreateEdge, OpUpdateEdge:
 			if op.Edge != nil {

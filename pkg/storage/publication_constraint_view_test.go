@@ -6,6 +6,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Author: #1548 implementation lane (Codex). The release constraint-snapshot
+// controls include metadata emitted by the same publication-key producer.
 var capturedPublicationView publicationConstraintView
 
 func TestPublicationConstraintViewCaptureAllocationBudget(t *testing.T) {
@@ -24,18 +26,24 @@ func TestPublicationConstraintViewPreservesNodeKeysAndNamespace(t *testing.T) {
 	old := &Node{ID: "alpha:n", Labels: []string{"Person"}, Properties: map[string]any{"uid": "old"}}
 	written := &Node{ID: old.ID, Labels: old.Labels, Properties: map[string]any{"uid": "new"}}
 	want := []any{old.ID,
+		AffectedFact{NodeID: old.ID},
+		AffectedFact{NodeID: old.ID, Label: "Person", Before: true},
+		AffectedFact{NodeID: old.ID, Label: "Person"},
 		publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "Person", property: "uid", value: "old"}},
 		publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "Person", property: "uid", value: "new"}},
 	}
 	require.Equal(t, want, appendNodePublicationKeys(nil, &view, old.ID, old, written))
-	require.Equal(t, want[:2], appendNodePublicationKeys(nil, &view, old.ID, old, old), "unchanged values have one dependency")
+	unchanged := append([]any(nil), want[:4]...)
+	unchanged[3] = AffectedFact{NodeID: old.ID, Label: "Person", Before: true}
+	unchanged = append(unchanged, want[4])
+	require.Equal(t, unchanged, appendNodePublicationKeys(nil, &view, old.ID, old, old), "unchanged values have one dependency")
 	other := *written
 	other.ID = "beta:n"
-	require.Equal(t, []any{other.ID, publicationUniqueKey{namespace: "beta", value: uniqueConstraintLockKey{label: "Person", property: "uid", value: "new"}}}, appendNodePublicationKeys(nil, &view, other.ID, nil, &other))
+	require.Equal(t, []any{other.ID, AffectedFact{NodeID: other.ID}, AffectedFact{NodeID: other.ID, Label: "Person"}, publicationUniqueKey{namespace: "beta", value: uniqueConstraintLockKey{label: "Person", property: "uid", value: "new"}}}, appendNodePublicationKeys(nil, &view, other.ID, nil, &other))
 	require.NoError(t, schema.DropConstraint("uid"))
 	require.Equal(t, want, appendNodePublicationKeys(nil, &view, old.ID, old, written), "an in-flight snapshot retains its rules")
 	fresh := capturePublicationConstraintView(schema)
-	require.Equal(t, []any{old.ID}, appendNodePublicationKeys(nil, &fresh, old.ID, old, written))
+	require.Equal(t, want[:4], appendNodePublicationKeys(nil, &fresh, old.ID, old, written))
 }
 
 func TestPublicationConstraintViewOwnsCompositeRelationshipProperties(t *testing.T) {
@@ -51,6 +59,9 @@ func TestPublicationConstraintViewOwnsCompositeRelationshipProperties(t *testing
 	newValues, ok := relationshipConstraintValueKeys([]string{"since", "weight"}, written.Properties, true)
 	require.True(t, ok)
 	want := []any{old.ID,
+		AffectedFact{EdgeID: old.ID},
+		AffectedFact{EdgeID: old.ID, Type: "KNOWS", Before: true},
+		AffectedFact{EdgeID: old.ID, Type: "KNOWS"},
 		publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "\x00relationship:KNOWS", property: property, value: NewCompositeKey(oldValues...).Hash}},
 		publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "\x00relationship:KNOWS", property: property, value: NewCompositeKey(newValues...).Hash}},
 	}
@@ -60,11 +71,11 @@ func TestPublicationConstraintViewOwnsCompositeRelationshipProperties(t *testing
 	require.Equal(t, want, appendEdgePublicationKeys(nil, &view, old.ID, old, written), "captured composite property names remain owned")
 	unrelated := *written
 	unrelated.Type = "OTHER"
-	require.Equal(t, []any{old.ID}, appendEdgePublicationKeys(nil, &view, old.ID, nil, &unrelated))
+	require.Equal(t, []any{old.ID, AffectedFact{EdgeID: old.ID}, AffectedFact{EdgeID: old.ID, Type: "OTHER"}}, appendEdgePublicationKeys(nil, &view, old.ID, nil, &unrelated))
 	node := &Node{ID: "alpha:n", Labels: []string{"Person"}, Properties: map[string]any{"uid": "u"}}
 	ops := []Operation{{Type: OpCreateNode, Node: node}, {Type: OpUpdateEdge, OldEdge: old, Edge: written}, {Type: OpDeleteNode, NodeID: "alpha:gone", DeletedEdgeIDs: []EdgeID{"alpha:removed"}}}
-	expected := []any{node.ID, publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "Person", property: "uid", value: "u"}}}
+	expected := []any{node.ID, AffectedFact{NodeID: node.ID}, AffectedFact{NodeID: node.ID, Label: "Person"}, publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "Person", property: "uid", value: "u"}}}
 	expected = append(expected, want...)
-	expected = append(expected, NodeID("alpha:gone"), EdgeID("alpha:removed"))
+	expected = append(expected, NodeID("alpha:gone"), AffectedFact{NodeID: "alpha:gone", Deleted: true}, EdgeID("alpha:removed"), AffectedFact{EdgeID: "alpha:removed", Deleted: true})
 	require.Equal(t, expected, appendOperationPublicationKeys(nil, &view, ops))
 }

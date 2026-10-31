@@ -106,7 +106,7 @@ func TestReadSnapshotIncludesWriteBehind(t *testing.T) {
 	snapshot, err := engine.OpenReadSnapshot(context.Background())
 	require.NoError(t, err)
 	defer snapshot.Close()
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 
 	require.Equal(t, map[NodeID]string{"test:a": "buffered", "test:b": "buffered"}, snapshotNodeText(t, snapshot))
 	require.Equal(t, map[EdgeID]string{"test:r": "buffered"}, snapshotEdgeNotes(t, snapshot))

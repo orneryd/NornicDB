@@ -2993,7 +2993,7 @@ func TestShowConstraints_WithSchemaConstraintsAndPropertyTypes(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to add unique constraint: %v", err)
 	}
-	if err := store.GetSchema().AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger); err != nil {
+	if err := store.GetSchema().AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger, storage.PropertyTypeConstraintOptions{}); err != nil {
 		t.Fatalf("failed to add property type constraint: %v", err)
 	}
 

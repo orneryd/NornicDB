@@ -24,7 +24,7 @@ func TestBadgerEngine_DeleteByPrefix_MalformedSecondaryIndexKeysIgnored(t *testi
 	validEdgeTypeIdx := append(append([]byte{prefixEdgeTypeIndex}, []byte("KNOWS")...), 0x00)
 	validEdgeTypeIdx = append(validEdgeTypeIdx, []byte(targetPrefix+"orphan-edge")...)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		// len(key) < 3 branch
 		require.NoError(t, txn.Set([]byte{prefixLabelIndex, 'x'}, []byte{1}))
 		// sep < 0 branch (no separator after prefix byte)

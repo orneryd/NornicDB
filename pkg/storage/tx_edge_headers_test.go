@@ -27,7 +27,7 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 	// e3's entry predates the values.
 	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
 	e3Num, _ := eng.idDict.lookupEdgeNumID("test:e3")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(outgoingIndexKey(aNum, e3Num), []byte{})
 	}))
 

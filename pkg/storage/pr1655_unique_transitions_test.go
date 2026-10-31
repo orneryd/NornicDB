@@ -132,7 +132,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				create("b", "old")
 				rejectDuplicate("old")
 				assertGraph() // Includes the unflushed ACK in implicit mode.
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 				assertGraph()
 				rejectDuplicate("old") // Replay cannot erase the newer owner's claim.
 				mutate("a", "final", false)
@@ -150,7 +150,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, schema))
 				rejectDuplicate("after-drop")
 				rejectDuplicate("final")
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 				assertGraph()
 
 				require.NoError(t, engine.Close())
@@ -163,7 +163,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				}
 				mutate("d", "", true)
 				create("after-restart", "old")
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 				assertGraph()
 				rejectDuplicate("old")
 			})
@@ -215,7 +215,7 @@ func TestPR1655UniqueTransitionsStaleWriterAfterReuse(t *testing.T) {
 				require.ErrorIs(t, err, ErrConflict)
 				var violation *ConstraintViolationError
 				require.NotErrorAs(t, err, &violation, "unchanged keys remain ordinary retryable conflicts")
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 				a, err := target.GetNode("a")
 				require.NoError(t, err)
 				require.Equal(t, "renamed", a.Properties["id"])
@@ -290,7 +290,7 @@ func TestPR1655UniqueTransitionsPrefixReleasesClaim(t *testing.T) {
 					require.Equal(t, []string{property}, violation.Properties)
 				}
 			}
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			for _, store := range []*NamespacedEngine{target, other} {
 				nodes, err := store.GetNodesByLabel("Doc")
 				require.NoError(t, err)
@@ -346,7 +346,7 @@ func TestPR1655UniqueTransitionsConcurrentPrefixReuse(t *testing.T) {
 			require.NoError(t, <-dropped)
 			require.NoError(t, <-created)
 			engine.dropPrefixTailHook = nil
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			peer, err := target.GetNode("peer")
 			require.NoError(t, err)
 			require.Equal(t, "reclaimed", peer.Properties["id"])
@@ -408,7 +408,7 @@ func TestPR1655UniqueTransitionsRestoredSchemaPendingClaims(t *testing.T) {
 			require.True(t, complete)
 			_, err = restored.CreateNode(&Node{ID: "replacement", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key"}})
 			require.NoError(t, err, "an unflushed delete releases a restored schema's claim")
-			require.NoError(t, target.FlushWriteBehind())
+			require.NoError(t, target.FlushWriteBehind(nil))
 			_, err = restored.GetNode("original")
 			require.ErrorIs(t, err, ErrNotFound)
 			replacement, err := restored.GetNode("replacement")
@@ -444,7 +444,7 @@ func TestPR1655UniqueTransitionsBufferedDeleteThenReuse(t *testing.T) {
 				_, err = target.CreateNode(&Node{ID: "new-owner", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key", "code": "code-key"}})
 				require.NoError(t, err)
 			}
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			for _, namespace := range []string{"test", "test2"} {
 				target := NewNamespacedEngine(engine, namespace)
 				for _, property := range []string{"id", "code"} {
@@ -507,7 +507,7 @@ func TestPR1655UniqueTransitionsIntermediateAcknowledgedClaims(t *testing.T) {
 			}
 			_, err = target.CreateNode(&Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "old", "code": "code-old"}})
 			require.NoError(t, err, "the final ACK already released the intermediate claim")
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			for _, property := range []string{"id", "code"} {
 				value := "old"
 				properties := map[string]interface{}{"id": "unused", "code": "unused-code"}
@@ -619,7 +619,7 @@ func TestPR1655UniqueTransitionsAtomicSwap(t *testing.T) {
 				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
 			}
 			require.NoError(t, tx.Commit())
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			for id, value := range map[NodeID]string{"a": "y", "b": "x"} {
 				node, err := target.GetNode(id)
 				require.NoError(t, err)

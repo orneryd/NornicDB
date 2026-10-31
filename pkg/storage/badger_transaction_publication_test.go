@@ -38,7 +38,6 @@ func runPublicationTransaction(engine interface {
 
 func TestBadgerTransaction_PublicationBeforeReentrantListener(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	published := false
 	engine.OnNodeCreated(func(node *Node) {
 		if node.ID != "review:outer" {
@@ -60,7 +59,6 @@ func TestBadgerTransaction_PublicationBeforeReentrantListener(t *testing.T) {
 
 func TestBadgerTransaction_ListenerOrderAndSnapshotUnderReentry(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	entered, release := make(chan struct{}), make(chan struct{})
 	var mu sync.Mutex
 	var observed []string
@@ -144,7 +142,6 @@ func TestBadgerTransaction_CloseWaitsForListenerWithoutWriteBarrier(t *testing.T
 
 func TestBadgerTransaction_RejectedCommitDoesNotPublish(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	_, err = tx.CreateNode(&Node{ID: "review:canceled"})
@@ -160,7 +157,6 @@ func TestBadgerTransaction_RejectedCommitDoesNotPublish(t *testing.T) {
 
 func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	engine.OnNodeCreated(func(node *Node) {
 		if node.ID == "review:panic" {
 			panic("listener failed")
@@ -221,4 +217,77 @@ func TestPublishCommitRechecksDetachedOwnershipUnderLock(t *testing.T) {
 	require.False(t, published)
 	_, err = engine.GetNode("test:detached-publication")
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+// Client detachment can happen while a caller waits for tx.mu. Neither a
+// lifecycle query nor rollback may regain ownership after that handoff.
+func TestClientLifecycleRechecksDetachedOwnershipUnderLock(t *testing.T) {
+	for _, operation := range []string{"active", "rollback"} {
+		t.Run(operation, func(t *testing.T) {
+			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: true})
+			tx, err := engine.BeginTransaction()
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				tx.clientDetached.Store(false)
+				_ = tx.Rollback()
+			})
+			waiting := make(chan struct{})
+			var once sync.Once
+			t.Cleanup(setAdmissionWaitObserver(func(owner any, _ context.Context) {
+				if owner == &tx.mu {
+					once.Do(func() { close(waiting) })
+				}
+			}))
+			tx.mu.Lock()
+			locked := true
+			defer func() {
+				if locked {
+					tx.mu.Unlock()
+				}
+			}()
+			type outcome struct {
+				active bool
+				err    error
+			}
+			done := make(chan outcome, 1)
+			joined := make(chan struct{})
+			t.Cleanup(func() {
+				select {
+				case <-joined:
+				case <-time.After(3 * time.Second):
+					t.Error("client lifecycle worker did not join")
+				}
+			})
+			go func() {
+				defer close(joined)
+				if operation == "active" {
+					done <- outcome{active: tx.IsActive()}
+				} else {
+					done <- outcome{err: tx.Rollback()}
+				}
+			}()
+			select {
+			case <-waiting:
+			case <-time.After(3 * time.Second):
+				t.Fatal("client did not reach the held transaction mutex")
+			}
+			tx.clientDetached.Store(true)
+			tx.mu.Unlock()
+			locked = false
+			select {
+			case got := <-done:
+				if operation == "active" {
+					require.False(t, got.active)
+				} else {
+					require.ErrorIs(t, got.err, ErrTransactionClosed)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("client did not finish")
+			}
+			tx.mu.Lock()
+			status := tx.Status
+			tx.mu.Unlock()
+			require.Equal(t, TxStatusActive, status, "the native accepted owner retains the transaction")
+		})
+	}
 }

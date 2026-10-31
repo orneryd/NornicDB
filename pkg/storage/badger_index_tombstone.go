@@ -24,32 +24,25 @@ func putIndexTombstoneInTxn(txn *badger.Txn, originalKey []byte) error {
 	return err
 }
 
-// WriteIndexTombstones writes zero-length presence markers for all given
-// original index keys in a single batched transaction.
-func (b *BadgerEngine) WriteIndexTombstones(keys [][]byte) error {
+// SetIndexTombstones changes visibility markers for the original index keys
+// atomically. present=true hides entries; present=false removes their markers.
+// An empty batch performs no write. Keys and stored marker bytes are unchanged.
+func (b *BadgerEngine) SetIndexTombstones(keys [][]byte, present bool) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
-		for _, k := range keys {
-			if err := putIndexTombstoneInTxn(txn, k); err != nil {
-				return err
+	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		for _, key := range keys {
+			var err error
+			if present {
+				err = putIndexTombstoneInTxn(txn, key)
+			} else {
+				err = txn.Delete(indexTombstoneKey(key))
+				if err == badger.ErrKeyNotFound {
+					err = nil
+				}
 			}
-		}
-		return nil
-	})
-}
-
-// DeleteIndexTombstones removes tombstones for the given original index keys.
-// Used when an entity recovers visibility (score rises above threshold) or
-// when reveal() restores an entity.
-func (b *BadgerEngine) DeleteIndexTombstones(keys [][]byte) error {
-	if len(keys) == 0 {
-		return nil
-	}
-	return b.withUpdate(func(txn *badger.Txn) error {
-		for _, k := range keys {
-			if err := txn.Delete(indexTombstoneKey(k)); err != nil && err != badger.ErrKeyNotFound {
+			if err != nil {
 				return err
 			}
 		}

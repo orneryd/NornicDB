@@ -61,7 +61,7 @@ func TestWriteBehindBuffer_ReadYourOwnWritesBeforeApply(t *testing.T) {
 	}()
 
 	node := bufferedTestNode("n1", map[string]any{"v": int64(1)})
-	buf.AppendNode(node)
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: node}))
 
 	got, found, deleted := buf.GetNode("n1")
 	require.True(t, found, "acknowledged write must be visible before apply")
@@ -75,8 +75,8 @@ func TestWriteBehindBuffer_NeverBlocksWritesDuringDrain(t *testing.T) {
 	buf := NewWriteBehindBuffer(time.Hour, 0, apply.fn)
 	defer buf.Close()
 
-	buf.AppendNode(bufferedTestNode("n1", map[string]any{"v": int64(1)}))
-	buf.AppendDelete("n2")
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", map[string]any{"v": int64(1)})}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpDelete, ID: "n2"}))
 	buf.FlushAsync() // rotate so n1 enters draining; apply blocks in apply.fn
 
 	<-apply.started // the flusher is now mid-apply
@@ -84,16 +84,25 @@ func TestWriteBehindBuffer_NeverBlocksWritesDuringDrain(t *testing.T) {
 	// Writers must not wait for the blocked flush: append many ops with a
 	// tight deadline.
 	done := make(chan struct{})
+	appendErr := make(chan error, 1)
 	go func() {
+		defer close(done)
 		for i := 0; i < 1000; i++ {
-			buf.AppendNode(bufferedTestNode("n1", map[string]any{"v": int64(i)}))
+			if err := buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", map[string]any{"v": int64(i)})}); err != nil {
+				appendErr <- err
+				return
+			}
 		}
-		close(done)
 	}()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("writers blocked behind a draining generation")
+	}
+	select {
+	case err := <-appendErr:
+		require.NoError(t, err)
+	default:
 	}
 
 	close(apply.release)
@@ -121,7 +130,7 @@ func TestWriteBehindBuffer_AdaptiveTargetTracksDrainRate(t *testing.T) {
 
 	// One drained generation of 1000 ops at ~10ms → ~100K ops/s.
 	for i := 0; i < 1000; i++ {
-		buf.AppendNode(bufferedTestNode("n"+strconv.Itoa(i), nil))
+		require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n"+strconv.Itoa(i), nil)}))
 	}
 	buf.FlushAsync()
 	require.Eventually(t, func() bool { return buf.PendingOps() == 0 }, 5*time.Second, time.Millisecond)
@@ -145,7 +154,7 @@ func TestWriteBehindBuffer_AdaptiveTargetClampedByMaxOps(t *testing.T) {
 	defer buf.Close()
 
 	for i := 0; i < 500; i++ {
-		buf.AppendNode(bufferedTestNode("n"+strconv.Itoa(i), nil))
+		require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n"+strconv.Itoa(i), nil)}))
 	}
 	require.NoError(t, buf.Flush())
 	// Instant applies measure an enormous rate, but the target can never
@@ -185,7 +194,7 @@ func TestWriteBehindBuffer_DelayPinnedWarning(t *testing.T) {
 	buf.SetDelayBounds(time.Millisecond, 5*time.Millisecond)
 
 	for i := 0; i < 200; i++ {
-		buf.AppendNode(bufferedTestNode("n"+strconv.Itoa(i), nil))
+		require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n"+strconv.Itoa(i), nil)}))
 	}
 	require.NoError(t, buf.Flush())
 	require.Equal(t, 5*time.Millisecond, buf.CurrentInterval(), "delay clamps at its bound")
@@ -207,9 +216,9 @@ func TestWriteBehindBuffer_BackgroundApplyPreservesOrder(t *testing.T) {
 	buf := NewWriteBehindBuffer(time.Hour, 0, apply)
 	defer buf.Close()
 
-	buf.AppendNode(bufferedTestNode("a", nil))
-	buf.AppendEdge(bufferedTestEdge("e1", "a", "b", "R"))
-	buf.AppendDelete("a")
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("a", nil)}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpEdge, Edge: bufferedTestEdge("e1", "a", "b", "R")}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpDelete, ID: "a"}))
 
 	require.NoError(t, buf.Flush())
 	require.Equal(t, []string{"node:a", "edge:e1", "delete:a"}, order)
@@ -224,11 +233,11 @@ func TestWriteBehindBuffer_CrossGenerationShadowing(t *testing.T) {
 		require.NoError(t, buf.Flush())
 	}()
 
-	buf.AppendNode(bufferedTestNode("n1", map[string]any{"v": int64(1)}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", map[string]any{"v": int64(1)})}))
 	buf.FlushAsync()
 	<-apply.started // generation 1 is draining (unapplied)
 
-	buf.AppendNode(bufferedTestNode("n1", map[string]any{"v": int64(2)}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", map[string]any{"v": int64(2)})}))
 	got, found, deleted := buf.GetNode("n1")
 	require.True(t, found)
 	require.False(t, deleted)
@@ -244,8 +253,8 @@ func TestWriteBehindBuffer_DeleteHidesWrite(t *testing.T) {
 		require.NoError(t, buf.Flush())
 	}()
 
-	buf.AppendNode(bufferedTestNode("n1", nil))
-	buf.AppendDelete("n1")
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", nil)}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpDelete, ID: "n1"}))
 	_, found, deleted := buf.GetNode("n1")
 	require.True(t, found)
 	require.True(t, deleted, "a buffered delete must hide the buffered write")
@@ -260,8 +269,8 @@ func TestWriteBehindBuffer_SizeThresholdRotates(t *testing.T) {
 		require.NoError(t, buf.Flush())
 	}()
 
-	buf.AppendNode(bufferedTestNode("n1", nil))
-	buf.AppendNode(bufferedTestNode("n2", nil))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", nil)}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n2", nil)}))
 	select {
 	case <-apply.started:
 	case <-time.After(2 * time.Second):
@@ -280,7 +289,7 @@ func TestWriteBehindBuffer_ApplyErrorRetries(t *testing.T) {
 	buf := NewWriteBehindBuffer(time.Hour, 0, apply)
 	defer buf.Close()
 
-	buf.AppendNode(bufferedTestNode("n1", nil))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", nil)}))
 	require.NoError(t, buf.Flush())
 	require.Equal(t, int64(2), calls.Load(), "failed apply must be retried")
 	require.Equal(t, 0, buf.PendingOps())
@@ -295,7 +304,7 @@ func TestWriteBehindBuffer_AppliedGenerationFallsThrough(t *testing.T) {
 	buf := NewWriteBehindBuffer(time.Hour, 0, apply)
 	defer buf.Close()
 
-	buf.AppendNode(bufferedTestNode("n1", nil))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", nil)}))
 	require.NoError(t, buf.Flush())
 	_, found, _ := buf.GetNode("n1")
 	require.False(t, found, "retired generations must fall through to the engine")
@@ -311,9 +320,9 @@ func TestWriteBehindBuffer_LabelAndTypeOverlays(t *testing.T) {
 		require.NoError(t, buf.Flush())
 	}()
 
-	buf.AppendNode(bufferedTestNode("n1", nil))
-	buf.AppendNode(&Node{ID: "n2", Labels: []string{"Other"}})
-	buf.AppendEdge(bufferedTestEdge("e1", "n1", "n2", "R"))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", nil)}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{ID: "n2", Labels: []string{"Other"}}}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpEdge, Edge: bufferedTestEdge("e1", "n1", "n2", "R")}))
 
 	labels := buf.LabelNodes("L")
 	require.Len(t, labels, 1)
@@ -323,8 +332,79 @@ func TestWriteBehindBuffer_LabelAndTypeOverlays(t *testing.T) {
 	require.Len(t, edges, 1)
 	require.Equal(t, EdgeID("e1"), edges[0].ID)
 
-	buf.AppendDelete("n1")
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpDelete, ID: "n1"}))
 	require.Empty(t, buf.LabelNodes("L"), "deleted buffered nodes drop out of label overlay")
+}
+
+func TestWriteBehindBuffer_AppendRejectsInvalidMutations(t *testing.T) {
+	node := bufferedTestNode("n1", nil)
+	edge := bufferedTestEdge("e1", "n1", "n2", "R")
+	cases := []struct {
+		name string
+		m    BufferedMutation
+	}{
+		{"unknown kind", BufferedMutation{Kind: BufferedOpKind(99), ID: "n1"}},
+		{"node kind with edge payload", BufferedMutation{Kind: BufferedOpNode, Edge: edge}},
+		{"edge kind with node payload", BufferedMutation{Kind: BufferedOpEdge, Node: node}},
+		{"delete kind with node payload", BufferedMutation{Kind: BufferedOpDelete, ID: "n1", Node: node}},
+		{"delete kind with edge payload", BufferedMutation{Kind: BufferedOpDelete, ID: "e1", Edge: edge}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := NewWriteBehindBuffer(time.Hour, 0, func(*CommitBuffer) error { return nil })
+			defer buf.Close()
+
+			epochBefore := buf.readEpoch.Load()
+			require.ErrorIs(t, buf.Append(tc.m), ErrInvalidData)
+			require.Equal(t, 0, buf.PendingOps(), "a rejected mutation must not count as an op")
+			require.Equal(t, epochBefore, buf.readEpoch.Load(), "a rejected mutation must not advance the read epoch")
+			require.Zero(t, buf.NodeCountDeltaForPrefix(""))
+			require.Zero(t, buf.EdgeCountDelta())
+			_, nodeFound, _ := buf.GetNode("n1")
+			require.False(t, nodeFound)
+			_, edgeFound, _ := buf.GetEdge("e1")
+			require.False(t, edgeFound)
+			_, wildcard := buf.readScopes.Load("")
+			require.False(t, wildcard, "a rejected mutation must not mark a read scope")
+		})
+	}
+}
+
+func TestWriteBehindBuffer_AppendAcceptsNilPayloadAsOneOp(t *testing.T) {
+	buf := NewWriteBehindBuffer(time.Hour, 0, func(*CommitBuffer) error { return nil })
+	defer buf.Close()
+
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode}))
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpEdge}))
+	require.Equal(t, 2, buf.PendingOps())
+	require.Zero(t, buf.NodeCountDeltaForPrefix(""))
+	require.Zero(t, buf.EdgeCountDelta())
+}
+
+func TestWriteBehindBuffer_AppendDerivesIDAndScopesEmptyDelete(t *testing.T) {
+	buf := NewWriteBehindBuffer(time.Hour, 0, func(*CommitBuffer) error { return nil })
+	defer buf.Close()
+
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, ID: "stale", Node: bufferedTestNode("n1", map[string]any{"v": int64(1)})}))
+	node, found, deleted := buf.GetNode("n1")
+	require.True(t, found)
+	require.False(t, deleted)
+	require.Equal(t, int64(1), node.Properties["v"])
+	_, staleNode, _ := buf.GetNode("stale")
+	require.False(t, staleNode, "a node request derives its ID from the payload")
+
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpEdge, ID: "stale", Edge: bufferedTestEdge("e1", "n1", "n2", "R")}))
+	edge, found, deleted := buf.GetEdge("e1")
+	require.True(t, found)
+	require.False(t, deleted)
+	require.Equal(t, NodeID("n1"), edge.StartNode)
+	_, staleEdge, _ := buf.GetEdge("stale")
+	require.False(t, staleEdge, "an edge request derives its ID from the payload")
+
+	require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpDelete}))
+	_, wildcard := buf.readScopes.Load("")
+	require.True(t, wildcard, "an empty delete still names the wildcard read scope")
+	require.Equal(t, 3, buf.PendingOps())
 }
 
 func TestWriteBehindBuffer_ConcurrentAppendsAndReads(t *testing.T) {
@@ -337,12 +417,16 @@ func TestWriteBehindBuffer_ConcurrentAppendsAndReads(t *testing.T) {
 	}()
 
 	var wg sync.WaitGroup
+	appendErr := make(chan error, 4)
 	for w := 0; w < 4; w++ {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
 			for i := 0; i < 200; i++ {
-				buf.AppendNode(bufferedTestNode("n1", map[string]any{"w": int64(w), "i": int64(i)}))
+				if err := buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: bufferedTestNode("n1", map[string]any{"w": int64(w), "i": int64(i)})}); err != nil {
+					appendErr <- err
+					return
+				}
 			}
 		}(w)
 	}
@@ -357,15 +441,19 @@ func TestWriteBehindBuffer_ConcurrentAppendsAndReads(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	close(appendErr)
+	for err := range appendErr {
+		require.NoError(t, err)
+	}
 }
 
-func (k bufferedOpKind) String() string {
+func (k BufferedOpKind) String() string {
 	switch k {
-	case bufferedOpNode:
+	case BufferedOpNode:
 		return "node"
-	case bufferedOpEdge:
+	case BufferedOpEdge:
 		return "edge"
-	case bufferedOpDelete:
+	case BufferedOpDelete:
 		return "delete"
 	}
 	return "unknown"

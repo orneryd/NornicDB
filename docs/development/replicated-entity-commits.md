@@ -201,3 +201,33 @@ cannot mutate the accepted commit. The semantic transaction wire is unchanged.
 
 The [paired UNIQUE commit measurements](../performance/pr1655-unique-claims.md)
 record the workload, correctness boundary and allocation effects of these checks.
+
+### Context-bearing authority and drains
+
+`PreparedEntityCommit.RetainAcceptedAuthority(ctx)` is the single authority
+retention entry point. Replace calls to `RetainAcceptedAuthorityWithContext`
+with this name; former no-argument calls supply an explicit context, or `nil`
+when the existing durable owner's hold must not be canceled. Accepted native
+completion keeps its independent lifetime.
+
+`BadgerEngine.FlushWriteBehind(ctx)` replaces both former flush signatures.
+Callers waiting for admission pass their request context; recovery and snapshot
+owners that must finish after acceptance pass `nil`. Cancellation stops the
+waiter without discarding independently accepted replay. Implementations of
+optional flush capabilities must accept `context.Context` as well.
+
+
+### Individual buffered mutations and index visibility markers
+
+Use `WriteBehindBuffer.Append(BufferedMutation{Kind: BufferedOpNode, Node: node})`
+(and `BufferedOpEdge` or `BufferedOpDelete`) instead of the retired per-kind
+append methods. Check its error: invalid kind/payload combinations are rejected
+without changing the read epoch or the overlay. Node/edge payloads are copied
+before admission; their ID comes from the payload. Replay records remain private.
+Nil node/edge payloads still count as one operation, and an empty delete ID still
+names the wildcard scope.
+
+Use `BadgerEngine.SetIndexTombstones(keys, true)` to hide index entries and
+`SetIndexTombstones(keys, false)` to remove those visibility markers. This replaces
+`WriteIndexTombstones` and `DeleteIndexTombstones`; empty batches remain no-ops.
+These Go API changes do not change Badger keys, payloads, WAL, or storage version.

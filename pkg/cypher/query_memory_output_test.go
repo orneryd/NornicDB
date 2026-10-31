@@ -181,6 +181,11 @@ func TestQueryMemoryOutputScoredStreamRetention(t *testing.T) {
 				require.NoError(t, be.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("review:r%06d", i)), StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": strings.Repeat(fmt.Sprintf("%08d", i), 512)}}))
 			}
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(be, "review"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
+			// First-pass Badger block/index cache fills belong to the engine,
+			// not to consumed stream rows. Establish the same read population
+			// before measuring additional retention by the streaming consumer.
+			_, err = exec.Execute(context.Background(), "MATCH ()-[r:LINK]->() RETURN r.secret", nil)
+			require.NoError(t, err)
 			runtime.GC()
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)

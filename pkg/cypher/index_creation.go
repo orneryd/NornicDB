@@ -70,7 +70,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			property := parsed.properties[0]
 			// Persist operator intent even with vector search disabled. Only
 			// node indexes register an in-memory vector space, after commit.
-			if err := e.storage.GetSchema().AddVectorIndexForEntity(name, label, property, dimensions, similarity, entityType); err != nil {
+			if err := e.storage.GetSchema().AddVectorIndex(name, label, property, dimensions, similarity, entityType); err != nil {
 				return nil, err
 			}
 			if svc := e.search(); !parsed.isRelationship && (svc == nil || svc.VectorEnabled()) {

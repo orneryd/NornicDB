@@ -26,7 +26,6 @@ func mutationEquivalenceStacks(t *testing.T) map[string]func(*testing.T) Engine 
 	return map[string]func(*testing.T) Engine{
 		"memory": func(t *testing.T) Engine {
 			engine := newTestMemoryEngine(t)
-			t.Cleanup(func() { _ = engine.Close() })
 			return engine
 		},
 		"badger": func(t *testing.T) Engine {

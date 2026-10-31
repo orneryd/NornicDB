@@ -141,8 +141,9 @@ When the application limit is enabled, `WriteBehindBuffer` in
 `pkg/storage/commit_buffer.go` is inside that application memory policy. Without
 it, the existing async write-buffer behavior remains in force. Its current `AppendCommit` increments operation counts and signals
 rotation; rotation is not a byte limit and does not establish freed memory. The
-same file exposes `AppendNode`, `AppendEdge` and `AppendDelete`; source search at
-this review base found no production call sites for those three methods. Inventory
+same file now exposes `Append(BufferedMutation)` for individual owned mutations;
+source search at the original review base found no production call sites for
+the retired per-kind methods. Inventory
 all actual producers on the implementation head rather than assuming they are
 active routes or adding another async engine.
 

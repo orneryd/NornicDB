@@ -34,7 +34,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 					engine := h.db.GetBaseStorageForManager()
 					for {
 						if base, ok := engine.(*storage.BadgerEngine); ok {
-							require.NoError(t, base.FlushWriteBehind())
+							require.NoError(t, base.FlushWriteBehind(nil))
 							return
 						}
 						wrapper, ok := engine.(storage.EngineUnwrapper)

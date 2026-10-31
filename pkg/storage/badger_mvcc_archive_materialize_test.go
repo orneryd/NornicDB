@@ -8,6 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// archiveNodeAndEdgePrimaryImagesInTxn archives the primary node and edge images
+// at v in one update transaction, the pair both archive tests exercise.
+func archiveNodeAndEdgePrimaryImagesInTxn(t *testing.T, engine *BadgerEngine, nodeID NodeID, edgeID EdgeID, v MVCCVersion) {
+	t.Helper()
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, nodeID, v, nil, MVCCVersion{}))
+		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, edgeID, v, nil, MVCCVersion{}))
+		return nil
+	}))
+}
+
 func TestArchivePrimaryIntoMVCCVersionInTxn_NodeAndEdge(t *testing.T) {
 	engine := newTestEngine(t)
 
@@ -23,11 +34,7 @@ func TestArchivePrimaryIntoMVCCVersionInTxn_NodeAndEdge(t *testing.T) {
 	engine.activeMVCCSnapshotReaders.Store(1)
 	defer engine.activeMVCCSnapshotReaders.Store(0)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, node.ID, v, nil, MVCCVersion{}))
-		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, edge.ID, v, nil, MVCCVersion{}))
-		return nil
-	}))
+	archiveNodeAndEdgePrimaryImagesInTxn(t, engine, node.ID, edge.ID, v)
 
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 		_, err := engine.loadNodeMVCCRecordExactInTxn(txn, node.ID, v)
@@ -43,11 +50,7 @@ func TestArchivePrimaryIntoMVCCVersionInTxn_NoHistoryOrMissing_NoOp(t *testing.T
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 7}
 
 	// Head-only retention and no active readers => archive short-circuits.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, "tenant:missing", v, nil, MVCCVersion{}))
-		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, "tenant:missing", v, nil, MVCCVersion{}))
-		return nil
-	}))
+	archiveNodeAndEdgePrimaryImagesInTxn(t, engine, "tenant:missing", "tenant:missing", v)
 }
 
 func TestMaterializeMVCCCommitInTxn_CoversOperationSwitch(t *testing.T) {
@@ -84,7 +87,7 @@ func TestMaterializeMVCCCommitInTxn_CoversOperationSwitch(t *testing.T) {
 		{Type: OpDeleteEdge, EdgeID: "tenant:ed", OldEdge: &Edge{ID: "tenant:ed", StartNode: "tenant:a", EndNode: "tenant:b", Type: "R", Properties: map[string]any{"p": "gone"}}},
 	}
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, opList)
 	}))
 

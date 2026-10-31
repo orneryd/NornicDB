@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"strings"
@@ -134,7 +135,7 @@ func (intent *namespaceDropIntent) head() []byte {
 // writeNamespaceDropIntent uses the current atomic/large commit owner. The head
 // and bounded victim chunks become visible together, before any destructive I/O.
 func (b *BadgerEngine) writeNamespaceDropIntent(intent *namespaceDropIntent, lifecycle *lifecycleWrite) error {
-	err := b.commitEngineWrite(func(cw *commitWriter) error {
+	err := b.commitEngineWrite(lifecycle.ctx, func(cw *commitWriter) error {
 		for kind, victims := range map[byte]map[uint64]struct{}{1: intent.nodes, 2: intent.edges} {
 			if len(victims) == 0 {
 				continue
@@ -180,7 +181,7 @@ func (b *BadgerEngine) completeNamespaceDrop(intent *namespaceDropIntent, lifecy
 	if err := b.db.syncIfPersistent(); err != nil {
 		return err
 	}
-	err := b.commitEngineWrite(func(cw *commitWriter) error {
+	err := b.commitEngineWrite(lifecycle.ctx, func(cw *commitWriter) error {
 		for kind, count := range map[byte]int{1: len(intent.nodes), 2: len(intent.edges)} {
 			for chunk := 0; chunk < (count+namespaceDropChunkIDs-1)/namespaceDropChunkIDs; chunk++ {
 				key := namespaceDropKey(intent.namespace, kind, uint64(chunk))
@@ -303,7 +304,7 @@ func (b *BadgerEngine) recoverNamespaceDrops(held *lifecycleWrite) error {
 		return nil
 	}
 	if held == nil {
-		lease, err := b.beginLifecycleWrite("")
+		lease, err := b.beginLifecycleWrite(context.Background(), "")
 		if err != nil {
 			return err
 		}

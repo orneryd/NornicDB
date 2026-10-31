@@ -95,7 +95,7 @@ func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 			}
-			require.NoError(t, disk.FlushWriteBehind())
+			require.NoError(t, disk.FlushWriteBehind(nil))
 			err = disk.UpdateNodeEmbeddingSidecar(payload)
 			if updated {
 				require.ErrorIs(t, err, ErrEmbeddingSourceChanged)
@@ -189,7 +189,7 @@ func TestEmbeddingRevisionIdentityAcrossFlush(t *testing.T) {
 	same, err := disk.embeddingRevisionIsCurrent("test:doc", revision)
 	require.NoError(t, err)
 	require.True(t, same, "the acknowledged body is current before flush")
-	require.NoError(t, disk.FlushWriteBehind())
+	require.NoError(t, disk.FlushWriteBehind(nil))
 	materialized, err := disk.getNodeSnapshot("test:doc", true)
 	require.NoError(t, err)
 	same, err = revision.MatchesNode(materialized)

@@ -188,7 +188,7 @@ func (d *engineDriver) Rollback(slot int) {
 }
 
 func (d *engineDriver) Flush() error {
-	if err := d.e.FlushWriteBehind(); err != nil {
+	if err := d.e.FlushWriteBehind(nil); err != nil {
 		return err
 	}
 	// FlushWriteBehind joins buffered generations. A direct write can queue

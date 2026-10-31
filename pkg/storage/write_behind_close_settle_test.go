@@ -109,7 +109,7 @@ func TestFlushReleasesBarrierBeforeWorkerListeners(t *testing.T) {
 		t.Fatal("the worker never claimed the generation")
 	}
 	flushed := make(chan error, 1)
-	go func() { flushed <- b.FlushWriteBehind() }()
+	go func() { flushed <- b.FlushWriteBehind(nil) }()
 	// The flush waits for the generation the worker is applying.
 	time.Sleep(50 * time.Millisecond)
 	close(applied)
@@ -143,7 +143,7 @@ func TestFlushSettlesGenerationAppliedOutsideTheDrain(t *testing.T) {
 				buf.releaseDrain()
 			}
 			flushed := make(chan error, 1)
-			go func() { flushed <- b.FlushWriteBehind() }()
+			go func() { flushed <- b.FlushWriteBehind(nil) }()
 			select {
 			case err := <-flushed:
 				require.NoError(t, err)

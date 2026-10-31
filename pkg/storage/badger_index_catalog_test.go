@@ -108,7 +108,7 @@ func TestIndexCatalog_CollectIndexKeys(t *testing.T) {
 			t.Cleanup(func() { _ = engine.Close() })
 			if kind == "node" {
 				// Seed a numID so the compact collector returns the expected keys.
-				if err := engine.withUpdate(func(txn *badger.Txn) error {
+				if err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 					_, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, NodeID("nornic:n1"))
 					return err
 				}); err != nil {
@@ -126,7 +126,7 @@ func TestIndexCatalog_CollectIndexKeys(t *testing.T) {
 				return
 			}
 			// Pre-seed the dict so the edge-between key makes it into the catalog.
-			err = engine.withUpdate(func(txn *badger.Txn) error {
+			err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				if _, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, NodeID("nornic:a")); err != nil {
 					return err
 				}

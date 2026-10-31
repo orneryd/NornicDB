@@ -31,7 +31,7 @@ func TestDirectDeleteKernelPhysicalCompletion(t *testing.T) {
 	edges, e := b.EdgeCount()
 	require.NoError(t, e)
 	require.Zero(t, edges)
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	_, err := b.GetNode("test:delete")
 	require.ErrorIs(t, err, ErrNotFound)
 }
@@ -106,7 +106,7 @@ func TestNodeDeletionKernelSelfLoopAndStagedCatalog(t *testing.T) {
 				_, e = b.GetEdge("test:loop")
 				require.NoError(t, e)
 			} else {
-				require.NoError(t, b.withUpdate(func(raw *badger.Txn) error { result, err = b.executeNodeDeletion(raw, id, nil); return err }))
+				require.NoError(t, b.withUpdate(updateRequest{}, func(raw *badger.Txn) error { result, err = b.executeNodeDeletion(raw, id, nil); return err }))
 			}
 			require.Equal(t, []EdgeID{"test:loop"}, result.ids)
 			require.Len(t, result.edges, 1)

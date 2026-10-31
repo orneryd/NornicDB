@@ -210,7 +210,7 @@ func TestManagedBadgerReadsHeld(t *testing.T) {
 	require.ErrorIs(t, err, ErrStorageRestoring)
 	_, _, err = db.beginTxn(false)
 	require.ErrorIs(t, err, ErrStorageRestoring)
-	require.ErrorIs(t, engine.withUpdate(noop), ErrStorageRestoring)
+	require.ErrorIs(t, engine.withUpdate(updateRequest{}, noop), ErrStorageRestoring)
 	tx.mu.Lock()
 	err = tx.advanceSnapshotLocked(false)
 	tx.mu.Unlock()

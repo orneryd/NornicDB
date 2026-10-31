@@ -119,7 +119,7 @@ func BenchmarkCallSubqueryUnion_VectorRelBranch(b *testing.B) {
 
 	// Create vector index
 	schema := store.GetSchema()
-	if err := schema.AddVectorIndex("idx_original_text", "OriginalText", "embedding", dim, "cosine"); err != nil {
+	if err := schema.AddVectorIndex("idx_original_text", "OriginalText", "embedding", dim, "cosine", storage.ConstraintEntityNode); err != nil {
 		b.Fatalf("create vector index failed: %v", err)
 	}
 

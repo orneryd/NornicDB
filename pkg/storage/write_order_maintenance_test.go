@@ -52,7 +52,7 @@ func TestTemporalConstraintBackfillsBufferedNodes(t *testing.T) {
 	require.NoError(t, ValidateConstraintOnCreationForEngine(engine, c))
 	require.NoError(t, engine.GetSchema().AddConstraint(c))
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, engine.GetSchema(), []Constraint{c}))
-	require.NoError(t, inner.FlushWriteBehind())
+	require.NoError(t, inner.FlushWriteBehind(nil))
 
 	require.Equal(t, 1, countKeysWithPrefix(t, inner, prefixTemporalIndex),
 		"the node acknowledged before the constraint has no history entry, yet the index is recorded complete")
@@ -68,26 +68,26 @@ func TestBetweenSelfHealWritesOnlyWhatIsStored(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, b.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	// Drift: the between index lost the relationship; the legacy outgoing
 	// index still holds it.
 	edge, err := b.GetEdge("test:e")
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return b.deleteEdgeBetweenIndexesInTxn(txn, edge) }))
+	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return b.deleteEdgeBetweenIndexesInTxn(txn, edge) }))
 	require.Zero(t, countKeysWithPrefix(t, b, prefixEdgeBetweenIndex))
 
 	var once sync.Once
 	restore := setBetweenSelfHealHook(func() {
 		once.Do(func() {
 			require.NoError(t, b.DeleteEdge("test:e"))
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 		})
 	})
 	defer restore()
 	_, err = b.GetEdgesBetween("test:a", "test:b")
 	require.NoError(t, err)
 	restore()
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 
 	require.Zero(t, countKeysWithPrefix(t, b, prefixEdgeBetweenIndex), "the heal indexed a relationship deleted before it")
 	require.Zero(t, countKeysWithPrefix(t, b, prefixEdgeBetweenHead), "the heal pointed the between head at a relationship deleted before it")
@@ -156,7 +156,7 @@ func TestTemporalRebuildRunsAcrossNoWrite(t *testing.T) {
 			}
 			_, err := engine.CreateNode(period(from))
 			require.NoError(t, err)
-			require.NoError(t, inner.FlushWriteBehind())
+			require.NoError(t, inner.FlushWriteBehind(nil))
 
 			attempts := 0
 			hook, wait := writeAtPause(pauseTemporalRebuildNode, func() error {
@@ -169,14 +169,14 @@ func TestTemporalRebuildRunsAcrossNoWrite(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				return inner.FlushWriteBehind()
+				return inner.FlushWriteBehind(nil)
 			})
 			restore := setMaintenancePauseHook(hook)
 			defer restore()
 			require.NoError(t, inner.RebuildTemporalIndexes(context.Background()))
 			restore()
 			require.NoError(t, wait())
-			require.NoError(t, inner.FlushWriteBehind())
+			require.NoError(t, inner.FlushWriteBehind(nil))
 
 			published := indexKeys(t, inner, prefixTemporalIndex, prefixTemporalHead)
 			require.NoError(t, inner.RebuildTemporalIndexes(context.Background()))
@@ -215,7 +215,7 @@ func TestIDRepairRunsAcrossNoWrite(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				return b.FlushWriteBehind()
+				return b.FlushWriteBehind(nil)
 			})
 			restore := setMaintenancePauseHook(hook)
 			defer restore()
@@ -223,7 +223,7 @@ func TestIDRepairRunsAcrossNoWrite(t *testing.T) {
 			require.NoError(t, err)
 			restore()
 			require.NoError(t, wait())
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 
 			require.Equal(t, []NodeID{"test:b"}, report.RestoredNodes)
 			require.True(t, labelled(t, b, "Fresh", "test:b"), "a label added during the repair is indexed under a number the repair moved the node off")

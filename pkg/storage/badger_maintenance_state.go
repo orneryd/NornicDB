@@ -23,7 +23,7 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 		return false, err
 	}
 	clean := false
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.db.updateMetadataContext(ctx, func(txn *badger.Txn) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -76,7 +76,7 @@ func (b *BadgerEngine) MarkCleanShutdown(ctx context.Context) error {
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	if err := b.db.Update(func(txn *badger.Txn) error {
+	if err := b.db.updateMetadataContext(ctx, func(txn *badger.Txn) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

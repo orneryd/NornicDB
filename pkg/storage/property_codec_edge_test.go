@@ -32,7 +32,7 @@ import (
 func roundTripValueThroughCodec(t *testing.T, eng *BadgerEngine, key string, val any) any {
 	t.Helper()
 	var data []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeTokenizedProperties(txn, "ns", map[string]any{key: val})
 		if err != nil {
@@ -271,51 +271,43 @@ func TestRawByteSlice_RoundTripsAsBytes(t *testing.T) {
 	assert.Equal(t, payload, gotBytes)
 }
 
-// TestNamespaceIsolation_PropKeyDict — the same property name
-// allocated in two different namespaces gets two different IDs, and
-// payloads written under one namespace MUST refuse to decode under
-// the other. This is the storage-level invariant that prevents
-// cross-database key bleed.
+// TestNamespaceIsolation_PropKeyDict verifies namespace-local token meanings.
+// Token IDs may overlap between namespaces; callers must provide the namespace
+// of the body being decoded. Isolation belongs to namespace-qualified keys,
+// not a namespace tag embedded in each property payload.
 func TestNamespaceIsolation_PropKeyDict(t *testing.T) {
 	eng := newTestEngine(t)
 
-	var dataNs1, dataNs2 []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	payloads := map[string]map[string]any{
+		"ns1": {"k": "v1"},
+		"ns2": {"k": "v2"},
+	}
+	data := map[string][]byte{}
+	inPropertyKeyTxn(t, eng, []string{"ns1", "ns2"}, func(txn *badger.Txn, namespace string) error {
 		var err error
-		dataNs1, err = eng.encodeTokenizedProperties(txn, "ns1", map[string]any{"k": "v1"})
-		if err != nil {
-			return err
-		}
-		dataNs2, err = eng.encodeTokenizedProperties(txn, "ns2", map[string]any{"k": "v2"})
-		if err != nil {
-			return err
-		}
-		_ = eng.propKeyDict.flushTxnCounters(txn)
-		return nil
-	}))
+		data[namespace], err = eng.encodeTokenizedProperties(txn, namespace, payloads[namespace])
+		return err
+	})
 
 	// Each namespace decodes its own payload correctly.
-	out1, err := eng.decodeTokenizedProperties("ns1", dataNs1)
+	out1, err := eng.decodeTokenizedProperties("ns1", data["ns1"])
 	require.NoError(t, err)
 	assert.Equal(t, "v1", out1["k"])
 
-	out2, err := eng.decodeTokenizedProperties("ns2", dataNs2)
+	out2, err := eng.decodeTokenizedProperties("ns2", data["ns2"])
 	require.NoError(t, err)
 	assert.Equal(t, "v2", out2["k"])
 
-	// If the IDs happened to collide (both got id 1, say), reading
-	// ns2's payload under ns1 would silently succeed with the wrong
-	// key name. Pin: cross-namespace decode either errors or produces
-	// the correct namespace-local key. We accept either: the contract
-	// is "cannot leak ns2 data into ns1 with ns1's key names".
-	cross, err := eng.decodeTokenizedProperties("ns1", dataNs2)
-	if err == nil {
-		// If decode succeeded, the key MUST resolve to ns1's name for
-		// that ID, not "k". Confirm by checking the value is whatever
-		// ns2 wrote (it has to be: that's the only payload), so the key
-		// it landed under is what the dict translated ID→name in ns1.
-		_ = cross
-	}
+	// Independently advancing one namespace must not rename the other namespace's
+	// existing token or change its decoded payload.
+	inPropertyKeyTxn(t, eng, []string{"ns1"}, func(txn *badger.Txn, namespace string) error {
+		_, err := eng.encodeTokenizedProperties(txn, namespace, map[string]any{"only_ns1": true})
+		return err
+	})
+	out2, err = eng.decodeTokenizedProperties("ns2", data["ns2"])
+	require.NoError(t, err)
+	assert.Equal(t, payloads["ns2"], out2)
+
 }
 
 // TestDecodeStrictTypedValue_UnreadableHeaderError — feeding a decoder
@@ -371,12 +363,7 @@ func TestDecodeStrictTypedMap_NonStringKeyErrors(t *testing.T) {
 // payload must take the "count=0, no entries" path instead.
 func TestEncodeTokenizedProperties_ZeroLengthBuffer(t *testing.T) {
 	eng := newTestEngine(t)
-	var data []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		var err error
-		data, err = eng.encodeTokenizedProperties(txn, "ns", map[string]any{})
-		return err
-	}))
+	data := encodeTokenizedPropertiesForTest(t, eng, map[string]any{})
 	require.NotEmpty(t, data, "empty map must encode to a single-byte (count=0) payload, not zero bytes")
 	assert.Equal(t, byte(0x00), data[0], "first byte must be uvarint(0) for an empty map")
 
@@ -412,7 +399,7 @@ func TestDecodeTokenizedProperties_DuplicateKeyOverwrites(t *testing.T) {
 	eng := newTestEngine(t)
 	// Allocate "k" so the dict knows the id.
 	var keyID uint64
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		id, err := eng.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "k")
 		require.NoError(t, err)
 		keyID = id
@@ -449,7 +436,7 @@ func TestRoundTrip_LargePropertyMap(t *testing.T) {
 	}
 
 	var data []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeTokenizedProperties(txn, "ns", props)
 		if err != nil {

@@ -1279,14 +1279,14 @@ func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string
 	case "property", "btree":
 		return schema.AddPropertyIndex(indexName, label, []string{property})
 	case "fulltext":
-		return schema.AddFulltextIndex(indexName, []string{label}, []string{property})
+		return schema.AddFulltextIndex(indexName, []string{label}, []string{property}, storage.ConstraintEntityNode)
 	case "vector":
 		// Use configured embedding dimensions instead of hardcoded value
 		dims := 1024
 		if config != nil {
 			dims = config.Memory.EmbeddingDimensions
 		}
-		return schema.AddVectorIndex(indexName, label, property, dims, "cosine")
+		return schema.AddVectorIndex(indexName, label, property, dims, "cosine", storage.ConstraintEntityNode)
 	case "range":
 		return schema.AddRangeIndex(indexName, label, property)
 	default:

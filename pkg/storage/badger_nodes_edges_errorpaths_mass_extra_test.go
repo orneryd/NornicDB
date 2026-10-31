@@ -8,7 +8,6 @@ import (
 
 func TestBadgerEngine_NodeAndEdgeInputValidationBranches(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(nil)
 	require.ErrorIs(t, err, ErrInvalidData)
@@ -36,7 +35,6 @@ func TestBadgerEngine_NodeAndEdgeInputValidationBranches(t *testing.T) {
 
 func TestBadgerEngine_EdgeCRUDErrorAndBranchPaths(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	require.ErrorIs(t, engine.CreateEdge(nil), ErrInvalidData)
 	require.ErrorIs(t, engine.CreateEdge(&Edge{}), ErrInvalidID)

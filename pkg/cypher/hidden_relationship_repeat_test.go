@@ -44,7 +44,7 @@ func openHiddenRelationshipStorage(t *testing.T, buffered bool) (*storage.Badger
 // which stays in the write-behind overlay.
 func settleHiddenRelationshipPredecessor(t *testing.T, base *storage.BadgerEngine, exec *StorageExecutor, flushed bool, value string, params map[string]interface{}) {
 	t.Helper()
-	require.NoError(t, base.FlushWriteBehind())
+	require.NoError(t, base.FlushWriteBehind(nil))
 	if !flushed {
 		_, err := exec.Execute(context.Background(), "MATCH ()-[r:LINK]->() SET r.payload = "+value, params)
 		require.NoError(t, err)
@@ -84,7 +84,7 @@ func forEachHiddenRelationshipFixture(t *testing.T, check func(t *testing.T, bas
 // its body and stayed hidden.
 func requireHiddenRelationshipUnchanged(t *testing.T, base *storage.BadgerEngine, before *storage.Edge) {
 	t.Helper()
-	require.NoError(t, base.FlushWriteBehind())
+	require.NoError(t, base.FlushWriteBehind(nil))
 	after, err := base.GetStoredEdge(before.ID)
 	require.NoError(t, err)
 	require.Equal(t, before.Properties, after.Properties)

@@ -19,7 +19,7 @@ func TestWriteBehind_NodeKeyAfterBufferRetirement(t *testing.T) {
 	require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
 	require.NoError(t, bufferedTry(t, b, factNode("holder", 1, "name", 1)))
 	require.Error(t, bufferedTry(t, b, factNode("pending-duplicate", 1, "name", 1)))
-	require.NoError(t, b.FlushWriteBehind())
+	require.NoError(t, b.FlushWriteBehind(nil))
 	require.Empty(t, b.writeBehind.draining)
 	require.Zero(t, b.writeBehind.PendingOps())
 	require.Len(t, idx.LookupFull(int64(1), "name", int64(1)), 1)
@@ -46,7 +46,7 @@ func TestWriteBehind_IdleFilledKeyConstraints(t *testing.T) {
 				require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
 				if retired {
 					require.NoError(t, bufferedTry(t, b, factNode("holder", 1, "name", 1)))
-					require.NoError(t, b.FlushWriteBehind())
+					require.NoError(t, b.FlushWriteBehind(nil))
 				} else {
 					_, err := b.CreateNode(factNode("holder", 1, "name", 1))
 					require.NoError(t, err)

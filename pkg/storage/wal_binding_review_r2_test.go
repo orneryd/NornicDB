@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -71,7 +72,7 @@ func TestReviewR2ConcurrentAllocation(t *testing.T) {
 		require.NoError(t, e)
 	}
 	for d := range drains {
-		require.NoError(t, dest.propKeyDict.persistTxnCounters(dest.db, d))
+		require.NoError(t, dest.propKeyDict.persistTxnCounters(metadataBatches{db: dest.db, ctx: context.Background()}, d))
 	}
 	assertPropertyDictionaryBijection(t, dest)
 	for i := 0; i < 160; i++ {
@@ -126,7 +127,7 @@ func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("identity:%c", 'a'+i)), Properties: map[string]any{name: int64(i + 1)}}, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
-		require.NoError(t, source.FlushWriteBehind())
+		require.NoError(t, source.FlushWriteBehind(nil))
 	}
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 	require.NoError(t, err)

@@ -176,15 +176,18 @@ func kvHas(w kvWriter, key []byte) (bool, error) {
 // its Badger commit; a large commit before its first batch, ahead of the
 // exclusive commit gate (lock order: write barrier, count locks, commit
 // gate). Idempotent.
-func (tx *BadgerTransaction) acquireCommitPublicationLocked() {
+func (tx *BadgerTransaction) acquireCommitPublicationLocked() error {
 	if tx.commitCountsHeld {
-		return
+		return nil
 	}
-	tx.commitCountsHeld = true
 	if len(tx.pendingEdgeTypeLabelCountDeltas) > 0 {
-		tx.engine.edgeTypeCountWriteMu.Lock()
+		if err := tx.engine.edgeTypeCountWriteMu.LockContext(tx.commitCtx); err != nil {
+			return err
+		}
 		tx.commitEdgeTypeCounts = true
 	}
+	tx.commitCountsHeld = true
+	return nil
 }
 
 func (tx *BadgerTransaction) releaseEdgeTypeCountLockLocked() {

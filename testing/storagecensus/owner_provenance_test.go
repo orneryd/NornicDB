@@ -48,7 +48,7 @@ func(b *BadgerEngine)censusBypassSuppressionInTxn(txn *badger.Txn,input suppress
 // A legitimate effect cannot mask a second direct body write, and a method
 // with a similar name cannot acquire the evaluator's ownership.
 func TestBodyOwnershipRequiresEveryEffectPath(t *testing.T) {
-	p, pkg := coverageProgram(t, `package storage
+	p, pkg := ssaFixture(t, `package storage
  type BadgerEngine struct{}
  func(b *BadgerEngine)evaluateSuppressionInTxn(){}
  func(b *BadgerEngine)evaluateSuppressionInTxnLookalike(){}
@@ -56,7 +56,7 @@ func TestBodyOwnershipRequiresEveryEffectPath(t *testing.T) {
  func owned(b *BadgerEngine){b.evaluateSuppressionInTxn()}
  func mixed(b *BadgerEngine){b.evaluateSuppressionInTxn();b.bypass()}
  func lookalike(b *BadgerEngine){b.evaluateSuppressionInTxnLookalike()}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	a := &analysis{p: p, bodyMarks: map[ssa.Instruction]bool{}, bodyChains: map[ssa.Instruction]map[string][]string{}}
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg != pkg {
@@ -78,7 +78,7 @@ func TestBodyOwnershipRequiresEveryEffectPath(t *testing.T) {
 }
 
 func TestPublicationTimestampHasExactOwner(t *testing.T) {
-	p, pkg := coverageProgram(t, `package storage
+	p, pkg := ssaFixture(t, `package storage
  type commitPublication struct{ts uint64}
  type commitPublicationLookalike struct{ts uint64}
  type prefixDrops struct{pendingCount uint64; pending map[string]*commitPublication}
@@ -90,7 +90,7 @@ func TestPublicationTimestampHasExactOwner(t *testing.T) {
  func owner(s *publicationStage,pub *commitPublication){s.register(3,pub)}
  func rogue(pub *commitPublication){pub.ts=7}
  func lookalike(pub *commitPublicationLookalike){pub.ts=7}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg == pkg {
 			p.funcs = append(p.funcs, fn)
@@ -113,14 +113,14 @@ func TestPublicationTimestampHasExactOwner(t *testing.T) {
 }
 
 func TestReviewCensusBranchEveryGatedInstruction(t *testing.T) {
-	p, pkg := coverageProgram(t, `package storage
+	p, pkg := ssaFixture(t, `package storage
  type BadgerEngine struct{}
  func(b *BadgerEngine)evaluateSuppressionInTxn(){}
  func(b *BadgerEngine)bypass(){}
  func(b *BadgerEngine)filterEntityByDecay()bool{return true}
  func deciding(b *BadgerEngine){if b.filterEntityByDecay(){b.evaluateSuppressionInTxn();b.bypass()}}
  func mixed(b *BadgerEngine,hidden bool){if hidden {b.evaluateSuppressionInTxn();b.bypass()}}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	a := &analysis{p: p, bodyMarks: map[ssa.Instruction]bool{}, bodyChains: map[ssa.Instruction]map[string][]string{}}
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg != pkg {

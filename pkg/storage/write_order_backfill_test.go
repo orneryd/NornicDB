@@ -180,7 +180,7 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 					}
 					require.NoError(t, seed.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 					require.NoError(t, seed.CreateEdge(&Edge{ID: "test:bc", StartNode: "test:b", EndNode: "test:c", Type: "LINK"}))
-					require.NoError(t, seed.withUpdate(func(txn *badger.Txn) error { return txn.Delete(index.marker) }))
+					require.NoError(t, seed.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Delete(index.marker) }))
 					require.NoError(t, seed.Close())
 
 					paused, resume := make(chan struct{}), make(chan struct{})
@@ -204,7 +204,7 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, mode.writeBehind, buffered, "the write is acknowledged buffered exactly when write-behind is on")
 					if mode.flushInside {
-						require.NoError(t, b.FlushWriteBehind())
+						require.NoError(t, b.FlushWriteBehind(nil))
 					}
 					close(resume)
 					require.Eventually(t, func() bool {
@@ -213,7 +213,7 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 					}, 30*time.Second, 10*time.Millisecond, "the backfill never published the index ready")
 					restore()
 					if mode.writeBehind {
-						require.NoError(t, b.FlushWriteBehind())
+						require.NoError(t, b.FlushWriteBehind(nil))
 					}
 					m.check(t, b)
 					requireIndexMatchesStorage(t, b, index.rebuild(b), index.prefixes...)

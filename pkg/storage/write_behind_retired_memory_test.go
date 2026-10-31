@@ -21,11 +21,11 @@ func TestWriteBehindBuffer_RetiredGenerationCollectible(t *testing.T) {
 			// can change which generation the queue must release.
 			w.Close()
 			retire := func() weak.Pointer[CommitBuffer] {
-				w.AppendNode(&Node{ID: "test:retired"})
+				require.NoError(t, w.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{ID: "test:retired"}}))
 				generation := weak.Make(w.active)
 				w.rotate()
 				if pendingSuccessor {
-					w.AppendNode(&Node{ID: "test:pending"})
+					require.NoError(t, w.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{ID: "test:pending"}}))
 					w.rotate()
 				}
 				w.drainOne(true, nil)

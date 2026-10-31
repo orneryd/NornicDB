@@ -23,7 +23,7 @@ func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T)
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	_, err := engine.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"v": "initial"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 
 	update := func(implicit bool, v string) error {
 		tx, err := engine.BeginTransaction()
