@@ -15,7 +15,7 @@ import (
 // that does not exist, after the buffer drained.
 func noDanglingRelationships(t *testing.T, engine *BadgerEngine) {
 	t.Helper()
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	engine.invalidateCachesAfterRestore()
 	edges, err := engine.AllEdges()
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestRelationshipEndpointsHoldAcrossOrderedCommits(t *testing.T) {
 				_, err := engine.CreateNode(&Node{ID: id})
 				require.NoError(t, err)
 			}
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			tx, err := engine.BeginTransaction()
 			require.NoError(t, err)
 			if c.stagedImplicit {
@@ -96,7 +96,7 @@ func TestManualSuppressionOrdersAfterBufferedCommits(t *testing.T) {
 						require.NoError(t, engine.CreateEdge(listenerOrderEdge("initial")))
 					}
 				}
-				require.NoError(t, engine.FlushWriteBehind())
+				require.NoError(t, engine.FlushWriteBehind(nil))
 				var notified any
 				engine.OnNodeUpdated(func(n *Node) { notified = n.Properties["v"] })
 				engine.OnEdgeUpdated(func(e *Edge) { notified = e.Properties["v"] })
@@ -167,7 +167,7 @@ func TestEmbeddingSidecarOrdersAfterBufferedCommits(t *testing.T) {
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	_, err = engine.CreateNode(listenerOrderNode("initial"))
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
 		return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("acknowledged"), Policy: ClientNodeEdits})
 	}, nil))
@@ -199,7 +199,7 @@ func TestRelationshipDeleteCountsTheNewestEndpointLabels(t *testing.T) {
 			_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"End"}})
 			require.NoError(t, err)
 			require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
 				return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"New"}}, Policy: ClientNodeEdits})
 			}, nil))
@@ -208,7 +208,7 @@ func TestRelationshipDeleteCountsTheNewestEndpointLabels(t *testing.T) {
 			} else {
 				require.NoError(t, runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error { return tx.DeleteEdge("test:r") }, nil))
 			}
-			require.NoError(t, engine.FlushWriteBehind())
+			require.NoError(t, engine.FlushWriteBehind(nil))
 			for _, label := range []string{"Old", "New"} {
 				count, err := engine.EdgeCountByStartLabelInNamespace("test", label, "LINK")
 				require.NoError(t, err)

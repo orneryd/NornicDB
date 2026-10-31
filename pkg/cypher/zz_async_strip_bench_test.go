@@ -57,7 +57,7 @@ func BenchmarkZZAsyncStrip(b *testing.B) {
 		}
 		engine := storage.NewWALEngine(badger, wal)
 		b.Cleanup(func() {
-			if err := badger.FlushWriteBehind(); err != nil {
+			if err := badger.FlushWriteBehind(nil); err != nil {
 				b.Logf("flush on cleanup: %v", err)
 			}
 			_ = wal.Close()

@@ -14,14 +14,17 @@ func cloneConstraint(c Constraint) Constraint {
 	if c.AllowedValues != nil {
 		values := make([]any, len(c.AllowedValues))
 		for i, value := range c.AllowedValues {
-			values[i] = ownedMetadataValue(value)
+			values[i] = ownedValueCopy(value)
 		}
 		c.AllowedValues = values
 	}
 	return c
 }
 
-func cloneDecayProfileBinding(b knowledgepolicy.DecayProfileBinding) knowledgepolicy.DecayProfileBinding {
+// cloneDecayProfileBinding returns an owned snapshot of a caller-owned binding:
+// the value is copied before any field is replaced, so source is never mutated.
+func cloneDecayProfileBinding(source *knowledgepolicy.DecayProfileBinding) knowledgepolicy.DecayProfileBinding {
+	b := *source
 	b.TargetLabels = slices.Clone(b.TargetLabels)
 	b.PropertyRules = slices.Clone(b.PropertyRules)
 	if b.VisibilityThreshold != nil {
@@ -31,7 +34,10 @@ func cloneDecayProfileBinding(b knowledgepolicy.DecayProfileBinding) knowledgepo
 	return b
 }
 
-func clonePromotionPolicy(p knowledgepolicy.PromotionPolicyDef) knowledgepolicy.PromotionPolicyDef {
+// clonePromotionPolicy returns an owned snapshot of a caller-owned policy: the
+// value is copied before any field is replaced, so source is never mutated.
+func clonePromotionPolicy(source *knowledgepolicy.PromotionPolicyDef) knowledgepolicy.PromotionPolicyDef {
+	p := *source
 	p.TargetLabels = slices.Clone(p.TargetLabels)
 	p.WhenClauses = slices.Clone(p.WhenClauses)
 	if p.OnAccess != nil {

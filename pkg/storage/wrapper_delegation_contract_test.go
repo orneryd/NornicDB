@@ -74,7 +74,6 @@ type delegationSpyEngine struct {
 func newDelegationSpyEngine(t *testing.T) *delegationSpyEngine {
 	t.Helper()
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	return &delegationSpyEngine{MemoryEngine: base, calls: map[string]int{}}
 }
 

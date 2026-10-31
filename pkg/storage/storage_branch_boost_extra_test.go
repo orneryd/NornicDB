@@ -63,7 +63,7 @@ func TestBadgerQueries_EdgeFromTxn_ErrorBranches(t *testing.T) {
 		return nil
 	}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(edgeKey("test:bad"), []byte("not-a-valid-edge"))
 	}))
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
@@ -79,16 +79,8 @@ func TestBadgerQueries_EdgeFromTxn_ErrorBranches(t *testing.T) {
 }
 
 func TestTemporalCurrentNode_Branches(t *testing.T) {
-	engine := newTestEngine(t)
+	engine := newTemporalConstraintEngine(t, "test", "Role", "role", "valid_from", "valid_to")
 	ns := "test"
-	sm := engine.GetSchemaForNamespace(ns)
-	require.NoError(t, sm.AddConstraint(Constraint{
-		Name:       "temporal_role",
-		Type:       ConstraintTemporal,
-		EntityType: ConstraintEntityNode,
-		Label:      "Role",
-		Properties: []string{"role", "valid_from", "valid_to"},
-	}))
 
 	asOf := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	ok, err := engine.IsCurrentTemporalNode(&Node{ID: "unprefixed", Labels: []string{"Role"}}, asOf)

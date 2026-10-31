@@ -64,7 +64,7 @@ type entityWriteContext struct {
 
 type entityAuthorityResources struct {
 	keysOnce         sync.Once
-	ordered          orderedWrite
+	ordered          writeBarrierLease
 	releaseAuthority func()
 	once             sync.Once
 }
@@ -174,7 +174,7 @@ func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge b
 			return nil, nil, err
 		}
 	}
-	ordered, err := b.beginOrderedWrite(ctx)
+	ordered, err := b.beginBarrierWrite(ctx, false, true)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -190,11 +190,11 @@ type transactionStartEngine struct {
 	pinnedNamespace string
 }
 
-func (e *transactionStartEngine) FlushWriteBehind() error {
+func (e *transactionStartEngine) FlushWriteBehind(context.Context) error {
 	if e.failFlush {
 		return errRoleMutation
 	}
-	return e.MemoryEngine.FlushWriteBehind()
+	return e.MemoryEngine.FlushWriteBehind(nil)
 }
 
 func (e *transactionStartEngine) BeginTransaction() (*storage.BadgerTransaction, error) {

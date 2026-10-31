@@ -94,10 +94,10 @@ func TestFulltextIndex_LoadLegacy(t *testing.T) {
 	assert.Equal(t, []string{"name"}, idx.Properties)
 }
 
-// TestSchemaManager_AddFulltextRelationshipIndex_RoundTrip drives the
+// TestSchemaManager_RelationshipFulltextIndex_RoundTrip drives the
 // full export/import cycle through SchemaManager so the persistence
 // helpers are exercised end-to-end.
-func TestSchemaManager_AddFulltextRelationshipIndex_RoundTrip(t *testing.T) {
+func TestSchemaManager_RelationshipFulltextIndex_RoundTrip(t *testing.T) {
 	var persisted *SchemaDefinition
 	sm := NewSchemaManager()
 	sm.SetPersister(func(def *SchemaDefinition) error {
@@ -110,7 +110,7 @@ func TestSchemaManager_AddFulltextRelationshipIndex_RoundTrip(t *testing.T) {
 		return nil
 	})
 
-	require.NoError(t, sm.AddFulltextRelationshipIndex("rel_search", []string{"KNOWS"}, []string{"note"}))
+	require.NoError(t, sm.AddFulltextIndex("rel_search", []string{"KNOWS"}, []string{"note"}, ConstraintEntityRelationship))
 
 	// In-memory get returns the new fields.
 	idx, ok := sm.GetFulltextIndex("rel_search")
@@ -141,8 +141,8 @@ func TestSchemaManager_AddFulltextRelationshipIndex_RoundTrip(t *testing.T) {
 // breaking it silently produces queries that traverse the wrong axis.
 func TestFulltextIndex_BothScopesNeverMixed(t *testing.T) {
 	sm := NewSchemaManager()
-	require.NoError(t, sm.AddFulltextIndex("node_idx", []string{"Person"}, []string{"name"}))
-	require.NoError(t, sm.AddFulltextRelationshipIndex("rel_idx", []string{"KNOWS"}, []string{"note"}))
+	require.NoError(t, sm.AddFulltextIndex("node_idx", []string{"Person"}, []string{"name"}, ConstraintEntityNode))
+	require.NoError(t, sm.AddFulltextIndex("rel_idx", []string{"KNOWS"}, []string{"note"}, ConstraintEntityRelationship))
 
 	nodeIdx, _ := sm.GetFulltextIndex("node_idx")
 	relIdx, _ := sm.GetFulltextIndex("rel_idx")
@@ -269,19 +269,19 @@ func TestFulltextIndex_LoadMalformedJSON(t *testing.T) {
 	}
 }
 
-// TestSchemaManager_AddFulltextRelationshipIndex_PersistError pins the
+// TestSchemaManager_RelationshipFulltextIndex_PersistError pins the
 // rollback contract: when the persist callback fails, the in-memory map
 // must NOT carry the half-added entry. Older binaries reading a
 // half-written persist file would otherwise see an index that the new
 // binary treats as nonexistent.
-func TestSchemaManager_AddFulltextRelationshipIndex_PersistError(t *testing.T) {
+func TestSchemaManager_RelationshipFulltextIndex_PersistError(t *testing.T) {
 	sm := NewSchemaManager()
 	sentinel := errors.New("disk full")
 	sm.SetPersister(func(def *SchemaDefinition) error {
 		return sentinel
 	})
 
-	err := sm.AddFulltextRelationshipIndex("rel_idx", []string{"KNOWS"}, []string{"note"})
+	err := sm.AddFulltextIndex("rel_idx", []string{"KNOWS"}, []string{"note"}, ConstraintEntityRelationship)
 	require.ErrorIs(t, err, sentinel,
 		"persist failure must surface to caller verbatim")
 
@@ -290,35 +290,35 @@ func TestSchemaManager_AddFulltextRelationshipIndex_PersistError(t *testing.T) {
 		"persist failure must roll back the in-memory entry; otherwise the in-memory and on-disk states diverge")
 }
 
-// TestSchemaManager_AddFulltextRelationshipIndex_DuplicateName pins the
-// idempotent-add contract. The legacy AddFulltextIndex returns nil for
-// a duplicate (no-op); AddFulltextRelationshipIndex must do the same so
+// TestSchemaManager_RelationshipFulltextIndex_DuplicateName pins the
+// idempotent-add contract. Node-scoped full-text addition returns nil for
+// a duplicate (no-op); RelationshipFulltextIndex must do the same so
 // admin-API retries don't surface spurious errors.
-func TestSchemaManager_AddFulltextRelationshipIndex_DuplicateName(t *testing.T) {
+func TestSchemaManager_RelationshipFulltextIndex_DuplicateName(t *testing.T) {
 	sm := NewSchemaManager()
 
-	require.NoError(t, sm.AddFulltextRelationshipIndex("rel_idx", []string{"KNOWS"}, []string{"note"}))
+	require.NoError(t, sm.AddFulltextIndex("rel_idx", []string{"KNOWS"}, []string{"note"}, ConstraintEntityRelationship))
 	// Second call with different scope is a no-op (preserves first call's data).
-	require.NoError(t, sm.AddFulltextRelationshipIndex("rel_idx", []string{"DIFFERENT"}, []string{"different"}))
+	require.NoError(t, sm.AddFulltextIndex("rel_idx", []string{"DIFFERENT"}, []string{"different"}, ConstraintEntityRelationship))
 
 	idx, ok := sm.GetFulltextIndex("rel_idx")
 	require.True(t, ok)
 	assert.Equal(t, []string{"KNOWS"}, idx.RelationshipTypes,
-		"duplicate AddFulltextRelationshipIndex must NOT overwrite the first call's scope")
+		"duplicate RelationshipFulltextIndex must NOT overwrite the first call's scope")
 	assert.Equal(t, []string{"note"}, idx.Properties)
 }
 
-// TestSchemaManager_AddFulltextRelationshipIndex_NameCollidesWithNodeIndex —
+// TestSchemaManager_RelationshipFulltextIndex_NameCollidesWithNodeIndex —
 // node and relationship fulltext indexes share the same `fulltextIndexes`
 // map, so a name collision between the two (e.g., admin creates a node
 // index `search`, then later wants a relationship index also named
 // `search`) returns no-op rather than corrupting the node index.
-func TestSchemaManager_AddFulltextRelationshipIndex_NameCollidesWithNodeIndex(t *testing.T) {
+func TestSchemaManager_RelationshipFulltextIndex_NameCollidesWithNodeIndex(t *testing.T) {
 	sm := NewSchemaManager()
 
-	require.NoError(t, sm.AddFulltextIndex("search", []string{"Memory"}, []string{"name"}))
+	require.NoError(t, sm.AddFulltextIndex("search", []string{"Memory"}, []string{"name"}, ConstraintEntityNode))
 	// Try to add a relationship index with the same name — must be a no-op.
-	require.NoError(t, sm.AddFulltextRelationshipIndex("search", []string{"KNOWS"}, []string{"note"}))
+	require.NoError(t, sm.AddFulltextIndex("search", []string{"KNOWS"}, []string{"note"}, ConstraintEntityRelationship))
 
 	idx, ok := sm.GetFulltextIndex("search")
 	require.True(t, ok)
@@ -328,14 +328,22 @@ func TestSchemaManager_AddFulltextRelationshipIndex_NameCollidesWithNodeIndex(t 
 		"name collision must NOT inject relationship-type scope into the existing node index")
 }
 
+// fulltextSiblingIndexFixture creates the node/relationship siblings shared by
+// both drop directions. Each test retains its own drop and survivor assertions.
+func fulltextSiblingIndexFixture(t *testing.T) *SchemaManager {
+	t.Helper()
+	sm := NewSchemaManager()
+	require.NoError(t, sm.AddFulltextIndex("node_idx", []string{"Memory"}, []string{"name"}, ConstraintEntityNode))
+	require.NoError(t, sm.AddFulltextIndex("rel_idx", []string{"KNOWS"}, []string{"note"}, ConstraintEntityRelationship))
+	return sm
+}
+
 // TestFulltextIndex_DropIndex_PreservesSiblings — DropIndex on a
 // relationship index must not disturb a sibling node index of the same
 // SchemaManager. The two share `fulltextIndexes` so a buggy delete
 // could in theory wipe both.
 func TestFulltextIndex_DropIndex_PreservesSiblings(t *testing.T) {
-	sm := NewSchemaManager()
-	require.NoError(t, sm.AddFulltextIndex("node_idx", []string{"Memory"}, []string{"name"}))
-	require.NoError(t, sm.AddFulltextRelationshipIndex("rel_idx", []string{"KNOWS"}, []string{"note"}))
+	sm := fulltextSiblingIndexFixture(t)
 
 	require.NoError(t, sm.DropIndex("rel_idx"))
 
@@ -352,9 +360,7 @@ func TestFulltextIndex_DropIndex_PreservesSiblings(t *testing.T) {
 // previous test: dropping the node-side index must leave the
 // relationship-side intact.
 func TestFulltextIndex_DropIndex_DropNodePreservesRel(t *testing.T) {
-	sm := NewSchemaManager()
-	require.NoError(t, sm.AddFulltextIndex("node_idx", []string{"Memory"}, []string{"name"}))
-	require.NoError(t, sm.AddFulltextRelationshipIndex("rel_idx", []string{"KNOWS"}, []string{"note"}))
+	sm := fulltextSiblingIndexFixture(t)
 
 	require.NoError(t, sm.DropIndex("node_idx"))
 
@@ -397,8 +403,8 @@ func TestFulltextIndex_LoadLegacy_RespectsSecondaryFields(t *testing.T) {
 // drift introduced by future struct changes.
 func TestFulltextIndex_RoundTripIdempotent(t *testing.T) {
 	sm := NewSchemaManager()
-	require.NoError(t, sm.AddFulltextIndex("node_idx", []string{"A", "B"}, []string{"p", "q"}))
-	require.NoError(t, sm.AddFulltextRelationshipIndex("rel_idx", []string{"R1", "R2"}, []string{"x"}))
+	require.NoError(t, sm.AddFulltextIndex("node_idx", []string{"A", "B"}, []string{"p", "q"}, ConstraintEntityNode))
+	require.NoError(t, sm.AddFulltextIndex("rel_idx", []string{"R1", "R2"}, []string{"x"}, ConstraintEntityRelationship))
 
 	def1 := sm.ExportDefinition()
 	bytes1, err := json.Marshal(def1)

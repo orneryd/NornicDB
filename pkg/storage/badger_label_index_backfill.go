@@ -84,7 +84,7 @@ func (b *BadgerEngine) markIndexBackfillReady(ctx context.Context, kind startupI
 	if kind == startupEdgeBetweenIndex {
 		key, version = edgeBetweenIndexReadyKey, 1
 	}
-	return b.withMetadataUpdateContext(ctx, func(txn *badger.Txn) error {
+	return b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return txn.Set(key, []byte{version})
 	})
 }

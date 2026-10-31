@@ -5,11 +5,12 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResidualRetainedAuthorityAdmission(t *testing.T) {
-	b, err := NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	schema := b.GetSchemaForNamespace("test")
@@ -41,7 +42,7 @@ func TestResidualRetainedAuthorityAdmission(t *testing.T) {
 	}))
 	done := make(chan error, 1)
 	go func() {
-		release, err := prepared.RetainAcceptedAuthorityWithContext(ctx)
+		release, err := prepared.RetainAcceptedAuthority(ctx)
 		if release != nil {
 			release()
 		}

@@ -1,5 +1,3 @@
-//go:build r73_composition
-
 package storagecensus
 
 import (
@@ -7,21 +5,19 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
-	"github.com/orneryd/nornicdb/internal/workcensus"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/ssa"
 )
 
-// Author: #1548 implementation lane (Codex). Domain queries over #1667's
-// shared compiled Program. This client has no loader, source traversal, call
-// graph builder, reachability walker, approval table or callback proof.
-// The composition tag is required until the shared engine is in our parent.
+// The cache/admission population queries use the census's canonical typed
+// program and VTA graph. The root worklist is discovery, not an acquisition,
+// approval table or lifetime proof. No optional future compiler package or
+// composition build tag is required.
 type residualCompiledMember struct {
 	Kind, Caller, Target, Position, Type string
 }
@@ -31,61 +27,61 @@ type residualCompiledCaller struct {
 }
 
 func TestResidualCompiledPopulation(t *testing.T) {
-	p, err := workcensus.LoadProgram(workcensus.Config{
-		Dir: root, Patterns: []string{"./..."}, BuildFlags: []string{"-tags=noui,nolocalllm"},
-		Env: append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=-mod=mod"),
-	})
+	p, err := load(root, nil)
 	require.NoError(t, err)
 	runtimePackage := func(pkg string) bool {
-		return strings.HasPrefix(pkg, Module) && !strings.HasPrefix(pkg, Module+"testing/") && pkg != Module+"internal/workcensus"
+		return strings.HasPrefix(pkg, Module) && !strings.HasPrefix(pkg, Module+"testing/")
 	}
-	// Public runtime APIs, init and main are entry roots, including maintenance
-	// and recovery. The engine expands their real VTA/closure reach. Tooling is
-	// loaded for type completeness but is not a database execution entrypoint.
-	var roots []workcensus.Root
-	for _, fn := range p.Functions {
-		if fn.Parent() != nil || fn.Pkg == nil {
+	// Exported runtime APIs, init and main remain the entry roots. Traverse
+	// the existing graph through dependency/synthetic bridges; only runtime
+	// module functions contribute population records below.
+	var roots []string
+	reached := map[*ssa.Function]bool{}
+	var queue []*ssa.Function
+	for _, fn := range p.funcs {
+		if fn.Parent() != nil || fn.Pkg == nil || !runtimePackage(fn.Pkg.Pkg.Path()) {
 			continue
 		}
-		pkg := fn.Pkg.Pkg.Path()
-		if !runtimePackage(pkg) || (fn.Name() != "init" && fn.Name() != "main" && (fn.Object() == nil || !fn.Object().Exported())) {
+		if fn.Name() != "init" && fn.Name() != "main" && (fn.Object() == nil || !fn.Object().Exported()) {
 			continue
 		}
-		name, receiver := fn.Name(), ""
-		if fn.Object() != nil {
-			name = fn.Object().Name()
-		}
-		if recv := fn.Signature.Recv(); recv != nil {
-			r := types.Unalias(recv.Type())
-			if ptr, ok := r.(*types.Pointer); ok {
-				r = types.Unalias(ptr.Elem())
-			}
-			if named, ok := r.(*types.Named); ok {
-				receiver = named.Obj().Name()
-			}
-		}
-		roots = append(roots, workcensus.Root{Package: pkg, Name: name, Receiver: receiver, Required: true})
+		roots = append(roots, p.funcName(fn))
+		reached[fn] = true
+		queue = append(queue, fn)
 	}
-	reach, err := p.ReachableFrom(roots)
-	require.NoError(t, err)
+	require.NotEmpty(t, roots)
+	sort.Strings(roots)
+	for len(queue) > 0 {
+		fn := queue[len(queue)-1]
+		queue = queue[:len(queue)-1]
+		if node := p.cg.Nodes[fn]; node != nil {
+			for _, edge := range node.Out {
+				callee := edge.Callee.Func
+				if callee != nil && !reached[callee] {
+					reached[callee] = true
+					queue = append(queue, callee)
+				}
+			}
+		}
+	}
 	position := func(pos token.Pos) string {
-		x := p.FileSet.Position(pos)
-		rel, err := filepath.Rel(p.Root, x.Filename)
+		x := p.fset.Position(pos)
+		rel, err := filepath.Rel(p.root, x.Filename)
 		if err != nil {
 			rel = x.Filename
 		}
 		return fmt.Sprintf("%s:%d:%d", filepath.ToSlash(rel), x.Line, x.Column)
 	}
 	cacheNames := map[string]bool{}
-	for _, name := range []string{"cacheFillNode", "cacheStoreNode", "cacheStoreNodeBody", "cacheStoreWrittenNode", "cacheStoreEdge", "cacheFillEdge", "cacheFillEdgeAtVersion", "adjCacheStoreOutgoing", "adjCacheStoreIncoming", "labelCacheSetFirst", "edgeTypeCacheFill"} {
+	for _, name := range []string{"cacheFillNode", "cacheStoreNode", "cacheStoreNodeBody", "cacheStoreWrittenNode", "cacheStoreEdge", "cacheFillEdge", "cacheFillEdgeAtVersion", "adjCacheStore", "labelCacheSetFirst", "edgeTypeCacheFill"} {
 		cacheNames[name] = true
 	}
 	propertyNames := map[string]bool{}
-	for _, name := range []string{"copyNode", "copyNodeWithoutEmbeddings", "copyNodeForCaller", "copyEdge", "CopyNode", "CopyEdge", "codecImageProperties", "canonicalPropertyValue", "ownedProperties", "ownPropertyValue", "ownRetainedValue", "ownRetainedMap", "ownedMetadataValue", "canonicalPropertyList", "StoragePropertyValue", "ReadNumber", "NumericFloat64", "ReadList"} {
+	for _, name := range []string{"copyNode", "copyNodeWithoutEmbeddings", "copyNodeForCaller", "copyEdge", "CopyNode", "CopyEdge", "codecImageProperties", "canonicalPropertyValue", "ownedProperties", "ownPropertyValue", "ownRetainedValue", "ownRetainedMap", "ownedValueCopy", "ownedEntries", "canonicalPropertyList", "StoragePropertyValue", "ReadNumber", "NumericFloat64", "ReadList"} {
 		propertyNames[name] = true
 	}
 	admissionNames := map[string]bool{}
-	for _, name := range []string{"Lock", "RLock", "LockContext", "RLockContext", "acquireUniqueConstraintCommitLocks", "beginBarrierWrite", "beginBarrierWriteContext", "beginLifecycleWrite", "beginMaintenanceWrite", "beginOrderedWrite", "beginEntityWrite", "acquireEntityWriteKeys", "orderAfterBufferedCommits", "orderAfterBufferedCommitsContext", "orderCovering", "beginLargeCommit", "beginLargeCommitContext", "waitPublished", "waitPublishedContext", "waitForReadersBefore", "flushContext", "FlushWriteBehind", "FlushWriteBehindContext", "RetainAcceptedAuthority", "RetainAcceptedAuthorityWithContext", "DecidePublication", "SubmitAcceptedCommand", "SubmitEntityCommit", "AppendBufferedCommit"} {
+	for _, name := range []string{"Lock", "RLock", "LockContext", "RLockContext", "acquireUniqueConstraintCommitLocks", "beginBarrierWrite", "beginLifecycleWrite", "beginMaintenanceWrite", "beginEntityWrite", "acquireEntityWriteKeys", "orderAfterBufferedCommits", "orderCovering", "beginLargeCommitContext", "waitPublished", "waitForReadersBefore", "flushContext", "FlushWriteBehind", "RetainAcceptedAuthority", "DecidePublication", "SubmitAcceptedCommand", "SubmitEntityCommit", "AppendBufferedCommit"} {
 		admissionNames[name] = true
 	}
 	for _, name := range []string{"Acquire", "AcquireContext", "Reserve", "Admit", "Wait", "WaitApplied", "WaitSettled", "BeginTransaction", "CommitContext", "PrepareEntityCommit"} {
@@ -99,12 +95,12 @@ func TestResidualCompiledPopulation(t *testing.T) {
 			members = append(members, row)
 		}
 	}
-	for fn := range reach.Functions {
+	for fn := range reached {
 		synthetic := fn.Pkg == nil && fn.Synthetic != ""
 		if !synthetic && (fn.Pkg == nil || !runtimePackage(fn.Pkg.Pkg.Path())) {
 			continue
 		}
-		if node := p.CallGraph.Nodes[fn]; node != nil {
+		if node := p.cg.Nodes[fn]; node != nil {
 			for _, edge := range node.Out {
 				callee := edge.Callee.Func
 				if edge.Site == nil {
@@ -202,7 +198,7 @@ func TestResidualCompiledPopulation(t *testing.T) {
 		wanted[row.Caller] = true
 	}
 	var callers []residualCompiledCaller
-	for _, fn := range p.Functions {
+	for _, fn := range p.funcs {
 		if syntax := fn.Syntax(); wanted[fn.String()] && syntax != nil {
 			callers = append(callers, residualCompiledCaller{fn.String(), position(syntax.Pos()), position(syntax.End())})
 		}
@@ -213,7 +209,7 @@ func TestResidualCompiledPopulation(t *testing.T) {
 		Roots          []string
 		Members        []residualCompiledMember
 		Callers        []residualCompiledCaller
-	}{"#1548 implementation lane (Codex)", "Compiled domain-query discovery only; every member needs a semantic disposition; no approval or lifetime proof", reach.Roots, members, callers}
+	}{"#1548 implementation lane (Codex)", "Compiled domain-query discovery only; every member needs a semantic disposition; no approval or lifetime proof", roots, members, callers}
 	encoded, err := json.MarshalIndent(result, "", "  ")
 	require.NoError(t, err)
 	fmt.Printf("RESIDUAL-COMPILED-POPULATION-BEGIN\n%s\nRESIDUAL-COMPILED-POPULATION-END\n", encoded)

@@ -180,17 +180,11 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
 
 	if node.Properties != nil {
-		nodeCopy.Properties = make(map[string]interface{}, len(node.Properties))
-		for k, v := range node.Properties {
-			nodeCopy.Properties[k] = canonicalPropertyValue(v)
-		}
+		nodeCopy.Properties = ownedEntries(nil, node.Properties)
 	}
 
 	if node.EmbedMeta != nil {
-		nodeCopy.EmbedMeta = make(map[string]any, len(node.EmbedMeta))
-		for k, v := range node.EmbedMeta {
-			nodeCopy.EmbedMeta[k] = ownedMetadataValue(v)
-		}
+		nodeCopy.EmbedMeta = ownedEntries(nil, node.EmbedMeta)
 	}
 
 	return nodeCopy
@@ -217,10 +211,7 @@ func copyEdge(edge *Edge) *Edge {
 	}
 
 	if edge.Properties != nil {
-		edgeCopy.Properties = make(map[string]interface{})
-		for k, v := range edge.Properties {
-			edgeCopy.Properties[k] = canonicalPropertyValue(v)
-		}
+		edgeCopy.Properties = ownedEntries(nil, edge.Properties)
 	}
 
 	return edgeCopy

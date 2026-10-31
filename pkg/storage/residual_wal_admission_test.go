@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +20,7 @@ func TestResidualWALAcceptanceAdmission(t *testing.T) {
 			wal, err := NewWAL(dir, &WALConfig{Dir: dir, SyncMode: "immediate"})
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = wal.Close() })
-			b, err := NewBadgerEngine(t.TempDir())
+			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			owner := NewWALEngine(b, wal)

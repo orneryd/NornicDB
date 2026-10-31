@@ -90,10 +90,6 @@ func (s *orderStripeSet) deletions(ops []Operation) {
 // always taken in ascending order.
 type writeOrder [writeOrderStripes]trackedRWMutex
 
-func (o *writeOrder) lock(s *orderStripeSet, exclusive bool) {
-	_ = o.lockContext(nil, s, exclusive)
-}
-
 func (o *writeOrder) lockContext(ctx context.Context, s *orderStripeSet, exclusive bool) error {
 	var held orderStripeSet
 	for word, bitsSet := range s {
@@ -115,12 +111,6 @@ func (o *writeOrder) lockContext(ctx context.Context, s *orderStripeSet, exclusi
 		}
 	}
 	return nil
-}
-
-// lockMixed takes the stripes of s in ascending order, those also in
-// exclusive exclusively and the others shared.
-func (o *writeOrder) lockMixed(s, exclusive *orderStripeSet) {
-	_ = o.lockMixedContext(nil, s, exclusive)
 }
 
 func (o *writeOrder) lockMixedContext(ctx context.Context, s, exclusive *orderStripeSet) error {
@@ -272,10 +262,6 @@ func (lease *writeRelease[T]) release() {
 // drained reports a drain: those commits landed after any Badger snapshot
 // the caller opened before. Without write-behind there is nothing to order.
 func (b *BadgerEngine) orderAfterBufferedCommits(ctx context.Context, h *orderHold, e writtenEntities) (drained bool, err error) {
-	return b.orderAfterBufferedCommitsContext(ctx, h, e)
-}
-
-func (b *BadgerEngine) orderAfterBufferedCommitsContext(ctx context.Context, h *orderHold, e writtenEntities) (drained bool, err error) {
 	w := b.writeBehind
 	if w == nil {
 		return false, nil

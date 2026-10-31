@@ -278,24 +278,11 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 // and must not re-enter it), and through ordinary commits otherwise,
 // mirroring the sync commit path's finish.
 func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyTxnDrain) error {
-	if drain.empty() {
-		return nil
-	}
 	var to batchTarget = metadataBatches{db: b.db}
 	if cw.large != nil {
 		to = cw.large
 	}
-	w := &batchWriter{to: to}
-	defer w.discard()
-	err := drain.writeTo(w)
-	if err == nil {
-		err = w.flush()
-	}
-	if err != nil {
-		return err
-	}
-	b.propKeyDict.markPersisted(drain)
-	return nil
+	return b.propKeyDict.persistTxnCounters(to, drain)
 }
 
 // replayWriteBehind replays one drained generation into Badger. It marks
@@ -691,7 +678,7 @@ func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(label map[namespaceLabe
 	if len(label) == 0 && len(edgeType) == 0 && len(edgeTypeLabel) == 0 {
 		return nil
 	}
-	return b.withMetadataUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for key, delta := range label {
 			if err := b.adjustLabelCountInTxn(txn, key.namespace, key.label, delta); err != nil {
 				return err
@@ -717,14 +704,9 @@ func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(label map[namespaceLabe
 // final drain is admitted), and delivers the drained commits' notifications
 // once it released it, so no listener runs while a barrier waiter waits for
 // it.
-func (b *BadgerEngine) FlushWriteBehind() error {
-	return b.FlushWriteBehindContext(nil)
-}
-
-// FlushWriteBehindContext retains the existing flush owner. Cancellation ends
-// this wait; independently accepted replay
-// keeps its existing terminal and settlement ownership.
-func (b *BadgerEngine) FlushWriteBehindContext(ctx context.Context) error {
+// Cancellation ends this wait; independently accepted replay retains its
+// terminal and settlement ownership. A nil context waits non-cancellably.
+func (b *BadgerEngine) FlushWriteBehind(ctx context.Context) error {
 	if b.writeBehind == nil {
 		return nil
 	}

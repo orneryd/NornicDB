@@ -380,7 +380,7 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 		catalog, err := engine.GetIndexEntryCatalog(id)
 		require.NoError(t, err)
 		require.NotNil(t, catalog)
-		require.NoError(t, engine.WriteIndexTombstones(catalog.IndexKeys))
+		require.NoError(t, engine.SetIndexTombstones(catalog.IndexKeys, true))
 		catalog.Deindexed = true
 		require.NoError(t, engine.PutIndexEntryCatalog(id, catalog))
 	}

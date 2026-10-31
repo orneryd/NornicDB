@@ -12,8 +12,8 @@ func TestLookupIndexNameTakenByAnyIndexKind(t *testing.T) {
 	sm := NewSchemaManager()
 	require.NoError(t, sm.DropIndex(DefaultNodeLookupIndexName))
 	require.NoError(t, sm.AddCompositeIndex("composite_idx", "Person", []string{"a", "b"}))
-	require.NoError(t, sm.AddFulltextIndex("fulltext_idx", []string{"Person"}, []string{"bio"}))
-	require.NoError(t, sm.AddVectorIndex("vector_idx", "Person", "embedding", 3, "cosine"))
+	require.NoError(t, sm.AddFulltextIndex("fulltext_idx", []string{"Person"}, []string{"bio"}, ConstraintEntityNode))
+	require.NoError(t, sm.AddVectorIndex("vector_idx", "Person", "embedding", 3, "cosine", ConstraintEntityNode))
 	require.NoError(t, sm.AddRangeIndex("range_idx", "Person", "age"))
 	for _, name := range []string{"composite_idx", "fulltext_idx", "vector_idx", "range_idx", DefaultRelationshipLookupIndexName} {
 		err := sm.AddLookupIndex(name, ConstraintEntityNode)

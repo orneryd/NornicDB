@@ -54,7 +54,7 @@ func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 	require.Greater(t, engine.writeBehind.PendingOps(), 0, "the commits stay buffered")
 	require.Equal(t, 21, pendingEntries(), "buffered entries are pending until the flush")
 
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.Zero(t, pendingEntries())
 	engine.idDict.txnMu.Lock()
 	require.Empty(t, engine.idDict.txnCounters)

@@ -119,7 +119,6 @@ func TestMonster531CompositeUniqueStorage(t *testing.T) {
 // this test without coordinating with known consumers.
 func TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 
 	const namespace = "tenant_a"
 	ns := NewNamespacedEngine(inner, namespace)

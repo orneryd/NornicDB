@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 // Author: #1548 implementation lane (Codex). Trigger the real cleanup worker
 // through a public delete, then observe its throw-away marker being dropped.
 func TestResidualCleanupKeepsUnrelatedCacheWarm(t *testing.T) {
-	b, err := NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []NodeID{"test:keep-cleanup", "test:delete-cleanup"} {

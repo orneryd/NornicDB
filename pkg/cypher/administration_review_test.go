@@ -36,14 +36,26 @@ func administrationReviewExecutor(t *testing.T, database string) (*StorageExecut
 	return exec, system
 }
 
+// administrationTransactionWithGrant opens an explicit transaction on database
+// and accepts an administration statement inside it: the fixture both
+// administration transaction outcome tests start from. What the caller does
+// with the open transaction stays in the test, because that is what differs —
+// a rejected data statement fails the commit and keeps nothing, a plain COMMIT
+// on a user database keeps the grant.
+func administrationTransactionWithGrant(t *testing.T, database, grant string) (*StorageExecutor, storage.Engine) {
+	t.Helper()
+	exec, system := administrationReviewExecutor(t, database)
+	_, err := exec.handleBegin(nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(context.Background(), grant, nil)
+	require.NoError(t, err)
+	return exec, system
+}
+
 func TestRejectedSystemStatementFailsTransaction(t *testing.T) {
 	ctx := context.Background()
-	exec, system := administrationReviewExecutor(t, "system")
-	_, err := exec.handleBegin()
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE (:Review)", nil)
+	exec, system := administrationTransactionWithGrant(t, "system", "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer")
+	_, err := exec.Execute(ctx, "CREATE (:Review)", nil)
 	require.Error(t, err)
 	_, err = exec.handleCommit(context.Background())
 	require.Error(t, err)
@@ -86,7 +98,7 @@ func TestSystemStatementPolicyExecutionModes(t *testing.T) {
 func TestAdministrationTransactionRoutesToSystem(t *testing.T) {
 	ctx := context.Background()
 	exec, system := administrationReviewExecutor(t, "nornic")
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer", nil)
 	require.NoError(t, err)
@@ -104,7 +116,7 @@ func TestAdministrationAndDataStatementsDoNotMix(t *testing.T) {
 		t.Run(database, func(t *testing.T) {
 			ctx := context.Background()
 			exec, system := administrationReviewExecutor(t, database)
-			_, err := exec.handleBegin()
+			_, err := exec.handleBegin(nil)
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.a ON DBMS TO viewer", nil)
 			require.NoError(t, err)
@@ -133,7 +145,7 @@ func TestTransactionStatementTypeMessages(t *testing.T) {
 		t.Run(c.first+" then "+c.second, func(t *testing.T) {
 			ctx := context.Background()
 			exec, _ := administrationReviewExecutor(t, c.database)
-			_, err := exec.handleBegin()
+			_, err := exec.handleBegin(nil)
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, c.first, nil)
 			require.NoError(t, err)
@@ -153,7 +165,7 @@ func TestUseBeforeAdministrationCommandIsSyntaxError(t *testing.T) {
 			ctx := context.Background()
 			exec, _ := administrationReviewExecutor(t, "nornic")
 			if tx {
-				_, err := exec.handleBegin()
+				_, err := exec.handleBegin(nil)
 				require.NoError(t, err)
 				_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
 				require.NoError(t, err)

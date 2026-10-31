@@ -63,12 +63,7 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 			if err := sm.ReplaceFromDefinition(&def); err != nil {
 				return fmt.Errorf("schema: apply %q: %w", namespace, err)
 			}
-			sm.SetPersister(func(def *SchemaDefinition) error {
-				return b.persistSchemaDefinition(namespace, def)
-			})
-			sm.SetKnowledgePolicyChangedHook(func() {
-				_ = b.ReconcileDecaySuppression(namespace)
-			})
+			b.bindNamespaceSchema(namespace, sm)
 
 			loadedSchemas = append(loadedSchemas, loaded{namespace: namespace, schema: sm})
 		}
@@ -108,6 +103,18 @@ func parseSchemaNamespaceFromKey(key []byte) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// bindNamespaceSchema is the single owner of a schema manager's engine
+// binding: persistence and the knowledge-policy changed callback. It runs
+// before the manager is published through the schema registry.
+func (b *BadgerEngine) bindNamespaceSchema(namespace string, sm *SchemaManager) {
+	sm.SetPersister(func(def *SchemaDefinition) error {
+		return b.persistSchemaDefinition(namespace, def)
+	})
+	sm.SetKnowledgePolicyChangedHook(func() {
+		_ = b.ReconcileDecaySuppression(namespace)
+	})
 }
 
 func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefinition) error {
@@ -303,12 +310,7 @@ func (b *BadgerEngine) transitionNamespaceSchema(namespace string, action namesp
 	sm := b.schemas[namespace]
 	if sm == nil {
 		sm = NewSchemaManager()
-		sm.SetPersister(func(def *SchemaDefinition) error {
-			return b.persistSchemaDefinition(namespace, def)
-		})
-		sm.SetKnowledgePolicyChangedHook(func() {
-			_ = b.ReconcileDecaySuppression(namespace)
-		})
+		b.bindNamespaceSchema(namespace, sm)
 		b.schemas[namespace] = sm
 	}
 	// Write-behind: attach the commit buffer as this schema's pending-write

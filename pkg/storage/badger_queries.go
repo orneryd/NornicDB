@@ -683,7 +683,6 @@ func (b *BadgerEngine) GetStoredEdgesByType(edgeType string) ([]*Edge, error) {
 }
 
 func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edge, error) {
-	var sourceTs uint64
 	if edgeType == "" {
 		if v == storedRead {
 			return b.allEdges(storedRead)
@@ -704,6 +703,7 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 		b.edgeTypeCacheMu.RUnlock()
 	}
 
+	var sourceTs uint64
 	var overlay []*Edge
 	var touched map[EdgeID]bool
 	var edges []*Edge
@@ -1728,7 +1728,7 @@ func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
 	for _, edge := range edges {
 		e.edge(edge)
 	}
-	err := b.withMetadataUpdate(func(txn *badger.Txn) error {
+	err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for _, edge := range edges {
 			if edge == nil {
 				continue

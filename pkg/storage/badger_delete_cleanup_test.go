@@ -101,7 +101,7 @@ func TestManagedDropPrefixHoldsCommitGate(t *testing.T) {
 	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer eng.Close()
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(deleteCleanupMarkerKey, []byte{1})
 	}))
 

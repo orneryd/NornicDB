@@ -3,6 +3,7 @@ package storage_test
 import (
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -10,7 +11,7 @@ import (
 // Author: #1548 implementation lane (Codex). The release's shared projection
 // helper must return owned selected values just as its full-image branch does.
 func TestResidualProjectedReadOwnership(t *testing.T) {
-	b, err := storage.NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	id, err := b.CreateNode(&storage.Node{ID: "test:projected-owned", Properties: map[string]any{"values": []int64{1, 2}, "omitted": "retained"}})

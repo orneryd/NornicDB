@@ -56,8 +56,8 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 
 	gen = engine.adjCacheGen.current()
 	engine.adjCacheInvalidateForEdge(&Edge{StartNode: "gen:a", EndNode: "gen:b"})
-	engine.adjCacheStoreOutgoing(gen, "gen:a", []EdgeID{"gen:e"}, engine.db.oracle.published.Load())
-	engine.adjCacheStoreIncoming(gen, "gen:b", []EdgeID{"gen:e"}, engine.db.oracle.published.Load())
+	engine.adjCacheStore(gen, "gen:a", []EdgeID{"gen:e"}, engine.db.oracle.published.Load(), true)
+	engine.adjCacheStore(gen, "gen:b", []EdgeID{"gen:e"}, engine.db.oracle.published.Load(), false)
 	require.NotContains(t, engine.outgoingAdjCache, NodeID("gen:a"))
 	require.NotContains(t, engine.incomingAdjCache, NodeID("gen:b"))
 

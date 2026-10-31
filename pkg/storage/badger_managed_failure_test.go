@@ -203,7 +203,7 @@ func TestPropertyKeyDict_ManyNamesRefusedStayUnpersisted(t *testing.T) {
 	}
 	drain := engine.propKeyDict.flushTxnCounters(txn)
 	engine.db.oracle.fail(errors.New("disk gone"))
-	require.ErrorContains(t, engine.propKeyDict.persistTxnCounters(context.Background(), engine.db, drain), "refuses writes until restart")
+	require.ErrorContains(t, engine.propKeyDict.persistTxnCounters(metadataBatches{db: engine.db, ctx: context.Background()}, drain), "refuses writes until restart")
 	again := engine.db.DB.NewTransactionAt(engine.db.oracle.published.Load(), true)
 	defer again.Discard()
 	_, err = engine.propKeyDict.resolveOrAllocateInTxn(again, "test", "refused_0")
@@ -221,8 +221,22 @@ func TestCommitOracle_FailureReleasesWaiters(t *testing.T) {
 	o.fail(cause)
 	_, err = o.assign()
 	require.ErrorIs(t, err, cause)
-	require.ErrorIs(t, o.waitPublished(ts), cause)
+	require.ErrorIs(t, o.waitPublished(nil, ts), cause)
 	require.ErrorIs(t, o.failure(), cause)
+}
+
+// managedStoreWithValue opens a managed store in a fresh temp directory, writes
+// the control record and returns the store with the options that reopen the
+// same directory. Both recovery tests start from this persisted state and differ
+// only in how the interruption is produced.
+func managedStoreWithValue(t *testing.T) (*managedBadgerDB, badger.Options) {
+	t.Helper()
+	dir := t.TempDir()
+	opts := badger.DefaultOptions(dir).WithLogger(nil)
+	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
+	require.NoError(t, err)
+	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
+	return m, opts
 }
 
 // A store whose interrupted large commit cannot be rolled back (here: it is
@@ -231,12 +245,8 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Badger read-only mode is unsupported on Windows")
 	}
-	dir := t.TempDir()
-	opts := badger.DefaultOptions(dir).WithLogger(nil)
-	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
-	require.NoError(t, err)
-	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
-	lc, err := m.beginLargeCommit(context.Background())
+	m, opts := managedStoreWithValue(t)
+	lc, err := m.beginLargeCommitContext(context.Background())
 	require.NoError(t, err)
 	batch := lc.openBatch()
 	require.NoError(t, batch.Set([]byte("k"), []byte("x")))
@@ -261,17 +271,13 @@ func TestManagedBadger_LargeCommitCannotStartOnReadOnlyStore(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Badger read-only mode is unsupported on Windows")
 	}
-	dir := t.TempDir()
-	opts := badger.DefaultOptions(dir).WithLogger(nil)
-	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
-	require.NoError(t, err)
-	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
+	m, opts := managedStoreWithValue(t)
 	require.NoError(t, m.Close())
 
-	m, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts.WithReadOnly(true)))
+	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts.WithReadOnly(true)))
 	require.NoError(t, err)
 	defer m.Close()
-	_, err = m.beginLargeCommit(context.Background())
+	_, err = m.beginLargeCommitContext(context.Background())
 	require.ErrorContains(t, err, "rolling back")
 	require.Error(t, m.oracle.failure())
 	require.NoError(t, m.View(func(txn *badger.Txn) error {

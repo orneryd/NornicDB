@@ -272,7 +272,7 @@ func TestPR1655PublicUniqueClaimLifecycle(t *testing.T) {
 					require.NoError(t, err)
 					require.Empty(t, rows, "every rejected duplicate is atomic")
 					require.False(t, fault.fired.Load(), "no corruption fixture was armed")
-					require.NoError(t, fault.engine.FlushWriteBehind())
+					require.NoError(t, fault.engine.FlushWriteBehind(nil))
 				})
 			}
 		}
@@ -298,7 +298,7 @@ func TestPR1655PublicStagedEndpointDeletion(t *testing.T) {
 					err = client.commit()
 					require.Error(t, err)
 					require.Equal(t, nornicerrors.TransientOutdated, pr1655PublicStatus(err))
-					require.NoError(t, fault.engine.FlushWriteBehind())
+					require.NoError(t, fault.engine.FlushWriteBehind(nil))
 					for _, query := range []string{"MATCH (n:EndpointMarker) RETURN n", "MATCH ()-[r:ENDPOINT_NEW]->() RETURN r", "MATCH (n:Endpoint {id:'b'}) RETURN n"} {
 						rows, err := client.run(query)
 						require.NoError(t, err)

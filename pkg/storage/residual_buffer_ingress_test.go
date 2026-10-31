@@ -21,7 +21,7 @@ func TestResidualBufferAppendOwnsInput(t *testing.T) {
 			EmbedMeta:       map[string]any{"weights": []float32{2}, "typed": []any{map[string]string{"state": "before"}}},
 			ChunkEmbeddings: [][]float32{{3}},
 		}
-		w.AppendNode(node)
+		require.NoError(t, w.Append(storage.BufferedMutation{Kind: storage.BufferedOpNode, Node: node}))
 		node.Labels[0] = "Changed"
 		node.Properties["nested"].(map[string]any)["list"].([]int64)[0] = 99
 		node.Properties["new"] = true
@@ -44,7 +44,7 @@ func TestResidualBufferAppendOwnsInput(t *testing.T) {
 			ID: "test:append-edge", StartNode: "test:append-node", EndNode: "test:append-peer", Type: "OWNED",
 			Properties: map[string]any{"nested": map[string]any{"list": []string{"old"}}},
 		}
-		w.AppendEdge(edge)
+		require.NoError(t, w.Append(storage.BufferedMutation{Kind: storage.BufferedOpEdge, Edge: edge}))
 		edge.Properties["nested"].(map[string]any)["list"].([]string)[0] = "changed"
 		edge.Properties["new"] = true
 		bufferedEdge, found, deleted := w.GetEdge("test:append-edge")

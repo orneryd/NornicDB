@@ -21,12 +21,12 @@ func TestMigrationV1ToV2_ClosedDB_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("migrate nodes pass surfaces collect error", func(t *testing.T) {
-		_, err := engine.migrateV1ToV2Nodes()
+		_, err := migrateV1ToV2Bodies[nodeV1ToV2Body](engine, "nodes")
 		require.Error(t, err)
 	})
 
 	t.Run("migrate edges pass surfaces collect error", func(t *testing.T) {
-		_, err := engine.migrateV1ToV2Edges()
+		_, err := migrateV1ToV2Bodies[edgeV1ToV2Body](engine, "edges")
 		require.Error(t, err)
 	})
 

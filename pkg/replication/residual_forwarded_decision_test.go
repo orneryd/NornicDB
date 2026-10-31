@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -44,22 +45,13 @@ func TestResidualForwardedCypherDecision(t *testing.T) {
 	for _, bulk := range []bool{false, true} {
 		for _, veto := range []bool{false, true} {
 			t.Run(fmt.Sprintf("bulk=%v/veto=%v", bulk, veto), func(t *testing.T) {
-				leader, err := storage.NewBadgerEngine(t.TempDir())
+				leader, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = leader.Close() })
-				follower, err := storage.NewBadgerEngine(t.TempDir())
+				follower, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = follower.Close() })
-				local, err := NewStorageAdapterWithWAL(leader, t.TempDir())
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = local.Close() })
-				peer, err := NewStorageAdapterWithWAL(follower, t.TempDir())
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = peer.Close() })
-				mirror := &acceptedMirrorStorage{Storage: local, peer: peer}
-				r := NewStandaloneReplicator(&Config{}, mirror)
-				require.NoError(t, r.Start(context.Background()))
-				t.Cleanup(func() { _ = r.Shutdown() })
+				r, mirror := newAcceptedReplicationFixture(t, leader, follower, &Config{})
 				leaderManager, err := multidb.NewDatabaseManager(context.Background(), NewReplicatedEngine(leader, r, time.Second), nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = leaderManager.Close() })

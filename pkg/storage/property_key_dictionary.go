@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -358,14 +357,15 @@ func (d *propertyKeyDictionary) flushTxnCounters(txn *badger.Txn) propKeyTxnDrai
 	return out
 }
 
-// persistTxnCounters writes the staged forward/reverse entries and
-// per-namespace counter keys out of the user transaction, as ordinary
-// commits of as many batches as they need.
-func (d *propertyKeyDictionary) persistTxnCounters(ctx context.Context, db *managedBadgerDB, drain propKeyTxnDrain) error {
+// persistTxnCounters makes one drain's forward/reverse tokens and namespace
+// counters durable through the commit owner's batch target, and only then marks
+// them persisted. Ordinary commits supply metadataBatches; replay holding the
+// large-commit gate supplies that existing largeCommit instead of reacquiring it.
+func (d *propertyKeyDictionary) persistTxnCounters(to batchTarget, drain propKeyTxnDrain) error {
 	if drain.empty() {
 		return nil
 	}
-	w := &batchWriter{to: metadataBatches{db: db, ctx: ctx}}
+	w := &batchWriter{to: to}
 	defer w.discard()
 	err := drain.writeTo(w)
 	if err == nil {

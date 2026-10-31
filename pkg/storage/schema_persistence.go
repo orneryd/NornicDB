@@ -237,7 +237,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.decayProfileBindings) > 0 {
 		def.DecayProfileBindings = make([]knowledgepolicy.DecayProfileBinding, 0, len(sm.decayProfileBindings))
 		for _, b := range sm.decayProfileBindings {
-			def.DecayProfileBindings = append(def.DecayProfileBindings, cloneDecayProfileBinding(*b))
+			def.DecayProfileBindings = append(def.DecayProfileBindings, cloneDecayProfileBinding(b))
 		}
 		sort.Slice(def.DecayProfileBindings, func(i, j int) bool {
 			return def.DecayProfileBindings[i].Name < def.DecayProfileBindings[j].Name
@@ -259,7 +259,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.promotionPolicies) > 0 {
 		def.PromotionPolicies = make([]knowledgepolicy.PromotionPolicyDef, 0, len(sm.promotionPolicies))
 		for _, p := range sm.promotionPolicies {
-			def.PromotionPolicies = append(def.PromotionPolicies, clonePromotionPolicy(*p))
+			def.PromotionPolicies = append(def.PromotionPolicies, clonePromotionPolicy(p))
 		}
 		sort.Slice(def.PromotionPolicies, func(i, j int) bool {
 			return def.PromotionPolicies[i].Name < def.PromotionPolicies[j].Name
@@ -430,16 +430,16 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 		bc := b
 		sm.decayProfileBundles[bc.Name] = &bc
 	}
-	for _, b := range def.DecayProfileBindings {
-		bc := cloneDecayProfileBinding(b)
+	for i := range def.DecayProfileBindings {
+		bc := cloneDecayProfileBinding(&def.DecayProfileBindings[i])
 		sm.decayProfileBindings[bc.Name] = &bc
 	}
 	for _, p := range def.PromotionProfiles {
 		pc := p
 		sm.promotionProfiles[pc.Name] = &pc
 	}
-	for _, p := range def.PromotionPolicies {
-		pc := clonePromotionPolicy(p)
+	for i := range def.PromotionPolicies {
+		pc := clonePromotionPolicy(&def.PromotionPolicies[i])
 		sm.promotionPolicies[pc.Name] = &pc
 	}
 

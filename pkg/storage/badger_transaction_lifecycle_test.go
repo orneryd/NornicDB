@@ -27,7 +27,6 @@ type txLifecycleControllerStub struct {
 
 func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	committed := engine.GetSchemaForNamespace("schema_lifetime")
 	require.NoError(t, committed.AddPropertyIndex("retained", "Account", []string{"name"}))
 	require.NoError(t, committed.BackfillPropertyIndex("Account", "name", map[NodeID]interface{}{"schema_lifetime:existing": "existing"}))
@@ -80,7 +79,6 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 
 func TestSchemaTransactionRejectsAllEntityMutations(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("schema_mutations"))
@@ -210,7 +208,6 @@ func TestBeginTransaction_WithLifecycleAdmissionDoesNotDeadlock(t *testing.T) {
 	// per-namespace MVCC counter to register against — is unknown at
 	// begin time.
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	controller := &txLifecycleControllerStub{enabled: true}
 	engine.SetLifecycleController(controller)
 
@@ -244,7 +241,6 @@ func TestBeginTransaction_LifecycleAdmissionFailureReturnsError(t *testing.T) {
 	// Admission failure now surfaces on the first pin attempt, since
 	// admission cannot run until a namespace is bound.
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	controller := &txLifecycleControllerStub{enabled: true, err: ErrMVCCResourcePressure}
 	engine.SetLifecycleController(controller)
 
@@ -259,7 +255,6 @@ func TestBeginTransaction_LifecycleAdmissionFailureReturnsError(t *testing.T) {
 
 func TestTransaction_GracefulSnapshotExpirationCancelsWorkAndReleasesReader(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	controller := &txLifecycleControllerStub{enabled: true}
 	engine.SetLifecycleController(controller)
 
@@ -283,7 +278,6 @@ func TestTransaction_GracefulSnapshotExpirationCancelsWorkAndReleasesReader(t *t
 
 func TestTransaction_HardSnapshotExpirationFailsCommitAndReleasesReader(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
 	controller := &txLifecycleControllerStub{enabled: true}
 	engine.SetLifecycleController(controller)
 
@@ -305,7 +299,6 @@ func TestTransaction_HardSnapshotExpirationFailsCommitAndReleasesReader(t *testi
 
 func TestLifecycleWrappers_DelegateLifecycleControls(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	controller := &txLifecycleControllerStub{enabled: true}
 	base.SetLifecycleController(controller)
 

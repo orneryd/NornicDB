@@ -78,7 +78,7 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 						err = engine.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": []any{"stored"}}})
 					}
 					require.NoError(t, err)
-					require.NoError(t, base.FlushWriteBehind())
+					require.NoError(t, base.FlushWriteBehind(nil))
 					// An acknowledged rewrite: until a flush, stored reads, and so
 					// initialization, meet it in the write-behind overlay.
 					write(setPayload([]any{"stored"}))
@@ -103,7 +103,7 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 						return tx.DeleteEdge("nornic:r")
 					})
 					requireRecount("delete")
-					require.NoError(t, base.FlushWriteBehind())
+					require.NoError(t, base.FlushWriteBehind(nil))
 					requireRecount("flush")
 				})
 			}

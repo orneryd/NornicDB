@@ -27,10 +27,6 @@ func (b *BadgerEngine) ensureOpen(writing bool) error {
 // a Close that has completed is always observed and a Close that has not
 // started yet cannot slip in between the check and the write.
 func (b *BadgerEngine) beginBarrierWrite(ctx context.Context, exclusive bool, publication bool) (writeBarrierLease, error) {
-	return b.beginBarrierWriteContext(ctx, exclusive, publication)
-}
-
-func (b *BadgerEngine) beginBarrierWriteContext(ctx context.Context, exclusive bool, publication bool) (writeBarrierLease, error) {
 	lease := writeBarrierLease{engine: b, exclusive: exclusive}
 	var err error
 	if exclusive {
@@ -77,26 +73,12 @@ func (lease writeBarrierLease) releaseCallback() func() {
 	return lease.engine.writeBarrier.RUnlock
 }
 
-// orderedWrite is a write ordered after the write-behind buffer
-// (orderAfterBufferedCommits), from its write barrier to its publication
-// point (beginOrderedWrite), kept on the writer's stack.
-type orderedWrite struct {
-	b    *BadgerEngine
-	held *commitNotification
-}
-
-// beginOrderedWrite acquires shared admission for a write ordered after the write-behind
-// buffer. finish, deferred before every other lock the write takes, delivers
-// the notifications of the write, and of the commits its drain replays, after
-// the write released every other lock (holdPublication).
-func (b *BadgerEngine) beginOrderedWrite(ctx context.Context) (orderedWrite, error) {
-	lease, err := b.beginBarrierWrite(ctx, false, true)
-	return orderedWrite{b: lease.engine, held: lease.held}, err
-}
-
-func (w orderedWrite) finish() {
-	w.b.writeBarrier.RUnlock()
-	w.b.completeCommitNotification(w.held)
+// finish releases lifecycle admission before delivering its publication hold.
+// Plain release remains available to transactions that deliver notifications
+// separately after all of their other locks have been released.
+func (lease writeBarrierLease) finish() {
+	lease.release()
+	lease.engine.completeCommitNotification(lease.held)
 }
 
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
@@ -120,35 +102,39 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 	return b.db, nil
 }
 
+// updateRequest carries what a withUpdate caller knows about its write before
+// the callback runs: the context it runs under, the cache scope its writes
+// belong to, and whether it writes metadata only. It never carries the written
+// entities; those stay the trailing variadic argument, so a literal entity
+// list at the call site remains the static proof that the write is ordered.
+type updateRequest struct {
+	ctx      context.Context
+	scope    cacheWriteScope
+	metadata bool
+}
+
 // withUpdate runs fn as one atomic engine write, committed through the same
 // commit writer as a transaction. fn reads and writes in one Badger
 // transaction and cannot be repeated, so its writes must fit one Badger
 // batch (badger.ErrTxnTooBig otherwise); writes of any size go through
 // commitEngineWrite repeatable units. Optional entities acquire their write-behind order first;
-// their notifications are delivered only after that order is released.
-func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
-	return b.withScopedUpdate(context.Background(), cacheWriteScope{}, false, fn, entities...)
-}
-
-// withMetadataUpdate declares that its read-based caller writes no body or
-// membership represented in the graph read caches. It uses the same writer.
-func (b *BadgerEngine) withMetadataUpdate(fn func(*badger.Txn) error, entities ...writtenEntities) error {
-	return b.withMetadataUpdateContext(context.Background(), fn, entities...)
-}
-
-func (b *BadgerEngine) withMetadataUpdateContext(ctx context.Context, fn func(*badger.Txn) error, entities ...writtenEntities) error {
-	return b.withScopedUpdate(ctx, cacheWriteScope{known: true}, true, fn, entities...)
-}
-
-func (b *BadgerEngine) withScopedUpdate(ctx context.Context, scope cacheWriteScope, metadata bool, fn func(*badger.Txn) error, entities ...writtenEntities) error {
+// their notifications are delivered only after that order is released. A
+// request without a context runs under the background context, as every
+// unrequested write did before the request existed.
+func (b *BadgerEngine) withUpdate(request updateRequest, fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
+	ctx := request.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(entities) > 0 && b.writeBehind != nil {
 		var order orderHold
-		if _, err := b.orderAfterBufferedCommitsContext(ctx, &order, entities[0]); err != nil {
+		if _, err := b.orderAfterBufferedCommits(ctx, &order, entities[0]); err != nil {
 			return err
 		}
 		defer b.drainCommitNotifications()
 		defer order.release()
 	}
+	scope, metadata := request.scope, request.metadata
 	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		cw.declaredCache, cw.metadata = &scope, metadata
 		return cw.writeOnce(fn)

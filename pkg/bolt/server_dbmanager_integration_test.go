@@ -565,7 +565,7 @@ func (p *providerBackedExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageE
 func TestSessionGetExecutorForDatabase_InheritsEmbedder_ForStringVectorQuery(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
-	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine"))
+	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine", storage.ConstraintEntityNode))
 	_, err := store.CreateNode(&storage.Node{
 		ID:     "d1",
 		Labels: []string{"Doc"},
@@ -615,7 +615,7 @@ func TestSessionGetExecutorForDatabase_InheritsEmbedder_ForStringVectorQuery(t *
 func TestSessionGetExecutorForDatabase_InheritsEmbedder_FromBaseExecutorProvider(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
-	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine"))
+	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine", storage.ConstraintEntityNode))
 	_, err := store.CreateNode(&storage.Node{
 		ID:     "d1",
 		Labels: []string{"Doc"},

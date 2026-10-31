@@ -9,7 +9,6 @@ import (
 
 func TestSol1482R4SidecarPublishes(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	_, err := e.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"content": "text"}})
 	require.NoError(t, err)
 	n, err := e.GetNode("test:n")
@@ -21,7 +20,6 @@ func TestSol1482R4SidecarPublishes(t *testing.T) {
 }
 func TestSol1482R4EdgeDecayPublishes(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	e.SetDecayEnabled(true)
 	s := e.GetSchemaForNamespace("test")
 	require.NoError(t, s.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{Name: "edge_decay", Scope: knowledgepolicy.ScopeEdge, Function: knowledgepolicy.DecayFunctionExponential, HalfLifeSeconds: 1, VisibilityThreshold: 0.1, ScoreFrom: knowledgepolicy.ScoreFromCreated, Enabled: true, DecayEnabled: true}))

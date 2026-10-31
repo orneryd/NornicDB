@@ -21,7 +21,7 @@ func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	const deltas = countDeltaFoldChunk*2 + 137 // spans three fold chunks
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for i := 0; i < deltas; i++ {
 			if err := engine.adjustLabelCountInTxn(txn, "ns1", "BigFold", 1); err != nil {
 				return err

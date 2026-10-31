@@ -26,7 +26,7 @@ func TestBufferedPublicationCallbacksKeepAcknowledgedRevision(t *testing.T) {
 		change(tx)
 		require.NoError(t, tx.Commit())
 		acknowledged, _ := engine.GraphMutationVersionInNamespace("test")
-		require.NoError(t, engine.FlushWriteBehind())
+		require.NoError(t, engine.FlushWriteBehind(nil))
 		persisted, _ := engine.GraphMutationVersionInNamespace("test")
 		require.Equal(t, acknowledged, persisted, "durability does not change the logical graph")
 	}

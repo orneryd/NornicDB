@@ -88,7 +88,7 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 		return out
 	}
 	overlay := read()
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	// Drop the caches the flush filled, so the second read decodes storage.
 	engine.invalidateCachesAfterRestore()
 	physical := read()
@@ -142,7 +142,9 @@ func TestWrittenSourceIsStoredImage(t *testing.T) {
 		"uint16 max": uint16(math.MaxUint16), "uint32 max": uint32(math.MaxUint32),
 		"uint64 maxint64": uint64(math.MaxInt64), "uint64 maxint64+1": uint64(math.MaxInt64) + 1, "uint maxint64+1": uint(math.MaxInt64) + 1,
 	}
-	// Exactly the scalar kinds take the fast path.
+	// Scalars retain their existing fast-path guarantee. Container support can
+	// expand when the owned-value owner provides an exact image; the independent
+	// codec comparison below proves every successful image, including its types.
 	accepted := map[string]bool{}
 	for name, value := range kinds {
 		switch value.(type) {
@@ -204,8 +206,11 @@ func TestWrittenSourceIsStoredImage(t *testing.T) {
 	for name, value := range kinds {
 		_, nodeOK := writtenNodeSource(&Node{ID: "test:n", Properties: map[string]any{"v": value}})
 		_, edgeOK := writtenEdgeSource(&Edge{ID: "test:e", Properties: map[string]any{"v": value}})
-		require.Equal(t, accepted[name], nodeOK, "node fast path for %s (%T)", name, value)
-		require.Equal(t, accepted[name], edgeOK, "edge fast path for %s (%T)", name, value)
+		if accepted[name] {
+			require.True(t, nodeOK, "node scalar fast path for %s (%T)", name, value)
+			require.True(t, edgeOK, "edge scalar fast path for %s (%T)", name, value)
+		}
+		require.Equal(t, nodeOK, edgeOK, "shared property image contract for %s (%T)", name, value)
 		for i, at := range times {
 			check(name, map[string]any{"v": value, "s": "x"}, at, []string{"A"}, i%2 == 0)
 		}
@@ -279,7 +284,7 @@ func TestWriteBehindOverlayKeepsSidecarEmbedding(t *testing.T) {
 	engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	node := sidecarTestNode(t, engine, "keep", map[string]any{"text": "boiler invoice", "tags": []any{"a"}}, now)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
 
 	tx, err := engine.BeginTransaction()
@@ -295,7 +300,7 @@ func TestWriteBehindOverlayKeepsSidecarEmbedding(t *testing.T) {
 	overlay, err := engine.GetNode(node.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.1, 0.2}}, overlay.ChunkEmbeddings)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	physical, err := engine.GetNode(node.ID)
 	require.NoError(t, err)
 	require.Equal(t, physical.ChunkEmbeddings, overlay.ChunkEmbeddings)

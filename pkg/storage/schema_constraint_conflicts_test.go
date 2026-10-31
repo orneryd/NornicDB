@@ -69,10 +69,10 @@ func TestAddConstraint_NameTakenByIndex(t *testing.T) {
 			return schema.AddRangeIndexForEntity("taken", "Doc", []string{"id"}, ConstraintEntityNode)
 		},
 		"fulltext": func(schema *SchemaManager) error {
-			return schema.AddFulltextIndex("taken", []string{"Doc"}, []string{"id"})
+			return schema.AddFulltextIndex("taken", []string{"Doc"}, []string{"id"}, ConstraintEntityNode)
 		},
 		"vector": func(schema *SchemaManager) error {
-			return schema.AddVectorIndexForEntity("taken", "Doc", "id", 3, "cosine", ConstraintEntityNode)
+			return schema.AddVectorIndex("taken", "Doc", "id", 3, "cosine", ConstraintEntityNode)
 		},
 		"text": func(schema *SchemaManager) error {
 			return schema.AddTypedIndexForEntity(IndexKindText, "taken", "Doc", []string{"id"}, ConstraintEntityNode)
@@ -113,7 +113,7 @@ func TestAddConstraint_NameTakenByContract(t *testing.T) {
 	sm := NewSchemaManager()
 	sm.constraintContracts["taken"] = ConstraintContract{Name: "taken", TargetEntityType: string(ConstraintEntityNode), TargetLabelOrType: "Doc"}
 	require.Error(t, sm.AddConstraint(Constraint{Name: "taken", Type: ConstraintUnique, Label: "Doc", Properties: []string{"id"}}))
-	require.Error(t, sm.AddPropertyTypeConstraint("taken", "Doc", "id", PropertyTypeString))
+	require.Error(t, sm.AddPropertyTypeConstraint("taken", "Doc", "id", PropertyTypeString, PropertyTypeConstraintOptions{}))
 	require.Empty(t, sm.GetAllConstraints())
 }
 
@@ -127,13 +127,13 @@ func TestConstraintAdders_IfNotExistsNoOpPersistsNothing(t *testing.T) {
 
 	require.NoError(t, sm.AddUniqueConstraint("u", "Doc", "id", true))
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "k", Type: ConstraintNodeKey, Label: "Item", Properties: []string{"sku"}}, true))
-	require.NoError(t, sm.AddPropertyTypeConstraintWithOptions("t", "Doc", "n", PropertyTypeInteger, PropertyTypeConstraintOptions{IfNotExists: true}))
+	require.NoError(t, sm.AddPropertyTypeConstraint("t", "Doc", "n", PropertyTypeInteger, PropertyTypeConstraintOptions{IfNotExists: true}))
 	require.Equal(t, 3, persisted)
 
 	for i := 0; i < 3; i++ {
 		require.NoError(t, sm.AddUniqueConstraint("u", "Doc", "id", true))
 		require.NoError(t, sm.AddConstraint(Constraint{Name: "k", Type: ConstraintNodeKey, Label: "Item", Properties: []string{"sku"}}, true))
-		require.NoError(t, sm.AddPropertyTypeConstraintWithOptions("t", "Doc", "n", PropertyTypeInteger, PropertyTypeConstraintOptions{IfNotExists: true}))
+		require.NoError(t, sm.AddPropertyTypeConstraint("t", "Doc", "n", PropertyTypeInteger, PropertyTypeConstraintOptions{IfNotExists: true}))
 	}
 	require.Equal(t, 3, persisted)
 	require.Len(t, sm.GetAllConstraints(), 2)

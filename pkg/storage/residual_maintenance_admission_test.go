@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 	for _, route := range []string{"mark-clean", "consume-clean", "temporal-rebuild", "mvcc-rebuild", "temporal-write", "lifecycle-stripes", "lifecycle-suppression", "mvcc-prune", "label-drop", "edge-type-drop", "between-drop", "raw-drop-all", "raw-load"} {
 		t.Run(route, func(t *testing.T) {
-			b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: route == "lifecycle-stripes", WriteBehindInterval: time.Hour})
+			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: route == "lifecycle-stripes", WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			var target sync.Locker = &b.db.commitGate
@@ -121,7 +122,7 @@ func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 }
 
 func TestResidualCleanMarkerKeepsGraphCachesWarm(t *testing.T) {
-	b, err := NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.CreateNode(&Node{ID: "test:marker-peer"})

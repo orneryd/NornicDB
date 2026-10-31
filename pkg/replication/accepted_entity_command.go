@@ -103,7 +103,7 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	if err != nil {
 		return nil, err
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthorityWithContext(ctx)
+	releaseAuthority, err := prepared.RetainAcceptedAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}

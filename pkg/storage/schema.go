@@ -11,7 +11,9 @@
 package storage
 
 import (
+	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -125,6 +127,17 @@ type SchemaManager struct {
 	// Persistence hook (optional).
 	// When set (by BadgerEngine), schema changes are persisted transactionally.
 	persist func(def *SchemaDefinition) error
+	// publicationGate serializes a persisting schema mutation's definition
+	// read, durable write and live publication with a native commit that
+	// publishes a schema definition. A direct mutation holds it exclusively
+	// from before it reads the published manager until after it persists, so it
+	// cannot read between a native commit's physical write and that commit's
+	// publication and persist a definition that omits the native change. A
+	// native schema-dirty commit holds the same manager's gate from before its
+	// first physical batch until its publication completes. Ordinary
+	// entity-only commits never take it, and an isolated transaction schema
+	// view is its own manager with its own gate.
+	publicationGate trackedRWMutex
 	// Optional callback invoked after knowledge-policy mutations have been
 	// persisted and the schema lock has been released.
 	knowledgePolicyChanged func()
@@ -198,12 +211,8 @@ type SchemaManager struct {
 //	schema.AddPropertyIndex("idx_user_email", "User", []string{"email"})
 //
 //	// Vector index for semantic search
-//	schema.AddVectorIndex(&storage.VectorIndex{
-//		Name:       "doc_embeddings",
-//		Label:      "Document",
-//		Property:   "embedding",
-//		Dimensions: 1024,
-//	})
+//	schema.AddVectorIndex("doc_embeddings", "Document", "embedding", 1024,
+//		"cosine", storage.ConstraintEntityNode)
 //
 // ELI12:
 //
@@ -542,6 +551,83 @@ func (sm *SchemaManager) SetKnowledgePolicyChangedHook(hook func()) {
 	sm.knowledgePolicyChanged = hook
 }
 
+// schemaMutationLease is one admitted persisting schema mutation: the
+// publication gate and the schema lock, both held from before the mutated
+// state is read until after it is persisted. It is taken by value on the
+// caller's stack and released once.
+type schemaMutationLease struct {
+	schema *SchemaManager
+}
+
+// beginSchemaMutation admits one persisting schema mutation. The publication
+// gate is taken before the schema lock, the reverse of release, so a direct
+// mutation cannot read the manager between a native commit's physical write
+// and its publication, and a native commit waiting for the gate holds no
+// schema lock.
+func (sm *SchemaManager) beginSchemaMutation() schemaMutationLease {
+	sm.publicationGate.Lock()
+	sm.mu.Lock()
+	return schemaMutationLease{schema: sm}
+}
+
+// release abandons a mutation that published nothing: the schema lock and then
+// the publication gate, the reverse of the order they were taken.
+func (lease schemaMutationLease) release() {
+	lease.schema.mu.Unlock()
+	lease.schema.publicationGate.Unlock()
+}
+
+// commitPolicy persists the knowledge-policy change staged under the lease and
+// publishes its effects only when the persister accepts it. On rejection it
+// restores the published family and leaves every other family, the compiled
+// binding table and all runtime index caches untouched. The changed hook runs
+// after both the schema lock and the publication gate are released, because it
+// re-enters the engine and admits itself again.
+func (lease schemaMutationLease) commitPolicy(restore func()) error {
+	sm := lease.schema
+	if persist := sm.persist; persist != nil {
+		if err := persist(sm.exportDefinitionLocked()); err != nil {
+			restore()
+			lease.release()
+			return err
+		}
+	}
+	sm.rebuildBindingTableLocked()
+	onChanged := sm.knowledgePolicyChanged
+	lease.release()
+	if onChanged != nil {
+		onChanged()
+	}
+	return nil
+}
+
+// schemaPublicationLease is one admitted native schema publication: the
+// publication gate held from before a schema-dirty commit's first physical
+// batch until its definition is published.
+type schemaPublicationLease struct {
+	schema *SchemaManager
+}
+
+// beginSchemaPublication admits a native commit that publishes a schema
+// definition. A direct persisting mutation admitted afterwards reads the
+// definition this commit published, not one that omits it. The wait honors the
+// commit's context; a cancelled wait leaves the gate unheld.
+func (sm *SchemaManager) beginSchemaPublication(ctx context.Context) (schemaPublicationLease, error) {
+	if err := sm.publicationGate.LockContext(ctx); err != nil {
+		return schemaPublicationLease{}, err
+	}
+	return schemaPublicationLease{schema: sm}, nil
+}
+
+// release ends the native commit's schema publication interval. The zero lease
+// releases nothing, so a commit that never took the gate can release it
+// unconditionally.
+func (lease schemaPublicationLease) release() {
+	if lease.schema != nil {
+		lease.schema.publicationGate.Unlock()
+	}
+}
+
 // UniqueConstraint represents a unique constraint on a label and property.
 type UniqueConstraint struct {
 	Name     string
@@ -754,8 +840,8 @@ type RangeIndex struct {
 // Pass ifNotExists=true for IF NOT EXISTS semantics (duplicate is no-op).
 func (sm *SchemaManager) AddUniqueConstraint(name, label, property string, ifNotExists ...bool) error {
 	defer sm.trackPendingPairs()
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 
 	silent := len(ifNotExists) > 0 && ifNotExists[0]
 	constraint := Constraint{
@@ -766,19 +852,21 @@ func (sm *SchemaManager) AddUniqueConstraint(name, label, property string, ifNot
 	}
 	return sm.addSchemaRuleLocked(
 		func() (bool, error) { return sm.admitConstraintLocked(constraint, silent) },
+		sm.stageConstraintFamilies,
 		func() { sm.applyConstraintLocked(constraint) },
 	)
 }
 
 // addSchemaRuleLocked adds a constraint: admit checks it against the
 // schema without changing it, and only when admit accepts it does the
-// adder take the rollback snapshot, apply the change and persist the
-// schema; if persisting fails, the in-memory schema returns to the
-// snapshot. An IF NOT EXISTS that finds the constraint already present
-// costs the check alone, as an existing index does for the index adders
-// (#823: every repeated CREATE CONSTRAINT ... IF NOT EXISTS exported and
-// rewrote the whole schema).
-func (sm *SchemaManager) addSchemaRuleLocked(admit func() (bool, error), apply func()) error {
+// adder copy the schema families apply will change, apply the change and
+// persist the schema; if persisting fails, those families return to the
+// published entries they held, so every other constraint, index and runtime
+// cache keeps its live allocation and no other family is rebuilt. An IF NOT
+// EXISTS that finds the constraint already present costs the check alone, as an
+// existing index does for the index adders (#823: every repeated CREATE
+// CONSTRAINT ... IF NOT EXISTS exported and rewrote the whole schema).
+func (sm *SchemaManager) addSchemaRuleLocked(admit func() (bool, error), stage func() schemaRuleRollback, apply func()) error {
 	add, err := admit()
 	if err != nil || !add {
 		return err
@@ -787,51 +875,78 @@ func (sm *SchemaManager) addSchemaRuleLocked(admit func() (bool, error), apply f
 		apply()
 		return nil
 	}
-	snapshot := sm.exportDefinitionLocked()
+	rollback := stage()
 	apply()
 	if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
-		sm.replaceFromDefinitionLocked(snapshot)
+		rollback()
 		return err
 	}
 	return nil
 }
 
-// AddPropertyTypeConstraint adds a property type constraint to the schema.
-// This enforces a specific type for a property on a label (NULL values allowed).
-// An optional entityType can be passed to specify RELATIONSHIP constraints.
-// PropertyTypeConstraintOptions holds optional parameters for AddPropertyTypeConstraint.
+// schemaRuleRollback restores the entries one admitted schema rule add changed.
+type schemaRuleRollback func()
+
+// stageSchemaFamily copies one schema family so a rejected rule add restores
+// its published entries, including the runtime value caches and compiled index
+// pointers those entries own, without rebuilding any other family.
+func stageSchemaFamily[M any](field *map[string]M) schemaRuleRollback {
+	published := maps.Clone(*field)
+	return func() { *field = published }
+}
+
+// stageConstraintFamilies stages the families applyConstraintLocked changes.
+func (sm *SchemaManager) stageConstraintFamilies() schemaRuleRollback {
+	return combineSchemaRuleRollbacks(
+		stageSchemaFamily(&sm.constraints),
+		stageSchemaFamily(&sm.uniqueConstraints),
+		stageSchemaFamily(&sm.compositeIndexes),
+		stageSchemaFamily(&sm.rangeIndexes),
+		stageSchemaFamily(&sm.temporalIndexCompleteKeys),
+		stageSchemaFamily(&sm.temporalIndexIncompleteKeys),
+	)
+}
+
+// stagePropertyTypeConstraintFamily stages the family a property type
+// constraint add changes.
+func (sm *SchemaManager) stagePropertyTypeConstraintFamily() schemaRuleRollback {
+	return stageSchemaFamily(&sm.propertyTypeConstraints)
+}
+
+// combineSchemaRuleRollbacks restores several staged families as one.
+func combineSchemaRuleRollbacks(rollbacks ...schemaRuleRollback) schemaRuleRollback {
+	return func() {
+		for _, rollback := range rollbacks {
+			rollback()
+		}
+	}
+}
+
+// PropertyTypeConstraintOptions selects entity scope and duplicate admission.
+// A zero EntityType retains node scoping; IfNotExists makes an equal rule a no-op.
 type PropertyTypeConstraintOptions struct {
 	EntityType  ConstraintEntityType
 	IfNotExists bool
 }
 
-// AddPropertyTypeConstraint adds a property type constraint to the schema.
-// The entityType parameter controls NODE vs RELATIONSHIP scoping.
-func (sm *SchemaManager) AddPropertyTypeConstraint(name, label, property string, expectedType PropertyType, entityType ...ConstraintEntityType) error {
-	var et ConstraintEntityType
-	if len(entityType) > 0 {
-		et = entityType[0]
-	}
-	return sm.addPropertyTypeConstraint(name, label, property, expectedType, et, false)
-}
-
-// AddPropertyTypeConstraintWithOptions adds a property type constraint with full options.
-func (sm *SchemaManager) AddPropertyTypeConstraintWithOptions(name, label, property string, expectedType PropertyType, opts PropertyTypeConstraintOptions) error {
-	return sm.addPropertyTypeConstraint(name, label, property, expectedType, opts.EntityType, opts.IfNotExists)
-}
-
-func (sm *SchemaManager) addPropertyTypeConstraint(name, label, property string, expectedType PropertyType, entityType ConstraintEntityType, ifNotExists bool) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+// AddPropertyTypeConstraint enforces a property type (NULL values allowed),
+// with entity scope and duplicate admission selected in opts.
+//
+// Example: sm.AddPropertyTypeConstraint("age_type", "Person", "age",
+// PropertyTypeInteger, PropertyTypeConstraintOptions{EntityType: ConstraintEntityNode}).
+func (sm *SchemaManager) AddPropertyTypeConstraint(name, label, property string, expectedType PropertyType, opts PropertyTypeConstraintOptions) error {
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 	ptc := PropertyTypeConstraint{
 		Name:         name,
-		EntityType:   entityType,
+		EntityType:   opts.EntityType,
 		Label:        label,
 		Property:     property,
 		ExpectedType: expectedType,
 	}
 	return sm.addSchemaRuleLocked(
-		func() (bool, error) { return sm.admitPropertyTypeConstraintLocked(ptc, ifNotExists) },
+		func() (bool, error) { return sm.admitPropertyTypeConstraintLocked(ptc, opts.IfNotExists) },
+		sm.stagePropertyTypeConstraintFamily,
 		func() { sm.propertyTypeConstraints[ptc.Name] = ptc },
 	)
 }
@@ -893,8 +1008,8 @@ func (sm *SchemaManager) AddCompositeIndex(name, label string, properties []stri
 	// once the lock is released.
 	defer sm.trackPendingPairs()
 
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 
 	if _, exists := sm.compositeIndexes[name]; exists {
 		return nil // Already exists (idempotent)
@@ -1266,71 +1381,43 @@ func removeNodeID(slice []NodeID, nodeID NodeID) []NodeID {
 	return slice
 }
 
-// AddFulltextIndex adds a node-scoped full-text index.
-func (sm *SchemaManager) AddFulltextIndex(name string, labels, properties []string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
+// AddFulltextIndex adds a full-text index over node labels or relationship
+// types. The entity kind selects which target list is stored; all supplied
+// slices are owned by the schema. Existing names remain an idempotent no-op.
+// For example, AddFulltextIndex("people", []string{"Person"}, []string{"name"},
+// ConstraintEntityNode) indexes node names without changing stored formats.
+func (sm *SchemaManager) AddFulltextIndex(name string, targets, properties []string, entityType ConstraintEntityType) error {
+	if entityType != ConstraintEntityNode && entityType != ConstraintEntityRelationship {
+		return fmt.Errorf("%w: full-text entity kind %q", ErrInvalidData, entityType)
+	}
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 	if _, exists := sm.fulltextIndexes[name]; exists {
-		return nil // Already exists
+		return nil
 	}
-
-	sm.fulltextIndexes[name] = &FulltextIndex{
-		Name:       name,
-		Labels:     slices.Clone(labels),
-		Properties: slices.Clone(properties),
+	definition := &FulltextIndex{Name: name, Properties: slices.Clone(properties)}
+	if entityType == ConstraintEntityNode {
+		definition.Labels = slices.Clone(targets)
+	} else {
+		definition.RelationshipTypes = slices.Clone(targets)
 	}
-
+	sm.fulltextIndexes[name] = definition
 	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
+		if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
 			delete(sm.fulltextIndexes, name)
 			return err
 		}
 	}
-
 	return nil
 }
 
-// AddFulltextRelationshipIndex adds a relationship-scoped full-text
-// index. Mirrors AddFulltextIndex but populates RelationshipTypes
-// instead of Labels. The two share the same `fulltextIndexes` map so
-// every existing get/list/remove path works for both kinds; consumers
-// that need to distinguish check which scope slice is non-empty.
-func (sm *SchemaManager) AddFulltextRelationshipIndex(name string, relTypes, properties []string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	if _, exists := sm.fulltextIndexes[name]; exists {
-		return nil // Already exists
-	}
-
-	sm.fulltextIndexes[name] = &FulltextIndex{
-		Name:              name,
-		RelationshipTypes: slices.Clone(relTypes),
-		Properties:        slices.Clone(properties),
-	}
-
-	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
-			delete(sm.fulltextIndexes, name)
-			return err
-		}
-	}
-
-	return nil
-}
-
-// AddVectorIndex adds a vector index.
-func (sm *SchemaManager) AddVectorIndex(name, label, property string, dimensions int, similarityFunc string) error {
-	return sm.AddVectorIndexForEntity(name, label, property, dimensions, similarityFunc, ConstraintEntityNode)
-}
-
-// AddVectorIndexForEntity adds a vector index scoped to a node label or relationship type.
-func (sm *SchemaManager) AddVectorIndexForEntity(name, label, property string, dimensions int, similarityFunc string, entityType ConstraintEntityType) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+// AddVectorIndex adds a vector index scoped to a node label or relationship type.
+//
+// Example: sm.AddVectorIndex("doc_vector", "Doc", "embedding", 384,
+// "cosine", ConstraintEntityNode).
+func (sm *SchemaManager) AddVectorIndex(name, label, property string, dimensions int, similarityFunc string, entityType ConstraintEntityType) error {
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 
 	if _, exists := sm.vectorIndexes[name]; exists {
 		return nil // Already exists
@@ -1375,8 +1462,8 @@ func (sm *SchemaManager) addIndexForEntity(kind IndexKind, name, label string, p
 		return localizedError(localization.StorageSchemaRangeIndexPropertiesRequired(), nil)
 	}
 
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 
 	if _, exists := sm.rangeIndexes[name]; exists {
 		return nil // Already exists
@@ -1691,12 +1778,13 @@ func allowedValuesEqual(a, b []interface{}) bool {
 // Pass ifNotExists=true when the DDL includes IF NOT EXISTS; duplicate-schema is then a no-op.
 func (sm *SchemaManager) AddConstraint(c Constraint, ifNotExists ...bool) error {
 	defer sm.trackPendingPairs()
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 
 	silentOnDuplicate := len(ifNotExists) > 0 && ifNotExists[0]
 	return sm.addSchemaRuleLocked(
 		func() (bool, error) { return sm.admitConstraintLocked(c, silentOnDuplicate) },
+		sm.stageConstraintFamilies,
 		func() { sm.applyConstraintLocked(c) },
 	)
 }
@@ -1704,8 +1792,8 @@ func (sm *SchemaManager) AddConstraint(c Constraint, ifNotExists ...bool) error 
 // DropIndex removes an index (by name) from the schema.
 // It searches across all index types: property, composite, fulltext, vector, and range.
 func (sm *SchemaManager) DropIndex(name string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	lease := sm.beginSchemaMutation()
+	defer lease.release()
 
 	// Track what we dropped for rollback on persist failure.
 	type dropped struct {

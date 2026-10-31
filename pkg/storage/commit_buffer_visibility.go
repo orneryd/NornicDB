@@ -3,8 +3,9 @@ package storage
 import "strings"
 
 // Entity IDs are independently allocated: a node and an edge may have the
-// same string ID. The legacy AppendDelete API deliberately hides both kinds;
-// its mask lets a later write revive only its own kind.
+// same string ID. A generic delete mutation submitted through Append
+// deliberately hides both kinds; its mask lets a later write revive only its
+// own kind.
 type bufferedEntityKind uint8
 
 const (

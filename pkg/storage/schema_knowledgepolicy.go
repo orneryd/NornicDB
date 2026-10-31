@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -9,10 +11,21 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
+// stageKnowledgePolicyFamily copies one published family immediately before an
+// admitted mutation changes it, so a rejected change restores the published map
+// and the values (including any compiled pointers) it still owns. A nil family
+// stages as the empty map the mutation creates.
+func stageKnowledgePolicyFamily[T any](published map[string]*T) map[string]*T {
+	staged := make(map[string]*T, len(published)+1)
+	maps.Copy(staged, published)
+	return staged
+}
+
 // createKnowledgeProfile is the shared create path for knowledge-policy
-// profiles (decay bundles, promotion profiles): ensure the map, reject a
-// duplicate name (honoring IF NOT EXISTS), validate, store a copy and finish
-// the mutation.
+// profiles (decay bundles, promotion profiles): admit the name (honoring IF NOT
+// EXISTS), validate, then stage a copy of the family with the new profile and
+// finish the mutation. profiles refers to the schema field, not to a snapshot,
+// so the staged copy replaces the published family on acceptance.
 func createKnowledgeProfile[T any](
 	sm *SchemaManager,
 	profiles *map[string]*T,
@@ -22,58 +35,58 @@ func createKnowledgeProfile[T any](
 	validate func(*T) error,
 	ifNotExists bool,
 ) error {
-	sm.mu.Lock()
-	if *profiles == nil {
-		*profiles = make(map[string]*T)
-	}
+	lease := sm.beginSchemaMutation()
 	if _, exists := (*profiles)[name]; exists {
-		sm.mu.Unlock()
+		lease.release()
 		if ifNotExists {
 			return nil
 		}
 		return localizedError(alreadyExists(name), nil)
 	}
-	if err := validate(&value); err != nil {
-		sm.mu.Unlock()
-		return err
-	}
-	(*profiles)[name] = &value
-	return sm.finishKnowledgePolicyMutationLocked()
+	return publishKnowledgeProfile(lease, profiles, name, value, validate)
 }
 
 // alterKnowledgeProfile is the shared update path for knowledge-policy
 // profiles: find the named profile, apply the option updates to a copy,
-// validate the copy and finish the mutation.
+// validate the copy and stage it into a copy of the family before finishing the
+// mutation. profiles refers to the schema field, not to a snapshot.
 func alterKnowledgeProfile[T any](
 	sm *SchemaManager,
-	profiles map[string]*T,
+	profiles *map[string]*T,
 	notFound func(string) localization.Message,
 	apply func(*T, map[string]interface{}) error,
 	validate func(*T) error,
 	name string,
 	updates map[string]interface{},
 ) error {
-	sm.mu.Lock()
-	if profiles == nil {
-		sm.mu.Unlock()
-		return localizedError(notFound(name), nil)
-	}
-	profile, ok := profiles[name]
+	lease := sm.beginSchemaMutation()
+	profile, ok := (*profiles)[name]
 	if !ok {
-		sm.mu.Unlock()
+		lease.release()
 		return localizedError(notFound(name), nil)
 	}
 	updated := *profile
 	if err := apply(&updated, updates); err != nil {
-		sm.mu.Unlock()
+		lease.release()
 		return err
 	}
-	if err := validate(&updated); err != nil {
-		sm.mu.Unlock()
+	return publishKnowledgeProfile(lease, profiles, name, updated, validate)
+}
+
+// publishKnowledgeProfile validates and stages the owned next profile under
+// the caller's admitted lease. Create and alter retain their different name
+// admission and option handling, but share this one accepted/rejected state
+// transition and its compiled-policy publication.
+func publishKnowledgeProfile[T any](lease schemaMutationLease, profiles *map[string]*T, name string, value T, validate func(*T) error) error {
+	if err := validate(&value); err != nil {
+		lease.release()
 		return err
 	}
-	profiles[name] = &updated
-	return sm.finishKnowledgePolicyMutationLocked()
+	published := *profiles
+	staged := stageKnowledgePolicyFamily(published)
+	staged[name] = &value
+	*profiles = staged
+	return lease.commitPolicy(func() { *profiles = published })
 }
 
 // CreateDecayProfileBundle adds a decay profile bundle to the schema.
@@ -83,82 +96,80 @@ func (sm *SchemaManager) CreateDecayProfileBundle(bundle knowledgepolicy.DecayPr
 
 // CreateDecayProfileBinding adds a decay profile binding to the schema.
 func (sm *SchemaManager) CreateDecayProfileBinding(binding knowledgepolicy.DecayProfileBinding, ifNotExists ...bool) error {
-	sm.mu.Lock()
-
-	if sm.decayProfileBindings == nil {
-		sm.decayProfileBindings = make(map[string]*knowledgepolicy.DecayProfileBinding)
-	}
+	lease := sm.beginSchemaMutation()
 
 	if _, exists := sm.decayProfileBindings[binding.Name]; exists {
+		lease.release()
 		if len(ifNotExists) > 0 && ifNotExists[0] {
-			sm.mu.Unlock()
 			return nil
 		}
-		sm.mu.Unlock()
 		return localizedError(localization.StorageSchemaDecayProfileBindingAlreadyExists(binding.Name), nil)
 	}
 
-	if binding.ProfileRef != "" && sm.decayProfileBundles != nil {
+	if binding.ProfileRef != "" {
 		if _, ok := sm.decayProfileBundles[binding.ProfileRef]; !ok {
-			sm.mu.Unlock()
+			lease.release()
 			return localizedError(localization.StorageSchemaDecayProfileBundleNotFound(binding.ProfileRef), nil)
 		}
 	}
 
 	if err := sm.validateBindingTarget(&binding); err != nil {
-		sm.mu.Unlock()
+		lease.release()
 		return err
 	}
 
-	binding = cloneDecayProfileBinding(binding)
+	binding = cloneDecayProfileBinding(&binding)
 	sort.Strings(binding.TargetLabels)
-	b := binding
-	sm.decayProfileBindings[b.Name] = &b
-	return sm.finishKnowledgePolicyMutationLocked()
+	published := sm.decayProfileBindings
+	staged := stageKnowledgePolicyFamily(published)
+	staged[binding.Name] = &binding
+	sm.decayProfileBindings = staged
+	return lease.commitPolicy(func() { sm.decayProfileBindings = published })
 }
 
 // DropDecayProfile removes a decay profile bundle or binding by name.
 func (sm *SchemaManager) DropDecayProfile(name string, ifExists ...bool) error {
-	sm.mu.Lock()
+	lease := sm.beginSchemaMutation()
 
-	if sm.decayProfileBundles != nil {
-		if _, exists := sm.decayProfileBundles[name]; exists {
-			if sm.isBundleReferenced(name) {
-				sm.mu.Unlock()
-				return localizedError(localization.StorageSchemaDecayProfileBundleReferenced(name), nil)
-			}
-			delete(sm.decayProfileBundles, name)
-			return sm.finishKnowledgePolicyMutationLocked()
+	if _, exists := sm.decayProfileBundles[name]; exists {
+		if sm.isBundleReferenced(name) {
+			lease.release()
+			return localizedError(localization.StorageSchemaDecayProfileBundleReferenced(name), nil)
 		}
+		published := sm.decayProfileBundles
+		staged := stageKnowledgePolicyFamily(published)
+		delete(staged, name)
+		sm.decayProfileBundles = staged
+		return lease.commitPolicy(func() { sm.decayProfileBundles = published })
 	}
 
-	if sm.decayProfileBindings != nil {
-		if _, exists := sm.decayProfileBindings[name]; exists {
-			delete(sm.decayProfileBindings, name)
-			return sm.finishKnowledgePolicyMutationLocked()
-		}
+	if _, exists := sm.decayProfileBindings[name]; exists {
+		published := sm.decayProfileBindings
+		staged := stageKnowledgePolicyFamily(published)
+		delete(staged, name)
+		sm.decayProfileBindings = staged
+		return lease.commitPolicy(func() { sm.decayProfileBindings = published })
 	}
 
+	lease.release()
 	if len(ifExists) > 0 && ifExists[0] {
-		sm.mu.Unlock()
 		return nil
 	}
-	sm.mu.Unlock()
 	return localizedError(localization.StorageSchemaDecayProfileNotFound(name), nil)
 }
 
 // AlterDecayProfile updates options on an existing decay profile bundle.
 func (sm *SchemaManager) AlterDecayProfile(name string, updates map[string]interface{}) error {
-	return alterKnowledgeProfile(sm, sm.decayProfileBundles, localization.StorageSchemaDecayProfileBundleNotFound, applyBundleUpdates, validateDecayProfileBundle, name, updates)
+	return alterKnowledgeProfile(sm, &sm.decayProfileBundles, localization.StorageSchemaDecayProfileBundleNotFound, applyBundleUpdates, validateDecayProfileBundle, name, updates)
 }
 
 // AlterDecayProfileBinding replaces the target and APPLY definition of an existing binding.
 func (sm *SchemaManager) AlterDecayProfileBinding(name string, replacement knowledgepolicy.DecayProfileBinding) error {
-	sm.mu.Lock()
+	lease := sm.beginSchemaMutation()
 
 	existing, ok := sm.decayProfileBindings[name]
 	if !ok {
-		sm.mu.Unlock()
+		lease.release()
 		return localizedError(localization.StorageSchemaDecayProfileNotFound(name), nil)
 	}
 
@@ -166,19 +177,22 @@ func (sm *SchemaManager) AlterDecayProfileBinding(name string, replacement knowl
 	replacement.Order = existing.Order
 	if replacement.ProfileRef != "" {
 		if _, ok := sm.decayProfileBundles[replacement.ProfileRef]; !ok {
-			sm.mu.Unlock()
+			lease.release()
 			return localizedError(localization.StorageSchemaDecayProfileBundleNotFound(replacement.ProfileRef), nil)
 		}
 	}
 	if err := sm.validateBindingTarget(&replacement); err != nil {
-		sm.mu.Unlock()
+		lease.release()
 		return err
 	}
 
-	replacement = cloneDecayProfileBinding(replacement)
+	replacement = cloneDecayProfileBinding(&replacement)
 	sort.Strings(replacement.TargetLabels)
-	sm.decayProfileBindings[name] = &replacement
-	return sm.finishKnowledgePolicyMutationLocked()
+	published := sm.decayProfileBindings
+	staged := stageKnowledgePolicyFamily(published)
+	staged[name] = &replacement
+	sm.decayProfileBindings = staged
+	return lease.commitPolicy(func() { sm.decayProfileBindings = published })
 }
 
 // ShowDecayProfiles returns all stored decay profile bundles and bindings.
@@ -186,17 +200,10 @@ func (sm *SchemaManager) ShowDecayProfiles() ([]knowledgepolicy.DecayProfileBund
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
-	bundles := make([]knowledgepolicy.DecayProfileBundle, 0, len(sm.decayProfileBundles))
-	for _, b := range sm.decayProfileBundles {
-		bundles = append(bundles, *b)
-	}
-	sort.Slice(bundles, func(i, j int) bool { return bundles[i].Name < bundles[j].Name })
-
-	bindings := make([]knowledgepolicy.DecayProfileBinding, 0, len(sm.decayProfileBindings))
-	for _, b := range sm.decayProfileBindings {
-		bindings = append(bindings, cloneDecayProfileBinding(*b))
-	}
-	sort.Slice(bindings, func(i, j int) bool { return bindings[i].Name < bindings[j].Name })
+	bundles := sortedPolicyCopies(sm.decayProfileBundles, nil,
+		func(a, b *knowledgepolicy.DecayProfileBundle) int { return strings.Compare(a.Name, b.Name) })
+	bindings := sortedPolicyCopies(sm.decayProfileBindings, cloneDecayProfileBinding,
+		func(a, b *knowledgepolicy.DecayProfileBinding) int { return strings.Compare(a.Name, b.Name) })
 
 	return bundles, bindings
 }
@@ -208,38 +215,31 @@ func (sm *SchemaManager) CreatePromotionProfile(profile knowledgepolicy.Promotio
 
 // DropPromotionProfile removes a promotion profile by name.
 func (sm *SchemaManager) DropPromotionProfile(name string, ifExists ...bool) error {
-	sm.mu.Lock()
-
-	if sm.promotionProfiles == nil {
-		if len(ifExists) > 0 && ifExists[0] {
-			sm.mu.Unlock()
-			return nil
-		}
-		sm.mu.Unlock()
-		return localizedError(localization.StorageSchemaPromotionProfileNotFound(name), nil)
-	}
+	lease := sm.beginSchemaMutation()
 
 	if _, exists := sm.promotionProfiles[name]; !exists {
+		lease.release()
 		if len(ifExists) > 0 && ifExists[0] {
-			sm.mu.Unlock()
 			return nil
 		}
-		sm.mu.Unlock()
 		return localizedError(localization.StorageSchemaPromotionProfileNotFound(name), nil)
 	}
 
 	if sm.isPromotionProfileReferenced(name) {
-		sm.mu.Unlock()
+		lease.release()
 		return localizedError(localization.StorageSchemaPromotionProfileReferenced(name), nil)
 	}
 
-	delete(sm.promotionProfiles, name)
-	return sm.finishKnowledgePolicyMutationLocked()
+	published := sm.promotionProfiles
+	staged := stageKnowledgePolicyFamily(published)
+	delete(staged, name)
+	sm.promotionProfiles = staged
+	return lease.commitPolicy(func() { sm.promotionProfiles = published })
 }
 
 // AlterPromotionProfile updates options on an existing promotion profile.
 func (sm *SchemaManager) AlterPromotionProfile(name string, updates map[string]interface{}) error {
-	return alterKnowledgeProfile(sm, sm.promotionProfiles, localization.StorageSchemaPromotionProfileNotFound, applyPromotionProfileUpdates, validatePromotionProfile, name, updates)
+	return alterKnowledgeProfile(sm, &sm.promotionProfiles, localization.StorageSchemaPromotionProfileNotFound, applyPromotionProfileUpdates, validatePromotionProfile, name, updates)
 }
 
 // ShowPromotionProfiles returns all stored promotion profiles.
@@ -248,23 +248,19 @@ func (sm *SchemaManager) ShowPromotionProfiles() []knowledgepolicy.PromotionProf
 	defer sm.mu.RUnlock()
 
 	profiles := make([]knowledgepolicy.PromotionProfileDef, 0, len(sm.promotionProfiles))
-	for _, p := range sm.promotionProfiles {
-		profiles = append(profiles, *p)
+	for _, value := range sm.promotionProfiles {
+		profiles = append(profiles, *value)
 	}
-	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
+	slices.SortFunc(profiles, func(a, b knowledgepolicy.PromotionProfileDef) int { return strings.Compare(a.Name, b.Name) })
 	return profiles
 }
 
 // CreatePromotionPolicy adds a promotion policy to the schema.
 func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionPolicyDef, ifNotExists ...bool) error {
-	sm.mu.Lock()
-
-	if sm.promotionPolicies == nil {
-		sm.promotionPolicies = make(map[string]*knowledgepolicy.PromotionPolicyDef)
-	}
+	lease := sm.beginSchemaMutation()
 
 	if _, exists := sm.promotionPolicies[policy.Name]; exists {
-		sm.mu.Unlock()
+		lease.release()
 		if len(ifNotExists) > 0 && ifNotExists[0] {
 			return nil
 		}
@@ -273,48 +269,39 @@ func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionP
 
 	for _, wc := range policy.WhenClauses {
 		if wc.ProfileRef != "" {
-			if sm.promotionProfiles == nil {
-				sm.mu.Unlock()
-				return localizedError(localization.StorageSchemaPromotionProfileWhenClauseNotFound(wc.ProfileRef), nil)
-			}
 			if _, ok := sm.promotionProfiles[wc.ProfileRef]; !ok {
-				sm.mu.Unlock()
+				lease.release()
 				return localizedError(localization.StorageSchemaPromotionProfileWhenClauseNotFound(wc.ProfileRef), nil)
 			}
 		}
 	}
 
-	policy = clonePromotionPolicy(policy)
+	policy = clonePromotionPolicy(&policy)
 	sort.Strings(policy.TargetLabels)
-	p := policy
-	sm.promotionPolicies[p.Name] = &p
-	return sm.finishKnowledgePolicyMutationLocked()
+	published := sm.promotionPolicies
+	staged := stageKnowledgePolicyFamily(published)
+	staged[policy.Name] = &policy
+	sm.promotionPolicies = staged
+	return lease.commitPolicy(func() { sm.promotionPolicies = published })
 }
 
 // DropPromotionPolicy removes a promotion policy by name.
 func (sm *SchemaManager) DropPromotionPolicy(name string, ifExists ...bool) error {
-	sm.mu.Lock()
-
-	if sm.promotionPolicies == nil {
-		if len(ifExists) > 0 && ifExists[0] {
-			sm.mu.Unlock()
-			return nil
-		}
-		sm.mu.Unlock()
-		return localizedError(localization.StorageSchemaPromotionPolicyNotFound(name), nil)
-	}
+	lease := sm.beginSchemaMutation()
 
 	if _, exists := sm.promotionPolicies[name]; !exists {
+		lease.release()
 		if len(ifExists) > 0 && ifExists[0] {
-			sm.mu.Unlock()
 			return nil
 		}
-		sm.mu.Unlock()
 		return localizedError(localization.StorageSchemaPromotionPolicyNotFound(name), nil)
 	}
 
-	delete(sm.promotionPolicies, name)
-	return sm.finishKnowledgePolicyMutationLocked()
+	published := sm.promotionPolicies
+	staged := stageKnowledgePolicyFamily(published)
+	delete(staged, name)
+	sm.promotionPolicies = staged
+	return lease.commitPolicy(func() { sm.promotionPolicies = published })
 }
 
 // ValidatePromotionPolicyOptions accepts only a boolean enabled option.
@@ -335,44 +322,47 @@ func ValidatePromotionPolicyOptions(updates map[string]interface{}) error {
 // AlterPromotionPolicy updates an existing promotion policy.
 // Invalid options are rejected before changing the policy or persisting schema.
 func (sm *SchemaManager) AlterPromotionPolicy(name string, updates map[string]interface{}) error {
-	sm.mu.Lock()
+	lease := sm.beginSchemaMutation()
 
-	if sm.promotionPolicies == nil {
-		sm.mu.Unlock()
+	existing, ok := sm.promotionPolicies[name]
+	if !ok {
+		lease.release()
 		return localizedError(localization.StorageSchemaPromotionPolicyNotFound(name), nil)
 	}
-	if _, ok := sm.promotionPolicies[name]; !ok {
-		sm.mu.Unlock()
-		return localizedError(localization.StorageSchemaPromotionPolicyNotFound(name), nil)
-	}
-
-	policy := sm.promotionPolicies[name]
 	if err := ValidatePromotionPolicyOptions(updates); err != nil {
-		sm.mu.Unlock()
+		lease.release()
 		return err
 	}
+
+	// The published value is copied before editing: an in-place edit would stay
+	// visible through the published pointer even after a rejected persistence.
+	updated := clonePromotionPolicy(existing)
 	if v, ok := updates["enabled"]; ok {
 		if b, ok := v.(bool); ok {
-			policy.Enabled = b
+			updated.Enabled = b
 		}
 	}
-	return sm.finishKnowledgePolicyMutationLocked()
+	published := sm.promotionPolicies
+	staged := stageKnowledgePolicyFamily(published)
+	staged[name] = &updated
+	sm.promotionPolicies = staged
+	return lease.commitPolicy(func() { sm.promotionPolicies = published })
 }
 
 // AlterPromotionPolicyDefinition replaces the target and APPLY definition of an existing policy.
 func (sm *SchemaManager) AlterPromotionPolicyDefinition(name string, replacement knowledgepolicy.PromotionPolicyDef) error {
-	sm.mu.Lock()
+	lease := sm.beginSchemaMutation()
 
 	existing, ok := sm.promotionPolicies[name]
 	if !ok {
-		sm.mu.Unlock()
+		lease.release()
 		return localizedError(localization.StorageSchemaPromotionPolicyNotFound(name), nil)
 	}
 
 	for _, clause := range replacement.WhenClauses {
 		if clause.ProfileRef != "" {
 			if _, ok := sm.promotionProfiles[clause.ProfileRef]; !ok {
-				sm.mu.Unlock()
+				lease.release()
 				return localizedError(localization.StorageSchemaPromotionProfileWhenClauseNotFound(clause.ProfileRef), nil)
 			}
 		}
@@ -380,30 +370,13 @@ func (sm *SchemaManager) AlterPromotionPolicyDefinition(name string, replacement
 
 	replacement.Name = name
 	replacement.Enabled = existing.Enabled
-	replacement = clonePromotionPolicy(replacement)
+	replacement = clonePromotionPolicy(&replacement)
 	sort.Strings(replacement.TargetLabels)
-	sm.promotionPolicies[name] = &replacement
-	return sm.finishKnowledgePolicyMutationLocked()
-}
-
-func (sm *SchemaManager) finishKnowledgePolicyMutationLocked() error {
-	sm.rebuildBindingTableLocked()
-	persist := sm.persist
-	var def *SchemaDefinition
-	if persist != nil {
-		def = sm.exportDefinitionLocked()
-	}
-	onChanged := sm.knowledgePolicyChanged
-	sm.mu.Unlock()
-	if persist != nil {
-		if err := persist(def); err != nil {
-			return err
-		}
-	}
-	if onChanged != nil {
-		onChanged()
-	}
-	return nil
+	published := sm.promotionPolicies
+	staged := stageKnowledgePolicyFamily(published)
+	staged[name] = &replacement
+	sm.promotionPolicies = staged
+	return lease.commitPolicy(func() { sm.promotionPolicies = published })
 }
 
 // ShowPromotionPolicies returns all stored promotion policies.
@@ -411,12 +384,8 @@ func (sm *SchemaManager) ShowPromotionPolicies() []knowledgepolicy.PromotionPoli
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
-	policies := make([]knowledgepolicy.PromotionPolicyDef, 0, len(sm.promotionPolicies))
-	for _, p := range sm.promotionPolicies {
-		policies = append(policies, clonePromotionPolicy(*p))
-	}
-	sort.Slice(policies, func(i, j int) bool { return policies[i].Name < policies[j].Name })
-	return policies
+	return sortedPolicyCopies(sm.promotionPolicies, clonePromotionPolicy,
+		func(a, b *knowledgepolicy.PromotionPolicyDef) int { return strings.Compare(a.Name, b.Name) })
 }
 
 // GetBindingTable returns the current compiled binding table, or nil if not built.
@@ -434,8 +403,8 @@ func (sm *SchemaManager) SetBindingTable(bt *knowledgepolicy.BindingTable) {
 }
 
 // rebuildBindingTableLocked recompiles the BindingTable from current schema
-// state. Called under sm.mu.Lock() after every mutating DDL operation so the
-// scorer always sees a consistent, up-to-date table.
+// state. Called under sm.mu.Lock() after every accepted mutating DDL operation
+// so the scorer always sees a consistent, up-to-date table.
 func (sm *SchemaManager) rebuildBindingTableLocked() {
 	bt, err := knowledgepolicy.BuildBindingTable(
 		sm.decayProfileBundles,
@@ -446,14 +415,6 @@ func (sm *SchemaManager) rebuildBindingTableLocked() {
 	if err == nil {
 		sm.bindingTable = bt
 	}
-}
-
-// persistIfSet calls the persist hook if one is set.
-func (sm *SchemaManager) persistIfSet() error {
-	if sm.persist == nil {
-		return nil
-	}
-	return sm.persist(sm.exportDefinitionLocked())
 }
 
 func (sm *SchemaManager) isBundleReferenced(name string) bool {
@@ -745,4 +706,31 @@ func toFloat64(v interface{}) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// sortedPolicyCopies is the owned, deterministic SHOW projection shared by
+// every policy family. The caller holds schema.mu; clone retains each family's
+// value ownership and receives the stored pointer, so no definition is copied
+// into a callback argument and a definition that holds no reference fields is
+// copied straight from the stored pointer (nil clone). The sort compares and
+// swaps the stored pointers, so the only definition-sized buffer is the
+// returned slice itself. The typed sort avoids reflection and auxiliary key
+// slices.
+func sortedPolicyCopies[T any](stored map[string]*T, clone func(*T) T, compare func(*T, *T) int) []T {
+	refs := make([]*T, 0, len(stored))
+	for _, value := range stored {
+		refs = append(refs, value)
+	}
+	slices.SortFunc(refs, compare)
+	out := make([]T, len(refs))
+	if clone == nil {
+		for i, ref := range refs {
+			out[i] = *ref
+		}
+	} else {
+		for i, ref := range refs {
+			out[i] = clone(ref)
+		}
+	}
+	return out
 }

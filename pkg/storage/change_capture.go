@@ -716,7 +716,7 @@ func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (in
 	}
 	for start := 0; start < len(expired); start += 1000 {
 		end := min(start+1000, len(expired))
-		if err := b.withMetadataUpdate(func(txn *badger.Txn) error {
+		if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for _, key := range expired[start:end] {
 				if err := txn.Delete(key); err != nil {
 					return err

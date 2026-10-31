@@ -22,21 +22,37 @@ import (
 	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
-// bufferedOpKind identifies one committed mutation kind.
-type bufferedOpKind uint8
+// BufferedOpKind identifies one committed mutation kind: a node image, an
+// edge image, or a raw delete key.
+type BufferedOpKind uint8
 
 const (
-	bufferedOpNode bufferedOpKind = iota
-	bufferedOpEdge
-	bufferedOpDelete
+	// BufferedOpNode admits a node image in BufferedMutation.Node.
+	BufferedOpNode BufferedOpKind = iota
+	// BufferedOpEdge admits an edge image in BufferedMutation.Edge.
+	BufferedOpEdge
+	// BufferedOpDelete admits a raw delete key in BufferedMutation.ID.
+	BufferedOpDelete
 )
 
-// bufferedMutation is one ordered entry of a generation's replay log.
+// BufferedMutation is one transient committed mutation submitted to Append.
+// Append derives ID from the payload of a node or edge request, so a caller
+// sets the payload matching Kind and leaves ID empty; a delete request sets
+// only ID. It is a request value, not the generation replay record: the
+// replay log keeps its own private bufferedMutation entries.
+type BufferedMutation struct {
+	Kind BufferedOpKind
+	ID   string // node or edge ID derived by Append, or the raw delete key
+	Node *Node  // payload for BufferedOpNode
+	Edge *Edge  // payload for BufferedOpEdge
+}
+
+// bufferedMutation is one ordered entry of the generation replay log.
 type bufferedMutation struct {
-	kind bufferedOpKind
+	kind BufferedOpKind
 	id   string // node or edge ID, or the raw delete key
-	node *Node  // payload for bufferedOpNode
-	edge *Edge  // payload for bufferedOpEdge
+	node *Node  // payload for BufferedOpNode
+	edge *Edge  // payload for BufferedOpEdge
 }
 
 // bufferedCommit is one committed statement captured at BadgerTransaction
@@ -319,7 +335,7 @@ func (b *CommitBuffer) addNode(n *Node) {
 	copyNode := *n
 	b.clearEntityDeletion(bufferedNodeEntity, string(n.ID))
 	b.nodes[n.ID] = &copyNode
-	b.order = append(b.order, bufferedMutation{kind: bufferedOpNode, id: string(n.ID), node: &copyNode})
+	b.order = append(b.order, bufferedMutation{kind: BufferedOpNode, id: string(n.ID), node: &copyNode})
 	b.indexNodeLabels(n.ID, n.Labels)
 }
 
@@ -345,7 +361,7 @@ func (b *CommitBuffer) addEdge(e *Edge) {
 	copyEdge := *e
 	b.clearEntityDeletion(bufferedEdgeEntity, string(e.ID))
 	b.edges[e.ID] = &copyEdge
-	b.order = append(b.order, bufferedMutation{kind: bufferedOpEdge, id: string(e.ID), edge: &copyEdge})
+	b.order = append(b.order, bufferedMutation{kind: BufferedOpEdge, id: string(e.ID), edge: &copyEdge})
 	b.edgesByType[e.Type] = append(b.edgesByType[e.Type], e.ID)
 	b.indexEdgeAdjacency(&copyEdge)
 	b.edgeCreateCount++
@@ -375,7 +391,7 @@ func (b *CommitBuffer) addDelete(key string) {
 		return
 	}
 	b.deletes[key] = bufferedNodeEntity | bufferedEdgeEntity
-	b.order = append(b.order, bufferedMutation{kind: bufferedOpDelete, id: key})
+	b.order = append(b.order, bufferedMutation{kind: BufferedOpDelete, id: key})
 }
 
 // getNode resolves the latest buffered state for id in this generation.
@@ -562,52 +578,92 @@ func (w *WriteBehindBuffer) signal() {
 	}
 }
 
-// AppendNode appends an owned copy of a committed node write to the active generation.
-func (w *WriteBehindBuffer) AppendNode(n *Node) {
-	n = copyNode(n)
-	w.mu.Lock()
-	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
-	if n != nil {
-		w.markReadScopeLocked(string(n.ID))
+// namesScope reports whether the mutation names a read scope. A nil node or
+// edge payload is admitted without one; every delete names its raw key, the
+// empty key included.
+func (m BufferedMutation) namesScope() bool {
+	switch m.Kind {
+	case BufferedOpNode:
+		return m.Node != nil
+	case BufferedOpEdge:
+		return m.Edge != nil
 	}
-	w.active.addNode(n)
-	w.opCount++
-	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
-	w.mu.Unlock()
-	if rotate {
-		w.signal()
-	}
+	return true
 }
 
-// AppendEdge appends an owned copy of a committed edge write to the active generation.
-func (w *WriteBehindBuffer) AppendEdge(e *Edge) {
-	e = copyEdge(e)
-	w.mu.Lock()
-	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
-	if e != nil {
-		w.markReadScopeLocked(string(e.ID))
+// validate rejects a mutation whose Kind and payload fields cannot describe
+// a buffered operation. Append calls it before copying a payload or taking
+// the buffer lock, so an invalid request leaves the overlay, the read epoch
+// and the operation count untouched.
+func (m BufferedMutation) validate() error {
+	switch m.Kind {
+	case BufferedOpNode:
+		if m.Edge != nil {
+			return fmt.Errorf("append buffered node: unexpected edge payload: %w", ErrInvalidData)
+		}
+	case BufferedOpEdge:
+		if m.Node != nil {
+			return fmt.Errorf("append buffered edge: unexpected node payload: %w", ErrInvalidData)
+		}
+	case BufferedOpDelete:
+		if m.Node != nil || m.Edge != nil {
+			return fmt.Errorf("append buffered delete: unexpected node or edge payload: %w", ErrInvalidData)
+		}
+	default:
+		return fmt.Errorf("append buffered mutation: unknown kind %d: %w", m.Kind, ErrInvalidData)
 	}
-	w.active.addEdge(e)
-	w.opCount++
-	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
-	w.mu.Unlock()
-	if rotate {
-		w.signal()
-	}
+	return nil
 }
 
-// AppendDelete appends a committed delete to the active generation.
-func (w *WriteBehindBuffer) AppendDelete(key string) {
+// Append appends one committed mutation to the active generation.
+//
+// Append owns its input: a node or edge payload is deep-copied before the
+// lock, so a caller may keep using, or drop, the value it passed and the
+// buffered overlay keeps the image it acknowledged. A node or edge request
+// derives ID from its payload. A nil node or edge payload names no read scope
+// and leaves the overlay unchanged, but it is still one admitted operation and
+// still counts toward the rotation threshold. A delete names its raw key and
+// touches no entity body. The read epoch, read scopes, size accounting,
+// rotation decision and rotation signal happen once here for every kind.
+//
+// Append returns ErrInvalidData for an unknown Kind or for payload fields that
+// do not match Kind, without changing the buffer.
+func (w *WriteBehindBuffer) Append(m BufferedMutation) error {
+	if err := m.validate(); err != nil {
+		return err
+	}
+	switch m.Kind {
+	case BufferedOpNode:
+		m.Node = copyNode(m.Node)
+		if m.Node != nil {
+			m.ID = string(m.Node.ID)
+		}
+	case BufferedOpEdge:
+		m.Edge = copyEdge(m.Edge)
+		if m.Edge != nil {
+			m.ID = string(m.Edge.ID)
+		}
+	}
 	w.mu.Lock()
 	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
-	w.markReadScopeLocked(key)
-	w.active.addDelete(key)
+	if m.namesScope() {
+		w.markReadScopeLocked(m.ID)
+	}
+	switch m.Kind {
+	case BufferedOpNode:
+		w.active.addNode(m.Node)
+	case BufferedOpEdge:
+		w.active.addEdge(m.Edge)
+	case BufferedOpDelete:
+		w.active.addDelete(m.ID)
+	}
 	w.opCount++
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
 	w.mu.Unlock()
 	if rotate {
 		w.signal()
 	}
+	return nil
 }
 
 // AppendCommit appends one committed statement captured at transaction

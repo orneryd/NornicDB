@@ -249,7 +249,7 @@ func (b *BadgerEngine) Close() error {
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
 	if b.writeBehind != nil {
-		if err := b.FlushWriteBehind(); err != nil && b.log != nil {
+		if err := b.FlushWriteBehind(nil); err != nil && b.log != nil {
 			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
 		}
 		b.writeBehind.Close()
@@ -429,7 +429,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		// prefix of stale markers larger than one batch must still make
 		// durable progress toward the live candidates behind it.
 		batchFull := false
-		err := b.withMetadataUpdate(func(txn *badger.Txn) error {
+		err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for len(p.ids) > 0 && !batchFull {
 				nodeID := p.ids[0]
 				if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
@@ -584,7 +584,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 
 	// First pass: Clean up stale entries in the pending index
 	// Remove entries for nodes that don't exist or already have embeddings
-	cleanupErr := b.withMetadataUpdate(func(txn *badger.Txn) error {
+	cleanupErr := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		pendingPrefix := []byte{prefixPendingEmbed}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(pendingPrefix))
 		defer it.Close()
@@ -668,7 +668,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	}
 
 	// Second pass: Add missing nodes to the index
-	_ = b.withMetadataUpdate(func(txn *badger.Txn) error {
+	_ = b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()

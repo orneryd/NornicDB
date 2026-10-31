@@ -158,6 +158,10 @@ func (m *managedBadgerDB) Update(fn func(txn *badger.Txn) error) error {
 	return m.update(context.Background(), fn, nil)
 }
 
+// updateMetadata is the metadata-only adapter for badgerKV's callback shape.
+// idDictionary.persistCounters selects this method value instead of db.Update
+// so managed counter writes publish metadata scope rather than invalidating
+// entity caches. Request-bearing callers use updateMetadataContext directly.
 func (m *managedBadgerDB) updateMetadata(fn func(txn *badger.Txn) error) error {
 	return m.updateMetadataContext(context.Background(), fn)
 }
@@ -215,7 +219,7 @@ func (m *managedBadgerDB) commit(ctx context.Context, txn *badger.Txn, publicati
 	if err != nil {
 		return err
 	}
-	return m.oracle.waitPublished(ts)
+	return m.oracle.waitPublished(nil, ts)
 }
 
 func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, publish *commitPublication) (uint64, error) {
@@ -539,12 +543,8 @@ type largeCommit struct {
 	batches int
 }
 
-// beginLargeCommit takes the commit gate exclusively and durably records the
-// intent of a large commit.
-func (m *managedBadgerDB) beginLargeCommit(ctx context.Context, onAssign ...func()) (*largeCommit, error) {
-	return m.beginLargeCommitContext(ctx, onAssign...)
-}
-
+// beginLargeCommitContext takes the commit gate exclusively and durably
+// records the intent of a large commit.
 func (m *managedBadgerDB) beginLargeCommitContext(ctx context.Context, onAssign ...func()) (*largeCommit, error) {
 	if err := m.commitGate.LockContext(ctx); err != nil {
 		return nil, err
@@ -918,13 +918,9 @@ func (o *commitOracle) advanceTo(ts uint64) {
 // waitPublished waits until ts is published, so a committer reads its own
 // write. It only waits behind commits that were assigned an earlier
 // timestamp and are still writing.
-func (o *commitOracle) waitPublished(ts uint64) error {
-	return o.waitPublishedContext(nil, ts)
-}
-
-// waitPublishedContext is cancellable only for preparation. A completed user
-// action retains the existing noncancellable success tail through waitPublished.
-func (o *commitOracle) waitPublishedContext(ctx context.Context, ts uint64) error {
+// A preparation waiter supplies its context. Completed user actions pass nil
+// so cancellation cannot turn an accepted physical success into a rollback.
+func (o *commitOracle) waitPublished(ctx context.Context, ts uint64) error {
 	for {
 		if o.published.Load() >= ts {
 			return nil

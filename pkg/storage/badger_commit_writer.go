@@ -99,20 +99,9 @@ func (cw *commitWriter) openBatch() *badger.Txn {
 // (rollbackSince).
 func (cw *commitWriter) commitTokens(txn *badger.Txn) error {
 	dict := cw.engine.propKeyDict
-	drain := dict.flushTxnCounters(txn)
-	if drain.empty() {
-		return nil
-	}
-	tokens := &batchWriter{to: cw.large}
-	defer tokens.discard()
-	err := drain.writeTo(tokens)
-	if err == nil {
-		err = tokens.flush()
-	}
-	if err != nil {
+	if err := dict.persistTxnCounters(cw.large, dict.flushTxnCounters(txn)); err != nil {
 		return fmt.Errorf("%w: %w", errPersistingTokens, err)
 	}
-	dict.markPersisted(drain)
 	return nil
 }
 
@@ -123,7 +112,7 @@ func (cw *commitWriter) finish() error {
 	cw.collectPendingEmbeddingAdds(cw.txn)
 	if cw.large == nil {
 		dict := cw.engine.propKeyDict
-		if err := dict.persistTxnCounters(cw.ctx, cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
+		if err := dict.persistTxnCounters(metadataBatches{db: cw.db, ctx: cw.ctx}, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
 		if err := cw.commitOutcome(); err != nil {

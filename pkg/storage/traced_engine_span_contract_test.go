@@ -44,7 +44,6 @@ func tracedSpanNamed(t *testing.T, spans []sdktrace.ReadOnlySpan, name string) s
 // parented by the SetContext context and ended by the time the facade returns.
 func TestTracedEngine_SpanContract(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	traced := NewTracedEngine(inner)
 
 	type want struct {

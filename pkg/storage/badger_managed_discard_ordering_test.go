@@ -20,7 +20,6 @@ import (
 // without the fix it fails deterministically-ish under the race detector.
 func TestManagedDB_DiscardPublishOrdering(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	db := e.BadgerEngine.db
 
 	var mu sync.Mutex
@@ -66,7 +65,6 @@ func TestManagedDB_DiscardPublishOrdering(t *testing.T) {
 // "Assert failed" in cleanupCommittedTransactions.
 func TestManagedDB_ConcurrentUpdatesNoBadgerAssert(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	db := e.BadgerEngine.db
 
 	const goroutines = 8

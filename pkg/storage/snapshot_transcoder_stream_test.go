@@ -129,11 +129,11 @@ func TestSnapshotTranscoderStoredStreamDifferential(t *testing.T) {
 
 func TestSnapshotTranscoderOverlayDifferential(t *testing.T) {
 	engine := snapshotOverlayFixture(t)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	for _, id := range []EdgeID{"test:stable-r", "test:gone-r"} {
 		require.NoError(t, engine.CreateEdge(&Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true, Properties: map[string]any{"v": int64(2)}}))
 	}
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(nil))
 	// The stored-read owner must keep an untouched committed body, shadow an
 	// updated body, omit an acknowledged deletion, and include a pending edge.
 	tx, err := engine.BeginTransaction()

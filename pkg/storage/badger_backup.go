@@ -21,7 +21,7 @@ import (
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
 	// Every write acknowledged before the backup is in it.
-	if err := b.FlushWriteBehind(); err != nil {
+	if err := b.FlushWriteBehind(nil); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	b.mu.RLock()

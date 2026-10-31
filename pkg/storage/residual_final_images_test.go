@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +20,7 @@ func TestResidualFinalCacheImages(t *testing.T) {
 	for _, route := range []string{"ordinary", "buffered", "large", "prepared", "wal"} {
 		for _, ending := range []string{"update", "delete-edge", "cascade", "move-type"} {
 			t.Run(route+"/"+ending, func(t *testing.T) {
-				b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: route == "buffered", LowMemory: route == "large", WriteBehindInterval: time.Hour})
+				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: route == "buffered", LowMemory: route == "large", WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = b.Close() })
 				for _, id := range []NodeID{"test:a", "test:b", "test:middle"} {
@@ -135,7 +136,7 @@ func TestResidualFinalCacheImages(t *testing.T) {
 				} else {
 					require.NoError(t, tx.Commit())
 				}
-				require.NoError(t, b.FlushWriteBehind())
+				require.NoError(t, b.FlushWriteBehind(nil))
 				require.True(t, observed)
 				require.NoError(t, observationErr)
 				point, err := b.GetStoredEdge("test:e")
@@ -153,7 +154,7 @@ func TestResidualFinalCacheImages(t *testing.T) {
 func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		t.Run(fmt.Sprintf("buffered=%v", buffered), func(t *testing.T) {
-			b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour})
+			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			for _, id := range []NodeID{"test:keep-a", "test:keep-b"} {
@@ -161,6 +162,8 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, b.CreateEdge(&Edge{ID: "test:keep-e", StartNode: "test:keep-a", EndNode: "test:keep-b", Type: "KEEP"}))
+			// Land the fixture before warming physical caches; overlay scans need not populate them.
+			require.NoError(t, b.FlushWriteBehind(nil))
 			_, err = b.GetStoredNode("test:keep-a")
 			require.NoError(t, err)
 			_, err = b.GetOutgoingEdges("test:keep-a")
@@ -180,6 +183,25 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 			}))
 			types := reflect.ValueOf(b.edgeTypeCache["KEEP"]).Pointer()
 			adjacency := reflect.ValueOf(b.outgoingAdjCache["test:keep-a"]).Pointer()
+			require.NotNil(t, node, "the retained node cache assertion must observe a warm entry")
+			require.NotNil(t, edge, "the retained edge cache assertion must observe a warm entry")
+			if buffered {
+				require.Zero(t, types, "write-behind intentionally bypasses whole-type cache admission")
+			} else {
+				require.NotZero(t, types, "the sync type-cache assertion must observe a warm entry")
+			}
+			require.NotZero(t, adjacency)
+			assertWarm := func() {
+				t.Helper()
+				require.Same(t, node, b.nodeCache["test:keep-a"])
+				require.Same(t, edge, b.edgeCache["test:keep-e"])
+				require.Equal(t, types, reflect.ValueOf(b.edgeTypeCache["KEEP"]).Pointer())
+				require.Equal(t, adjacency, reflect.ValueOf(b.outgoingAdjCache["test:keep-a"]).Pointer())
+				got, err := b.GetEdgesByType("KEEP")
+				require.NoError(t, err)
+				require.Len(t, got, 1)
+				require.Equal(t, EdgeID("test:keep-e"), got[0].ID)
+			}
 			if buffered {
 				tx, err := b.BeginTransaction()
 				require.NoError(t, err)
@@ -194,7 +216,8 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 					}
 				}
 				require.NoError(t, tx.Commit())
-				require.NoError(t, b.FlushWriteBehind())
+				assertWarm() // ACK visibility must preserve unrelated caches before replay too.
+				require.NoError(t, b.FlushWriteBehind(nil))
 			} else {
 				_, err := b.CreateNode(&Node{ID: "other:new", Labels: []string{"OTHER"}, Properties: map[string]any{"fresh-property": int64(1)}})
 				require.NoError(t, err)
@@ -202,10 +225,7 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 			if stack := globalIssuer.Load(); stack != nil {
 				t.Logf("global cache issuer: %s", *stack)
 			}
-			require.Same(t, node, b.nodeCache["test:keep-a"])
-			require.Same(t, edge, b.edgeCache["test:keep-e"])
-			require.Equal(t, types, reflect.ValueOf(b.edgeTypeCache["KEEP"]).Pointer())
-			require.Equal(t, adjacency, reflect.ValueOf(b.outgoingAdjCache["test:keep-a"]).Pointer())
+			assertWarm()
 		})
 	}
 }

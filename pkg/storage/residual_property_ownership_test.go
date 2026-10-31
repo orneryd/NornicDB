@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ func TestResidualPropertyOwnership(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			dir := t.TempDir()
 			open := func() *storage.BadgerEngine {
-				b, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: route == "buffered", WriteBehindInterval: time.Hour})
+				b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: route == "buffered", WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				return b
 			}
@@ -56,7 +57,7 @@ func TestResidualPropertyOwnership(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "original", second.Properties["nested"].(map[string]any)["list"].([]any)[1])
 			require.Equal(t, "original", second.EmbedMeta["nested"].([]any)[1])
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			require.NoError(t, b.Close())
 			b = open()
 			cold, err := b.GetStoredNode(node.ID)
@@ -68,7 +69,7 @@ func TestResidualPropertyOwnership(t *testing.T) {
 }
 
 func TestResidualUint64PropertyList(t *testing.T) {
-	b, err := storage.NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.CreateNode(&storage.Node{ID: "test:uints", Properties: map[string]any{"xs": []uint64{1, math.MaxUint64}}})

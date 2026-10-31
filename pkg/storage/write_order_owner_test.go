@@ -44,7 +44,7 @@ func TestWriteMVCCHeadNeverMovesBackwards(t *testing.T) {
 			_, err = e.CreateNode(&Node{ID: "test:b", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
 			require.NoError(t, e.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
-			require.NoError(t, e.FlushWriteBehind())
+			require.NoError(t, e.FlushWriteBehind(nil))
 
 			nodeNum, ok := e.idDict.nodeForwardLookup("test:a")
 			require.True(t, ok)
@@ -65,7 +65,7 @@ func TestWriteMVCCHeadNeverMovesBackwards(t *testing.T) {
 				read, err := e.ReadMVCCHead(ctx, logical)
 				require.NoError(t, err, kind)
 				require.NoError(t, update[kind](), kind)
-				require.NoError(t, e.FlushWriteBehind())
+				require.NoError(t, e.FlushWriteBehind(nil))
 				newer, err := e.ReadMVCCHead(ctx, logical)
 				require.NoError(t, err, kind)
 				require.Positive(t, newer.Version.Compare(read.Version), kind)
@@ -101,7 +101,7 @@ func TestMVCCWritersApplyAcknowledgedCommitsFirst(t *testing.T) {
 	e := newOwnerTestEngine(t, true)
 	_, err := e.CreateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, e.FlushWriteBehind())
+	require.NoError(t, e.FlushWriteBehind(nil))
 	head, err := e.GetNodeCurrentHead("test:a")
 	require.NoError(t, err)
 
@@ -128,7 +128,7 @@ func TestBufferedRelationshipDeleteConflictsWithLaterCommit(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, e.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-	require.NoError(t, e.FlushWriteBehind())
+	require.NoError(t, e.FlushWriteBehind(nil))
 
 	tx, err := e.BeginTransaction()
 	require.NoError(t, err)
@@ -143,7 +143,7 @@ func TestBufferedRelationshipDeleteConflictsWithLaterCommit(t *testing.T) {
 	require.NotZero(t, e.writeBehind.PendingOps())
 
 	require.ErrorIs(t, tx.Commit(), ErrConflict)
-	require.NoError(t, e.FlushWriteBehind())
+	require.NoError(t, e.FlushWriteBehind(nil))
 	count, err := e.EdgeCount()
 	require.NoError(t, err)
 	require.Zero(t, count, "the relationship is deleted and counted once")
@@ -155,7 +155,7 @@ func TestFlushWriteBehindAfterClose(t *testing.T) {
 	_, err := e.CreateNode(&Node{ID: "test:a"})
 	require.NoError(t, err)
 	require.NoError(t, e.Close())
-	require.NoError(t, e.FlushWriteBehind())
+	require.NoError(t, e.FlushWriteBehind(nil))
 }
 
 // A prefix delete of another namespace does not fail a transaction open
@@ -173,7 +173,7 @@ func TestPrefixDeleteOfAnotherNamespaceKeepsOpenTransaction(t *testing.T) {
 			_, _, err = e.DeleteByPrefix("other:")
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit())
-			require.NoError(t, e.FlushWriteBehind())
+			require.NoError(t, e.FlushWriteBehind(nil))
 			_, err = e.GetStoredNode("test:a")
 			require.NoError(t, err)
 		})

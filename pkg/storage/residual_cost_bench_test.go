@@ -92,9 +92,13 @@ func BenchmarkResidualCosts(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					if kind == "node" {
-						buffer.AppendNode(node)
+						if err := buffer.Append(BufferedMutation{Kind: BufferedOpNode, Node: node}); err != nil {
+							b.Fatal(err)
+						}
 					} else {
-						buffer.AppendEdge(edge)
+						if err := buffer.Append(BufferedMutation{Kind: BufferedOpEdge, Edge: edge}); err != nil {
+							b.Fatal(err)
+						}
 					}
 					if (i+1)%1024 == 0 {
 						b.StopTimer()

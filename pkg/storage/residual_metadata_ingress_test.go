@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -14,7 +15,7 @@ import (
 func TestResidualMetadataIngressOwnership(t *testing.T) {
 	for _, origin := range []string{"input", "returned"} {
 		t.Run(origin, func(t *testing.T) {
-			b, err := storage.NewBadgerEngine(t.TempDir())
+			b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			b.SetChangeCapture("test", storage.ChangeCaptureFull)
@@ -67,7 +68,7 @@ func TestResidualBatchSerializationOwnsInput(t *testing.T) {
 	require.NoError(t, wal.Close())
 	entries, err := storage.ReadWALEntriesFromDir(dir)
 	require.NoError(t, err)
-	b, err := storage.NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	found := false

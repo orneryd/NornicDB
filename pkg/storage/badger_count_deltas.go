@@ -187,16 +187,24 @@ func countDeltaKeyParts(key []byte) (namespace, name string, ok bool) {
 	return string(key[2 : 2+sep]), string(key[2+sep+1 : 2+sep+1+nameSep]), true
 }
 
+// countFoldSource selects the lifecycle owner of a count fold. The zero
+// value uses normal engine admission; a supplied database is owned by Close
+// or Restore, with held selecting Restore's already-acquired database hold.
+type countFoldSource struct {
+	db   *managedBadgerDB
+	held bool
+}
+
 // foldCountDeltaKeys folds one bounded set of delta keys into their base keys
-// in a single transaction run through run. Each chunk is atomic: it sums and
-// deletes exactly the keys it was handed and adds the chunk sums to the base
+// in one transaction under source lifecycle ownership. Each chunk atomically
+// sums and deletes exactly the keys it was handed and adds the sums to the base
 // keys, so a crash between chunks leaves the remaining deltas to fold at the
 // next open (or the next read past the fold threshold). Keys are collected
 // up front, so a delta appended by a concurrent commit after collection is
 // never deleted without being summed.
-func (b *BadgerEngine) foldCountDeltaKeys(run func(func(*badger.Txn) error) error, baseKey func(string, string) []byte, keys [][]byte) error {
+func (b *BadgerEngine) foldCountDeltaKeys(source countFoldSource, baseKey func(string, string) []byte, keys [][]byte) error {
 	sums := make(map[namespaceLabel]int64)
-	return run(func(txn *badger.Txn) error {
+	write := func(txn *badger.Txn) error {
 		for _, key := range keys {
 			ns, name, ok := countDeltaKeyParts(key)
 			if !ok {
@@ -243,17 +251,24 @@ func (b *BadgerEngine) foldCountDeltaKeys(run func(func(*badger.Txn) error) erro
 			}
 		}
 		return nil
-	})
+	}
+	if source.db == nil {
+		return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, write)
+	}
+	if source.held {
+		return source.db.updateHeld(write)
+	}
+	return source.db.Update(write)
 }
 
 // foldCountDeltaKeysChunked folds keys in bounded transactions.
-func (b *BadgerEngine) foldCountDeltaKeysChunked(run func(func(*badger.Txn) error) error, baseKey func(string, string) []byte, keys [][]byte) error {
+func (b *BadgerEngine) foldCountDeltaKeysChunked(source countFoldSource, baseKey func(string, string) []byte, keys [][]byte) error {
 	for start := 0; start < len(keys); start += countDeltaFoldChunk {
 		end := start + countDeltaFoldChunk
 		if end > len(keys) {
 			end = len(keys)
 		}
-		if err := b.foldCountDeltaKeys(run, baseKey, keys[start:end]); err != nil {
+		if err := b.foldCountDeltaKeys(source, baseKey, keys[start:end]); err != nil {
 			return err
 		}
 	}
@@ -262,11 +277,17 @@ func (b *BadgerEngine) foldCountDeltaKeysChunked(run func(func(*badger.Txn) erro
 
 // foldCountDeltasOn collapses the persisted deltas of one namespace/name pair
 // (or every delta of one kind when namespace is empty) in bounded
-// transactions. view and run supply the read and write transaction runners so
-// the same kernel serves engine paths (b.withView / b.withUpdate) and the
-// post-close raw-handle path.
-func (b *BadgerEngine) foldCountDeltasOn(view func(func(*badger.Txn) error) error, run func(func(*badger.Txn) error) error, kind byte, baseKey func(string, string) []byte, namespace, name string) error {
+// transactions. The same kernel selects normal engine admission, Restore
+// ownership or the post-close database handle from source.
+func (b *BadgerEngine) foldCountDeltasOn(source countFoldSource, kind byte, baseKey func(string, string) []byte, namespace, name string) error {
 	var keys [][]byte
+	view := b.withView
+	if source.db != nil {
+		view = source.db.View
+		if source.held {
+			view = source.db.viewHeld
+		}
+	}
 	if err := view(func(txn *badger.Txn) error {
 		var prefix []byte
 		if namespace == "" {
@@ -286,7 +307,7 @@ func (b *BadgerEngine) foldCountDeltasOn(view func(func(*badger.Txn) error) erro
 	if len(keys) == 0 {
 		return nil
 	}
-	return b.foldCountDeltaKeysChunked(run, baseKey, keys)
+	return b.foldCountDeltaKeysChunked(source, baseKey, keys)
 }
 
 // foldCountDeltasChunked collapses the persisted deltas of one
@@ -294,21 +315,21 @@ func (b *BadgerEngine) foldCountDeltasOn(view func(func(*badger.Txn) error) erro
 // transaction fold for reads past the fold threshold, where a single pair
 // may hold hundreds of thousands of deltas.
 func (b *BadgerEngine) foldCountDeltasChunked(kind byte, baseKey func(string, string) []byte, namespace, name string) error {
-	return b.foldCountDeltasOn(b.withView, func(fn func(*badger.Txn) error) error { return b.withMetadataUpdate(fn) }, kind, baseKey, namespace, name)
+	return b.foldCountDeltasOn(countFoldSource{}, kind, baseKey, namespace, name)
 }
 
 // foldRestoredCountDeltas folds every derived-count delta a restore loaded,
 // past the restore's read hold.
 func (b *BadgerEngine) foldRestoredCountDeltas(db *managedBadgerDB) error {
 	b.labelCountWriteMu.Lock()
-	err := b.foldCountDeltasOn(db.viewHeld, db.updateHeld, countDeltaKindLabel, labelCountKey, "", "")
+	err := b.foldCountDeltasOn(countFoldSource{db: db, held: true}, countDeltaKindLabel, labelCountKey, "", "")
 	b.labelCountWriteMu.Unlock()
 	if err != nil {
 		return err
 	}
 	b.edgeTypeCountWriteMu.Lock()
 	defer b.edgeTypeCountWriteMu.Unlock()
-	return b.foldCountDeltasOn(db.viewHeld, db.updateHeld, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
+	return b.foldCountDeltasOn(countFoldSource{db: db, held: true}, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
 }
 
 // readDerivedCountInTxn reads one persisted base count (0 when absent).

@@ -102,7 +102,7 @@ func TestStreamNodesByLabelProjectedHidesDeindexedNodes(t *testing.T) {
 	eng, created := labelScanFixture(t, count)
 	eng.SetDecayEnabled(true)
 	hidden := []NodeID{created[0], created[count-1]}
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for _, id := range hidden {
 			num, ok := eng.idDict.lookupNodeNumID(id)
 			require.True(t, ok)
@@ -123,7 +123,7 @@ func TestStreamNodesByLabelProjectedSkipsMissingRecords(t *testing.T) {
 	const count = labelScanPointLookups + 50
 	eng, created := labelScanFixture(t, count)
 	gone := []NodeID{created[1], created[count-1]}
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for _, id := range gone {
 			if err := txn.Delete(nodeKey(id)); err != nil {
 				return err
@@ -171,7 +171,7 @@ func TestStreamNodesByLabelProjectedRejectsCorruptRecords(t *testing.T) {
 			if phase == "one-pass" {
 				corrupt = created[count-1]
 			}
-			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(nodeKey(corrupt), []byte{0xff})
 			}))
 			for _, properties := range [][]string{nil, {"i"}} {
@@ -234,7 +234,7 @@ func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
 			eng, created := labelScanFixture(t, count)
 			// Reverse creation order puts this last label candidate first in
 			// the one-pass record walk, before valid pending candidates.
-			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(nodeKey(created[count-1]), []byte{0xff})
 			}))
 			for _, transaction := range []bool{false, true} {

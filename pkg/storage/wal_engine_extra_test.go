@@ -52,7 +52,6 @@ func (e *walLabelFallbackEngine) GetNodesByLabel(string) ([]*Node, error) {
 
 func TestWALEngine_GetInnerEngine_Delegation(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
 	// Engine returned must be the same instance we wrapped — callers
@@ -78,7 +77,6 @@ func TestWALEngine_Logger_FallsBackToDiscard(t *testing.T) {
 
 func TestWALEngine_TemporalDelegation(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
 	// IsCurrentTemporalNode delegates; with no temporal index the
@@ -99,7 +97,6 @@ func TestWALEngine_TemporalDelegation(t *testing.T) {
 
 func TestWALEngine_LifecycleDelegation(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
 	// SetLifecycleSchedule delegates when the inner engine implements
@@ -114,7 +111,6 @@ func TestWALEngine_LifecycleDelegation(t *testing.T) {
 
 func TestWALEngine_NamespaceListing(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
 	// Empty store → no namespaces.
@@ -132,7 +128,6 @@ func TestWALEngine_NamespaceListing(t *testing.T) {
 
 func TestWALEngine_AdjacentAndLabelCountFallbacks(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	for _, id := range []NodeID{"tenant:n1", "tenant:n2", "tenant:n3"} {
 		_, err := base.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}})
 		require.NoError(t, err)
@@ -255,7 +250,6 @@ func TestWALEngine_LabelFallbackBranches(t *testing.T) {
 
 func TestWALEngine_MVCCHeadDelegation(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
 	_, err := base.CreateNode(&Node{
@@ -283,7 +277,6 @@ func TestWALEngine_MVCCHeadDelegation(t *testing.T) {
 
 func TestWALEngine_LatestEffectiveAndVisible(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
 	_, err := base.CreateNode(&Node{ID: "test:n", Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
@@ -307,7 +300,6 @@ func TestWALEngine_LatestEffectiveAndVisible(t *testing.T) {
 
 func TestWALEngine_FallbacksForNonOptionalInterfaces(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(&nonMVCCEngine{Engine: base}, nil)
 
 	_, err := base.CreateNode(&Node{ID: "test:n", Labels: []string{"L"}, Properties: map[string]any{}})

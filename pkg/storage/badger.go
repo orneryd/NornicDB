@@ -1368,7 +1368,7 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 	encodedSeq := make([]byte, 8)
 	binary.BigEndian.PutUint64(encodedSeq, seq)
 	persistKey := state.persistKey
-	_ = b.db.updateMetadata(func(txn *badger.Txn) error {
+	_ = b.db.updateMetadataContext(context.Background(), func(txn *badger.Txn) error {
 		return txn.Set(persistKey, encodedSeq)
 	})
 }
@@ -1428,7 +1428,7 @@ func accessSchemaVersionInTxn(txn *badger.Txn, operation schemaVersionAccess, va
 }
 
 func (b *BadgerEngine) writeSchemaVersion(version int) error {
-	return b.db.updateMetadata(func(txn *badger.Txn) error {
+	return b.db.updateMetadataContext(context.Background(), func(txn *badger.Txn) error {
 		_, err := accessSchemaVersionInTxn(txn, storeSchemaVersion, version)
 		return err
 	})

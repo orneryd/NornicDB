@@ -281,29 +281,37 @@ func TestRejectedBufferedCommitDropsUnpersistedIDBeforeRetry(t *testing.T) {
 	require.Equal(t, NodeID("test:rejected"), nodes[0].ID)
 }
 
+// numericIDKinds are the dictionary freelists both rejected-adopter tests cover.
+var numericIDKinds = []byte{freelistKindNode, freelistKindEdge}
+
+// resolveNumericIDForKind resolves or allocates id's number in kind's dictionary
+// inside tx, returning the number an adopter must agree on.
+func resolveNumericIDForKind(t *testing.T, b *BadgerEngine, tx *badger.Txn, kind byte, id string) uint64 {
+	t.Helper()
+	var (
+		num uint64
+		err error
+	)
+	if kind == freelistKindNode {
+		num, err = resolveOrAllocateNumericIDInTxn(b.idDict, tx, NodeID(id))
+	} else {
+		num, err = resolveOrAllocateNumericIDInTxn(b.idDict, tx, EdgeID(id))
+	}
+	require.NoError(t, err)
+	return num
+}
+
 // A later adopter can be rejected while the original writer is still able to
 // commit. Its rejection must not remove the original writer's in-memory ID.
 func TestNumericIDRejectedAdopterPreservesLiveWinner(t *testing.T) {
-	for _, kind := range []byte{freelistKindNode, freelistKindEdge} {
+	for _, kind := range numericIDKinds {
 		t.Run(string(kind), func(t *testing.T) {
-			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			newTxn := writeTxnFor(t, b)
 			winner, adopter := newTxn(), newTxn()
-			resolve := func(tx *badger.Txn) uint64 {
-				t.Helper()
-				var num uint64
-				if kind == freelistKindNode {
-					num, err = resolveOrAllocateNumericIDInTxn(b.idDict, tx, NodeID("test:adopted"))
-				} else {
-					num, err = resolveOrAllocateNumericIDInTxn(b.idDict, tx, EdgeID("test:adopted"))
-				}
-				require.NoError(t, err)
-				return num
-			}
-			winningID := resolve(winner)
-			require.Equal(t, winningID, resolve(adopter))
+			winningID := resolveNumericIDForKind(t, b, winner, kind, "test:adopted")
+			require.Equal(t, winningID, resolveNumericIDForKind(t, b, adopter, kind, "test:adopted"))
 			b.idDict.flushTxnCounters(adopter)
 			b.idDict.abandonPending(b.idDict.takeTxnCommitting(adopter))
 			adopter.Discard()
@@ -331,24 +339,14 @@ func TestNumericIDRejectedAdopterPreservesLiveWinner(t *testing.T) {
 }
 
 func TestNumericIDCommittedWinnerSurvivesRejectedAdopter(t *testing.T) {
-	for _, kind := range []byte{freelistKindNode, freelistKindEdge} {
+	for _, kind := range numericIDKinds {
 		t.Run(string(kind), func(t *testing.T) {
-			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			newTxn := writeTxnFor(t, b)
 			winner, adopter := newTxn(), newTxn()
-			var first, second uint64
-			if kind == freelistKindNode {
-				first, err = resolveOrAllocateNumericIDInTxn(b.idDict, winner, NodeID("test:committed"))
-				require.NoError(t, err)
-				second, err = resolveOrAllocateNumericIDInTxn(b.idDict, adopter, NodeID("test:committed"))
-			} else {
-				first, err = resolveOrAllocateNumericIDInTxn(b.idDict, winner, EdgeID("test:committed"))
-				require.NoError(t, err)
-				second, err = resolveOrAllocateNumericIDInTxn(b.idDict, adopter, EdgeID("test:committed"))
-			}
-			require.NoError(t, err)
+			first := resolveNumericIDForKind(t, b, winner, kind, "test:committed")
+			second := resolveNumericIDForKind(t, b, adopter, kind, "test:committed")
 			require.Equal(t, first, second)
 			b.idDict.flushTxnCounters(adopter)
 			adopterState := b.idDict.takeTxnCommitting(adopter)

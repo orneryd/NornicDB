@@ -30,9 +30,10 @@ func ownPropertyValue(value any) (any, bool) {
 	return ownRetainedValue(value, true)
 }
 
-// Metadata shares recursive ownership with properties, while retaining its
-// codec's scalar and list types (DecodeNamedMetadata deliberately differs).
-func ownedMetadataValue(value any) any {
+// ownedValueCopy detaches an in-memory value without applying durable property
+// normalization. Generic entity copies, metadata and diagnostic images retain
+// their Go scalar/list types; durable ingress uses canonicalPropertyValue.
+func ownedValueCopy(value any) any {
 	owned, exact := ownRetainedValue(value, false)
 	if exact {
 		return owned
@@ -51,7 +52,28 @@ func ownedMetadataValue(value any) any {
 	return decoded["value"]
 }
 
+// ownedEntries copies src entries into dst, taking ownership of every value
+// through ownedValueCopy. A nil dst is allocated with room for src, so callers
+// that return an independent image always get a non-nil map, while callers that
+// must keep an absent map absent check the nil before the call.
+func ownedEntries(dst, src map[string]any) map[string]any {
+	if dst == nil {
+		dst = make(map[string]any, len(src))
+	}
+	for key, value := range src {
+		dst[key] = ownedValueCopy(value)
+	}
+	return dst
+}
+
 func ownRetainedValue(value any, propertyImage bool) (any, bool) {
+	// These immutable scalar images already match the durable decoder. Keep
+	// their existing interface boxes instead of allocating a replacement on
+	// every cache copy. Other numeric types still require codec normalization.
+	switch value.(type) {
+	case nil, string, bool, int64, float32, float64:
+		return value, true
+	}
 	if number, ok := convert.ReadNumber(value); ok {
 		if !propertyImage {
 			return value, true
@@ -74,8 +96,6 @@ func ownRetainedValue(value any, propertyImage bool) (any, bool) {
 		}
 	}
 	switch v := value.(type) {
-	case nil, string, bool:
-		return v, true
 	case OwnedPropertyValue:
 		rv := reflect.ValueOf(v)
 		if rv.Kind() == reflect.Pointer && rv.IsNil() {
@@ -106,11 +126,17 @@ func ownRetainedValue(value any, propertyImage bool) (any, bool) {
 		return time.Unix(v.Unix(), int64(v.Nanosecond())).In(location), true
 	case map[string]any:
 		if v == nil {
+			if !propertyImage {
+				return v, true
+			}
 			return nil, true
 		}
 		return ownRetainedMap(v, propertyImage)
 	case []byte:
 		if v == nil {
+			if !propertyImage {
+				return v, true
+			}
 			return nil, true
 		}
 		return slices.Clone(v), true
@@ -127,6 +153,9 @@ func ownRetainedValue(value any, propertyImage bool) (any, bool) {
 	}
 	if list, ok := convert.ReadList(value); ok {
 		if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice && rv.IsNil() {
+			if !propertyImage {
+				return value, true
+			}
 			return nil, true
 		}
 		if !propertyImage {
@@ -139,7 +168,9 @@ func ownRetainedValue(value any, propertyImage bool) (any, bool) {
 			}
 			exact := true
 			for i := 0; i < list.Len(); i++ {
-				item, ok := ownRetainedValue(list.At(i), false)
+				// The numeric list reader intentionally normalizes Go integers.
+				// Generic copies preserve the source element's concrete type.
+				item, ok := ownRetainedValue(original.Index(i).Interface(), false)
 				exact = exact && ok
 				if item != nil {
 					owned.Index(i).Set(reflect.ValueOf(item))

@@ -383,26 +383,22 @@ func (b *BadgerEngine) cacheInvalidateEdges() {
 	b.edgeCacheMu.Unlock()
 }
 
-// adjCacheLoadOutgoing returns the cached EdgeIDs incident to nodeID as
-// outgoing, or (nil, false) on miss. Returned slice is shared with the
-// cache; callers must treat it as read-only.
-func (b *BadgerEngine) adjCacheLoadOutgoing(nodeID NodeID) ([]EdgeID, bool) {
+// adjCacheLoad returns one direction's cached IDs. The shared slice is
+// read-only; a miss returns nil, false.
+func (b *BadgerEngine) adjCacheLoad(nodeID NodeID, outgoing bool) ([]EdgeID, bool) {
 	b.adjCacheMu.RLock()
-	ids, ok := b.outgoingAdjCache[nodeID]
+	cache := b.incomingAdjCache
+	if outgoing {
+		cache = b.outgoingAdjCache
+	}
+	ids, ok := cache[nodeID]
 	b.adjCacheMu.RUnlock()
 	return ids, ok
 }
 
-func (b *BadgerEngine) adjCacheLoadIncoming(nodeID NodeID) ([]EdgeID, bool) {
-	b.adjCacheMu.RLock()
-	ids, ok := b.incomingAdjCache[nodeID]
-	b.adjCacheMu.RUnlock()
-	return ids, ok
-}
-
-// adjCacheStoreOutgoing caches the outgoing IDs a read captured gen before
-// reading, unless the adjacency cache was written since (cacheGeneration).
-func (b *BadgerEngine) adjCacheStoreOutgoing(gen uint64, nodeID NodeID, ids []EdgeID, source uint64) {
+// adjCacheStore owns directional cache admission and the durable read floor.
+// It copies IDs only after both generation and source timestamp remain valid.
+func (b *BadgerEngine) adjCacheStore(gen uint64, nodeID NodeID, ids []EdgeID, source uint64, outgoing bool) {
 	b.durableCaches.mu.Lock()
 	defer b.durableCaches.mu.Unlock()
 	if source < max(b.durableCaches.all, b.durableCaches.adjacency[nodeID]) {
@@ -413,34 +409,16 @@ func (b *BadgerEngine) adjCacheStoreOutgoing(gen uint64, nodeID NodeID, ids []Ed
 	if b.adjCacheGen.current() != gen {
 		return
 	}
-	if b.adjCacheMaxNodes > 0 && len(b.outgoingAdjCache) > b.adjCacheMaxNodes {
-		b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	cache := &b.incomingAdjCache
+	if outgoing {
+		cache = &b.outgoingAdjCache
 	}
-	// Defensive copy: the iterator's growslice can re-allocate, but the
-	// caller's slice is the canonical one. Store a fresh slice header.
-	cached := make([]EdgeID, len(ids))
-	copy(cached, ids)
-	b.outgoingAdjCache[nodeID] = cached
-}
-
-// adjCacheStoreIncoming is adjCacheStoreOutgoing for incoming IDs.
-func (b *BadgerEngine) adjCacheStoreIncoming(gen uint64, nodeID NodeID, ids []EdgeID, source uint64) {
-	b.durableCaches.mu.Lock()
-	defer b.durableCaches.mu.Unlock()
-	if source < max(b.durableCaches.all, b.durableCaches.adjacency[nodeID]) {
-		return
-	}
-	b.adjCacheMu.Lock()
-	defer b.adjCacheMu.Unlock()
-	if b.adjCacheGen.current() != gen {
-		return
-	}
-	if b.adjCacheMaxNodes > 0 && len(b.incomingAdjCache) > b.adjCacheMaxNodes {
-		b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	if b.adjCacheMaxNodes > 0 && len(*cache) > b.adjCacheMaxNodes {
+		*cache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	}
 	cached := make([]EdgeID, len(ids))
 	copy(cached, ids)
-	b.incomingAdjCache[nodeID] = cached
+	(*cache)[nodeID] = cached
 }
 
 // adjCacheInvalidateForEdge drops the entries for both endpoints of edge.

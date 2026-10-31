@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,7 @@ func residualExecutor(b *storage.BadgerEngine) *cypher.StorageExecutor {
 }
 
 func TestResidualCypherMergeAdmissionCancellation(t *testing.T) {
-	b, err := storage.NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	require.NoError(t, b.GetSchemaForNamespace("test").AddUniqueConstraint("merge-context", "MergeContext", "id"))
@@ -58,7 +59,7 @@ func TestResidualCypherMergeAdmissionCancellation(t *testing.T) {
 }
 
 func TestResidualCypherDurableBody(t *testing.T) {
-	b, err := storage.NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	writer, reader := residualExecutor(b), residualExecutor(b)
@@ -95,7 +96,7 @@ func TestResidualCypherDurableBody(t *testing.T) {
 func TestResidualCypherFinalRelationshipImage(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		t.Run(fmt.Sprintf("buffered=%v", buffered), func(t *testing.T) {
-			b, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour})
+			b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			writer, reader := residualExecutor(b), residualExecutor(b)
@@ -105,7 +106,7 @@ func TestResidualCypherFinalRelationshipImage(t *testing.T) {
 				require.NoError(t, err)
 			}
 			run("CREATE (:Owned {id:'a'})-[:OWNED {p:0}]->(:Owned {id:'b'})")
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			const read = "MATCH (:Owned {id:'a'})-[r:OWNED]->() RETURN r.p"
 			_, err = reader.Execute(ctx, read, nil)
 			require.NoError(t, err)
@@ -129,7 +130,7 @@ func TestResidualCypherFinalRelationshipImage(t *testing.T) {
 			if !buffered {
 				run("COMMIT")
 			}
-			require.NoError(t, b.FlushWriteBehind())
+			require.NoError(t, b.FlushWriteBehind(nil))
 			require.True(t, observed)
 			require.NoError(t, observationErr)
 			result, err := reader.Execute(ctx, read, nil)
@@ -140,7 +141,7 @@ func TestResidualCypherFinalRelationshipImage(t *testing.T) {
 }
 
 func TestResidualPrefixDropDurableFence(t *testing.T) {
-	b, err := storage.NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []storage.NodeID{"victim:a", "victim:b"} {
@@ -173,4 +174,56 @@ func TestResidualPrefixDropDurableFence(t *testing.T) {
 	result, err := reader.Execute(context.Background(), query, nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)
+}
+
+func TestResidualCypherBeginCarriesCancellationToFlush(t *testing.T) {
+	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+		DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour,
+	}))
+	require.NoError(t, err)
+	executor := cypher.NewStorageExecutor(b, cypher.QueryCachePolicy{MaxEntries: 0})
+	release, waiting := b.ResidualHoldWriteBarrierForTest()
+	defer release()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done, joined := make(chan error, 1), make(chan struct{})
+	t.Cleanup(func() {
+		release()
+		cancel()
+		select {
+		case <-joined:
+		case <-time.After(3 * time.Second):
+			t.Error("BEGIN worker did not join")
+			return
+		}
+		_, _ = executor.Execute(context.Background(), "ROLLBACK", nil)
+	})
+	go func() {
+		defer close(joined)
+		_, err := executor.Execute(ctx, "BEGIN", nil)
+		done <- err
+	}()
+	select {
+	case <-waiting:
+	case <-time.After(3 * time.Second):
+		t.Fatal("BEGIN did not reach actual storage admission")
+	}
+	cancel()
+	returned := false
+	var beginErr error
+	select {
+	case beginErr = <-done:
+		returned = true
+	case <-time.After(2 * time.Second):
+	}
+	release()
+	if !returned {
+		select {
+		case beginErr = <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("BEGIN did not finish after admission was released")
+		}
+	}
+	require.True(t, returned, "cancelled BEGIN must leave admission before the peer releases it")
+	require.ErrorIs(t, beginErr, context.Canceled)
 }

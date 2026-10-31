@@ -26,9 +26,9 @@ func TestResidualSchemaIngressOwnership(t *testing.T) {
 				properties = append(properties, "peer")
 				err = sm.AddCompositeIndex("idx", "L", properties)
 			case "fulltext-node":
-				err = sm.AddFulltextIndex("idx", targets, properties)
+				err = sm.AddFulltextIndex("idx", targets, properties, storage.ConstraintEntityNode)
 			case "fulltext-edge":
-				err = sm.AddFulltextRelationshipIndex("idx", targets, properties)
+				err = sm.AddFulltextIndex("idx", targets, properties, storage.ConstraintEntityRelationship)
 			case "range":
 				err = sm.AddRangeIndexForEntity("idx", "L", properties, storage.ConstraintEntityNode)
 			case "typed":

@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResidualFlushWaitCancellation(t *testing.T) {
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour})
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	workerAtDispatch, releaseDispatch := make(chan struct{}), make(chan struct{})
@@ -74,13 +75,7 @@ func TestResidualFlushWaitCancellation(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		if contextual, ok := any(b).(interface{ FlushWriteBehindContext(context.Context) error }); ok {
-			done <- contextual.FlushWriteBehindContext(ctx)
-		} else {
-			// Test-only baseline adapter: the release's public flush has
-			// no context entrance and must exhibit the same blocked wait.
-			done <- b.FlushWriteBehind()
-		}
+		done <- b.FlushWriteBehind(ctx)
 	}()
 	select {
 	case <-waited:

@@ -10,7 +10,7 @@ func TestIndexTombstone_WriteAndProbe(t *testing.T) {
 	eng := newTestEngine(t)
 
 	origKey := labelIndexKey("person", 1)
-	if err := eng.WriteIndexTombstones([][]byte{origKey}); err != nil {
+	if err := eng.SetIndexTombstones([][]byte{origKey}, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -29,10 +29,10 @@ func TestIndexTombstone_Delete(t *testing.T) {
 	eng := newTestEngine(t)
 
 	origKey := labelIndexKey("person", 1)
-	if err := eng.WriteIndexTombstones([][]byte{origKey}); err != nil {
+	if err := eng.SetIndexTombstones([][]byte{origKey}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := eng.DeleteIndexTombstones([][]byte{origKey}); err != nil {
+	if err := eng.SetIndexTombstones([][]byte{origKey}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -42,6 +42,22 @@ func TestIndexTombstone_Delete(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// tombstoneLabelIndexEntry tombstones the label-index entry of a node that the
+// case has already created. Every tombstone visibility case shares this write;
+// the caller supplies its label and identity and keeps its own seed population,
+// RevealAll toggle and read assertions.
+func tombstoneLabelIndexEntry(t *testing.T, eng *BadgerEngine, label string, id NodeID) {
+	t.Helper()
+
+	tombstoneKey := eng.labelIndexKeyStringLookup(label, id)
+	if tombstoneKey == nil {
+		t.Fatalf("missing numID for %s", id)
+	}
+	if err := eng.SetIndexTombstones([][]byte{tombstoneKey}, true); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestIndexTombstone_LabelIndexSkipsTombstoned(t *testing.T) {
@@ -64,13 +80,7 @@ func TestIndexTombstone_LabelIndexSkipsTombstoned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tombstoneKey := eng.labelIndexKeyStringLookup("Person", "nornic:hidden")
-	if tombstoneKey == nil {
-		t.Fatal("missing numID for nornic:hidden")
-	}
-	if err := eng.WriteIndexTombstones([][]byte{tombstoneKey}); err != nil {
-		t.Fatal(err)
-	}
+	tombstoneLabelIndexEntry(t, eng, "Person", node2.ID)
 
 	nodes, err := eng.GetNodesByLabel("Person")
 	if err != nil {
@@ -96,13 +106,7 @@ func TestIndexTombstone_RevealAllBypassesTombstone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tombstoneKey := eng.labelIndexKeyStringLookup("Person", "nornic:revealed")
-	if tombstoneKey == nil {
-		t.Fatal("missing numID for nornic:revealed")
-	}
-	if err := eng.WriteIndexTombstones([][]byte{tombstoneKey}); err != nil {
-		t.Fatal(err)
-	}
+	tombstoneLabelIndexEntry(t, eng, "Person", node.ID)
 
 	eng.SetRevealAll(true)
 	defer eng.SetRevealAll(false)
@@ -125,10 +129,10 @@ func TestIndexTombstone_RevealAllBypassesTombstone(t *testing.T) {
 
 func TestIndexTombstone_EmptyWriteNoError(t *testing.T) {
 	eng := newTestEngine(t)
-	if err := eng.WriteIndexTombstones(nil); err != nil {
+	if err := eng.SetIndexTombstones(nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := eng.DeleteIndexTombstones(nil); err != nil {
+	if err := eng.SetIndexTombstones(nil, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -147,13 +151,7 @@ func TestIndexTombstone_ForEachNodeIDSkipsTombstoned(t *testing.T) {
 		}
 	}
 
-	tombstoneKey := eng.labelIndexKeyStringLookup("Item", "nornic:b")
-	if tombstoneKey == nil {
-		t.Fatal("missing numID for nornic:b")
-	}
-	if err := eng.WriteIndexTombstones([][]byte{tombstoneKey}); err != nil {
-		t.Fatal(err)
-	}
+	tombstoneLabelIndexEntry(t, eng, "Item", "nornic:b")
 
 	var visited []string
 	eng.ForEachNodeIDByLabel("Item", func(id NodeID) bool {

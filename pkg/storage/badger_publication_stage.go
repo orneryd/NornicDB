@@ -248,10 +248,7 @@ func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id N
 	// The rules are walked here, not in a callback: a rule is then addressed
 	// through its index and its strings are never copied into a closure.
 	for i := -1; i < len(view.rest); i++ {
-		rule := &view.first
-		if i >= 0 {
-			rule = &view.rest[i]
-		}
+		rule := view.ruleAt(i)
 		if rule.empty() || rule.kind != ConstraintEntityNode {
 			continue
 		}
@@ -296,10 +293,7 @@ func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id E
 	}
 	namespace := namespaceForEdgeID(id)
 	for i := -1; i < len(view.rest); i++ {
-		rule := &view.first
-		if i >= 0 {
-			rule = &view.rest[i]
-		}
+		rule := view.ruleAt(i)
 		if rule.empty() || rule.kind != ConstraintEntityRelationship {
 			continue
 		}

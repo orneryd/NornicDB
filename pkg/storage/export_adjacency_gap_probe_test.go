@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,58 +23,79 @@ func (b *BadgerEngine) GapProbeAcrossReplay(t *testing.T, run func() (int64, err
 	b.writeBehind.mu.RUnlock()
 	require.NotNil(t, frontier)
 	b.adjCacheInvalidate()
-	b.adjCacheMu.RLock()
-	adjHeld := true
-	defer func() {
-		if adjHeld {
-			b.adjCacheMu.RUnlock()
+	// Park after capture, outside all product cache locks. Durable revocation
+	// must finish before oracle publication; a cache-lock park would deadlock
+	// the fixture against that required ordering.
+	captured, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(resume) }) }
+	var claimed atomic.Bool
+	observe := func(engine *BadgerEngine) {
+		if engine == b && claimed.CompareAndSwap(false, true) {
+			close(captured)
+			<-resume
 		}
-	}()
+	}
+	previous := adjacencyReadCaptureObserver.Swap(&observe)
 	type result struct {
 		count int64
 		err   error
 	}
 	read := make(chan result, 1)
-	go func() { count, err := run(); read <- result{count, err} }()
-	deadline := time.Now().Add(3 * time.Second)
-	for b.adjCacheMu.TryRLock() {
-		b.adjCacheMu.RUnlock()
-		if time.Now().After(deadline) {
-			t.Fatal("public query did not reach adjacency cache publication")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	b.writeBehind.mu.Lock()
-	overlayHeld := true
+	readerJoined, replayJoined := make(chan struct{}), make(chan struct{})
+	overlayHeld, replayStarted := false, false
 	defer func() {
+		adjacencyReadCaptureObserver.Store(previous)
 		if overlayHeld {
 			b.writeBehind.mu.Unlock()
 		}
+		unblock()
+		select {
+		case <-readerJoined:
+		case <-time.After(3 * time.Second):
+			t.Error("public query did not join")
+		}
+		if replayStarted {
+			select {
+			case <-replayJoined:
+			case <-time.After(3 * time.Second):
+				t.Error("replay did not join")
+			}
+		}
 	}()
+	go func() {
+		defer close(readerJoined)
+		count, err := run()
+		read <- result{count, err}
+	}()
+	select {
+	case <-captured:
+	case got := <-read:
+		require.NoError(t, got.err)
+		t.Fatal("public query completed before its captured read was parked")
+	case <-time.After(3 * time.Second):
+		t.Fatal("public query did not reach its captured read")
+	}
+	b.writeBehind.mu.Lock()
+	overlayHeld = true
 	replayed := make(chan error, 1)
 	beforeReplay := b.db.oracle.published.Load()
-	go func() { replayed <- b.replayWriteBehind(frontier) }()
-	// Hold the query at cache publication until replay's physical commit is
-	// visible. Counts and adjacency now publish in the same ordered stage;
-	// waiting for counts while holding adjacency would block that stage on
-	// our own lock rather than exercise the read's captured replay boundary.
-	for b.db.oracle.published.Load() <= beforeReplay {
-		if time.Now().After(deadline) {
-			t.Fatal("replay did not publish its physical commit")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	b.adjCacheMu.RUnlock()
-	adjHeld = false
+	replayStarted = true
+	go func() {
+		defer close(replayJoined)
+		replayed <- b.replayWriteBehind(frontier)
+	}()
 	select {
 	case err := <-replayed:
 		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("replay did not finish")
 	}
+	require.Greater(t, b.db.oracle.published.Load(), beforeReplay)
 	require.True(t, frontier.IsApplied())
 	b.writeBehind.mu.Unlock()
 	overlayHeld = false
+	unblock()
 	select {
 	case got := <-read:
 		require.NoError(t, got.err)

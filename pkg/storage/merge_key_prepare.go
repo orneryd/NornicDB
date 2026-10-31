@@ -41,8 +41,8 @@ func (tx *BadgerTransaction) PrepareMergeNodeForWrite(ctx context.Context, label
 }
 
 func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []string, props map[string]interface{}, write bool) error {
-	if tx.clientDetached.Load() {
-		return ErrTransactionClosed
+	if err := tx.clientOwnershipError(transactionDataWrite); err != nil {
+		return err
 	}
 	if err := tx.mu.LockContext(ctx); err != nil {
 		return err
@@ -59,9 +59,9 @@ func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []stri
 	if err := tx.mu.LockContext(ctx); err != nil {
 		return err
 	}
-	if tx.clientDetached.Load() {
+	if err := tx.clientOwnershipError(transactionDataWrite); err != nil {
 		tx.mu.Unlock()
-		return ErrTransactionClosed
+		return err
 	}
 	if tx.Status != TxStatusActive {
 		tx.mu.Unlock()

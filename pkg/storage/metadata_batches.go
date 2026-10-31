@@ -20,5 +20,5 @@ func (target metadataBatches) commitBatch(txn *badger.Txn) error {
 	if err != nil {
 		return err
 	}
-	return target.db.oracle.waitPublishedContext(target.ctx, ts)
+	return target.db.oracle.waitPublished(target.ctx, ts)
 }

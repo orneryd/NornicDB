@@ -54,7 +54,7 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 		}
 		return nil, nil, true, storage.ErrInvalidData
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthorityWithContext(ctx)
+	releaseAuthority, err := prepared.RetainAcceptedAuthority(ctx)
 	if err != nil {
 		prepared.Abort()
 		if settle != nil {

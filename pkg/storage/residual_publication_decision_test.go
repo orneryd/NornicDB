@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +21,7 @@ func TestResidualPublicationDecisionRoutes(t *testing.T) {
 	for _, route := range []string{"ordinary", "large", "buffered", "prepared", "wal"} {
 		for _, veto := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/veto=%v", route, veto), func(t *testing.T) {
-				b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), LowMemory: route == "large", WriteBehind: route == "buffered", WriteBehindInterval: time.Hour})
+				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), LowMemory: route == "large", WriteBehind: route == "buffered", WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = b.Close() })
 				tx, err := b.BeginTransaction()
@@ -93,7 +94,7 @@ func TestResidualPublicationDecisionRoutes(t *testing.T) {
 				require.EqualValues(t, 1, calls.Load())
 				require.NotNil(t, retained)
 				require.ErrorIs(t, retained(), ErrInvalidData, "returned/rejected actions cannot run later")
-				require.NoError(t, b.FlushWriteBehind())
+				require.NoError(t, b.FlushWriteBehind(nil))
 				_, readErr := b.GetStoredNode("test:decision")
 				if veto {
 					require.ErrorIs(t, readErr, ErrNotFound)

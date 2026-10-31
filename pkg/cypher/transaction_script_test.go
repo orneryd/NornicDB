@@ -238,7 +238,7 @@ func TestTransactionStatementHandlers_AdditionalBranches(t *testing.T) {
 	require.NotNil(t, exec.txContext)
 	assert.True(t, exec.txContext.active)
 
-	_, err = exec.handleBegin()
+	_, err = exec.handleBegin(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transaction already active")
 
@@ -302,12 +302,17 @@ func TestTransactionStatementHandlers_WithWALAsyncEngine(t *testing.T) {
 	require.NotNil(t, commitRes.Metadata["receipt"])
 }
 
-func TestTransactionHandleCommit_ErrorBranchAfterClosedTx(t *testing.T) {
+// requireTransactionHandlerFailsAfterClosedTransaction is the shared
+// arrangement of the commit and rollback closed-transaction error branches: the
+// executor's own transaction is ended behind its back, and finish must then
+// fail with want and leave no transaction behind.
+func requireTransactionHandlerFailsAfterClosedTransaction(t *testing.T, finish func(*StorageExecutor) (*ExecuteResult, error), want string) {
+	t.Helper()
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(nil)
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 
@@ -315,10 +320,16 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx(t *testing.T) {
 	require.True(t, ok)
 	require.NoError(t, tx.Rollback())
 
-	_, err = exec.handleCommit(context.Background())
+	_, err = finish(exec)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "commit failed")
+	assert.Contains(t, err.Error(), want)
 	assert.Nil(t, exec.txContext)
+}
+
+func TestTransactionHandleCommit_ErrorBranchAfterClosedTx(t *testing.T) {
+	requireTransactionHandlerFailsAfterClosedTransaction(t,
+		func(exec *StorageExecutor) (*ExecuteResult, error) { return exec.handleCommit(context.Background()) },
+		"commit failed")
 }
 
 func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) {
@@ -338,7 +349,7 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) 
 	store := storage.NewNamespacedEngine(walEngine, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err = exec.handleBegin()
+	_, err = exec.handleBegin(nil)
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 	require.NotNil(t, exec.txContext.wal)
@@ -355,72 +366,50 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) 
 }
 
 func TestTransactionHandleRollback_ErrorBranchAfterClosedTx(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
+	requireTransactionHandlerFailsAfterClosedTransaction(t,
+		func(exec *StorageExecutor) (*ExecuteResult, error) { return exec.handleRollback() },
+		"rollback failed")
+}
 
-	_, err := exec.handleBegin()
+// requireExecuteInTransactionSucceeds opens an explicit transaction on exec and
+// requires that executing cypher inside it returns the one column and value the
+// statement projects. upperQuery is the statement's upper-cased form, as the
+// executeInTransaction caller supplies it. The transaction is rolled back on
+// cleanup; the executor's namespace stays the caller's.
+func requireExecuteInTransactionSucceeds(t *testing.T, exec *StorageExecutor, cypher, upperQuery, column string, value int64) {
+	t.Helper()
+	ctx := context.Background()
+
+	_, err := exec.handleBegin(nil)
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
+	t.Cleanup(func() {
+		if exec.txContext != nil {
+			_, _ = exec.handleRollback()
+		}
+	})
 
-	tx, ok := exec.txContext.tx.(*storage.BadgerTransaction)
-	require.True(t, ok)
-	require.NoError(t, tx.Rollback())
-
-	_, err = exec.handleRollback()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rollback failed")
-	assert.Nil(t, exec.txContext)
+	res, err := exec.executeInTransaction(ctx, cypher, upperQuery)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, []string{column}, res.Columns)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, value, res.Rows[0][0])
 }
 
 func TestExecuteInTransaction_SuccessPath(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	_, err := exec.handleBegin()
-	require.NoError(t, err)
-	require.NotNil(t, exec.txContext)
-	defer func() {
-		if exec.txContext != nil {
-			_, _ = exec.handleRollback()
-		}
-	}()
-
-	res, err := exec.executeInTransaction(ctx, "RETURN 1 AS x", "RETURN 1 AS X")
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	require.Equal(t, []string{"x"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	require.Equal(t, int64(1), res.Rows[0][0])
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	requireExecuteInTransactionSucceeds(t, exec, "RETURN 1 AS x", "RETURN 1 AS X", "x", int64(1))
 }
 
 func TestExecuteInTransaction_SuccessPath_NoNamespace(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	exec := NewStorageExecutor(base)
-	ctx := context.Background()
-
-	_, err := exec.handleBegin()
-	require.NoError(t, err)
-	require.NotNil(t, exec.txContext)
-	defer func() {
-		if exec.txContext != nil {
-			_, _ = exec.handleRollback()
-		}
-	}()
-
-	res, err := exec.executeInTransaction(ctx, "RETURN 2 AS y", "RETURN 2 AS Y")
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	require.Equal(t, []string{"y"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	require.Equal(t, int64(2), res.Rows[0][0])
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	requireExecuteInTransactionSucceeds(t, exec, "RETURN 2 AS y", "RETURN 2 AS Y", "y", int64(2))
 }
 
 func TestTransactionHandleBegin_NoTransactionEngine(t *testing.T) {
 	exec := &StorageExecutor{} // no storage engine configured
-	_, err := exec.handleBegin()
+	_, err := exec.handleBegin(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "engine does not support transactions")
 }

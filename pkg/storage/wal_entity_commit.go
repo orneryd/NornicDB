@@ -60,7 +60,7 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if ctx != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthorityWithContext(ctx)
+	releaseAuthority, err := prepared.RetainAcceptedAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}

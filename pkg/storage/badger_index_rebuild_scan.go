@@ -48,7 +48,7 @@ func (b *BadgerEngine) forEachStoredRecordInChunks(ctx context.Context, scan sto
 		var next []byte
 		// These visitors rewrite secondary indexes and policy metadata. The
 		// stored bodies they read are inputs, not affected body/cache facts.
-		err := b.withScopedUpdate(ctx, cacheWriteScope{known: true}, true, func(txn *badger.Txn) error {
+		err := b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 			defer it.Close()
 			start := cursor

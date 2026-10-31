@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -15,16 +16,10 @@ import (
 func TestResidualReplicatedPublicationDecision(t *testing.T) {
 	for _, veto := range []bool{false, true} {
 		t.Run(fmt.Sprintf("veto=%v", veto), func(t *testing.T) {
-			base, err := storage.NewBadgerEngine(t.TempDir())
+			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = base.Close() })
-			adapter, err := NewStorageAdapterWithWAL(base, t.TempDir())
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = adapter.Close() })
-			mirror := &acceptedMirrorStorage{Storage: adapter}
-			r := NewStandaloneReplicator(&Config{}, mirror)
-			require.NoError(t, r.Start(context.Background()))
-			t.Cleanup(func() { _ = r.Shutdown() })
+			r, mirror := newAcceptedReplicationFixture(t, base, nil, &Config{})
 			owner := NewReplicatedEngine(base, r, time.Second)
 			tx, err := base.BeginTransaction()
 			require.NoError(t, err)

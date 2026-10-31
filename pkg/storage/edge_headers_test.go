@@ -69,7 +69,7 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 	// An entry written before the values existed reads the record.
 	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
 	e2Num, _ := eng.idDict.lookupEdgeNumID("test:e2")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(outgoingIndexKey(aNum, e2Num), []byte{})
 	}))
 	eng.edgeCacheMu.Lock()
@@ -174,7 +174,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 			aNum, _ := eng.idDict.lookupNodeNumID("test:a")
 			bNum, _ := eng.idDict.lookupNodeNumID("test:b")
 			oddNum, _ := eng.idDict.lookupEdgeNumID("test:odd")
-			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				if !transactional {
 					for _, id := range []EdgeID{"test:cached", "test:gone"} {
 						num, _ := eng.idDict.lookupEdgeNumID(id)
@@ -214,7 +214,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 			// snapshot and the engine-current path must both reject the bad record.
 			require.NoError(t, eng.CreateEdge(&Edge{ID: "test:corrupt", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
 			corruptNum, _ := eng.idDict.lookupEdgeNumID("test:corrupt")
-			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				if err := txn.Set(edgeKey("test:corrupt"), []byte{0xff}); err != nil {
 					return err
 				}
@@ -239,7 +239,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 			require.Error(t, err)
 			if !transactional {
 				require.True(t, answered)
-				require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error { return txn.Delete(edgeKey("test:corrupt")) }))
+				require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Delete(edgeKey("test:corrupt")) }))
 				out, answered, err := reader.OutgoingEdgeHeaders("test:a")
 				require.NoError(t, err)
 				require.True(t, answered)
@@ -329,7 +329,7 @@ func TestAdjacencyHeaderMatchesRecord(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	same("transaction update")
 
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		_, err := eng.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: "test:e", isEdge: true})
 		return err
 	}))

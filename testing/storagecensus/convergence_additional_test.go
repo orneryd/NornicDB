@@ -8,13 +8,13 @@ import (
 )
 
 func TestBranchConditionDoubleNotAndWholeStoreGuard(t *testing.T) {
-	p, pkg := coverageProgram(t, `package storage
+	p, pkg := ssaFixture(t, `package storage
  type writer interface{write()};type stagedKV struct{};func(*stagedKV)write(){}
  func integer(n int)bool{return !!(n<3)}
  func typed(w writer)bool{_,ok:=w.(*stagedKV);return !!ok}
  func rawWrite(){}
  func whole(w writer){if _,staged:=w.(*stagedKV);!staged{rawWrite()}}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions)
 	for _, name := range []string{"integer", "typed"} {
 		fn := pkg.Func(name)
 		found := false

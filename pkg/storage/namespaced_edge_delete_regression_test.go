@@ -8,7 +8,6 @@ import (
 
 func TestNamespacedEngine_BulkDeleteEdgesInvalidatesPreloadedTraversalCaches(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 
 	tenant := NewNamespacedEngine(inner, "test")
 	_, err := tenant.CreateNode(&Node{ID: "a", Labels: []string{"Entity"}})

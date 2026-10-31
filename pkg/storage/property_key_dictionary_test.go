@@ -19,7 +19,7 @@ func TestPropertyKeyDict_ResolveAndLookup(t *testing.T) {
 	dict := eng.propKeyDict
 
 	var idA, idB uint64
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		idA, err = dict.resolveOrAllocateInTxn(txn, "ns", "alpha")
 		if err != nil {
@@ -46,12 +46,27 @@ func TestPropertyKeyDict_ResolveAndLookup(t *testing.T) {
 
 	// Resolve of an already-allocated name returns the same ID without
 	// allocating a new one.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		got, err := dict.resolveOrAllocateInTxn(txn, "ns", "alpha")
 		if err != nil {
 			return err
 		}
 		require.Equal(t, idA, got)
+		return nil
+	}))
+}
+
+// inPropertyKeyTxn runs fn for each namespace inside one update transaction and
+// flushes the property-key counters, the lifecycle a persisted token requires.
+func inPropertyKeyTxn(t *testing.T, eng *BadgerEngine, namespaces []string, fn func(txn *badger.Txn, namespace string) error) {
+	t.Helper()
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		for _, namespace := range namespaces {
+			if err := fn(txn, namespace); err != nil {
+				return err
+			}
+		}
+		_ = eng.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
 }
@@ -62,27 +77,19 @@ func TestPropertyKeyDict_NamespaceIsolation(t *testing.T) {
 	eng := newTestEngine(t)
 	dict := eng.propKeyDict
 
-	var idNs1, idNs2 uint64
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		var err error
-		idNs1, err = dict.resolveOrAllocateInTxn(txn, "tenant1", "name")
-		if err != nil {
-			return err
-		}
-		idNs2, err = dict.resolveOrAllocateInTxn(txn, "tenant2", "name")
-		if err != nil {
-			return err
-		}
-		_ = dict.flushTxnCounters(txn)
-		return nil
-	}))
+	ids := map[string]uint64{}
+	inPropertyKeyTxn(t, eng, []string{"tenant1", "tenant2"}, func(txn *badger.Txn, namespace string) error {
+		id, err := dict.resolveOrAllocateInTxn(txn, namespace, "name")
+		ids[namespace] = id
+		return err
+	})
 
 	// Both start fresh per namespace, so both see ID 1.
-	require.Equal(t, uint64(1), idNs1)
-	require.Equal(t, uint64(1), idNs2)
+	require.Equal(t, uint64(1), ids["tenant1"])
+	require.Equal(t, uint64(1), ids["tenant2"])
 
 	// Lookups respect namespace boundaries.
-	name1, ok1 := dict.lookup("tenant1", idNs1)
+	name1, ok1 := dict.lookup("tenant1", ids["tenant1"])
 	require.True(t, ok1)
 	require.Equal(t, "name", name1)
 
@@ -91,7 +98,7 @@ func TestPropertyKeyDict_NamespaceIsolation(t *testing.T) {
 	require.False(t, ok)
 
 	// tenant2 also has id 1 but it points to a different (logical) entry.
-	name2, ok2 := dict.lookup("tenant2", idNs2)
+	name2, ok2 := dict.lookup("tenant2", ids["tenant2"])
 	require.True(t, ok2)
 	require.Equal(t, "name", name2)
 }
@@ -108,7 +115,7 @@ func TestPropertyKeyDict_PersistTxnCountersReportsFailure(t *testing.T) {
 	eng := newTestEngine(t)
 	require.NoError(t, eng.db.Close())
 
-	err := eng.propKeyDict.persistTxnCounters(context.Background(), eng.db, propKeyTxnDrain{
+	err := eng.propKeyDict.persistTxnCounters(metadataBatches{db: eng.db, ctx: context.Background()}, propKeyTxnDrain{
 		counters: map[string]uint64{"nornic": 20},
 		pending: []propKeyPersistEntry{{
 			namespace: "nornic",
@@ -130,7 +137,7 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 	firstTxn.Discard()
 	closed := newTestEngine(t)
 	require.NoError(t, closed.db.Close())
-	require.Error(t, dict.persistTxnCounters(context.Background(), closed.db, drain))
+	require.Error(t, dict.persistTxnCounters(metadataBatches{db: closed.db, ctx: context.Background()}, drain))
 
 	secondTxn := eng.db.testTxn(true)
 	_, err = dict.resolveOrAllocateInTxn(secondTxn, "nornic", "novelProperty")
@@ -138,7 +145,7 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 	retryDrain := dict.flushTxnCounters(secondTxn)
 	secondTxn.Discard()
 	require.Len(t, retryDrain.pending, 1, "an unpersisted token must be restaged on retry")
-	require.NoError(t, dict.persistTxnCounters(context.Background(), eng.db, retryDrain))
+	require.NoError(t, dict.persistTxnCounters(metadataBatches{db: eng.db, ctx: context.Background()}, retryDrain))
 }
 
 func TestPropertyKeyDict_NovelKeySurvivesCleanReopen(t *testing.T) {
@@ -181,7 +188,7 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 
 	var allocated []uint64
 	var counters propKeyTxnDrain
-	require.NoError(t, first.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, first.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for _, name := range []string{"productID", "productName", "sku"} {
 			id, err := first.propKeyDict.resolveOrAllocateInTxn(txn, "shop", name)
 			if err != nil {
@@ -192,7 +199,7 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, first.propKeyDict.persistTxnCounters(context.Background(), first.db, counters))
+	require.NoError(t, first.propKeyDict.persistTxnCounters(metadataBatches{db: first.db, ctx: context.Background()}, counters))
 	require.NoError(t, first.Close())
 
 	// Reopen — V0 store with no bodies, so the upgrade gate doesn't
@@ -208,7 +215,7 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 	}
 
 	// The next allocation continues the counter rather than restarting.
-	require.NoError(t, second.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, second.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		id, err := second.propKeyDict.resolveOrAllocateInTxn(txn, "shop", "newField")
 		if err != nil {
 			return err
@@ -232,7 +239,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 	require.NoError(t, err)
 
 	var counters propKeyTxnDrain
-	require.NoError(t, first.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, first.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		_, err := first.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "a")
 		require.NoError(t, err)
 		_, err = first.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "b")
@@ -240,7 +247,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, first.propKeyDict.persistTxnCounters(context.Background(), first.db, counters))
+	require.NoError(t, first.propKeyDict.persistTxnCounters(metadataBatches{db: first.db, ctx: context.Background()}, counters))
 
 	// Manually delete the counter key to simulate a partial write.
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
@@ -258,7 +265,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 
 	// The next allocation still produces a fresh ID (not one that
 	// collides with "a" or "b").
-	require.NoError(t, second.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, second.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		id, err := second.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "c")
 		if err != nil {
 			return err
@@ -278,7 +285,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 	dict := eng.propKeyDict
 
 	var batchedCounters propKeyTxnDrain
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		for i := 0; i < 50; i++ {
 			_, err := dict.resolveOrAllocateInTxn(txn, "nsA", "k"+string(rune('a'+i%26)))
 			require.NoError(t, err)
@@ -290,7 +297,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 		batchedCounters = dict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, dict.persistTxnCounters(context.Background(), eng.db, batchedCounters))
+	require.NoError(t, dict.persistTxnCounters(metadataBatches{db: eng.db, ctx: context.Background()}, batchedCounters))
 
 	// Exactly two counter keys should exist.
 	require.NoError(t, eng.db.View(func(txn *badger.Txn) error {
@@ -312,7 +319,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 // branch of flushTxnCounters when no allocations were staged.
 func TestPropertyKeyDict_FlushOnEmptyTxnIsNoop(t *testing.T) {
 	eng := newTestEngine(t)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		got := eng.propKeyDict.flushTxnCounters(txn)
 		require.Nil(t, got.counters, "empty-txn drain must return nil counter map")
 		require.Nil(t, got.pending, "empty-txn drain must return nil pending entries")
@@ -336,7 +343,7 @@ func TestPropertyKeyDict_DiscardTxnCounters(t *testing.T) {
 
 	// A fresh txn that flushes immediately should not write a counter
 	// for "ns" — the staged state from the discarded txn is gone.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		_ = dict.flushTxnCounters(txn)
 		return nil
 	}))
@@ -364,7 +371,7 @@ func TestPropertyKeyDict_ConcurrentAllocate(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			err := eng.withUpdate(func(txn *badger.Txn) error {
+			err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				id, err := dict.resolveOrAllocateInTxn(txn, "race", "key")
 				if err != nil {
 					return err
@@ -538,13 +545,13 @@ func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 
 	// One real entry so reopen exercises the loop body.
 	var counters propKeyTxnDrain
-	require.NoError(t, first.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, first.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		_, err := first.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "real")
 		require.NoError(t, err)
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, first.propKeyDict.persistTxnCounters(context.Background(), first.db, counters))
+	require.NoError(t, first.propKeyDict.persistTxnCounters(metadataBatches{db: first.db, ctx: context.Background()}, counters))
 
 	// Inject malformed keys under both prefixes.
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {

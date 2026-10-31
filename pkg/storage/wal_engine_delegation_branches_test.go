@@ -173,7 +173,6 @@ func TestWALEngine_OptionalDelegationAndFallbackBranches(t *testing.T) {
 
 func TestWALEngine_OptionalFallbackBranches(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	we := NewWALEngine(&nonMVCCEngine{Engine: inner}, nil)
 
 	ok, err := we.IsCurrentTemporalNode(&Node{}, time.Now())
@@ -246,7 +245,6 @@ func TestWALEngine_Logger_NilBranches(t *testing.T) {
 
 func TestWALEngine_FallbackLatestEffectivePropagatesErrors(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	we := NewWALEngine(inner, nil)
 
 	_, err := we.GetNodeLatestEffective("test:missing")

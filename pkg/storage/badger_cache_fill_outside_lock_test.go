@@ -272,6 +272,23 @@ func TestNodeCacheConcurrentFillNeverPublishesStaleBody(t *testing.T) {
 	}
 }
 
+// nodeCacheFillBenchmarkFixture shares untimed setup only. The two benchmark
+// loops retain their distinct generation loads and cache-fill behavior.
+func nodeCacheFillBenchmarkFixture(b *testing.B, distinct int, tags bool) (*BadgerEngine, []*Node) {
+	b.Helper()
+	engine, err := fixtureowner.OwnResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
+	require.NoError(b, err)
+	bodies := make([]*Node, distinct)
+	for i := range bodies {
+		properties := map[string]any{"name": fmt.Sprintf("node-%d", i), "score": int64(i)}
+		if tags {
+			properties["tags"] = []any{"a", "b"}
+		}
+		bodies[i] = &Node{ID: NodeID(fmt.Sprintf("bench:fill:%d", i)), Labels: []string{"Person", "Bench"}, Properties: properties}
+	}
+	return engine, bodies
+}
+
 // BenchmarkNodeCacheFillParallel measures cacheFillNode from many goroutines
 // filling distinct nodes, the shape a wide label scan has. The deep copy runs
 // outside nodeCacheMu, so the lock covers the generation check and map writes
@@ -279,18 +296,8 @@ func TestNodeCacheConcurrentFillNeverPublishesStaleBody(t *testing.T) {
 // The engine it opens is a real store fixture: it enters the lifetime owner and
 // is closed by it, exactly like a test fixture.
 func BenchmarkNodeCacheFillParallel(b *testing.B) {
-	engine, err := fixtureowner.OwnResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
-	require.NoError(b, err)
-
 	const distinct = 1024
-	bodies := make([]*Node, distinct)
-	for i := range bodies {
-		bodies[i] = &Node{
-			ID:         NodeID(fmt.Sprintf("bench:fill:%d", i)),
-			Labels:     []string{"Person", "Bench"},
-			Properties: map[string]any{"name": fmt.Sprintf("node-%d", i), "score": int64(i), "tags": []any{"a", "b"}},
-		}
-	}
+	engine, bodies := nodeCacheFillBenchmarkFixture(b, distinct, true)
 	var next atomic.Uint64
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -307,18 +314,8 @@ func BenchmarkNodeCacheFillParallel(b *testing.B) {
 // finds the generation stale and drops it: the worst case for the copy's
 // placement relative to the lock.
 func BenchmarkNodeCacheFillParallelStale(b *testing.B) {
-	engine, err := fixtureowner.OwnResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
-	require.NoError(b, err)
-
 	const distinct = 1024
-	bodies := make([]*Node, distinct)
-	for i := range bodies {
-		bodies[i] = &Node{
-			ID:         NodeID(fmt.Sprintf("bench:fill:%d", i)),
-			Labels:     []string{"Person", "Bench"},
-			Properties: map[string]any{"name": fmt.Sprintf("node-%d", i), "score": int64(i)},
-		}
-	}
+	engine, bodies := nodeCacheFillBenchmarkFixture(b, distinct, false)
 	stale := engine.nodeCacheGen.current() - 1
 	var next atomic.Uint64
 	b.ReportAllocs()

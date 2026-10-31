@@ -102,7 +102,7 @@ func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection
 	if err := ctx.Err(); err != nil {
 		return processed, err
 	}
-	err = b.withMetadataUpdateContext(ctx, func(txn *badger.Txn) error {
+	err = b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return txn.Set(edgeBetweenIndexReadyKey, []byte{1})
 	})
 	if err != nil {
@@ -116,7 +116,7 @@ func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection
 		if err := b.rewriteIndexEntryCatalogs(ctx); err != nil {
 			return processed, fmt.Errorf("rewrite index entry catalogs: %w", err)
 		}
-		err = b.withMetadataUpdateContext(ctx, func(txn *badger.Txn) error { return txn.Delete(cleanShutdownMarkerKey) })
+		err = b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error { return txn.Delete(cleanShutdownMarkerKey) })
 	}
 	return processed, err
 }

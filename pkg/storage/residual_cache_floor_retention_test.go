@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -11,7 +12,7 @@ import (
 // not retain one revocation record forever per formerly stored entity. A
 // delayed old writer image still cannot replace the current public read.
 func TestResidualCacheFloorRetention(t *testing.T) {
-	b, err := NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	const capacity = 8
@@ -71,7 +72,7 @@ func TestResidualCacheFloorRetention(t *testing.T) {
 // the existing Close owner, which releases retained caches after all work ends.
 func TestResidualClosedCacheProvenance(t *testing.T) {
 	dir := t.TempDir()
-	b, err := NewBadgerEngine(dir)
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []NodeID{"test:close-a", "test:close-b"} {
@@ -82,7 +83,7 @@ func TestResidualClosedCacheProvenance(t *testing.T) {
 	// Settle construction/count work first: an incidental count-fold fence on
 	// Close must not be the lifetime owner of the new cache provenance state.
 	require.NoError(t, b.Close())
-	b, err = NewBadgerEngine(dir)
+	b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	_, err = b.GetOutgoingEdges("test:close-a")
 	require.NoError(t, err)

@@ -8,7 +8,6 @@ import (
 
 func TestReconcileDecaySuppression_NoOpWhenDisabled(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	// Decay disabled by default → reconciliation is a no-op.
 	require.NoError(t, e.ReconcileDecaySuppression("test"))
@@ -20,7 +19,6 @@ func TestReconcileDecaySuppression_NoOpWhenDisabled(t *testing.T) {
 
 func TestReconcileDecaySuppression_NoOpWhenEmptyNamespace(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	e.SetDecayEnabled(true)
 
 	// Empty-namespace argument is rejected (no work to do).
@@ -32,7 +30,6 @@ func TestReconcileDecaySuppression_NoOpWhenEmptyNamespace(t *testing.T) {
 
 func TestReconcileDecaySuppression_WithEntities(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	e.SetDecayEnabled(true)
 
 	// Stage two nodes and one edge in namespace "test".
@@ -58,7 +55,6 @@ func TestReconcileDecaySuppression_WithEntities(t *testing.T) {
 
 func TestReadNodeSuppressionState_RoundTrip(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{
 		ID: "test:n", Labels: []string{"L1", "L2"}, Properties: map[string]any{},
@@ -77,7 +73,6 @@ func TestReadNodeSuppressionState_RoundTrip(t *testing.T) {
 
 func TestReadEdgeSuppressionState_RoundTrip(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := e.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
@@ -99,7 +94,6 @@ func TestReadEdgeSuppressionState_RoundTrip(t *testing.T) {
 
 func TestCollectNamespaceNodeAndEdgeIDs(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 
 	for _, id := range []NodeID{"test:a", "test:b", "other:c"} {
 		_, err := e.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})

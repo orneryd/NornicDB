@@ -216,7 +216,6 @@ func relationshipConstraintKinds() []Constraint {
 // value refresh scanned AllNodes of every database.
 func TestConstraintCreation_DoesNotScanOtherDatabases(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	populateOtherDatabase(t, inner, 50, 200, 20)
 
 	guard := newScanGuardEngine(inner)
@@ -302,7 +301,6 @@ func TestRelationshipConstraintCreation_StreamsOnlyTypeAndDatabase(t *testing.T)
 	for _, c := range relationshipConstraintKinds() {
 		t.Run(c.Name, func(t *testing.T) {
 			inner := newTestMemoryEngine(t)
-			t.Cleanup(func() { _ = inner.Close() })
 
 			// Database b holds violating REL edges; database a holds
 			// violating edges of another type only.
@@ -328,7 +326,6 @@ func TestRelationshipConstraintCreation_StreamsOnlyTypeAndDatabase(t *testing.T)
 
 func TestRelationshipKeyCreation_ReportsMissingPropertyBeforeDuplicate(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	ns := NewNamespacedEngine(inner, "a")
 	// A duplicate key first in index order, a missing key property later:
 	// the missing property wins, as with the former existence-then-unique scans.
@@ -344,7 +341,6 @@ func TestRelationshipKeyCreation_ReportsMissingPropertyBeforeDuplicate(t *testin
 
 func TestRelationshipPropertyTypeCreation_StreamsOnlyTypeAndDatabase(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	ptc := PropertyTypeConstraint{Name: "ptc", EntityType: ConstraintEntityRelationship, Label: "REL", Property: "k", ExpectedType: PropertyTypeString}
 	bad := map[string]any{"k": 42}
 	seedRelDatabase(t, NewNamespacedEngine(inner, "b"), relEdge("e1", "x", "y", "REL", bad))
@@ -357,7 +353,6 @@ func TestRelationshipPropertyTypeCreation_StreamsOnlyTypeAndDatabase(t *testing.
 
 func TestBadgerValidateRelationshipConstraint_StreamsType(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	for _, id := range []NodeID{"t:x", "t:y"} {
 		_, err := e.CreateNode(&Node{ID: id, Labels: []string{"A"}, Properties: map[string]any{}})
 		require.NoError(t, err)
@@ -390,7 +385,6 @@ func collectEdgeIDs(t *testing.T, engine Engine, edgeType string) []string {
 
 func TestStreamEdgesByType_NamespacedReturnsUserFacingEdgesOfOneDatabase(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	seedRelDatabase(t, NewNamespacedEngine(inner, "b"), relEdge("e1", "x", "y", "REL", nil))
 	nsA := NewNamespacedEngine(inner, "a")
 	seedRelDatabase(t, nsA, relEdge("e1", "x", "y", "REL", nil), relEdge("e2", "p", "q", "OTHER", nil))
@@ -410,7 +404,6 @@ func TestStreamEdgesByType_NamespacedReturnsUserFacingEdgesOfOneDatabase(t *test
 
 func TestStreamEdgesByType_StopsOnVisitorErrorAndContext(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	seedRelDatabase(t, NewNamespacedEngine(e, "a"), relEdge("e1", "x", "y", "REL", nil), relEdge("e2", "y", "x", "REL", nil))
 
 	stop := errors.New("stop")
@@ -427,7 +420,6 @@ func TestStreamEdgesByType_StopsOnVisitorErrorAndContext(t *testing.T) {
 
 func TestStreamEdgesByType_TransactionMergesPendingWrites(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = e.Close() })
 	seedRelDatabase(t, NewNamespacedEngine(e, "a"),
 		relEdge("keep", "x", "y", "REL", map[string]any{"k": "old"}),
 		relEdge("drop", "x", "y", "REL", nil),
@@ -472,7 +464,6 @@ func (e *edgeTypeOnlyEngine) GetNodesByLabel(label string) ([]*Node, error) {
 
 func TestConstraintCreation_FallbackForEnginesWithoutStreaming(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	plain := &edgeTypeOnlyEngine{Engine: inner}
 	seedRelDatabase(t, NewNamespacedEngine(inner, "a"),
 		relEdge("e1", "x", "y", "REL", map[string]any{"k": "dup"}),
@@ -540,7 +531,6 @@ func uniqueCacheSnapshot(schema *SchemaManager) map[string]map[interface{}]NodeI
 
 func TestRefreshUniqueConstraintValues_StreamedMatchesFullScan(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	populateOtherDatabase(t, inner, 20, 0, 0)
 	nsA := NewNamespacedEngine(inner, "a")
 	for i, n := range []*Node{
@@ -581,7 +571,6 @@ func TestRefreshUniqueConstraintValues_StreamedMatchesFullScan(t *testing.T) {
 
 func TestStreamEdgesByType_CompositeStreamsEachConstituent(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = inner.Close() })
 	nsA := NewNamespacedEngine(inner, "a")
 	nsB := NewNamespacedEngine(inner, "b")
 	seedRelDatabase(t, nsA, relEdge("ea", "x", "y", "REL", nil))

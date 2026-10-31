@@ -51,7 +51,7 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 					_, err = b.CreateNode(&Node{ID: NodeID(ns + ":b")})
 					require.NoError(t, err)
 					require.NoError(t, b.CreateEdge(&Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: before}))
-					require.NoError(t, b.FlushWriteBehind())
+					require.NoError(t, b.FlushWriteBehind(nil))
 				}
 			}
 			wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
@@ -75,7 +75,7 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
 					require.NoError(t, tx.Commit())
 					require.True(t, tx.AcknowledgedBuffered())
-					require.NoError(t, source.FlushWriteBehind())
+					require.NoError(t, source.FlushWriteBehind(nil))
 					if stage == 0 {
 						head, err := source.loadNodeMVCCHead(node.ID)
 						require.NoError(t, err)

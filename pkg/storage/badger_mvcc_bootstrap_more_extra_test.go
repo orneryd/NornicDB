@@ -24,31 +24,31 @@ func TestBadgerEngine_MVCCBootstrapHelpersAndTxnVariants(t *testing.T) {
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCNodeHead))
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCEdgeHead))
 
-	nodeBatch1, nodeLast, nodeReachedEnd, err := engine.collectNodeBootstrapBatch(context.Background(), []byte{prefixNode}, 1)
+	nodeBatch1, nodeLast, nodeReachedEnd, err := collectMVCCBootstrapBatch[*Node, NodeID, nodeMVCCBootstrapKind](engine, context.Background(), []byte{prefixNode}, 1)
 	require.NoError(t, err)
 	require.Len(t, nodeBatch1, 1)
 	require.False(t, nodeReachedEnd)
 	require.NotEmpty(t, nodeLast)
-	require.NoError(t, engine.applyNodeBootstrapBatch(context.Background(), nodeBatch1))
+	require.NoError(t, applyMVCCBootstrapBatch[*Node, NodeID, nodeMVCCBootstrapKind](engine, context.Background(), nodeBatch1))
 
-	nodeBatch2, _, nodeReachedEnd2, err := engine.collectNodeBootstrapBatch(context.Background(), nextScanStart(nodeLast), 10)
+	nodeBatch2, _, nodeReachedEnd2, err := collectMVCCBootstrapBatch[*Node, NodeID, nodeMVCCBootstrapKind](engine, context.Background(), nextScanStart(nodeLast), 10)
 	require.NoError(t, err)
 	require.NotEmpty(t, nodeBatch2)
 	require.True(t, nodeReachedEnd2)
-	require.NoError(t, engine.applyNodeBootstrapBatch(context.Background(), nodeBatch2))
+	require.NoError(t, applyMVCCBootstrapBatch[*Node, NodeID, nodeMVCCBootstrapKind](engine, context.Background(), nodeBatch2))
 
-	edgeBatch1, edgeLast, edgeReachedEnd, err := engine.collectEdgeBootstrapBatch(context.Background(), []byte{prefixEdge}, 1)
+	edgeBatch1, edgeLast, edgeReachedEnd, err := collectMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](engine, context.Background(), []byte{prefixEdge}, 1)
 	require.NoError(t, err)
 	require.Len(t, edgeBatch1, 1)
 	require.False(t, edgeReachedEnd)
 	require.NotEmpty(t, edgeLast)
-	require.NoError(t, engine.applyEdgeBootstrapBatch(context.Background(), edgeBatch1))
+	require.NoError(t, applyMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](engine, context.Background(), edgeBatch1))
 
-	edgeBatch2, _, edgeReachedEnd2, err := engine.collectEdgeBootstrapBatch(context.Background(), nextScanStart(edgeLast), 10)
+	edgeBatch2, _, edgeReachedEnd2, err := collectMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](engine, context.Background(), nextScanStart(edgeLast), 10)
 	require.NoError(t, err)
 	require.NotEmpty(t, edgeBatch2)
 	require.True(t, edgeReachedEnd2)
-	require.NoError(t, engine.applyEdgeBootstrapBatch(context.Background(), edgeBatch2))
+	require.NoError(t, applyMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](engine, context.Background(), edgeBatch2))
 
 	// Full bootstrap orchestration.
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCNodeHead))
@@ -63,11 +63,11 @@ func TestBadgerEngine_MVCCBootstrapHelpersAndTxnVariants(t *testing.T) {
 	// In-txn bootstrap variants.
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCNodeHead))
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCEdgeHead))
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		if err := engine.bootstrapNodeMVCCFromCurrentStateInTxn(txn); err != nil {
+	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		if err := bootstrapMVCCFromCurrentStateInTxn[*Node, NodeID, nodeMVCCBootstrapKind](engine, txn); err != nil {
 			return err
 		}
-		return engine.bootstrapEdgeMVCCFromCurrentStateInTxn(txn)
+		return bootstrapMVCCFromCurrentStateInTxn[*Edge, EdgeID, edgeMVCCBootstrapKind](engine, txn)
 	}))
 
 	_, err = engine.GetNodeCurrentHead("test:bn2")
@@ -78,8 +78,8 @@ func TestBadgerEngine_MVCCBootstrapHelpersAndTxnVariants(t *testing.T) {
 	// Cancellation path in collectors.
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, _, err = engine.collectNodeBootstrapBatch(cancelled, []byte{prefixNode}, 1)
+	_, _, _, err = collectMVCCBootstrapBatch[*Node, NodeID, nodeMVCCBootstrapKind](engine, cancelled, []byte{prefixNode}, 1)
 	require.ErrorIs(t, err, context.Canceled)
-	_, _, _, err = engine.collectEdgeBootstrapBatch(cancelled, []byte{prefixEdge}, 1)
+	_, _, _, err = collectMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](engine, cancelled, []byte{prefixEdge}, 1)
 	require.ErrorIs(t, err, context.Canceled)
 }

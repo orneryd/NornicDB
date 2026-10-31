@@ -3,13 +3,14 @@ package storage
 import (
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 // A public write is durably visible before its derived stage runs. A warm
 // point read at that boundary must agree with the newly committed body.
 func TestResidualDurableNodeCache(t *testing.T) {
-	b, err := NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.CreateNode(&Node{ID: "test:durable", Properties: map[string]any{"v": int64(1)}})

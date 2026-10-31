@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResidualCommitAdmissionCancellation(t *testing.T) {
 	for _, route := range []string{"transaction", "merge-preparation", "barrier", "ordinary-gate", "fresh-property-gate", "count", "change-log"} {
 		t.Run(route, func(t *testing.T) {
-			b, err := NewBadgerEngine(t.TempDir())
+			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			if route == "count" {

@@ -73,7 +73,7 @@ func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 	writeBehindCommit(t, badgerEngine, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("nornic:gone", CascadeEdges) })
 	_, err = stack.GetNodeEmbeddingMeta("gone")
 	require.ErrorIs(t, err, ErrNotFound, "a buffered delete")
-	require.NoError(t, badgerEngine.FlushWriteBehind())
+	require.NoError(t, badgerEngine.FlushWriteBehind(nil))
 	_, err = stack.GetNodeEmbeddingMeta("gone")
 	require.ErrorIs(t, err, ErrNotFound, "the flushed delete")
 	meta, err = stack.GetNodeEmbeddingMeta("pending")

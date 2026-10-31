@@ -97,7 +97,7 @@ func TestPendingCandidatesFailedEngineWrite(t *testing.T) {
 	e.MarkNodeEmbedded(pendingCandidateNode(0).ID)
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	sentinel := errors.New("abort pending-marker write")
-	err = e.withUpdate(func(txn *badger.Txn) error {
+	err = e.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		require.NoError(t, e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID))
 		return sentinel
 	})

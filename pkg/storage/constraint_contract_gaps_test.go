@@ -68,7 +68,7 @@ func TestDropConstraint_ContractPersistFailureRestoresEverything(t *testing.T) {
 
 func TestDropConstraint_PrimitivePersistFailureRestores(t *testing.T) {
 	sm := NewSchemaManager()
-	require.NoError(t, sm.AddPropertyTypeConstraint("age_type", "Person", "age", PropertyTypeInteger))
+	require.NoError(t, sm.AddPropertyTypeConstraint("age_type", "Person", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}))
 	sm.persist = func(*SchemaDefinition) error { return errors.New("persist failed") }
 	require.Error(t, sm.DropConstraint("age_type"))
 	require.Len(t, sm.GetAllPropertyTypeConstraints(), 1)

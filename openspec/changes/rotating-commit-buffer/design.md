@@ -33,7 +33,7 @@ inline — a single policy, not shape routing.
 
 - `active *CommitBuffer`, `draining []*CommitBuffer` (oldest first),
   guarded by `mu sync.RWMutex`.
-- `AppendNode / AppendEdge / AppendDelete`: RLock-free append into `active`
+- `Append(BufferedMutation)`: RLock-free append into `active`
   (a short `mu.Lock` for map writes, O(1)); rotation check after append.
 - `rotate()`: swap in a fresh buffer, move the old one to `draining`,
   signal the flusher. O(1) — writers never wait for flush.

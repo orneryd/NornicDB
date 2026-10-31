@@ -23,8 +23,12 @@ type CommitPublication struct {
 // Failed commits never invoke it. Buffered commits use their acknowledged
 // publication boundary. The callback must not panic.
 func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPublication) (commitErr error) {
-	if request.prepare == nil && tx.clientDetached.Load() {
-		return ErrTransactionClosed
+	operation := transactionRead
+	if request.prepare != nil {
+		operation = transactionCoordinatorCommit
+	}
+	if err := tx.clientOwnershipError(operation); err != nil {
+		return err
 	}
 	afterPublication, prepare := request.AfterPublication, request.prepare
 	if ctx != nil {
@@ -50,14 +54,16 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			knowledgePolicyChanged()
 		}
 	}()
-	defer tx.releaseWriteBarrierLocked()
+	var schemaPublication schemaPublicationLease
+	defer func() {
+		// Keep schema cleanup in the existing lease cleanup owner, without a
+		// separate deferred method-value callback.
+		schemaPublication.release()
+		tx.releaseWriteBarrierLocked()
+	}()
 
 	// Recheck client ownership under the same mutex as the state transition.
 	// Only the private accepted-commit continuation may publish a detached tx.
-	operation := transactionRead
-	if prepare != nil {
-		operation = transactionCoordinatorCommit
-	}
 	if err := tx.ensureOperationAllowedLocked(operation); err != nil {
 		return err
 	}
@@ -75,7 +81,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		tx.releaseWriteBarrierLocked()
 	}
 	if tx.commitReleaseWrite == nil {
-		lease, writeErr := tx.engine.beginBarrierWriteContext(ctx, tx.schemaRuntime != nil, false)
+		lease, writeErr := tx.engine.beginBarrierWrite(ctx, tx.schemaRuntime != nil, false)
 		if writeErr != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return writeErr
@@ -222,7 +228,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// after the commits acknowledged before it (orderAfterBufferedCommits).
 	var order orderHold
 	if tx.engine.writeBehindEnabled() {
-		drained, err := tx.engine.orderAfterBufferedCommitsContext(tx.commitCtx, &order, operationEntities(tx.operations))
+		drained, err := tx.engine.orderAfterBufferedCommits(tx.commitCtx, &order, operationEntities(tx.operations))
 		if err != nil {
 			return tx.abortCommitLocked(err)
 		}
@@ -326,6 +332,20 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
 	tx.commitW = cw
+	// A schema-dirty commit publishes a schema definition into the namespace
+	// manager. Take that manager's publication gate before the commit's first
+	// physical batch and hold it until the definition is published, so a direct
+	// persisting schema mutation admitted afterwards reads the published
+	// definition instead of one that omits this commit. The wait honors the
+	// commit's context, and every exit releases the gate before the deferred
+	// callbacks and notifications run.
+	if tx.knowledgeSchemaDirty {
+		lease, err := tx.engine.GetSchemaForNamespace(tx.namespace).beginSchemaPublication(tx.commitCtx)
+		if err != nil {
+			return tx.abortCommitLocked(err)
+		}
+		schemaPublication = lease
+	}
 	if hasWrites {
 		if err := tx.engine.materializeMVCCCommit(&cw.batchWriter, version, physicalOperations); err != nil {
 			return tx.abortCommitLocked(fmt.Errorf("materializing mvcc commit state: %w", err))
@@ -376,6 +396,8 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		}
 		return tx.abortCommitLocked(err)
 	}
+	schemaPublication.release()
+	schemaPublication = schemaPublicationLease{}
 	tx.engine.idDict.markTxnCommitted(committingTxn)
 	tx.commitW = nil
 	// Later acknowledgements must order after this committed image.
