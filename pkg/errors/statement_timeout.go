@@ -52,6 +52,11 @@ func MarkStatementTimeout(err, cause error) error {
 	if err == nil || !stderrors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
+	// Author: Codex,NOR-180. The finish owner already recorded the deadline
+	// that owned this primary. A later deadline cannot relabel a finished child.
+	if HasTerminalOutcome(err) {
+		return NormalizeTerminalOutcome(err)
+	}
 	var deadline *statementDeadline
 	if !stderrors.As(cause, &deadline) {
 		return err

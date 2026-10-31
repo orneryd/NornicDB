@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -79,7 +80,7 @@ func TestRoleDeletionJoinsExplicitTransaction(t *testing.T) {
 			if commit {
 				_, err = exec.handleCommit(context.Background())
 			} else {
-				_, err = exec.handleRollback()
+				_, err = exec.handleRollback(context.Background(), nil)
 			}
 			require.NoError(t, err)
 			_, err = system.GetNode("role:ops")

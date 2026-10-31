@@ -227,7 +227,9 @@ func TestAdministrationTransactionTakeover(t *testing.T) {
 	exec, _ := administrationReviewExecutor(t, "nornic")
 	_, err := exec.handleBegin(nil)
 	require.NoError(t, err)
-	exec.txContext.tx.(*storage.BadgerTransaction).Metadata = map[string]interface{}{"oversized": strings.Repeat("x", 4096)}
+	native := exec.txContext.tx.(*storage.BadgerTransaction)
+	require.NoError(t, native.SetMetadata(map[string]interface{}{"first": strings.Repeat("x", 1500)}))
+	require.NoError(t, native.SetMetadata(map[string]interface{}{"second": strings.Repeat("x", 1500)}))
 	_, err = exec.Execute(ctx, grant, nil)
 	require.Error(t, err)
 

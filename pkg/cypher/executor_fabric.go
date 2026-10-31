@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 Fabric completion error retention, 2026-11-01.
 package cypher
 
 import (
@@ -107,7 +108,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 							cause = cleanupPanic
 						}
 					}()
-					resultErr = errors.Join(resultErr, tx.Rollback(nil))
+					resultErr = nornicerrors.CombineTerminalOutcomes(resultErr, tx.Rollback(nil))
 				}()
 			}
 			if cause != nil {
@@ -189,7 +190,16 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	if remoteExec == nil {
 		remoteExec = fabric.NewRemoteFragmentExecutor()
 		if autoCommit {
-			defer func() { _ = remoteExec.Close() }()
+			defer func() {
+				if closeErr := remoteExec.Close(); closeErr != nil {
+					operation := nornicerrors.TerminalRollback
+					committed := tx.State() == "committed"
+					if committed {
+						operation = nornicerrors.TerminalCommit
+					}
+					resultErr = newTransactionWALFailure(ctx, operation, committed, resultErr, closeErr, localization.Message{})
+				}
+			}()
 		}
 		if !autoCommit && e.txContext != nil {
 			e.txContext.fabricRemoteExe = remoteExec
@@ -229,6 +239,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 			return nil, err
 		}
 		if err := tx.Commit(nil, nil); err != nil {
+			recordTerminalOutcome(ctx, err)
 			if commitFailureWroteNothing(false, err) {
 				err = nornicerrors.MarkCommitRolledBack(err)
 			}
@@ -996,8 +1007,8 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	registered := false
 	defer func() {
 		if !registered && txExec.txContext != nil && txExec.txContext.active {
-			_, cleanupErr := txExec.handleRollback()
-			resultErr = errors.Join(resultErr, cleanupErr)
+			_, cleanupErr := txExec.handleRollback(beginCtx, nil)
+			resultErr = nornicerrors.CombineTerminalOutcomes(resultErr, cleanupErr)
 		}
 	}()
 
@@ -1027,7 +1038,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	rollbackFn := func(_ *fabric.SubTransaction) error {
 		// Local storage rollback has no context API. Always release its state;
 		// the protocol terminal owner bounds its wait independently.
-		_, err := txExec.handleRollback()
+		_, err := txExec.handleRollback(terminalCtx, nil)
 		return err
 	}
 	if tx := c.fabricTransaction(); tx != nil {

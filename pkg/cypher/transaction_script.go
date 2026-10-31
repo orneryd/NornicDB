@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal outcome context propagation,29October2026.
 package cypher
 
 import (
@@ -117,7 +118,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 		}
 		return result, nil
 	case "ROLLBACK":
-		return e.handleRollback()
+		return e.handleRollback(ctx, nil)
 	default:
 		return nil, e.abortTransaction(ctx, localizedError(localization.CypherTransactionsInvalidScriptAction(action), nil))
 	}
@@ -162,7 +163,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		}
 	}
 	if rollbackRequired {
-		return e.handleRollback()
+		return e.handleRollback(ctx, nil)
 	}
 
 	projected, err := e.projectTransactionReturn(ctx, callResult, returnExpr)

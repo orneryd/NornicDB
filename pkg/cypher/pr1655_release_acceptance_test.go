@@ -1,3 +1,4 @@
+// Author: Codex, restore release unique-claim assertions after OUT policy removal, 2026-11-01.
 package cypher
 
 import (
@@ -61,13 +62,13 @@ func TestPR1655ReleaseUniqueClaimConflict(t *testing.T) {
 			require.Equal(t, tc.wantUnique, errors.As(err, &violation), "commit error: %v", err)
 			if tc.wantUnique {
 				require.Equal(t, storage.ConstraintUnique, violation.Type)
-				code, _ := nornicerrors.Neo4jCommitStatus(err)
+				code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
 				require.Equal(t, nornicerrors.ConstraintValidationFailed, code)
 			} else {
 				require.ErrorIs(t, err, storage.ErrConflict)
 				require.Contains(t, err.Error(), "changed after transaction start")
 				require.NotContains(t, err.Error(), "constraint violation")
-				code, _ := nornicerrors.Neo4jCommitStatus(err)
+				code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
 				require.Equal(t, nornicerrors.TransientOutdated, code)
 				_, err = loser.Execute(ctx, "BEGIN", nil)
 				require.NoError(t, err)

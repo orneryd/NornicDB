@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal-outcome response propagation, 2026-10-27.
 package server
 
 import (
@@ -755,8 +756,10 @@ func queryStatsFromResult(result *cypher.ExecuteResult) *QueryStats {
 // Neo4j code the engine raised (or a transient transaction code), with the
 // message without that code prefix. Every transaction endpoint reports
 // statement errors through here.
-func statementError(err error) QueryError {
-	code, message := mapSessionExecError(err)
+// statementError is a failed statement's status and message, rendered in one
+// pass with the request's localization.
+func statementError(err error, localize func(localization.Message) string) QueryError {
+	code, message := nornicerrors.RenderStatus(err, localize)
 	return QueryError{Code: code, Message: message}
 }
 
@@ -765,8 +768,7 @@ func statementError(err error) QueryError {
 // is recorded in response first, as Neo4j's HTTP API reports it (#668); a
 // statement failing at compile time has no result.
 func statementFailure(ctx context.Context, response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error, localize func(localization.Message) string) QueryError {
-	failure := statementError(err)
-	localizeStatementError(&failure, err, localize)
+	failure := statementError(err, localize)
 	if executor != nil && !nornicerrors.IsCompileTimeError(err) {
 		columns, columnErr := executor.StatementResultColumnsContext(ctx, query, cypher.RawSource)
 		if columnErr != nil {
@@ -780,13 +782,6 @@ func statementFailure(ctx context.Context, response *TransactionResponse, execut
 		}
 	}
 	return failure
-}
-
-func localizeStatementError(failure *QueryError, err error, localize func(localization.Message) string) {
-	var localized *localization.LocalizedError
-	if errors.As(err, &localized) && localized.Code == failure.Code && localize != nil {
-		failure.Message = localize(localized.Message)
-	}
 }
 
 // QueryError is an error from a query (Neo4j format).
@@ -1300,10 +1295,7 @@ func (s *Server) executeTxStatements(
 	statements []StatementRequest,
 	response *TransactionResponse,
 ) (failed bool) {
-	localize := func(message localization.Message) string {
-		text, _ := localizationboundary.Render(ctx, s.localizer, message, localizationboundary.FallbackOrID, localizationboundary.SourceEnglish)
-		return text
-	}
+	localize := s.transactionMessageRenderer(ctx)
 	return s.runRequestStatements(s.withRequestIdentity(ctx, nil, claims), authToken, claims, dbName, statements, s.sessionStatementRunner(session), localize, response)
 }
 
@@ -1410,8 +1402,7 @@ func (s *Server) runRequestStatements(
 		// An empty statement (or only a comment) is Neo4j's SyntaxError, so it
 		// fails its request like any other invalid statement.
 		if err := cypher.ValidateStatementText(queryStatement); err != nil {
-			failure := statementError(err)
-			localizeStatementError(&failure, err, localize)
+			failure := statementError(err, localize)
 			return &failure
 		}
 
@@ -1423,8 +1414,7 @@ func (s *Server) runRequestStatements(
 			if errors.As(err, &own) {
 				return &own.QueryError
 			}
-			failure := statementError(err)
-			localizeStatementError(&failure, err, localize)
+			failure := statementError(err, localize)
 			// Authorization failures never publish a statement result, even when
 			// the executor supplies column metadata alongside the denial. Keep
 			// runtime partial results for non-security statement failures below.
@@ -1507,7 +1497,7 @@ func (s *Server) runOneShotTransaction(
 		result, executor, err := s.sessionStatementRunner(session)(ctx, target, query, params)
 		var detail interface{ BoltErrorDetail() string }
 		code, _ := mapSessionExecError(err)
-		if err != nil && code == "Neo.DatabaseError.Transaction.TransactionStartFailed" && errors.As(err, &detail) && detail.BoltErrorDetail() == "InvalidCallInTransactions" {
+		if err != nil && code == nornicerrors.TransactionStartFailed && errors.As(err, &detail) && detail.BoltErrorDetail() == "InvalidCallInTransactions" {
 			if wrote {
 				return nil, executor, &requestStatementError{QueryError{
 					Code:    "Neo.DatabaseError.Statement.ExecutionFailed",
@@ -1515,7 +1505,7 @@ func (s *Server) runOneShotTransaction(
 				}}
 			}
 			if rollbackErr := s.rollbackRequestTransaction(ctx, session, nil); rollbackErr != nil {
-				return nil, executor, rollbackErr
+				return nil, executor, nornicerrors.CombineTerminalOutcomes(err, rollbackErr)
 			}
 			session = nil
 			return s.autoCommitStatementRunner(r.Header.Get("Authorization"))(ctx, target, query, params)
@@ -1547,7 +1537,8 @@ func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims,
 	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
 		executor, execErr := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, authToken))
 		if execErr != nil {
-			return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: execErr.Error()}
+			code, message := nornicerrors.RenderStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, execErr), localize)
+			return nil, &QueryError{Code: code, Message: message}
 		}
 		session, err = s.txSessions.OpenWithExecutorForOwner(r.Context(), dbName, executor, ownerKey)
 	} else {
@@ -1560,7 +1551,8 @@ func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims,
 				Message: localize(localization.HTTPDatabaseNotFound(dbName)),
 			}
 		}
-		return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: err.Error()}
+		code, message := nornicerrors.RenderStatus(err, localize)
+		return nil, &QueryError{Code: code, Message: message}
 	}
 	return session, nil
 }
@@ -1570,8 +1562,7 @@ func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims,
 func (s *Server) commitRequestTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) {
 	commitResult, err := s.txSessions.CommitAndDelete(ctx, session)
 	if err != nil {
-		code, message := nornicerrors.Neo4jCommitStatus(err)
-		response.Errors = append(response.Errors, QueryError{Code: code, Message: message})
+		response.Errors = append(response.Errors, s.transactionResponseError(ctx, err))
 		return
 	}
 	if commitResult != nil {
@@ -1607,13 +1598,29 @@ func (s *Server) rollbackRequestTransaction(ctx context.Context, session *txsess
 	err := s.txSessions.RollbackAndDelete(ctx, session)
 	if response != nil {
 		if err != nil {
-			code, message := mapSessionExecError(err)
-			response.Errors = append(response.Errors, QueryError{Code: code, Message: message})
+			response.Errors = append(response.Errors, s.transactionResponseError(ctx, err))
 		}
 		response.Receipt = nil
 		response.Optimistic = nil
 	}
 	return err
+}
+
+// transactionResponseError renders completion failures with the same locale
+// owner as statement failures. Classification and committed truth are produced
+// by the transaction; this boundary only renders them for the request.
+func (s *Server) transactionResponseError(ctx context.Context, err error) QueryError {
+	code, message := nornicerrors.RenderStatus(err, s.transactionMessageRenderer(ctx))
+	return QueryError{Code: code, Message: message}
+}
+
+// transactionMessageRenderer binds the same request locale policy for statement
+// failures and explicit completion. The localization boundary owns rendering.
+func (s *Server) transactionMessageRenderer(ctx context.Context) func(localization.Message) string {
+	return func(message localization.Message) string {
+		text, _ := localizationboundary.Render(ctx, s.localizer, message, localizationboundary.FallbackOrID, localizationboundary.SourceEnglish)
+		return text
+	}
 }
 
 // transactionExpires formats an explicit transaction's expiry as an HTTP

@@ -67,15 +67,28 @@ func (e *mergeCommitTimeUniqueConflictError) Unwrap() error {
 	return e.err
 }
 
+// The existing retry-classification owner supplies this status. Consumers only
+// render it;they do not override a finished child's status in a protocol mapper.
+func (e *mergeCommitTimeUniqueConflictError) BoltErrorCode() string { return TransientOutdated }
+
 func (e *mergeCommitTimeUniqueConflictError) Is(target error) bool {
 	return target == ErrMergeCommitTimeUniqueConflict
 }
 
-// MapTransientTransactionError maps known transaction failure sentinels to
+// IsTransientTransactionError reports whether err is a transient transaction
+// failure a client may retry. It is the same classification the render pass
+// uses for the failure's status (transientTransactionStatus), without
+// rendering anything (Author: Claude, NOR-180: one classification owner).
+func IsTransientTransactionError(err error) bool {
+	_, transient := transientTransactionStatus(err)
+	return transient
+}
+
+// transientTransactionStatus maps known transaction failure sentinels to
 // Neo4j-compatible transient transaction codes. It intentionally classifies by
 // error reference rather than message text so localized or templated messages do
 // not change retry semantics.
-func MapTransientTransactionError(err error) (string, bool) {
+func transientTransactionStatus(err error) (string, bool) {
 	if err == nil {
 		return "", false
 	}
@@ -105,6 +118,11 @@ func transactionTooBigMessage(cause string) string {
 // returned unchanged.
 func MarkMergeCommitTimeUniqueConflict(err error) error {
 	if err == nil || stderrors.Is(err, ErrMergeCommitTimeUniqueConflict) {
+		return err
+	}
+	if lookupTerminalView(err) != nil {
+		// Its native owner already applied the policy before producing this
+		// value. A later response cannot reclassify any finished child.
 		return err
 	}
 	var violation *storage.ConstraintViolationError

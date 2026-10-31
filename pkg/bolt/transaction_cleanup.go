@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 )
 
 // rollbackWithCleanupDeadline gives cooperative storage work a deadline without
@@ -40,7 +42,7 @@ func invokeTransactionRollback(ctx context.Context, executor TransactionalExecut
 			err = fmt.Errorf("transaction rollback panicked: %v", recovered)
 		}
 	}()
-	return executor.RollbackTransaction(ctx)
+	return nornicerrors.NormalizeTerminalOutcome(executor.RollbackTransaction(ctx))
 }
 
 // invokeTransactionBegin preserves a backend panic separately from returned

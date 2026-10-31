@@ -193,7 +193,7 @@ func TestConstraintViolationStatusAndRolledBackCommit(t *testing.T) {
 	_, err = exec.Execute(ctx, "COMMIT", nil)
 	require.Error(t, err)
 	require.True(t, nornicerrors.IsCommitRolledBack(err))
-	code, message := nornicerrors.Neo4jCommitStatus(err)
+	code, message := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, nornicerrors.ConstraintValidationFailed, code)
 	require.Contains(t, message, "commit failed: constraint violation")
 

@@ -163,7 +163,7 @@ func TestBoltExpiredBeginCleanupFailureClosesAndQuarantines(t *testing.T) {
 			close(release)
 			code, _, err := AssertFailure(t, conn)
 			require.NoError(t, err, "failed cleanup must not return BEGIN SUCCESS")
-			require.Equal(t, "Neo.ClientError.Transaction.TransactionStartFailed", code)
+			require.Equal(t, "Neo.DatabaseError.Transaction.TransactionStartFailed", code)
 			requireBoltConnectionClosed(t, conn)
 			require.Eventually(t, func() bool { return server.activeConnections.Load() == 0 },
 				time.Second, time.Millisecond)

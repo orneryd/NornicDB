@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 participant terminal completion changes, 2026-11-01.
 package fabric
 
 import (
@@ -6,6 +7,9 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // ErrSecondWriteShard is returned when a distributed transaction attempts to write
@@ -271,7 +275,8 @@ func endOne(fn func(*SubTransaction) error, sub *SubTransaction, panicked **part
 //   - The writer's commit that fails is not committed (ErrCommitKeptNothing),
 //     unless its outcome is not known, a lost remote acknowledgement or a
 //     panic (ErrCommitOutcomeUnknown; the transaction ends StateUnknown).
-//   - A committed write is never reported as an error.
+//   - A committed write stays committed even when terminal completion fails;
+//     the complete failure is returned without inviting a retry of that work.
 //
 // Every participant ends however another's end ends, a panic included: each
 // end runs as a finalizer (endOne), and once all have ended the first panic
@@ -307,10 +312,16 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 		if sub.State != "open" {
 			continue
 		}
-		if _, err := commit(sub); err != nil {
+		if didPanic, err := commit(sub); err != nil {
+			outcome, failure := participantCommitOutcome(sub, err, didPanic)
+			if outcome == "committed" && !didPanic {
+				// Its native end is final. Keep its failed completion, but do
+				// not attempt to roll back a committed participant.
+				sub.State, sub.CommitOutcome = outcome, outcome
+			}
 			// A reader's failed end may leave what it holds: it is rolled
 			// back with the others.
-			return t.abortCommitLocked(rollbackFn, &panicked, fmt.Errorf("commit failed on shard '%s': %w", sub.ShardName, err))
+			return t.abortCommitLocked(rollbackFn, &panicked, fmt.Errorf("commit failed on shard '%s': %w", sub.ShardName, failure))
 		}
 		sub.State = "committed"
 		sub.CommitOutcome = "committed"
@@ -323,7 +334,7 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 			t.state = "committed"
 			return nil
 		}
-		outcome := writerOutcome(writer, err, didPanic)
+		outcome, err := participantCommitOutcome(writer, err, didPanic)
 		var cleanupErr error
 		if outcome != "committed" || didPanic {
 			// A commit that failed or panicked may have left what it holds;
@@ -339,13 +350,13 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 		t.state = outcome
 		err = fmt.Errorf("commit failed on shard '%s': %w", writer.ShardName, err)
 		if cleanupErr != nil {
-			err = fmt.Errorf("%w (rollback failed: %w; cleanup not confirmed)", err, cleanupErr)
+			err = nornicerrors.CombineTerminalOutcomes(err, fmt.Errorf("rollback failed (cleanup not confirmed): %w", cleanupErr))
 		}
 		switch outcome {
 		case "committed":
-			// Its storage committed before the failure (a panic after the
-			// commit): the write stays committed.
-			return nil
+			// Native state and completion are independent. In particular,
+			// an explicit COMMIT has a new caller, not BEGIN's journal.
+			return err
 		case StateUnknown:
 			return fmt.Errorf("%w: %w", ErrCommitOutcomeUnknown, err)
 		}
@@ -353,6 +364,18 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 	}
 	t.state = "committed"
 	return nil
+}
+
+// participantCommitOutcome maps the participant's state and returned failure
+// together for both readers and the writer. A known commit never erases the
+// failure, and a plain transient post-commit failure is frozen as nonretryable
+// through the existing terminal constructor, just like a failed logical record.
+func participantCommitOutcome(sub *SubTransaction, err error, didPanic bool) (string, error) {
+	outcome := writerOutcome(sub, err, didPanic)
+	if outcome == "committed" {
+		err = nornicerrors.NewTerminalFailure(nornicerrors.TerminalCommit, true, err, nil, localization.Message{})
+	}
+	return outcome, err
 }
 
 // writerOutcome is the state the write participant's failed commit leaves
@@ -413,7 +436,8 @@ func (t *FabricTransaction) abortCommitLocked(rollbackFn RollbackCallback, panic
 	}
 	t.state = "rolledback"
 	if len(rollbackErrs) > 0 {
-		return fmt.Errorf("%w: %w (rollback failed on: %w; cleanup not confirmed)", ErrCommitKeptNothing, commitErr, errors.Join(rollbackErrs...))
+		rollbackErr := fmt.Errorf("rollback failed (cleanup not confirmed): %w", nornicerrors.CombineTerminalOutcomes(nil, rollbackErrs...))
+		return nornicerrors.CombineTerminalOutcomes(fmt.Errorf("%w: %w", ErrCommitKeptNothing, commitErr), rollbackErr)
 	}
 	return fmt.Errorf("%w: %w", ErrCommitKeptNothing, commitErr)
 }
@@ -463,7 +487,7 @@ func (t *FabricTransaction) Rollback(rollbackFn RollbackCallback) error {
 	}
 	t.state = "rolledback"
 	if len(failures) > 0 {
-		return fmt.Errorf("rollback failed (cleanup not confirmed): %w", errors.Join(failures...))
+		return fmt.Errorf("rollback failed (cleanup not confirmed): %w", nornicerrors.CombineTerminalOutcomes(nil, failures...))
 	}
 	return nil
 }
