@@ -142,7 +142,7 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 	// Third-open backfill goroutine must NOT run because the marker
 	// is set. Probe: backfillDone is nil (no goroutine launched).
 	engine3.labelIndexBackfillMu.Lock()
-	stillIdle := engine3.labelIndexBackfillDone == nil
+	stillIdle := engine3.labelIndexBackfill == nil
 	engine3.labelIndexBackfillMu.Unlock()
 	assert.True(t, stillIdle,
 		"backfill must not relaunch on subsequent opens once the marker is set")
@@ -299,11 +299,11 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	reopened.labelIndexBackfillMu.Lock()
-	done := reopened.labelIndexBackfillDone
+	done := reopened.labelIndexBackfill
 	reopened.labelIndexBackfillMu.Unlock()
 	require.NotNil(t, done, "a legacy ready marker must schedule the existing backfill")
 	select {
-	case <-done.Done():
+	case <-done.done.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("legacy label-index backfill did not finish")
 	}
@@ -332,7 +332,7 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = again.Close() })
 	again.labelIndexBackfillMu.Lock()
-	nextBackfill := again.labelIndexBackfillDone
+	nextBackfill := again.labelIndexBackfill
 	again.labelIndexBackfillMu.Unlock()
 	require.Nil(t, nextBackfill, "current marker must prevent repeated backfill")
 }
@@ -355,7 +355,7 @@ func TestLabelIndexBackfill_EmptyStoreMarksCurrentScheme(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = reopened.Close() })
 			reopened.labelIndexBackfillMu.Lock()
-			done := reopened.labelIndexBackfillDone
+			done := reopened.labelIndexBackfill
 			reopened.labelIndexBackfillMu.Unlock()
 			require.Nil(t, done)
 			require.NoError(t, reopened.db.View(func(txn *badger.Txn) error {

@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-
-	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // Label-index startup backfill.
@@ -138,34 +136,27 @@ func (b *BadgerEngine) startIndexBackfill(kind startupIndexKind, mode indexBackf
 	}
 
 	mu := &b.labelIndexBackfillMu
-	cancelSlot, doneSlot := &b.labelIndexBackfillCancel, &b.labelIndexBackfillDone
+	slot := &b.labelIndexBackfill
 	indexName, message, entity := "label", "label index backfill", "nodes"
 	rebuild := b.rebuildLabelIndex
 	if kind == startupEdgeBetweenIndex {
 		mu = &b.edgeBetweenIndexBackfillMu
-		cancelSlot, doneSlot = &b.edgeBetweenIndexBackfillCancel, &b.edgeBetweenIndexBackfillDone
+		slot = &b.edgeBetweenIndexBackfill
 		indexName, message, entity = "edge_between", "edge-between index backfill", "edges"
 		rebuild = func(ctx context.Context) (int, error) {
 			return b.rebuildRelationshipIndexes(ctx, rebuildEdgeBetweenOnly)
 		}
 	}
 	mu.Lock()
-	if *doneSlot != nil || !b.work.Enter() {
-		mu.Unlock()
+	defer mu.Unlock()
+	if *slot != nil {
 		return nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := &lifecycle.OnceCompletion{}
-	*cancelSlot = cancel
-	*doneSlot = done
-	mu.Unlock()
-
 	// The backfill is accepted engine work; its completion is what
 	// stopIndexBackfill joins.
-	go func() {
-		defer b.work.Leave()
-		done.Run(func() { b.runIndexBackfill(ctx, rebuild, indexName, message, entity) })
-	}()
+	*slot = b.startEngineWorker(context.Background(), func(ctx context.Context) {
+		b.runIndexBackfill(ctx, rebuild, indexName, message, entity)
+	})
 	return nil
 }
 
@@ -199,24 +190,16 @@ func (b *BadgerEngine) runIndexBackfill(ctx context.Context, rebuild func(contex
 // stopIndexBackfill detaches, cancels and waits for the selected startup rebuild.
 func (b *BadgerEngine) stopIndexBackfill(kind startupIndexKind) {
 	mu := &b.labelIndexBackfillMu
-	cancelSlot, doneSlot := &b.labelIndexBackfillCancel, &b.labelIndexBackfillDone
+	slot := &b.labelIndexBackfill
 	if kind == startupEdgeBetweenIndex {
 		mu = &b.edgeBetweenIndexBackfillMu
-		cancelSlot, doneSlot = &b.edgeBetweenIndexBackfillCancel, &b.edgeBetweenIndexBackfillDone
+		slot = &b.edgeBetweenIndexBackfill
 	}
 	mu.Lock()
-	cancel := *cancelSlot
-	done := *doneSlot
-	*cancelSlot = nil
-	*doneSlot = nil
+	worker := *slot
+	*slot = nil
 	mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	if done != nil {
-		<-done.Done()
-	}
+	worker.stopAndJoin()
 }
 
 // rebuildLabelIndex scans every stored node and re-emits the
