@@ -153,16 +153,10 @@ type nodeUserView struct {
 
 // toUserNode returns a node with the namespace prefix stripped from its ID.
 //
-// The Edge/Node Properties map is shared with whatever the inner engine
-// returned (often a cache pointer). All current callers in the cypher
-// executor and storage layer treat Get*/AllNodes results as read-only:
-// mutations go through UpdateNode/UpdateEdge with fresh structs. If a
-// future caller needs to mutate, it must call CopyNode/CopyEdge first.
-//
-// Profiling: NamespacedEngine.toUserEdge → CopyEdge was 30% of the warm
-// shortestPath benchmark. The deep copy was duplicating the Properties
-// map for every cache-hit edge — pure waste because nothing in the
-// traversal path touches the map.
+// Every inner engine read is already caller-owned (NOR-160), so an owned view
+// rewrites the identity in place and any other view takes a shallow struct
+// copy; the Properties map is never copied again here. (Profiling: a deep
+// copy in toUserEdge was 30% of the warm shortestPath benchmark.)
 
 func (n *NamespacedEngine) toUserNode(node *Node, view nodeUserView) *Node {
 	if node == nil {
@@ -182,24 +176,6 @@ func (n *NamespacedEngine) toUserNode(node *Node, view nodeUserView) *Node {
 		metadata.Database = n.namespace
 		out.SetRuntimeMetadata(metadata)
 	}
-	return out
-}
-
-func keepNodeProperties(node *Node, properties []string) *Node {
-	if node == nil {
-		return nil
-	}
-	out := CopyNode(node)
-	if properties == nil {
-		return out
-	}
-	props := make(map[string]any, len(properties))
-	for _, property := range properties {
-		if value, ok := node.Properties[property]; ok {
-			props[property] = value
-		}
-	}
-	out.Properties = props
 	return out
 }
 
@@ -249,7 +225,9 @@ func (n *NamespacedEngine) GetNodeProjected(id NodeID, properties []string) (*No
 		if err != nil || node == nil || properties == nil {
 			return node, err
 		}
-		return keepNodeProperties(node, properties), nil
+		// The inner engine's ownership of what it returns is not established
+		// here: copy.
+		return copyShaped(node, properties, false), nil
 	}
 
 	return materializedRead(func() (*Node, error) { return projected.GetNodeProjected(n.PrefixNodeID(id), properties) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, true)
@@ -715,18 +693,15 @@ func (n *NamespacedEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error)
 	return n.readNodeBatch(ids, false)
 }
 
-// toUserNodeBatch binds stored result keys and copy ownership to the one
-// node view owner; materializedKeyed owns the batch materialization walk.
+// toUserNodeBatch binds stored result keys to the one node view owner;
+// materializedKeyed owns the batch materialization walk. Inner batch reads
+// are caller-owned, so identity is rewritten in place, never copied again.
 func (n *NamespacedEngine) toUserNodeBatch(rows map[NodeID]*Node, withoutEmbeddings bool) map[NodeID]*Node {
 	return materializedKeyed(rows, func(key NodeID, node *Node) (NodeID, *Node) {
 		if withoutEmbeddings && node == nil {
 			return "", nil
 		}
-		owned := !withoutEmbeddings
-		if owned {
-			node = CopyNode(node)
-		}
-		out := n.toUserNode(node, nodeUserView{owned: owned, keyed: true, id: key})
+		out := n.toUserNode(node, nodeUserView{owned: true, keyed: true, id: key})
 		return out.ID, out
 	})
 }
@@ -959,7 +934,8 @@ func (n *NamespacedEngine) StreamNodeChunks(ctx context.Context, chunkSize int, 
 		if end > len(nodes) {
 			end = len(nodes)
 		}
-		if err := fn(nodes[i:end]); err != nil {
+		// Cap each chunk so appending to one cannot overwrite the next.
+		if err := fn(nodes[i:end:end]); err != nil {
 			return err
 		}
 	}

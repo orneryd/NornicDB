@@ -549,51 +549,43 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 
 // copyQueuedNode makes a queued node independent of its caller, who may reuse
 // any buffer once IndexNode returns: the build reads the queued copy later,
-// as the live path read the caller's node before returning. Every value the
-// index reads by reference is copied: labels, embedding vectors, and the
-// slices and maps inside properties (property vectors) and embedding metadata.
-// The struct copy keeps every other field. size is the payload the queue
-// retains for it.
+// as the live path read the caller's node before returning. The copy is the
+// single entity copy owner's (storage.CopyNode); size is the payload the
+// queue retains for it, measured without copying.
 func copyQueuedNode(node *storage.Node) (copied *storage.Node, size int) {
 	if node == nil {
 		return nil, 0
 	}
-	size = queuedEntryBytes + int(unsafe.Sizeof(*node))
-	clone := *node
-	clone.Labels = slices.Clone(node.Labels)
-	size += 16 * len(node.Labels)
-	for _, label := range node.Labels {
+	copied = storage.CopyNode(node)
+	size = queuedEntryBytes + int(unsafe.Sizeof(*copied))
+	size += 16 * len(copied.Labels)
+	for _, label := range copied.Labels {
 		size += len(label)
 	}
-	clone.Properties = cloneQueuedMapSized(node.Properties, &size)
-	clone.EmbedMeta = cloneQueuedMapSized(node.EmbedMeta, &size)
-	if node.NamedEmbeddings != nil {
-		clone.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
-		size += queuedMapBytes(len(node.NamedEmbeddings), 16+24)
-		for name, embedding := range node.NamedEmbeddings {
-			clone.NamedEmbeddings[name] = slices.Clone(embedding)
+	size += queuedMapRetainedBytes(copied.Properties)
+	size += queuedMapRetainedBytes(copied.EmbedMeta)
+	if copied.NamedEmbeddings != nil {
+		size += queuedMapBytes(len(copied.NamedEmbeddings), 16+24)
+		for name, embedding := range copied.NamedEmbeddings {
 			size += len(name) + 4*len(embedding)
 		}
 	}
-	if node.ChunkEmbeddings != nil {
-		clone.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
-		size += 24 * len(node.ChunkEmbeddings)
-		for i, embedding := range node.ChunkEmbeddings {
-			clone.ChunkEmbeddings[i] = slices.Clone(embedding)
+	if copied.ChunkEmbeddings != nil {
+		size += 24 * len(copied.ChunkEmbeddings)
+		for _, embedding := range copied.ChunkEmbeddings {
 			size += 4 * len(embedding)
 		}
 	}
-	return &clone, size
+	return copied, size
 }
 
+// copyQueuedEdge is copyQueuedNode for a relationship (storage.CopyEdge).
 func copyQueuedEdge(edge *storage.Edge) (copied *storage.Edge, size int) {
 	if edge == nil {
 		return nil, 0
 	}
-	size = queuedEntryBytes + int(unsafe.Sizeof(*edge))
-	clone := *edge
-	clone.Properties = cloneQueuedMapSized(edge.Properties, &size)
-	return &clone, size
+	copied = storage.CopyEdge(edge)
+	return copied, queuedEntryBytes + int(unsafe.Sizeof(*copied)) + queuedMapRetainedBytes(copied.Properties)
 }
 
 // queuedEntryBytes is what the queue counts for an entry besides what it
@@ -613,139 +605,109 @@ func queuedMapBytes(entries, slotBytes int) int {
 	return header + slots*(slotBytes+1)
 }
 
-func cloneQueuedMap(source map[string]any) map[string]any {
-	var size int
-	return cloneQueuedMapSized(source, &size)
+// queuedMapRetainedBytes measures what a queued map retains, strings
+// included. It copies nothing.
+func queuedMapRetainedBytes(m map[string]any) int {
+	if m == nil {
+		return 0
+	}
+	size := queuedMapBytes(len(m), 16+16)
+	for key, value := range m {
+		size += len(key) + queuedValueBytes(value)
+	}
+	return size
 }
 
-func cloneQueuedMapSized(source map[string]any, size *int) map[string]any {
-	if source == nil {
-		return nil
-	}
-	copied := make(map[string]any, len(source))
-	*size += queuedMapBytes(len(source), 16+16)
-	for key, value := range source {
-		*size += len(key)
-		copied[key] = cloneQueuedValue(value, size)
-	}
-	return copied
-}
-
-// cloneQueuedValue copies every mutable container a property value can hold,
-// whatever its type: the deferred apply reads property values in several
-// places (BM25 text, property vectors, and the chunk-span fallback, which
-// JSON-encodes arbitrary values). Common types take the fast path; any other
-// slice, map, array, pointer, interface or struct is copied recursively.
-// Scalars and strings are immutable and shared. size accumulates the bytes
-// the copy retains, strings included.
-func cloneQueuedValue(value any, size *int) any {
+// queuedValueBytes is the retained size of one queued value. Scalars and
+// strings are shared; containers are counted with their payload.
+func queuedValueBytes(value any) int {
 	switch v := value.(type) {
 	case nil, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		*size += 8
-		return value
+		return 8
 	case string:
-		*size += 16 + len(v)
-		return value
+		return 16 + len(v)
 	case []float32:
-		*size += 24 + 4*len(v)
-		return slices.Clone(v)
+		return 24 + 4*len(v)
 	case []float64:
-		*size += 24 + 8*len(v)
-		return slices.Clone(v)
+		return 24 + 8*len(v)
 	case []string:
-		*size += 24 + 16*len(v)
+		size := 24 + 16*len(v)
 		for _, item := range v {
-			*size += len(item)
+			size += len(item)
 		}
-		return slices.Clone(v)
+		return size
 	case []any:
-		*size += 24
-		copied := make([]any, len(v))
-		for i, item := range v {
-			copied[i] = cloneQueuedValue(item, size)
+		size := 24
+		for _, item := range v {
+			size += queuedValueBytes(item)
 		}
-		return copied
+		return size
 	case map[string]any:
-		return cloneQueuedMapSized(v, size)
+		return queuedMapRetainedBytes(v)
 	default:
-		return cloneQueuedReflect(reflect.ValueOf(value), size).Interface()
+		return queuedReflectBytes(reflect.ValueOf(value))
 	}
 }
 
-// cloneQueuedReflect is cloneQueuedValue for any other type. A struct's
-// unexported fields are copied by value, since they cannot be set.
-func cloneQueuedReflect(v reflect.Value, size *int) reflect.Value {
+// queuedReflectBytes is queuedValueBytes for any other type.
+func queuedReflectBytes(v reflect.Value) int {
 	switch v.Kind() {
 	case reflect.Slice:
 		if v.IsNil() {
-			return v
+			return 0
 		}
-		*size += 24 + v.Len()*int(v.Type().Elem().Size())
-		copied := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		size := 24 + v.Len()*int(v.Type().Elem().Size())
 		if queuedScalarKind(v.Type().Elem().Kind()) {
-			reflect.Copy(copied, v)
 			if v.Type().Elem().Kind() == reflect.String {
 				for i := range v.Len() {
-					*size += v.Index(i).Len()
+					size += v.Index(i).Len()
 				}
 			}
-			return copied
+			return size
 		}
 		for i := range v.Len() {
-			copied.Index(i).Set(cloneQueuedReflect(v.Index(i), size))
+			size += queuedReflectBytes(v.Index(i))
 		}
-		return copied
+		return size
 	case reflect.Array:
-		copied := reflect.New(v.Type()).Elem()
-		copied.Set(v)
-		*size += int(v.Type().Size())
+		size := int(v.Type().Size())
 		if !queuedScalarKind(v.Type().Elem().Kind()) {
 			for i := range v.Len() {
-				copied.Index(i).Set(cloneQueuedReflect(v.Index(i), size))
+				size += queuedReflectBytes(v.Index(i))
 			}
 		}
-		return copied
+		return size
 	case reflect.Map:
 		if v.IsNil() {
-			return v
+			return 0
 		}
-		copied := reflect.MakeMapWithSize(v.Type(), v.Len())
-		*size += queuedMapBytes(v.Len(), int(v.Type().Key().Size()+v.Type().Elem().Size()))
+		size := queuedMapBytes(v.Len(), int(v.Type().Key().Size()+v.Type().Elem().Size()))
 		for it := v.MapRange(); it.Next(); {
-			copied.SetMapIndex(it.Key(), cloneQueuedReflect(it.Value(), size))
+			size += queuedReflectBytes(it.Value())
 		}
-		return copied
+		return size
 	case reflect.Pointer:
 		if v.IsNil() {
-			return v
+			return 0
 		}
-		copied := reflect.New(v.Type().Elem())
-		*size += int(v.Type().Elem().Size())
-		copied.Elem().Set(cloneQueuedReflect(v.Elem(), size))
-		return copied
+		return int(v.Type().Elem().Size()) + queuedReflectBytes(v.Elem())
 	case reflect.Interface:
 		if v.IsNil() {
-			return v
+			return 0
 		}
-		copied := reflect.New(v.Type()).Elem()
-		copied.Set(cloneQueuedReflect(v.Elem(), size))
-		return copied
+		return queuedReflectBytes(v.Elem())
 	case reflect.Struct:
-		copied := reflect.New(v.Type()).Elem()
-		copied.Set(v)
-		*size += int(v.Type().Size())
+		size := int(v.Type().Size())
 		for i := range v.NumField() {
 			if v.Type().Field(i).IsExported() {
-				copied.Field(i).Set(cloneQueuedReflect(v.Field(i), size))
+				size += queuedReflectBytes(v.Field(i))
 			}
 		}
-		return copied
+		return size
 	case reflect.String:
-		*size += v.Len()
-		return v
+		return v.Len()
 	default:
-		*size += int(v.Type().Size())
-		return v
+		return int(v.Type().Size())
 	}
 }
 

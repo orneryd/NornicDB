@@ -143,25 +143,37 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked() error {
 			if before == nil || tx.pendingNodes[id] == nil {
 				continue
 			}
+			claimChanged := func(current *Node) bool {
+				if current == nil {
+					return true
+				}
+				for index := range constraints {
+					constraint := &constraints[index]
+					if !sameNodeUniqueClaim(before, current, constraint.Label, constraint.Property) {
+						return true
+					}
+				}
+				return false
+			}
 			current, found := buffered[id]
+			changed := found && claimChanged(current)
 			if !found {
 				item, err := view.Get(nodeKey(id))
 				if err != nil && err != badger.ErrKeyNotFound {
 					return &CommitFailureError{Cause: err}
 				}
+				changed = true // absent, unless the stored body says otherwise
 				if err == nil {
-					current, err = tx.engine.readProjectedNodeItemInTxn(view, item, id, properties, include, nodeBodyBorrowed)
+					// The comparison runs on the stored body itself, cached
+					// or decoded, as the read's selection: the body is never
+					// copied, and nothing is returned (NOR-160).
+					_, err = tx.engine.readProjectedNodeItemInTxn(view, item, id, properties, include, func(current *Node) bool {
+						changed = claimChanged(current)
+						return false
+					})
 					if err != nil {
 						return &CommitFailureError{Cause: err}
 					}
-				}
-			}
-			changed := current == nil
-			for index := range constraints {
-				constraint := &constraints[index]
-				if !sameNodeUniqueClaim(before, current, constraint.Label, constraint.Property) {
-					changed = true
-					break
 				}
 			}
 			if changed {

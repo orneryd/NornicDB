@@ -41,7 +41,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	old, err := b.readNodeItemInTxn(view.txn, item, "test:a", nodeItemFullEmbeddings)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), old.Properties["v"])
-	edge, err := b.readIndexedEdgeInTxn(view.txn, "test:r", edgeGen)
+	edge, err := b.readIndexedEdgeInTxn(view.txn, "test:r", edgeGen, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), edge.Properties["v"])
 	// The older read must not refill the current unversioned cache with old data.

@@ -10,47 +10,50 @@ type nativeAdjacencyReader struct {
 	out, in             adjacencyDirection
 	cachedOut, cachedIn []*Edge
 	view                *badgerReadView
+	// keep is the caller's own selection (nil for none), decided with the
+	// reader's before any cached body is copied (NOR-160).
+	keep func(*Edge) bool
 }
 type adjacencyDirection struct {
-	ids        []EdgeID
-	hit        bool
-	live       []*Edge
-	suppressed map[EdgeID]struct{}
-	deleted    bool
+	ids     []EdgeID
+	hit     bool
+	overlay bufferedEntityResult
 }
 
 // captureAdjacencyReader selects both native directions at one cache/overlay
 // boundary. A nil view means the captured cache result is already complete.
-func (b *BadgerEngine) captureAdjacencyReader(nodeID NodeID, wantOut, wantIn bool, v readVisibility) (reader nativeAdjacencyReader, err error) {
+// keep, when set, is the caller's selection (a transaction's own writes
+// superseding committed edges), decided before any cached body is copied.
+func (b *BadgerEngine) captureAdjacencyReader(nodeID NodeID, wantOut, wantIn bool, v readVisibility, keep func(*Edge) bool) (reader nativeAdjacencyReader, err error) {
 	if nodeID == "" {
 		return reader, ErrInvalidID
 	}
-	reader.engine, reader.nodeID, reader.visibility = b, nodeID, v
+	reader.engine, reader.nodeID, reader.visibility, reader.keep = b, nodeID, v, keep
 	reader.adjGen, reader.edgeGen = b.adjCacheGen.current(), b.edgeCacheGen.current()
 	reader.view, err = b.captureReadView(func(w *WriteBehindBuffer) {
 		if wantOut {
 			reader.out.ids, reader.out.hit = b.adjCacheLoad(nodeID, true)
 			if w != nil {
-				pendingAdjacency := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: true})
-				reader.out.live, reader.out.suppressed, reader.out.deleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
+				reader.out.overlay = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: true})
 			}
 		}
 		if wantIn {
 			reader.in.ids, reader.in.hit = b.adjCacheLoad(nodeID, false)
 			if w != nil {
-				pendingAdjacency := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: false})
-				reader.in.live, reader.in.suppressed, reader.in.deleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
+				reader.in.overlay = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: false})
 			}
 		}
 	}, readViewOptions{scope: namespaceForNodeID(nodeID), cached: func(w *WriteBehindBuffer) (bool, error) {
 		var complete bool
-		reader.cachedOut, reader.cachedIn, complete = b.cachedAdjacency(w, nodeID, wantOut, wantIn, v)
+		reader.cachedOut, reader.cachedIn, complete = b.cachedAdjacency(w, nodeID, wantOut, wantIn, v, keep)
 		return complete, nil
 	}})
 	return reader, err
 }
 
-// read hydrates one captured direction; it never selects a later view or cache.
+// read hands out one captured direction; it never selects a later view or
+// cache. Each edge it keeps is copied once by the owner that selected it
+// (indexed reader, cached body, buffered overlay), after selection (NOR-160).
 func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 	if r.view == nil {
 		if outgoing {
@@ -64,8 +67,17 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 	if outgoing {
 		d = &r.out
 	}
+	// The whole selection (buffered replacements, direction, visibility) is
+	// decided before a cached body is copied (NOR-160).
+	now := DecayScoringTime()
+	keep := func(edge *Edge) bool {
+		if _, hidden := d.overlay.suppressed[edge.ID]; hidden {
+			return false
+		}
+		return attachedAt(edge, nodeID, outgoing) && (r.keep == nil || r.keep(edge)) && !b.filterEntityByDecay(v, edge, now)
+	}
 	err = recoverBadgerClosedPanic(func() error {
-		if d.deleted {
+		if d.overlay.sourceDeleted {
 			return nil
 		}
 		if !d.hit {
@@ -75,46 +87,30 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 			}
 			if prefix != nil {
 				var err error
-				edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, DecayScoringTime(), edgeGen, v)
+				edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, now, edgeGen, v, keep)
 				if err != nil {
 					return err
 				}
 			}
 			b.adjCacheStore(adjGen, nodeID, d.ids, txn.ReadTs(), outgoing)
-		}
-		// Read cached IDs from this transaction, never a later body cache.
-		if edges == nil {
+		} else {
+			// Read cached IDs from this transaction, never a later body cache.
 			for _, id := range d.ids {
-				if _, hidden := d.suppressed[id]; hidden {
+				if _, hidden := d.overlay.suppressed[id]; hidden {
 					continue
 				}
-				edge, err := b.readIndexedEdgeInTxn(txn, id, edgeGen)
+				edge, err := b.readIndexedEdgeInTxn(txn, id, edgeGen, keep)
 				if err != nil {
 					return err
 				}
-				if edge != nil && !b.filterEntityByDecay(v, edge, DecayScoringTime()) {
+				if edge != nil {
 					edges = append(edges, edge)
 				}
 			}
-		} else if len(d.suppressed) != 0 {
-			visible := edges[:0]
-			for _, edge := range edges {
-				if _, hidden := d.suppressed[edge.ID]; !hidden {
-					visible = append(visible, edge)
-				}
-			}
-			edges = visible
 		}
-		attached := edges[:0]
-		for _, edge := range edges {
-			if attachedAt(edge, nodeID, outgoing) {
-				attached = append(attached, edge)
-			}
-		}
-		edges = attached
-		for _, edge := range d.live {
-			edges = append(edges, copyEdge(edge))
-		}
+		// The buffered edges are attached and visible by capture; the
+		// caller's selection decides which are copied.
+		edges = append(edges, d.overlay.ownedEdges(r.keep)...)
 		return nil
 	})
 	if err != nil {
@@ -134,9 +130,11 @@ func attachedAt(edge *Edge, nodeID NodeID, outgoing bool) bool {
 	return edge.EndNode == nodeID
 }
 
-// cachedAdjacency resolves a traversal as one captured operation. The edge cache
-// is locked once for both directions; only pending adjacency entries are copied.
-func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, bool) {
+// cachedAdjacency resolves a traversal as one captured operation: cached
+// bodies through the all-or-nothing cacheLoadEdgeLists, pending ones through
+// readBufferedEntities, copied only once every cached body is known present,
+// so abandoning an incomplete attempt for the physical read drops no copy.
+func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility, keep func(*Edge) bool) ([]*Edge, []*Edge, bool) {
 	var outIDs, inIDs []EdgeID
 	var outHit, inHit = !wantOut, !wantIn
 	if wantOut {
@@ -151,48 +149,46 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	if w != nil && w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead}).deleted {
 		return nil, nil, true
 	}
-	b.edgeCacheMu.RLock()
-	defer b.edgeCacheMu.RUnlock()
 	now := DecayScoringTime()
-	read := func(ids []EdgeID, outgoing bool) ([]*Edge, bool) {
-		var live []*Edge
-		if w != nil {
-			live = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLiveAdjacency, source: id, outgoing: outgoing}).edges
-		}
-		if len(ids) == 0 && len(live) == 0 {
-			return nil, true
-		}
-		result := make([]*Edge, 0, len(ids)+len(live))
-		for _, edgeID := range ids {
-			if w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID), bufferedReadVisibility{engine: b, visibility: storedRead}).found {
-				continue
-			}
-			edge := b.edgeCache[edgeID]
-			if edge == nil {
-				return nil, false
-			}
-			if attachedAt(edge, id, outgoing) && !b.filterEntityByDecay(v, edge, now) {
-				result = append(result, edge)
-			}
-		}
-		for _, edge := range live {
-			result = append(result, copyEdge(edge))
-		}
-		return result, true
+	// Every cached body of every requested direction is checked before any is
+	// copied: a miss anywhere falls back to the physical read having copied
+	// nothing (NOR-160).
+	buffered := func(edgeID EdgeID) bool {
+		return w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID), bufferedReadVisibility{engine: b, visibility: storedRead}).found
 	}
-	var out, in []*Edge
-	var ok bool
+	list := func(ids []EdgeID, outgoing bool) edgeCacheList {
+		return edgeCacheList{ids: ids, skip: buffered, read: edgeCacheRead{bufferExcluded: true, match: func(edge *Edge) bool {
+			return attachedAt(edge, id, outgoing) && (keep == nil || keep(edge)) && !b.filterEntityByDecay(v, edge, now)
+		}}}
+	}
+	var lists []edgeCacheList
 	if wantOut {
-		out, ok = read(outIDs, true)
-		if !ok {
-			return nil, nil, false
-		}
+		lists = append(lists, list(outIDs, true))
 	}
 	if wantIn {
-		in, ok = read(inIDs, false)
-		if !ok {
-			return nil, nil, false
+		lists = append(lists, list(inIDs, false))
+	}
+	copied, ok := b.cacheLoadEdgeLists(lists)
+	if !ok {
+		return nil, nil, false
+	}
+	withLive := func(edges []*Edge, outgoing bool) []*Edge {
+		if w != nil {
+			edges = append(edges, b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLiveAdjacency, source: id, outgoing: outgoing}).ownedEdges(keep)...)
 		}
+		if len(edges) == 0 {
+			return nil
+		}
+		return edges
+	}
+	var out, in []*Edge
+	next := 0
+	if wantOut {
+		out = withLive(copied[next], true)
+		next++
+	}
+	if wantIn {
+		in = withLive(copied[next], false)
 	}
 	return out, in, true
 }

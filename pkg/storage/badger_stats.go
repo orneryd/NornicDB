@@ -760,6 +760,9 @@ type StreamNodesOptions struct {
 	ApplyDecayFilter bool
 	// StripEmbeddings removes inline/legacy embedding payloads from results.
 	StripEmbeddings bool
+	// readOnlyCandidates hands a retained node over uncopied, for a caller that
+	// keeps ReadOnlyLabelNodeReader's contract.
+	readOnlyCandidates bool
 	// PropertyFilter, with a Projection, lets the engine skip a node whose
 	// projected properties it rejects before decoding the rest of the node
 	// (#824). It is a hint: an engine may ignore it, and pending writes are
@@ -780,6 +783,31 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if fn == nil {
 		return ErrInvalidData
 	}
+	return b.streamNodesOwned(ctx, opts, nil, fn)
+}
+
+// streamNodesOwned is StreamNodesWithOptions with the consumer's decision:
+// committed rows are decoded (and shaped) for this read, buffered nodes read in
+// place. decide runs on that node first and may deliver a replacement itself;
+// only a node it keeps is copied, once, into the delivered shape (NOR-160).
+func (b *BadgerEngine) streamNodesOwned(ctx context.Context, opts StreamNodesOptions, decide func(*Node) (bool, error), out func(*Node) error) error {
+	if out == nil {
+		return ErrInvalidData
+	}
+	fn := func(image nodeImage) error {
+		if decide != nil {
+			keep, err := decide(image.Node)
+			if err != nil || !keep {
+				return err
+			}
+		}
+		// A node this scan decoded already has the delivered shape, except a
+		// full read with a projection, which decodes the whole node.
+		if !image.retained && (opts.Projection == nil || !opts.WithEmbeddings) {
+			return out(image.Node)
+		}
+		return out(deliverNode(image, opts.Projection, opts.StripEmbeddings))
+	}
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
@@ -788,12 +816,9 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if opts.StripEmbeddings {
-				node = copyNodeWithoutEmbeddings(node)
-			}
-			return fn(node)
+			return out(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamLabelNodes(opts.Prefix, opts.Label, nil, opts.StripEmbeddings, opts.readVisibility(), decide, visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -801,15 +826,15 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	}
 	// Write-behind overlay: acknowledged-but-unflushed nodes shadow
 	// committed rows for their IDs and are visited after the scan.
-	var overlay []*Node
+	var overlay bufferedEntityResult
 	var touched map[NodeID]bool
 	v := storedRead
 	if opts.ApplyDecayFilter {
 		v = visibleRead
 	}
 	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
-		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		overlay = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		touched = overlay.nodesTouched
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
@@ -824,7 +849,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if len(touched) > 0 && touched[node.ID] {
 			return nil // the write-behind overlay shadows this committed row
 		}
-		err := fn(node)
+		err := fn(decodedNode(node))
 		if err == ErrIterationStopped {
 			stopped = true
 		}
@@ -839,19 +864,19 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if stopped {
 		return nil
 	}
-	for _, node := range overlay {
+	err = overlay.visitNodes(func(node *Node) (bool, error) {
 		if !inScope(node.ID) {
-			continue
+			return false, nil
 		}
-		projected := opts.copyResidentNode(node)
-		if err := fn(projected); err != nil {
-			if err == ErrIterationStopped {
-				return nil
-			}
-			return err
+		if decide == nil {
+			return true, nil
 		}
+		return decide(node)
+	}, opts.Projection, opts.StripEmbeddings, out)
+	if err == ErrIterationStopped {
+		return nil
 	}
-	return nil
+	return err
 }
 
 // streamNodesWithOptionsInTxn is StreamNodesWithOptions over one read
@@ -904,7 +929,8 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 			return nil
 		}
 		if opts.StripEmbeddings {
-			node = copyNodeWithoutEmbeddings(node)
+			// The decoded or cache-copied node is already the caller's.
+			node = shapeOwned(node, nil, true)
 		}
 		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
@@ -986,11 +1012,11 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	}
 	// Write-behind overlay: acknowledged-but-unflushed edges shadow
 	// committed rows for their IDs and are visited after the scan.
-	var overlay []*Edge
+	var overlay bufferedEntityResult
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
-		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+		overlay = b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
+		touched = overlay.edgesTouched
 	}
 	nowNanos := DecayScoringTime()
 	stopped := false
@@ -1053,13 +1079,8 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	if stopped {
 		return nil
 	}
-	for _, edge := range overlay {
-		if err := fn(copyEdge(edge)); err != nil {
-			if err == ErrIterationStopped {
-				return nil
-			}
-			return err
-		}
+	if err := overlay.visitEdges(nil, fn); err != ErrIterationStopped {
+		return err
 	}
 	return nil
 }
@@ -1078,7 +1099,8 @@ func (b *BadgerEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn f
 			return nil
 		}
 		err := fn(chunk)
-		chunk = chunk[:0]
+		// A delivered chunk is the caller's; start the next one in new memory.
+		chunk = make([]*Node, 0, chunkSize)
 		stopped = err == ErrIterationStopped
 		return err
 	})

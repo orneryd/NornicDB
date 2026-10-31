@@ -287,72 +287,39 @@ func (m *recordingBatchEmbedder) MaxBatchSize() int {
 }
 
 // TestCopyNodeForEmbedding tests that the copy function creates independent copies
-func TestCopyNodeForEmbedding(t *testing.T) {
-	t.Run("creates_independent_properties_map", func(t *testing.T) {
-		original := &storage.Node{
-			ID:     storage.NodeID("test-node"),
-			Labels: []string{"Memory", "Test"},
-			Properties: map[string]any{
-				"content": "test content",
-				"title":   "Test Title",
-			},
-		}
-
-		copy := copyNodeForEmbedding(original)
-
-		// Modify the copy
-		copy.Properties["new_property"] = "new value"
-		copy.Properties["content"] = "modified content"
-
-		// Original should be unchanged
-		assert.Equal(t, "test content", original.Properties["content"])
-		_, hasNew := original.Properties["new_property"]
-		assert.False(t, hasNew, "Original should not have new property")
-	})
-
-	t.Run("copies_embedding", func(t *testing.T) {
+// The worker's view of a node it owns keeps exactly the parts an outcome is
+// built from, taken over without a copy, and starts outcomes on a fresh
+// EmbedMeta without NamedEmbeddings (NOR-160).
+func TestEmbeddingWorkView(t *testing.T) {
+	t.Run("keeps_the_worker_parts_without_copying", func(t *testing.T) {
 		original := &storage.Node{
 			ID:              storage.NodeID("test-node"),
+			Labels:          []string{"Memory", "Test"},
+			Properties:      map[string]any{"content": "test content"},
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
+			EmbedMeta:       map[string]any{"embedding_failed": true},
+			NamedEmbeddings: map[string][]float32{"title": {1}},
 		}
-
-		copy := copyNodeForEmbedding(original)
-
-		// Modify the copy's embedding
-		copy.ChunkEmbeddings[0][0] = 999.0
-
-		// Original should be unchanged
-		assert.Equal(t, float32(0.1), original.ChunkEmbeddings[0][0]) // Use first chunk, first element
+		view := embeddingWorkView(original)
+		assert.Equal(t, original.ID, view.ID)
+		assert.Equal(t, []string{"Memory", "Test"}, view.Labels)
+		assert.Equal(t, "test content", view.Properties["content"])
+		assert.Equal(t, [][]float32{{0.1, 0.2, 0.3}}, view.ChunkEmbeddings)
+		view.Properties["content"] = "worker"
+		assert.Equal(t, "worker", original.Properties["content"], "the view takes the owned map over, no copy")
+		assert.Nil(t, view.EmbedMeta)
+		assert.Nil(t, view.NamedEmbeddings)
 	})
 
-	t.Run("copies_labels", func(t *testing.T) {
-		original := &storage.Node{
-			ID:     storage.NodeID("test-node"),
-			Labels: []string{"Label1", "Label2"},
-		}
-
-		copy := copyNodeForEmbedding(original)
-
-		// Modify the copy's labels
-		copy.Labels[0] = "Modified"
-
-		// Original should be unchanged
-		assert.Equal(t, "Label1", original.Labels[0])
-	})
-
-	t.Run("preserves_id", func(t *testing.T) {
-		original := &storage.Node{
-			ID: storage.NodeID("unique-id-123"),
-		}
-
-		copy := copyNodeForEmbedding(original)
-
-		assert.Equal(t, original.ID, copy.ID)
+	t.Run("labels_are_never_nil", func(t *testing.T) {
+		view := embeddingWorkView(&storage.Node{ID: storage.NodeID("unlabelled")})
+		assert.NotNil(t, view.Labels)
+		assert.Empty(t, view.Labels)
+		assert.Nil(t, view.ChunkEmbeddings)
 	})
 
 	t.Run("handles_nil", func(t *testing.T) {
-		copy := copyNodeForEmbedding(nil)
-		assert.Nil(t, copy)
+		assert.Nil(t, embeddingWorkView(nil))
 	})
 }
 
