@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash"
-	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -116,44 +115,8 @@ func writeJavaList(out *strings.Builder, list valueconvert.List, nested bool) {
 }
 
 // JavaDoubleString is Java's Double.toString(value) (Java 19 and later,
-// shortest round-trip digits): plain notation with at least one fraction
-// digit for 1e-3 <= |value| < 1e7 (100.0, 0.001), otherwise computerized
-// scientific notation (1.0E7, 1.234E-5); NaN, Infinity, -Infinity; 0.0 and
-// -0.0.
+// shortest round-trip digits), which is Cypher's FLOAT text: it is
+// convert.FormatFloat, the one FLOAT text owner.
 func JavaDoubleString(value float64) string {
-	switch {
-	case math.IsNaN(value):
-		return "NaN"
-	case math.IsInf(value, 1):
-		return "Infinity"
-	case math.IsInf(value, -1):
-		return "-Infinity"
-	case value == 0:
-		if math.Signbit(value) {
-			return "-0.0"
-		}
-		return "0.0"
-	}
-	if magnitude := math.Abs(value); magnitude >= 1e-3 && magnitude < 1e7 {
-		text := strconv.FormatFloat(value, 'f', -1, 64)
-		if !strings.Contains(text, ".") {
-			text += ".0"
-		}
-		return text
-	}
-	text := strconv.FormatFloat(value, 'e', -1, 64)
-	mantissa, exponent, _ := strings.Cut(text, "e")
-	if !strings.Contains(mantissa, ".") {
-		// Java's decimal selection includes both one- and two-digit
-		// candidates when the shortest has one digit, choosing the nearest
-		// (ties to even). Appending .0 to Go's shortest loses this distinction
-		// for subnormals: Double.MIN_VALUE is 4.9E-324, not 5.0E-324.
-		text = strconv.FormatFloat(value, 'e', 1, 64)
-		mantissa, exponent, _ = strings.Cut(text, "e")
-	}
-	sign := ""
-	if exponent[0] == '-' {
-		sign = "-"
-	}
-	return mantissa + "E" + sign + strings.TrimLeft(exponent[1:], "0")
+	return valueconvert.FormatFloat(value, 64)
 }

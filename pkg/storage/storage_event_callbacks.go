@@ -5,7 +5,7 @@ import "strings"
 // storageEventCallback retains the notifier's concrete callback types. The
 // delivery shape is selected once at registration, never per published event.
 type storageEventCallback interface {
-	NodeEventCallback | EdgeEventCallback | NodeDeleteCallback | EdgeDeleteCallback | NamespaceResetCallback
+	EntityCommitCallback | NodeEventCallback | EdgeEventCallback | NodeDeleteCallback | EdgeDeleteCallback | NamespaceResetCallback
 }
 
 // subscribeStorageEvent registers each already-deduplicated target through the
@@ -38,6 +38,30 @@ func scopeStorageEvent[Callback storageEventCallback](callback Callback, views [
 		return callback
 	}
 	switch handler := any(callback).(type) {
+	case EntityCommitCallback:
+		return any(EntityCommitCallback(func(event EntityCommitEvent) {
+			id := event.Operation.entityEventID()
+			view := firstStorageEventView(views, id)
+			if view == nil {
+				return
+			}
+			op := event.Operation
+			if op.Node != nil {
+				op.Node = view.toUserNode(op.Node, nodeUserView{})
+			}
+			if op.Edge != nil {
+				op.Edge = view.toUserEdge(op.Edge)
+			}
+			op.NodeID = NodeID(strings.TrimPrefix(string(op.NodeID), view.scope))
+			op.EdgeID = EdgeID(strings.TrimPrefix(string(op.EdgeID), view.scope))
+			ids := make([]EdgeID, len(op.DeletedEdgeIDs))
+			for i, id := range op.DeletedEdgeIDs {
+				ids[i] = EdgeID(strings.TrimPrefix(string(id), view.scope))
+			}
+			op.DeletedEdgeIDs = ids
+			event.Operation = op
+			handler(event)
+		})).(Callback)
 	case NodeEventCallback:
 		return any(NodeEventCallback(func(node *Node) {
 			if node == nil {

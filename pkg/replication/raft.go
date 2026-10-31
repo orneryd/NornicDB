@@ -1385,6 +1385,7 @@ func (r *RaftReplicator) HandleForwardApply(cmd *Command, timeout time.Duration)
 // Apply applies a command through Raft consensus.
 // If this node is not the leader, it forwards the command to the leader automatically.
 func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	cmd = admittedVectorCommand(cmd)
 	// Plan 04-06-03 D-15a: observe apply latency at the function-exit
 	// chokepoint via the pre-bound MET-25 observer (zero alloc when ctx
 	// has no sampled span). Wrapped at the outer entry so retries /

@@ -88,8 +88,11 @@ type pendingRouteFixture struct {
 	marked, queued, checked []NodeID
 }
 
-func (f *pendingRouteFixture) MarkNodeEmbedded(id NodeID)       { f.marked = append(f.marked, id) }
-func (f *pendingRouteFixture) AddToPendingEmbeddings(id NodeID) { f.queued = append(f.queued, id) }
+func (f *pendingRouteFixture) MarkNodeEmbedded(id NodeID) { f.marked = append(f.marked, id) }
+func (f *pendingRouteFixture) AddToPendingEmbeddingsWithOrigin(id NodeID, _ uint64) {
+	f.queued = append(f.queued, id)
+}
+func (f *pendingRouteFixture) RecoverPendingEmbedding(id NodeID) { f.queued = append(f.queued, id) }
 func (f *pendingRouteFixture) RelationshipEndpointVisible(id NodeID) (bool, bool) {
 	f.checked = append(f.checked, id)
 	return true, true
@@ -107,13 +110,16 @@ type queueOnlyRouteFixture struct {
 	ids []NodeID
 }
 
-func (f *queueOnlyRouteFixture) AddToPendingEmbeddings(id NodeID) { f.ids = append(f.ids, id) }
+func (f *queueOnlyRouteFixture) AddToPendingEmbeddingsWithOrigin(id NodeID, _ uint64) {
+	f.ids = append(f.ids, id)
+}
+func (f *queueOnlyRouteFixture) RecoverPendingEmbedding(id NodeID) { f.ids = append(f.ids, id) }
 
 func TestNamespacedCapabilityRoutesKeepDecoratorOwnership(t *testing.T) {
 	f := &pendingRouteFixture{}
 	n := NewNamespacedEngine(f, "tenant")
 	n.MarkNodeEmbedded("tenant:n")
-	n.AddToPendingEmbeddings("n")
+	n.AddToPendingEmbeddingsWithOrigin("n", CaptureVectorWorkOrigin())
 	require.Equal(t, []NodeID{"tenant:n"}, f.marked)
 	require.Equal(t, []NodeID{"tenant:n"}, f.queued)
 	visible, answered := n.RelationshipEndpointVisible("other:n")
@@ -130,18 +136,18 @@ func TestNamespacedCapabilityRoutesKeepDecoratorOwnership(t *testing.T) {
 	require.False(t, visible)
 	require.False(t, answered)
 	plain.MarkNodeEmbedded("n")
-	plain.AddToPendingEmbeddings("n")
+	plain.AddToPendingEmbeddingsWithOrigin("n", CaptureVectorWorkOrigin())
 	require.Len(t, f.marked, 1)
 	require.Len(t, f.queued, 1)
 	require.Len(t, f.checked, 2)
 	mark := &markOnlyRouteFixture{}
 	m := NewNamespacedEngine(mark, "tenant")
 	m.MarkNodeEmbedded("n")
-	m.AddToPendingEmbeddings("n")
+	m.AddToPendingEmbeddingsWithOrigin("n", CaptureVectorWorkOrigin())
 	require.Equal(t, []NodeID{"tenant:n"}, mark.ids)
 	queue := &queueOnlyRouteFixture{}
 	q := NewNamespacedEngine(queue, "tenant")
 	q.MarkNodeEmbedded("n")
-	q.AddToPendingEmbeddings("n")
+	q.AddToPendingEmbeddingsWithOrigin("n", CaptureVectorWorkOrigin())
 	require.Equal(t, []NodeID{"tenant:n"}, queue.ids)
 }

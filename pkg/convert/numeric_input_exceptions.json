@@ -12,8 +12,8 @@
     "sha256": "3f691ff05957d6f3f03856567c624ebc04d2992c91ef0c7c7a6d01eb023be13f"
   },
   "pkg/cypher/call_cdc.go:cdcValue": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "ff99c8ef12abc395894ad721fdd1fba3249ffd8fdf4ef9d36518e830b7becaac"
+    "reason": "Nonconsumer: CDC selector values read every number through the shared readers (convert.ReadNumber, convert.IntegerValue); the remaining switch only recurses through the lists and maps of a stored value, a structural walk with no number decision.",
+    "sha256": "102fcd01d6fa11fd44582810c1c6f3792271174d8d78d46e31673e216371714b"
   },
   "pkg/cypher/clauses.go:canonicalUnwindMergeValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -40,12 +40,12 @@
     "sha256": "2f7a4bea69fd6ddd9ac9444c5fbf42e140d81d829fa3a9adebb0613a15626894"
   },
   "apoc/json/json.go:Type": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "105d1f7f01359f7960cfa9bdbb6e1bb37524844c4de428c4cd1390e5c22fb77b"
+    "reason": "Nonconsumer: names the JSON type of a value decoded by the property JSON domain; a number is recognised through the shared convert.ReadNumber, and the switch only names string, boolean, list and map structure.",
+    "sha256": "9333b9119d9cd189b9b2f1eac4fcedc59d567be1f67d2c19d1b4012161d60e7d"
   },
   "apoc/json/json.go:Size": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "736b8bc6afb48936bafea8574d7f3f3e028887a1268bb2caed88a0f17e2f0c4e"
+    "reason": "Nonconsumer: reports the length of a string, list or map decoded by the property JSON domain; it reads no number (structure only).",
+    "sha256": "a5f424530ef09472f9e67dd274fa5a710f0fab160f66c42d19eef474a356ec6e"
   },
   "apoc/json/json.go:extractPath": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -290,5 +290,13 @@
   "pkg/cypher/result_restoration.go:value": {
     "reason": "One canonical presentation-tree owner replaces both source and quoted-name map/list/row traversal and leaf dispatch. Numeric leaves remain opaque with unchanged type; source text/diagnostics retain Source coordinate and fragment policy, quoted plans retain identifier rendering, and both retain their original container copying contracts. Public restoration and quoted-variable regressions plus TestRestoredResultContainerOwnership exercise both entry points; this does not read, admit or coerce generic numeric/list inputs.",
     "sha256": "b18d2ce2710edccbe59e2aa938b57ab7a65f14e92bf4ac4923fa3736ebd5d10a"
+  },
+  "pkg/convert/json.go:jsonNumbers": {
+    "reason": "Owner: the one JSON number read decision (kind and range of every JSON number, per domain policy); its switch walks lists and maps to reach the json.Number leaves it decides.",
+    "sha256": "eaa71c9ea3c495242bceaf8b30c39849b430fec787757f909ceb04c64840f04e"
+  },
+  "pkg/convert/json_encode.go:any": {
+    "reason": "Owner (output): the JSON writer's value dispatch (jsonWriterState.any); an encoder, not an input reader; every FLOAT is written through the one write decision appendJSONFloat.",
+    "sha256": "14f6af1d57089e73c5770b77eeeb1204380f93c2b887ca7d40971a1f8d746cee"
   }
 }

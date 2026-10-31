@@ -30,7 +30,9 @@ func setupOnAccessE2E(t *testing.T, bundles map[string]*knowledgepolicy.DecayPro
 	flusher.SetPropertySuppression(
 		func(namespace string) *knowledgepolicy.Scorer { return be.ScorerForNamespace(namespace) },
 		be,
-		func(entityID string) { be.AddToPendingEmbeddings(storage.NodeID(entityID)) },
+		func(entityID string) {
+			be.AddToPendingEmbeddingsWithOrigin(storage.NodeID(entityID), storage.CaptureVectorWorkOrigin())
+		},
 	)
 	flusher.SetSuppressionRecheck(func(entityID string, meta knowledgepolicy.EntityMeta) {
 		becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, meta.Scope == knowledgepolicy.ScopeEdge)

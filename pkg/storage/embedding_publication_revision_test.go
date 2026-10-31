@@ -33,7 +33,7 @@ func TestReviewR73QueuedOutcomeRevisionBarrier(t *testing.T) {
 			var publications atomic.Int64
 			bound := mode == "update" || mode == "delete"
 			if bound {
-				payload.SetEmbeddingAttempt(NewEmbeddingAttempt(1, 1, payload.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) { publications.Add(1) }))
+				payload.SetEmbeddingAttempt(NewEmbeddingAttempt(CaptureVectorWorkOrigin(), 1, 1, payload.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) { publications.Add(1) }))
 			}
 			entered, resume := make(chan struct{}), make(chan struct{})
 			var unblock sync.Once

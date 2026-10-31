@@ -61,7 +61,7 @@ func (e *getNodeErrEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 }
 
 func TestApplyInlineEmbeddingMutations_Branches(t *testing.T) {
-	ctx := context.Background()
+	ctx := admittedTestContext()
 
 	t.Run("empty_ids_noop", func(t *testing.T) {
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "inline_embed_empty_ids"))
