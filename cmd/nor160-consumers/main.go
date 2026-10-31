@@ -978,6 +978,30 @@ func (c *NOR160ControlCache) GetFreshOrSame(n *Node) *Node {
 	}
 	return copyNode(c.nodes[n.ID])
 }
+
+// Handoff controls: what each callee does with a copy it is handed must be
+// reported per callee: one only reads it, one overwrites it, one retains it.
+func nor160ControlHandoffReads(n *Node) bool { return n.ID == "" }
+
+func nor160ControlHandoffOverwrites(n *Node) { n.Properties = nil }
+
+func (c *NOR160ControlCache) nor160ControlHandoffKeeps(n *Node) { c.nodes[n.ID] = n }
+
+func (c *NOR160ControlCache) GetHandoffMixed(id NodeID) *Node {
+	n := copyNode(c.nodes[id])
+	if nor160ControlHandoffReads(n) {
+		return nil
+	}
+	nor160ControlHandoffOverwrites(n)
+	return n
+}
+
+func (c *NOR160ControlCache) GetHandoffKept(id NodeID) *Node {
+	n := copyNode(c.nodes[id])
+	c.nor160ControlHandoffKeeps(n)
+	nor160ControlHandoffOverwrites(n)
+	return n
+}
 `
 
 // fixtureControlFile plants a retention point in a test-only package
@@ -1090,7 +1114,22 @@ type control struct {
 	clean     bool
 }
 
+// handoffControl: a member of fn must report the callee's named effect as want.
+type handoffControl struct {
+	fn, callee, effect string
+	want               bool
+}
+
+var handoffControls = []handoffControl{
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffMixed", storagePkg + ".nor160ControlHandoffOverwrites", "overwrites", true},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffMixed", storagePkg + ".nor160ControlHandoffReads", "overwrites", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffMixed", storagePkg + ".nor160ControlHandoffReads", "escapes", false},
+	{"(*" + storagePkg + ".NOR160ControlCache).GetHandoffKept", "(*" + storagePkg + ".NOR160ControlCache).nor160ControlHandoffKeeps", "escapes", true},
+}
+
 var controls = []control{
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffMixed", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetHandoffKept", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLent", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLentAll", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLentField", false},
@@ -4565,14 +4604,91 @@ func positionOf(fn *ssa.Function, p token.Pos) string {
 // ---------------------------------------------------------------- report
 
 type hit struct {
-	Class    string   `json:"class"`
-	Function string   `json:"function"`
-	File     string   `json:"file"`
-	Line     int      `json:"line"`
-	Detail   string   `json:"detail"`
-	Entries  int      `json:"public_entries_reaching"`
-	Examples []string `json:"entry_examples,omitempty"`
-	ReadExit string   `json:"read_exit,omitempty"`
+	Class    string    `json:"class"`
+	Function string    `json:"function"`
+	File     string    `json:"file"`
+	Line     int       `json:"line"`
+	Detail   string    `json:"detail"`
+	Entries  int       `json:"public_entries_reaching"`
+	Examples []string  `json:"entry_examples,omitempty"`
+	ReadExit string    `json:"read_exit,omitempty"`
+	Handoff  []handoff `json:"handoff,omitempty"`
+}
+
+// handoff: what one resolved callee does with a copy handed to it, from the
+// compiled program's facts. Unresolved: no summary to read, so nothing is shown.
+type handoff struct {
+	Callee     string `json:"callee"`
+	Param      int    `json:"param"`
+	Overwrites bool   `json:"overwrites"`
+	Drops      bool   `json:"drops"`
+	Returns    bool   `json:"returns"`
+	Escapes    bool   `json:"escapes"`
+	Unresolved bool   `json:"unresolved,omitempty"`
+}
+
+func (h handoff) effect(name string) bool {
+	switch name {
+	case "overwrites":
+		return h.Overwrites
+	case "drops":
+		return h.Drops
+	case "returns":
+		return h.Returns
+	case "escapes":
+		return h.Escapes
+	}
+	return false
+}
+
+// handoffsOf: every resolved callee in fn that receives a value of d.
+func (a *analysis) handoffsOf(fn *ssa.Function, d map[ssa.Value]bool, drops, overwrite map[*ssa.Function][]bool) []handoff {
+	seen := map[string]bool{}
+	var out []handoff
+	record := func(h handoff) {
+		key := fmt.Sprint(h)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, h)
+		}
+	}
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			call, ok := ins.(ssa.CallInstruction)
+			if !ok {
+				continue
+			}
+			args := callArgs(call.Common())
+			callees := a.calleesOf(call)
+			for m, arg := range args {
+				if !d[arg] {
+					continue
+				}
+				if len(callees) == 0 {
+					record(handoff{Callee: "dynamic call", Param: m, Unresolved: true})
+				}
+				for _, g := range callees {
+					h := handoff{Callee: fullName(g), Param: m}
+					h.Overwrites = m < len(overwrite[g]) && overwrite[g][m]
+					h.Drops = m < len(drops[g]) && drops[g][m]
+					sg := a.sums[g]
+					if sg == nil {
+						h.Unresolved = true
+					} else {
+						h.Escapes = m < len(sg.Escapes) && sg.Escapes[m]
+						for _, ret := range sg.Ret {
+							if ret.Params&bit(m) != 0 {
+								h.Returns = true
+							}
+						}
+					}
+					record(h)
+				}
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return fmt.Sprint(out[i]) < fmt.Sprint(out[j]) })
+	return out
 }
 
 type report struct {
@@ -4873,6 +4989,14 @@ func main() {
 	a.computeReadScope()
 	seenHit := map[string]bool{}
 	outOfScope := map[string]int{}
+	handoffs := map[string][]handoff{}
+	hitKey := func(class, function, file string, line int, detail string) string {
+		return class + "|" + function + "|" + file + fmt.Sprint(line) + "|" + detail
+	}
+	recordHandoff := func(class string, fn *ssa.Function, p token.Pos, detail string, h []handoff) {
+		file, line := pos(fn, p)
+		handoffs[hitKey(class, fullName(fn), file, line, detail)] = h
+	}
 	add := func(class string, fn *ssa.Function, p token.Pos, detail string) {
 		if !strings.HasPrefix(detail, "a retained value") && !a.inReadScope(fn, p) {
 			outOfScope[class]++
@@ -4983,7 +5107,9 @@ func main() {
 								a.receipts = append(a.receipts, fmt.Sprintf("K1 %s: %s hands only proven caller-owned copies to %s (package %s), which overwrites them", fullName(fn), strings.TrimPrefix(fullName(t), module+"/"), strings.TrimPrefix(fullName(g), module+"/"), strings.TrimPrefix(pkgPathOf(g), module+"/")))
 								continue
 							}
-							add("K1", fn, call.Pos(), strings.TrimPrefix(fullName(t), module+"/")+" hands copies to "+strings.TrimPrefix(fullName(g), module+"/")+", which overwrites their fields")
+							detail := strings.TrimPrefix(fullName(t), module+"/") + " hands copies to " + strings.TrimPrefix(fullName(g), module+"/") + ", which overwrites their fields"
+							recordHandoff("K1", fn, call.Pos(), detail, []handoff{{Callee: fullName(g), Param: -1, Overwrites: true}})
+							add("K1", fn, call.Pos(), detail)
 						}
 					}
 				}
@@ -5028,7 +5154,9 @@ func main() {
 					if _, _, own := a.droppingCallIn(fn, d, dropsOwn); owned && !own {
 						a.receipts = append(a.receipts, fmt.Sprintf("K1 %s: proven caller-owned copy %s is selected out only inside another package's callback %s", fullName(fn), copyLabel(v), strings.TrimPrefix(fullName(g), module+"/")))
 					} else {
-						addRoot("K1", ins.Pos(), "copy "+copyLabel(v)+" is selected out inside "+strings.TrimPrefix(fullName(g), module+"/")+" (parameter "+fmt.Sprint(j)+")")
+						detail := "copy " + copyLabel(v) + " is selected out inside " + strings.TrimPrefix(fullName(g), module+"/") + " (parameter " + fmt.Sprint(j) + ")"
+						recordHandoff("K1", fn, ins.Pos(), detail, a.handoffsOf(fn, d, drops, overwrite))
+						addRoot("K1", ins.Pos(), detail)
 					}
 				}
 
@@ -5048,7 +5176,9 @@ func main() {
 										a.receipts = append(a.receipts, fmt.Sprintf("K1 %s: fields of proven caller-owned copy %s are overwritten only inside another package's callback %s", fullName(fn), copyLabel(v), strings.TrimPrefix(fullName(g), module+"/")))
 										continue
 									}
-									addRoot("K1", ins.Pos(), "fields of copy "+copyLabel(v)+" are overwritten inside "+strings.TrimPrefix(fullName(g), module+"/"))
+									detail := "fields of copy " + copyLabel(v) + " are overwritten inside " + strings.TrimPrefix(fullName(g), module+"/")
+									recordHandoff("K1", fn, ins.Pos(), detail, a.handoffsOf(fn, d, drops, overwrite))
+									addRoot("K1", ins.Pos(), detail)
 								}
 							}
 						}
@@ -5362,7 +5492,28 @@ func main() {
 	for _, h := range r.Hits {
 		r.Counts[h.Class]++
 	}
+	for i := range r.Hits {
+		h := &r.Hits[i]
+		h.Handoff = handoffs[hitKey(h.Class, h.Function, h.File, h.Line, h.Detail)]
+	}
 	r.AllControlsOK = true
+	for _, c := range handoffControls {
+		state := "MISSED"
+		for _, h := range r.Hits {
+			if h.Function != c.fn {
+				continue
+			}
+			for _, x := range h.Handoff {
+				if x.Callee == c.callee && !x.Unresolved && x.effect(c.effect) == c.want {
+					state = "detected"
+				}
+			}
+		}
+		if state != "detected" {
+			r.AllControlsOK = false
+		}
+		r.Controls[fmt.Sprintf("handoff %s %s %s=%v", c.fn, c.callee, c.effect, c.want)] = state
+	}
 	for _, c := range controls {
 		found := false
 		for _, h := range r.Hits {
