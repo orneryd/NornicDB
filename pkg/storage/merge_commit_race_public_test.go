@@ -100,6 +100,55 @@ func TestMergeCommitRaceDecidesOnAcceptedStatements(t *testing.T) {
 	}
 }
 
+// The decision rests on what each statement did when it ran. A procedure's READ
+// declaration, or replacing it afterwards, can't turn an executed write into a read.
+func TestMergeCommitRaceDecidesOnExecutedEffects(t *testing.T) {
+	const claim = "CREATE (:RaceDoc {id: 'claimed'}) RETURN 1 AS n"
+	keep := "MERGE (:Keep {key: 1})"
+	merge := "MERGE (n {id: 'claimed'}) SET n:RaceDoc, n.by = '%s'"
+	for _, route := range []string{"Execute", "Bolt", "HTTP"} {
+		for _, tc := range []struct {
+			name, first, companion, replacement string
+			want                                string
+		}{
+			{name: "read_declared_procedure_body_writes", first: keep, companion: fmt.Sprintf("CALL review.run(%q)", claim), want: nornicerrors.ConstraintValidationFailed},
+			{name: "write_replaced_by_read_after_it_ran", first: keep, companion: "CALL review.claim()", replacement: "CREATE OR REPLACE PROCEDURE review.claim() MODE READ AS RETURN 1 AS value", want: nornicerrors.ConstraintValidationFailed},
+			{name: "show_continuation_write", first: keep, companion: "CYPHER 25 SHOW FUNCTIONS YIELD name WITH name WHERE name = 'abs' CREATE (:RaceDoc {id: 'claimed'}) RETURN name", want: nornicerrors.ConstraintValidationFailed},
+			{name: "show_continuation_read_declared_body_writes", first: keep, companion: fmt.Sprintf("CYPHER 25 SHOW FUNCTIONS YIELD name WITH name WHERE name = 'abs' CALL review.run(%q) YIELD value RETURN name", claim), want: nornicerrors.ConstraintValidationFailed},
+			{name: "read_declared_body_updates_the_merged_node", first: fmt.Sprintf(merge, "loser"), companion: "CALL review.run(\"MATCH (n {id: 'claimed'}) SET n.note = 1 RETURN 1 AS n\")", want: nornicerrors.ConstraintValidationFailed},
+			{name: "read_declared_body_reads", first: fmt.Sprintf(merge, "loser"), companion: "CALL review.run('RETURN 1 AS n')", want: nornicerrors.TransientOutdated},
+		} {
+			t.Run(route+"/"+tc.name, func(t *testing.T) {
+				srv, _ := openPR1655ProtocolFixture(t, false)
+				setup := pr1655OpenPublicClient(t, srv, route)
+				for _, statement := range []string{
+					"CREATE CONSTRAINT race_id FOR (n:RaceDoc) REQUIRE n.id IS UNIQUE",
+					"CREATE OR REPLACE PROCEDURE review.run($q) MODE READ AS CALL apoc.cypher.run($q, {}) YIELD value RETURN value",
+					"CREATE OR REPLACE PROCEDURE review.claim() MODE WRITE AS CREATE (:RaceDoc {id: 'claimed'}) RETURN 1 AS value",
+				} {
+					_, err := setup.statement(statement, false)
+					require.NoError(t, err)
+				}
+				loser, peer := pr1655OpenPublicClient(t, srv, route), pr1655OpenPublicClient(t, srv, route)
+				require.NoError(t, loser.begin())
+				_, err := loser.run(tc.first)
+				require.NoError(t, err)
+				_, err = loser.run(tc.companion)
+				require.NoError(t, err)
+				if tc.replacement != "" {
+					_, err = setup.statement(tc.replacement, false)
+					require.NoError(t, err)
+				}
+				_, err = peer.statement(fmt.Sprintf(merge, "peer"), false)
+				require.NoError(t, err)
+				err = loser.commit()
+				require.Error(t, err, "the later commit loses the race")
+				require.Equal(t, tc.want, pr1655PublicStatus(err), "commit error: %v", err)
+			})
+		}
+	}
+}
+
 // Shell parameters are effective bindings: the record has the map execution reads.
 func TestMergeCommitRaceReadsSessionParameters(t *testing.T) {
 	srv, _ := openPR1655ProtocolFixture(t, false)
