@@ -278,7 +278,7 @@ func TestTransaction_SnapshotAdjacencyRejectsUnknownDirection(t *testing.T) {
 	require.False(t, tx.readTS.IsZero(), "read tx must pin a snapshot version")
 
 	tx.mu.Lock()
-	_, err = tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
+	_, err = deliveredEdges(tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99), nil))
 	tx.mu.Unlock()
 	require.ErrorIs(t, err, ErrInvalidData)
 }
@@ -302,10 +302,10 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 	tx.mu.Lock()
 	tx.readTS = MVCCVersion{} // force the no-snapshot path deterministically
 	zeroed := tx.readTS.IsZero()
-	out, outErr := tx.getCommittedAdjacentEdgesLocked(start, Outgoing)
-	in, inErr := tx.getCommittedAdjacentEdgesLocked(target, Incoming)
-	_, badDirErr := tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
-	nodes, nodesErr := tx.getAllCommittedNodesLocked()
+	out, outErr := deliveredEdges(tx.getCommittedAdjacentEdgesLocked(start, Outgoing, nil))
+	in, inErr := deliveredEdges(tx.getCommittedAdjacentEdgesLocked(target, Incoming, nil))
+	_, badDirErr := deliveredEdges(tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99), nil))
+	nodes, nodesErr := deliveredNodesWithOverlay(tx.getAllCommittedNodesLocked(true))
 	tx.mu.Unlock()
 
 	require.True(t, zeroed)
