@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal WAL outcome changes, 2026-10-26.
 // Package cypher - Transaction support for Cypher queries.
 //
 // Implements BEGIN/COMMIT/ROLLBACK for Neo4j-compatible transaction control.
@@ -35,17 +36,27 @@ type TransactionContext struct {
 	outsideStorage storage.Engine
 	// Captured at BEGIN, independent of user-editable tx.setMetaData values.
 	coordinatorOwned bool
-	tx               interface{}    // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
-	engine           storage.Engine // Engine owning this transaction's commit.
-	storageWrapper   *transactionStorageWrapper
 	active           bool
-	wal              *storage.WAL
-	walSeqStart      uint64
-	database         string
-	txID             string
-	fabricRemoteExe  *fabric.RemoteFragmentExecutor
+	// storageRolledBack records early cleanup after a memory failure. The
+	// protocol transaction stays failed until its owner receives COMMIT or
+	// ROLLBACK, while staged storage and its budget are released immediately.
+	// (The flags sit together so the context keeps its allocation size.)
+	storageRolledBack bool
+	tx                interface{}    // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
+	engine            storage.Engine // Engine owning this transaction's commit.
+	storageWrapper    *transactionStorageWrapper
+	wal               *storage.WAL
+	walSeqStart       uint64
+	database          string
+	txID              string
+	fabricRemoteExe   *fabric.RemoteFragmentExecutor
 	// running is the transaction's SHOW TRANSACTIONS entry (#718).
 	running *runningTransaction
+	// mergeRetry is what the transaction keeps of its client statements for
+	// its MERGE retry classification (classifyMergeRetry) at the statement
+	// that broke a constraint or at COMMIT. Nil until a statement that can
+	// need the rule runs, so a transaction that never does pays nothing.
+	mergeRetry *mergeRetryStatements
 
 	// fabricLocalTxExec holds, per local constituent (shard name), the
 	// executor of this transaction's sub-transaction on it. Every statement
@@ -57,10 +68,6 @@ type TransactionContext struct {
 	// it wrote; any other statement is refused and COMMIT rolls it back, as in
 	// Neo4j (#683).
 	failed error
-	// storageRolledBack records early cleanup after a memory failure. The
-	// protocol transaction stays failed until its owner receives COMMIT or
-	// ROLLBACK, while staged storage and its budget are released immediately.
-	storageRolledBack bool
 
 	// statementKind keeps administration commands apart from data statements.
 	statementKind string
@@ -128,8 +135,8 @@ func remoteFailureRollbackContext(ctx context.Context) (context.Context, context
 // statement fails, since no later ROLLBACK can reach it. It returns err.
 func (e *StorageExecutor) abortTransaction(ctx context.Context, err error) error {
 	e.failTransaction(ctx, err)
-	_, _ = e.handleRollback()
-	return err
+	_, cleanup := e.handleRollback(ctx, err)
+	return nornicerrors.CombineTerminalOutcomes(err, cleanup)
 }
 
 // queryOnFailedTransactionError is the error of a statement sent to a
@@ -169,14 +176,16 @@ func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher 
 	case upper == "COMMIT" || upper == "COMMIT TRANSACTION":
 		return e.handleCommit(ctx)
 	case upper == "ROLLBACK" || upper == "ROLLBACK TRANSACTION":
-		return e.handleRollback()
+		return e.handleRollback(ctx, nil)
 	default:
 		return nil, nil // Not a transaction statement
 	}
 }
 
-// handleBegin starts a new explicit transaction.
-func (e *StorageExecutor) handleBegin(ctx context.Context) (*ExecuteResult, error) {
+// handleBegin starts a new explicit transaction. Its failure is a BEGIN
+// failure, classified here where it is produced.
+func (e *StorageExecutor) handleBegin(ctx context.Context) (_ *ExecuteResult, retErr error) {
+	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, retErr) }()
 	if e.txContext != nil && e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsAlreadyActive(), nil)
 	}
@@ -234,38 +243,20 @@ func (e *StorageExecutor) handleBegin(ctx context.Context) (*ExecuteResult, erro
 	if !ok {
 		return nil, localizedError(localization.CypherTransactionsEngineUnsupported(), nil)
 	}
-	if namespaceHint != "" {
-		if primer, ok := txEngine.(interface{ EnsureNamespaceMVCC(string) error }); ok {
-			if err := primer.EnsureNamespaceMVCC(namespaceHint); err != nil {
-				return nil, localizedError(localization.CypherTransactionsPrimeNamespaceFailed(err), err)
-			}
-		}
-	}
+	start := transactionStart{namespace: namespaceHint}
 	// With write-behind buffering, drain acknowledged autocommit writes so
 	// the explicit snapshot observes every acknowledged statement.
 	if drainer, ok := engine.(interface{ FlushWriteBehind(context.Context) error }); ok {
-		if err := drainer.FlushWriteBehind(ctx); err != nil {
-			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
-		}
-	}
-	tx, err := beginTransactionSnapshot(txEngine)
-	if err != nil {
-		return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
-	}
-	if namespaceHint != "" {
-		if err := tx.SetNamespace(namespaceHint); err != nil {
-			_ = tx.Rollback()
-			return nil, localizedError(localization.CypherTransactionsPinNamespaceFailed(err), err)
-		}
+		start.drain, start.drainContext = drainer, ctx
 	}
 	// An explicit transaction checks each write against the constraints
 	// when its statement runs, as Neo4j does: the statement that breaks a
 	// constraint fails with ConstraintValidationFailed (and fails the
 	// transaction), not the COMMIT (#700). COMMIT checks again under the
 	// constraint keys' locks, against what other writers committed since.
-	if err := tx.SetValidationSetting(storage.DeferredConstraintValidation, false); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherTransactionsConfigureFailed(err), err)
+	tx, bookkeeping, err := e.openTransaction(context.Background(), txEngine, start)
+	if err != nil {
+		return nil, err
 	}
 	txCtx := &TransactionContext{
 		controller: e, outsideStorage: e.storage,
@@ -274,15 +265,10 @@ func (e *StorageExecutor) handleBegin(ctx context.Context) (*ExecuteResult, erro
 		active: true,
 		txID:   tx.ID,
 	}
-	if wal, dbName := e.resolveWALAndDatabase(); wal != nil {
-		walSeq, walErr := wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: tx.ID, Metadata: nil}, dbName)
-		if walErr != nil {
-			_ = tx.Rollback()
-			return nil, localizedError(localization.CypherTransactionsWALBeginFailed(walErr), walErr)
-		}
-		txCtx.wal = wal
-		txCtx.walSeqStart = walSeq
-		txCtx.database = dbName
+	if bookkeeping.wal != nil {
+		txCtx.wal = bookkeeping.wal
+		txCtx.walSeqStart = bookkeeping.start
+		txCtx.database = bookkeeping.database
 	}
 	e.txContext = txCtx
 	e.storage = e.transactionStorageFor(tx)
@@ -300,22 +286,22 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 	}
 	// A transaction TERMINATE TRANSACTIONS ended doesn't commit (#718).
 	if e.txContext.running != nil && e.txContext.running.terminated.Load() {
-		_, _ = e.handleRollback()
-		return nil, transactionTerminatedError()
+		failure := transactionTerminatedError()
+		_, cleanup := e.handleRollback(ctx, failure)
+		return nil, nornicerrors.CombineTerminalOutcomes(failure, cleanup)
 	}
 	// A transaction a statement failed in can't commit: it is rolled back.
 	if cause := e.txContext.failed; cause != nil {
-		if _, err := e.handleRollback(); err != nil {
-			return nil, err
-		}
-		return nil, newSemanticError("Neo.ClientError.Transaction.TransactionMarkedAsFailed", "TransactionMarkedAsFailed",
+		failure := newSemanticError("Neo.ClientError.Transaction.TransactionMarkedAsFailed", "TransactionMarkedAsFailed",
 			"The transaction was rolled back because a statement in it failed: "+cause.Error())
+		_, cleanup := e.handleRollback(ctx, failure)
+		// Keep the original failed-statement status and any rollback failure.
+		return nil, nornicerrors.CombineTerminalOutcomes(failure, cleanup)
 	}
 	// Commit based on transaction type
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)
 	var (
 		err     error
-		receipt *storage.Receipt
 		opCount int
 	)
 	switch tx := e.txContext.tx.(type) {
@@ -330,33 +316,19 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 	default:
 		return nil, localizedError(localization.CypherTransactionsUnknownType(), nil)
 	}
+	// The transaction's own MERGE retry classification, before its outcome is
+	// produced (and, with a WAL failure, frozen).
+	err = classifyMergeRetry(ctx, e.analyzer, e.txContext.mergeRetry, err)
 
-	wal := e.txContext.wal
-	walSeqStart := e.txContext.walSeqStart
-	txID := e.txContext.txID
-	dbName := e.txContext.database
-
-	if err == nil && wal != nil && walSeqStart > 0 {
-		commitSeq, walErr := wal.AppendWithDatabaseReturningSeq(storage.OpTxCommit, storage.WALTxData{TxID: txID, OpCount: opCount}, dbName)
-		if walErr == nil {
-			receipt, _ = storage.NewReceipt(
-				txID,
-				walSeqStart,
-				commitSeq,
-				dbName,
-				time.Now().UTC(),
-			)
-		}
-	}
-
+	bookkeeping := transactionWAL{e.txContext.wal, e.txContext.walSeqStart, e.txContext.txID, e.txContext.database}
 	if err != nil {
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: err.Error()}, dbName)
-		}
+		// Remote participants roll back with their executor: their failures
+		// are part of this failed commit's outcome.
 		if e.txContext.fabricRemoteExe != nil {
-			_ = e.txContext.fabricRemoteExe.Close()
+			err = nornicerrors.CombineTerminalOutcomes(err, e.txContext.fabricRemoteExe.Close())
 			e.txContext.fabricRemoteExe = nil
 		}
+		err = bookkeeping.rejectCommit(ctx, err, err.Error())
 		_, localTx := e.txContext.tx.(*storage.BadgerTransaction)
 		e.txContext.active = false
 		runningTransactions.end(e.txContext.running)
@@ -366,20 +338,26 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		e.txContext = nil
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-		failure := localizedError(localization.CypherTransactionsCommitFailed(err), err)
+		failure := nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, localizedError(localization.CypherTransactionsCommitFailed(err), err))
 		if commitFailureWroteNothing(localTx, err) {
 			failure = nornicerrors.MarkCommitRolledBack(failure)
 		}
 		return nil, failure
 	}
-	var completionErr error
-	if e.txContext.storageWrapper != nil {
-		txExec := e.cloneWithStorage(e.txContext.storageWrapper)
-		txExec.promoteNodeLookupCacheTo(e)
-		completionErr = e.txContext.storageWrapper.completeCommitActions()
-		txExec.refreshSearchAfterCommit(e.txContext.storageWrapper)
+	var actions func() error
+	if wrapper := e.txContext.storageWrapper; wrapper != nil {
+		actions = func() error {
+			txExec := e.cloneWithStorage(wrapper)
+			txExec.promoteNodeLookupCacheTo(e)
+			completionErr := wrapper.completeCommitActions()
+			txExec.refreshSearchAfterCommit(wrapper)
+			return completionErr
+		}
 	}
+	receipt, completionErr, bookkeepingErr := bookkeeping.finishCommitted(ctx, opCount, actions)
 
+	// The remote participants already committed with the transaction; closing
+	// their executor only releases its connections.
 	if e.txContext.fabricRemoteExe != nil {
 		_ = e.txContext.fabricRemoteExe.Close()
 		e.txContext.fabricRemoteExe = nil
@@ -390,6 +368,10 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		e.storage = e.txContext.outsideStorage
 	}
 	e.txContext = nil
+
+	if bookkeepingErr != nil {
+		return nil, localizedError(localization.CypherTransactionsCommitFailed(bookkeepingErr), bookkeepingErr)
+	}
 
 	result := &ExecuteResult{
 		Columns: []string{"status"},
@@ -426,7 +408,7 @@ func commitFailureWroteNothing(localTx bool, err error) bool {
 }
 
 // handleRollback rolls back the active transaction.
-func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
+func (e *StorageExecutor) handleRollback(ctx context.Context, primary error) (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
@@ -449,12 +431,21 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 		return nil, localizedError(localization.CypherTransactionsUnknownType(), nil)
 	}
 
-	if e.txContext.wal != nil && e.txContext.walSeqStart > 0 {
-		_, _ = e.txContext.wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: e.txContext.txID, Reason: "rollback"}, e.txContext.database)
-	}
+	// Remote participants roll back with their executor; their failures are
+	// this rollback's own failures, next to the native one.
 	if e.txContext.fabricRemoteExe != nil {
-		_ = e.txContext.fabricRemoteExe.Close()
+		err = nornicerrors.CombineTerminalOutcomes(err, e.txContext.fabricRemoteExe.Close())
 		e.txContext.fabricRemoteExe = nil
+	}
+	bookkeeping := transactionWAL{e.txContext.wal, e.txContext.walSeqStart, e.txContext.txID, e.txContext.database}
+	// A statement's failure that ended the transaction keeps its own status;
+	// an explicit ROLLBACK's own failure takes the rollback status.
+	operation, cause := nornicerrors.TerminalRollback, err
+	if primary != nil {
+		operation, cause = nornicerrors.TerminalAbort, nornicerrors.CombineTerminalOutcomes(primary, err)
+	}
+	if _, terminalErr := bookkeeping.finish(ctx, false, 0, "rollback", cause, operation); terminalErr != nil {
+		err = terminalErr
 	}
 
 	e.txContext.active = false
@@ -465,7 +456,7 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 	e.txContext = nil
 
 	if err != nil {
-		return nil, localizedError(localization.CypherTransactionsRollbackFailed(err), err)
+		return nil, nornicerrors.TransactionControlFailure(nornicerrors.TerminalRollback, localizedError(localization.CypherTransactionsRollbackFailed(err), err))
 	}
 
 	return &ExecuteResult{
