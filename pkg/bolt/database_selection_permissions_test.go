@@ -88,7 +88,7 @@ func TestBoltDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 	}
 	nornic, err := mgr.GetStorage("nornic")
 	require.NoError(t, err)
-	nodes, err := nornic.GetNodesByLabel("Loaded")
+	nodes, err := nornic.GetNodesByLabel(ctx, "Loaded")
 	require.NoError(t, err)
 	require.Len(t, nodes, 6, "only the write-only role's statements committed")
 }

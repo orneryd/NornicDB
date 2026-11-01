@@ -54,34 +54,34 @@ func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID 
 		return nil, nil, err
 	}
 	if direction == "outgoing" {
-		edges, err := store.GetOutgoingEdges(nodeID)
+		edges, err := store.GetOutgoingEdges(ctx, nodeID)
 		if err == nil {
 			err = ctx.Err()
 		}
 		return edges, nil, err
 	}
 	if direction == "incoming" {
-		edges, err := store.GetIncomingEdges(nodeID)
+		edges, err := store.GetIncomingEdges(ctx, nodeID)
 		if err == nil {
 			err = ctx.Err()
 		}
 		return nil, edges, err
 	}
 	if adjacent, ok := store.(storage.AdjacentEdgesEngine); ok {
-		out, in, err := adjacent.GetAdjacentEdges(nodeID)
+		out, in, err := adjacent.GetAdjacentEdges(ctx, nodeID)
 		if err == nil {
 			err = ctx.Err()
 		}
 		return out, in, err
 	}
-	outgoing, err := store.GetOutgoingEdges(nodeID)
+	outgoing, err := store.GetOutgoingEdges(ctx, nodeID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	incoming, err := store.GetIncomingEdges(nodeID)
+	incoming, err := store.GetIncomingEdges(ctx, nodeID)
 	if err != nil {
 		return nil, nil, err
 	}

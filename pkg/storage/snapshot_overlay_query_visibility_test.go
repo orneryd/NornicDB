@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -57,7 +58,7 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 					read = tx.GetQueryNode
 					readStored = tx.GetStoredNode
 				case "transaction-scan":
-					nodes, err := tx.AllNodes()
+					nodes, err := tx.AllNodes(context.Background())
 					require.NoError(t, err)
 					require.Len(t, nodes, 1)
 					read = tx.GetQueryNode

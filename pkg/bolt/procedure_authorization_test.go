@@ -59,7 +59,7 @@ func testBoltRejectsWriteModeProcedure(t *testing.T, inTransaction bool) {
 	if code != "Neo.ClientError.Security.Forbidden" {
 		t.Fatalf("unexpected failure code %q: %s", code, message)
 	}
-	if nodes, err := store.GetNodesByLabel("Restricted"); err != nil || len(nodes) != 0 {
+	if nodes, err := store.GetNodesByLabel(context.Background(), "Restricted"); err != nil || len(nodes) != 0 {
 		t.Fatalf("refused statement changed storage: nodes=%v err=%v", nodes, err)
 	}
 }

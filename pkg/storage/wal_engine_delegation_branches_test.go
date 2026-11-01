@@ -15,6 +15,17 @@ type walOptionalEngine struct {
 	edge *Edge
 }
 
+// singletonVisibleEdge is the version-visible edge lookup kernel for the single
+// edge this double owns: an absent edge or a rejected predicate reports no
+// visible edges, otherwise the caller gets one copy of that edge. Every
+// directional and typed lookup shares it so only the predicate differs.
+func singletonVisibleEdge(edge *Edge, keep func(*Edge) bool) []*Edge {
+	if edge == nil || !keep(edge) {
+		return nil
+	}
+	return []*Edge{copyEdge(edge)}
+}
+
 func (e *walOptionalEngine) IsCurrentTemporalNode(node *Node, asOf time.Time) (bool, error) {
 	_ = asOf
 	return node != nil, nil
@@ -53,35 +64,31 @@ func (e *walOptionalEngine) GetNodeVisibleAt(id NodeID, _ MVCCVersion) (*Node, e
 func (e *walOptionalEngine) GetEdgeVisibleAt(id EdgeID, _ MVCCVersion) (*Edge, error) {
 	return e.GetEdgeLatestEffective(id)
 }
-func (e *walOptionalEngine) GetNodesByLabelVisibleAt(label string, _ MVCCVersion) ([]*Node, error) {
+func (e *walOptionalEngine) GetNodesByLabelVisibleAt(_ context.Context, label string, _ MVCCVersion) ([]*Node, error) {
 	if e.node != nil && hasLabel(e.node.Labels, label) {
 		return []*Node{copyNode(e.node)}, nil
 	}
 	return nil, nil
 }
-func (e *walOptionalEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, _ MVCCVersion) ([]*Edge, error) {
-	if e.edge != nil && e.edge.StartNode == nodeID {
-		return []*Edge{copyEdge(e.edge)}, nil
-	}
-	return nil, nil
+func (e *walOptionalEngine) GetOutgoingEdgesVisibleAt(_ context.Context, nodeID NodeID, _ MVCCVersion) ([]*Edge, error) {
+	return singletonVisibleEdge(e.edge, func(edge *Edge) bool {
+		return edge.StartNode == nodeID
+	}), nil
 }
-func (e *walOptionalEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, _ MVCCVersion) ([]*Edge, error) {
-	if e.edge != nil && e.edge.EndNode == nodeID {
-		return []*Edge{copyEdge(e.edge)}, nil
-	}
-	return nil, nil
+func (e *walOptionalEngine) GetIncomingEdgesVisibleAt(_ context.Context, nodeID NodeID, _ MVCCVersion) ([]*Edge, error) {
+	return singletonVisibleEdge(e.edge, func(edge *Edge) bool {
+		return edge.EndNode == nodeID
+	}), nil
 }
-func (e *walOptionalEngine) GetEdgesByTypeVisibleAt(edgeType string, _ MVCCVersion) ([]*Edge, error) {
-	if e.edge != nil && e.edge.Type == edgeType {
-		return []*Edge{copyEdge(e.edge)}, nil
-	}
-	return nil, nil
+func (e *walOptionalEngine) GetEdgesByTypeVisibleAt(_ context.Context, edgeType string, _ MVCCVersion) ([]*Edge, error) {
+	return singletonVisibleEdge(e.edge, func(edge *Edge) bool {
+		return edge.Type == edgeType
+	}), nil
 }
-func (e *walOptionalEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, _ MVCCVersion) ([]*Edge, error) {
-	if e.edge != nil && e.edge.StartNode == startID && e.edge.EndNode == endID {
-		return []*Edge{copyEdge(e.edge)}, nil
-	}
-	return nil, nil
+func (e *walOptionalEngine) GetEdgesBetweenVisibleAt(_ context.Context, startID, endID NodeID, _ MVCCVersion) ([]*Edge, error) {
+	return singletonVisibleEdge(e.edge, func(edge *Edge) bool {
+		return edge.StartNode == startID && edge.EndNode == endID
+	}), nil
 }
 func (e *walOptionalEngine) GetNodeCurrentHead(NodeID) (MVCCHead, error) {
 	return MVCCHead{Version: MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}}, nil
@@ -139,19 +146,19 @@ func TestWALEngine_OptionalDelegationAndFallbackBranches(t *testing.T) {
 	_, err = we.GetEdgeVisibleAt("test:e1", MVCCVersion{})
 	require.NoError(t, err)
 
-	nodes, err := we.GetNodesByLabelVisibleAt("L", MVCCVersion{})
+	nodes, err := we.GetNodesByLabelVisibleAt(context.Background(), "L", MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
-	edges, err := we.GetOutgoingEdgesVisibleAt("test:n1", MVCCVersion{})
+	edges, err := we.GetOutgoingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
-	edges, err = we.GetIncomingEdgesVisibleAt("test:n1", MVCCVersion{})
+	edges, err = we.GetIncomingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
-	edges, err = we.GetEdgesByTypeVisibleAt("R", MVCCVersion{})
+	edges, err = we.GetEdgesByTypeVisibleAt(context.Background(), "R", MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
-	edges, err = we.GetEdgesBetweenVisibleAt("test:n1", "test:n1", MVCCVersion{})
+	edges, err = we.GetEdgesBetweenVisibleAt(context.Background(), "test:n1", "test:n1", MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 
@@ -205,15 +212,15 @@ func TestWALEngine_OptionalFallbackBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = we.GetEdgeVisibleAt("test:e1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = we.GetNodesByLabelVisibleAt("L", MVCCVersion{})
+	_, err = we.GetNodesByLabelVisibleAt(context.Background(), "L", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = we.GetOutgoingEdgesVisibleAt("test:n1", MVCCVersion{})
+	_, err = we.GetOutgoingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = we.GetIncomingEdgesVisibleAt("test:n1", MVCCVersion{})
+	_, err = we.GetIncomingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = we.GetEdgesByTypeVisibleAt("R", MVCCVersion{})
+	_, err = we.GetEdgesByTypeVisibleAt(context.Background(), "R", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = we.GetEdgesBetweenVisibleAt("test:n1", "test:n1", MVCCVersion{})
+	_, err = we.GetEdgesBetweenVisibleAt(context.Background(), "test:n1", "test:n1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
 
 	_, err = we.GetNodeCurrentHead("test:n1")

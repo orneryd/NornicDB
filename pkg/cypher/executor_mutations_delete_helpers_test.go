@@ -153,7 +153,7 @@ func TestDeleteHelpers_StreamEligibilityAndExecution(t *testing.T) {
 	res, err = exec.Execute(ctx, "MATCH (n:Ghost)"+" DELETE "+"missingVar", getParamsFromContext(ctx))
 	require.Error(t, err)
 	require.Nil(t, res)
-	ghosts, err := store.GetNodesByLabel("Ghost")
+	ghosts, err := store.GetNodesByLabel(ctx, "Ghost")
 	require.NoError(t, err)
 	require.Len(t, ghosts, 1)
 

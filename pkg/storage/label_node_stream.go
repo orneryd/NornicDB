@@ -1,6 +1,9 @@
 package storage
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // streamNodesByLabelForValidation visits the nodes of label through engine,
 // decoding only properties, for schema validation and cache rebuilds.
@@ -11,10 +14,10 @@ import "errors"
 // visiting anything (a wrapper whose inner engine cannot stream), it falls
 // back to GetNodesByLabel: still label-scoped, never a whole-graph AllNodes
 // scan.
-func streamNodesByLabelForValidation(engine Engine, label string, properties []string, visit func(*Node) error) error {
+func streamNodesByLabelForValidation(ctx context.Context, engine Engine, label string, properties []string, visit func(*Node) error) error {
 	if reader, ok := engine.(ProjectedLabelNodeReader); ok {
 		visited := false
-		err := reader.StreamNodesByLabelProjected(label, properties, func(node *Node) error {
+		err := reader.StreamNodesByLabelProjected(ctx, label, properties, func(node *Node) error {
 			visited = true
 			return visit(node)
 		})
@@ -22,7 +25,7 @@ func streamNodesByLabelForValidation(engine Engine, label string, properties []s
 			return err
 		}
 	}
-	nodes, err := engine.GetNodesByLabel(label)
+	nodes, err := engine.GetNodesByLabel(ctx, label)
 	if err != nil {
 		return err
 	}

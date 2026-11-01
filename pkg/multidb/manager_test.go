@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -364,10 +365,10 @@ func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
 			for _, edge := range tc.edges {
 				require.NoError(t, store.CreateEdge(edge))
 			}
-			nodes, err := store.AllNodes()
+			nodes, err := store.AllNodes(context.Background())
 			require.NoError(t, err)
 			assert.Len(t, nodes, len(tc.nodes))
-			edges, err := store.AllEdges()
+			edges, err := store.AllEdges(context.Background())
 			require.NoError(t, err)
 			assert.Len(t, edges, len(tc.edges))
 			for _, node := range tc.nodes {
@@ -378,10 +379,10 @@ func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
 				_, err = inner.GetEdge(storage.EdgeID(tc.name + ":" + string(edge.ID)))
 				require.NoError(t, err)
 			}
-			beforeNodes, err := inner.AllNodes()
+			beforeNodes, err := inner.AllNodes(context.Background())
 			require.NoError(t, err)
 			assert.GreaterOrEqual(t, len(beforeNodes), len(tc.nodes))
-			beforeEdges, err := inner.AllEdges()
+			beforeEdges, err := inner.AllEdges(context.Background())
 			require.NoError(t, err)
 			assert.GreaterOrEqual(t, len(beforeEdges), len(tc.edges))
 			require.NoError(t, manager.DropDatabase(t.Context(), tc.name))
@@ -396,10 +397,10 @@ func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
 				assert.Error(t, err)
 				assert.Equal(t, storage.ErrNotFound, err)
 			}
-			afterNodes, err := inner.AllNodes()
+			afterNodes, err := inner.AllNodes(context.Background())
 			require.NoError(t, err)
 			assert.Len(t, afterNodes, len(beforeNodes)-len(tc.nodes))
-			afterEdges, err := inner.AllEdges()
+			afterEdges, err := inner.AllEdges(context.Background())
 			require.NoError(t, err)
 			assert.Len(t, afterEdges, len(beforeEdges)-len(tc.edges))
 			_, err = manager.GetStorage(tc.name)
@@ -456,7 +457,7 @@ func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
 	assert.Equal(t, storage.ErrNotFound, err)
 
 	// Verify AllNodes in namespaced storage only returns this node
-	allNodes, err := store.AllNodes()
+	allNodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(allNodes), "Namespaced storage should only see 1 node")
 	assert.Equal(t, nodeID, allNodes[0].ID, "Node ID should be unprefixed in namespaced view")
@@ -464,7 +465,7 @@ func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
 	// Verify the node is NOT visible in default database
 	defaultStore, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
-	defaultNodes, err := defaultStore.AllNodes()
+	defaultNodes, err := defaultStore.AllNodes(context.Background())
 	require.NoError(t, err)
 	// Filter out system nodes
 	nonSystemNodes := []*storage.Node{}
@@ -681,13 +682,13 @@ func TestDatabaseManager_GetStorage_Isolation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify isolation: tenant_a should only see its node
-	nodesA, err := storeA.AllNodes()
+	nodesA, err := storeA.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodesA, 1)
 	assert.Equal(t, "node-a", string(nodesA[0].ID))
 
 	// Verify isolation: tenant_b should only see its node
-	nodesB, err := storeB.AllNodes()
+	nodesB, err := storeB.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodesB, 1)
 	assert.Equal(t, "node-b", string(nodesB[0].ID))
@@ -878,7 +879,7 @@ func TestDatabaseManager_BackwardsCompatibility(t *testing.T) {
 	require.NoError(t, err)
 
 	// Can query nodes
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodes, 1)
 }

@@ -129,9 +129,9 @@ func TestBadgerEngine_TemporalAdjacentOverlapChecks(t *testing.T) {
 
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	err = tx.checkTemporalConstraint(makeNode("acct-middle-ok", "acct", base.Add(2*time.Hour), base.Add(3*time.Hour)), constraint)
+	err = tx.checkTemporalConstraint(context.Background(), makeNode("acct-middle-ok", "acct", base.Add(2*time.Hour), base.Add(3*time.Hour)), constraint)
 	require.NoError(t, err)
-	err = tx.checkTemporalConstraint(makeNode("acct-middle-bad", "acct", base.Add(90*time.Minute), base.Add(4*time.Hour)), constraint)
+	err = tx.checkTemporalConstraint(context.Background(), makeNode("acct-middle-bad", "acct", base.Add(90*time.Minute), base.Add(4*time.Hour)), constraint)
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
 }
@@ -211,7 +211,7 @@ func TestBadgerEngine_PruneTemporalHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), deleted)
 
-	nodes, err := engine.GetNodesByLabel("FactVersion")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "FactVersion")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 

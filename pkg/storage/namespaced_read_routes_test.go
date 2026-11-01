@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/stretchr/testify/require"
@@ -240,31 +241,31 @@ func (f *adjacencyRouteFixture) list(op string, start, end NodeID, v MVCCVersion
 	f.record(op, id, v)
 	return f.edges, f.err
 }
-func (f *adjacencyRouteFixture) GetOutgoingEdges(id NodeID) ([]*Edge, error) {
+func (f *adjacencyRouteFixture) GetOutgoingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
 	return f.list("out", id, "", MVCCVersion{})
 }
-func (f *adjacencyRouteFixture) GetIncomingEdges(id NodeID) ([]*Edge, error) {
+func (f *adjacencyRouteFixture) GetIncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
 	return f.list("in", id, "", MVCCVersion{})
 }
-func (f *adjacencyRouteFixture) GetEdgesBetween(a, b NodeID) ([]*Edge, error) {
+func (f *adjacencyRouteFixture) GetEdgesBetween(ctx context.Context, a, b NodeID) ([]*Edge, error) {
 	return f.list("between", a, b, MVCCVersion{})
 }
-func (f *adjacencyRouteFixture) GetOutgoingEdgesVisibleAt(id NodeID, v MVCCVersion) ([]*Edge, error) {
+func (f *adjacencyRouteFixture) GetOutgoingEdgesVisibleAt(ctx context.Context, id NodeID, v MVCCVersion) ([]*Edge, error) {
 	return f.list("out-at", id, "", v)
 }
-func (f *adjacencyRouteFixture) GetIncomingEdgesVisibleAt(id NodeID, v MVCCVersion) ([]*Edge, error) {
+func (f *adjacencyRouteFixture) GetIncomingEdgesVisibleAt(ctx context.Context, id NodeID, v MVCCVersion) ([]*Edge, error) {
 	return f.list("in-at", id, "", v)
 }
-func (f *adjacencyRouteFixture) GetEdgesBetweenVisibleAt(a, b NodeID, v MVCCVersion) ([]*Edge, error) {
+func (f *adjacencyRouteFixture) GetEdgesBetweenVisibleAt(ctx context.Context, a, b NodeID, v MVCCVersion) ([]*Edge, error) {
 	return f.list("between-at", a, b, v)
 }
-func (f *adjacencyRouteFixture) GetNodesByLabelVisibleAt(string, MVCCVersion) ([]*Node, error) {
+func (f *adjacencyRouteFixture) GetNodesByLabelVisibleAt(ctx context.Context, label string, v MVCCVersion) ([]*Node, error) {
 	return nil, f.err
 }
-func (f *adjacencyRouteFixture) GetEdgesByTypeVisibleAt(string, MVCCVersion) ([]*Edge, error) {
+func (f *adjacencyRouteFixture) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, v MVCCVersion) ([]*Edge, error) {
 	return f.edges, f.err
 }
-func (f *adjacencyRouteFixture) GetAdjacentEdges(id NodeID) ([]*Edge, []*Edge, error) {
+func (f *adjacencyRouteFixture) GetAdjacentEdges(ctx context.Context, id NodeID) ([]*Edge, []*Edge, error) {
 	edges, err := f.list("both", id, "", MVCCVersion{})
 	return edges, edges, err
 }
@@ -278,13 +279,21 @@ func TestNamespacedAdjacencyRoutingPreservesReadPoint(t *testing.T) {
 		pinned bool
 		read   func(*NamespacedEngine) ([]*Edge, error)
 	}{
-		{"out", "tenant:a", false, func(n *NamespacedEngine) ([]*Edge, error) { return n.GetOutgoingEdges("a") }},
-		{"in", "tenant:b", false, func(n *NamespacedEngine) ([]*Edge, error) { return n.GetIncomingEdges("tenant:b") }},
-		{"between", "tenant:a->tenant:b", false, func(n *NamespacedEngine) ([]*Edge, error) { return n.GetEdgesBetween("tenant:a", "b") }},
-		{"out-at", "tenant:a", true, func(n *NamespacedEngine) ([]*Edge, error) { return n.GetOutgoingEdgesVisibleAt("a", version) }},
-		{"in-at", "tenant:b", true, func(n *NamespacedEngine) ([]*Edge, error) { return n.GetIncomingEdgesVisibleAt("tenant:b", version) }},
+		{"out", "tenant:a", false, func(n *NamespacedEngine) ([]*Edge, error) { return n.GetOutgoingEdges(context.Background(), "a") }},
+		{"in", "tenant:b", false, func(n *NamespacedEngine) ([]*Edge, error) {
+			return n.GetIncomingEdges(context.Background(), "tenant:b")
+		}},
+		{"between", "tenant:a->tenant:b", false, func(n *NamespacedEngine) ([]*Edge, error) {
+			return n.GetEdgesBetween(context.Background(), "tenant:a", "b")
+		}},
+		{"out-at", "tenant:a", true, func(n *NamespacedEngine) ([]*Edge, error) {
+			return n.GetOutgoingEdgesVisibleAt(context.Background(), "a", version)
+		}},
+		{"in-at", "tenant:b", true, func(n *NamespacedEngine) ([]*Edge, error) {
+			return n.GetIncomingEdgesVisibleAt(context.Background(), "tenant:b", version)
+		}},
 		{"between-at", "tenant:a->tenant:b", true, func(n *NamespacedEngine) ([]*Edge, error) {
-			return n.GetEdgesBetweenVisibleAt("tenant:a", "b", version)
+			return n.GetEdgesBetweenVisibleAt(context.Background(), "tenant:a", "b", version)
 		}},
 	}
 	for _, tc := range tests {
@@ -328,7 +337,7 @@ func TestNamespacedAdjacencyRoutingPreservesReadPoint(t *testing.T) {
 				if !combined {
 					engine = struct{ Engine }{f}
 				}
-				out, in, err := NewNamespacedEngine(engine, "tenant").GetAdjacentEdges("a")
+				out, in, err := NewNamespacedEngine(engine, "tenant").GetAdjacentEdges(context.Background(), "a")
 				require.Equal(t, f.err, err)
 				wantCalls := []string{"both"}
 				if !combined {

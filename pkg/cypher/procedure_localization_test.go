@@ -32,10 +32,26 @@ func TestCompatibilityProcedureErrorsHaveTypedIdentity(t *testing.T) {
 	})
 
 	t.Run("named argument", func(t *testing.T) {
-		ctx := context.WithValue(context.Background(), paramsKey, map[string]interface{}{})
-		_, err := exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 10, $embedding)")
-		localizedErr := requireCypherProceduresLocalizedError(t, err, localization.MessageCypherProceduresParameterNotProvided, "parameter $embedding not provided")
-		require.Equal(t, "embedding", localizedErr.Message.Data["Parameter"])
+		// A parameter the statement never supplied is not a vector query
+		// argument error: the call does not run (Neo4j's ParameterMissing).
+		_, err := exec.Execute(context.Background(), "CALL db.index.vector.queryRelationships('idx', 10, $embedding)", map[string]interface{}{})
+		require.EqualError(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): embedding")
+
+		code, message := nerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.ParameterMissing", code)
+		require.Equal(t, "Expected parameter(s): embedding", message)
+	})
+
+	t.Run("relationship search text descriptor", func(t *testing.T) {
+		// The relationship vector procedure keeps its own localized message
+		// identity, distinct from the node procedure's.
+		_, err := exec.Execute(context.Background(), "CALL db.index.vector.queryRelationships('idx', 10, 'hello')", nil)
+		require.ErrorContains(t, err, "string query provided but no embedder configured; use vector array or configure embedding service")
+
+		var localizedErr *localization.LocalizedError
+		require.ErrorAs(t, err, &localizedErr)
+		require.Equal(t, localization.MessageCypherProceduresStringQueryEmbedderRequired, localizedErr.Message.ID)
+		require.Equal(t, string(localization.MessageCypherProceduresStringQueryEmbedderRequired), localizedErr.Code)
 	})
 
 	t.Run("argument type", func(t *testing.T) {

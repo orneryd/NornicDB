@@ -184,6 +184,9 @@ type CypherParserListener interface {
 	// EnterForSt is called when entering the forSt production.
 	EnterForSt(c *ForStContext)
 
+	// EnterLoadCSVSt is called when entering the loadCSVSt production.
+	EnterLoadCSVSt(c *LoadCSVStContext)
+
 	// EnterReadingStatement is called when entering the readingStatement production.
 	EnterReadingStatement(c *ReadingStatementContext)
 
@@ -663,6 +666,9 @@ type CypherParserListener interface {
 
 	// ExitForSt is called when exiting the forSt production.
 	ExitForSt(c *ForStContext)
+
+	// ExitLoadCSVSt is called when exiting the loadCSVSt production.
+	ExitLoadCSVSt(c *LoadCSVStContext)
 
 	// ExitReadingStatement is called when exiting the readingStatement production.
 	ExitReadingStatement(c *ReadingStatementContext)

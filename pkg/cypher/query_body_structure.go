@@ -427,6 +427,8 @@ func querySyntaxClauseKind(node cypherantlr.SyntaxNode) (pipelineClauseKind, boo
 		return pipelineClauseWith, true
 	case cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt:
 		return pipelineClauseUnwind, true
+	case cypherantlr.CypherParserRULE_loadCSVSt:
+		return pipelineClauseLoadCSV, true
 	case cypherantlr.CypherParserRULE_returnSt:
 		return pipelineClauseReturn, true
 	case cypherantlr.CypherParserRULE_callSubquery:

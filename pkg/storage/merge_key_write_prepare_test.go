@@ -157,7 +157,7 @@ func TestPrepareMergeNodeForWriteBufferedAdmission(t *testing.T) {
 			}
 			// Write-behind reads are read-committed and do not pin a snapshot.
 			reader := beginMergeKeyTx(t, engine)
-			read, err := reader.GetNodesByLabel("U")
+			read, err := reader.GetNodesByLabel(ctx, "U")
 			require.NoError(t, err)
 			require.Len(t, read, 1)
 			require.Equal(t, int64(2), read[0].Properties["w"])

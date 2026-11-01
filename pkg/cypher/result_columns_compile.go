@@ -401,6 +401,16 @@ func (compilation *boundCompilation) enterClause(clause *boundClause) {
 		}
 		name := syntaxSymbolName(symbol)
 		clause.after[name] = struct{}{}
+	case pipelineClauseLoadCSV:
+		// LOAD CSV binds one record variable per row of the resource it names;
+		// the resource expression reads only names the clause already has.
+		clause.step.Kind = resultmetadata.ClauseLoadCSV
+		symbol := source.syntax.ChildRule(cypherantlr.CypherParserRULE_symbol)
+		if !symbol.Valid() {
+			compilation.fail(resultmetadata.ReasonParserDecline, source.start, nil)
+			return
+		}
+		clause.after[syntaxSymbolName(symbol)] = struct{}{}
 	case pipelineClauseLet:
 		clause.step.Kind = resultmetadata.ClauseLet
 	case pipelineClauseFilter:

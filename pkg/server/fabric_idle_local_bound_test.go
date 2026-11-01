@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -207,6 +208,9 @@ func TestFabricHTTPCommitWaitsForLocalStorageOutcome(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Errorf("COMMIT returned error despite its eventual committed write: %v", result.Errors)
 	}
-	require.Eventually(t, func() bool { nodes, err := leaf.GetNodesByLabel("CommitOutcome"); return err == nil && len(nodes) == 1 }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		nodes, err := leaf.GetNodesByLabel(context.Background(), "CommitOutcome")
+		return err == nil && len(nodes) == 1
+	}, 5*time.Second, 10*time.Millisecond)
 	t.Logf("local write committed; HTTP outcome returned after %s", time.Since(started))
 }

@@ -92,7 +92,7 @@ func TestInlineShellUseExecutesStatementAndChecksDatabase(t *testing.T) {
 	for target, count := range map[string]int{database: 0, "inline_target": 1} {
 		store, err := server.dbManager.GetStorage(target)
 		require.NoError(t, err)
-		nodes, err := store.GetNodesByLabel("InlineSelectionProof")
+		nodes, err := store.GetNodesByLabel(context.Background(), "InlineSelectionProof")
 		require.NoError(t, err)
 		require.Len(t, nodes, count, target)
 	}

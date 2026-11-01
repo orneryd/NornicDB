@@ -79,7 +79,7 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 			builtin = "type"
 		}
 		fnCtx := e.registryFunctionContext(ctx, func(string) (interface{}, error) { return value, nil })
-		v, _, err := cypherfn.EvaluateFunction(builtin, []string{"value"}, fnCtx)
+		v, _, err := cypherfn.EvaluateFunction(ctx, builtin, []string{"value"}, fnCtx)
 		if err != nil {
 			err = functionEvaluationError(err)
 		}

@@ -209,7 +209,7 @@ func (s *databaseCollectionStore) PointCount(ctx context.Context, name string) (
 	if err != nil {
 		return 0, err
 	}
-	nodes, err := engine.GetNodesByLabel(QdrantPointLabel)
+	nodes, err := engine.GetNodesByLabel(ctx, QdrantPointLabel)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return 0, nil

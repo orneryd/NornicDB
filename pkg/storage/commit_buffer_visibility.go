@@ -1,6 +1,9 @@
 package storage
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // Entity IDs are independently allocated: a node and an edge may have the
 // same string ID. A generic delete mutation submitted through Append
@@ -97,21 +100,37 @@ func (b *CommitBuffer) clearEntityDeletion(kind bufferedEntityKind, id string) {
 	}
 }
 
-func (b *CommitBuffer) deletedEntityIDs(kind bufferedEntityKind, visit func(string)) {
+func (b *CommitBuffer) deletedEntityIDs(ctx context.Context, kind bufferedEntityKind, visit func(string) bool) error {
+	var work bulkReadCancellation
 	if kind == bufferedNodeEntity {
 		for id := range b.deletedNodeIDs {
-			visit(string(id))
+			if err := work.check(ctx); err != nil {
+				return err
+			}
+			if !visit(string(id)) {
+				return ctx.Err()
+			}
 		}
 	} else {
 		for id := range b.deletedEdgeIDs {
-			visit(string(id))
+			if err := work.check(ctx); err != nil {
+				return err
+			}
+			if !visit(string(id)) {
+				return ctx.Err()
+			}
 		}
 	}
 	for id, mask := range b.deletes {
-		if mask&kind != 0 {
-			visit(id)
+		// Even deletion masks for the other entity kind consume iteration work.
+		if err := work.check(ctx); err != nil {
+			return err
+		}
+		if mask&kind != 0 && !visit(id) {
+			return ctx.Err()
 		}
 	}
+	return nil
 }
 
 // entityStateLocked resolves the first relevant state, newest generation
@@ -143,30 +162,51 @@ func (w *WriteBehindBuffer) entityStateLocked(kind bufferedEntityKind, id string
 // visitEntityOverlayLocked resolves each candidate only once. Enumeration
 // remains label/type/adjacency scoped; pure deletions participate even when
 // their generation has no body or corresponding index entry.
-func (w *WriteBehindBuffer) visitEntityOverlayLocked(kind bufferedEntityKind, candidates func(*CommitBuffer, func(string)), visit func(string, bufferedEntityState), prefixes ...string) {
+//
+// ctx is the read's own lifetime. Every candidate, touched ID and deletion
+// mask this copy visits polls it, so a canceled read stops inside the copy
+// rather than after the whole overlay has been materialised. A canceled copy
+// reports the caller's own error and leaves no partial result to publish.
+func (w *WriteBehindBuffer) visitEntityOverlayLocked(ctx context.Context, kind bufferedEntityKind, candidates func(*CommitBuffer, func(string) bool), visit func(string, bufferedEntityState), prefixes ...string) error {
 	if w == nil {
-		return
+		return nil
 	}
+	var cancel bulkReadCancellation
+	var cancelErr error
 	seen := make(map[string]struct{})
-	emit := func(id string) {
+	emit := func(id string) bool {
+		if cancelErr != nil {
+			return false
+		}
+		if err := cancel.check(ctx); err != nil {
+			cancelErr = err
+			return false
+		}
 		if len(prefixes) > 0 && !strings.HasPrefix(id, prefixes[0]) {
-			return
+			return true
 		}
 		if _, found := seen[id]; found {
-			return
+			return true
 		}
 		seen[id] = struct{}{}
 		state := w.entityStateLocked(kind, id)
 		if state.found {
 			visit(id, state)
 		}
+		return true
 	}
 	collect := func(buf *CommitBuffer) {
 		candidates(buf, emit)
-		buf.deletedEntityIDs(kind, emit)
+		if cancelErr == nil {
+			cancelErr = buf.deletedEntityIDs(ctx, kind, emit)
+		}
 	}
 	collect(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
+	for i := len(w.draining) - 1; i >= 0 && cancelErr == nil; i-- {
 		collect(w.draining[i])
 	}
+	if cancelErr != nil {
+		return cancelErr
+	}
+	return ctx.Err()
 }

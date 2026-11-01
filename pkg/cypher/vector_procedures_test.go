@@ -784,7 +784,9 @@ func TestVectorSearchQueryModes(t *testing.T) {
 			"CALL db.index.vector.queryNodes('doc_idx', 10, $queryVector) YIELD node, score",
 			map[string]interface{}{"queryVector": 123}) // Invalid: not a vector
 		require.Error(t, err, "Should error when parameter has invalid type")
-		assert.Contains(t, err.Error(), "unsupported type", "Error should mention unsupported type")
+		// The actual value has no parameter name: the diagnostic names its type.
+		assert.Contains(t, err.Error(), "db.index.vector.queryNodes: argument query must be []float32, []float64, []interface{}, or string, not Integer")
+		assert.NotContains(t, err.Error(), "parameter $")
 	})
 
 	t.Run("string_query_error_without_embedder", func(t *testing.T) {
@@ -920,7 +922,7 @@ func TestMultiLineSetWithArray(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all properties were set
-	nodes, err := engine.AllNodes()
+	nodes, err := engine.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 
@@ -2030,44 +2032,31 @@ func TestCallDbIndexVectorQueryNodes_AdditionalParameterBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// []float64 parameter path.
-	res, err := exec.callDbIndexVectorQueryNodes(
-		context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float64{0.1, 0.2, 0.3}}),
-		"CALL db.index.vector.queryNodes('idx_doc', 5, $q)",
-	)
+	res, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, $q)", map[string]interface{}{"q": []float64{0.1, 0.2, 0.3}})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotEmpty(t, res.Rows)
 
 	// []interface{} numeric conversion path.
-	res, err = exec.callDbIndexVectorQueryNodes(
-		context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []interface{}{float64(0.1), int(0), int64(1)}}),
-		"CALL db.index.vector.queryNodes('idx_doc', 5, $q)",
-	)
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, $q)", map[string]interface{}{"q": []interface{}{float64(0.1), int(0), int64(1)}})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
 	// string parameter embedding path.
 	exec.SetEmbedder(&sequenceEmbedder{embs: [][]float32{{0.1, 0.2, 0.3}}})
-	res, err = exec.callDbIndexVectorQueryNodes(
-		context.WithValue(ctx, paramsKey, map[string]interface{}{"q": "semantic query"}),
-		"CALL db.index.vector.queryNodes('idx_doc', 5, $q)",
-	)
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, $q)", map[string]interface{}{"q": "semantic query"})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
-	// No query input and params present with supported types -> deterministic error branch.
-	_, err = exec.callDbIndexVectorQueryNodes(
-		context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float32{0.1, 0.2, 0.3}}),
-		"CALL db.index.vector.queryNodes('idx_doc', 5)",
-	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parameter may have unsupported type")
+	// A call without its query argument is rejected before the procedure runs.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5)", map[string]interface{}{"q": []float32{0.1, 0.2, 0.3}})
+	require.ErrorContains(t, err, "procedure db.index.vector.queryNodes requires at least 3 arguments, got 2")
 
 	// Build index state, then delete node and query again (covers stale/orphan-safe flow).
-	_, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, [0.1,0.2,0.3])")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, [0.1,0.2,0.3])", nil)
 	require.NoError(t, err)
 	require.NoError(t, engine.DeleteNode("doc-1"))
-	res, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, [0.1,0.2,0.3])")
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, [0.1,0.2,0.3])", nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 }

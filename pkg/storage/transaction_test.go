@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
@@ -421,23 +422,23 @@ func TestTransaction_UpdateEdge(t *testing.T) {
 		t.Error("Engine should store updated edge after commit")
 	}
 
-	outgoingOld, _ := engine.GetOutgoingEdges(node1.ID)
+	outgoingOld, _ := engine.GetOutgoingEdges(context.Background(), node1.ID)
 	if len(outgoingOld) != 0 {
 		t.Error("Old outgoing index should be cleared")
 	}
-	outgoingNew, _ := engine.GetOutgoingEdges(node2.ID)
+	outgoingNew, _ := engine.GetOutgoingEdges(context.Background(), node2.ID)
 	if len(outgoingNew) != 1 || outgoingNew[0].ID != edgeID {
 		t.Error("New outgoing index should include updated edge")
 	}
-	incomingOld, _ := engine.GetIncomingEdges(node2.ID)
+	incomingOld, _ := engine.GetIncomingEdges(context.Background(), node2.ID)
 	if len(incomingOld) != 0 {
 		t.Error("Old incoming index should be cleared")
 	}
-	incomingNew, _ := engine.GetIncomingEdges(node3.ID)
+	incomingNew, _ := engine.GetIncomingEdges(context.Background(), node3.ID)
 	if len(incomingNew) != 1 || incomingNew[0].ID != edgeID {
 		t.Error("New incoming index should include updated edge")
 	}
-	typed, _ := engine.GetEdgesByType("NEW")
+	typed, _ := engine.GetEdgesByType(context.Background(), "NEW")
 	if len(typed) != 1 || typed[0].ID != edgeID {
 		t.Error("Updated type index should include edge")
 	}
@@ -698,7 +699,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 		defer engine.Close()
 		tx, _ := engine.BeginTransaction()
 
-		err := tx.checkTemporalConstraint(newTemporalNode(prefixTestID("temporal-count"), "acct", now, now.Add(time.Hour)), Constraint{
+		err := tx.checkTemporalConstraint(context.Background(), newTemporalNode(prefixTestID("temporal-count"), "acct", now, now.Add(time.Hour)), Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"account", "from"},
@@ -709,17 +710,17 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 
 		node := newTemporalNode(prefixTestID("temporal-null"), "", now, now.Add(time.Hour))
 		node.Properties["account"] = nil
-		if err := tx.checkTemporalConstraint(node, constraint); err == nil {
+		if err := tx.checkTemporalConstraint(context.Background(), node, constraint); err == nil {
 			t.Fatal("expected null key error")
 		}
 
 		node = newTemporalNode(prefixTestID("temporal-bad-start"), "acct", "bad", now.Add(time.Hour))
-		if err := tx.checkTemporalConstraint(node, constraint); err == nil {
+		if err := tx.checkTemporalConstraint(context.Background(), node, constraint); err == nil {
 			t.Fatal("expected invalid start error")
 		}
 
 		node = newTemporalNode("unprefixed", "acct", now, now.Add(time.Hour))
-		if err := tx.checkTemporalConstraint(node, constraint); err == nil {
+		if err := tx.checkTemporalConstraint(context.Background(), node, constraint); err == nil {
 			t.Fatal("expected unprefixed id error")
 		}
 	})
@@ -739,7 +740,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 			},
 		}
 
-		err := tx.checkTemporalConstraint(newTemporalNode(prefixTestID("pending-check"), "acct", now, now.Add(time.Hour)), constraint)
+		err := tx.checkTemporalConstraint(context.Background(), newTemporalNode(prefixTestID("pending-check"), "acct", now, now.Add(time.Hour)), constraint)
 		if err == nil {
 			t.Fatal("expected invalid pending node error")
 		}
@@ -747,7 +748,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 		delete(tx.pendingNodes, NodeID(prefixTestID("pending-invalid")))
 		tx.pendingNodes[NodeID(prefixTestID("pending-overlap"))] = newTemporalNode(prefixTestID("pending-overlap"), "acct", now, now.Add(2*time.Hour))
 
-		err = tx.checkTemporalConstraint(newTemporalNode(prefixTestID("pending-check"), "acct", now.Add(time.Hour), now.Add(3*time.Hour)), constraint)
+		err = tx.checkTemporalConstraint(context.Background(), newTemporalNode(prefixTestID("pending-check"), "acct", now.Add(time.Hour), now.Add(3*time.Hour)), constraint)
 		if err == nil {
 			t.Fatal("expected pending overlap error")
 		}
@@ -773,7 +774,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
 
-		err = tx.checkTemporalConstraint(newTemporalNode(prefixTestID("committed-check"), "acct", now, now.Add(time.Hour)), constraint)
+		err = tx.checkTemporalConstraint(context.Background(), newTemporalNode(prefixTestID("committed-check"), "acct", now, now.Add(time.Hour)), constraint)
 		if err == nil {
 			t.Fatal("expected committed invalid start error")
 		}
@@ -788,7 +789,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
 
-		err = tx.checkTemporalConstraint(newTemporalNode(prefixTestID("committed-check"), "acct", now.Add(time.Hour), now.Add(3*time.Hour)), constraint)
+		err = tx.checkTemporalConstraint(context.Background(), newTemporalNode(prefixTestID("committed-check"), "acct", now.Add(time.Hour), now.Add(3*time.Hour)), constraint)
 		if err == nil {
 			t.Fatal("expected committed overlap error")
 		}
@@ -806,12 +807,12 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
 
-		err = tx.checkTemporalConstraint(newTemporalNode(prefixTestID("same-node"), "acct", now, now.Add(time.Hour)), constraint)
+		err = tx.checkTemporalConstraint(context.Background(), newTemporalNode(prefixTestID("same-node"), "acct", now, now.Add(time.Hour)), constraint)
 		if err != nil {
 			t.Fatalf("expected same-node update to be ignored, got %v", err)
 		}
 
-		err = tx.checkTemporalConstraint(newTemporalNode(prefixTestID("non-overlap"), "acct", now.Add(2*time.Hour), now.Add(3*time.Hour)), constraint)
+		err = tx.checkTemporalConstraint(context.Background(), newTemporalNode(prefixTestID("non-overlap"), "acct", now.Add(2*time.Hour), now.Add(3*time.Hour)), constraint)
 		if err != nil {
 			t.Fatalf("expected non-overlapping interval to pass, got %v", err)
 		}
@@ -837,7 +838,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 		}
 		c := Constraint{Type: ConstraintNodeKey, Label: "Person", Properties: []string{"tenant", "external_id"}}
 
-		err = tx.checkNodeKeyConstraint(newNode(prefixTestID("nk-null"), map[string]interface{}{"tenant": "t1"}), c)
+		err = tx.checkNodeKeyConstraint(context.Background(), newNode(prefixTestID("nk-null"), map[string]interface{}{"tenant": "t1"}), c)
 		if err == nil {
 			t.Fatal("expected null node-key property error")
 		}
@@ -846,7 +847,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 			"tenant":      "t1",
 			"external_id": "e1",
 		})
-		err = tx.checkNodeKeyConstraint(newNode(prefixTestID("nk-check"), map[string]interface{}{
+		err = tx.checkNodeKeyConstraint(context.Background(), newNode(prefixTestID("nk-check"), map[string]interface{}{
 			"tenant":      "t1",
 			"external_id": "e1",
 		}), c)
@@ -866,7 +867,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
-		err = tx.checkNodeKeyConstraint(newNode(prefixTestID("nk-check"), map[string]interface{}{
+		err = tx.checkNodeKeyConstraint(context.Background(), newNode(prefixTestID("nk-check"), map[string]interface{}{
 			"tenant":      "t1",
 			"external_id": "e1",
 		}), c)
@@ -896,12 +897,12 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
 
-		err = tx.validateNodeConstraints(newNode("unprefixed", map[string]interface{}{}))
+		err = tx.validateNodeConstraints(context.Background(), newNode("unprefixed", map[string]interface{}{}))
 		if err == nil {
 			t.Fatal("expected unprefixed id validation error")
 		}
 
-		err = tx.validateNodeConstraints(newNode(prefixTestID("missing-name"), map[string]interface{}{
+		err = tx.validateNodeConstraints(context.Background(), newNode(prefixTestID("missing-name"), map[string]interface{}{
 			"tenant":      "t1",
 			"external_id": "e1",
 			"account":     "acct",
@@ -913,7 +914,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 			t.Fatal("expected exists constraint error")
 		}
 
-		err = tx.validateNodeConstraints(newNode(prefixTestID("bad-type"), map[string]interface{}{
+		err = tx.validateNodeConstraints(context.Background(), newNode(prefixTestID("bad-type"), map[string]interface{}{
 			"name":        "Alice",
 			"tenant":      "t1",
 			"external_id": "e1",
@@ -926,7 +927,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 			t.Fatal("expected property type constraint error")
 		}
 
-		err = tx.validateNodeConstraints(newNode(prefixTestID("valid"), map[string]interface{}{
+		err = tx.validateNodeConstraints(context.Background(), newNode(prefixTestID("valid"), map[string]interface{}{
 			"name":        "Alice",
 			"tenant":      "t1",
 			"external_id": "e1",
@@ -949,7 +950,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 			"age":         int64(11),
 		})
 
-		err = tx.validateNodeConstraints(newNode(prefixTestID("valid"), map[string]interface{}{
+		err = tx.validateNodeConstraints(context.Background(), newNode(prefixTestID("valid"), map[string]interface{}{
 			"name":        "Alice",
 			"tenant":      "t1",
 			"external_id": "e1",
@@ -1505,7 +1506,7 @@ func TestTransaction_UpdateEdge_EndpointChange(t *testing.T) {
 			Properties: map[string]interface{}{},
 		},
 		assert: func(t *testing.T, engine *BadgerEngine) {
-			updateEdgeEndpoint(t, engine,
+			assertUpdatedEdgeIndex(t, engine, updatedEndpointIndex,
 				EdgeID(prefixTestID("ue-e1")),
 				NodeID(prefixTestID("ue-n2")),
 				NodeID(prefixTestID("ue-n3")),
@@ -1526,7 +1527,7 @@ func TestTransaction_UpdateEdge_TypeChange(t *testing.T) {
 			Properties: map[string]interface{}{},
 		},
 		assert: func(t *testing.T, engine *BadgerEngine) {
-			updateEdgeType(t, engine, EdgeID(prefixTestID("utc-e1")), "KNOWS", "LIKES")
+			assertUpdatedEdgeIndex(t, engine, updatedTypeIndex, EdgeID(prefixTestID("utc-e1")), "KNOWS", "LIKES")
 		},
 	})
 }

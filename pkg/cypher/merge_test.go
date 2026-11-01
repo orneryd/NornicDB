@@ -20,22 +20,22 @@ type staleMergeLookupEngine struct {
 	hiddenLabel string
 }
 
-func (s *staleMergeLookupEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (s *staleMergeLookupEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if label == s.hiddenLabel {
 		return nil, nil
 	}
-	return s.Engine.GetNodesByLabel(label)
+	return s.Engine.GetNodesByLabel(ctx, label)
 }
 
 type noScanMergeLookupEngine struct {
 	storage.Engine
 }
 
-func (n *noScanMergeLookupEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (n *noScanMergeLookupEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	return nil, assert.AnError
 }
 
-func (n *noScanMergeLookupEngine) AllNodes() ([]*storage.Node, error) {
+func (n *noScanMergeLookupEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	return nil, assert.AnError
 }
 
@@ -121,7 +121,7 @@ func TestMergeNode_FindMergeNodeIgnoresStaleCacheEntry(t *testing.T) {
 		Properties: map[string]interface{}{"name": "Alice"},
 	})
 
-	found, err := exec.findMergeNode(store, labels, props)
+	found, err := exec.findMergeNode(context.Background(), store, labels, props)
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, storage.NodeID("actual-person"), found.ID)
@@ -401,14 +401,14 @@ func TestMergeStandaloneRelationshipPath(t *testing.T) {
 				_, err := exec.Execute(context.Background(), tc.query, nil)
 				require.NoError(t, err)
 			}
-			nodes, err := store.AllNodes()
+			nodes, err := store.AllNodes(context.Background())
 			require.NoError(t, err)
 			expectedNodes := 2
 			if tc.name == "self loop" {
 				expectedNodes = 1
 			}
 			require.Len(t, nodes, expectedNodes)
-			edges, err := store.AllEdges()
+			edges, err := store.AllEdges(context.Background())
 			require.NoError(t, err)
 			require.Len(t, edges, 1)
 			if tc.name == "on create" {
@@ -442,10 +442,10 @@ func TestMergeStandaloneRelationshipPathInTransaction(t *testing.T) {
 	}
 	_, err = exec.Execute(context.Background(), "COMMIT", nil)
 	require.NoError(t, err)
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }
@@ -669,19 +669,26 @@ func TestFindMergeNode_UsesPropertyIndexLookup(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, schema.PropertyIndexInsert("OriginalText", "textKey", nodeID, "k-1"))
 
-	found, err := exec.findMergeNode(store, []string{"OriginalText"}, map[string]interface{}{"textKey": "k-1"})
+	found, err := exec.findMergeNode(context.Background(), store, []string{"OriginalText"}, map[string]interface{}{"textKey": "k-1"})
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	require.Equal(t, storage.NodeID("orig-idx-1"), found.ID)
 }
 
-func TestFindMergeNode_UsesUniqueConstraintLookupWithoutScan(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-
+// newUniqueUIDMergeStore builds the Function.uid unique-constraint fixture both
+// unique-lookup MERGE tests read: one namespaced store carrying the constraint
+// the lookup uses and no other population.
+func newUniqueUIDMergeStore(t *testing.T) *storage.NamespacedEngine {
+	t.Helper()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	schema := store.GetSchema()
 	require.NotNil(t, schema)
 	require.NoError(t, schema.AddUniqueConstraint("function_uid_unique", "Function", "uid"))
+	return store
+}
+
+func TestFindMergeNode_UsesUniqueConstraintLookupWithoutScan(t *testing.T) {
+	store := newUniqueUIDMergeStore(t)
 	_, err := store.CreateNode(&storage.Node{
 		ID:     "function-1",
 		Labels: []string{"Function"},
@@ -695,23 +702,18 @@ func TestFindMergeNode_UsesUniqueConstraintLookupWithoutScan(t *testing.T) {
 	noScanStore := &noScanMergeLookupEngine{Engine: store}
 	exec := NewStorageExecutor(noScanStore)
 
-	found, err := exec.findMergeNode(noScanStore, []string{"Function"}, map[string]interface{}{"uid": "content-entity:e_hot"})
+	found, err := exec.findMergeNode(context.Background(), noScanStore, []string{"Function"}, map[string]interface{}{"uid": "content-entity:e_hot"})
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	require.Equal(t, storage.NodeID("function-1"), found.ID)
 }
 
 func TestFindMergeNode_IgnoresNonComparableUniqueLookupValue(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-
-	schema := store.GetSchema()
-	require.NotNil(t, schema)
-	require.NoError(t, schema.AddUniqueConstraint("function_uid_unique", "Function", "uid"))
+	store := newUniqueUIDMergeStore(t)
 	exec := NewStorageExecutor(store)
 
 	require.NotPanics(t, func() {
-		found, err := exec.findMergeNode(store, []string{"Function"}, map[string]interface{}{"uid": []string{"bad"}})
+		found, err := exec.findMergeNode(context.Background(), store, []string{"Function"}, map[string]interface{}{"uid": []string{"bad"}})
 		require.NoError(t, err)
 		require.Nil(t, found)
 	})
@@ -731,7 +733,7 @@ func TestFindMergeNode_RequiresFullMultiLabelMatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	found, err := exec.findMergeNode(store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
+	found, err := exec.findMergeNode(context.Background(), store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
 	require.NoError(t, err)
 	require.Nil(t, found)
 
@@ -744,7 +746,7 @@ func TestFindMergeNode_RequiresFullMultiLabelMatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	found, err = exec.findMergeNode(store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
+	found, err = exec.findMergeNode(context.Background(), store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	require.Equal(t, dualID, found.ID)
@@ -1312,7 +1314,7 @@ func TestExecuteMerge_MissingParameterAndAnonymousPattern(t *testing.T) {
 	_, err := exec.Execute(ctx, "MERGE (n:Doc {path: $path}) RETURN n", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ParameterMissing")
-	nodes, err := store.GetNodesByLabel("Doc")
+	nodes, err := store.GetNodesByLabel(ctx, "Doc")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 
@@ -1363,7 +1365,7 @@ func TestExecuteMerge_RecoversFromDuplicateCreateForParameterizedRepositoryMerge
 	assert.Equal(t, "my-CodeGraphContext", result.Rows[0][1])
 	assert.Equal(t, false, result.Rows[0][2])
 
-	nodes, err := store.GetNodesByLabel("Repository")
+	nodes, err := store.GetNodesByLabel(ctx, "Repository")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	assert.Equal(t, "/Users/timothysweet/src/my-CodeGraphContext", nodes[0].Properties["path"])
@@ -1406,7 +1408,7 @@ func TestExecuteMerge_CreatesNodeWhenLegacySequentialIDWouldCollide(t *testing.T
 	assert.Equal(t, "/Users/timothysweet/src/my-CodeGraphContext/cgc_entry.py", result.Rows[0][0])
 	assert.Equal(t, "cgc_entry.py", result.Rows[0][1])
 
-	files, err := store.GetNodesByLabel("File")
+	files, err := store.GetNodesByLabel(ctx, "File")
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	assert.Equal(t, "/Users/timothysweet/src/my-CodeGraphContext/cgc_entry.py", files[0].Properties["path"])
@@ -1474,7 +1476,7 @@ func TestExecuteCompoundMatchMerge_StaleLabelLookupSurfacesConstraintViolation(t
 	assert.Nil(t, result)
 
 	// The conflict aborts the statement before the relationship MERGE runs.
-	params, err := store.GetNodesByLabel("Parameter")
+	params, err := store.GetNodesByLabel(ctx, "Parameter")
 	require.NoError(t, err)
 	require.Len(t, params, 1)
 	assert.Equal(t, "query", params[0].Properties["name"])
@@ -1482,7 +1484,7 @@ func TestExecuteCompoundMatchMerge_StaleLabelLookupSurfacesConstraintViolation(t
 
 	fn, err := store.GetFirstNodeByLabel("Function")
 	require.NoError(t, err)
-	edges, err := store.GetEdgesBetween(fn.ID, params[0].ID)
+	edges, err := store.GetEdgesBetween(ctx, fn.ID, params[0].ID)
 	require.NoError(t, err)
 	require.Empty(t, edges)
 }
@@ -1508,7 +1510,7 @@ func TestExecuteCompoundMatchMerge_SecondMergeAndErrorBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.EqualValues(t, 2, res.Stats.NodesCreated)
-	created, err := store.GetNodesByLabel("Scratch")
+	created, err := store.GetNodesByLabel(ctx, "Scratch")
 	require.NoError(t, err)
 	require.Len(t, created, 1)
 	require.Equal(t, "pre", created[0].Properties["id"])
@@ -1517,7 +1519,7 @@ func TestExecuteCompoundMatchMerge_SecondMergeAndErrorBranches(t *testing.T) {
 	_, err = exec.Execute(ctx, "MATCH (a:P MERGE (m:Broken {id:'x'})", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	created, err = store.GetNodesByLabel("Broken")
+	created, err = store.GetNodesByLabel(ctx, "Broken")
 	require.NoError(t, err)
 	require.Empty(t, created)
 

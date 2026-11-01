@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
@@ -38,10 +39,10 @@ func TestManualSuppression(t *testing.T) {
 		t.Helper()
 		_, err := engine.GetNode("test:b")
 		require.ErrorIs(t, err, ErrNotFound)
-		docs, err := engine.GetNodesByLabel("Doc")
+		docs, err := engine.GetNodesByLabel(context.Background(), "Doc")
 		require.NoError(t, err)
 		require.Len(t, docs, 1)
-		outgoing, err := engine.GetOutgoingEdges("test:a")
+		outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
 		require.NoError(t, err)
 		require.Empty(t, outgoing)
 	}
@@ -67,7 +68,7 @@ func TestManualSuppression(t *testing.T) {
 	require.False(t, engine.HasManualSuppressions())
 	_, err = engine.GetNode("test:b")
 	require.NoError(t, err)
-	outgoing, err := engine.GetOutgoingEdges("test:a")
+	outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 
@@ -76,7 +77,7 @@ func TestManualSuppression(t *testing.T) {
 	require.NoError(t, engine.DeleteEdge("test:r"))
 	require.False(t, engine.manuallySuppressed(manualSuppressionEdge, "test:r"))
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "CITES"}))
-	outgoing, err = engine.GetOutgoingEdges("test:a")
+	outgoing, err = engine.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:a", true))

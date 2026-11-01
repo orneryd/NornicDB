@@ -638,8 +638,11 @@ func (c *searchResultCache) Get(key string) *SearchResponse {
 	return cloneSearchResponse(ent.response)
 }
 
-func (c *searchResultCache) Put(key string, response *SearchResponse) {
-	if response == nil {
+// Put publishes a complete response for reuse only while the request is live.
+// A canceled search can have stopped retrieval early; its response must not
+// become a cached successful answer for a later caller.
+func (c *searchResultCache) Put(ctx context.Context, key string, response *SearchResponse) {
+	if c == nil || ctx.Err() != nil || response == nil {
 		return
 	}
 	expires := time.Time{}
@@ -4997,17 +5000,15 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	if len(embedding) == 0 {
 		if !opts.fallbackEnabled() {
 			response := &SearchResponse{Status: "success", Query: query, SearchMethod: "rrf_hybrid", RetrievalExhausted: true}
-			if resultCache != nil {
-				resultCache.Put(cacheKey, response)
-			}
+			resultCache.Put(ctx, cacheKey, response)
 			s.maybeLogSearchTiming(query, response, time.Since(start), false)
 			return response, nil
 		}
 		mode = "bm25" // Plan 04-05-05: closed AllowedSearchModes
 		resp, err := s.fullTextSearchOnly(ctx, query, opts)
 		resp = withSearchFallback(resp, SearchFallbackNoEmbedder)
-		if err == nil && resultCache != nil {
-			resultCache.Put(cacheKey, resp)
+		if err == nil {
+			resultCache.Put(ctx, cacheKey, resp)
 		}
 		s.maybeLogSearchTiming(query, resp, time.Since(start), false)
 		return resp, err
@@ -5019,8 +5020,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	if strings.TrimSpace(query) == "" {
 		mode = "vector" // Plan 04-05-05: closed AllowedSearchModes
 		resp, err := s.vectorSearchOnly(ctx, embedding, opts)
-		if err == nil && resultCache != nil {
-			resultCache.Put(cacheKey, resp)
+		if err == nil {
+			resultCache.Put(ctx, cacheKey, resp)
 		}
 		s.maybeLogSearchTiming(query, resp, time.Since(start), false)
 		return resp, err
@@ -5029,8 +5030,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// Try RRF hybrid search
 	response, err := s.rrfHybridSearch(ctx, query, embedding, opts)
 	if err == nil && response.selectionIsAuthoritative() {
-		if resultCache != nil && response.FallbackReason != SearchFallbackRerankFailed {
-			resultCache.Put(cacheKey, response)
+		if response.FallbackReason != SearchFallbackRerankFailed {
+			resultCache.Put(ctx, cacheKey, response)
 		}
 		s.maybeLogSearchTiming(query, response, time.Since(start), false)
 		return response, nil
@@ -5039,8 +5040,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		if response == nil {
 			response = &SearchResponse{Status: "success", Query: query, SearchMethod: "rrf_hybrid"}
 		}
-		if err == nil && resultCache != nil {
-			resultCache.Put(cacheKey, response)
+		if err == nil {
+			resultCache.Put(ctx, cacheKey, response)
 		}
 		s.maybeLogSearchTiming(query, response, time.Since(start), false)
 		return response, err
@@ -5060,9 +5061,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 			response.FallbackReason = SearchFallbackHybridSearchFailed
 		}
 		response.Message = "RRF search returned no results, fell back to vector search"
-		if resultCache != nil {
-			resultCache.Put(cacheKey, response)
-		}
+		resultCache.Put(ctx, cacheKey, response)
 		s.maybeLogSearchTiming(query, response, time.Since(start), false)
 		return response, nil
 	}
@@ -5080,8 +5079,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		resp = withSearchFallback(resp, reason)
 		resp.RetrievalExhausted = resp.RetrievalExhausted && !hybridIncomplete && !vectorIncomplete
 	}
-	if err == nil && resultCache != nil {
-		resultCache.Put(cacheKey, resp)
+	if err == nil {
+		resultCache.Put(ctx, cacheKey, resp)
 	}
 	s.maybeLogSearchTiming(query, resp, time.Since(start), false)
 	return resp, err
@@ -6711,12 +6710,12 @@ func (s *Service) getNodeWithoutEmbeddings(id storage.NodeID) (*storage.Node, er
 	return s.engine.GetNode(id)
 }
 
-func (s *Service) batchGetNodesWithoutEmbeddings(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (s *Service) batchGetNodesWithoutEmbeddings(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	if len(ids) == 0 {
 		return map[storage.NodeID]*storage.Node{}, nil
 	}
 	if reader, ok := s.engine.(storage.BatchNodeWithoutEmbeddingsReader); ok {
-		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ids)
+		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ctx, ids)
 		if err == nil {
 			return nodes, nil
 		}
@@ -7838,7 +7837,7 @@ func (s *Service) filterByTypeAndProperties(
 		}
 	}
 
-	nodes, err := s.batchGetNodesWithoutEmbeddings(ids)
+	nodes, err := s.batchGetNodesWithoutEmbeddings(ctx, ids)
 	if err != nil {
 		// Batch unavailable – fall back to the individual-fetch helpers.
 		if len(types) > 0 && !typesResolved {

@@ -3,42 +3,17 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
 
-// checkpointContext cancels a real context at successive work checkpoints.
-// Tests snapshot products, levels, reads and bindings at cancellation and
-// assert that the search performs no further observable work.
-type checkpointContext struct {
-	context.Context
-	cancel  context.CancelFunc
-	left    int
-	observe func()
-}
-
-func newCheckpointContext(limit int, observe func()) *checkpointContext {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &checkpointContext{Context: ctx, cancel: cancel, left: limit, observe: observe}
-}
-func (ctx *checkpointContext) Err() error {
-	if ctx.Context.Err() == nil {
-		ctx.left--
-		if ctx.left == 0 {
-			ctx.cancel()
-			if ctx.observe != nil {
-				ctx.observe()
-			}
-		}
-	}
-	return ctx.Context.Err()
-}
 func TestSelectedPathCompilationCancellationCheckpoints(t *testing.T) {
 	e, _ := newShortestSelectorExecutor(t)
 	pattern := "(a)((x)-[r:T]->(y) WHERE x.id <= y.id){2,1000000}(()-[:T]->()){0,3}(b)"
 	for budget := 1; budget <= 256; budget++ {
-		ctx := newCheckpointContext(budget, nil)
+		ctx := fixtureowner.NewCheckpointContext(budget, nil)
 		plan, _, ok := buildSelectedPathPlanContext(ctx, pattern, "p", "", nil)
 		if ctx.Context.Err() != nil {
 			require.False(t, ok)
@@ -46,19 +21,19 @@ func TestSelectedPathCompilationCancellationCheckpoints(t *testing.T) {
 		} else {
 			require.True(t, ok)
 		}
-		ctx.cancel()
-		ctx = newCheckpointContext(budget, nil)
+		ctx.Cancel()
+		ctx = fixtureowner.NewCheckpointContext(budget, nil)
 		_, _, ok = compileSelectedPathPlanContext(ctx, pattern, fmt.Sprintf("p%d", budget), "", nil)
 		if ctx.Context.Err() != nil {
 			require.False(t, ok)
 		}
-		ctx.cancel()
-		ctx = newCheckpointContext(budget, nil)
+		ctx.Cancel()
+		ctx = fixtureowner.NewCheckpointContext(budget, nil)
 		_, _, err := e.parseSelectedPathMatchContext(ctx, pattern, "p", nil, &pathSelector{}, "", nil)
 		if ctx.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
 		}
-		ctx.cancel()
+		ctx.Cancel()
 	}
 	canceled, stop := context.WithCancel(context.Background())
 	stop()
@@ -82,7 +57,7 @@ func TestSelectedPathCancellationWorkCheckpoints(t *testing.T) {
 			for budget := 1; budget <= 200; budget++ {
 				var search *pathSearch
 				products, levels, bound, atBound := 0, 0, 0, 0
-				ctx := newCheckpointContext(budget, func() {
+				ctx := fixtureowner.NewCheckpointContext(budget, func() {
 					if search != nil {
 						products = len(search.products)
 						levels = len(search.levels)
@@ -129,7 +104,7 @@ func TestSelectedPathCancellationWorkCheckpoints(t *testing.T) {
 					require.Equal(t, products, len(search.products), "%s %s budget=%d", pattern, mode, budget)
 					require.Equal(t, levels, len(search.levels), "%s %s budget=%d", pattern, mode, budget)
 				}
-				ctx.cancel()
+				ctx.Cancel()
 			}
 		}
 	}
@@ -149,14 +124,14 @@ func TestSelectedPathBindingCancellationCheckpoints(t *testing.T) {
 		for _, path := range paths {
 			for _, reversed := range []bool{false, true} {
 				for budget := 1; budget <= 100; budget++ {
-					ctx := newCheckpointContext(budget, nil)
+					ctx := fixtureowner.NewCheckpointContext(budget, nil)
 					_, ok := e.bindSelectedPath(ctx, plan, plan.forward, reversed, pipelineRow{}, path)
 					if ctx.Context.Err() != nil {
 						require.False(t, ok)
 					} else {
 						require.True(t, ok)
 					}
-					ctx.cancel()
+					ctx.Cancel()
 				}
 			}
 			for _, value := range []interface{}{nil, []interface{}{}, []interface{}{&storage.Edge{ID: "other"}, &storage.Edge{ID: "other2"}}} {
@@ -166,14 +141,14 @@ func TestSelectedPathBindingCancellationCheckpoints(t *testing.T) {
 		}
 	}
 	for budget := 1; budget <= 20; budget++ {
-		ctx := newCheckpointContext(budget, nil)
+		ctx := fixtureowner.NewCheckpointContext(budget, nil)
 		value := e.pathToMapContext(ctx, PathResult{Nodes: []*storage.Node{source, target}, Relationships: []*storage.Edge{{ID: "e"}}})
 		if ctx.Context.Err() != nil {
 			require.Nil(t, value)
 		} else {
 			require.NotNil(t, value)
 		}
-		ctx.cancel()
+		ctx.Cancel()
 	}
 }
 func TestSelectedPathUniformEligibilityAndTrailFallback(t *testing.T) {

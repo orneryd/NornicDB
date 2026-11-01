@@ -51,7 +51,7 @@ func TestCreatePipelineBuildsNodeListForRelationshipCreation(t *testing.T) {
 		CREATE (n1)-[:T]->(n2)`, nil)
 	require.NoError(t, err)
 
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Len(t, edges, 21)
 }

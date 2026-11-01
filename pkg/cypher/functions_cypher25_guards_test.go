@@ -108,7 +108,7 @@ func TestCypher25FunctionGuards(t *testing.T) {
 		for index := range values {
 			args[index] = string(rune('a' + index))
 		}
-		value, found, err := cypherfn.EvaluateFunction(name, args, cypherfn.Context{Eval: func(expression string) (interface{}, error) {
+		value, found, err := cypherfn.EvaluateFunction(context.Background(), name, args, cypherfn.Context{Eval: func(expression string) (interface{}, error) {
 			argument := values[expression[0]-'a']
 			if argument == failing {
 				return nil, failing

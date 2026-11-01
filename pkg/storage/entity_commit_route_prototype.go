@@ -1,6 +1,8 @@
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 // EntityCommitRoute describes whether an outer owner must process submission.
 // RequiresSubmission is false only for canonical native storage owners.

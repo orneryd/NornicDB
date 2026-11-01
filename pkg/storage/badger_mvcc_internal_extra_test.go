@@ -95,16 +95,16 @@ func TestBadgerEngine_AdjacencySnapshotReaderAcquisitionErrors(t *testing.T) {
 	engine.lifecycleController = ctrl
 	engine.mu.Unlock()
 
-	_, err := engine.GetOutgoingEdgesVisibleAt("test:n1", MVCCVersion{})
+	_, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
 	require.ErrorIs(t, err, context.Canceled)
-	_, err = engine.GetIncomingEdgesVisibleAt("test:n1", MVCCVersion{})
+	_, err = engine.GetIncomingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestBadgerEngine_CollectVisibleAdjacencyEdgeIDsInTxn_EmptyPrefix(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-		edgeIDs, err := engine.collectVisibleAdjacencyEdgeIDsInTxn(txn, nil, MVCCVersion{})
+		edgeIDs, err := engine.collectVisibleAdjacencyEdgeIDsInTxn(context.Background(), txn, nil, MVCCVersion{})
 		require.NoError(t, err)
 		require.Nil(t, edgeIDs)
 		return nil
@@ -130,7 +130,7 @@ func TestBadgerEngine_CollectVisibleAdjacencyEdgeIDsInTxn_MalformedRecord(t *tes
 	}))
 
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-		_, err := engine.collectVisibleAdjacencyEdgeIDsInTxn(txn, engine.mvccOutgoingAdjacencyPrefixString("test:adj-a"), head.Version)
+		_, err := engine.collectVisibleAdjacencyEdgeIDsInTxn(context.Background(), txn, engine.mvccOutgoingAdjacencyPrefixString("test:adj-a"), head.Version)
 		require.Error(t, err)
 		return nil
 	}))
@@ -152,9 +152,9 @@ func TestBadgerEngine_VisibleAdjacencyReaders_PropagateEdgeLookupErrors(t *testi
 		return txn.Set(mvccEdgeHeadKey(edgeNum), []byte("bad-head"))
 	}))
 
-	_, err = engine.GetOutgoingEdgesVisibleAt("test:ga", head.Version)
+	_, err = engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:ga", head.Version)
 	require.Error(t, err)
-	_, err = engine.GetIncomingEdgesVisibleAt("test:gb", head.Version)
+	_, err = engine.GetIncomingEdgesVisibleAt(context.Background(), "test:gb", head.Version)
 	require.Error(t, err)
 }
 

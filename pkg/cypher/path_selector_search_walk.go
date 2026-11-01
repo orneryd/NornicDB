@@ -318,7 +318,7 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 		}
 	}
 	if len(ids) > 0 {
-		loaded, err := s.e.storage.BatchGetNodes(ids)
+		loaded, err := s.e.storage.BatchGetNodes(s.ctx, ids)
 		if err != nil {
 			return nil, false
 		}

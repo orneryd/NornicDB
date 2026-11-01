@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 func streamTxLabel(t *testing.T, tx *BadgerTransaction, label string) []*Node {
 	t.Helper()
 	var nodes []*Node
-	require.NoError(t, tx.StreamNodesByLabelProjected(label, nil, func(node *Node) error {
+	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), label, nil, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	}))

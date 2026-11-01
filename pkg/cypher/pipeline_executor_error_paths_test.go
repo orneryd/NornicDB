@@ -14,11 +14,11 @@ type matchErrEngine struct {
 	err error
 }
 
-func (e *matchErrEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *matchErrEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	return nil, e.err
 }
 
-func (e *matchErrEngine) AllNodes() ([]*storage.Node, error) {
+func (e *matchErrEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	return nil, e.err
 }
 
@@ -156,7 +156,7 @@ func TestUnresolvedWithExpressionRejectsWithoutEffects(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	nodes, err := store.GetNodesByLabel("Tmp")
+	nodes, err := store.GetNodesByLabel(ctx, "Tmp")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }

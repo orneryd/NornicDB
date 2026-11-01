@@ -5,6 +5,7 @@
 package meta
 
 import (
+	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 
@@ -17,19 +18,32 @@ type Node = storage.Node
 // Relationship represents a graph relationship.
 type Relationship = storage.Relationship
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// BoundFunctions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for. The name
+// keeps the pure list helper Functions free: the bound instance and the value
+// function are different owners, and only one of them depends on storage.
+type BoundFunctions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *BoundFunctions {
+	return &BoundFunctions{backend: backend}
+}
 
 // Schema returns the graph schema.
 //
 // Example:
 //
 //	apoc.meta.schema() => schema information
-func Schema() map[string]interface{} {
+func (f *BoundFunctions) Schema(ctx context.Context) map[string]interface{} {
 	return map[string]interface{}{
-		"labels":            NodeLabels(),
-		"relationshipTypes": RelTypes(),
-		"propertyKeys":      PropertyKeys(),
+		"labels":            f.NodeLabels(ctx),
+		"relationshipTypes": f.RelTypes(ctx),
+		"propertyKeys":      f.PropertyKeys(ctx),
 	}
 }
 
@@ -38,9 +52,12 @@ func Schema() map[string]interface{} {
 // Example:
 //
 //	apoc.meta.graph() => {nodes: 1000, relationships: 5000}
-func Graph() map[string]interface{} {
-	nodes, _ := Storage.AllNodes()
-	rels, _ := Storage.AllRelationships()
+func (f *BoundFunctions) Graph() map[string]interface{} {
+	// apoc.meta.graph is a procedure-classified name: the bundled plugin
+	// implements no such procedure, so no statement context reaches this
+	// helper and its whole-graph reads run on the background lifetime.
+	nodes, _ := f.backend.AllNodes(context.Background())
+	rels, _ := f.backend.AllRelationships(context.Background())
 
 	labelCounts := make(map[string]int)
 	for _, node := range nodes {
@@ -67,9 +84,12 @@ func Graph() map[string]interface{} {
 // Example:
 //
 //	apoc.meta.stats() => detailed statistics
-func Stats() map[string]interface{} {
-	nodes, _ := Storage.AllNodes()
-	rels, _ := Storage.AllRelationships()
+func (f *BoundFunctions) Stats() map[string]interface{} {
+	// apoc.meta.stats is procedure-classified and the bundled plugin implements
+	// no such procedure: no statement context reaches this helper, whose
+	// whole-graph reads run on the background lifetime.
+	nodes, _ := f.backend.AllNodes(context.Background())
+	rels, _ := f.backend.AllRelationships(context.Background())
 
 	labelSet := make(map[string]bool)
 	propSet := make(map[string]bool)
@@ -205,15 +225,6 @@ func SubGraph(config map[string]interface{}) map[string]interface{} {
 	}
 }
 
-// GraphSample samples the graph for metadata.
-//
-// Example:
-//
-//	apoc.meta.graphSample(1000) => sampled metadata
-func GraphSample(sampleSize int) map[string]interface{} {
-	return Graph()
-}
-
 // IsType checks if a value is of a specific type.
 //
 // Example:
@@ -221,24 +232,6 @@ func GraphSample(sampleSize int) map[string]interface{} {
 //	apoc.meta.isType(value, 'STRING') => true/false
 func IsType(value interface{}, typeName string) bool {
 	return Type(value) == typeName
-}
-
-// Cypher returns Cypher type information.
-//
-// Example:
-//
-//	apoc.meta.cypher.type(value) => Cypher type
-func CypherType(value interface{}) string {
-	return Type(value)
-}
-
-// CypherTypes returns Cypher types for all properties.
-//
-// Example:
-//
-//	apoc.meta.cypher.types(node) => property types
-func CypherTypes(node *Node) map[string]string {
-	return Types(node)
 }
 
 // IsNode checks if a value is a node.
@@ -276,8 +269,8 @@ func IsPath(value interface{}) bool {
 // Example:
 //
 //	apoc.meta.nodeLabels() => ['Person', 'Company', 'Product']
-func NodeLabels() []string {
-	nodes, err := Storage.AllNodes()
+func (f *BoundFunctions) NodeLabels(ctx context.Context) []string {
+	nodes, err := f.backend.AllNodes(ctx)
 	if err != nil {
 		return []string{}
 	}
@@ -301,8 +294,8 @@ func NodeLabels() []string {
 // Example:
 //
 //	apoc.meta.relTypes() => ['KNOWS', 'WORKS_AT', 'BOUGHT']
-func RelTypes() []string {
-	rels, err := Storage.AllRelationships()
+func (f *BoundFunctions) RelTypes(ctx context.Context) []string {
+	rels, err := f.backend.AllRelationships(ctx)
 	if err != nil {
 		return []string{}
 	}
@@ -324,10 +317,10 @@ func RelTypes() []string {
 // Example:
 //
 //	apoc.meta.propertyKeys() => ['name', 'age', 'email']
-func PropertyKeys() []string {
+func (f *BoundFunctions) PropertyKeys(ctx context.Context) []string {
 	propSet := make(map[string]bool)
 
-	nodes, err := Storage.AllNodes()
+	nodes, err := f.backend.AllNodes(ctx)
 	if err == nil {
 		for _, node := range nodes {
 			for prop := range node.Properties {
@@ -336,7 +329,7 @@ func PropertyKeys() []string {
 		}
 	}
 
-	rels, err := Storage.AllRelationships()
+	rels, err := f.backend.AllRelationships(ctx)
 	if err == nil {
 		for _, rel := range rels {
 			for prop := range rel.Properties {
@@ -381,7 +374,9 @@ func Procedures() []map[string]interface{} {
 	return []map[string]interface{}{}
 }
 
-// Functions returns all available functions.
+// Functions returns all available functions. It reads no storage and has no
+// instance: the storage-dependent metadata helpers are methods of
+// BoundFunctions, and this list answers without a backend.
 //
 // Example:
 //
@@ -438,15 +433,6 @@ func Validate(schema map[string]interface{}) map[string]interface{} {
 	}
 }
 
-// Export exports metadata.
-//
-// Example:
-//
-//	apoc.meta.export() => exported metadata
-func Export() map[string]interface{} {
-	return Schema()
-}
-
 // Import imports metadata.
 //
 // Example:
@@ -455,33 +441,6 @@ func Export() map[string]interface{} {
 func Import(metadata map[string]interface{}) error {
 	// Placeholder - would import metadata
 	return nil
-}
-
-// Diff compares two metadata snapshots.
-//
-// Example:
-//
-//	apoc.meta.diff(before, after) => differences
-func Diff(before, after map[string]interface{}) map[string]interface{} {
-	return Compare(before, after)
-}
-
-// Snapshot creates a metadata snapshot.
-//
-// Example:
-//
-//	apoc.meta.snapshot() => snapshot
-func Snapshot() map[string]interface{} {
-	return Export()
-}
-
-// Restore restores from a metadata snapshot.
-//
-// Example:
-//
-//	apoc.meta.restore(snapshot) => restored
-func Restore(snapshot map[string]interface{}) error {
-	return Import(snapshot)
 }
 
 // Analyze analyzes graph structure.

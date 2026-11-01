@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/math/angle"
@@ -16,8 +17,6 @@ import (
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -28,8 +27,8 @@ import (
 // mismatch: expected … but was …" SyntaxError (cypherfn.TypeMismatchError).
 func init() {
 	cypherfn.Register("radians", fnRadians)
-	cypherfn.Register("pi", fnMathConstant("pi", math.Pi))
-	cypherfn.Register("e", fnMathConstant("e", math.E))
+	cypherfn.Register("pi", constantFunction("pi", math.Pi, coreConstantArguments))
+	cypherfn.Register("e", constantFunction("e", math.E, coreConstantArguments))
 	cypherfn.Register("round", fnRound)
 	for name, operation := range map[string]func(float64) float64{
 		"sin":      math.Sin,
@@ -50,17 +49,17 @@ func init() {
 		"tanh":     math.Tanh,
 		"coth":     rowMathCoth,
 	} {
-		cypherfn.Register(name, fnMathUnary(name, operation))
+		cypherfn.Register(name, mathFunction(name, mathOperation{unary: operation}))
 	}
-	cypherfn.Register("ceil", fnMathUnary("ceil", math.Ceil))
-	cypherfn.Register("floor", fnMathUnary("floor", math.Floor))
-	cypherfn.Register("atan2", fnMathBinary("atan2", math.Atan2))
-	cypherfn.Register("power", fnMathBinary("power", math.Pow))
+	cypherfn.Register("ceil", mathFunction("ceil", mathOperation{unary: math.Ceil}))
+	cypherfn.Register("floor", mathFunction("floor", mathOperation{unary: math.Floor}))
+	cypherfn.Register("atan2", mathFunction("atan2", mathOperation{binary: math.Atan2}))
+	cypherfn.Register("power", mathFunction("power", mathOperation{binary: math.Pow}))
 	cypherfn.Register("isnan", fnIsNaN)
 	cypherfn.Register("char_length", fnCharLength)
 	cypherfn.Register("character_length", fnCharLength)
-	cypherfn.Register("upper", fnStringCase(func(text string) string { return cases.Upper(language.Und).String(text) }, "upper"))
-	cypherfn.Register("lower", fnStringCase(func(text string) string { return cases.Lower(language.Und).String(text) }, "lower"))
+	cypherfn.Register("upper", cypherfn.CaseFunction("upper", cypherfn.UpperCaseText, argumentCountError))
+	cypherfn.Register("lower", cypherfn.CaseFunction("lower", cypherfn.LowerCaseText, argumentCountError))
 	cypherfn.Register("btrim", fnTrimFunction("btrim", true, true))
 	cypherfn.Register("ltrim", fnTrimFunction("ltrim", true, false))
 	cypherfn.Register("rtrim", fnTrimFunction("rtrim", false, true))
@@ -92,54 +91,45 @@ func init() {
 	}
 }
 
-func fnMathConstant(name string, value float64) cypherfn.Func {
-	return func(_ cypherfn.Context, args []string) (interface{}, error) {
-		if len(args) != 0 {
-			return nil, argumentCountError(name, "0", len(args))
-		}
-		return value, nil
-	}
+// mathOperation selects the arity and calculation at registration. Arguments
+// retain eager evaluation and null-before-type-error precedence for both arities.
+type mathOperation struct {
+	unary  func(float64) float64
+	binary func(float64, float64) float64
 }
 
-func fnMathUnary(name string, operation func(float64) float64) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
-		if len(args) != 1 {
-			return nil, argumentCountError(name, "1", len(args))
+func mathFunction(name string, operation mathOperation) cypherfn.Func {
+	arity, expected := 2, "2"
+	if operation.unary != nil {
+		arity, expected = 1, "1"
+	}
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
+		if len(args) != arity {
+			return nil, argumentCountError(name, expected, len(args))
 		}
 		values, err := evalArgs(ctx, args)
-		if err != nil || values[0] == nil {
+		if err != nil {
 			return nil, err
 		}
-		number, ok := toFloat64(values[0])
+		if values[0] == nil || arity == 2 && values[1] == nil {
+			return nil, nil
+		}
+		left, ok := toFloat64(values[0])
 		if !ok {
 			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Float or Integer", Value: values[0]}
 		}
-		return operation(number), nil
-	}
-}
-
-func fnMathBinary(name string, operation func(float64, float64) float64) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
-		if len(args) != 2 {
-			return nil, argumentCountError(name, "2", len(args))
+		if arity == 1 {
+			return operation.unary(left), nil
 		}
-		values, err := evalArgs(ctx, args)
-		if err != nil || values[0] == nil || values[1] == nil {
-			return nil, err
-		}
-		left, leftOK := toFloat64(values[0])
-		right, rightOK := toFloat64(values[1])
-		if !leftOK {
-			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Float or Integer", Value: values[0]}
-		}
-		if !rightOK {
+		right, ok := toFloat64(values[1])
+		if !ok {
 			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Float or Integer", Value: values[1]}
 		}
-		return operation(left, right), nil
+		return operation.binary(left, right), nil
 	}
 }
 
-func fnRound(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnRound(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) < 1 || len(args) > 3 {
 		return nil, argumentCountError("round", "1 to 3", len(args))
 	}
@@ -215,7 +205,7 @@ var singleValueFunctions = map[string]func(interface{}) (interface{}, error){
 // singleValueFunction registers fn as a one-argument registry function
 // that evaluates its argument and calls fn with the value.
 func singleValueFunction(function string, fn func(interface{}) (interface{}, error)) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(function, "1", len(args))
 		}
@@ -290,7 +280,7 @@ func isEmptyValue(value interface{}) (interface{}, error) {
 	return nil, &cypherfn.TypeMismatchError{Function: "isEmpty", Expected: "List, Map, or String", Value: value}
 }
 
-func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnTail(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("tail", "1", len(args))
 	}
@@ -308,7 +298,7 @@ func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 }
 
 func fnStringOperation(name string) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		minimum, maximum := 2, 2
 		if name == "substring" {
 			maximum = 3
@@ -400,7 +390,7 @@ func sameInEveryVersion(convert func(interface{}) interface{}) versionedConversi
 }
 
 func fnScalarConversion(name string, convert versionedConversion, orNull bool) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
 		}
@@ -455,7 +445,7 @@ func argumentCountError(function string, want string, got int) error {
 	return localizedError(localization.CypherCoreFunctionArgumentCount(function, want, got), nil)
 }
 
-func fnRadians(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnRadians(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("radians", "1", len(args))
 	}
@@ -470,7 +460,7 @@ func fnRadians(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return angle.ToRadians(number), nil
 }
 
-func fnIsNaN(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnIsNaN(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("isNaN", "1", len(args))
 	}
@@ -546,7 +536,7 @@ func stringArgument(function string, values []interface{}, index int) (string, b
 	return text, true, nil
 }
 
-func fnCharLength(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnCharLength(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("char_length", "1", len(args))
 	}
@@ -559,23 +549,6 @@ func fnCharLength(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return nil, err
 	}
 	return int64(utf8.RuneCountInString(text)), nil
-}
-
-func fnStringCase(convert func(string) string, name string) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
-		if len(args) != 1 {
-			return nil, argumentCountError(name, "1", len(args))
-		}
-		values, err := evalArgs(ctx, args)
-		if err != nil {
-			return nil, err
-		}
-		text, ok, err := stringArgument(name, values, 0)
-		if err != nil || !ok {
-			return nil, err
-		}
-		return convert(text), nil
-	}
 }
 
 // trimCharacters trims the characters of cutset (whitespace when cutset is
@@ -601,7 +574,7 @@ func trimCharacters(text, cutset string, leading, trailing bool) string {
 
 // fnTrimFunction is btrim / ltrim / rtrim(original [, characters]).
 func fnTrimFunction(name string, leading, trailing bool) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) < 1 || len(args) > 2 {
 			return nil, argumentCountError(name, "1 or 2", len(args))
 		}
@@ -687,7 +660,7 @@ func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, er
 	return trimCharacters(text, cutset, specification != "TRAILING", specification != "LEADING"), nil
 }
 
-func fnTrim(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnTrim(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) == 2 || len(args) == 3 {
 		return trimSpecificationForm(ctx, args)
 	}
@@ -760,7 +733,7 @@ func unicodeNormalForm(keyword string) (norm.Form, bool) {
 
 // fnNormalize is normalize(input [, NFC | NFD | NFKC | NFKD]); the normal
 // form is a keyword, NFC by default.
-func fnNormalize(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnNormalize(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) < 1 || len(args) > 2 {
 		return nil, argumentCountError("normalize", "1 or 2", len(args))
 	}
@@ -787,7 +760,7 @@ func fnNormalize(ctx cypherfn.Context, args []string) (interface{}, error) {
 // fnListConversion converts every item of a list with convert: an item it
 // can't convert becomes null.
 func fnListConversion(name string, convert versionedConversion) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
 		}
@@ -890,7 +863,7 @@ func convertToBooleanOrNull(value interface{}) interface{} {
 	return nil
 }
 
-func fnNullIf(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnNullIf(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 2 {
 		return nil, argumentCountError("nullIf", "2", len(args))
 	}
@@ -904,7 +877,7 @@ func fnNullIf(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return values[0], nil
 }
 
-func fnValueType(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnValueType(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("valueType", "1", len(args))
 	}

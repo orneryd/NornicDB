@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"strings"
@@ -65,65 +66,6 @@ func createTestNode(t *testing.T, engine *BadgerEngine, id string, labels []stri
 	}
 }
 
-func TestDecayFilter_DisabledByDefault(t *testing.T) {
-	engine := setupDecayTestEngine(t)
-	createTestNode(t, engine, "nornic:n1", []string{"MemoryEpisode"}, time.Now().Add(-48*time.Hour))
-
-	nodes, err := engine.GetNodesByLabel("MemoryEpisode")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(nodes) != 1 {
-		t.Errorf("expected 1 node when decay disabled, got %d", len(nodes))
-	}
-}
-
-func TestDecayFilter_SuppressesDecayedNode(t *testing.T) {
-	engine := setupDecayTestEngine(t)
-	ns := "testns"
-
-	setupDecayBindings(t, engine, ns)
-	engine.SetDecayEnabled(true)
-
-	nodeID := ns + ":old_episode"
-	createTestNode(t, engine, nodeID, []string{"MemoryEpisode"}, time.Now().Add(-720*time.Hour)) // 30 days old, ~8 half-lives
-
-	nodes, err := engine.GetNodesByLabel("MemoryEpisode")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, n := range nodes {
-		if string(n.ID) == nodeID {
-			t.Error("old node should be suppressed by decay")
-		}
-	}
-}
-
-func TestDecayFilter_KeepsRecentNode(t *testing.T) {
-	engine := setupDecayTestEngine(t)
-	ns := "testns"
-
-	setupDecayBindings(t, engine, ns)
-	engine.SetDecayEnabled(true)
-
-	nodeID := ns + ":recent_episode"
-	createTestNode(t, engine, nodeID, []string{"MemoryEpisode"}, time.Now().Add(-5*time.Minute))
-
-	nodes, err := engine.GetNodesByLabel("MemoryEpisode")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, n := range nodes {
-		if string(n.ID) == nodeID {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("recent node should not be suppressed")
-	}
-}
-
 func TestDecayFilter_NoDecayBindingAlwaysReturns(t *testing.T) {
 	engine := setupDecayTestEngine(t)
 	ns := "testns"
@@ -154,7 +96,7 @@ func TestDecayFilter_NoDecayBindingAlwaysReturns(t *testing.T) {
 	nodeID := ns + ":old_fact"
 	createTestNode(t, engine, nodeID, []string{"KnowledgeFact"}, time.Now().Add(-8760*time.Hour)) // 1 year old
 
-	nodes, err := engine.GetNodesByLabel("KnowledgeFact")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "KnowledgeFact")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,59 +108,6 @@ func TestDecayFilter_NoDecayBindingAlwaysReturns(t *testing.T) {
 	}
 	if !found {
 		t.Error("no-decay node should always be returned regardless of age")
-	}
-}
-
-func TestDecayFilter_RevealAllBypasses(t *testing.T) {
-	engine := setupDecayTestEngine(t)
-	ns := "testns"
-
-	setupDecayBindings(t, engine, ns)
-	engine.SetDecayEnabled(true)
-
-	nodeID := ns + ":old_episode"
-	createTestNode(t, engine, nodeID, []string{"MemoryEpisode"}, time.Now().Add(-720*time.Hour))
-
-	engine.SetRevealAll(true)
-	defer engine.SetRevealAll(false)
-
-	nodes, err := engine.GetNodesByLabel("MemoryEpisode")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, n := range nodes {
-		if string(n.ID) == nodeID {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("reveal should bypass decay suppression")
-	}
-}
-
-func TestDecayFilter_UnmatchedLabelNotSuppressed(t *testing.T) {
-	engine := setupDecayTestEngine(t)
-	ns := "testns"
-
-	setupDecayBindings(t, engine, ns)
-	engine.SetDecayEnabled(true)
-
-	nodeID := ns + ":custom_node"
-	createTestNode(t, engine, nodeID, []string{"CustomLabel"}, time.Now().Add(-720*time.Hour))
-
-	nodes, err := engine.GetNodesByLabel("CustomLabel")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, n := range nodes {
-		if string(n.ID) == nodeID {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("node with no matching binding should not be suppressed")
 	}
 }
 
@@ -286,7 +175,10 @@ func TestDecayFilter_AllNodesFiltered(t *testing.T) {
 	otherID := ns + ":other"
 	createTestNode(t, engine, otherID, []string{"OtherLabel"}, time.Now().Add(-720*time.Hour))
 
-	nodes := engine.GetAllNodes()
+	nodes, err := engine.AllNodes(context.Background())
+	if err != nil {
+		t.Fatalf("AllNodes failed: %v", err)
+	}
 	for _, n := range nodes {
 		if string(n.ID) == oldID {
 			t.Error("AllNodes should filter decayed MemoryEpisode")
@@ -308,5 +200,47 @@ func TestDecayFilter_AllNodesFiltered(t *testing.T) {
 	}
 	if !foundOther {
 		t.Error("AllNodes should include nodes without decay bindings")
+	}
+}
+
+func TestDecayFilter_Visibility(t *testing.T) {
+	for _, test := range []struct {
+		name, id, label                          string
+		age                                      time.Duration
+		configured, enabled, reveal, wantVisible bool
+	}{
+		{name: "TestDecayFilter_DisabledByDefault", id: "nornic:n1", label: "MemoryEpisode", age: 48 * time.Hour, wantVisible: true},
+		{name: "TestDecayFilter_SuppressesDecayedNode", id: "testns:old_episode", label: "MemoryEpisode", age: 720 * time.Hour, configured: true, enabled: true},
+		{name: "TestDecayFilter_KeepsRecentNode", id: "testns:recent_episode", label: "MemoryEpisode", age: 5 * time.Minute, configured: true, enabled: true, wantVisible: true},
+		{name: "TestDecayFilter_RevealAllBypasses", id: "testns:old_episode", label: "MemoryEpisode", age: 720 * time.Hour, configured: true, enabled: true, reveal: true, wantVisible: true},
+		{name: "TestDecayFilter_UnmatchedLabelNotSuppressed", id: "testns:custom_node", label: "CustomLabel", age: 720 * time.Hour, configured: true, enabled: true, wantVisible: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := setupDecayTestEngine(t)
+			if test.configured {
+				setupDecayBindings(t, engine, "testns")
+			}
+			if test.enabled {
+				engine.SetDecayEnabled(true)
+			}
+			createTestNode(t, engine, test.id, []string{test.label}, time.Now().Add(-test.age))
+			if test.reveal {
+				engine.SetRevealAll(true)
+				defer engine.SetRevealAll(false)
+			}
+			nodes, err := engine.GetNodesByLabel(context.Background(), test.label)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !test.wantVisible {
+				if len(nodes) != 0 {
+					t.Fatalf("decayed node must be suppressed: %+v", nodes)
+				}
+				return
+			}
+			if len(nodes) != 1 || string(nodes[0].ID) != test.id {
+				t.Fatalf("expected visible node %s, got %+v", test.id, nodes)
+			}
+		})
 	}
 }

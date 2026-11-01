@@ -22,6 +22,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Storage-backed Go APOC helpers use immutable `New(backend)` instances instead
+  of module storage globals. Backend replacement publishes a new registry for
+  future lookups; retained handlers and warmup caches stay bound to their
+  original backend. `apoc.SetStorage` now returns an error. Rebuild Go consumers
+  and plugins using the [APOC migration guide](docs/features/apoc-functions.md).
+
+- Retire the graph-free Go `apoc/algo.PageRank` stub and bundled scalar
+  registration. Native `CALL apoc.algo.pageRank` remains the supported graph
+  ranking entry point; Go consumers/plugins must rebuild without the removed API.
+- Go bulk storage readers and Louvain APIs receive the caller context; bulk
+  read callers and custom storage implementations must rebuild against the
+  [bulk-read API](docs/development/storage-bulk-read-go-api.md) and
+  [Louvain API](docs/development/louvain-context-go-api.md) guides.
+- Both Cypher `apoc.load.binary` and `apoc.load.stream` return serializable
+  bytes read and closed within the statement. The Go `Stream` reader remains
+  available; the canonical `Binary` loader accepts one optional config map.
+
+- Registered Go Cypher functions receive an explicit caller context; bundled
+  APOC I/O loaders are context-first and share the native file/URL capability.
+  Rebuild embedding consumers and plugins using the [function migration guide](docs/development/function-context-go-api.md)
+  and [APOC loader guide](docs/features/apoc-functions.md).
+
 - Go write-behind mutations use `Append(BufferedMutation)`; index visibility
   markers use `SetIndexTombstones(keys, present)`. Flushes and retained authority
   accept the caller context directly. Retired per-kind and context forwarding
@@ -103,6 +125,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Escape CSV export identifiers, relationship types and headers containing
+  commas, quotes or line breaks while preserving ordinary export bytes.
+- Stop native bulk and buffered-overlay enumeration when its caller cancels;
+  never publish a partial bulk collection after cancellation.
+
+- Preserve warm graph caches when an explicit read-only transaction commits;
+  actual or unclassified writes retain their cache publication and invalidation.
+- Stop materialized candidate scans, projection and stable ordering when the
+  caller cancels; retain stable ties without a second graph-sized sort buffer.
+  Account for each keyed row reference against the query memory limit.
+- Return cancellation instead of panicking when a canceled WITH scope flows
+  into UNWIND.
+- Apply the configured file/URL capability to bundled scalar APOC loaders and
+  reject prohibited default-transport socket destinations after DNS resolution.
+  Local loader reads observe caller cancellation at their I/O boundaries.
 
 - Keep durable cache publication scoped to affected entities, publish final
   relationship images, and detach nested mutable read values. Preserve accepted

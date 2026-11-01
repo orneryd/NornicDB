@@ -14,8 +14,19 @@ type Node = storage.Node
 // Relationship represents a graph relationship.
 type Relationship = storage.Relationship
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// Functions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for.
+type Functions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
+}
 
 // ID returns the ID of a relationship.
 //
@@ -58,8 +69,8 @@ func Property(rel *Relationship, key string) interface{} {
 // Example:
 //
 //	apoc.rel.startNode(rel) => start node
-func StartNode(rel *Relationship) *Node {
-	node, _ := Storage.GetNode(rel.StartNode)
+func (f *Functions) StartNode(rel *Relationship) *Node {
+	node, _ := f.backend.GetNode(rel.StartNode)
 	return node
 }
 
@@ -68,8 +79,8 @@ func StartNode(rel *Relationship) *Node {
 // Example:
 //
 //	apoc.rel.endNode(rel) => end node
-func EndNode(rel *Relationship) *Node {
-	node, _ := Storage.GetNode(rel.EndNode)
+func (f *Functions) EndNode(rel *Relationship) *Node {
+	node, _ := f.backend.GetNode(rel.EndNode)
 	return node
 }
 
@@ -78,9 +89,9 @@ func EndNode(rel *Relationship) *Node {
 // Example:
 //
 //	apoc.rel.nodes(rel) => [startNode, endNode]
-func Nodes(rel *Relationship) []*Node {
-	start, _ := Storage.GetNode(rel.StartNode)
-	end, _ := Storage.GetNode(rel.EndNode)
+func (f *Functions) Nodes(rel *Relationship) []*Node {
+	start, _ := f.backend.GetNode(rel.StartNode)
+	end, _ := f.backend.GetNode(rel.EndNode)
 	return []*Node{start, end}
 }
 
@@ -181,8 +192,8 @@ func FromMap(m map[string]interface{}) *Relationship {
 // Example:
 //
 //	apoc.rel.exists(relId) => true/false
-func Exists(relID int64) bool {
-	rel, err := Storage.GetRelationship(relID)
+func (f *Functions) Exists(relID int64) bool {
+	rel, err := f.backend.GetRelationship(relID)
 	return err == nil && rel != nil
 }
 
@@ -191,8 +202,8 @@ func Exists(relID int64) bool {
 // Example:
 //
 //	apoc.rel.delete(rel) => success
-func Delete(rel *Relationship) bool {
-	err := Storage.DeleteRelationship(rel.ID)
+func (f *Functions) Delete(rel *Relationship) bool {
+	err := f.backend.DeleteRelationship(rel.ID)
 	return err == nil
 }
 
@@ -201,13 +212,13 @@ func Delete(rel *Relationship) bool {
 // Example:
 //
 //	apoc.rel.clone(rel) => new relationship
-func Clone(rel *Relationship) *Relationship {
+func (f *Functions) Clone(rel *Relationship) *Relationship {
 	props := make(map[string]interface{})
 	for k, v := range rel.Properties {
 		props[k] = v
 	}
 
-	created, _ := Storage.CreateRelationship(rel.StartNode, rel.EndNode, rel.Type, props)
+	created, _ := f.backend.CreateRelationship(rel.StartNode, rel.EndNode, rel.Type, props)
 	return created
 }
 
@@ -336,12 +347,12 @@ func Direction(rel *Relationship, node *Node) string {
 // Example:
 //
 //	apoc.rel.otherNode(rel, node) => other node
-func OtherNode(rel *Relationship, node *Node) *Node {
+func (f *Functions) OtherNode(rel *Relationship, node *Node) *Node {
 	if rel.StartNode == node.ID {
-		otherNode, _ := Storage.GetNode(rel.EndNode)
+		otherNode, _ := f.backend.GetNode(rel.EndNode)
 		return otherNode
 	} else if rel.EndNode == node.ID {
-		otherNode, _ := Storage.GetNode(rel.StartNode)
+		otherNode, _ := f.backend.GetNode(rel.StartNode)
 		return otherNode
 	}
 	return nil

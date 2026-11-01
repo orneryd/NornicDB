@@ -14,7 +14,7 @@ type failingLabelScanEngine struct {
 	err error
 }
 
-func (engine failingLabelScanEngine) GetNodesByLabel(string) ([]*Node, error) {
+func (engine failingLabelScanEngine) GetNodesByLabel(ctx context.Context, _ string) ([]*Node, error) {
 	return nil, engine.err
 }
 
@@ -23,7 +23,7 @@ type failingProjectedLabelEngine struct {
 	err error
 }
 
-func (engine failingProjectedLabelEngine) StreamNodesByLabelProjected(string, []string, func(*Node) error) error {
+func (engine failingProjectedLabelEngine) StreamNodesByLabelProjected(ctx context.Context, label string, _ []string, _ func(*Node) error) error {
 	return engine.err
 }
 
@@ -34,7 +34,7 @@ func TestProjectedLabelWrappers_PropagateBackingScanError(t *testing.T) {
 	failing := failingProjectedLabelEngine{Engine: backing, err: readErr}
 
 	composite := NewCompositeEngine(map[string]Engine{"failed": failing}, nil, map[string]string{"failed": "read"})
-	require.ErrorIs(t, composite.StreamNodesByLabelProjected("Evidence", nil, func(*Node) error { return nil }), readErr)
+	require.ErrorIs(t, composite.StreamNodesByLabelProjected(context.Background(), "Evidence", nil, func(*Node) error { return nil }), readErr)
 }
 
 func TestWALEngine_GetNodesByLabelPropagatesBackingError(t *testing.T) {
@@ -42,7 +42,7 @@ func TestWALEngine_GetNodesByLabelPropagatesBackingError(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	readErr := errors.New("label scan failed")
 	wal := NewWALEngine(failingLabelScanEngine{Engine: backing, err: readErr}, nil)
-	nodes, err := wal.GetNodesByLabel("Evidence")
+	nodes, err := wal.GetNodesByLabel(context.Background(), "Evidence")
 	require.ErrorIs(t, err, readErr)
 	require.Nil(t, nodes)
 }
@@ -92,18 +92,26 @@ func TestBadgerEngine_GetNodeProjectedEmptyPropertyList(t *testing.T) {
 	require.Empty(t, projected.Properties)
 }
 
+// newLargeVectorEvidenceNode builds the embedding-heavy Evidence node these
+// embedding-free reads exercise: two 10,000-element float32 chunks. Every call
+// allocates its own vectors, so separate nodes never share backing memory.
+func newLargeVectorEvidenceNode(id NodeID, assetID string) *Node {
+	chunks := make([][]float32, 2)
+	for i := range chunks {
+		chunks[i] = make([]float32, 10_000)
+	}
+	return &Node{
+		ID:              id,
+		Labels:          []string{"Evidence"},
+		Properties:      map[string]any{"asset_id": assetID},
+		ChunkEmbeddings: chunks,
+	}
+}
+
 func TestNamespacedEngine_GetNodeWithoutEmbeddingsSkipsSeparateVectors(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	tenant := NewNamespacedEngine(engine, "tenant")
-	node := &Node{
-		ID:         "large-vector-node",
-		Labels:     []string{"Evidence"},
-		Properties: map[string]any{"asset_id": "asset-a"},
-		ChunkEmbeddings: [][]float32{
-			make([]float32, 10_000),
-			make([]float32, 10_000),
-		},
-	}
+	node := newLargeVectorEvidenceNode("large-vector-node", "asset-a")
 	_, err := tenant.CreateNode(node)
 	require.NoError(t, err)
 
@@ -125,61 +133,17 @@ func TestNamespacedEngine_BatchGetNodesWithoutEmbeddingsSkipsSeparateVectors(t *
 	engine := createTestBadgerEngine(t)
 	tenant := NewNamespacedEngine(engine, "tenant")
 	for _, id := range []NodeID{"large-vector-a", "large-vector-b"} {
-		node := &Node{
-			ID:         id,
-			Labels:     []string{"Evidence"},
-			Properties: map[string]any{"asset_id": string(id) + "-asset"},
-			ChunkEmbeddings: [][]float32{
-				make([]float32, 10_000),
-				make([]float32, 10_000),
-			},
-		}
-		_, err := tenant.CreateNode(node)
+		_, err := tenant.CreateNode(newLargeVectorEvidenceNode(id, string(id)+"-asset"))
 		require.NoError(t, err)
 	}
 
-	light, err := tenant.BatchGetNodesWithoutEmbeddings([]NodeID{"large-vector-a", "missing", "large-vector-b"})
+	light, err := tenant.BatchGetNodesWithoutEmbeddings(context.Background(), []NodeID{"large-vector-a", "missing", "large-vector-b"})
 	require.NoError(t, err)
 	require.Len(t, light, 2)
 	require.Equal(t, NodeID("large-vector-a"), light["large-vector-a"].ID)
 	require.Equal(t, "large-vector-a-asset", light["large-vector-a"].Properties["asset_id"])
 	require.Empty(t, light["large-vector-a"].ChunkEmbeddings)
 	require.Empty(t, light["large-vector-b"].ChunkEmbeddings)
-}
-
-func TestNamespacedEngine_StreamNodesByLabelProjected(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-	tenantA := NewNamespacedEngine(engine, "tenant_a")
-	tenantB := NewNamespacedEngine(engine, "tenant_b")
-
-	_, err := tenantA.CreateNode(&Node{
-		ID:     "one",
-		Labels: []string{"Evidence"},
-		Properties: map[string]any{
-			"asset_id":  "wanted",
-			"embedding": make([]float64, 1024),
-		},
-	})
-	require.NoError(t, err)
-	_, err = tenantB.CreateNode(&Node{
-		ID:     "two",
-		Labels: []string{"Evidence"},
-		Properties: map[string]any{
-			"asset_id": "other",
-		},
-	})
-	require.NoError(t, err)
-
-	var nodes []*Node
-	err = tenantA.StreamNodesByLabelProjected("Evidence", []string{"asset_id"}, func(node *Node) error {
-		nodes = append(nodes, node)
-		return nil
-	})
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.Equal(t, NodeID("one"), nodes[0].ID)
-	require.Equal(t, "wanted", nodes[0].Properties["asset_id"])
-	require.NotContains(t, nodes[0].Properties, "embedding")
 }
 
 func TestNamespacedWAL_StreamNodesByLabelProjected(t *testing.T) {
@@ -191,7 +155,7 @@ func TestNamespacedWAL_StreamNodesByLabelProjected(t *testing.T) {
 	_, err = tenant.CreateNode(&Node{ID: "one", Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "found", "unused": "hidden"}})
 	require.NoError(t, err)
 	var found []*Node
-	err = tenant.StreamNodesByLabelProjected("Evidence", []string{"asset_id"}, func(node *Node) error {
+	err = tenant.StreamNodesByLabelProjected(context.Background(), "Evidence", []string{"asset_id"}, func(node *Node) error {
 		found = append(found, node)
 		return nil
 	})
@@ -199,7 +163,7 @@ func TestNamespacedWAL_StreamNodesByLabelProjected(t *testing.T) {
 	require.Len(t, found, 1)
 	require.Equal(t, NodeID("one"), found[0].ID)
 	require.Equal(t, map[string]any{"asset_id": "found"}, found[0].Properties)
-	err = tenant.StreamNodesByLabelProjected("Evidence", nil, func(*Node) error {
+	err = tenant.StreamNodesByLabelProjected(context.Background(), "Evidence", nil, func(*Node) error {
 		return ErrIterationStopped
 	})
 	require.ErrorIs(t, err, ErrIterationStopped)
@@ -214,51 +178,12 @@ func TestProjectedLabelWrappers_UnsupportedBackendReturnsError(t *testing.T) {
 	wal, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, wal.Close()) })
-	err = NewWALEngine(unsupported, wal).StreamNodesByLabelProjected("Evidence", nil, func(*Node) error {
+	err = NewWALEngine(unsupported, wal).StreamNodesByLabelProjected(context.Background(), "Evidence", nil, func(*Node) error {
 		visited = true
 		return nil
 	})
 	require.ErrorIs(t, err, ErrNotImplemented)
 	require.False(t, visited)
-}
-
-func TestNamespacedEngine_StreamNodesByPrefixProjected(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-	tenantA := NewNamespacedEngine(engine, "tenant_a")
-	tenantB := NewNamespacedEngine(engine, "tenant_b")
-
-	_, err := tenantA.CreateNode(&Node{
-		ID:     "evidence-one",
-		Labels: []string{"Evidence"},
-		Properties: map[string]any{
-			"asset_id":  "wanted",
-			"embedding": make([]float64, 1024),
-		},
-	})
-	require.NoError(t, err)
-	_, err = tenantA.CreateNode(&Node{
-		ID:         "other-one",
-		Labels:     []string{"Evidence"},
-		Properties: map[string]any{"asset_id": "same-tenant-other-prefix"},
-	})
-	require.NoError(t, err)
-	_, err = tenantB.CreateNode(&Node{
-		ID:         "evidence-two",
-		Labels:     []string{"Evidence"},
-		Properties: map[string]any{"asset_id": "other-tenant"},
-	})
-	require.NoError(t, err)
-
-	var nodes []*Node
-	err = tenantA.StreamNodesByPrefixProjected(context.Background(), "evidence", []string{"asset_id"}, func(node *Node) error {
-		nodes = append(nodes, node)
-		return nil
-	})
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.Equal(t, NodeID("evidence-one"), nodes[0].ID)
-	require.Equal(t, "wanted", nodes[0].Properties["asset_id"])
-	require.NotContains(t, nodes[0].Properties, "embedding")
 }
 
 // TestBadgerEngine_GetNodeKernel_CacheStoreAsymmetry pins the shared
@@ -315,4 +240,37 @@ func TestBadgerEngine_GetNodeKernel_CacheStoreAsymmetry(t *testing.T) {
 	again, err := engine.GetNodeWithoutEmbeddings(storedID)
 	require.NoError(t, err)
 	require.Equal(t, "T", again.Properties["title"])
+}
+
+func TestNamespacedEngine_ProjectedStreamingIsolation(t *testing.T) {
+	for _, test := range []struct {
+		name, selector string
+		id, otherID    NodeID
+		otherAsset     string
+		extra          bool
+		read           func(*NamespacedEngine, context.Context, string, []string, func(*Node) error) error
+	}{
+		{"TestNamespacedEngine_StreamNodesByLabelProjected", "Evidence", "one", "two", "other", false, (*NamespacedEngine).StreamNodesByLabelProjected},
+		{"TestNamespacedEngine_StreamNodesByPrefixProjected", "evidence", "evidence-one", "evidence-two", "other-tenant", true, (*NamespacedEngine).StreamNodesByPrefixProjected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := createTestBadgerEngine(t)
+			tenantA, tenantB := NewNamespacedEngine(engine, "tenant_a"), NewNamespacedEngine(engine, "tenant_b")
+			_, err := tenantA.CreateNode(&Node{ID: test.id, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "wanted", "embedding": make([]float64, 1024)}})
+			require.NoError(t, err)
+			if test.extra {
+				_, err = tenantA.CreateNode(&Node{ID: "other-one", Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "same-tenant-other-prefix"}})
+				require.NoError(t, err)
+			}
+			_, err = tenantB.CreateNode(&Node{ID: test.otherID, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": test.otherAsset}})
+			require.NoError(t, err)
+			var nodes []*Node
+			err = test.read(tenantA, context.Background(), test.selector, []string{"asset_id"}, func(node *Node) error { nodes = append(nodes, node); return nil })
+			require.NoError(t, err)
+			require.Len(t, nodes, 1)
+			require.Equal(t, test.id, nodes[0].ID)
+			require.Equal(t, "wanted", nodes[0].Properties["asset_id"])
+			require.NotContains(t, nodes[0].Properties, "embedding")
+		})
+	}
 }

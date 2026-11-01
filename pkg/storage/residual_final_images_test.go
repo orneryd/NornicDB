@@ -77,15 +77,15 @@ func TestResidualFinalCacheImages(t *testing.T) {
 						return
 					}
 					for name, read := range map[string]func() ([]*Edge, error){
-						"out-old":     func() ([]*Edge, error) { return b.GetOutgoingEdges("test:a") },
-						"out-new":     func() ([]*Edge, error) { return b.GetOutgoingEdges("test:b") },
-						"in-old":      func() ([]*Edge, error) { return b.GetIncomingEdges("test:b") },
-						"in-new":      func() ([]*Edge, error) { return b.GetIncomingEdges("test:middle") },
-						"between-old": func() ([]*Edge, error) { return b.GetEdgesBetween("test:a", "test:b") },
-						"between-new": func() ([]*Edge, error) { return b.GetEdgesBetween("test:b", "test:middle") },
-						"type-old":    func() ([]*Edge, error) { return b.GetEdgesByType("T") },
-						"type-new":    func() ([]*Edge, error) { return b.GetEdgesByType("FINAL") },
-						"all":         b.AllEdges,
+						"out-old":     func() ([]*Edge, error) { return b.GetOutgoingEdges(context.Background(), "test:a") },
+						"out-new":     func() ([]*Edge, error) { return b.GetOutgoingEdges(context.Background(), "test:b") },
+						"in-old":      func() ([]*Edge, error) { return b.GetIncomingEdges(context.Background(), "test:b") },
+						"in-new":      func() ([]*Edge, error) { return b.GetIncomingEdges(context.Background(), "test:middle") },
+						"between-old": func() ([]*Edge, error) { return b.GetEdgesBetween(context.Background(), "test:a", "test:b") },
+						"between-new": func() ([]*Edge, error) { return b.GetEdgesBetween(context.Background(), "test:b", "test:middle") },
+						"type-old":    func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "T") },
+						"type-new":    func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "FINAL") },
+						"all":         func() ([]*Edge, error) { return b.AllEdges(context.Background()) },
 					} {
 						found, readErr := read()
 						if readErr != nil {
@@ -166,9 +166,9 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 			require.NoError(t, b.FlushWriteBehind(nil))
 			_, err = b.GetStoredNode("test:keep-a")
 			require.NoError(t, err)
-			_, err = b.GetOutgoingEdges("test:keep-a")
+			_, err = b.GetOutgoingEdges(context.Background(), "test:keep-a")
 			require.NoError(t, err)
-			_, err = b.GetEdgesByType("KEEP")
+			_, err = b.GetEdgesByType(context.Background(), "KEEP")
 			require.NoError(t, err)
 			node, edge := b.nodeCache["test:keep-a"], b.edgeCache["test:keep-e"]
 			var globalIssuer atomic.Pointer[string]
@@ -197,7 +197,7 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 				require.Same(t, edge, b.edgeCache["test:keep-e"])
 				require.Equal(t, types, reflect.ValueOf(b.edgeTypeCache["KEEP"]).Pointer())
 				require.Equal(t, adjacency, reflect.ValueOf(b.outgoingAdjCache["test:keep-a"]).Pointer())
-				got, err := b.GetEdgesByType("KEEP")
+				got, err := b.GetEdgesByType(context.Background(), "KEEP")
 				require.NoError(t, err)
 				require.Len(t, got, 1)
 				require.Equal(t, EdgeID("test:keep-e"), got[0].ID)

@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -88,13 +89,13 @@ func TestDatabaseManager_CleanupLeakedSystemNodes_FromDefaultDatabase(t *testing
 
 	defaultStorage, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
-	nodes, err := defaultStorage.AllNodes()
+	nodes, err := defaultStorage.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Len(t, nodes, 0, "leaked system nodes should be removed from default database")
 
 	systemStorage, err := manager.GetStorage("system")
 	require.NoError(t, err)
-	sysNodes, err := systemStorage.AllNodes()
+	sysNodes, err := systemStorage.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.NotEmpty(t, sysNodes, "system database should still contain metadata nodes")
 }

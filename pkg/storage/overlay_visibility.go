@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // The write-behind overlay serves acknowledged bodies until the flush lands
 // them, so every read that merges it with storage must leave out what the
 // visibility layer hides from that read, exactly as its storage path does.
@@ -13,20 +15,36 @@ package storage
 // lock (withReadView's capture, captureReadView's cached callback).
 
 // visibleBufferedEntities compacts either fresh overlay slice through the same
-// visibility owner. Hidden bodies still mask their stored predecessor through
-// the caller's untouched touched/suppressed sets.
-func visibleBufferedEntities[E *Node | *Edge](b *BadgerEngine, v readVisibility, entities []E) []E {
-	if v == storedRead || len(entities) == 0 || !b.visibilityFiltered() {
-		return entities
+// visibility owner while observing the read's cancellation. Hidden bodies still
+// mask their stored predecessor through the caller's untouched
+// touched/suppressed sets. A canceled read returns the caller's own context
+// error and no overlay: nothing it managed to copy is published or cached.
+func visibleBufferedEntities[E *Node | *Edge](ctx context.Context, b *BadgerEngine, v readVisibility, entities []E) ([]E, error) {
+	if len(entities) == 0 {
+		return entities, nil
+	}
+	var cancel bulkReadCancellation
+	if v == storedRead || !b.visibilityFiltered() {
+		// Nothing is filtered out, so this pass exists only to observe the
+		// caller's cancellation once per buffered entity.
+		for range entities {
+			if err := cancel.check(ctx); err != nil {
+				return nil, err
+			}
+		}
+		return entities, nil
 	}
 	now := DecayScoringTime()
 	visible := entities[:0]
 	for _, entity := range entities {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		if !b.filterEntityByDecay(v, entity, now) {
 			visible = append(visible, entity)
 		}
 	}
-	return visible
+	return visible, nil
 }
 
 // bufferedReadVisibility is a read's stack-only policy. Omission means a
@@ -71,31 +89,55 @@ type bufferedEntityResult struct {
 // readBufferedEntities is the sole indexed-overlay capture/filter owner. The
 // caller holds w's read lock; touched IDs and deletion masks remain unfiltered
 // so hidden buffered bodies cannot reveal their older committed predecessors.
-func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult) {
+//
+// ctx is the read's own context, threaded from the caller's route (a statement
+// read's context, or context.Background at a documented context-free
+// boundary). The overlay copy itself observes that cancellation inside every
+// candidate, touched and deletion loop it runs, and the visibility pass that
+// follows observes it per buffered entity, so a canceled read retires with the
+// caller's error and no overlay instead of copying a population nobody will
+// consume.
+func (b *BadgerEngine) readBufferedEntities(ctx context.Context, w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (bufferedEntityResult, error) {
+	if err := ctx.Err(); err != nil {
+		return bufferedEntityResult{}, err
+	}
+	var result bufferedEntityResult
+	var copyErr error
 	switch request.kind {
 	case bufferedNodes:
-		result.nodes, result.nodesTouched = w.allNodesOverlayLocked(request.prefix)
+		result.nodes, result.nodesTouched, copyErr = w.allNodesOverlayLocked(ctx, request.prefix)
 	case bufferedLabel:
-		result.nodes, result.nodesTouched = w.labelOverlayLocked(request.label, request.prefix)
+		result.nodes, result.nodesTouched, copyErr = w.labelOverlayLocked(ctx, request.label, request.prefix)
 	case bufferedKey:
-		result.nodes = w.keyCandidatesLocked(request.label, request.property, request.valueKey)
+		result.nodes, copyErr = w.keyCandidatesLocked(ctx, request.label, request.property, request.valueKey)
 	case bufferedEdges:
-		result.edges, result.edgesTouched = w.allEdgesOverlayLocked(request.prefix)
+		result.edges, result.edgesTouched, copyErr = w.allEdgesOverlayLocked(ctx, request.prefix)
 	case bufferedType:
-		result.edges, result.edgesTouched = w.typeOverlayLocked(request.edgeType, request.prefix)
+		result.edges, result.edgesTouched, copyErr = w.typeOverlayLocked(ctx, request.edgeType, request.prefix)
 	case bufferedAdjacency:
-		result.edges, result.suppressed, result.sourceDeleted = w.edgeAdjacencyOverlayLocked(request.source, request.outgoing)
+		result.edges, result.suppressed, result.sourceDeleted, copyErr = w.edgeAdjacencyOverlayLocked(ctx, request.source, request.outgoing)
 	case bufferedLiveAdjacency:
-		result.edges = w.liveAdjacencyLocked(request.source, request.outgoing)
+		result.edges, copyErr = w.liveAdjacencyLocked(ctx, request.source, request.outgoing)
 	case bufferedBetween:
-		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted = w.edgesBetweenOverlayLocked(request.source, request.target)
+		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted, copyErr = w.edgesBetweenOverlayLocked(ctx, request.source, request.target)
+	}
+	if copyErr != nil {
+		return bufferedEntityResult{}, copyErr
 	}
 	if request.kind <= bufferedKey {
-		result.nodes = visibleBufferedEntities(b, v, result.nodes)
-	} else {
-		result.edges = visibleBufferedEntities(b, v, result.edges)
+		visible, err := visibleBufferedEntities(ctx, b, v, result.nodes)
+		if err != nil {
+			return bufferedEntityResult{}, err
+		}
+		result.nodes = visible
+		return result, nil
 	}
-	return result
+	visible, err := visibleBufferedEntities(ctx, b, v, result.edges)
+	if err != nil {
+		return bufferedEntityResult{}, err
+	}
+	result.edges = visible
+	return result, nil
 }
 
 // commitsSince visits the operations of each commit the buffer acknowledged

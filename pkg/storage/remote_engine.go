@@ -868,6 +868,18 @@ func defaultCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), RemoteRequestTimeout)
 }
 
+// remoteReadContext bounds one remote read by the configured request timeout
+// while retaining the caller's context: a caller cancellation and any earlier
+// caller deadline still end the read, and a read whose public API carries no
+// context keeps the timeout every remote request has. A bulk read calls it
+// once so every statement it issues shares one deadline.
+func remoteReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		return defaultCtx()
+	}
+	return context.WithTimeout(ctx, RemoteRequestTimeout)
+}
+
 // ---------------------------------------------------------------------------
 // Engine interface implementation
 // ---------------------------------------------------------------------------
@@ -1037,8 +1049,8 @@ func (r *RemoteEngine) DeleteEdge(id EdgeID) error {
 	return r.mutateRemoteEntity("MATCH ()-[r]->() WHERE r.id = $id DELETE r", string(id), nil, false)
 }
 
-func (r *RemoteEngine) GetNodesByLabel(label string) ([]*Node, error) {
-	ctx, cancel := defaultCtx()
+func (r *RemoteEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
+	ctx, cancel := remoteReadContext(ctx)
 	defer cancel()
 	return r.getNodesByLabel(ctx, label)
 }
@@ -1070,43 +1082,53 @@ func (r *RemoteEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	return queryRemoteEntities(r, nil, stmt, nil, valueToNode, firstRemoteEntity[Node])
 }
 
-func (r *RemoteEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	return queryRemoteEntities(r, nil, "MATCH (n)-[r]->() WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)}, valueToEdge, allRemoteEntities[Edge])
+func (r *RemoteEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	ctx, cancel := remoteReadContext(ctx)
+	defer cancel()
+	return queryRemoteEntities(r, ctx, "MATCH (n)-[r]->() WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)}, valueToEdge, allRemoteEntities[Edge])
 }
 
-func (r *RemoteEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	return queryRemoteEntities(r, nil, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)}, valueToEdge, allRemoteEntities[Edge])
+func (r *RemoteEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	ctx, cancel := remoteReadContext(ctx)
+	defer cancel()
+	return queryRemoteEntities(r, ctx, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)}, valueToEdge, allRemoteEntities[Edge])
 }
 
 // readEdgesBetween owns endpoint binding and the two Engine lookup contracts.
 // A type selects the typed first-edge query; nil selects every connecting edge.
-func (r *RemoteEngine) readEdgesBetween(startID, endID NodeID, edgeType *string) ([]*Edge, error) {
+func (r *RemoteEngine) readEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType *string) ([]*Edge, error) {
+	ctx, cancel := remoteReadContext(ctx)
+	defer cancel()
 	relationship, limit := "r", ""
 	if edgeType != nil {
 		relationship += ":" + cyphertext.PrintIdentifier(*edgeType, nil, cyphertext.RawSource)
 		limit = " LIMIT 1"
 	}
 	statement := "MATCH (a)-[" + relationship + "]->(b) WHERE a.id = $start AND b.id = $end RETURN r" + limit
-	return queryRemoteEntities(r, nil, statement, map[string]interface{}{"start": string(startID), "end": string(endID)}, valueToEdge, allRemoteEntities[Edge])
+	return queryRemoteEntities(r, ctx, statement, map[string]interface{}{"start": string(startID), "end": string(endID)}, valueToEdge, allRemoteEntities[Edge])
 }
 
-func (r *RemoteEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
-	return r.readEdgesBetween(startID, endID, nil)
+func (r *RemoteEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
+	return r.readEdgesBetween(ctx, startID, endID, nil)
 }
 
 func (r *RemoteEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	edges, _ := r.readEdgesBetween(startID, endID, &edgeType)
+	edges, _ := r.readEdgesBetween(nil, startID, endID, &edgeType)
 	if len(edges) == 0 {
 		return nil
 	}
 	return edges[0]
 }
 
-func (r *RemoteEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
-	return queryRemoteEntities(r, nil, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN r", cyphertext.PrintIdentifier(edgeType, nil, cyphertext.RawSource)), nil, valueToEdge, allRemoteEntities[Edge])
+func (r *RemoteEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
+	ctx, cancel := remoteReadContext(ctx)
+	defer cancel()
+	return queryRemoteEntities(r, ctx, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN r", cyphertext.PrintIdentifier(edgeType, nil, cyphertext.RawSource)), nil, valueToEdge, allRemoteEntities[Edge])
 }
 
-func (r *RemoteEngine) AllNodes() ([]*Node, error) { return r.GetNodesByLabel("") }
+func (r *RemoteEngine) AllNodes(ctx context.Context) ([]*Node, error) {
+	return r.GetNodesByLabel(ctx, "")
+}
 
 // StreamNodesWithOptions satisfies the Engine streaming contract for the
 // remote view: nodes are materialized through the remote read path and the
@@ -1149,16 +1171,10 @@ func (r *RemoteEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	return nil
 }
 
-func (r *RemoteEngine) AllEdges() ([]*Edge, error) {
-	return queryRemoteEntities(r, nil, "MATCH ()-[r]->() RETURN r", nil, valueToEdge, allRemoteEntities[Edge])
-}
-
-func (r *RemoteEngine) GetAllNodes() []*Node {
-	nodes, err := r.AllNodes()
-	if err != nil {
-		return []*Node{}
-	}
-	return nodes
+func (r *RemoteEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
+	ctx, cancel := remoteReadContext(ctx)
+	defer cancel()
+	return queryRemoteEntities(r, ctx, "MATCH ()-[r]->() RETURN r", nil, valueToEdge, allRemoteEntities[Edge])
 }
 
 func (r *RemoteEngine) GetInDegree(nodeID NodeID) int {
@@ -1287,8 +1303,8 @@ func (r *RemoteEngine) BulkDeleteEdges(ids []EdgeID) error {
 	return nil
 }
 
-func (r *RemoteEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
-	ctx, cancel := defaultCtx()
+func (r *RemoteEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
+	ctx, cancel := remoteReadContext(ctx)
 	defer cancel()
 	out := make(map[NodeID]*Node, len(ids))
 	for _, id := range ids {

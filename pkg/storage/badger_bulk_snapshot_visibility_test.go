@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 		Type:      "HAS",
 	}}))
 
-	beforeOutgoing, err := beforeCreate.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "snapshot_bulk:owner"})
+	beforeOutgoing, err := beforeCreate.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "snapshot_bulk:owner"})
 	require.NoError(t, err)
 	require.Empty(t, beforeOutgoing, "a snapshot opened before the create must not observe the relationship")
 	require.NoError(t, beforeCreate.Rollback())
@@ -45,12 +46,12 @@ func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 		}
 	})
 
-	outgoing, err := afterCreate.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "snapshot_bulk:owner"})
+	outgoing, err := afterCreate.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "snapshot_bulk:owner"})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, EdgeID("snapshot_bulk:relationship"), outgoing[0].ID)
 
-	incoming, err := afterCreate.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "snapshot_bulk:item"})
+	incoming, err := afterCreate.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "snapshot_bulk:item"})
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 	require.Equal(t, EdgeID("snapshot_bulk:relationship"), incoming[0].ID)

@@ -22,25 +22,24 @@ type subqueryLookupFailureEngine struct {
 
 func (s *subqueryLookupFailureEngine) Namespace() string { return "subquery_failure" }
 
-func (s *subqueryLookupFailureEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	if s.operation == "node" && label == "Source" && s.calls.Add(1) == 1 {
-		return nil, s.failure
+// singleShotLookup owns the operation-selected first-call substitution. Unlike
+// a nonnil-error gate, selection also returns a nil/nil pair when configured.
+func singleShotLookup[T any](s *subqueryLookupFailureEngine, ctx context.Context, selected bool, read func(context.Context) (T, error)) (T, error) {
+	if selected && s.calls.Add(1) == 1 {
+		var zero T
+		return zero, s.failure
 	}
-	return s.Engine.GetNodesByLabel(label)
+	return read(ctx)
 }
 
-func (s *subqueryLookupFailureEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	if s.operation == "outgoing" && s.calls.Add(1) == 1 {
-		return nil, s.failure
-	}
-	return s.Engine.GetOutgoingEdges(id)
+func (s *subqueryLookupFailureEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return singleShotLookup(s, ctx, s.operation == "node" && label == "Source", func(ctx context.Context) ([]*storage.Node, error) { return s.Engine.GetNodesByLabel(ctx, label) })
 }
-
-func (s *subqueryLookupFailureEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	if s.operation == "incoming" && s.calls.Add(1) == 1 {
-		return nil, s.failure
-	}
-	return s.Engine.GetIncomingEdges(id)
+func (s *subqueryLookupFailureEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return singleShotLookup(s, ctx, s.operation == "outgoing", func(ctx context.Context) ([]*storage.Edge, error) { return s.Engine.GetOutgoingEdges(ctx, id) })
+}
+func (s *subqueryLookupFailureEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return singleShotLookup(s, ctx, s.operation == "incoming", func(ctx context.Context) ([]*storage.Edge, error) { return s.Engine.GetIncomingEdges(ctx, id) })
 }
 
 func TestSubqueryLookupErrorsFailStatement(t *testing.T) {

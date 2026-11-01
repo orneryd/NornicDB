@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -12,13 +13,13 @@ type observedIncidentEngine struct {
 	outgoing, incoming int
 }
 
-func (e *observedIncidentEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *observedIncidentEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	e.outgoing++
-	return e.Engine.GetOutgoingEdges(id)
+	return e.Engine.GetOutgoingEdges(ctx, id)
 }
-func (e *observedIncidentEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *observedIncidentEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	e.incoming++
-	return e.Engine.GetIncomingEdges(id)
+	return e.Engine.GetIncomingEdges(ctx, id)
 }
 func TestIncidentReaderCancellationWork(t *testing.T) {
 	executor, ctx := newShortestSelectorExecutor(t)
@@ -29,7 +30,7 @@ func TestIncidentReaderCancellationWork(t *testing.T) {
 		for budget := 1; budget <= 8; budget++ {
 			reader := &observedIncidentEngine{Engine: executor.storage}
 			atOut, atIn := 0, 0
-			canceled := newCheckpointContext(budget, func() { atOut, atIn = reader.outgoing, reader.incoming })
+			canceled := fixtureowner.NewCheckpointContext(budget, func() { atOut, atIn = reader.outgoing, reader.incoming })
 			_, _, err := incidentEdgeListsContext(canceled, reader, source.ID, direction)
 			if canceled.Context.Err() != nil {
 				require.ErrorIs(t, err, context.Canceled)
@@ -38,10 +39,10 @@ func TestIncidentReaderCancellationWork(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			canceled.cancel()
+			canceled.Cancel()
 			adjacent := &adjacentEdgeEngine{Engine: reader}
 			atCalls := 0
-			canceled = newCheckpointContext(budget, func() { atCalls = adjacent.calls })
+			canceled = fixtureowner.NewCheckpointContext(budget, func() { atCalls = adjacent.calls })
 			_, _, err = incidentEdgeListsContext(canceled, adjacent, source.ID, direction)
 			if canceled.Context.Err() != nil {
 				require.ErrorIs(t, err, context.Canceled)
@@ -49,7 +50,7 @@ func TestIncidentReaderCancellationWork(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			canceled.cancel()
+			canceled.Cancel()
 		}
 	}
 	edges := make([]*storage.Edge, 1024)
@@ -57,7 +58,7 @@ func TestIncidentReaderCancellationWork(t *testing.T) {
 		edges[index] = &storage.Edge{ID: "parallel", StartNode: "a", EndNode: "b"}
 	}
 	for budget := 1; budget <= 20; budget++ {
-		canceled := newCheckpointContext(budget, nil)
+		canceled := fixtureowner.NewCheckpointContext(budget, nil)
 		combined, err := combineIncidentEdges(canceled, "a", edges, edges)
 		if canceled.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
@@ -66,7 +67,7 @@ func TestIncidentReaderCancellationWork(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, combined, 2048)
 		}
-		canceled.cancel()
+		canceled.Cancel()
 	}
 }
 func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
@@ -75,22 +76,22 @@ func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
 	require.NoError(t, err)
 	source, target := r.Rows[0][0].(*storage.Node), r.Rows[0][1].(*storage.Node)
 	for budget := 1; budget <= 128; budget++ {
-		canceled := newCheckpointContext(budget, nil)
+		canceled := fixtureowner.NewCheckpointContext(budget, nil)
 		_, _, err := e.evaluateShortestPathValue(canceled, "shortestPath", "(a)-[:T*1..3]->(b)", map[string]*storage.Node{"a": source, "b": target})
 		if canceled.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
 		} else {
 			require.NoError(t, err)
 		}
-		canceled.cancel()
-		canceled = newCheckpointContext(budget, nil)
+		canceled.Cancel()
+		canceled = fixtureowner.NewCheckpointContext(budget, nil)
 		_, _, err = e.parseShortestPathMatch(canceled, "p = shortestPath((a)-[:T*1..3]->(b))")
 		if canceled.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
 		} else {
 			require.NoError(t, err)
 		}
-		canceled.cancel()
+		canceled.Cancel()
 	}
 	traversal := e.parseTraversalPattern(ctx, "(a)-[r:T*]->(b)")
 	plan, _, ok := compileSelectedPathPlan("(a)-[r:T*]->(b)", "p", "", nil)

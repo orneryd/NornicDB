@@ -1,6 +1,8 @@
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 // StoredEntityReader reads what storage holds: every node and relationship,
 // those the visibility layer hides from user reads included (on-demand
@@ -18,10 +20,10 @@ import "context"
 type StoredEntityReader interface {
 	GetStoredNode(id NodeID) (*Node, error)
 	GetStoredEdge(id EdgeID) (*Edge, error)
-	GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error)
-	GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error)
-	GetStoredNodesByLabel(label string) ([]*Node, error)
-	StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error
+	GetStoredOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
+	GetStoredIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
+	GetStoredNodesByLabel(ctx context.Context, label string) ([]*Node, error)
+	StreamStoredNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error
 	// StreamStoredEdgesByType visits edgeType's relationships; an empty
 	// edgeType visits every relationship.
 	StreamStoredEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error
@@ -32,8 +34,8 @@ type StoredEntityReader interface {
 // stored scans skip other databases' index entries as its user scans do
 // (#851).
 type ScopedStoredEntityReader interface {
-	GetStoredNodesByLabelInScope(scope, label string) ([]*Node, error)
-	StreamStoredNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error
+	GetStoredNodesByLabelInScope(ctx context.Context, scope, label string) ([]*Node, error)
+	StreamStoredNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error
 	StreamStoredEdgesByTypeInScope(ctx context.Context, scope, edgeType string, visit func(*Edge) error) error
 }
 
@@ -78,27 +80,27 @@ func GetStoredEdge(engine Engine, id EdgeID) (*Edge, error) {
 }
 
 // GetStoredNodesByLabel is GetStoredNode for a label's nodes.
-func GetStoredNodesByLabel(engine Engine, label string) ([]*Node, error) {
+func GetStoredNodesByLabel(ctx context.Context, engine Engine, label string) ([]*Node, error) {
 	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredNodesByLabel(label)
+		return reader.GetStoredNodesByLabel(ctx, label)
 	}
-	return engine.GetNodesByLabel(label)
+	return engine.GetNodesByLabel(ctx, label)
 }
 
 // GetStoredOutgoingEdges is GetStoredNode for a node's outgoing relationships.
-func GetStoredOutgoingEdges(engine Engine, nodeID NodeID) ([]*Edge, error) {
+func GetStoredOutgoingEdges(ctx context.Context, engine Engine, nodeID NodeID) ([]*Edge, error) {
 	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredOutgoingEdges(nodeID)
+		return reader.GetStoredOutgoingEdges(ctx, nodeID)
 	}
-	return engine.GetOutgoingEdges(nodeID)
+	return engine.GetOutgoingEdges(ctx, nodeID)
 }
 
 // GetStoredIncomingEdges is GetStoredNode for a node's incoming relationships.
-func GetStoredIncomingEdges(engine Engine, nodeID NodeID) ([]*Edge, error) {
+func GetStoredIncomingEdges(ctx context.Context, engine Engine, nodeID NodeID) ([]*Edge, error) {
 	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredIncomingEdges(nodeID)
+		return reader.GetStoredIncomingEdges(ctx, nodeID)
 	}
-	return engine.GetIncomingEdges(nodeID)
+	return engine.GetIncomingEdges(ctx, nodeID)
 }
 
 // StreamStoredEdgesByType visits edgeType's relationships for integrity work
@@ -121,8 +123,8 @@ func StreamStoredEdgesByType(ctx context.Context, engine Engine, edgeType string
 // StreamStoredNodesByLabelProjected visits label's nodes for integrity work,
 // decoding only properties: the stored ones when engine can read hidden
 // entities (StoredReader), else those its projected label stream visits.
-func StreamStoredNodesByLabelProjected(engine Engine, label string, properties []string, visit func(*Node) error) error {
-	return streamStoredNodesByLabelProjectedInScope(engine, "", label, properties, visit)
+func StreamStoredNodesByLabelProjected(ctx context.Context, engine Engine, label string, properties []string, visit func(*Node) error) error {
+	return streamStoredNodesByLabelProjectedInScope(ctx, engine, "", label, properties, visit)
 }
 
 // StreamStoredNodes visits every node for integrity work, with
@@ -169,15 +171,15 @@ func CollectStoredEdges(ctx context.Context, engine Engine) ([]*Edge, error) {
 
 // GetStoredNodesByLabelInScope is GetStoredNodesByLabel within one database
 // (ScopedStoredEntityReader).
-func (b *BadgerEngine) GetStoredNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	return b.getNodesByLabelInScope(scope, label, storedRead)
+func (b *BadgerEngine) GetStoredNodesByLabelInScope(ctx context.Context, scope, label string) ([]*Node, error) {
+	return b.getNodesByLabelInScope(ctx, scope, label, storedRead)
 }
 
 // StreamStoredNodesByLabelProjectedInScope is
 // StreamStoredNodesByLabelProjected within one database
 // (ScopedStoredEntityReader).
-func (b *BadgerEngine) StreamStoredNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return b.streamNodesByLabelProjectedInScope(scope, label, properties, storedRead, visit)
+func (b *BadgerEngine) StreamStoredNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
+	return b.streamNodesByLabelProjectedInScope(ctx, scope, label, properties, storedRead, visit)
 }
 
 // StreamStoredEdgesByTypeInScope is StreamStoredEdgesByType within one
@@ -201,24 +203,24 @@ func (w *WALEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
 }
 
 // GetStoredOutgoingEdges forwards to the inner engine (StoredEntityReader).
-func (w *WALEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	return GetStoredOutgoingEdges(w.engine, nodeID)
+func (w *WALEngine) GetStoredOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return GetStoredOutgoingEdges(ctx, w.engine, nodeID)
 }
 
 // GetStoredIncomingEdges forwards to the inner engine (StoredEntityReader).
-func (w *WALEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	return GetStoredIncomingEdges(w.engine, nodeID)
+func (w *WALEngine) GetStoredIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return GetStoredIncomingEdges(ctx, w.engine, nodeID)
 }
 
 // GetStoredNodesByLabel forwards to the inner engine (StoredEntityReader).
-func (w *WALEngine) GetStoredNodesByLabel(label string) ([]*Node, error) {
-	return GetStoredNodesByLabel(w.engine, label)
+func (w *WALEngine) GetStoredNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
+	return GetStoredNodesByLabel(ctx, w.engine, label)
 }
 
 // StreamStoredNodesByLabelProjected forwards to the inner engine
 // (StoredEntityReader).
-func (w *WALEngine) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	return w.StreamStoredNodesByLabelProjectedInScope("", label, properties, visit)
+func (w *WALEngine) StreamStoredNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
+	return w.StreamStoredNodesByLabelProjectedInScope(ctx, "", label, properties, visit)
 }
 
 // StreamStoredEdgesByType forwards to the inner engine (StoredEntityReader).
@@ -228,14 +230,14 @@ func (w *WALEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string
 
 // GetStoredNodesByLabelInScope forwards to the inner engine
 // (ScopedStoredEntityReader).
-func (w *WALEngine) GetStoredNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	return getStoredNodesByLabelInScope(w.engine, scope, label)
+func (w *WALEngine) GetStoredNodesByLabelInScope(ctx context.Context, scope, label string) ([]*Node, error) {
+	return getStoredNodesByLabelInScope(ctx, w.engine, scope, label)
 }
 
 // StreamStoredNodesByLabelProjectedInScope forwards to the inner engine
 // (ScopedStoredEntityReader).
-func (w *WALEngine) StreamStoredNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return streamStoredNodesByLabelProjectedInScope(w.engine, scope, label, properties, visit)
+func (w *WALEngine) StreamStoredNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
+	return streamStoredNodesByLabelProjectedInScope(ctx, w.engine, scope, label, properties, visit)
 }
 
 // StreamStoredEdgesByTypeInScope forwards to the inner engine
@@ -274,29 +276,29 @@ func storedScopeReader(engine Engine) (ScopedStoredEntityReader, bool) {
 // has one, else its unscoped stored scan (the wrapper keeps filtering by
 // database), else, for an engine that cannot read hidden entities, the scoped
 // scan of what it can read.
-func getStoredNodesByLabelInScope(engine Engine, scope, label string) ([]*Node, error) {
+func getStoredNodesByLabelInScope(ctx context.Context, engine Engine, scope, label string) ([]*Node, error) {
 	if scoped, ok := storedScopeReader(engine); ok {
-		return scoped.GetStoredNodesByLabelInScope(scope, label)
+		return scoped.GetStoredNodesByLabelInScope(ctx, scope, label)
 	}
 	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredNodesByLabel(label)
+		return reader.GetStoredNodesByLabel(ctx, label)
 	}
-	return getNodesByLabelInScope(engine, scope, label)
+	return getNodesByLabelInScope(ctx, engine, scope, label)
 }
 
 // streamStoredNodesByLabelProjectedInScope is getStoredNodesByLabelInScope
 // for the projected label stream.
-func streamStoredNodesByLabelProjectedInScope(engine Engine, scope, label string, properties []string, visit func(*Node) error) error {
+func streamStoredNodesByLabelProjectedInScope(ctx context.Context, engine Engine, scope, label string, properties []string, visit func(*Node) error) error {
 	if scoped, ok := storedScopeReader(engine); ok {
-		return scoped.StreamStoredNodesByLabelProjectedInScope(scope, label, properties, visit)
+		return scoped.StreamStoredNodesByLabelProjectedInScope(ctx, scope, label, properties, visit)
 	}
 	if reader, ok := StoredReader(engine); ok {
-		return reader.StreamStoredNodesByLabelProjected(label, properties, visit)
+		return reader.StreamStoredNodesByLabelProjected(ctx, label, properties, visit)
 	}
 	if _, ok := engine.(ScopedLabelNodeReader); ok {
-		return streamNodesByLabelProjectedInScope(engine, scope, label, properties, visit)
+		return streamNodesByLabelProjectedInScope(ctx, engine, scope, label, properties, visit)
 	}
-	return streamNodesByLabelForValidation(engine, label, properties, visit)
+	return streamNodesByLabelForValidation(ctx, engine, label, properties, visit)
 }
 
 // streamStoredEdgesByTypeInScope is getStoredNodesByLabelInScope for the
@@ -329,26 +331,38 @@ func (n *NamespacedEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
 
 // GetStoredOutgoingEdges is GetOutgoingEdges' stored read
 // (StoredEntityReader).
-func (n *NamespacedEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	return materializedRead(func() ([]*Edge, error) { return GetStoredOutgoingEdges(n.inner, n.PrefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
+func (n *NamespacedEngine) GetStoredOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	edges, err := GetStoredOutgoingEdges(ctx, n.inner, n.PrefixNodeID(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	return n.toUserEdgesInNamespace(ctx, edges, true, false)
 }
 
 // GetStoredIncomingEdges is GetIncomingEdges' stored read
 // (StoredEntityReader).
-func (n *NamespacedEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	return materializedRead(func() ([]*Edge, error) { return GetStoredIncomingEdges(n.inner, n.PrefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
+func (n *NamespacedEngine) GetStoredIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	edges, err := GetStoredIncomingEdges(ctx, n.inner, n.PrefixNodeID(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	return n.toUserEdgesInNamespace(ctx, edges, true, false)
 }
 
 // GetStoredNodesByLabel is GetNodesByLabel's stored read
 // (StoredEntityReader).
-func (n *NamespacedEngine) GetStoredNodesByLabel(label string) ([]*Node, error) {
-	return materializedRead(func() ([]*Node, error) { return getStoredNodesByLabelInScope(n.inner, n.nodeScope(), label) }, func(nodes []*Node) []*Node { return n.toUserNodesInNamespace(nodes, true) }, false)
+func (n *NamespacedEngine) GetStoredNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
+	nodes, err := getStoredNodesByLabelInScope(ctx, n.inner, n.nodeScope(), label)
+	if err != nil {
+		return nil, err
+	}
+	return n.toUserNodesInNamespace(ctx, nodes, true)
 }
 
 // StreamStoredNodesByLabelProjected is StreamNodesByLabelProjected's stored
 // read (StoredEntityReader).
-func (n *NamespacedEngine) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	return n.streamNamespaceNodesProjected(label, properties, visit, true)
+func (n *NamespacedEngine) StreamStoredNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
+	return n.streamNamespaceNodesProjected(ctx, label, properties, visit, true)
 }
 
 // StreamStoredEdgesByType is StreamEdgesByType's stored read
@@ -365,37 +379,26 @@ func (n *NamespacedEngine) StreamStoredEdgesByType(ctx context.Context, edgeType
 	})
 }
 
-// toUserEdgesInNamespace keeps the edges of this database, unprefixed.
-func (n *NamespacedEngine) toUserEdgesInNamespace(edges []*Edge, skipNil bool, reserve bool) []*Edge {
-	var empty []*Edge
+// toUserEdgesInNamespace keeps the edges of this database, unprefixed. The
+// copy loop observes the caller's cancellation: a canceled request returns
+// that error and no partial list.
+func (n *NamespacedEngine) toUserEdgesInNamespace(ctx context.Context, edges []*Edge, skipNil bool, reserve bool) ([]*Edge, error) {
+	var out []*Edge
 	if reserve {
-		empty = []*Edge{}
+		out = make([]*Edge, 0, len(edges))
 	}
-	return materializedCollection(edges, empty, func(edges []*Edge) []*Edge {
-		project := func(edge *Edge) *Edge {
-			if skipNil && edge == nil {
-				return nil
-			}
-			if !n.hasEdgePrefix(edge.ID) {
-				return nil
-			}
-			return n.toUserEdge(edge)
+	var cancel bulkReadCancellation
+	for _, edge := range edges {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
 		}
-		if reserve {
-			reserved := make([]*Edge, 0, len(edges))
-			materializedValues(edges, func(edge *Edge) {
-				if view := project(edge); view != nil {
-					reserved = append(reserved, view)
-				}
-			})
-			return reserved
+		if skipNil && edge == nil {
+			continue
 		}
-		var out []*Edge
-		materializedValues(edges, func(edge *Edge) {
-			if view := project(edge); view != nil {
-				out = append(out, view)
-			}
-		})
-		return out
-	})
+		if !n.hasEdgePrefix(edge.ID) {
+			continue
+		}
+		out = append(out, n.toUserEdge(edge))
+	}
+	return out, nil
 }

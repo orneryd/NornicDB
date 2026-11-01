@@ -132,7 +132,7 @@ func TestDynamicStatementModeMatrix(t *testing.T) {
 									}
 								}
 								for i, store := range []storage.Engine{one, two} {
-									nodes, err := store.GetNodesByLabel("U5DynamicMode")
+									nodes, err := store.GetNodesByLabel(ctx, "U5DynamicMode")
 									require.NoError(t, err)
 									want := 0
 									if i == 0 && write && !reject {
@@ -180,7 +180,7 @@ func TestDynamicPromotionReadsOwnWritesAndRejectsSecondWriter(t *testing.T) {
 					}
 				}
 				for i, store := range []storage.Engine{one, two} {
-					nodes, err := store.GetNodesByLabel("U5DynamicMode")
+					nodes, err := store.GetNodesByLabel(ctx, "U5DynamicMode")
 					require.NoError(t, err)
 					want := 0
 					if i == 0 && !secondWriter {

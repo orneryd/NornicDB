@@ -39,19 +39,19 @@ func (c *countingStreamingEngine) StreamNodeChunks(ctx context.Context, chunkSiz
 	return fmt.Errorf("inner engine does not implement StreamingEngine")
 }
 
-func (c *countingStreamingEngine) AllNodes() ([]*storage.Node, error) {
+func (c *countingStreamingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	c.allNodesCalls++
-	return c.Engine.AllNodes()
+	return c.Engine.AllNodes(ctx)
 }
 
-func (c *countingStreamingEngine) AllEdges() ([]*storage.Edge, error) {
+func (c *countingStreamingEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	c.allEdgesCalls++
-	return c.Engine.AllEdges()
+	return c.Engine.AllEdges(ctx)
 }
 
-func (c *countingStreamingEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (c *countingStreamingEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	c.labelCalls++
-	return c.Engine.GetNodesByLabel(label)
+	return c.Engine.GetNodesByLabel(ctx, label)
 }
 
 func TestGh713SimpleMatchLimitUsesSharedProjectionAndPagination(t *testing.T) {

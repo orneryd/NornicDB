@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -27,7 +28,10 @@ func MatchEdgesBetween(engine Engine, startID, endID NodeID, edgeType string, pr
 	if matcher, ok := engine.(EdgesBetweenMatcher); ok {
 		return matcher.MatchEdgesBetween(startID, endID, edgeType, properties, match)
 	}
-	edges, err := engine.GetEdgesBetween(startID, endID)
+	// MatchEdgesBetween keeps its existing public API (no caller context):
+	// context.Background is the true lifetime of this context-free entry
+	// point, not a forwarded default.
+	edges, err := engine.GetEdgesBetween(context.Background(), startID, endID)
 	if err != nil {
 		return nil, err
 	}
@@ -69,12 +73,23 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	var live []*Edge
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
+	var captureErr error
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-		pendingBetween := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
+		// MatchEdgesBetween keeps its existing public API (no caller context):
+		// context.Background is the true lifetime at this context-free boundary.
+		pendingBetween, err := b.readBufferedEntities(context.Background(), w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
+		if err != nil {
+			captureErr = err
+			return
+		}
 		live, suppressed, sourceDeleted, targetDeleted = pendingBetween.edges, pendingBetween.suppressed, pendingBetween.sourceDeleted, pendingBetween.targetDeleted
 	}, readViewOptions{scope: namespaceForNodeID(startID)})
 	if err != nil {
 		return nil, err
+	}
+	if captureErr != nil {
+		view.Close()
+		return nil, captureErr
 	}
 	defer view.Close()
 	if sourceDeleted || targetDeleted {
@@ -201,7 +216,9 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 	if err != nil || indexed {
 		return matched, err
 	}
-	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(startID, endID, edgeType, withView)
+	// The matcher has no caller context of its own: its legacy fallback runs on
+	// context.Background at this context-free entry point.
+	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(context.Background(), startID, endID, edgeType, withView)
 	if err != nil {
 		return nil, err
 	}

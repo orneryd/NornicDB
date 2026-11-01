@@ -2,11 +2,11 @@ package storage
 
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+	"strings"
 
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -77,25 +77,14 @@ type namespacedMVCCVisibleEngine struct {
 	lastIncomingNodeID NodeID
 }
 
+// Pin the optional capability: a signature drift must fail compilation.
+var _ ScopedLabelNodeReader = (*namespacedMVCCVisibleEngine)(nil)
+
 func (e *namespacedHelperEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
 	if e.streamNodeErr != nil {
 		return e.streamNodeErr
 	}
-	nodes, err := e.MemoryEngine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if err := fn(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(ctx, e.MemoryEngine.AllNodes, nil, fn)
 }
 
 // StreamNodesWithOptions models the options-driven capability explicitly so the
@@ -105,76 +94,30 @@ func (e *namespacedHelperEngine) StreamNodesWithOptions(ctx context.Context, opt
 	if e.streamNodeErr != nil {
 		return e.streamNodeErr
 	}
-	nodes, err := e.MemoryEngine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if opts.Prefix != "" && !strings.HasPrefix(string(node.ID), opts.Prefix) {
-			continue
-		}
-		if err := fn(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureNodes(ctx, e.MemoryEngine.AllNodes, opts.Prefix, fn)
 }
 
 func (e *namespacedHelperEngine) StreamNodesByPrefix(ctx context.Context, prefix string, fn func(node *Node) error) error {
 	if e.streamNodeErr != nil {
 		return e.streamNodeErr
 	}
-	nodes, err := e.MemoryEngine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if !strings.HasPrefix(string(node.ID), prefix) {
-			continue
-		}
-		if err := fn(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(ctx, e.MemoryEngine.AllNodes, func(node *Node) bool {
+		return strings.HasPrefix(string(node.ID), prefix)
+	}, fn)
 }
 
 func (e *namespacedHelperEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
 	if e.streamEdgeErr != nil {
 		return e.streamEdgeErr
 	}
-	edges, err := e.MemoryEngine.AllEdges()
-	if err != nil {
-		return err
-	}
-	for _, edge := range edges {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if err := fn(edge); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(ctx, e.MemoryEngine.AllEdges, nil, fn)
 }
 
 func (e *namespacedHelperEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
 	if e.chunkErr != nil {
 		return e.chunkErr
 	}
-	nodes, err := e.MemoryEngine.AllNodes()
+	nodes, err := e.MemoryEngine.AllNodes(ctx)
 	if err != nil {
 		return err
 	}
@@ -253,49 +196,21 @@ func (e *namespacedStreamingOnlyEngine) StreamNodes(ctx context.Context, fn func
 	if e.streamNodeErr != nil {
 		return e.streamNodeErr
 	}
-	nodes, err := e.Engine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if err := fn(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(ctx, e.Engine.AllNodes, nil, fn)
 }
 
 func (e *namespacedStreamingOnlyEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
 	if e.streamEdgeErr != nil {
 		return e.streamEdgeErr
 	}
-	edges, err := e.Engine.AllEdges()
-	if err != nil {
-		return err
-	}
-	for _, edge := range edges {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if err := fn(edge); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(ctx, e.Engine.AllEdges, nil, fn)
 }
 
 func (e *namespacedStreamingOnlyEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
 	if chunkSize <= 0 {
 		chunkSize = 1
 	}
-	nodes, err := e.Engine.AllNodes()
+	nodes, err := e.Engine.AllNodes(ctx)
 	if err != nil {
 		return err
 	}
@@ -316,79 +231,49 @@ func (e *namespacedStreamingOnlyEngine) StreamNodeChunks(ctx context.Context, ch
 	return nil
 }
 
-func (e *namespacedMVCCVisibleEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
+func (e *namespacedMVCCVisibleEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
 	return e.nodes, nil
 }
 
 // The wrappers delegate label reads through the scoped method
 // (ScopedLabelNodeReader); without this override the embedded engine's one
 // would bypass the fake.
-func (e *namespacedMVCCVisibleEngine) GetNodesByLabelVisibleAtInScope(_, label string, version MVCCVersion) ([]*Node, error) {
-	return e.GetNodesByLabelVisibleAt(label, version)
+func (e *namespacedMVCCVisibleEngine) GetNodesByLabelVisibleAtInScope(ctx context.Context, _, label string, version MVCCVersion) ([]*Node, error) {
+	return e.GetNodesByLabelVisibleAt(ctx, label, version)
 }
 
-func (e *namespacedMVCCVisibleEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (e *namespacedMVCCVisibleEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	e.lastOutgoingNodeID = nodeID
-	if e.outgoingErr != nil {
-		return nil, e.outgoingErr
-	}
-	return e.outgoing, nil
+	return runtimeFixtureOwner.ReadWithFailure(ctx, e.outgoingErr, func(context.Context) ([]*Edge, error) {
+		return e.outgoing, nil
+	})
 }
 
-func (e *namespacedMVCCVisibleEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (e *namespacedMVCCVisibleEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	e.lastIncomingNodeID = nodeID
-	if e.incomingErr != nil {
-		return nil, e.incomingErr
-	}
-	return e.incoming, nil
+	return runtimeFixtureOwner.ReadWithFailure(ctx, e.incomingErr, func(context.Context) ([]*Edge, error) {
+		return e.incoming, nil
+	})
 }
 
-func (e *namespacedMVCCVisibleEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
+func (e *namespacedMVCCVisibleEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
 	return e.edgesByType, nil
 }
 
-func (e *namespacedMVCCVisibleEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (e *namespacedMVCCVisibleEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
 	return e.edgesBetween, nil
 }
 
 func (e *namespacedPrefixStreamingEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
-	nodes, err := e.Engine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if err := fn(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(ctx, e.Engine.AllNodes, nil, fn)
 }
 
 func (e *namespacedPrefixStreamingEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	edges, err := e.Engine.AllEdges()
-	if err != nil {
-		return err
-	}
-	for _, edge := range edges {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if err := fn(edge); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(ctx, e.Engine.AllEdges, nil, fn)
 }
 
 func (e *namespacedPrefixStreamingEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
-	nodes, err := e.Engine.AllNodes()
+	nodes, err := e.Engine.AllNodes(ctx)
 	if err != nil {
 		return err
 	}
@@ -410,24 +295,9 @@ func (e *namespacedPrefixStreamingEngine) StreamNodeChunks(ctx context.Context, 
 func (e *namespacedPrefixStreamingEngine) StreamNodesByPrefix(ctx context.Context, prefix string, fn func(node *Node) error) error {
 	e.prefixCalls++
 	e.lastPrefix = prefix
-	nodes, err := e.Engine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if !strings.HasPrefix(string(node.ID), prefix) {
-			continue
-		}
-		if err := fn(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(ctx, e.Engine.AllNodes, func(node *Node) bool {
+		return strings.HasPrefix(string(node.ID), prefix)
+	}, fn)
 }
 
 // StreamNodesWithOptions models the unified kernel so the namespaced wrapper
@@ -435,24 +305,7 @@ func (e *namespacedPrefixStreamingEngine) StreamNodesByPrefix(ctx context.Contex
 func (e *namespacedPrefixStreamingEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(node *Node) error) error {
 	e.prefixCalls++
 	e.lastPrefix = opts.Prefix
-	nodes, err := e.Engine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if opts.Prefix != "" && !strings.HasPrefix(string(node.ID), opts.Prefix) {
-			continue
-		}
-		if err := fn(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureNodes(ctx, e.Engine.AllNodes, opts.Prefix, fn)
 }
 
 func (e *namespacedSchemaProviderEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
@@ -545,12 +398,12 @@ func TestNamespacedEngine_Isolation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Each tenant should only see their own nodes
-	nodesA, err := tenantA.AllNodes()
+	nodesA, err := tenantA.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodesA, 1)
 	assert.Equal(t, "a", nodesA[0].Properties["tenant"])
 
-	nodesB, err := tenantB.AllNodes()
+	nodesB, err := tenantB.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodesB, 1)
 	assert.Equal(t, "b", nodesB[0].Properties["tenant"])
@@ -591,7 +444,7 @@ func TestNamespacedEngine_Edges(t *testing.T) {
 	assert.Equal(t, "KNOWS", retrieved.Type)
 
 	// Get outgoing edges (NamespacedEngine receives unprefixed IDs)
-	outgoing, err := tenantA.GetOutgoingEdges(NodeID("n1"))
+	outgoing, err := tenantA.GetOutgoingEdges(context.Background(), NodeID("n1"))
 	require.NoError(t, err)
 	assert.Len(t, outgoing, 1)
 	assert.Equal(t, "e1", string(outgoing[0].ID))
@@ -626,11 +479,11 @@ func TestNamespacedEngine_QueryOperations(t *testing.T) {
 	}
 
 	// Query by label - should only see tenant's nodes
-	nodesA, err := tenantA.GetNodesByLabel("Person")
+	nodesA, err := tenantA.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	assert.Len(t, nodesA, 3)
 
-	nodesB, err := tenantB.GetNodesByLabel("Person")
+	nodesB, err := tenantB.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	assert.Len(t, nodesB, 2)
 }
@@ -715,7 +568,7 @@ func TestNamespacedEngine_BulkOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all created
-	allNodes, err := tenantA.AllNodes()
+	allNodes, err := tenantA.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, allNodes, 3)
 
@@ -724,7 +577,7 @@ func TestNamespacedEngine_BulkOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify deleted
-	allNodes, err = tenantA.AllNodes()
+	allNodes, err = tenantA.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, allNodes, 1)
 	assert.Equal(t, "n3", string(allNodes[0].ID))
@@ -934,23 +787,24 @@ func TestNamespacedEngine_QueryDelegateMethods(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, first)
 
-	incoming, err := tenantA.GetIncomingEdges("n2")
+	incoming, err := tenantA.GetIncomingEdges(context.Background(), "n2")
 	require.NoError(t, err)
 	assert.Len(t, incoming, 1)
 
-	byType, err := tenantA.GetEdgesByType("KNOWS")
+	byType, err := tenantA.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	assert.Len(t, byType, 1)
 
 	edge := tenantA.GetEdgeBetween("n1", "n2", "KNOWS")
 	assert.NotNil(t, edge)
 
-	all := tenantA.GetAllNodes()
+	all, err := tenantA.AllNodes(context.Background())
+	require.NoError(t, err)
 	assert.Len(t, all, 2)
 	assert.GreaterOrEqual(t, tenantA.GetOutDegree("n1"), 1)
 	assert.GreaterOrEqual(t, tenantA.GetInDegree("n2"), 1)
 
-	batch, err := tenantA.BatchGetNodes([]NodeID{"n1", "n2"})
+	batch, err := tenantA.BatchGetNodes(context.Background(), []NodeID{"n1", "n2"})
 	require.NoError(t, err)
 	assert.Len(t, batch, 2)
 }
@@ -1356,7 +1210,7 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		tenantA := NewNamespacedEngine(engine, "tenant_a")
 
 		var seen []NodeID
-		err := tenantA.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+		err := tenantA.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool {
 			seen = append(seen, id)
 			return id != "one"
 		})
@@ -1372,14 +1226,14 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		require.NoError(t, err)
 
 		seen = nil
-		err = fallback.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+		err = fallback.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool {
 			seen = append(seen, id)
 			return true
 		})
 		require.NoError(t, err)
 		assert.Equal(t, []NodeID{"one"}, seen)
 
-		require.NoError(t, fallback.ForEachNodeIDByLabel("Person", nil))
+		require.NoError(t, fallback.ForEachNodeIDByLabel(context.Background(), "Person", nil))
 	})
 
 	t.Run("get edge between filters foreign edges and schema uses provider", func(t *testing.T) {
@@ -1431,15 +1285,15 @@ func TestNamespacedEngine_OptionalDelegateFallbackBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetEdgeVisibleAt("e1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetNodesByLabelVisibleAt("Doc", MVCCVersion{})
+	_, err = ns.GetNodesByLabelVisibleAt(context.Background(), "Doc", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetOutgoingEdgesVisibleAt("n1", MVCCVersion{})
+	_, err = ns.GetOutgoingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetIncomingEdgesVisibleAt("n1", MVCCVersion{})
+	_, err = ns.GetIncomingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetEdgesByTypeVisibleAt("REL", MVCCVersion{})
+	_, err = ns.GetEdgesByTypeVisibleAt(context.Background(), "REL", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetEdgesBetweenVisibleAt("n1", "n2", MVCCVersion{})
+	_, err = ns.GetEdgesBetweenVisibleAt(context.Background(), "n1", "n2", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetNodeCurrentHead("n1")
 	require.ErrorIs(t, err, ErrNotImplemented)
@@ -1484,12 +1338,12 @@ func TestNamespacedEngine_MVCCIndexedVisibilityFiltersAndStripsNamespace(t *test
 
 	ns := NewNamespacedEngine(inner, "tenant_a")
 
-	nodes, err := ns.GetNodesByLabelVisibleAt("Doc", MVCCVersion{})
+	nodes, err := ns.GetNodesByLabelVisibleAt(context.Background(), "Doc", MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, NodeID("n1"), nodes[0].ID)
 
-	outgoing, err := ns.GetOutgoingEdgesVisibleAt("n1", MVCCVersion{})
+	outgoing, err := ns.GetOutgoingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, NodeID("tenant_a:n1"), inner.lastOutgoingNodeID)
 	require.Len(t, outgoing, 1)
@@ -1497,7 +1351,7 @@ func TestNamespacedEngine_MVCCIndexedVisibilityFiltersAndStripsNamespace(t *test
 	require.Equal(t, NodeID("n1"), outgoing[0].StartNode)
 	require.Equal(t, NodeID("n3"), outgoing[0].EndNode)
 
-	incoming, err := ns.GetIncomingEdgesVisibleAt("n1", MVCCVersion{})
+	incoming, err := ns.GetIncomingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, NodeID("tenant_a:n1"), inner.lastIncomingNodeID)
 	require.Len(t, incoming, 1)
@@ -1515,9 +1369,9 @@ func TestNamespacedEngine_MVCCIndexedVisibilityPropagatesProviderErrors(t *testi
 	t.Cleanup(func() { _ = inner.Close() })
 	ns := NewNamespacedEngine(inner, "tenant_a")
 
-	_, err := ns.GetOutgoingEdgesVisibleAt("n1", MVCCVersion{})
+	_, err := ns.GetOutgoingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
 	require.EqualError(t, err, "outgoing boom")
-	_, err = ns.GetIncomingEdgesVisibleAt("n1", MVCCVersion{})
+	_, err = ns.GetIncomingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
 	require.EqualError(t, err, "incoming boom")
 }
 
@@ -1595,24 +1449,13 @@ func TestNamespacedEngine_ForEachNodeIDByLabel_EarlyStop(t *testing.T) {
 
 	ns := NewNamespacedEngine(inner, "mydb")
 
-	// Create several nodes
-	for i := 0; i < 5; i++ {
-		_, err := ns.CreateNode(&Node{
+	assertLabelVisitorStopsAfterTwo(t, "Item", func(i int) *Node {
+		return &Node{
 			ID:         NodeID(fmt.Sprintf("n%d", i)),
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{},
-		})
-		require.NoError(t, err)
-	}
-
-	// Early stop after 2
-	var visited []NodeID
-	err = ns.ForEachNodeIDByLabel("Item", func(id NodeID) bool {
-		visited = append(visited, id)
-		return len(visited) < 2
-	})
-	require.NoError(t, err)
-	assert.Len(t, visited, 2)
+		}
+	}, ns.CreateNode, ns.ForEachNodeIDByLabel)
 }
 
 func TestNamespacedEngine_GetEdgesByType(t *testing.T) {
@@ -1630,7 +1473,7 @@ func TestNamespacedEngine_GetEdgesByType(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ns.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
 
-	edges, err := ns.GetEdgesByType("KNOWS")
+	edges, err := ns.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	assert.Len(t, edges, 1)
 	// Should return unprefixed IDs

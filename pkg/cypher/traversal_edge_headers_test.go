@@ -28,14 +28,14 @@ func (e *countingHeaderEngine) IncomingEdgeHeaders(id storage.NodeID) ([]*storag
 	return e.NamespacedEngine.IncomingEdgeHeaders(id)
 }
 
-func (e *countingHeaderEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *countingHeaderEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	e.full++
-	return e.NamespacedEngine.GetOutgoingEdges(id)
+	return e.NamespacedEngine.GetOutgoingEdges(ctx, id)
 }
 
-func (e *countingHeaderEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *countingHeaderEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	e.full++
-	return e.NamespacedEngine.GetIncomingEdges(id)
+	return e.NamespacedEngine.GetIncomingEdges(ctx, id)
 }
 
 func TestTraversalRelationshipsNeedOnlyHeaders(t *testing.T) {

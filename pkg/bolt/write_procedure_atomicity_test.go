@@ -52,7 +52,7 @@ func TestBoltWriteProcedureStatementRollback(t *testing.T) {
 				_, err = result.Consume(ctx)
 			}
 			require.ErrorContains(t, err, failure.Error())
-			nodes, err := store.GetNodesByLabel("U5WireWrite")
+			nodes, err := store.GetNodesByLabel(ctx, "U5WireWrite")
 			require.NoError(t, err)
 			require.Empty(t, nodes, "Bolt failure must leave no committed procedure writes")
 		})

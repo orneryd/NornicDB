@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -98,7 +99,7 @@ func TestBufferedReplayDoesNotHoldCommitGateWhileReadingSchema(t *testing.T) {
 	require.Equal(t, []string{"BEFORE", "AFTER"}, schema.ExportDefinition().RelationshipTypeTokens)
 	requireNoLargeCommitIntent(t, b)
 	require.Zero(t, b.db.oracle.stage.pendingCount())
-	got, err := b.GetNodesByLabel("Ingest")
+	got, err := b.GetNodesByLabel(context.Background(), "Ingest")
 	require.NoError(t, err)
 	require.Len(t, got, nodes)
 }

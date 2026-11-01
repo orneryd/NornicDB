@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -86,7 +87,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_FilterAndBetweenGuards(t *testing.T) {
 	_, err = engine.GetEdgeLatestVisible(edgeID)
 	require.ErrorIs(t, err, ErrNotFound)
 
-	_, err = engine.GetEdgesBetweenVisibleAt("", end, MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
+	_, err = engine.GetEdgesBetweenVisibleAt(context.Background(), "", end, MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
 	require.ErrorIs(t, err, ErrInvalidID)
 }
 

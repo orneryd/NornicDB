@@ -188,9 +188,18 @@ func TestResultHeaderFamilyMatrix(t *testing.T) {
 				}
 			}
 		}
+		// Resource-row binding is known without loading a file. Keep unknown
+		// procedure output distinct from that supported syntax contract.
+		knownCSV := "LOAD CSV FROM 'file:///unused' AS row RETURN *"
+		require.Equal(t, []string{"row"}, exec.StatementColumns(knownCSV))
+		explained, explainErr := exec.Execute(ctx, "EXPLAIN "+knownCSV, nil)
+		require.NoError(t, explainErr)
+		require.Equal(t, []string{"row"}, explained.Columns)
+		_, mismatchErr := exec.Execute(ctx, "EXPLAIN "+knownCSV+" UNION RETURN 1 AS value", nil)
+		require.ErrorContains(t, mismatchErr, "UNION queries must return the same columns")
 		for _, query := range []string{
-			"LOAD CSV FROM 'file:///unused' AS row RETURN *",
-			"LOAD CSV FROM 'file:///unused' AS row RETURN * UNION RETURN 1 AS value",
+			"LOAD CSV FROM 'file:///unused' AS row CALL custom.unknown_header_procedure() YIELD * RETURN *",
+			"LOAD CSV FROM 'file:///unused' AS row CALL custom.unknown_header_procedure() YIELD * RETURN * UNION RETURN 1 AS value",
 		} {
 			t.Run("unknown/"+query, func(t *testing.T) {
 				require.Nil(t, exec.StatementColumns(query), "unknown must not be a fabricated empty header or wildcard")

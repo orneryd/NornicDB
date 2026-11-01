@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -22,10 +23,10 @@ func TestTransactionUnpinnedReadsIncludeLogicalHighWater(t *testing.T) {
 			t.Cleanup(func() { _ = tx.Rollback() })
 			_, err = engine.CreateNode(&Node{ID: "a:after", Labels: []string{"After"}})
 			require.NoError(t, err)
-			nodes, err := tx.GetNodesByLabel("Before")
+			nodes, err := tx.GetNodesByLabel(context.Background(), "Before")
 			require.NoError(t, err)
 			require.ElementsMatch(t, []string{"a:before", "b:before"}, nodeIDs(nodes))
-			nodes, err = tx.AllNodes()
+			nodes, err = tx.AllNodes(context.Background())
 			require.NoError(t, err)
 			require.ElementsMatch(t, []string{"a:before", "b:before"}, nodeIDs(nodes))
 			require.NoError(t, tx.SetNamespace("a"))

@@ -83,7 +83,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		return found
 	}
 	if nodes {
-		all, err := e.storage.AllNodes()
+		all, err := e.storage.AllNodes(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -93,7 +93,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 			category(schemaTypeKey(labels), labels).add(node.Properties, cypher25)
 		}
 	} else {
-		all, err := e.storage.AllEdges()
+		all, err := e.storage.AllEdges(ctx)
 		if err != nil {
 			return nil, err
 		}

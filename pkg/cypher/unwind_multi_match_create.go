@@ -164,7 +164,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 				matches = append(matches, match)
 			}
 		}
-		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, matches)
+		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, matches)
 		if err != nil {
 			return nil, true, err
 		}

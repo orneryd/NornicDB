@@ -16,16 +16,16 @@ type allNodesForbiddenEngine struct {
 	forbidScan bool
 }
 
-func (e *allNodesForbiddenEngine) AllNodes() ([]*storage.Node, error) {
+func (e *allNodesForbiddenEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	if !e.forbidScan {
-		return e.MemoryEngine.AllNodes()
+		return e.MemoryEngine.AllNodes(ctx)
 	}
 	return nil, fmt.Errorf("AllNodes should not be called for indexed equality lookup")
 }
 
-func (e *allNodesForbiddenEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *allNodesForbiddenEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if !e.forbidScan {
-		return e.MemoryEngine.GetNodesByLabel(label)
+		return e.MemoryEngine.GetNodesByLabel(ctx, label)
 	}
 	return nil, fmt.Errorf("GetNodesByLabel should not be called for indexed fast path")
 }

@@ -344,7 +344,7 @@ func TestSystemDatabaseRefusesGraphWrites(t *testing.T) {
 	_, err = exec.Execute(ctx, "ROLLBACK", nil)
 	require.NoError(t, err)
 
-	nodes, err := system.GetNodesByLabel("_ProcedurePrivilege")
+	nodes, err := system.GetNodesByLabel(ctx, "_ProcedurePrivilege")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)

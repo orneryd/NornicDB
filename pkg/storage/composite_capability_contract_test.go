@@ -67,7 +67,7 @@ func TestCompositeCapabilityParity_MVCCAndVisibilityReads(t *testing.T) {
 		if headB.Version.Compare(version) > 0 {
 			version = headB.Version
 		}
-		nodes, err := composite.GetNodesByLabelVisibleAt("Doc", version)
+		nodes, err := composite.GetNodesByLabelVisibleAt(context.Background(), "Doc", version)
 		require.NoError(t, err)
 		var ids []NodeID
 		for _, node := range nodes {
@@ -79,7 +79,7 @@ func TestCompositeCapabilityParity_MVCCAndVisibilityReads(t *testing.T) {
 
 	t.Run("label ID iteration preserves constituent namespace", func(t *testing.T) {
 		seen := make(map[NodeID]bool)
-		require.NoError(t, composite.ForEachNodeIDByLabel("Doc", func(id NodeID) bool {
+		require.NoError(t, composite.ForEachNodeIDByLabel(context.Background(), "Doc", func(id NodeID) bool {
 			seen[id] = true
 			return true
 		}))

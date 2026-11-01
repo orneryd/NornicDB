@@ -1237,7 +1237,7 @@ func TestSizeTrackingEngine_UpdateEdge(t *testing.T) {
 	err = store.CreateEdge(edge)
 	require.NoError(t, err)
 
-	outgoing, err := store.GetOutgoingEdges(idA)
+	outgoing, err := store.GetOutgoingEdges(context.Background(), idA)
 	require.NoError(t, err)
 	require.NotEmpty(t, outgoing)
 
@@ -1260,14 +1260,14 @@ func TestSizeTrackingEngine_DeleteEdge(t *testing.T) {
 	err = store.CreateEdge(edge)
 	require.NoError(t, err)
 
-	outgoing, err := store.GetOutgoingEdges(idA)
+	outgoing, err := store.GetOutgoingEdges(context.Background(), idA)
 	require.NoError(t, err)
 	require.NotEmpty(t, outgoing)
 
 	err = store.DeleteEdge(outgoing[0].ID)
 	require.NoError(t, err)
 
-	outgoing, err = store.GetOutgoingEdges(idA)
+	outgoing, err = store.GetOutgoingEdges(context.Background(), idA)
 	require.NoError(t, err)
 	assert.Empty(t, outgoing)
 }
@@ -1285,7 +1285,7 @@ func TestSizeTrackingEngine_BulkCreateNodes(t *testing.T) {
 	err = store.BulkCreateNodes(nodes)
 	require.NoError(t, err)
 
-	allNodes, err := store.AllNodes()
+	allNodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(allNodes), 3)
 }
@@ -1344,9 +1344,9 @@ func TestSizeTrackingEngine_BulkDeleteEdges(t *testing.T) {
 	err = store.CreateEdge(&storage.Edge{ID: "st-bde-e2", StartNode: idB, EndNode: idA, Type: "LIKES"})
 	require.NoError(t, err)
 
-	outgoing, err := store.GetOutgoingEdges(idA)
+	outgoing, err := store.GetOutgoingEdges(context.Background(), idA)
 	require.NoError(t, err)
-	incoming, err := store.GetIncomingEdges(idA)
+	incoming, err := store.GetIncomingEdges(context.Background(), idA)
 	require.NoError(t, err)
 
 	var edgeIDs []storage.EdgeID

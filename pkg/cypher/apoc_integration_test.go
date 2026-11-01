@@ -197,7 +197,7 @@ func TestAPOCNeighborsTypedContracts(t *testing.T) {
 				require.Equal(t, [][]interface{}{{[]interface{}{"staged"}}}, result.Rows)
 			})
 			t.Run("canonical_output_columns", func(t *testing.T) {
-				nodes, err := store.GetNodesByLabel("Neighbor")
+				nodes, err := store.GetNodesByLabel(ctx, "Neighbor")
 				require.NoError(t, err)
 				var start *storage.Node
 				for _, node := range nodes {
@@ -258,9 +258,9 @@ func TestAPOCNeighborsTerminalErrors(t *testing.T) {
 				name   string
 				engine storage.Engine
 			}{
-				{name: "outgoing_failure", engine: &callOutgoingErrEngine{Engine: store, err: sentinel}},
-				{name: "incoming_failure", engine: &callIncomingErrEngine{Engine: store, err: sentinel}},
-				{name: "node_failure", engine: &callGetNodeErrEngine{Engine: store, err: sentinel}},
+				{name: "outgoing_failure", engine: &directionalReadFaultEngine{Engine: store, outgoingErr: sentinel}},
+				{name: "incoming_failure", engine: &directionalReadFaultEngine{Engine: store, incomingErr: sentinel}},
+				{name: "node_failure", engine: &getNodeErrEngine{Engine: store, err: sentinel}},
 			} {
 				t.Run(testCase.name, func(t *testing.T) {
 					result, err := procedure.call(NewStorageExecutor(testCase.engine), context.Background(), []interface{}{start, "KNOWS", int64(1)})

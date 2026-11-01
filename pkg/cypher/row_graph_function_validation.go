@@ -87,7 +87,8 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 	if strings.TrimSpace(argument) != "" {
 		args = splitTopLevelComma(argument)
 	}
-	fnCtx := e.registryFunctionContext(rowStatementContextOrBackground(values), func(expression string) (interface{}, error) {
+	statementCtx := rowStatementContextOrBackground(values)
+	fnCtx := e.registryFunctionContext(statementCtx, func(expression string) (interface{}, error) {
 		value, resolved, err := e.evaluateRowValue(expression, values)
 		if err != nil {
 			panic(rowFunctionArgumentFailure{err})
@@ -102,7 +103,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 	if version, bound := values[cypher25RowKey].(bool); bound {
 		fnCtx.Cypher25 = version
 	}
-	value, found, err := cypherfn.EvaluateFunction(function, args, fnCtx)
+	value, found, err := cypherfn.EvaluateFunction(statementCtx, function, args, fnCtx)
 	if !found {
 		return nil, false, false, nil
 	}

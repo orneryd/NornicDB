@@ -116,12 +116,12 @@ type laterLabelScanErrEngine struct {
 	scans int
 }
 
-func (e *laterLabelScanErrEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *laterLabelScanErrEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	e.scans++
 	if e.scans > 2 {
 		return nil, errors.New("label scan failed")
 	}
-	return e.Engine.GetNodesByLabel(label)
+	return e.Engine.GetNodesByLabel(ctx, label)
 }
 
 // A constraint whose index can't be filled isn't created.

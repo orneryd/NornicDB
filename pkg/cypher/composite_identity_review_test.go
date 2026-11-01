@@ -51,7 +51,7 @@ func TestCompositeReviewRelationshipWrites(t *testing.T) {
 				for _, db := range []string{"one", "two"} {
 					store, err := mgr.GetStorage(db)
 					require.NoError(t, err)
-					edges, err := store.GetEdgesByType("REVIEW_WRITE")
+					edges, err := store.GetEdgesByType(context.Background(), "REVIEW_WRITE")
 					require.NoError(t, err)
 					want := 0
 					if !cross && db == "two" {
@@ -72,9 +72,9 @@ func TestCompositeReviewImportedRelationshipDelete(t *testing.T) {
 	require.NoError(t, err)
 	two, err := mgr.GetStorage("two")
 	require.NoError(t, err)
-	first, err := one.GetEdgesByType("R")
+	first, err := one.GetEdgesByType(context.Background(), "R")
 	require.NoError(t, err)
-	second, err := two.GetEdgesByType("R")
+	second, err := two.GetEdgesByType(context.Background(), "R")
 	require.NoError(t, err)
 	require.Len(t, first, 1)
 	require.Empty(t, second)

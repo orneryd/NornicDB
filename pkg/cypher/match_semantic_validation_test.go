@@ -85,8 +85,7 @@ func TestReturnScopeRejectsUndefinedAndEmptyWildcardProjections(t *testing.T) {
 }
 
 func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_self_relationship")
-	exec := NewStorageExecutor(store)
+	exec, store := newCypherTestExecutor(t, "match_self_relationship")
 	ctx := context.Background()
 
 	nodeID, err := store.CreateNode(&storage.Node{ID: "node"})

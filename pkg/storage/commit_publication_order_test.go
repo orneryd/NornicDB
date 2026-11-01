@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -203,7 +204,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 								require.Empty(t, sm.PropertyIndexLookup("L", "v", old), "superseded posting %s", old)
 							}
 						}
-						nodes, e := b.GetNodesByLabel("L")
+						nodes, e := b.GetNodesByLabel(context.Background(), "L")
 						require.NoError(t, e)
 						require.Len(t, nodes, 1)
 						require.Equal(t, c.final, nodes[0].Properties["v"])
@@ -220,7 +221,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 						got, e := b.GetEdge("db:e")
 						require.NoError(t, e)
 						require.Equal(t, c.final, got.Properties["v"], "public relationship cache")
-						for _, read := range []func() ([]*Edge, error){func() ([]*Edge, error) { return b.GetEdgesByType("LINK") }, func() ([]*Edge, error) { return b.GetOutgoingEdges("db:a") }, func() ([]*Edge, error) { return b.GetIncomingEdges("db:b") }, func() ([]*Edge, error) { return b.GetEdgesBetween("db:a", "db:b") }} {
+						for _, read := range []func() ([]*Edge, error){func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "LINK") }, func() ([]*Edge, error) { return b.GetOutgoingEdges(context.Background(), "db:a") }, func() ([]*Edge, error) { return b.GetIncomingEdges(context.Background(), "db:b") }, func() ([]*Edge, error) { return b.GetEdgesBetween(context.Background(), "db:a", "db:b") }} {
 							edges, e := read()
 							require.NoError(t, e)
 							require.Len(t, edges, 1)

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -24,7 +25,7 @@ func init() {
 
 // fnVectorSimilarity checks a, then b, then their dimensions, as Neo4j does.
 func fnVectorSimilarity(function string, valid func([]float64) bool, similarity func(a, b []float64) (float64, bool)) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, argumentCountError("vector.similarity."+function, "2", len(args))
 		}

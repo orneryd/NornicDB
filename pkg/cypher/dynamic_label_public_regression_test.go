@@ -66,7 +66,7 @@ func TestDynamicLabelGeneratedFunctionContract(t *testing.T) {
 			seen[normalized] = true
 			_, known := builtInCypherFunctions[normalized]
 			require.True(t, known, "rewrite emitted an unknown function: %s", name)
-			_, registered, _ := cypherfn.EvaluateFunction(name, nil, cypherfn.Context{})
+			_, registered, _ := cypherfn.EvaluateFunction(context.Background(), name, nil, cypherfn.Context{})
 			require.True(t, registered, "rewrite emitted an unregistered function: %s", name)
 			return nil
 		}))

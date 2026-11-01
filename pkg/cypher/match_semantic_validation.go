@@ -213,6 +213,7 @@ func queryBodyUpdates(ctx context.Context, source string, start, end int) bool {
 var queryBodyEndings = map[pipelineClauseKind]string{
 	pipelineClauseMatch: "MATCH", pipelineClauseOptionalMatch: "MATCH", pipelineClauseWith: "WITH",
 	pipelineClauseUnwind: "UNWIND", pipelineClauseLet: "LET", pipelineClauseFilter: "FILTER",
+	pipelineClauseLoadCSV:      "LOAD CSV",
 	pipelineClauseCallSubquery: "CALL",
 	pipelineClauseReturn:       "", pipelineClauseCreate: "", pipelineClauseMerge: "", pipelineClauseDelete: "",
 	pipelineClauseSet: "", pipelineClauseRemove: "", pipelineClauseForeach: "", pipelineClauseCall: "",

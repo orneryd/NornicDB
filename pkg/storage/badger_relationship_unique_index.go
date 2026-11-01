@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -106,7 +107,9 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 		if hook := getUniqueConstraintScanHook(); hook != nil {
 			hook()
 		}
-		edges, err := b.GetStoredEdgesByType(edge.Type)
+		// Building the unique index reads the accepted write's own state: its
+		// lifetime is the write's (context.Background), not a statement read's.
+		edges, err := b.GetStoredEdgesByType(context.Background(), edge.Type)
 		if err != nil {
 			set.active.Store(len(set.entries) > 0)
 			return nil, false, err

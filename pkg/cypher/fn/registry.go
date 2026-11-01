@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -38,9 +39,13 @@ func (e *TypeMismatchError) Error() string {
 
 // Func evaluates a Cypher function call.
 //
+// workCtx is the caller's statement context, the context the statement
+// execution was given: work that outlasts argument evaluation observes its
+// cancellation and deadline there.
+//
 // args are the raw argument expressions (not pre-evaluated). Use ctx.Eval for
 // evaluation to preserve Cypher semantics like lazy coalesce.
-type Func func(ctx Context, args []string) (interface{}, error)
+type Func func(workCtx context.Context, ctx Context, args []string) (interface{}, error)
 
 var (
 	mu       sync.RWMutex
@@ -64,11 +69,15 @@ func Register(name string, fn Func) {
 
 // EvaluateFunction evaluates a function by name.
 //
+// workCtx is the caller's statement context; it is the context the registered
+// function receives. It must be the statement's own context, not a
+// background context.
+//
 // Returns:
 //   - value: the function result
 //   - found: whether the function name is registered
 //   - err: evaluation error (only meaningful if found is true)
-func EvaluateFunction(name string, args []string, ctx Context) (value interface{}, found bool, err error) {
+func EvaluateFunction(workCtx context.Context, name string, args []string, ctx Context) (value interface{}, found bool, err error) {
 	key := cyphertext.NameLower(strings.TrimSpace(name))
 	mu.RLock()
 	fn, ok := registry[key]
@@ -82,6 +91,6 @@ func EvaluateFunction(name string, args []string, ctx Context) (value interface{
 	if ctx.Now == nil {
 		ctx.Now = func() time.Time { return time.Now() }
 	}
-	val, err := fn(ctx, args)
+	val, err := fn(workCtx, ctx, args)
 	return FunctionResult(val), true, err
 }

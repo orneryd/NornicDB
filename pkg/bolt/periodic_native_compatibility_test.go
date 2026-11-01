@@ -37,9 +37,9 @@ func TestPeriodicNativeDriverCompatibility(t *testing.T) {
 				_, err = seed.Consume(ctx)
 				require.NoError(t, err)
 				count := func() string {
-					markers, e := store.GetNodesByLabel("U5PeriodicCompatMarker")
+					markers, e := store.GetNodesByLabel(ctx, "U5PeriodicCompatMarker")
 					require.NoError(t, e)
-					seeds, e := store.GetNodesByLabel("U5PeriodicCompatSeed")
+					seeds, e := store.GetNodesByLabel(ctx, "U5PeriodicCompatSeed")
 					require.NoError(t, e)
 					return fmt.Sprintf("markers=%d seeds=%d", len(markers), len(seeds))
 				}

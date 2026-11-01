@@ -60,6 +60,11 @@ const (
 	pipelineClauseCall
 	pipelineClauseLet
 	pipelineClauseFilter
+	// pipelineClauseLoadCSV is the grammar's LOAD CSV reading clause. The
+	// pipeline has no reader for a remote resource, so the clause is never
+	// executed here: the splitter declines a statement that contains one and
+	// the clause's own owner runs it. Scope and effects still see its binding.
+	pipelineClauseLoadCSV
 )
 
 // pipelineClause is one segment of the pipeline. `text` includes the leading
@@ -347,6 +352,14 @@ func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSpli
 	}
 	if branch.useStart >= 0 || branch.finished || len(branch.clauses) == 0 {
 		return split
+	}
+	for _, clause := range branch.clauses {
+		if clause.kind == pipelineClauseLoadCSV {
+			// LOAD CSV reads the resource it names, not a graph: the pipeline has
+			// no reader for it, and the clause's own owner (the embedded
+			// residual or the participant USE names) runs the statement.
+			return split
+		}
 	}
 	// Inline embedding candidates keep the bound syntax of their WITH; the
 	// pipeline frame resolves them like the scope compiler does.
@@ -864,12 +877,20 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source != nil && !carryAfter {
 				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
 					source = windowed
-					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					next, err := pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					if err != nil {
+						return nil, true, err
+					}
+					scope = next
 					continue
 				}
 				if plan, local := parsePipelineRowWith(ctx, clause.text); local {
 					source = e.pipelineWithRowSource(ctx, source, plan)
-					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					next, err := pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					if err != nil {
+						return nil, true, err
+					}
+					scope = next
 					continue
 				}
 			}
@@ -901,7 +922,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			rows = newRows
-			scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+			next, err := pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+			if err != nil {
+				return nil, true, err
+			}
+			scope = next
 			if carryAfter {
 				carryPipelineImports(rows, scope, carried)
 			}
@@ -917,7 +942,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				scope[alias] = struct{}{}
 			}
 			for offset := 1; offset <= consumed; offset++ {
-				scope = pipelineProjectionScope(ctx, scope, clauses[idx+offset].text, pipelineImports(ctx))
+				next, err := pipelineProjectionScope(ctx, scope, clauses[idx+offset].text, pipelineImports(ctx))
+				if err != nil {
+					return nil, true, err
+				}
+				scope = next
 			}
 			idx += consumed
 			if idx+1 < len(clauses) && (pipelineClauseAggregates(ctx, clauses[idx+1]) || stream.forClause(ctx, &clauses[idx+1]) != nil) {
@@ -1372,7 +1401,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 	}
 	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
-	err = reader.StreamNodesByLabelProjected(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
+	err = reader.StreamNodesByLabelProjected(ctx, nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
 		return countNode(node, false)
 	})
 	if err != nil {

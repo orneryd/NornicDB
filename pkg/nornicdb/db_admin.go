@@ -732,7 +732,7 @@ func (db *DB) ListEdges(ctx context.Context, relType string, limit, offset int) 
 		return nil, ErrClosed
 	}
 
-	allEdges, err := db.storage.AllEdges()
+	allEdges, err := db.storage.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -812,7 +812,7 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
 	storageNodeID := storage.NodeID(nodeID)
 
 	// Get outgoing edges
-	outgoing, err := db.storage.GetOutgoingEdges(storageNodeID)
+	outgoing, err := db.storage.GetOutgoingEdges(ctx, storageNodeID)
 	if err == nil {
 		for _, e := range outgoing {
 			edges = append(edges, &GraphEdge{
@@ -827,7 +827,7 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
 	}
 
 	// Get incoming edges
-	incoming, err := db.storage.GetIncomingEdges(storageNodeID)
+	incoming, err := db.storage.GetIncomingEdges(ctx, storageNodeID)
 	if err == nil {
 		for _, e := range incoming {
 			edges = append(edges, &GraphEdge{

@@ -1,6 +1,8 @@
 package search
 
-import "context"
+import (
+	"context"
+)
 
 // residentBuildVectors owns immutable device shards in insertion order. Each
 // vector is uploaded once; device-specific kernels score existing buffers.

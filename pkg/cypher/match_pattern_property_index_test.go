@@ -90,29 +90,27 @@ func TestResidualLabellessPropertyIndexCompleteness(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
 }
 
-func (e *scanCountingEngine) AllNodes() ([]*storage.Node, error) {
+func (e *scanCountingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	atomic.AddInt64(&e.allNodesCalls, 1)
-	return e.MemoryEngine.AllNodes()
+	return e.MemoryEngine.AllNodes(ctx)
 }
 
-func (e *scanCountingEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *scanCountingEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	atomic.AddInt64(&e.getNodesByLabelHits, 1)
-	return e.MemoryEngine.GetNodesByLabel(label)
+	return e.MemoryEngine.GetNodesByLabel(ctx, label)
 }
 
-func (e *scanCountingEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *scanCountingEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	atomic.AddInt64(&e.outgoingEdgeCalls, 1)
-	if e.outgoingEdgeErr != nil {
-		return nil, e.outgoingEdgeErr
-	}
-	return e.MemoryEngine.GetOutgoingEdges(nodeID)
+	return runtimeFixtureOwner.ReadWithFailure(ctx, e.outgoingEdgeErr, func(ctx context.Context) ([]*storage.Edge, error) {
+		return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
+	})
 }
 
-func (e *scanCountingEngine) GetIncomingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
-	if e.incomingEdgeErr != nil {
-		return nil, e.incomingEdgeErr
-	}
-	return e.MemoryEngine.GetIncomingEdges(nodeID)
+func (e *scanCountingEngine) GetIncomingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return runtimeFixtureOwner.ReadWithFailure(ctx, e.incomingEdgeErr, func(ctx context.Context) ([]*storage.Edge, error) {
+		return e.MemoryEngine.GetIncomingEdges(ctx, nodeID)
+	})
 }
 
 func (e *scanCountingEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
@@ -813,7 +811,7 @@ func TestMatchPatternProperty_BoundRelationshipDeleteReturnsCandidateLookupError
 			lookupErr := errors.New(tt.name + " edge lookup failed")
 			tt.configure(wrapped, lookupErr)
 
-			_, err := exec.boundRelationshipDeleteCandidateEdges(wrapped, "source", tt.direction)
+			_, err := exec.boundRelationshipDeleteCandidateEdges(context.Background(), wrapped, "source", tt.direction)
 			require.ErrorIs(t, err, lookupErr)
 		})
 	}

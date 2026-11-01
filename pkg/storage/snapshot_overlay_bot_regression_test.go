@@ -31,7 +31,7 @@ func TestSnapshotOverlayProjectedCallbacksOwnPayload(t *testing.T) {
 			}
 			opts := StreamNodesOptions{Projection: []string{"keep"}}
 			if reader == "label" {
-				require.NoError(t, b.StreamNodesByLabelProjectedInScope("test", "Doc", opts.Projection, mutate))
+				require.NoError(t, b.StreamNodesByLabelProjectedInScope(context.Background(), "test", "Doc", opts.Projection, mutate))
 			} else if reader == "transaction-stream" {
 				tx, err := b.BeginTransaction()
 				require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, b.CreateEdge(&Edge{ID: "test:edge", StartNode: "test:hub", EndNode: "test:peer", Type: "R"}))
-			edges, err := b.GetIncomingEdges("test:peer")
+			edges, err := b.GetIncomingEdges(context.Background(), "test:peer")
 			require.NoError(t, err)
 			require.Len(t, edges, 1, "warm both the adjacency IDs and edge body")
 			if writer == "engine" {
@@ -131,7 +131,7 @@ func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
 			require.NoError(t, b.FlushWriteBehind(nil))
 			_, err = b.GetEdge("test:edge")
 			require.ErrorIs(t, err, ErrNotFound, "the record was physically deleted")
-			edges, err = b.GetIncomingEdges("test:peer")
+			edges, err = b.GetIncomingEdges(context.Background(), "test:peer")
 			require.NoError(t, err)
 			require.Empty(t, edges, "a retired cascade must also disappear from a warm traversal")
 		})

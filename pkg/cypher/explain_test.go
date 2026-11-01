@@ -344,7 +344,7 @@ func TestExplainNoExecution(t *testing.T) {
 
 	t.Run("EXPLAIN does not execute CREATE", func(t *testing.T) {
 		// Count nodes before
-		before, _ := store.AllNodes()
+		before, _ := store.AllNodes(ctx)
 		beforeCount := len(before)
 
 		// EXPLAIN CREATE
@@ -352,7 +352,7 @@ func TestExplainNoExecution(t *testing.T) {
 		require.NoError(t, err)
 
 		// Count nodes after - should be same
-		after, _ := store.AllNodes()
+		after, _ := store.AllNodes(ctx)
 		afterCount := len(after)
 
 		require.Equal(t, beforeCount, afterCount, "EXPLAIN should not create nodes")
@@ -361,7 +361,7 @@ func TestExplainNoExecution(t *testing.T) {
 	t.Run("EXPLAIN does not execute DELETE", func(t *testing.T) {
 		// Create a node
 		exec.Execute(ctx, `CREATE (n:ToDelete {name: 'test'})`, nil)
-		before, _ := store.AllNodes()
+		before, _ := store.AllNodes(ctx)
 		beforeCount := len(before)
 
 		// EXPLAIN DELETE
@@ -369,7 +369,7 @@ func TestExplainNoExecution(t *testing.T) {
 		require.NoError(t, err)
 
 		// Node should still exist
-		after, _ := store.AllNodes()
+		after, _ := store.AllNodes(ctx)
 		afterCount := len(after)
 
 		require.Equal(t, beforeCount, afterCount, "EXPLAIN should not delete nodes")

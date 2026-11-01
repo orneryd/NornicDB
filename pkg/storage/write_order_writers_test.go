@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -17,7 +18,7 @@ func noDanglingRelationships(t *testing.T, engine *BadgerEngine) {
 	t.Helper()
 	require.NoError(t, engine.FlushWriteBehind(nil))
 	engine.invalidateCachesAfterRestore()
-	edges, err := engine.AllEdges()
+	edges, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	for _, e := range edges {
 		for _, id := range []NodeID{e.StartNode, e.EndNode} {

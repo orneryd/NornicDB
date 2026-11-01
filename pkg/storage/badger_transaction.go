@@ -49,10 +49,11 @@ type BadgerTransaction struct {
 	// first write (SetWriteAdmission); nil once it admitted, or without one.
 	writeAdmission func() error
 
-	// commitCtx is the caller's context while CommitContext runs: commit-time
+	// commitCtx is the caller's context while a commit runs: commit-time
 	// constraint validation polls it, so a terminated or abandoned statement
 	// stops before anything is written instead of validating to the end
-	// (#1115). Nil for Commit.
+	// (#1115). Commit has no caller to cancel it and passes its own lifetime
+	// (context.Background); it is nil only outside a commit.
 	commitCtx context.Context
 
 	// changeCapture holds the database's change log while a capturing
@@ -845,9 +846,12 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 	// The write uses its key names now; it encodes them only at commit.
 	tx.engine.NotePropertyKeysInNamespace(tx.namespace, node.Properties)
 
-	// Validate constraints BEFORE writing
+	// Validate constraints BEFORE writing. Staging is the context-free
+	// transaction API (CreateNode/UpdateGraphNode take no context), so
+	// context.Background is this constraint read's own lifetime: a canceled
+	// commit or statement read cannot cancel a write's accepted staging check.
 	if !tx.deferConstraintValidation {
-		if err := tx.validateNodeConstraints(node); err != nil {
+		if err := tx.validateNodeConstraints(context.Background(), node); err != nil {
 			return "", err
 		}
 	}
@@ -941,9 +945,11 @@ func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) er
 	}
 	tx.engine.NotePropertyKeysInNamespace(tx.namespace, node.Properties)
 
-	// Validate constraints
+	// Validate constraints. Like CreateNode, UpdateGraphNode stages
+	// without a caller context: context.Background is this read's own
+	// lifetime, not a forwarded default.
 	if !tx.deferConstraintValidation {
-		if err := tx.validateNodeConstraints(node); err != nil {
+		if err := tx.validateNodeConstraints(context.Background(), node); err != nil {
 			return err
 		}
 	}
@@ -1273,7 +1279,10 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 	// not straddle replay/retirement. Transaction-local rewrites and deletes
 	// still take precedence over that captured stored view.
 	if tx.engine.writeBehind != nil {
-		outgoing, incoming, err := readAdjacency(tx.engine, adjacencyBoth, nodeID, "", nil, storedRead)
+		// This transaction-local write bookkeeping reads on the write's own
+		// lifetime (context.Background): it belongs to the write, not to a
+		// statement read that may be canceled.
+		outgoing, incoming, err := readAdjacency(context.Background(), tx.engine, adjacencyBoth, nodeID, "", nil, storedRead)
 		if err != nil {
 			return nil, err
 		}
@@ -2248,10 +2257,13 @@ func (tx *BadgerTransaction) GetEdge(edgeID EdgeID) (*Edge, error) {
 // snapshot or write-behind view; between reads retain the engine's current view.
 // For example, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: id}
 // reads outgoing edges, while TransactionReadBetween also supplies Other.
-func (tx *BadgerTransaction) ReadEdges(request TransactionEdgeRead) ([]*Edge, error) {
+func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request TransactionEdgeRead) ([]*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	var direction EdgeDirection
@@ -2275,9 +2287,9 @@ func (tx *BadgerTransaction) ReadEdges(request TransactionEdgeRead) ([]*Edge, er
 	var committed []*Edge
 	var err error
 	if request.Kind == TransactionReadBetween {
-		committed, err = tx.engine.GetEdgesBetween(request.Node, request.Other)
+		committed, err = tx.engine.GetEdgesBetween(ctx, request.Node, request.Other)
 	} else {
-		committed, err = tx.getCommittedAdjacentEdgesLocked(request.Node, direction)
+		committed, err = tx.getCommittedAdjacentEdgesLocked(ctx, request.Node, direction)
 	}
 	if err != nil {
 		return nil, err
@@ -2296,7 +2308,10 @@ func (tx *BadgerTransaction) ReadEdges(request TransactionEdgeRead) ([]*Edge, er
 
 // GetEdgeBetween returns a matching edge including pending transaction writes.
 func (tx *BadgerTransaction) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	edges, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: startID, Other: endID})
+	// This point read has no caller context of its own, so it runs on the
+	// transaction's own lifetime: context.Background is the true lifetime at
+	// this context-free entry point, not a forwarded default.
+	edges, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadBetween, Node: startID, Other: endID})
 	if err != nil {
 		return nil
 	}
@@ -2314,20 +2329,20 @@ func (tx *BadgerTransaction) GetEdgeBetween(startID, endID NodeID, edgeType stri
 // do. The type index in that snapshot is the membership at BEGIN and the read
 // retains the global collection contract of AllEdges and GetEdgesByType.
 // The caller supplies the original pending-record filter and holds tx.mu.
-func (tx *BadgerTransaction) getCommittedEdgesByTypeLocked(edgeType string, includePending func(*Edge) bool) ([]*Edge, error) {
+func (tx *BadgerTransaction) getCommittedEdgesByTypeLocked(ctx context.Context, edgeType string, includePending func(*Edge) bool) ([]*Edge, error) {
 	committed := make([]*Edge, 0)
-	err := tx.engine.streamEdgesByTypeAtSnapshotWithView(context.Background(), "", edgeType, tx.readTS, tx.withSnapshotViewLocked, visibleRead, func(edge *Edge) error {
+	err := tx.engine.streamEdgesByTypeAtSnapshotWithView(ctx, "", edgeType, tx.readTS, tx.withSnapshotViewLocked, visibleRead, func(edge *Edge) error {
 		committed = append(committed, edge)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return tx.mergePendingEdgesLocked(committed, includePending), nil
+	return tx.mergePendingEdgesLocked(ctx, committed, includePending)
 }
 
 // AllEdges returns all visible edges including pending transaction writes.
-func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
+func (tx *BadgerTransaction) AllEdges(ctx context.Context) ([]*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
@@ -2341,17 +2356,17 @@ func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, and buffered edges are
 		// invisible to the pinned view. Read the latest overlaid view.
-		committed, err := tx.engine.AllEdges()
+		committed, err := tx.engine.AllEdges(ctx)
 		if err != nil {
 			return nil, err
 		}
-		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool { return edge != nil }), nil
+		return tx.mergePendingEdgesLocked(ctx, committed, func(edge *Edge) bool { return edge != nil })
 	}
-	return tx.getCommittedEdgesByTypeLocked("", func(edge *Edge) bool { return edge != nil })
+	return tx.getCommittedEdgesByTypeLocked(ctx, "", func(edge *Edge) bool { return edge != nil })
 }
 
 // GetEdgesByType returns edges of a given type including pending transaction writes.
-func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
+func (tx *BadgerTransaction) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
@@ -2366,30 +2381,30 @@ func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		committed, err := tx.engine.GetEdgesByType(edgeType)
+		committed, err := tx.engine.GetEdgesByType(ctx, edgeType)
 		if err != nil {
 			return nil, err
 		}
-		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+		return tx.mergePendingEdgesLocked(ctx, committed, func(edge *Edge) bool {
 			return edge.Type == edgeType
-		}), nil
+		})
 	}
-	return tx.getCommittedEdgesByTypeLocked(edgeType, func(edge *Edge) bool { return edge.Type == edgeType })
+	return tx.getCommittedEdgesByTypeLocked(ctx, edgeType, func(edge *Edge) bool { return edge.Type == edgeType })
 }
 
 // GetNodesByLabel returns nodes with the given label including pending transaction writes.
-func (tx *BadgerTransaction) GetNodesByLabel(label string) ([]*Node, error) {
+func (tx *BadgerTransaction) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 
-	committed, err := tx.getNodesByLabelLocked(label)
+	committed, err := tx.getNodesByLabelLocked(ctx, label)
 	if err != nil {
 		return nil, err
 	}
-	return tx.mergePendingNodesLocked(committed, func(node *Node) bool {
+	return tx.mergePendingNodesLocked(ctx, committed, func(node *Node) bool {
 		if node == nil {
 			return false
 		}
@@ -2399,18 +2414,18 @@ func (tx *BadgerTransaction) GetNodesByLabel(label string) ([]*Node, error) {
 			}
 		}
 		return false
-	}), nil
+	})
 }
 
 // StreamNodesByLabelProjected visits label matches from the transaction's
 // pinned snapshot and overlays pending writes as one stream. The callback can
 // stop iteration without forcing the transaction to resolve or copy the rest
 // of the label population.
-func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	return tx.streamNodesByLabelProjected(label, properties, visibleRead, visit)
+func (tx *BadgerTransaction) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
+	return tx.streamNodesByLabelProjected(ctx, label, properties, visibleRead, visit)
 }
 
-func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, properties []string, v readVisibility, visit func(*Node) error, readOptions ...StreamNodesOptions) error {
+func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, label string, properties []string, v readVisibility, visit func(*Node) error, readOptions ...StreamNodesOptions) error {
 	opts := nodeScanOptions(readOptions)
 	queryNodes := opts.QueryNodes && !opts.WithEmbeddings
 	if visit == nil {
@@ -2456,7 +2471,11 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		}
 		scope := tx.labelScanScopeLocked(opts.Prefix)
 		nowNanos := DecayScoringTime()
+		var cancel bulkReadCancellation
 		for _, n := range overlay {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			if !nodeIDInScope(n.ID, scope) || tx.engine.filterEntityByDecay(v, n, nowNanos) {
 				continue
 			}
@@ -2521,7 +2540,13 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 	// never answer a reveal read (or the reverse). Keep both views pinned to
 	// the same physical snapshot, but cache their populations independently.
 	if cached, ok := cache[cacheKey]; ok && !engineOverlaid {
+		// Replaying the pinned population is a bulk read like the scan that
+		// filled it: the caller's cancellation retires it here.
+		var cancel bulkReadCancellation
 		for _, node := range cached {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			if err := emitCommitted(node); err != nil {
 				return err
 			}
@@ -2529,14 +2554,18 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		if err := emitOverlay(); err != nil {
 			return err
 		}
-		return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit, queryNodes)
+		return tx.streamPendingLabelNodesLocked(ctx, label, seen, properties, invokeVisit, queryNodes)
 	}
 
 	completed := make([]*Node, 0)
 	afterNodeID := NodeID("")
 	if prefix := tx.snapshotLabelPrefixNodes[cacheKey]; !engineOverlaid && tx.snapshotTx != nil && len(prefix) > 0 {
 		completed = append(completed, prefix...)
+		var cancel bulkReadCancellation
 		for _, node := range prefix {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			if err := emitCommitted(node); err != nil {
 				return err
 			}
@@ -2550,11 +2579,12 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		return emitCommitted(node)
 	}
 	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
-		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(scope, label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit, queryNodes)
+		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, scope, label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit, queryNodes)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		err = tx.engine.streamNodesByLabelProjectedInScope(scope, label, properties, v, streamVisit, queryNodes)
+		err = tx.engine.streamNodesByLabelProjectedInScope(ctx, scope, label, properties, v, streamVisit, queryNodes)
 	} else {
 		err = tx.engine.streamNodesByLabelAtSnapshotWithView(
+			ctx,
 			scope,
 			label, tx.readTS, tx.withSnapshotViewLocked, properties, v, streamVisit, queryNodes,
 		)
@@ -2590,7 +2620,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 	if err := emitOverlay(); err != nil {
 		return err
 	}
-	return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit, queryNodes)
+	return tx.streamPendingLabelNodesLocked(ctx, label, seen, properties, invokeVisit, queryNodes)
 }
 
 // StreamNodesWithOptions streams the transaction's view of every node (its
@@ -2610,7 +2640,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
 		queryVisit := borrowQueryNodeScanVisitor(ctx, opts, visit)
 		defer queryVisit.release()
-		err := tx.streamNodesByLabelProjected(opts.Label, nil, opts.readVisibility(), queryVisit.callback, opts)
+		err := tx.streamNodesByLabelProjected(ctx, opts.Label, nil, opts.readVisibility(), queryVisit.callback, opts)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -2706,7 +2736,7 @@ func (tx *BadgerTransaction) streamCommittedNodesLocked(ctx context.Context, opt
 		// Reuse the logical MVCC iterator instead of materializing full nodes
 		// before the options-driven scan can choose its read contract.
 		return tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
-			return tx.engine.iterateNodesVisibleAtInScopeInTxn(txn, tx.labelScanScopeLocked(opts.Prefix), tx.readTS, func(node *Node) error {
+			return tx.engine.iterateNodesVisibleAtInScopeInTxn(ctx, txn, tx.labelScanScopeLocked(opts.Prefix), tx.readTS, func(node *Node) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
@@ -2720,7 +2750,7 @@ func (tx *BadgerTransaction) streamCommittedNodesLocked(ctx context.Context, opt
 			}, opts)
 		})
 	}
-	nodes, err := tx.getAllCommittedNodesLocked()
+	nodes, err := tx.getAllCommittedNodesLocked(ctx)
 	if err != nil {
 		return err
 	}
@@ -2761,6 +2791,7 @@ func snapshotLabelProjectionKey(label string, properties []string) string {
 }
 
 func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
+	ctx context.Context,
 	label string,
 	seen map[NodeID]struct{},
 	properties []string,
@@ -2770,7 +2801,13 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
 		return nil
 	}
+	// The pending overlay is emitted under the read's own context, so a
+	// canceled statement stops here instead of projecting the rest.
+	var cancel bulkReadCancellation
 	for id, node := range tx.pendingNodes {
+		if err := cancel.check(ctx); err != nil {
+			return err
+		}
 		if _, emitted := seen[id]; emitted {
 			continue
 		}
@@ -2786,7 +2823,10 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 
 // GetFirstNodeByLabel returns the first visible node with the given label.
 func (tx *BadgerTransaction) GetFirstNodeByLabel(label string) (*Node, error) {
-	nodes, err := tx.GetNodesByLabel(label)
+	// The first-node read has no caller context of its own, so it runs on the
+	// transaction's own lifetime: context.Background is the true lifetime at
+	// this context-free entry point, not a forwarded default.
+	nodes, err := tx.GetNodesByLabel(context.Background(), label)
 	if err != nil {
 		return nil, err
 	}
@@ -2797,7 +2837,7 @@ func (tx *BadgerTransaction) GetFirstNodeByLabel(label string) (*Node, error) {
 }
 
 // AllNodes returns all visible nodes including pending transaction writes.
-func (tx *BadgerTransaction) AllNodes() ([]*Node, error) {
+func (tx *BadgerTransaction) AllNodes(ctx context.Context) ([]*Node, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
@@ -2808,21 +2848,13 @@ func (tx *BadgerTransaction) AllNodes() ([]*Node, error) {
 		return nil, err
 	}
 
-	committed, err := tx.getAllCommittedNodesLocked()
+	committed, err := tx.getAllCommittedNodesLocked(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return tx.mergePendingNodesLocked(committed, func(node *Node) bool {
+	return tx.mergePendingNodesLocked(ctx, committed, func(node *Node) bool {
 		return node != nil
-	}), nil
-}
-
-func (tx *BadgerTransaction) GetAllNodes() []*Node {
-	nodes, err := tx.AllNodes()
-	if err != nil {
-		return nil
-	}
-	return nodes
+	})
 }
 
 func (tx *BadgerTransaction) HasPendingNodeMutations() bool {
@@ -2848,21 +2880,31 @@ func (tx *BadgerTransaction) HasPendingEdgeMutations() bool {
 // callers can never mutate overlay state. Nil records are skipped (idOf
 // returns the zero ID for them). When there is no overlay, the committed
 // slice is returned unchanged.
+//
+// ctx is the read's own context, threaded from the route that asked for the
+// merged population. Both overlay loops observe its cancellation, so a
+// canceled read retires with the caller's error and no merged slice: nothing
+// partial escapes the kernel and no caller caches a truncated overlay.
 func mergePendingLocked[ID comparable, T any](
+	ctx context.Context,
 	committed []T,
 	pending map[ID]T,
 	deleted map[ID]struct{},
 	includePending func(T) bool,
 	idOf func(T) ID,
 	copyOf func(T) T,
-) []T {
+) ([]T, error) {
 	if len(pending) == 0 && len(deleted) == 0 {
-		return committed
+		return committed, nil
 	}
 	merged := make([]T, 0, util.SafePreallocSum(len(committed), len(pending)))
 	seen := make(map[ID]struct{}, util.SafePreallocSum(len(committed), len(pending)))
 	var zero ID
+	var cancel bulkReadCancellation
 	for _, record := range committed {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		id := idOf(record)
 		if id == zero {
 			continue // nil record
@@ -2884,6 +2926,9 @@ func mergePendingLocked[ID comparable, T any](
 	}
 
 	for id, record := range pending {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		if _, exists := seen[id]; exists {
 			continue
 		}
@@ -2892,11 +2937,11 @@ func mergePendingLocked[ID comparable, T any](
 		}
 	}
 
-	return merged
+	return merged, nil
 }
 
-func (tx *BadgerTransaction) mergePendingNodesLocked(committed []*Node, includePending func(*Node) bool) []*Node {
-	return mergePendingLocked(committed, tx.pendingNodes, tx.deletedNodes, includePending, func(node *Node) NodeID {
+func (tx *BadgerTransaction) mergePendingNodesLocked(ctx context.Context, committed []*Node, includePending func(*Node) bool) ([]*Node, error) {
+	return mergePendingLocked(ctx, committed, tx.pendingNodes, tx.deletedNodes, includePending, func(node *Node) NodeID {
 		if node == nil {
 			return ""
 		}
@@ -2904,8 +2949,8 @@ func (tx *BadgerTransaction) mergePendingNodesLocked(committed []*Node, includeP
 	}, copyNode)
 }
 
-func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includePending func(*Edge) bool) []*Edge {
-	return mergePendingLocked(committed, tx.pendingEdges, tx.deletedEdges, includePending, func(edge *Edge) EdgeID {
+func (tx *BadgerTransaction) mergePendingEdgesLocked(ctx context.Context, committed []*Edge, includePending func(*Edge) bool) ([]*Edge, error) {
+	return mergePendingLocked(ctx, committed, tx.pendingEdges, tx.deletedEdges, includePending, func(edge *Edge) EdgeID {
 		if edge == nil {
 			return ""
 		}
@@ -2936,7 +2981,12 @@ func (tx *BadgerTransaction) commitCancelledLocked() error {
 // between polls of the commit context.
 const commitCancelPollEvery = 256
 
-func (tx *BadgerTransaction) Commit() error { return tx.PublishCommit(nil, CommitPublication{}) }
+// Commit is the context-free commit: it has no caller to cancel it, so its
+// own lifetime (context.Background) is the boundary commit-time validation
+// reads run on. CommitContext carries the caller's context instead.
+func (tx *BadgerTransaction) Commit() error {
+	return tx.PublishCommit(context.Background(), CommitPublication{})
+}
 
 // commitConflictError reports a Badger write conflict found while committing
 // in the storage commit-conflict shape (ErrConflict, localized).
@@ -3362,14 +3412,14 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 	}
 }
 
-func (tx *BadgerTransaction) getNodesByLabelLocked(label string) ([]*Node, error) {
+func (tx *BadgerTransaction) getNodesByLabelLocked(ctx context.Context, label string) ([]*Node, error) {
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.GetNodesByLabelInScope(tx.labelScanScopeLocked(), label)
+		return tx.engine.GetNodesByLabelInScope(ctx, tx.labelScanScopeLocked(), label)
 	}
-	return tx.engine.getNodesByLabelVisibleAtSnapshotWithView(tx.labelScanScopeLocked(), label, tx.readTS, tx.withSnapshotViewLocked)
+	return tx.engine.getNodesByLabelVisibleAtSnapshotWithView(ctx, tx.labelScanScopeLocked(), label, tx.readTS, tx.withSnapshotViewLocked)
 }
 
 // labelScanScopeLocked is the node ID prefix of the database the transaction
@@ -3397,7 +3447,9 @@ func (tx *BadgerTransaction) labelScanScopeLocked(prefixes ...string) string {
 // rewrites are left out; the checks compare their pending versions
 // separately.
 func (tx *BadgerTransaction) committedConstraintNodesLocked(label string) ([]*Node, error) {
-	nodes, err := tx.engine.GetStoredNodesByLabel(label)
+	// A commit-time integrity scan on the accepted write's own lifetime
+	// (context.Background): a canceled statement read never cancels it.
+	nodes, err := tx.engine.GetStoredNodesByLabel(context.Background(), label)
 	if err != nil {
 		return nil, err
 	}
@@ -3847,11 +3899,15 @@ func hasUUIDShape(id string) bool {
 // namespace and the schema lookup is cached on the transaction rather than
 // re-derived from each node ID. Direct callers (tests, internal helpers)
 // that have not yet performed a pinned write will pin here on first use.
-func (tx *BadgerTransaction) validateNodeConstraints(node *Node) error {
+//
+// ctx is the lifetime of the read this validation performs: a staging write
+// passes its own (context.Background), a commit passes the commit's caller
+// context so a terminated statement stops before anything is written.
+func (tx *BadgerTransaction) validateNodeConstraints(ctx context.Context, node *Node) error {
 	if err := tx.pinNamespaceFromIDLocked(string(node.ID)); err != nil {
 		return err
 	}
-	return (nodeConstraintValidation{schema: tx.engine.GetSchemaForNamespace(tx.namespace), transaction: tx}).validate(node)
+	return (nodeConstraintValidation{ctx: ctx, schema: tx.engine.GetSchemaForNamespace(tx.namespace), transaction: tx}).validate(node)
 }
 
 // checkUniqueConstraint ensures property value is unique across ALL data.
@@ -4032,7 +4088,9 @@ func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property s
 }
 
 // checkNodeKeyConstraint ensures composite key uniqueness across ALL data.
-func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) error {
+// ctx is the lifetime of the committed candidate read (see
+// validateNodeConstraints).
+func (tx *BadgerTransaction) checkNodeKeyConstraint(ctx context.Context, node *Node, c Constraint) error {
 	values, missing := nodeConstraintKeyValues(node, c.Properties)
 	if missing >= 0 {
 		if c.Type == ConstraintUnique {
@@ -4067,7 +4125,7 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	// Commits update the index before releasing the key's commit lock, so a
 	// concurrent commit of the same key is listed or still holds the lock.
 	if idx := tx.engine.GetSchemaForNamespace(tx.namespace).filledKeyIndex(c.Label, c.Properties); idx != nil {
-		candidates, err := tx.engine.keyConstraintNodes(idx, c.Label, c.Properties[0], values)
+		candidates, err := tx.engine.keyConstraintNodes(ctx, idx, c.Label, c.Properties[0], values)
 		if err != nil {
 			return err
 		}
@@ -4185,7 +4243,10 @@ func (tx *BadgerTransaction) checkExistenceConstraint(node *Node, c Constraint) 
 // It must validate against:
 // - other pending nodes in this transaction (read-your-writes), and
 // - existing committed nodes in storage (via the label index scan).
-func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) error {
+//
+// ctx is the lifetime of that committed read: the staging write's own for a
+// staged node, the commit's caller context during commit validation.
+func (tx *BadgerTransaction) checkTemporalConstraint(ctx context.Context, node *Node, c Constraint) error {
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	if !ok {
 		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
@@ -4237,7 +4298,7 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 	// the nodes this transaction rewrites or deletes, whose pending versions
 	// were checked above.
 	if tx.engine.temporalIndexAuthoritative(tx.engine.GetSchemaForNamespace(tx.namespace), c) {
-		history, ok, err := tx.engine.temporalKeyHistoryNodesLatest(tx.commitCtx, tx.namespace, c, node)
+		history, ok, err := tx.engine.temporalKeyHistoryNodesLatest(ctx, tx.namespace, c, node)
 		if err != nil {
 			return err
 		}
@@ -4473,7 +4534,7 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(preserveWrites bool) error {
 	return tx.refreshReadVersionForNamespaceLocked()
 }
 
-func (tx *BadgerTransaction) validateAllConstraints() error {
+func (tx *BadgerTransaction) validateAllConstraints(ctx context.Context) error {
 	checked := 0
 	for _, node := range tx.pendingNodes {
 		if checked%commitCancelPollEvery == 0 {
@@ -4482,7 +4543,7 @@ func (tx *BadgerTransaction) validateAllConstraints() error {
 			}
 		}
 		checked++
-		if err := tx.validateNodeConstraints(node); err != nil {
+		if err := tx.validateNodeConstraints(ctx, node); err != nil {
 			return err
 		}
 	}
@@ -4645,11 +4706,12 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 		return nil
 	}
 
-	// Check against committed edges via the engine
+	// Check against committed edges via the engine. The integrity scan runs on
+	// the accepted write's own lifetime (context.Background).
 	if hook := getUniqueConstraintScanHook(); hook != nil {
 		hook()
 	}
-	existingEdges, err := tx.engine.GetStoredEdgesByType(edge.Type)
+	existingEdges, err := tx.engine.GetStoredEdgesByType(context.Background(), edge.Type)
 	if err != nil {
 		return err
 	}
@@ -4723,8 +4785,9 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 		}
 	}
 
-	// Check against committed edges (filtered by namespace)
-	existingEdges, err := tx.engine.GetStoredEdgesByType(edge.Type)
+	// Check against committed edges (filtered by namespace) on the accepted
+	// write's own lifetime (context.Background).
+	existingEdges, err := tx.engine.GetStoredEdgesByType(context.Background(), edge.Type)
 	if err != nil {
 		return err
 	}
@@ -4754,35 +4817,24 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 
 // checkEdgeCardinality enforces cardinality constraints within a transaction.
 // It counts pending + committed edges of the given type connected to the anchor node,
-// excluding deleted edges, and rejects the new edge if adding it would exceed MaxCount.
+// excluding deleted and rewritten edges, and rejects the new edge if adding it would
+// exceed MaxCount.
+//
+// Its input authority is the transaction's staged view: pending edge images
+// selected from the pending map, over the engine's committed adjacency of the
+// anchor, where a rewritten committed image counts once as its pending version and
+// a deleted one does not count at all. Population selection is all this route
+// keeps; the counter owns the population predicate, the threshold and the
+// violation that the engine's publishing-transaction route uses as well, and this
+// route counts the whole population before reporting, so the violation shows the
+// real total.
 func (tx *BadgerTransaction) checkEdgeCardinality(edge *Edge, c Constraint, namespace string) error {
-	// Determine anchor node based on direction.
-	var anchorNode NodeID
-	if c.Direction == "OUTGOING" {
-		anchorNode = NodeID(edge.StartNode)
-	} else {
-		anchorNode = NodeID(edge.EndNode)
-	}
-
-	nsPrefix := namespace + ":"
-	count := 0
+	counter := newEdgeCardinalityCounter(c, edge, namespace, edge.ID)
 
 	// Count pending edges in this transaction that match type + anchor + direction.
 	for id, pendingEdge := range tx.pendingEdges {
-		if id == edge.ID || pendingEdge.Type != c.Label {
-			continue
-		}
-		if namespace != "" && !strings.HasPrefix(string(id), nsPrefix) {
-			continue
-		}
-		var pendingAnchor NodeID
-		if c.Direction == "OUTGOING" {
-			pendingAnchor = NodeID(pendingEdge.StartNode)
-		} else {
-			pendingAnchor = NodeID(pendingEdge.EndNode)
-		}
-		if pendingAnchor == anchorNode {
-			count++
+		if counter.anchored(pendingEdge) && counter.admits(id) {
+			counter.counts(pendingEdge.Type)
 		}
 	}
 
@@ -4790,31 +4842,25 @@ func (tx *BadgerTransaction) checkEdgeCardinality(edge *Edge, c Constraint, name
 	var committedEdges []*Edge
 	var err error
 	if c.Direction == "OUTGOING" {
-		committedEdges, err = tx.engine.GetStoredOutgoingEdges(anchorNode)
+		committedEdges, err = tx.engine.GetStoredOutgoingEdges(context.Background(), counter.anchor)
 	} else {
-		committedEdges, err = tx.engine.GetStoredIncomingEdges(anchorNode)
+		committedEdges, err = tx.engine.GetStoredIncomingEdges(context.Background(), counter.anchor)
 	}
 	if err != nil {
 		return err
 	}
 	for _, existingEdge := range committedEdges {
-		if existingEdge.ID == edge.ID || existingEdge.Type != c.Label {
-			continue
-		}
-		if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
-			continue
-		}
 		// Edges deleted here don't count; rewritten ones are counted as pending.
 		if tx.committedEdgeSupersededLocked(existingEdge.ID) {
 			continue
 		}
-		count++
+		if counter.admits(existingEdge.ID) {
+			counter.counts(existingEdge.Type)
+		}
 	}
 
-	if count >= c.MaxCount {
-		dir := strings.ToLower(c.Direction)
-		message := localization.StorageValidationCardinalityExceeded(dir, c.MaxCount, c.Label, string(anchorNode), count)
-		return newLocalizedConstraintViolation(ConstraintCardinality, c.Label, nil, message, nil)
+	if counter.reached() {
+		return counter.violation()
 	}
 
 	return nil
@@ -4904,9 +4950,9 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(node *Node, oldNode
 		var edges []*Edge
 		var err error
 		if isOutgoing {
-			edges, err = tx.engine.GetStoredOutgoingEdges(node.ID)
+			edges, err = tx.engine.GetStoredOutgoingEdges(context.Background(), node.ID)
 		} else {
-			edges, err = tx.engine.GetStoredIncomingEdges(node.ID)
+			edges, err = tx.engine.GetStoredIncomingEdges(context.Background(), node.ID)
 		}
 		if err != nil {
 			return err

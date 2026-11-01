@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -307,7 +308,7 @@ func TestGetStorageWithAuth_ForwardsTokenToRemoteFactory(t *testing.T) {
 	require.NotNil(t, engine)
 
 	// Trigger at least one routed read through the composite wrapper.
-	_, err = engine.AllNodes()
+	_, err = engine.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "Bearer svc-principal-token", capturedToken)
 }

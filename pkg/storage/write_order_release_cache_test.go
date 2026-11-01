@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func TestOrderReleaseEvictsCachedImages(t *testing.T) {
 	createErr := <-created
 
 	require.NoError(t, b.FlushWriteBehind(nil))
-	edges, err := b.AllEdges()
+	edges, err := b.AllEdges(context.Background())
 	require.NoError(t, err)
 	for _, e := range edges {
 		for _, id := range []NodeID{e.StartNode, e.EndNode} {

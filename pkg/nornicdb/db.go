@@ -517,30 +517,24 @@ type DatabaseAndStorage struct {
 //	// Database recovered
 //	fmt.Println("Database opened successfully")
 //
-// Example (Migration):
+// Example (Enumerating Existing Data):
 //
-//	// Open old database
-//	oldDB, err := nornicdb.Open("/data/old", nil)
+//	db, err := nornicdb.Open("/data/existing", nil)
 //	if err != nil {
 //		log.Fatal(err)
 //	}
-//	defer oldDB.Close()
-//
-//	// Create new database with updated config
-//	newConfig := nornicdb.DefaultConfig()
-//	newConfig.EmbeddingDimensions = 3072 // Upgraded embeddings
-//	newDB, err := nornicdb.Open("/data/new", newConfig)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//	defer newDB.Close()
-//
-//	// Migrate data
-//	nodes, _ := oldDB.GetAllNodes(context.Background())
-//	for _, node := range nodes {
-//		// Re-embed with new model (done by the application)
-//		// Store in new database
-//		newDB.Store(context.Background(), node)
+//	defer db.Close()
+//	for offset := 0; ; offset += 1000 {
+//		nodes, err := db.ListNodes(context.Background(), "", 1000, offset)
+//		if err != nil {
+//			log.Fatal(err)
+//		}
+//		if len(nodes) == 0 {
+//			break
+//		}
+//		for _, node := range nodes {
+//			fmt.Println(node.ID, node.Labels)
+//		}
 //	}
 //
 // # Error Handling

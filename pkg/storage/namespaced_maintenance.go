@@ -33,13 +33,19 @@ func (n *NamespacedEngine) MarkCleanShutdown(ctx context.Context) error {
 // NodeCountByPrefix counts nodes in this namespace whose ID starts with prefix.
 // The caller-supplied prefix is namespace-relative.
 func (n *NamespacedEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	return namespacedPrefixCount(n, prefix, PrefixStatsEngine.NodeCountByPrefix, n.AllNodes, func(node *Node) string { return string(node.ID) })
+	return namespacedPrefixCount(n, prefix, PrefixStatsEngine.NodeCountByPrefix, func() ([]*Node, error) {
+		// Prefix counts are maintenance reads: context.Background is the true
+		// lifetime at this context-free boundary.
+		return n.AllNodes(context.Background())
+	}, func(node *Node) string { return string(node.ID) })
 }
 
 // EdgeCountByPrefix counts edges in this namespace whose ID starts with prefix.
 // The caller-supplied prefix is namespace-relative.
 func (n *NamespacedEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	return namespacedPrefixCount(n, prefix, PrefixStatsEngine.EdgeCountByPrefix, n.AllEdges, func(edge *Edge) string { return string(edge.ID) })
+	return namespacedPrefixCount(n, prefix, PrefixStatsEngine.EdgeCountByPrefix, func() ([]*Edge, error) {
+		return n.AllEdges(context.Background())
+	}, func(edge *Edge) string { return string(edge.ID) })
 }
 
 // GetSchemaForNamespace forwards the per-namespace schema lookup.
@@ -84,7 +90,9 @@ func (n *NamespacedEngine) IterateNodes(fn func(*Node) bool) error {
 			return fn(n.toUserNode(node, nodeUserView{}))
 		})
 	}
-	nodes, err := n.inner.AllNodes()
+	// Maintenance walk without a caller context: context.Background is the
+	// true lifetime at this context-free boundary.
+	nodes, err := n.inner.AllNodes(context.Background())
 	if err != nil {
 		return err
 	}

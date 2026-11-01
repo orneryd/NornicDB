@@ -52,10 +52,10 @@ func TestBadgerEngine_MaterializeAdjEdges_CacheMissAndDecodeError(t *testing.T) 
 		return txn.Set(edgeKey("test:e-corrupt"), []byte("bad-edge-bytes"))
 	}))
 
-	got, err := engine.materializeAdjEdges([]EdgeID{"test:e1", "test:e2", "test:e-missing", "test:e-corrupt"}, visibleRead)
+	got, err := engine.materializeAdjEdges(context.Background(), []EdgeID{"test:e1", "test:e2", "test:e-missing", "test:e-corrupt"}, visibleRead)
 	require.Error(t, err)
 	require.Nil(t, got)
-	got, err = engine.materializeAdjEdges([]EdgeID{"test:e1", "test:e2", "test:e-missing"}, visibleRead)
+	got, err = engine.materializeAdjEdges(context.Background(), []EdgeID{"test:e1", "test:e2", "test:e-missing"}, visibleRead)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	ids := map[EdgeID]struct{}{}

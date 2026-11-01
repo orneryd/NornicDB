@@ -9,6 +9,7 @@ package storage
 // from 6 s to 36 min (#850).
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -51,9 +52,9 @@ func TestAdjacencyReadsIgnoreDeletedNeighbourKeys(t *testing.T) {
 		start := time.Now()
 		for i := 0; i < probes; i++ {
 			id := NodeID(fmt.Sprintf("keep:n%d", i))
-			out, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: id})
+			out, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: id})
 			require.NoError(t, err)
-			in, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: id})
+			in, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: id})
 			require.NoError(t, err)
 			require.Empty(t, out)
 			require.Empty(t, in)

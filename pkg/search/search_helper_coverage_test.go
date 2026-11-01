@@ -67,7 +67,7 @@ func TestPropertyVectorHelpers(t *testing.T) {
 	(*Service)(nil).RemovePropertyVectorIndex("body")
 
 	liveSvc := NewService(engine, 4, nil)
-	liveSvc.resultCache.Put("cached", &SearchResponse{Query: "cached"})
+	liveSvc.resultCache.Put(context.Background(), "cached", &SearchResponse{Query: "cached"})
 	liveSvc.nodePropVector = map[string]map[string]string{
 		"node-1": {"body": nodePropertyVectorKey("node-1", "body")},
 		"node-2": {"title": nodePropertyVectorKey("node-2", "title")},

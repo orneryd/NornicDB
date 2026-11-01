@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -132,8 +133,8 @@ func TestBug_NodeTemporalCompositeKey_Transaction(t *testing.T) {
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		c := compositeTemporalConstraint()
-		require.NoError(t, tx.checkTemporalConstraint(compositeTemporalNode("adj2", "adj", "x", compositeDay(10), compositeDay(20)), c))
-		require.Error(t, tx.checkTemporalConstraint(compositeTemporalNode("adj3", "adj", "x", compositeDay(9), compositeDay(20)), c))
+		require.NoError(t, tx.checkTemporalConstraint(context.Background(), compositeTemporalNode("adj2", "adj", "x", compositeDay(10), compositeDay(20)), c))
+		require.Error(t, tx.checkTemporalConstraint(context.Background(), compositeTemporalNode("adj3", "adj", "x", compositeDay(9), compositeDay(20)), c))
 	})
 }
 

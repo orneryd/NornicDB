@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,18 +27,16 @@ func (e *failingNodeLookupEngine) Namespace() string {
 	return ""
 }
 
-func (e *failingNodeLookupEngine) AllNodes() ([]*storage.Node, error) {
-	if e.allNodesErr != nil {
-		return nil, e.allNodesErr
-	}
-	return e.Engine.AllNodes()
+func (e *failingNodeLookupEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.allNodesErr, func(ctx context.Context) ([]*storage.Node, error) {
+		return e.Engine.AllNodes(ctx)
+	})
 }
 
-func (e *failingNodeLookupEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	if e.byLabelErr != nil {
-		return nil, e.byLabelErr
-	}
-	return e.Engine.GetNodesByLabel(label)
+func (e *failingNodeLookupEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.byLabelErr, func(ctx context.Context) ([]*storage.Node, error) {
+		return e.Engine.GetNodesByLabel(ctx, label)
+	})
 }
 
 // TestCountSubqueryComparison tests COUNT { } subquery functionality
@@ -3551,7 +3550,7 @@ func TestExistsSubqueryHelpers_DirectBranches(t *testing.T) {
 	`, nil)
 	require.NoError(t, err)
 
-	nodes, err := store.GetNodesByLabel("Person")
+	nodes, err := store.GetNodesByLabel(ctx, "Person")
 	require.NoError(t, err)
 	var alice *storage.Node
 	for _, n := range nodes {

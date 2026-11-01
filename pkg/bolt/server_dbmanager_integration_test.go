@@ -126,7 +126,7 @@ func TestGh738_BoltStatementAdmission(t *testing.T) {
 	}
 	store, err := manager.GetStorage("system")
 	require.NoError(t, err)
-	nodes, err := store.GetNodesByLabel("U717")
+	nodes, err := store.GetNodesByLabel(ctx, "U717")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }
@@ -236,7 +236,7 @@ func TestGh683_BoltCompositeCommit(t *testing.T) {
 			require.NoError(t, tx.Commit(ctx))
 			store, err := manager.GetStorage("share_shard")
 			require.NoError(t, err)
-			nodes, err := store.GetNodesByLabel("TxShare")
+			nodes, err := store.GetNodesByLabel(ctx, "TxShare")
 			require.NoError(t, err)
 			require.Len(t, nodes, writes)
 		})

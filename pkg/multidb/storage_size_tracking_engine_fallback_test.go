@@ -195,7 +195,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_FallbackOnNonLookupEngine(t *te
 	lookup := wrapped.(storage.LabelNodeIDLookupEngine)
 
 	count := 0
-	require.NoError(t, lookup.ForEachNodeIDByLabel("Person", func(id storage.NodeID) bool {
+	require.NoError(t, lookup.ForEachNodeIDByLabel(context.Background(), "Person", func(id storage.NodeID) bool {
 		count++
 		return true
 	}))
@@ -203,7 +203,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_FallbackOnNonLookupEngine(t *te
 
 	// Visit returning false stops early.
 	count = 0
-	require.NoError(t, lookup.ForEachNodeIDByLabel("Person", func(id storage.NodeID) bool {
+	require.NoError(t, lookup.ForEachNodeIDByLabel(context.Background(), "Person", func(id storage.NodeID) bool {
 		count++
 		return false
 	}))

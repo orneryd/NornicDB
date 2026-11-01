@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
@@ -87,11 +88,11 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 		}
 	})
 
-	outgoing, err := reader.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: startID})
+	outgoing, err := reader.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: startID})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, edgeID, outgoing[0].ID)
-	incoming, err := reader.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: endID})
+	incoming, err := reader.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: endID})
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 	require.Equal(t, edgeID, incoming[0].ID)
@@ -158,12 +159,12 @@ func TestV3MigrationPreservesLegacyEdgeHistory(t *testing.T) {
 				fixtureowner.Own(t, engine)
 			}
 			require.NoError(t, err)
-			historical, err := engine.GetOutgoingEdgesVisibleAt(startID, created.Version)
+			historical, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), startID, created.Version)
 			require.NoError(t, err)
 			require.Len(t, historical, 1)
 			if tc.deleted {
 				require.Equal(t, edgeID, historical[0].ID)
-				current, err := engine.GetOutgoingEdges(startID)
+				current, err := engine.GetOutgoingEdges(context.Background(), startID)
 				require.NoError(t, err)
 				require.Empty(t, current)
 			} else {

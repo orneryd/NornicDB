@@ -61,7 +61,7 @@ func TestResolveNodeFromIDEqualityTerm_Branches(t *testing.T) {
 
 	_, err := exec.Execute(ctx, "CREATE (n:Person {name:'A'})", nil)
 	require.NoError(t, err)
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(ctx)
 	require.NoError(t, err)
 	require.NotEmpty(t, nodes)
 	nid := string(nodes[0].ID)

@@ -300,7 +300,7 @@ func TestRelationshipSearchDisabled(t *testing.T) {
 
 type failingEdgeStreamEngine struct{ storage.Engine }
 
-func (failingEdgeStreamEngine) AllEdges() ([]*storage.Edge, error) {
+func (failingEdgeStreamEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	return nil, errors.New("storage unavailable")
 }
 
