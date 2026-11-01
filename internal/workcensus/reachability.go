@@ -137,30 +137,54 @@ func OutermostFunction(fn *ssa.Function) *ssa.Function {
 
 // WalkCallers is the shared incoming walk, the reverse of ReachableFrom. From
 // roots it follows SourceCallSites breadth-first; each site is attributed to its
-// outermost enclosing source function. visit sees every caller once, with the
-// function it calls toward, and reports whether to walk past that caller and
-// whether to stop. Visibility is the call graph's, never a runtime proof.
+// outermost enclosing source function. visit sees every distinct caller edge,
+// because what a caller holds on its calls can differ by callee, and reports
+// whether to walk past that caller and whether to stop. Only the expansion is
+// deduplicated: a caller is expanded once, when any of its edges asks for it. A
+// root is not visited as a caller. Visibility is the call graph's, never a
+// runtime proof.
 // Author: storage-format-owners lane (Claude), #1693, 30 October 2026.
 func (p *Program) WalkCallers(roots []*ssa.Function, visit func(caller, callee *ssa.Function) (expand, stop bool)) {
-	seen := map[*ssa.Function]bool{}
+	p.WalkCallerEdges(roots, func(caller, callee *ssa.Function, _ []CallPath) (bool, bool) { return visit(caller, callee) })
+}
+
+// WalkCallerEdges is WalkCallers with the call paths of each edge, so a decision
+// about an edge can rest on that edge's own calls.
+func (p *Program) WalkCallerEdges(roots []*ssa.Function, visit func(caller, callee *ssa.Function, paths []CallPath) (expand, stop bool)) {
+	expanded := map[*ssa.Function]bool{}
 	for _, root := range roots {
-		seen[root] = true
+		expanded[root] = true
 	}
+	isRoot := map[*ssa.Function]bool{}
+	for root := range expanded {
+		isRoot[root] = true
+	}
+	edges := map[[2]*ssa.Function]bool{}
 	queue := append([]*ssa.Function(nil), roots...)
 	for len(queue) > 0 {
 		fn := queue[0]
 		queue = queue[1:]
-		for _, site := range p.SourceCallSites(fn) {
-			caller := OutermostFunction(site.Parent())
-			if seen[caller] {
+		byCaller := map[*ssa.Function][]CallPath{}
+		var callers []*ssa.Function
+		for _, path := range p.SourceCallPaths(fn) {
+			caller := OutermostFunction(path.Site.Parent())
+			if _, seen := byCaller[caller]; !seen {
+				callers = append(callers, caller)
+			}
+			byCaller[caller] = append(byCaller[caller], path)
+		}
+		for _, caller := range callers {
+			edge := [2]*ssa.Function{caller, fn}
+			if isRoot[caller] || edges[edge] {
 				continue
 			}
-			seen[caller] = true
-			expand, stop := visit(caller, fn)
+			edges[edge] = true
+			expand, stop := visit(caller, fn, byCaller[caller])
 			if stop {
 				return
 			}
-			if expand {
+			if expand && !expanded[caller] {
+				expanded[caller] = true
 				queue = append(queue, caller)
 			}
 		}
