@@ -1,0 +1,315 @@
+{
+  "version": 1,
+  "sourceCommit": "67e180c85f726db12c0e51ee4ec76da990a386ed",
+  "sourceArchiveSha256": "6a7adb2547e60e5bfc3a4a901703d74dab00803966203fa22ab5a4694a2d936e",
+  "sourceArchiveBytes": 26433387,
+  "cargoLockSha256": "43f3e6fc17ddc3615d984524eb3127c581a21810a56a8e723630f304a51fb8bb",
+  "rustVersion": "1.99.1",
+  "components": [
+    {
+      "name": "rustc",
+      "url": "https://static.rust-lang.org/dist/2026-10-15/rustc-1.99.1-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "85e7c0e6f21636f714e2a42966011364a6cc56b6548126d32144d6ba90904966"
+    },
+    {
+      "name": "cargo",
+      "url": "https://static.rust-lang.org/dist/2026-10-15/cargo-1.99.1-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "47babc028247e26577f8a1bf390b11f447ad9b7ab93f5c9a0dda078935fc149b"
+    },
+    {
+      "name": "rust-std",
+      "url": "https://static.rust-lang.org/dist/2026-10-15/rust-std-1.99.1-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "d1290c05994a59c029e562cb75be1bddc6fb11a4c501e1b7b0f61d119c6cbb12"
+    }
+  ],
+  "nextestVersion": "0.9.150",
+  "nextestSha256": "b0959bc64232974224cf9fb22c915845398c0e8668fa7831eb5b43fb1eef781f",
+  "patches": [
+    {
+      "path": "rust/crates/pd-test-support/src/native.rs",
+      "asset": "native.rs",
+      "beforeSha256": "4034f4370b2f819c47e08bafbef6dce521d546fda78ce59410e2b335ab823301",
+      "afterSha256": "961810f14be137f8a0962f8e16724e832afb13f21c4e0d5bbe450a075272bdf7"
+    },
+    {
+      "path": "rust/crates/pd-infra-adapters/src/bolt/mod.rs",
+      "asset": "bolt.rs",
+      "beforeSha256": "645692ca171c7b699330c7b3fdc8d958e314a6b1f16defc499d026da08569802",
+      "afterSha256": "b15bf5289d9b56adfed9eb07bd9df3dfbb905335fc97fccf8b203826564ab343"
+    }
+  ],
+  "case": "cases_multilingual::test_colliding_header_and_unicode_sentence_share_all_consumer_outcomes_alternative_false_ar",
+  "diagnosticLimitations": [
+    "Private application instrumentation changes diagnostic overhead; apply same snapshot to every arm",
+    "Client duration includes parameter conversion and full Bolt result consumption, not engine-only execution",
+    "Engine shape hashes may map to multiple exact hashes; ambiguous mappings must not be attributed",
+    "Engine source remains the exact committed tree; operator files are untracked and recorded"
+  ],
+  "toolchainTransport": "official gzip components; worker image has no xz binary",
+  "nativePackages": [
+    {
+      "name": "libbz2-dev",
+      "version": "1.0.8-5+b1",
+      "url": "https://deb.debian.org/debian/pool/main/b/bzip2/libbz2-dev_1.0.8-5+b1_amd64.deb",
+      "sha256": "df7204e188f7514ceae9c6f57c6c8b25ce8a642746fe284c6e89122ef26b7e57",
+      "bytes": 30868,
+      "depends": "libbz2-1.0 (= 1.0.8-5+b1), libc6-dev | libc-dev"
+    },
+    {
+      "name": "libarchive-dev",
+      "version": "3.6.2-1+deb12u5",
+      "url": "https://security.debian.org/debian-security/pool/updates/main/liba/libarchive/libarchive-dev_3.6.2-1+deb12u5_amd64.deb",
+      "sha256": "e8dbaf0d7d2f385063531832e4e97bbcd439c5ea2178806772be48645276135a",
+      "bytes": 561404,
+      "depends": "libarchive13 (= 3.6.2-1+deb12u5)"
+    },
+    {
+      "name": "libarchive13",
+      "version": "3.6.2-1+deb12u5",
+      "url": "https://security.debian.org/debian-security/pool/updates/main/liba/libarchive/libarchive13_3.6.2-1+deb12u5_amd64.deb",
+      "sha256": "45419b8c7646c1af12783ae31906ce2da4c465c1a948b01f8f44152d8269f403",
+      "bytes": 345488,
+      "depends": "libacl1 (>= 2.2.23), libbz2-1.0, libc6 (>= 2.36), liblz4-1 (>= 0.0~r130), liblzma5 (>= 5.2.2), libnettle8, libxml2 (>= 2.7.4), libzstd1 (>= 1.5.2), zlib1g (>= 1:1.1.4)"
+    },
+    {
+      "name": "libpfm4",
+      "version": "4.13.0-1",
+      "url": "https://deb.debian.org/debian/pool/main/libp/libpfm4/libpfm4_4.13.0-1_amd64.deb",
+      "sha256": "739c1255e9f39f6b094780ed02665eeb58abe5cfa7a156d83dfac45c34e8fe87",
+      "bytes": 294264,
+      "depends": "libc6 (>= 2.14)"
+    },
+    {
+      "name": "libzstd1",
+      "version": "1.5.4+dfsg2-5",
+      "url": "https://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_amd64.deb",
+      "sha256": "6315b5ac38b724a710fb96bf1042019398cb656718b1522279a5185ed39318fa",
+      "bytes": 290036,
+      "depends": "libc6 (>= 2.34)"
+    },
+    {
+      "name": "libclang-14-dev",
+      "version": "1:14.0.6-12",
+      "url": "https://deb.debian.org/debian/pool/main/l/llvm-toolchain-14/libclang-14-dev_14.0.6-12_amd64.deb",
+      "sha256": "203c676f8367fb0cc1630f7196f834248eb0f9de0770072042dc466f1b75f419",
+      "bytes": 23102896,
+      "depends": "libstdc++-12-dev, libgcc-12-dev, libobjc-12-dev, libclang1-14 (= 1:14.0.6-12), libclang-common-14-dev (= 1:14.0.6-12)"
+    },
+    {
+      "name": "libclang-common-14-dev",
+      "version": "1:14.0.6-12",
+      "url": "https://deb.debian.org/debian/pool/main/l/llvm-toolchain-14/libclang-common-14-dev_14.0.6-12_all.deb",
+      "sha256": "838781bfc798bcbdca68516db6546cf83677078efa57851bb957c19e265de7c6",
+      "bytes": 889680,
+      "depends": "libllvm14 (>= 1:14.0.6-12)"
+    },
+    {
+      "name": "libclang1-14",
+      "version": "1:14.0.6-12",
+      "url": "https://deb.debian.org/debian/pool/main/l/llvm-toolchain-14/libclang1-14_14.0.6-12_amd64.deb",
+      "sha256": "d0fb8eb1aa43a27ed9c3cca2a65108ab433735cb4cf1322444dbf269008e93a9",
+      "bytes": 6156824,
+      "depends": "libc6 (>= 2.34), libgcc-s1 (>= 3.0), libllvm14, libstdc++6 (>= 11)"
+    },
+    {
+      "name": "libllvm14",
+      "version": "1:14.0.6-12",
+      "url": "https://deb.debian.org/debian/pool/main/l/llvm-toolchain-14/libllvm14_14.0.6-12_amd64.deb",
+      "sha256": "cd986403cfe53f47c41b80667f6b344c40fe35de4c5081dad9358b4c77cf64a8",
+      "bytes": 21840232,
+      "depends": "libc6 (>= 2.36), libedit2 (>= 2.11-20080614-0), libffi8 (>= 3.4), libgcc-s1 (>= 3.3), libstdc++6 (>= 12), libtinfo6 (>= 6), libxml2 (>= 2.7.4), libz3-4 (>= 4.8.12), zlib1g (>= 1:1.2.0)"
+    },
+    {
+      "name": "liblz4-1",
+      "version": "1.9.4-1",
+      "url": "https://deb.debian.org/debian/pool/main/l/lz4/liblz4-1_1.9.4-1_amd64.deb",
+      "sha256": "64cde86cef1deaf828bd60297839b59710b5cd8dc50efd4f12643caaee9389d3",
+      "bytes": 62884,
+      "depends": "libc6 (>= 2.14)"
+    },
+    {
+      "name": "meson",
+      "version": "1.0.1-5",
+      "url": "https://deb.debian.org/debian/pool/main/m/meson/meson_1.0.1-5_all.deb",
+      "sha256": "64c435548c1118afdcc68a5d537b99cfcd12e0556b695a81febd512d671eb666",
+      "bytes": 548060,
+      "depends": "python3:any (>= 3.7~), ninja-build (>= 1.6), python3-pkg-resources, python3-setuptools"
+    },
+    {
+      "name": "nasm",
+      "version": "2.16.01-1",
+      "url": "https://deb.debian.org/debian/pool/main/n/nasm/nasm_2.16.01-1_amd64.deb",
+      "sha256": "0180693ad5d2da8b36e7d73b9b596dc3e9f900238e3de699976c0576875b878f",
+      "bytes": 405156,
+      "depends": "dpkg (>= 1.15.4) | install-info, libc6 (>= 2.34)"
+    },
+    {
+      "name": "ninja-build",
+      "version": "1.11.1-2~deb12u1",
+      "url": "https://deb.debian.org/debian/pool/main/n/ninja-build/ninja-build_1.11.1-2~deb12u1_amd64.deb",
+      "sha256": "e75fe14ee81334f52efe955aaaddac07d26f117bac60488ea19ea7a8b564e62c",
+      "bytes": 134996,
+      "depends": "libc6 (>= 2.34), libstdc++6 (>= 11)"
+    },
+    {
+      "name": "libssl-dev",
+      "version": "3.0.22-1~deb12u2",
+      "url": "https://security.debian.org/debian-security/pool/updates/main/o/openssl/libssl-dev_3.0.22-1~deb12u2_amd64.deb",
+      "sha256": "c5f948bf6cd6e8e6e8539364bed3280ff67bc2e058de484a1f6cce8d5afcc90e",
+      "bytes": 2450160,
+      "depends": "libssl3 (= 3.0.22-1~deb12u2)"
+    },
+    {
+      "name": "python3-pkg-resources",
+      "version": "66.1.1-1+deb12u2",
+      "url": "https://deb.debian.org/debian/pool/main/s/setuptools/python3-pkg-resources_66.1.1-1+deb12u2_all.deb",
+      "sha256": "25dfb378939ccdf27e7382adf44c168f86e22f9f1a8e6e3a2ec526431ed5e30f",
+      "bytes": 296604,
+      "depends": "python3:any"
+    },
+    {
+      "name": "python3-setuptools",
+      "version": "66.1.1-1+deb12u2",
+      "url": "https://deb.debian.org/debian/pool/main/s/setuptools/python3-setuptools_66.1.1-1+deb12u2_all.deb",
+      "sha256": "96f934b8dbe4367c4cf9e4c740aa5c85f9a9ac8875a16556c8677fb342c7838f",
+      "bytes": 521580,
+      "depends": "python3-pkg-resources (= 66.1.1-1+deb12u2), python3-distutils, python3:any"
+    },
+    {
+      "name": "liblzma-dev",
+      "version": "5.4.1-1+deb12u2",
+      "url": "https://security.debian.org/debian-security/pool/updates/main/x/xz-utils/liblzma-dev_5.4.1-1+deb12u2_amd64.deb",
+      "sha256": "8fba549e7a6819bb5758fc9b7d601a82963e6cdc222043d06a989312604bbc55",
+      "bytes": 260400,
+      "depends": "liblzma5 (= 5.4.1-1+deb12u2)"
+    },
+    {
+      "name": "xz-utils",
+      "version": "5.4.1-1+deb12u2",
+      "url": "https://security.debian.org/debian-security/pool/updates/main/x/xz-utils/xz-utils_5.4.1-1+deb12u2_amd64.deb",
+      "sha256": "f99fc3fe4b4e5baecf5fd8b53853a82e1e71cb5ec187b36b0ddcf227a8961c8f",
+      "bytes": 471448,
+      "depends": "libc6 (>= 2.34), liblzma5 (>= 5.4.0)"
+    },
+    {
+      "name": "libz3-4",
+      "version": "4.8.12-3.1",
+      "url": "https://deb.debian.org/debian/pool/main/z/z3/libz3-4_4.8.12-3.1_amd64.deb",
+      "sha256": "6221ca25ad5abcfbe1965801029d85a88b4775320384b4b716de8fab7a4d2f7a",
+      "bytes": 7216172,
+      "depends": "libc6 (>= 2.34), libgcc-s1 (>= 3.4), libstdc++6 (>= 12)"
+    },
+    {
+      "name": "zlib1g-dev",
+      "version": "1:1.2.13.dfsg-1",
+      "url": "https://deb.debian.org/debian/pool/main/z/zlib/zlib1g-dev_1.2.13.dfsg-1_amd64.deb",
+      "sha256": "f9ce531f60cbd5df37996af9370e0171be96902a17ec2bdbd8d62038c354094f",
+      "bytes": 916272,
+      "depends": "zlib1g (= 1:1.2.13.dfsg-1), libc6-dev | libc-dev"
+    },
+    {
+      "name": "libacl1",
+      "version": "2.3.1-3",
+      "url": "https://deb.debian.org/debian/pool/main/a/acl/libacl1_2.3.1-3_amd64.deb",
+      "sha256": "8be9df5795114bfe90e2be3d208ef47a5edd3fc7b3e20d387a597486d444e5e2",
+      "bytes": 31488,
+      "depends": "libc6 (>= 2.33)"
+    },
+    {
+      "name": "libobjc-12-dev",
+      "version": "12.2.0-14+deb12u1",
+      "url": "https://deb.debian.org/debian/pool/main/g/gcc-12/libobjc-12-dev_12.2.0-14+deb12u1_amd64.deb",
+      "sha256": "bcfd08e8824bfcfd464c0ab94316d9120fbb6eb81cf4f914cd88ff83978d89cd",
+      "bytes": 169836,
+      "depends": "gcc-12-base (= 12.2.0-14+deb12u1), libgcc-12-dev (= 12.2.0-14+deb12u1), libobjc4 (>= 12.2.0-14+deb12u1)"
+    },
+    {
+      "name": "libobjc4",
+      "version": "12.2.0-14+deb12u1",
+      "url": "https://deb.debian.org/debian/pool/main/g/gcc-12/libobjc4_12.2.0-14+deb12u1_amd64.deb",
+      "sha256": "61ca709b87ea9eb16c76c5156af96a776f4c92c6668c844f0bd2b3c6bf2e61d7",
+      "bytes": 43216,
+      "depends": "gcc-12-base (= 12.2.0-14+deb12u1), libc6 (>= 2.34), libgc1 (>= 1:7.2d), libgcc-s1 (>= 3.0)"
+    },
+    {
+      "name": "libicu72",
+      "version": "72.1-3+deb12u1",
+      "url": "https://security.debian.org/debian-security/pool/updates/main/i/icu/libicu72_72.1-3+deb12u1_amd64.deb",
+      "sha256": "f7f6f99c6d7b025914df2447fc93e11d22c44c0c8bdd8b6f36691c9e7ddcef88",
+      "bytes": 9376124,
+      "depends": "libc6 (>= 2.34), libgcc-s1 (>= 3.0), libstdc++6 (>= 12)"
+    },
+    {
+      "name": "libbsd0",
+      "version": "0.11.7-2",
+      "url": "https://deb.debian.org/debian/pool/main/libb/libbsd/libbsd0_0.11.7-2_amd64.deb",
+      "sha256": "bb31cc8b40f962a85b2cec970f7f79cc704a1ae4bad24257a822055404b2c60b",
+      "bytes": 117416,
+      "depends": "libc6 (>= 2.34), libmd0 (>= 1.0.3-2)"
+    },
+    {
+      "name": "libedit2",
+      "version": "3.1-20221030-2",
+      "url": "https://deb.debian.org/debian/pool/main/libe/libedit/libedit2_3.1-20221030-2_amd64.deb",
+      "sha256": "1cf14abf2716d3279db12d0657a5737cf70074a1e71d3bdf73206625e3c89ce6",
+      "bytes": 92992,
+      "depends": "libbsd0 (>= 0.1.3), libc6 (>= 2.33), libtinfo6 (>= 6)"
+    },
+    {
+      "name": "libgc1",
+      "version": "1:8.2.2-3",
+      "url": "https://deb.debian.org/debian/pool/main/libg/libgc/libgc1_8.2.2-3_amd64.deb",
+      "sha256": "c7fecfc533d31980e93faeb9bc529dc2d393fc066100550c0e28a760a2eab72e",
+      "bytes": 245116,
+      "depends": "libc6 (>= 2.34), libstdc++6 (>= 4.1.1)"
+    },
+    {
+      "name": "libmd0",
+      "version": "1.0.4-2",
+      "url": "https://deb.debian.org/debian/pool/main/libm/libmd/libmd0_1.0.4-2_amd64.deb",
+      "sha256": "03539fd30c509e27101d13a56e52eda9062bdf1aefe337c07ab56def25a13eab",
+      "bytes": 29456,
+      "depends": "libc6 (>= 2.33)"
+    },
+    {
+      "name": "libxml2",
+      "version": "2.9.14+dfsg-1.3~deb12u4",
+      "url": "https://security.debian.org/debian-security/pool/updates/main/libx/libxml2/libxml2_2.9.14+dfsg-1.3~deb12u4_amd64.deb",
+      "sha256": "f3bac32a5f7d32990af06713eef57664a66e98c13750fa8e007c9cbaf49b98c7",
+      "bytes": 687316,
+      "depends": "libc6 (>= 2.34), libicu72 (>= 72.1~rc-1~), liblzma5 (>= 5.1.1alpha+20120614), zlib1g (>= 1:1.2.3.3)"
+    },
+    {
+      "name": "libnettle8",
+      "version": "3.8.1-2",
+      "url": "https://deb.debian.org/debian/pool/main/n/nettle/libnettle8_3.8.1-2_amd64.deb",
+      "sha256": "45922e6e289ffd92f0f92d2bb9159e84236ff202d552a461bf10e5335b3f0261",
+      "bytes": 287764,
+      "depends": "libc6 (>= 2.17)"
+    }
+  ],
+  "seedPreparedSha256": "8a890ebf6b804d2cbc592c994e2d91b72eee748a5ce02af0ada11fa602628ecd",
+  "nativeSources": [
+    {
+      "name": "libiconv",
+      "url": "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.18.tar.gz",
+      "sha256": "3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8"
+    },
+    {
+      "name": "libxml2",
+      "url": "https://download.gnome.org/sources/libxml2/2.14/libxml2-2.14.6.tar.xz",
+      "sha256": "7ce458a0affeb83f0b55f1f4f9e0e55735dbfc1a9de124ee86fb4a66b597203a"
+    },
+    {
+      "name": "pdfium",
+      "url": "https://github.com/run-llama/pdfium-binaries/releases/download/chromium%2F8058/pdfium-linux-x64.tgz",
+      "sha256": "2dd418a8974dbb373ad281f99b6f95ed02e01b1a2bb2e05e772c80b7587577b5"
+    },
+    {
+      "name": "pdfium-8076",
+      "url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8076/pdfium-linux-x64.tgz",
+      "sha256": "d9d67bc40af03aef4fe28a60b19b1086f28ace019c8c9caf19cb7fe3d14ceca3"
+    }
+  ],
+  "nativeProvisioning": "Private prefix only; canonical application native versions/checksums, extracted pinned Bookworm build-tool packages; no apt installation or image/App change"
+}
