@@ -1,6 +1,6 @@
 name: Release verification
 
-# A release-to-main PR requests verification; no tests start before admin approval.
+# A same-repository release-to-main PR automatically runs full verification.
 # The base-repository workflow is trusted; forked or non-release heads are excluded.
 on:
   pull_request_target:
@@ -10,16 +10,19 @@ on:
       - opened
       - reopened
       - synchronize
-      - edited
 
 permissions:
   contents: read
 
+# A new event for this PR supersedes its previous verification run.
+concurrency:
+  group: release-verification-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   verify:
-    name: Full verification and differential ratchet
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') && (github.event.action != 'edited' || github.event.changes.base.ref.from != '') }}
-    environment: admin-approved-actions
+    name: Release verification (required)
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:

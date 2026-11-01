@@ -2,8 +2,8 @@
 """Check the metered Actions policy; requires PyYAML (pip install pyyaml).
 
 Run from any directory with ``python3 scripts/check-actions-policy.py``.
-Only release-to-main PR verification may start automatically; runner jobs require
-administrator approval except approved publishing pushes and PR-closing governance.
+Only same-repository release-to-main PR verification may run automatically;
+other runner jobs require approval except publishing and PR-closing governance.
 """
 from pathlib import Path
 import sys
@@ -32,12 +32,12 @@ def violations(name, workflow):
     if not isinstance(triggers, dict):
         return [f"{name}: triggers must be a mapping"]
     if name == "release-verification.yml":
-        expected = {"pull_request_target": {"branches": ["main"], "types": ["opened", "reopened", "synchronize", "edited"]}}
+        expected = {"pull_request_target": {"branches": ["main"], "types": ["opened", "reopened", "synchronize"]}}
         jobs = workflow.get("jobs", {})
         job = jobs.get("verify", {})
         if (triggers != expected or set(jobs) != {"verify"}
-                or job.get("environment") != "admin-approved-actions"
-                or job.get("if") != "${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') && (github.event.action != 'edited' || github.event.changes.base.ref.from != '') }}"
+                or "environment" in job
+                or job.get("if") != "${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}"
                 or workflow.get("permissions") != {"contents": "read"}):
             errors.append(f"{name}: invalid release-to-main verification policy")
         return errors
