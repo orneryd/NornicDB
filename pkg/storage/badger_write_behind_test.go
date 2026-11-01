@@ -21,6 +21,9 @@ type writeBehindTestOptions struct {
 	manualDrain  bool
 	lowMemory    bool
 	memoryPolicy *memory.Policy
+	// finalOutcome checks the terminal Close result for fixtures that
+	// deliberately prevent a clean final drain. Ordinary fixtures stay checked.
+	finalOutcome func(testing.TB, error)
 }
 
 func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...writeBehindTestOptions) *BadgerEngine {
@@ -43,7 +46,11 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		MemoryPolicy:        opts.memoryPolicy,
 	}))
 	if engine != nil {
-		fixtureowner.OwnChecked(t, engine)
+		if opts.finalOutcome == nil {
+			fixtureowner.OwnChecked(t, engine)
+		} else {
+			t.Cleanup(func() { opts.finalOutcome(t, engine.Close()) })
+		}
 	}
 	require.NoError(t, err)
 	if opts.manualDrain && engine.writeBehind != nil {
@@ -56,7 +63,16 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		walCfg.BatchSyncInterval = time.Hour
 		wal, err := NewWAL(walCfg.Dir, walCfg)
 		if wal != nil {
-			fixtureowner.OwnChecked(t, wal, engine)
+			if opts.finalOutcome == nil {
+				fixtureowner.OwnChecked(t, wal, engine)
+			} else {
+				t.Cleanup(func() {
+					engineErr := engine.Close()
+					walErr := wal.Close()
+					opts.finalOutcome(t, engineErr)
+					require.NoError(t, walErr)
+				})
+			}
 		}
 		require.NoError(t, err)
 		engine.SetBufferedCommitWAL(wal)
@@ -534,7 +550,7 @@ func TestWriteBehind_PropertyIndexBufferedGenerations(t *testing.T) {
 					t.Fatalf("unknown property-index test action %q", step.action)
 				}
 				for _, check := range step.lookups {
-					got := schema.PropertyIndexLookup("User", "id", check.value)
+					got := checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "User", "id", check.value))
 					if check.present {
 						require.Equal(t, []NodeID{"test:u1"}, got, check.message)
 					} else {

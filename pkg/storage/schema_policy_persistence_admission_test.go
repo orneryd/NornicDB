@@ -380,7 +380,7 @@ func TestPolicyRejectedMutationKeepsDerivedSchemaState(t *testing.T) {
 	after, ok := schema.GetPropertyIndex("Doc", "name")
 	require.True(t, ok)
 	require.Same(t, index, after, "a rejected change must keep the property index and its values")
-	require.Equal(t, []NodeID{"policy:1"}, after.LookupFull("kept"))
+	require.Equal(t, []NodeID{"policy:1"}, checkedIndexRead[[]NodeID](t)(after.LookupFull(t.Context(), "kept")))
 
 	require.Same(t, bindingTable, schema.GetBindingTable(),
 		"a rejected change must not rebuild the compiled binding table")
@@ -517,7 +517,10 @@ func (f *constraintRuntimeCacheFixture) requireUnchanged(t *testing.T, before *S
 	require.Equal(t, before, f.schema.ExportDefinition(), "a rejected constraint must not become the readable schema")
 	require.Same(t, f.unique, f.schema.uniqueConstraints["Doc:id"],
 		"a rejected constraint add must keep the live unique constraint and its value cache")
-	nodeID, valueFound, constrained, complete := f.schema.LookupUniqueConstraintValue("Doc", "id", "kept")
+	nodeID, valueFound, constrained, complete, uniqueLookupErr1 := f.schema.LookupUniqueConstraintValue(t.Context(), "Doc", "id", "kept")
+	if uniqueLookupErr1 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+	}
 	require.True(t, constrained)
 	require.True(t, valueFound, "a rejected constraint add must keep the cached unique value")
 	require.Equal(t, NodeID("constraint:1"), nodeID)
@@ -526,7 +529,7 @@ func (f *constraintRuntimeCacheFixture) requireUnchanged(t *testing.T, before *S
 	after, ok := f.schema.GetPropertyIndex("Doc", "id")
 	require.True(t, ok)
 	require.Same(t, f.index, after, "a rejected constraint add must keep the live property index")
-	require.Equal(t, []NodeID{"constraint:1"}, after.LookupFull("kept"))
+	require.Equal(t, []NodeID{"constraint:1"}, checkedIndexRead[[]NodeID](t)(after.LookupFull(t.Context(), "kept")))
 
 	require.Same(t, f.binding, f.schema.GetBindingTable(),
 		"a rejected constraint add must keep the compiled binding table instead of recompiling it")

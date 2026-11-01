@@ -265,11 +265,17 @@ func TestPR1655UniqueTransitionsPrefixReleasesClaim(t *testing.T) {
 				if property == "code" {
 					value = "code-released"
 				}
-				_, found, constrained, complete := target.GetSchema().LookupUniqueConstraintValue("Doc", property, value)
+				_, found, constrained, complete, uniqueLookupErr1 := target.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", property, value)
+				if uniqueLookupErr1 != nil {
+					t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+				}
 				require.True(t, constrained)
 				require.True(t, complete, "bulk retirement preserves completeness")
 				require.False(t, found, "the deleted owner releases every constraint entry")
-				holder, found, constrained, complete := other.GetSchema().LookupUniqueConstraintValue("Doc", property, value)
+				holder, found, constrained, complete, uniqueLookupErr2 := other.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", property, value)
+				if uniqueLookupErr2 != nil {
+					t.Errorf("unique index read failed: %v", uniqueLookupErr2)
+				}
 				require.True(t, found)
 				require.True(t, constrained)
 				require.True(t, complete)
@@ -333,7 +339,10 @@ func TestPR1655UniqueTransitionsConcurrentPrefixReuse(t *testing.T) {
 				engine.writeBarrier.RUnlock()
 				t.Fatal("prefix drop released write authority before retiring its claims")
 			}
-			_, found, _, complete := target.GetSchema().LookupUniqueConstraintValue("Doc", "id", "reclaimed")
+			_, found, _, complete, uniqueLookupErr3 := target.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", "id", "reclaimed")
+			if uniqueLookupErr3 != nil {
+				t.Errorf("unique index read failed: %v", uniqueLookupErr3)
+			}
 			require.True(t, complete)
 			require.False(t, found, "the successful primary drop already retired its claim")
 			started, created := make(chan struct{}), make(chan error, 1)
@@ -374,7 +383,10 @@ func TestPR1655UniqueTransitionsPrimaryDropRetiresBeforeCleanupFailure(t *testin
 	_, _, err = engine.DeleteByPrefix("test:prefix-")
 	require.ErrorIs(t, err, failure)
 	engine.dropPrefixTailHook = nil
-	_, found, constrained, complete := schema.LookupUniqueConstraintValue("Doc", "id", "released")
+	_, found, constrained, complete, uniqueLookupErr4 := schema.LookupUniqueConstraintValue(t.Context(), "Doc", "id", "released")
+	if uniqueLookupErr4 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr4)
+	}
 	require.True(t, constrained)
 	require.True(t, complete)
 	require.False(t, found, "a later cleanup failure cannot restore an already deleted node's claim")
@@ -403,7 +415,10 @@ func TestPR1655UniqueTransitionsRestoredSchemaPendingClaims(t *testing.T) {
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.DeleteGraphNode("test:original", CascadeEdges))
 			require.NoError(t, tx.Commit())
-			_, found, constrained, complete := restored.GetSchema().LookupUniqueConstraintValue("Doc", "id", "key")
+			_, found, constrained, complete, uniqueLookupErr5 := restored.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", "id", "key")
+			if uniqueLookupErr5 != nil {
+				t.Errorf("unique index read failed: %v", uniqueLookupErr5)
+			}
 			require.False(t, found, "the acknowledged delete shadows the restored stored claim")
 			require.True(t, constrained)
 			require.True(t, complete)
@@ -455,7 +470,10 @@ func TestPR1655UniqueTransitionsBufferedDeleteThenReuse(t *testing.T) {
 						value = "code-key"
 					}
 					properties[property] = value
-					holder, found, constrained, complete := target.GetSchema().LookupUniqueConstraintValue("Doc", property, value)
+					holder, found, constrained, complete, uniqueLookupErr6 := target.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", property, value)
+					if uniqueLookupErr6 != nil {
+						t.Errorf("unique index read failed: %v", uniqueLookupErr6)
+					}
 					require.True(t, found)
 					require.True(t, constrained)
 					require.True(t, complete)
@@ -625,7 +643,10 @@ func TestPR1655UniqueTransitionsAtomicSwap(t *testing.T) {
 				node, err := target.GetNode(id)
 				require.NoError(t, err)
 				require.Equal(t, value, node.Properties["id"])
-				holder, found, exists, _ := target.GetSchema().LookupUniqueConstraintValue("Doc", "id", value)
+				holder, found, exists, _, uniqueLookupErr7 := target.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", "id", value)
+				if uniqueLookupErr7 != nil {
+					t.Errorf("unique index read failed: %v", uniqueLookupErr7)
+				}
 				require.True(t, found)
 				require.True(t, exists)
 				require.Equal(t, NodeID("test:"+string(id)), holder)

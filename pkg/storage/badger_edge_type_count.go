@@ -246,7 +246,7 @@ func (b *BadgerEngine) readNodeLabelsIfPresentInTxn(txn *badger.Txn, id NodeID) 
 		labels, decodeErr = decodeStoredNodeLabels(val)
 		if decodeErr != nil {
 			// Pre-tokenization (V0) bodies: use the full compat decoder.
-			node, nodeErr := b.decodeNode(namespaceForNodeID(id), val)
+			node, nodeErr := b.decodeNodeProjected(txn, namespaceForNodeID(id), val, nil)
 			if nodeErr != nil {
 				return nil // undecodable: skip positional bookkeeping
 			}
@@ -282,7 +282,7 @@ func (b *BadgerEngine) collectAuthoritativeEdgeTypeCountsSnapshot() (*edgeTypeCo
 				continue
 			}
 			if err := it.Item().Value(func(value []byte) error {
-				edge, decodeErr := b.decodeEdgeBodyByID(value, edgeID)
+				edge, decodeErr := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), value, edgeID)
 				if decodeErr != nil {
 					return nil // skip undecodable bodies (same as EdgeCount semantics)
 				}
@@ -525,7 +525,7 @@ func (b *BadgerEngine) collectEdgeTypeCountsByPrefixSnapshot(keyPrefix []byte) (
 				continue
 			}
 			if err := it.Item().Value(func(value []byte) error {
-				edge, decodeErr := b.decodeEdgeBodyByID(value, edgeID)
+				edge, decodeErr := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), value, edgeID)
 				if decodeErr != nil {
 					return decodeErr
 				}
@@ -857,7 +857,7 @@ func (b *BadgerEngine) incidentEdgeTypesInTxn(txn *badger.Txn, prefix []byte) (m
 			return nil, err
 		}
 		if err := item.Value(func(val []byte) error {
-			edge, decodeErr := b.decodeEdgeBodyByID(val, edgeID)
+			edge, decodeErr := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 			if decodeErr != nil {
 				return nil // skip undecodable bodies
 			}

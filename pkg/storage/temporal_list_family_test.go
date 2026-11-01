@@ -71,7 +71,7 @@ func tlfColdProperties(t *testing.T, inner *BadgerEngine, c Constraint, id strin
 			return err
 		}
 		return item.Value(func(body []byte) error {
-			edge, err := inner.decodeEdgeBodyByID(body, edgeID)
+			edge, err := inner.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), body, edgeID)
 			if err == nil {
 				properties = edge.Properties
 			}

@@ -18,7 +18,7 @@ func TestStoredEntityViewUsesStoredInclusiveTypedOverlay(t *testing.T) {
 	t.Cleanup(func() { w.Close() })
 	require.NoError(t, w.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: NodeID(id), Properties: map[string]any{"value": "acknowledged"}, ChunkEmbeddings: [][]float32{{1, 2}}}}))
 	require.NoError(t, w.Append(BufferedMutation{Kind: BufferedOpEdge, Edge: &Edge{ID: EdgeID(id), StartNode: NodeID(id), EndNode: NodeID(id), Type: "R", VisibilitySuppressed: true, Properties: map[string]any{"value": "acknowledged"}}}))
-	read, err := b.captureReadView(nil)
+	read, err := b.captureReadView(t.Context(), nil)
 	require.NoError(t, err)
 	t.Cleanup(read.Close)
 	view := storedEntityView{read: embeddingRecordReader{txn: read.txn}, acknowledged: w}

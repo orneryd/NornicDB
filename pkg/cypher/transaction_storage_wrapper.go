@@ -19,29 +19,36 @@ import (
 // or changed are listed by their current values, nodes it changed or deleted
 // lose their committed entries (#809). The lookup stays an index lookup: a
 // transaction that reads by an indexed property doesn't scan the label.
-func propertyIndexLookup(engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) []storage.NodeID {
-	ids := schema.PropertyIndexLookup(label, property, value)
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return wrapper.tx.MergePendingPropertyMatches(ids, label, property, value)
+func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) ([]storage.NodeID, error) {
+	ids, err := schema.PropertyIndexLookup(ctx, label, property, value)
+	if err != nil {
+		return nil, err
 	}
-	return ids
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		return wrapper.tx.MergePendingPropertyMatches(ctx, ids, label, property, value)
+	}
+	return ids, nil
 }
 
 // compositeIndexLookup is the composite-index counterpart of
 // propertyIndexLookup: a full or prefix lookup against committed state, with
 // the transaction's own pending node writes merged in. full selects LookupFull
 // (all index properties equal) over LookupPrefix (leading properties equal).
-func compositeIndexLookup(engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) []storage.NodeID {
+func compositeIndexLookup(ctx context.Context, engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
 	var ids []storage.NodeID
+	var err error
 	if full {
-		ids = idx.LookupFull(values...)
+		ids, err = idx.LookupFull(ctx, values...)
 	} else {
-		ids = idx.LookupPrefix(values...)
+		ids, err = idx.LookupPrefix(ctx, values...)
+	}
+	if err != nil {
+		return nil, err
 	}
 	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return wrapper.tx.MergePendingCompositeMatches(ids, idx.Label, idx.Properties, values)
+		return wrapper.tx.MergePendingCompositeMatches(ctx, ids, idx.Label, idx.Properties, values)
 	}
-	return ids
+	return ids, nil
 }
 
 // labellessPropertyIndexUsable reports whether a pattern without a label may

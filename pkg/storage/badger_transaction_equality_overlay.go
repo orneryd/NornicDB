@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"cmp"
 	"context"
-	"sort"
+
+	"github.com/orneryd/nornicdb/internal/ctxsort"
 )
 
 // TransactionEqualityLookup exposes complete candidates from a transaction's
@@ -10,7 +12,7 @@ import (
 // read-committed views, unkeyable values or populations outside the cache bound).
 // Callers still apply their language's complete property/label predicate.
 type TransactionEqualityLookup interface {
-	LookupNodesByEquality(label string, properties map[string]interface{}) ([]*Node, bool, error)
+	LookupNodesByEquality(ctx context.Context, label string, properties map[string]interface{}) ([]*Node, bool, error)
 }
 
 type snapshotEqualityPopulation struct {
@@ -21,9 +23,12 @@ type snapshotEqualityPopulation struct {
 // LookupNodesByEquality reuses the pinned label reader and the existing
 // equality-key index. Only matching candidates escape as copies. Transaction
 // writes shadow committed IDs and join through the live pending-node index.
-func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[string]interface{}) ([]*Node, bool, error) {
-	tx.mu.Lock()
+func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label string, properties map[string]interface{}) ([]*Node, bool, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, false, err
+	}
 	defer tx.mu.Unlock()
+	var cancellation bulkReadCancellation
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, false, err
 	}
@@ -54,6 +59,9 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		cacheable := true
 		keyable := false
 		for _, value := range properties {
+			if err := cancellation.check(ctx); err != nil {
+				return nil, false, err
+			}
 			if _, ok := transactionEqualityKey(value); ok {
 				keyable = true
 				break
@@ -78,10 +86,8 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 			}
 			return true
 		}
-		// Equality lookups keep their existing public API (no caller context);
-		// the scan runs on the transaction's own lifetime, which is
-		// context.Background at this context-free boundary.
-		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(context.Background(), tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", visibleRead, func(node *Node) error {
+		// The pinned scan and candidate preparation share the statement lifetime.
+		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", visibleRead, func(node *Node) error {
 			if cacheable {
 				bytes, ok := snapshotLabelPrefixNodeBytes(node)
 				if !ok || len(population.nodes) >= maxSnapshotNodeLabelCacheNodes || bytes > maxSnapshotLabelPrefixBytes-retainedBytes || tx.nodeHasEmbeddingSidecar(tx.snapshotTx, node.ID) {
@@ -103,28 +109,50 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		if tx.snapshotEquality == nil {
 			tx.snapshotEquality = make(map[snapshotLabelCacheKey]*snapshotEqualityPopulation)
 		}
-		tx.snapshotEquality[key] = population
+
 		if !cacheable {
 			for id, node := range tx.pendingNodes {
+				if err := cancellation.check(ctx); err != nil {
+					return nil, false, err
+				}
 				if _, deleted := tx.deletedNodes[id]; !deleted && matches(node) {
 					first = append(first, copyNode(node))
 				}
 			}
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			tx.snapshotEquality[key] = population
 			return first, true, nil
 		}
 		population.index = newPendingNodeIndex()
 		for _, node := range population.nodes {
+			if err := cancellation.check(ctx); err != nil {
+				return nil, false, err
+			}
 			population.index.add(node)
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		tx.snapshotEquality[key] = population
 	}
 	names := make([]string, 0, len(properties))
 	for name := range properties {
+		if err := cancellation.check(ctx); err != nil {
+			return nil, false, err
+		}
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	if err := ctxsort.Sort(ctx, names, cmp.Compare[string], false); err != nil {
+		return nil, false, err
+	}
 	var committed, pending []NodeID
 	found := false
 	for _, property := range names {
+		if err := cancellation.check(ctx); err != nil {
+			return nil, false, err
+		}
 		value, ok := transactionEqualityKey(properties[property])
 		if !ok {
 			continue
@@ -132,9 +160,14 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		if _, tracked := population.index.tracked[label][property]; !tracked && len(population.index.tracked[label]) >= maxSnapshotProjectedLabelStreams {
 			continue
 		}
-		population.index.track(label, property, func(id NodeID) *Node { return population.nodes[id] })
+		if err := population.index.track(ctx, label, property, func(id NodeID) *Node { return population.nodes[id] }); err != nil {
+			return nil, false, err
+		}
 		ids := population.index.byValue[pendingValueKey{label: label, property: property, value: value}]
-		staged := tx.pendingValueMatchesLocked(label, property, value)
+		staged, err := tx.pendingValueMatchesLocked(ctx, label, property, value)
+		if err != nil {
+			return nil, false, err
+		}
 		if !found || len(ids)+len(staged) < len(committed)+len(pending) {
 			committed, pending, found = ids, staged, true
 		}
@@ -144,15 +177,24 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 	}
 	result := make([]*Node, 0, len(committed)+len(pending))
 	for _, id := range committed {
+		if err := cancellation.check(ctx); err != nil {
+			return nil, false, err
+		}
 		if tx.committedNodeSupersededLocked(id) {
 			continue
 		}
 		result = append(result, copyNode(population.nodes[id]))
 	}
 	for _, id := range pending {
+		if err := cancellation.check(ctx); err != nil {
+			return nil, false, err
+		}
 		if _, deleted := tx.deletedNodes[id]; !deleted {
 			result = append(result, copyNode(tx.pendingNodes[id]))
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
 	return result, true, nil
 }

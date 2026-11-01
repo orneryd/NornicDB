@@ -36,7 +36,7 @@ func TestBadgerTransactionConstraintScanErrorsDoNotCommit(t *testing.T) {
 					}))
 					c.Label, c.EntityType = "REL", ConstraintEntityRelationship
 					require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(c))
-					_, decodeErr := engine.decodeEdgeBodyByID(record.value, "test:original")
+					_, decodeErr := engine.decodeEdgeBodyWithID(nil, namespaceForEdgeID("test:original"), record.value, "test:original")
 					require.Error(t, decodeErr)
 					require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 						return txn.Set(edgeKey("test:original"), record.value)
@@ -91,10 +91,10 @@ func TestBadgerTransactionPolicyLabelChangeErrorsDoNotCommit(t *testing.T) {
 						anchor, other = "test:source", "test:target"
 					}
 					key := edgeKey("test:original")
-					_, decodeErr := engine.decodeEdgeBodyByID([]byte("corrupt-record"), "test:original")
+					_, decodeErr := engine.decodeEdgeBodyWithID(nil, namespaceForEdgeID("test:original"), []byte("corrupt-record"), "test:original")
 					if corruptEndpoint {
 						key = nodeKey(other)
-						_, decodeErr = engine.decodeNode("test", []byte("corrupt-record"))
+						_, decodeErr = engine.decodeNodeProjected(nil, "test", []byte("corrupt-record"), nil)
 					}
 					require.Error(t, decodeErr)
 					if corruptEndpoint {
@@ -144,7 +144,7 @@ func TestBadgerTransactionPolicyEndpointErrorsDoNotCommit(t *testing.T) {
 			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(nodeKey(endpoint), []byte("corrupt-record"))
 			}))
-			_, decodeErr := engine.decodeNode("test", []byte("corrupt-record"))
+			_, decodeErr := engine.decodeNodeProjected(nil, "test", []byte("corrupt-record"), nil)
 			require.Error(t, decodeErr)
 
 			tx, err := engine.BeginTransaction()

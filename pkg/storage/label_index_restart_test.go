@@ -131,11 +131,21 @@ func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 			if tc.checkBefore {
 				got, err := before.GetNodesByLabel(context.Background(), tc.label)
 				require.NoError(t, err)
-				want := tc.count
 				if tc.wipe {
-					want = 0
+					// Verify the fixture really removed the derived index. The
+					// public read must still return complete authoritative rows.
+					require.NoError(t, before.withView(func(txn *badger.Txn) error {
+						it := txn.NewIterator(badgerPrefixIteratorOptions(labelIndexPrefix(tc.label)))
+						defer it.Close()
+						it.Rewind()
+						require.False(t, it.Valid(), "wiped secondary index must be empty")
+						ready, err := readStartupIndexReadiness(txn, startupLabelIndex)
+						require.NoError(t, err)
+						require.False(t, ready, "wiped index cannot claim readiness")
+						return nil
+					}))
 				}
-				require.Len(t, got, want, "pre-reopen index population")
+				require.Len(t, got, tc.count, "pre-reopen public reads remain complete")
 			}
 			require.NoError(t, before.Close())
 			after, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))

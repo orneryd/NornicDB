@@ -135,7 +135,7 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 		if kind == manualSuppressionNode {
 			node, err = b.decodeNodeWithEmbeddings(txn, value, NodeID(id))
 		} else {
-			edge, err = b.decodeEdgeBodyWithID(namespaceForEdgeID(EdgeID(id)), value, EdgeID(id))
+			edge, err = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(EdgeID(id)), value, EdgeID(id))
 		}
 		return err
 	}

@@ -64,10 +64,24 @@ func (v storedEntityView) node(b *BadgerEngine, id NodeID) (*Node, error) {
 		return copyNode(state.node), nil
 	}
 
+	record, err := v.read.record(nodeKey(id))
+	if err == badger.ErrKeyNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	// A staged write is this commit's own encoded image, so it has no stored
+	// snapshot to resolve tokens through; a stored record resolves through
+	// the reader's pinned transaction.
+	var view *badger.Txn
+	if record.item != nil {
+		view = v.read.txn
+	}
 	var node *Node
-	err := v.read.value(nodeKey(id), func(data []byte) error {
+	err = record.value(func(data []byte) error {
 		var err error
-		node, err = b.decodeNode(namespaceForNodeID(id), data)
+		node, err = b.decodeNodeProjected(view, namespaceForNodeID(id), data, nil)
 		return err
 	})
 	if err == badger.ErrKeyNotFound {
@@ -97,8 +111,25 @@ func (b *BadgerEngine) readStoredEdgeImage(reader embeddingRecordReader, state b
 		}
 		return copyEdge(state.edge), true, nil
 	}
+	record, err := reader.record(edgeKey(id))
+	if err == badger.ErrKeyNotFound {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	// As storedEntityView.node: a staged image is this commit's own body, a
+	// stored record resolves through the reader's pinned transaction.
+	var view *badger.Txn
+	if record.item != nil {
+		view = reader.txn
+	}
 	var edge *Edge
-	err := reader.value(edgeKey(id), func(data []byte) error { var err error; edge, err = b.decodeEdgeBodyByID(data, id); return err })
+	err = record.value(func(data []byte) error {
+		var err error
+		edge, err = b.decodeEdgeBodyWithID(view, namespaceForEdgeID(id), data, id)
+		return err
+	})
 	if err == badger.ErrKeyNotFound {
 		return nil, false, nil
 	}

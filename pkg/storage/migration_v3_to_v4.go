@@ -50,7 +50,7 @@ func (b *BadgerEngine) migrateV3ToV4(ctx context.Context, replayCurrent bool) er
 				if err != nil {
 					return err
 				}
-				node, err := b.decodeNode(namespaceForNodeID(plan.NodeID), raw)
+				node, err := b.decodeNodeProjected(txn, namespaceForNodeID(plan.NodeID), raw, nil)
 				if err != nil {
 					return fmt.Errorf("decode catalog V4 record: %w", err)
 				}

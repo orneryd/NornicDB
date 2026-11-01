@@ -260,6 +260,9 @@ func (b *BadgerEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
 }
 
 func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
+	// This context-free owner has no request cancellation; its read capture
+	// shares the synchronous operation's lifetime.
+
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurGet)
 	if id == "" {
@@ -289,7 +292,7 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 		// The adjacency body cache cannot establish record presence.
 		return false, nil
 	}
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(context.Background(), func(w *WriteBehindBuffer) {
 		state = w.entityStateLocked(bufferedEdgeEntity, string(id), bufferedReadVisibility{engine: b, visibility: v})
 	}, func(txn *badger.Txn) error {
 		if state.found {
@@ -412,7 +415,7 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		var existing *Edge
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
-			existing, decodeErr = b.decodeEdgeBodyByID(val, edge.ID)
+			existing, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edge.ID), val, edge.ID)
 			return decodeErr
 		}); err != nil {
 			return err
@@ -708,7 +711,7 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), val, id)
 		return decodeErr
 	}); err != nil {
 		return err

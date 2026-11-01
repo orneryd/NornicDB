@@ -151,7 +151,7 @@ func (b *BadgerEngine) currentIndexKeysInTxn(txn *badger.Txn, cat *IndexEntryCat
 			return nil, false, nil
 		}
 		err = readStoredBody(txn, nodeKey(id), func(value []byte) error {
-			node, err := b.decodeNode(namespace, value)
+			node, err := b.decodeNodeProjected(txn, namespace, value, nil)
 			if err != nil {
 				return fmt.Errorf("decode node %q: %w", id, err)
 			}
@@ -161,7 +161,7 @@ func (b *BadgerEngine) currentIndexKeysInTxn(txn *badger.Txn, cat *IndexEntryCat
 	case "EDGE":
 		id := EdgeID(cat.TargetID)
 		err = readStoredBody(txn, edgeKey(id), func(value []byte) error {
-			edge, err := b.decodeEdgeBodyByID(value, id)
+			edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), value, id)
 			if err != nil {
 				return fmt.Errorf("decode edge %q: %w", id, err)
 			}

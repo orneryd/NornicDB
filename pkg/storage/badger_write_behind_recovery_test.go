@@ -19,10 +19,12 @@ func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.
 	require.NoError(t, wal.Append(OpBufferedCommit, "invalid buffered commit"))
 	crashClose(t, engine, wal)
 
-	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
-	// The deliberately invalid tail cannot receive a clean-downgrade proof.
-	// Assert that refusal before the shared fixture owner repeats Close.
-	t.Cleanup(func() { require.ErrorContains(t, engine.Close(), "cannot unmarshal string") })
+	// The invalid tail deliberately prevents a clean-downgrade proof. The
+	// fixture owner checks this same expected terminal result on every Close.
+	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{
+		dataDir: dir, wal: true,
+		finalOutcome: func(t testing.TB, err error) { require.ErrorContains(t, err, "cannot unmarshal string") },
+	})
 
 	wal = engine.bufferedCommitWAL
 	replayed, err := RecoverBufferedCommits(engine, wal)
@@ -37,6 +39,9 @@ func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.
 	replayed, err = RecoverBufferedCommits(engine, wal)
 	require.ErrorContains(t, err, "unmarshal buffered commit")
 	require.Zero(t, replayed, "retry must skip the durable batch")
+	finalOutcome := engine.Close()
+	require.ErrorContains(t, finalOutcome, "cannot unmarshal string")
+	require.ErrorIs(t, engine.Close(), finalOutcome, "repeated Close must preserve the corrupt-tail refusal")
 }
 
 // crashClose tears the engine down the way kill -9 does: stop the flusher

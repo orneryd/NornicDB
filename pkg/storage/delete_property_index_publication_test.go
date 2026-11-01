@@ -22,7 +22,7 @@ func TestBadgerDeleteRemovesPropertyIndexPostings(t *testing.T) {
 					n := &Node{ID: "tenant:x", Labels: []string{"L"}, Properties: map[string]any{"p": "v"}}
 					_, err := b.CreateNode(n)
 					require.NoError(t, err)
-					require.Equal(t, []NodeID{n.ID}, sm.PropertyIndexLookup("L", "p", "v"))
+					require.Equal(t, []NodeID{n.ID}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "L", "p", "v")))
 					_, err = b.GetNode(n.ID)
 					require.NoError(t, err)
 					if evicted {
@@ -39,7 +39,7 @@ func TestBadgerDeleteRemovesPropertyIndexPostings(t *testing.T) {
 					}
 					_, err = b.GetNode(n.ID)
 					require.ErrorIs(t, err, ErrNotFound)
-					ids := sm.PropertyIndexLookup("L", "p", "v")
+					ids := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "L", "p", "v"))
 					t.Logf("public PropertyIndexLookup after delete: %v", ids)
 					require.Empty(t, ids, "public property index must remove committed deleted identity")
 				})

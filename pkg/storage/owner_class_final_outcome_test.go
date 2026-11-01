@@ -16,7 +16,14 @@ import (
 func TestOwnerClassStorageFinalDrainOutcome(t *testing.T) {
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	var finalOutcome error
+	t.Cleanup(func() {
+		if finalOutcome == nil {
+			require.NoError(t, engine.Close())
+			return
+		}
+		require.ErrorIs(t, engine.Close(), finalOutcome, "repeated Close must retain its actual final outcome")
+	})
 	// Stop periodic scheduling before installing the native apply failure. The
 	// public Close still performs its real final drain on the admitted commit.
 	engine.writeBehind.Close()
@@ -29,7 +36,9 @@ func TestOwnerClassStorageFinalDrainOutcome(t *testing.T) {
 	_, err = tx.CreateNode(&Node{ID: "r4:final-drain", Properties: map[string]any{"value": int64(1)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
-	require.ErrorIs(t, engine.Close(), failure, "engine Close lost its final admitted drain outcome")
+	finalOutcome = engine.Close()
+	require.ErrorIs(t, finalOutcome, failure, "engine Close lost its final admitted drain outcome")
+	require.ErrorIs(t, engine.Close(), finalOutcome, "repeated Close lost the retained final outcome")
 }
 
 func TestOwnerClassStorageNativeFinalOutcomes(t *testing.T) {
@@ -42,4 +51,5 @@ func TestOwnerClassStorageNativeFinalOutcomes(t *testing.T) {
 	require.ErrorIs(t, result, badger.ErrDBClosed)
 	require.ErrorContains(t, result, "label-count final fold")
 	require.ErrorContains(t, result, "edge-type-count final fold")
+	require.ErrorIs(t, engine.Close(), result, "repeated Close must retain every native final failure")
 }

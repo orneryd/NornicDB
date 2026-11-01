@@ -22,7 +22,7 @@ func TestWriteBehind_NodeKeyAfterBufferRetirement(t *testing.T) {
 	require.NoError(t, b.FlushWriteBehind(nil))
 	require.Empty(t, b.writeBehind.draining)
 	require.Zero(t, b.writeBehind.PendingOps())
-	require.Len(t, idx.LookupFull(int64(1), "name", int64(1)), 1)
+	require.Len(t, checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), int64(1), "name", int64(1))), 1)
 	err := bufferedTry(t, b, factNode("retired-duplicate", 1, "name", 1))
 	require.Error(t, err, "a committed holder must still reject duplicate NODE KEY after retirement")
 }
@@ -53,7 +53,7 @@ func TestWriteBehind_IdleFilledKeyConstraints(t *testing.T) {
 				}
 				require.Empty(t, b.writeBehind.draining)
 				require.Zero(t, b.writeBehind.PendingOps())
-				require.Len(t, idx.LookupFull(int64(1), "name", int64(1)), 1)
+				require.Len(t, checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), int64(1), "name", int64(1))), 1)
 				require.Error(t, bufferedTry(t, b, factNode("duplicate", 1, "name", 1)))
 				require.NoError(t, bufferedTry(t, b, factNode("different", 1, "name", 2)))
 			})

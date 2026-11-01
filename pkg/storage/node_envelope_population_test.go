@@ -23,7 +23,10 @@ func TestNodeEnvelopeCompiledPopulation(t *testing.T) {
 	c := workcensus.Config{
 		Dir: dir, Patterns: []string{"./..."}, SourceOnly: true, IncludeSyntax: true,
 		BuildFlags: []string{"-tags=noui,nolocalllm"},
-		Env:        append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=-mod=readonly"),
+		// Match the shared stored-entity census's portable build population.
+		// Darwin Metal requires cgo; a host-dependent no-cgo census cannot
+		// type-check that package and would vary by the reviewer's machine.
+		Env: append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=-mod=readonly"),
 		Selectors: []workcensus.Selector{
 			{Kind: "varint", Node: "call", Packages: []string{"encoding/binary"}, Names: []string{"Uvarint", "Varint"}, Reachability: "all"},
 			{Kind: "varint", Node: "call", Packages: []string{"github.com/orneryd/nornicdb/pkg/storage"}, Names: []string{"readUvarint"}, Reachability: "all"},

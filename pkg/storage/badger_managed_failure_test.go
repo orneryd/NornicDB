@@ -81,11 +81,12 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	require.NoError(t, err)
 
 	injected := errors.New("injected batch failure")
+	diskFailure := errors.New("disk gone")
 	restore := setLargeCommitBatchHook(func(batch int) error {
 		if batch == 2 {
 			// The store stops writes: the rollback cannot get a timestamp
 			// either, and neither can a further batch.
-			engine.db.oracle.fail(errors.New("disk gone"))
+			engine.db.oracle.fail(diskFailure)
 			if batchFails {
 				return injected
 			}
@@ -122,10 +123,16 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	require.NoError(t, err)
 	stageLargeCreate(t, big, 6000)
 	require.ErrorContains(t, big.Commit(), "refuses writes until restart")
-	require.NoError(t, engine.Close())
+	finalOutcome := engine.Close()
+	require.ErrorIs(t, finalOutcome, diskFailure)
+	require.ErrorContains(t, finalOutcome, "label-count final fold")
+	require.ErrorContains(t, finalOutcome, "refuses writes until restart")
+	require.ErrorIs(t, engine.Close(), finalOutcome, "repeated Close must preserve the failed count-fold outcome")
 
 	engine = openLargeCommitTestEngine(t, dir)
-	defer engine.Close()
+	t.Cleanup(func() {
+		require.NoError(t, engine.Close(), "reopened engine must retire cleanly after rollback recovery")
+	})
 	requireNoLargeCommitIntent(t, engine)
 	require.Zero(t, countBigNodes(t, engine))
 	base, err = engine.GetNode("test:base")

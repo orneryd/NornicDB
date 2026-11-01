@@ -29,19 +29,19 @@ func TestConstraintPropertyIndexSeekableOnceFilled(t *testing.T) {
 	require.True(t, sm.HasAnyPropertyIndexForLabel("Rec"))
 
 	require.NoError(t, sm.PropertyIndexInsert("Rec", "uid", "n1", "a"))
-	require.Nil(t, sm.PropertyIndexLookup("Rec", "uid", "a"))
-	require.Nil(t, sm.PropertyIndexLookupAnyLabel("uid", "a"))
-	require.Nil(t, sm.PropertyIndexAllNonNil("Rec", "uid", false))
-	require.False(t, sm.VisitPropertyIndexGroups("Rec", "uid", false, func([]NodeID) bool { return true }))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "a")))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexAllNonNil(t.Context(), "Rec", "uid", false)))
+	require.False(t, checkedIndexRead[bool](t)(sm.VisitPropertyIndexGroups(t.Context(), "Rec", "uid", false, func([]NodeID) bool { return true })))
 
 	require.NoError(t, sm.BackfillPropertyIndex("Rec", "uid", map[NodeID]interface{}{"n2": "b"}))
 	_, ok = sm.GetPropertyIndex("Rec", "uid")
 	require.True(t, ok)
 	require.True(t, sm.HasPropertyIndex("Rec", "uid"))
-	require.Equal(t, []NodeID{"n1"}, sm.PropertyIndexLookup("Rec", "uid", "a"))
-	require.Equal(t, []NodeID{"n2"}, sm.PropertyIndexLookupAnyLabel("uid", "b"))
-	require.ElementsMatch(t, []NodeID{"n1", "n2"}, sm.PropertyIndexAllNonNil("Rec", "uid", false))
-	require.True(t, sm.VisitPropertyIndexGroups("Rec", "uid", false, func([]NodeID) bool { return true }))
+	require.Equal(t, []NodeID{"n1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")))
+	require.Equal(t, []NodeID{"n2"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "b")))
+	require.ElementsMatch(t, []NodeID{"n1", "n2"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexAllNonNil(t.Context(), "Rec", "uid", false)))
+	require.True(t, checkedIndexRead[bool](t)(sm.VisitPropertyIndexGroups(t.Context(), "Rec", "uid", false, func([]NodeID) bool { return true })))
 }
 
 // A label-less lookup can't be answered from the indexes while one of the
@@ -50,13 +50,13 @@ func TestPropertyIndexLookupAnyLabelSkipsWhileAnIndexIsUnfilled(t *testing.T) {
 	sm := NewSchemaManager()
 	require.NoError(t, sm.AddPropertyIndex("i_a", "A", []string{"uid"}))
 	require.NoError(t, sm.PropertyIndexInsert("A", "uid", "a1", "x"))
-	require.Equal(t, []NodeID{"a1"}, sm.PropertyIndexLookupAnyLabel("uid", "x"))
+	require.Equal(t, []NodeID{"a1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "x")))
 
 	require.NoError(t, sm.AddUniqueConstraint("c_b", "B", "uid"))
-	require.Nil(t, sm.PropertyIndexLookupAnyLabel("uid", "x"))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "x")))
 
 	sm.MarkPropertyIndexesFilled()
-	require.Equal(t, []NodeID{"a1"}, sm.PropertyIndexLookupAnyLabel("uid", "x"))
+	require.Equal(t, []NodeID{"a1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "x")))
 }
 
 // A node key constraint owns a property index too; relationship and
@@ -193,9 +193,9 @@ func TestBadgerConstraintPropertyIndexMaintainedAndRebuilt(t *testing.T) {
 
 	_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "a"}})
 	require.NoError(t, err)
-	require.Nil(t, schema.PropertyIndexLookup("Rec", "uid", "a"))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")))
 	require.NoError(t, schema.BackfillPropertyIndex("Rec", "uid", nil))
-	require.Len(t, schema.PropertyIndexLookup("Rec", "uid", "a"), 1)
+	require.Len(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")), 1)
 
 	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "b"}})
 	require.NoError(t, err)
@@ -206,6 +206,6 @@ func TestBadgerConstraintPropertyIndexMaintainedAndRebuilt(t *testing.T) {
 	t.Cleanup(func() { _ = reopened.Close() })
 	schema = reopened.GetSchemaForNamespace("test")
 	require.True(t, schema.HasPropertyIndex("Rec", "uid"))
-	require.Len(t, schema.PropertyIndexLookup("Rec", "uid", "a"), 1)
-	require.Len(t, schema.PropertyIndexLookup("Rec", "uid", "b"), 1)
+	require.Len(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")), 1)
+	require.Len(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "b")), 1)
 }

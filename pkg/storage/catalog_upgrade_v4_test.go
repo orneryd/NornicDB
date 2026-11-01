@@ -66,7 +66,7 @@ func catalogV4Run(b *BadgerEngine, ctx context.Context) error {
 func catalogV4Node(t *testing.T, b *BadgerEngine, id NodeID) *Node {
 	t.Helper()
 	raw := catalogV4Snapshot(t, b)[string(nodeKey(id))]
-	node, err := b.decodeNode(namespaceForNodeID(id), raw)
+	node, err := b.decodeNodeProjected(nil, namespaceForNodeID(id), raw, nil)
 	require.NoError(t, err)
 	return node
 }

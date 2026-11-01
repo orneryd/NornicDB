@@ -116,9 +116,12 @@ func (b *BadgerEngine) writtenEdgeImage(data []byte, edge *Edge) (*Edge, error) 
 	return b.decodeWrittenEdge(data, edge)
 }
 
-// decodeWrittenNode decodes data, the body encoded for node id.
+// decodeWrittenNode decodes data, the body encoded for node id. The body is
+// this write's own encoded image rather than a stored record read from a
+// snapshot, so its tokens are the writer's own claims: nil is the context-free
+// owned-image boundary.
 func (b *BadgerEngine) decodeWrittenNode(id NodeID, data []byte) (*Node, error) {
-	node, err := b.decodeNode(namespaceForNodeID(id), data)
+	node, err := b.decodeNodeProjected(nil, namespaceForNodeID(id), data, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decode written node %s: %w", id, err)
 	}
@@ -128,7 +131,7 @@ func (b *BadgerEngine) decodeWrittenNode(id NodeID, data []byte) (*Node, error) 
 // decodeWrittenEdge is decodeWrittenNode for a relationship, whose endpoint IDs
 // come from source, the body data was encoded from.
 func (b *BadgerEngine) decodeWrittenEdge(data []byte, source *Edge) (*Edge, error) {
-	edge, _, _, err := b.decodeEdgeCompactV2(namespaceForEdgeID(source.ID), data)
+	edge, _, _, err := b.decodeEdgeCompactV2(nil, namespaceForEdgeID(source.ID), data)
 	if err != nil {
 		return nil, fmt.Errorf("decode written edge %s: %w", source.ID, err)
 	}

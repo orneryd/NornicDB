@@ -34,13 +34,16 @@ import (
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
-func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool) {
+func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.Context, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if len(nodeInfo.properties) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	schema := store.GetSchema()
 	if schema == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Collect per-property candidate ID sets, one per inline equality that an
@@ -88,10 +91,16 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			for i := 0; i < covered; i++ {
 				values[i] = nodeInfo.properties[idx.Properties[i]]
 			}
-			ids := compositeIndexLookup(store, idx, values, covered == len(idx.Properties))
+			ids, err := compositeIndexLookup(ctx, store, idx, values, covered == len(idx.Properties))
+			if err != nil {
+				return nil, false, err
+			}
 			usedAnyIndex = true
 			set := make(map[storage.NodeID]struct{}, len(ids))
 			for _, id := range ids {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				set[id] = struct{}{}
 			}
 			idSets = append(idSets, set)
@@ -100,19 +109,23 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 
 	for prop, val := range nodeInfo.properties {
 		var ids []storage.NodeID
+		var err error
 		probed := false
 		if len(nodeInfo.labels) > 0 {
 			// Labelled: probe the (label, prop) index when one exists.
 			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
-				ids = propertyIndexLookup(store, schema, nodeInfo.labels[0], prop, val)
+				ids, err = propertyIndexLookup(ctx, store, schema, nodeInfo.labels[0], prop, val)
 				probed = true
 			}
 		} else {
 			labels := e.indexCandidateLabels(schema, nil, prop)
 			if labellessPropertyIndexUsable(store, labels...) {
-				ids = schema.PropertyIndexLookupAnyLabel(prop, val)
+				ids, err = schema.PropertyIndexLookupAnyLabel(ctx, prop, val)
 				probed = true
 			}
+		}
+		if err != nil {
+			return nil, false, err
 		}
 		// Property has no covering index — record nothing for this prop.
 		// The residual `nodeMatchesProps` step still enforces it. A probe
@@ -124,13 +137,16 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		usedAnyIndex = true
 		set := make(map[storage.NodeID]struct{}, len(ids))
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			set[id] = struct{}{}
 		}
 		idSets = append(idSets, set)
 	}
 
 	if !usedAnyIndex || len(idSets) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Intersect across all indexed-prop sets.
@@ -142,6 +158,9 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	}
 	out := make([]*storage.Node, 0, len(idSets[smallest]))
 	for id := range idSets[smallest] {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		hit := true
 		for i, s := range idSets {
 			if i == smallest {
@@ -161,7 +180,10 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		}
 		out = append(out, n)
 	}
-	return out, true
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return out, true, nil
 }
 
 // propertyIndexMissIsAuthoritative reports whether a property index lookup

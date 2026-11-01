@@ -293,22 +293,74 @@ func (m *managedBadgerDB) advanceDiscardTs() {
 
 // prefixDropOptions preserves the engine-aware rebuild boundary while raw
 // managed-handle callers retain their existing panic/error policy.
+type prefixDropMode uint8
+
+const (
+	// Ordinary deletion retains versions used by admitted queries and backups.
+	retainPrefixSnapshots prefixDropMode = iota
+	// Purge is reserved for bootstrap/restore with readers excluded, and for
+	// the disposable compaction marker that no graph snapshot can observe.
+	purgePrefixVersions
+)
+
 type prefixDropOptions struct {
+	mode     prefixDropMode
 	engine   *BadgerEngine
 	metadata bool // caller proves the exact prefix cannot contain graph cache state
 }
 
-// DropPrefix drops every key under prefixes. Badger blocks writes while it
-// drops and fails them with ErrBlockedWrites, so the drop holds the commit
-// gate exclusively and commits wait for it instead. The caller must not hold
-// the gate.
+// DropPrefix removes the ranges at one managed publication cut. Ordinary
+// engine deletion retains snapshot-visible versions through the atomic writer.
+// Physical purges require the caller's explicit exclusion/metadata proof;
+// bootstrap before engine attachment also has no admitted engine snapshots.
+// The caller must not hold the commit gate.
 func (m *managedBadgerDB) DropPrefix(ctx context.Context, options prefixDropOptions, prefixes ...[]byte) error {
-	drop := func() error {
-		if options.engine != nil {
-			if err := options.engine.ensureOpen(false); err != nil {
+	if options.engine != nil {
+		if err := options.engine.ensureOpen(false); err != nil {
+			return err
+		}
+	}
+	if b := m.cacheOwner; b != nil && options.mode == retainPrefixSnapshots {
+		// Physical Badger DropPrefix destroys versions even for registered
+		// readers. Use the existing atomic, rollback-capable writer so a
+		// pinned query or backup keeps its admitted snapshot through DROP.
+		return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
+			lc, err := m.beginLargeCommitContext(ctx)
+			if err != nil {
 				return err
 			}
-		}
+			cw.large = lc
+			cw.metadata = options.metadata
+			lc.cacheScope = cw.cacheScope
+			lc.originalReadTs = lc.intentTs - 1
+			// The exclusive commit gate defines the cut, independent of when
+			// commitEngineWrite opened its first (blind deletion) batch.
+			read := m.DB.NewTransactionAt(lc.originalReadTs, false)
+			defer read.Discard()
+			var cancel bulkReadCancellation
+			for _, prefix := range prefixes {
+				it := read.NewIterator(badgerPrefixIteratorOptions(prefix))
+				err := func() error {
+					defer it.Close()
+					for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+						if err := cancel.check(ctx); err != nil {
+							return err
+						}
+						key := it.Item().KeyCopy(nil)
+						if err := cw.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
+							return err
+						}
+					}
+					return nil
+				}()
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	drop := func() error {
 		if err := m.commitGate.LockContext(ctx); err != nil {
 			return err
 		}

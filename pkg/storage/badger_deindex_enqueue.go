@@ -119,7 +119,7 @@ func (b *BadgerEngine) evaluateSuppressionInTxn(txn *badger.Txn, input suppressi
 		err = item.Value(func(val []byte) error {
 			var err error
 			if isEdge {
-				edge, err = b.decodeEdgeBodyByID(val, EdgeID(id))
+				edge, err = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(EdgeID(id)), val, EdgeID(id))
 			} else {
 				node, err = b.decodeNodeWithEmbeddings(txn, val, NodeID(id))
 			}

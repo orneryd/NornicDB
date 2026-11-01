@@ -216,7 +216,7 @@ func pr1655PhysicalBody(t *testing.T, b *BadgerEngine, id NodeID) *Node {
 		}
 		return item.Value(func(val []byte) error {
 			var decodeErr error
-			node, decodeErr = b.decodeNode(namespaceForNodeID(id), append([]byte(nil), val...))
+			node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(id), append([]byte(nil), val...), nil)
 			return decodeErr
 		})
 	})

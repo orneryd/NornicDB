@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // The property indexes describe committed state: a transaction's own node
 // writes reach them at commit. A property-index lookup made inside the
 // transaction therefore merges the transaction's pending nodes in, exactly
@@ -31,13 +33,16 @@ func (tx *BadgerTransaction) pendingNodeChangedLocked(prev, node *Node) {
 // from them; the first lookup of a (label, property) pair indexes that pair
 // by value. The result may be the index's own slice: callers copy it.
 // Caller holds tx.mu.
-func (tx *BadgerTransaction) pendingValueMatchesLocked(label, property string, valueKey interface{}) []NodeID {
+func (tx *BadgerTransaction) pendingValueMatchesLocked(ctx context.Context, label, property string, valueKey interface{}) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if tx.pendingIndex == nil && len(tx.pendingNodes) <= pendingIndexMinNodes {
-		// A few pending nodes are compared directly: an index of them costs
-		// more to build than it saves (a single-statement transaction that
-		// writes one node and looks one up).
 		var matches []NodeID
 		for id, node := range tx.pendingNodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if !hasLabel(node.Labels, label) {
 				continue
 			}
@@ -45,16 +50,39 @@ func (tx *BadgerTransaction) pendingValueMatchesLocked(label, property string, v
 				matches = append(matches, id)
 			}
 		}
-		return matches
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return matches, nil
 	}
-	if tx.pendingIndex == nil {
-		tx.pendingIndex = newPendingNodeIndex()
+	index := tx.pendingIndex
+	if index == nil {
+		index = newPendingNodeIndex()
 		for _, node := range tx.pendingNodes {
-			tx.pendingIndex.add(node)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			for _, nodeLabel := range node.Labels {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				ids := index.byLabel[nodeLabel]
+				if ids == nil {
+					ids = make(map[NodeID]bool)
+					index.byLabel[nodeLabel] = ids
+				}
+				ids[node.ID] = true
+			}
 		}
 	}
-	tx.pendingIndex.track(label, property, func(id NodeID) *Node { return tx.pendingNodes[id] })
-	return tx.pendingIndex.byValue[pendingValueKey{label: label, property: property, value: valueKey}]
+	if err := index.track(ctx, label, property, func(id NodeID) *Node { return tx.pendingNodes[id] }); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	tx.pendingIndex = index
+	return index.byValue[pendingValueKey{label: label, property: property, value: valueKey}], nil
 }
 
 // MergePendingPropertyMatches turns ids, a property-index lookup of label's
@@ -63,14 +91,22 @@ func (tx *BadgerTransaction) pendingValueMatchesLocked(label, property string, v
 // dropped, and the transaction's own pending nodes that have label and the
 // value are added. ids is filtered in place. A transaction without node
 // writes returns ids unchanged.
-func (tx *BadgerTransaction) MergePendingPropertyMatches(ids []NodeID, label, property string, value interface{}) []NodeID {
-	tx.mu.Lock()
+func (tx *BadgerTransaction) MergePendingPropertyMatches(ctx context.Context, ids []NodeID, label, property string, value interface{}) ([]NodeID, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
 	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
-		return ids
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return ids, nil
 	}
 	kept := ids[:0]
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, rewritten := tx.pendingNodes[id]; rewritten {
 			continue
 		}
@@ -81,9 +117,25 @@ func (tx *BadgerTransaction) MergePendingPropertyMatches(ids []NodeID, label, pr
 	}
 	valueKey, ok := indexValueKey(value)
 	if !ok || len(tx.pendingNodes) == 0 {
-		return kept
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return kept, nil
 	}
-	return append(kept, tx.pendingValueMatchesLocked(label, property, valueKey)...)
+	pending, err := tx.pendingValueMatchesLocked(ctx, label, property, valueKey)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range pending {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		kept = append(kept, id)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return kept, nil
 }
 
 // MergePendingCompositeMatches is MergePendingPropertyMatches for a composite
@@ -92,14 +144,22 @@ func (tx *BadgerTransaction) MergePendingPropertyMatches(ids []NodeID, label, pr
 // properties (full or prefix) are added. values are raw pattern values; they
 // are canonicalized the same way IndexNode/LookupFull canonicalize, so a
 // pending node equals a committed entry exactly when it keys identically.
-func (tx *BadgerTransaction) MergePendingCompositeMatches(ids []NodeID, label string, properties []string, values []interface{}) []NodeID {
-	tx.mu.Lock()
+func (tx *BadgerTransaction) MergePendingCompositeMatches(ctx context.Context, ids []NodeID, label string, properties []string, values []interface{}) ([]NodeID, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
 	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
-		return ids
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return ids, nil
 	}
 	kept := ids[:0]
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, rewritten := tx.pendingNodes[id]; rewritten {
 			continue
 		}
@@ -108,15 +168,18 @@ func (tx *BadgerTransaction) MergePendingCompositeMatches(ids []NodeID, label st
 		}
 		kept = append(kept, id)
 	}
-	if len(tx.pendingNodes) == 0 {
-		return kept
-	}
 	for id, node := range tx.pendingNodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if compositeNodeMatches(node, label, properties, values) {
 			kept = append(kept, id)
 		}
 	}
-	return kept
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return kept, nil
 }
 
 // compositeNodeMatches reports whether a pending node carries label and its

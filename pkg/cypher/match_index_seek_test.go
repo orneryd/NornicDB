@@ -360,10 +360,11 @@ func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	_, err = exec.Execute(context.Background(), "CREATE INDEX idx_translation_id FOR (n:MongoDocument) ON (n.translationId)", nil)
 	require.NoError(t, err)
-	lookup := eng.GetSchema().PropertyIndexLookup("MongoDocument", "translationId", "src-a")
+	lookup, lookupErr := eng.GetSchema().PropertyIndexLookup(context.Background(), "MongoDocument", "translationId", "src-a")
+	require.NoError(t, lookupErr)
 	require.NotEmpty(t, lookup)
 	nodePattern := nodePatternInfo{variable: "n", labels: []string{"MongoDocument"}}
-	nodes, used, idxErr := exec.tryCollectNodesFromPropertyIndexIn(nodePattern, "n.translationId IN $keys", map[string]interface{}{"keys": []interface{}{"src-a", "src-c"}})
+	nodes, used, idxErr := exec.tryCollectNodesFromPropertyIndexIn(context.Background(), nodePattern, "n.translationId IN $keys", map[string]interface{}{"keys": []interface{}{"src-a", "src-c"}})
 	require.NoError(t, idxErr)
 	require.True(t, used)
 	require.Len(t, nodes, 2)

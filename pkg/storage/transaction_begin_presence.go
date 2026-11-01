@@ -118,11 +118,14 @@ func (generation *CommitBuffer) releaseMemoryLeases() {
 // does not read any entity population, so its empty ID scope leaves admission
 // to each subsequent bound, prefix-scoped or global operation.
 func (b *BadgerEngine) beginTransactionSnapshot(db *managedBadgerDB) (*badger.Txn, uint64, *transactionBeginPresence, error) {
+	// This context-free owner has no request cancellation; its read capture
+	// shares the synchronous operation's lifetime.
+
 	var presence *transactionBeginPresence
 	var captureErr error
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+	view, err := b.captureReadView(context.Background(), func(w *WriteBehindBuffer) {
 		presence, captureErr = w.pinTransactionBeginLocked()
-	}, readViewOptions{longLived: true, scopeKind: readNodeIDsScope, nodeReadCtx: context.Background()})
+	}, readViewOptions{longLived: true, scopeKind: readNodeIDsScope})
 	if err == nil {
 		err = captureErr
 	}

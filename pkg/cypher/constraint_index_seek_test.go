@@ -21,7 +21,9 @@ func TestGh875ConstraintIndexFilledAndUsed(t *testing.T) {
 
 	schema := exec.storage.GetSchema()
 	require.True(t, schema.HasPropertyIndex("Rec", "uid"))
-	require.Len(t, schema.PropertyIndexLookup("Rec", "uid", "u3"), 1)
+	indexedIDs, lookupErr := schema.PropertyIndexLookup(ctx, "Rec", "uid", "u3")
+	require.NoError(t, lookupErr)
+	require.Len(t, indexedIDs, 1)
 
 	result, err := exec.Execute(ctx, "MATCH (n:Rec) WHERE n.uid IN ['u2', 'u4', 'none'] RETURN n.uid ORDER BY n.uid", nil)
 	require.NoError(t, err)

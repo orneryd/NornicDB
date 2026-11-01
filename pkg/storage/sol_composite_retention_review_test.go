@@ -33,11 +33,11 @@ func TestSolCompositeRetiredIDCollectible(t *testing.T) {
 				if owner != "values" {
 					values = append(values, 2)
 				}
-				got := idx.LookupFull(values...)
+				got := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), values...))
 				if len(got) != 1 || got[0] != "test:kept" {
 					t.Fatalf("live index changed: %v", got)
 				}
-				prefix := idx.LookupPrefix(1)
+				prefix := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), 1))
 				if len(prefix) != 1 || prefix[0] != "test:kept" {
 					t.Fatalf("live prefix changed: %v", prefix)
 				}

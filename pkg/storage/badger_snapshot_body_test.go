@@ -17,7 +17,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	_, err = b.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	edgeGen := b.edgeCacheGen.current()
-	view, err := b.captureReadView(nil)
+	view, err := b.captureReadView(t.Context(), nil)
 	require.NoError(t, err)
 	defer view.Close()
 
@@ -56,7 +56,7 @@ func TestSnapshotOverlayBodyCacheHydratesSidecarsAtReadPoint(t *testing.T) {
 	require.NoError(t, b.FlushWriteBehind(nil))
 	node, err := b.GetNode("test:a")
 	require.NoError(t, err)
-	view, err := b.captureReadView(nil)
+	view, err := b.captureReadView(t.Context(), nil)
 	require.NoError(t, err)
 	defer view.Close()
 	node.ChunkEmbeddings = [][]float32{{1, 2}}

@@ -413,7 +413,7 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 // generations. Apply is injected so the replay destination (Badger) stays a
 // detail of the caller.
 type WriteBehindBuffer struct {
-	mu                  sync.RWMutex
+	mu                  trackedRWMutex
 	beginPresenceMu     sync.Mutex
 	beginPresences      *transactionBeginPresence
 	beginPresenceClosed bool
@@ -687,7 +687,7 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 		// rebuild it from the tracked pairs before indexing this commit.
 		w.pendingIndex = newPendingNodeIndex()
 		for _, pair := range w.trackedPairs {
-			w.pendingIndex.track(pair.label, pair.property, func(id NodeID) *Node {
+			w.pendingIndex.track(context.Background(), pair.label, pair.property, func(id NodeID) *Node {
 				node, _ := w.nodeLocked(id)
 				return node
 			})
@@ -952,9 +952,11 @@ func (w *WriteBehindBuffer) nodeLocked(id NodeID) (*Node, bool) {
 
 // lockPendingWrites holds the pending nodes still until unlockPendingWrites,
 // so a lookup combines the committed index with a stable buffer view.
-func (w *WriteBehindBuffer) lockPendingWrites() pendingWriteView {
-	w.mu.RLock()
-	return pendingWriteView{index: w.pendingIndex, owner: w}
+func (w *WriteBehindBuffer) lockPendingWrites(ctx context.Context) (pendingWriteView, error) {
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return pendingWriteView{}, err
+	}
+	return pendingWriteView{index: w.pendingIndex, owner: w}, nil
 }
 
 // unlockPendingWrites releases the lock pendingWrites took.
@@ -981,7 +983,7 @@ func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
 		}
 	}
 	for _, pair := range pairs {
-		w.pendingIndex.track(pair.label, pair.property, func(id NodeID) *Node {
+		w.pendingIndex.track(context.Background(), pair.label, pair.property, func(id NodeID) *Node {
 			node, _ := w.nodeLocked(id)
 			return node
 		})

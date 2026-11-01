@@ -50,7 +50,7 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if data == nil {
 			continue
 		}
-		edge, err := b.decodeEdgeBodyByID(data, id)
+		edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), data, id)
 		if err != nil {
 			return fmt.Errorf("recover prior edge %s: %w", id, err)
 		}

@@ -79,20 +79,18 @@ func stopR2Done(t *testing.T, s *Server) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	var err error
-	if waiter, ok := interface{}(s).(interface{ WaitStopped(context.Context) error }); ok {
-		err = waiter.WaitStopped(ctx)
-	} else {
-		// The old head has no actual-completion API; the file check below is still
-		// behavioural, and old-head callback tests also record the bounded result.
-		require.Eventually(t, func() bool { _, e := s.slowQueryFile.Write(nil); return errors.Is(e, os.ErrClosed) }, 5*time.Second, time.Millisecond)
-	}
+	err := s.WaitStopped(ctx)
 	if errors.Is(err, os.ErrClosed) {
 		t.Error("shutdown attempted to close the real file more than once")
 	}
 	_, closed := s.slowQueryFile.Write(nil)
 	require.ErrorIs(t, closed, os.ErrClosed)
-	require.NoError(t, s.Stop(context.Background()))
+	again := s.Stop(context.Background())
+	if err == nil {
+		require.NoError(t, again)
+	} else {
+		require.EqualError(t, again, err.Error(), "repeated Stop retains the same completed outcomes")
+	}
 	require.ErrorIs(t, s.Start(), ErrServerClosed)
 	return err
 }
@@ -348,10 +346,14 @@ func TestServerStopR2GRPCLifetime(t *testing.T) {
 	provider, err := qdrantgrpc.NewServerWithDatabaseManager(cfg, s.dbManager, s.db.GetBaseStorageForManager(), nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, provider.RegisterAdditionalServices(func(g *grpc.Server) { health.RegisterHealthServer(g, &stopR2Health{gate: gate}) }))
-	require.NoError(t, provider.Start())
 	s.mu.Lock()
 	s.qdrantGRPCServer = provider
 	s.mu.Unlock()
+	// This fixture adds a controlled health handler before startup, so it
+	// constructs the provider directly. Enroll that provider in the same
+	// actual-completion owner used by startQdrantGRPC before starting it.
+	require.True(t, s.shutdown.work.OnStop(func() error { s.stopQdrantGRPC(); return nil }))
+	require.NoError(t, provider.Start())
 	conn, err := grpc.NewClient(provider.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	defer conn.Close()

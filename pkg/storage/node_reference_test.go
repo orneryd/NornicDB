@@ -15,7 +15,7 @@ func TestNodeReferenceUsesCapturedSnapshot(t *testing.T) {
 	b := newReadSnapshotTestEngine(t, false)
 	first, err := b.CreateNode(&Node{ID: "test:reference-first", Labels: []string{"Reference"}})
 	require.NoError(t, err)
-	view, err := b.captureReadView(nil, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: []NodeID{first}, nodeReadCtx: t.Context()})
+	view, err := b.captureReadView(t.Context(), nil, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: []NodeID{first}})
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	defer view.Close()
@@ -59,7 +59,7 @@ func TestNodeReferencePreservesScopedBookmarkDiagnostics(t *testing.T) {
 			}))
 			require.NoError(t, b.withView(func(txn *badger.Txn) error {
 				ref, found, err := b.snapshotNodeRef(txn, id)
-				reader := b.newNodeIndexReader(txn, "test:", labelIndexPrefix("Reference"), id)
+				reader := b.newNodeIndexReader(t.Context(), txn, "test:", labelIndexPrefix("Reference"), id)
 				defer reader.Close()
 				if n != 8 {
 					require.ErrorIs(t, err, ErrInvalidData)
@@ -81,7 +81,7 @@ func TestNodeReferencePreservesScopedBookmarkDiagnostics(t *testing.T) {
 		_, found, err := b.snapshotNodeRef(txn, missing)
 		require.NoError(t, err)
 		require.False(t, found)
-		reader := b.newNodeIndexReader(txn, "test:", labelIndexPrefix("Reference"), missing)
+		reader := b.newNodeIndexReader(t.Context(), txn, "test:", labelIndexPrefix("Reference"), missing)
 		defer reader.Close()
 		require.ErrorIs(t, reader.Err(), ErrNotFound)
 		return nil

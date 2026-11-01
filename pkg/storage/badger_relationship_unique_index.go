@@ -130,7 +130,9 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 		set.entries[key] = idx
 	}
 	values, _ := relationshipConstraintValues(c.Properties, edge.Properties)
-	return idx.index.LookupFull(values...), true, nil
+	// Integrity checks belong to the accepted write, independently of statement cancellation.
+	ids, err := idx.index.LookupFull(context.Background(), values...)
+	return ids, true, err
 }
 func (b *BadgerEngine) updateRelationshipUniqueIndexes(edge *Edge) {
 	set := &b.relationshipUniqueIndexes

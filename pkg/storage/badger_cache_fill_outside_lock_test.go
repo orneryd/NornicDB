@@ -30,7 +30,7 @@ func (b *BadgerEngine) getStoredBody(id NodeID) (*Node, error) {
 		}
 		return item.Value(func(value []byte) error {
 			var decodeErr error
-			decoded, decodeErr = b.decodeNode(namespaceForNodeID(id), value)
+			decoded, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, nil)
 			return decodeErr
 		})
 	})

@@ -198,10 +198,10 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 						got, e := b.GetNode("db:n")
 						require.NoError(t, e)
 						require.Equal(t, c.final, got.Properties["v"], "public cached body")
-						require.Equal(t, []NodeID{"db:n"}, sm.PropertyIndexLookup("L", "v", c.final), "latest value, including same-value recreation, remains indexed")
+						require.Equal(t, []NodeID{"db:n"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "L", "v", c.final)), "latest value, including same-value recreation, remains indexed")
 						for _, old := range []string{"A", "B"} {
 							if old != c.final {
-								require.Empty(t, sm.PropertyIndexLookup("L", "v", old), "superseded posting %s", old)
+								require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "L", "v", old)), "superseded posting %s", old)
 							}
 						}
 						nodes, e := b.GetNodesByLabel(context.Background(), "L")
@@ -215,7 +215,10 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 							if e != nil {
 								return e
 							}
-							return item.Value(func(data []byte) error { physical, e = b.decodeEdgeBodyByID(data, "db:e"); return e })
+							return item.Value(func(data []byte) error {
+								physical, e = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID("db:e"), data, "db:e")
+								return e
+							})
 						}))
 						require.Equal(t, c.final, physical.Properties["v"], "physical committed relationship")
 						got, e := b.GetEdge("db:e")

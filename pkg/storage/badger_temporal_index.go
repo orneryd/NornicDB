@@ -199,7 +199,7 @@ func (b *BadgerEngine) loadNodeForTemporalTxn(txn *badger.Txn, nodeID NodeID, wi
 		if withEmbeddings {
 			node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 		} else {
-			node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), val)
+			node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), val, nil)
 		}
 		return decodeErr
 	})

@@ -46,13 +46,13 @@ func TestPropertyIndexFilesListsForEqualityOnly(t *testing.T) {
 	require.NoError(t, sm.PropertyIndexInsert("P", "tags", "n2", int64(5)))
 	require.NoError(t, sm.PropertyIndexInsert("P", "tags", "n3", []interface{}{"a"}))
 
-	require.Equal(t, []NodeID{"n1"}, sm.PropertyIndexLookup("P", "tags", []interface{}{1.0, 2.0}))
-	require.Equal(t, []NodeID{"n3"}, sm.PropertyIndexLookup("P", "tags", []string{"a"}))
-	require.Empty(t, sm.PropertyIndexLookup("P", "tags", []interface{}{int64(2), int64(1)}))
-	require.Equal(t, []NodeID{"n1"}, sm.PropertyIndexLookupAnyLabel("tags", []interface{}{int64(1), int64(2)}))
+	require.Equal(t, []NodeID{"n1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []interface{}{1.0, 2.0})))
+	require.Equal(t, []NodeID{"n3"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []string{"a"})))
+	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []interface{}{int64(2), int64(1)})))
+	require.Equal(t, []NodeID{"n1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "tags", []interface{}{int64(1), int64(2)})))
 	// Ordered scans read scalar keys only.
-	require.Equal(t, []NodeID{"n2"}, sm.PropertyIndexAllNonNil("P", "tags", false))
+	require.Equal(t, []NodeID{"n2"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexAllNonNil(t.Context(), "P", "tags", false)))
 
 	require.NoError(t, sm.PropertyIndexDelete("P", "tags", "n1", []interface{}{int64(1), int64(2)}))
-	require.Empty(t, sm.PropertyIndexLookup("P", "tags", []interface{}{int64(1), int64(2)}))
+	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []interface{}{int64(1), int64(2)})))
 }

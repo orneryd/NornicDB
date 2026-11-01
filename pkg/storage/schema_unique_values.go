@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/ctxsort"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
 	"sort"
@@ -46,69 +47,58 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 // cache has been rebuilt from storage and can be trusted for misses. Planners
 // may trust absence only when cacheComplete is true; otherwise they must retain
 // a scan fallback because the cache may not have been rebuilt from storage yet.
-func (sm *SchemaManager) LookupUniqueConstraintValue(label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool) {
-	sm.mu.RLock()
-	key := label + ":" + property
-	constraint, exists := sm.uniqueConstraints[key]
-	sm.mu.RUnlock()
-	if !exists || value == nil {
-		return "", false, exists, false
+func (sm *SchemaManager) LookupUniqueConstraintValue(ctx context.Context, label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool, err error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return "", false, false, false, err
 	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return "", false, true, false
-	}
-	nodeID, valueFound, cacheComplete = sm.lookupUniqueValue(constraint, label, property, value, valueKey)
-	return nodeID, valueFound, true, cacheComplete
-}
-
-// uniqueValueHolders returns the nodes holding value under label's unique
-// constraint on property, merged with the pending writes: the registered
-// holder unless a pending write supersedes it, and every pending node with
-// the value. cacheComplete reports whether the registered values cover all
-// stored nodes, so an empty result can be trusted.
-func (sm *SchemaManager) uniqueValueHolders(label, property string, value interface{}) (holders []NodeID, cacheComplete bool, constraintExists bool) {
-	sm.mu.RLock()
 	constraint, exists := sm.uniqueConstraints[label+":"+property]
 	sm.mu.RUnlock()
-	if !exists {
-		return nil, false, false
+	if !exists || value == nil {
+		return "", false, exists, false, ctx.Err()
 	}
 	valueKey, ok := indexValueKey(value)
 	if !ok {
-		return nil, false, true
+		return "", false, true, false, ctx.Err()
 	}
-	view, source := sm.beginPendingRead()
-	defer endPendingRead(source)
-	constraint.mu.RLock()
-	holder, found := constraint.values[valueKey]
-	cacheComplete = constraint.valuesCacheComplete
-	constraint.mu.RUnlock()
-	if found && view.keep(holder) {
-		holders = append(holders, holder)
+	nodeID, valueFound, cacheComplete, err = sm.lookupUniqueValue(ctx, constraint, label, property, valueKey)
+	if err != nil {
+		return "", false, false, false, err
 	}
-	holders = view.valueMatches(holders, label, property, valueKey)
-	return holders, cacheComplete, true
+	return nodeID, valueFound, true, cacheComplete, nil
 }
 
 // lookupUniqueValue returns the node holding valueKey under constraint,
 // merged with the pending writes: a registered holder with a pending update
 // or delete no longer counts, and a pending node with the value does.
-func (sm *SchemaManager) lookupUniqueValue(constraint *UniqueConstraint, label, property string, value, valueKey interface{}) (nodeID NodeID, found bool, cacheComplete bool) {
-	view, source := sm.beginPendingRead()
+func (sm *SchemaManager) lookupUniqueValue(ctx context.Context, constraint *UniqueConstraint, label, property string, valueKey interface{}) (nodeID NodeID, found bool, cacheComplete bool, err error) {
+	view, source, err := sm.beginPendingRead(ctx)
+	if err != nil {
+		return "", false, false, err
+	}
 	defer endPendingRead(source)
-	constraint.mu.RLock()
+	if err := constraint.mu.RLockContext(ctx); err != nil {
+		return "", false, false, err
+	}
 	nodeID, found = constraint.values[valueKey]
 	cacheComplete = constraint.valuesCacheComplete
 	constraint.mu.RUnlock()
 	if found && !view.keep(nodeID) {
 		nodeID, found = "", false
 	}
-	if pending := view.valueMatches(nil, label, property, valueKey); len(pending) > 0 {
-		sort.Slice(pending, func(i, j int) bool { return string(pending[i]) < string(pending[j]) })
+	pending, err := view.valueMatches(ctx, nil, label, property, valueKey)
+	if err != nil {
+		return "", false, false, err
+	}
+	if len(pending) > 0 {
+		if err := ctxsort.Sort(ctx, pending, func(a, b NodeID) int { return strings.Compare(string(a), string(b)) }, false); err != nil {
+			return "", false, false, err
+		}
 		nodeID, found = pending[0], true
 	}
-	return nodeID, found, cacheComplete
+	if err := ctx.Err(); err != nil {
+		return "", false, false, err
+	}
+	return nodeID, found, cacheComplete, nil
 }
 
 // uniqueConstraintLockKey identifies one (label, property, value) triple for

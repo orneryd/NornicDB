@@ -413,9 +413,15 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 		if schema != nil && schema.HasPropertyIndex(key.label, key.prop) {
 			unresolved := make(map[string]interface{})
 			for valueKey, value := range distinct {
-				ids := propertyIndexLookup(store, schema, key.label, key.prop, value)
+				ids, err := propertyIndexLookup(ctx, store, schema, key.label, key.prop, value)
+				if err != nil {
+					return nil, false, err
+				}
 				matched := 0
 				for _, id := range ids {
+					if err := ctx.Err(); err != nil {
+						return nil, false, err
+					}
 					node, err := e.getQueryNode(store, id)
 					if err == nil && nodeBatchMatchesValue(node, key, value) {
 						matched++

@@ -63,7 +63,8 @@ func TestExplicitTransactionSchemaCommitPublishesBackfill(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"staged_index"}}, visible.Rows)
 	for _, property := range []string{"accountID", "name"} {
-		indexed := store.GetSchema().PropertyIndexLookup("Account", property, map[string]string{"accountID": "seed", "name": "existing"}[property])
+		indexed, lookupErr := store.GetSchema().PropertyIndexLookup(ctx, "Account", property, map[string]string{"accountID": "seed", "name": "existing"}[property])
+		require.NoError(t, lookupErr)
 		require.Len(t, indexed, 1, property)
 	}
 }
@@ -91,7 +92,8 @@ func TestExplicitTransactionSchemaBackfillConcurrentWrite(t *testing.T) {
 		require.ErrorIs(t, err, storage.ErrConflict)
 		return
 	}
-	indexed := store.GetSchema().PropertyIndexLookup("Account", "accountID", "concurrent")
+	indexed, lookupErr := store.GetSchema().PropertyIndexLookup(ctx, "Account", "accountID", "concurrent")
+	require.NoError(t, lookupErr)
 	require.Len(t, indexed, 1, "schema commit must not publish a stale backfill")
 }
 

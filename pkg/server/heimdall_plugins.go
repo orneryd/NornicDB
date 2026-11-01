@@ -97,11 +97,6 @@ func (s *Server) loadHeimdallPlugins(ctx heimdall.SubsystemContext, server *mcp.
 	registerHeimdallMCPTools(server, manager, pluginContext.Database, pluginContext.Metrics, pluginContext.Bifrost)
 }
 
-// stopHeimdallPlugins is the legacy internal entry into the common protocol.
-func (s *Server) stopHeimdallPlugins() error {
-	return s.Stop(context.Background())
-}
-
 func (s *Server) signalHeimdallPlugins() error {
 	s.heimdallPluginsMu.Lock()
 	manager := s.heimdallSubsystem

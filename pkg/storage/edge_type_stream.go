@@ -179,7 +179,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 		}
 		return visit(edge)
 	}
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
 		}
@@ -254,7 +254,7 @@ func (b *BadgerEngine) readEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, err
 	var edge *Edge
 	err = item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 		return decodeErr
 	})
 	return edge, err
@@ -292,7 +292,7 @@ func (b *BadgerEngine) streamAllEdgesInScopeTxnWithBodies(ctx context.Context, t
 				}
 			}
 			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+			edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 			return decodeErr
 		}); err != nil {
 			return err

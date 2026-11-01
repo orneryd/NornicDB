@@ -18,7 +18,12 @@ func TestManagerR4JoinsArmedExpiryCallback(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(unblock)
+	t.Cleanup(func() {
+		unblock()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		require.NoError(t, manager.CloseContext(ctx))
+	})
 	// This constructor dependency still uses the real timer. The prefix gate
 	// observes a fired callback before the managed callback can enter its locks.
 	// The identical gate is overlaid on the old product without ownership fixes.
@@ -32,9 +37,9 @@ func TestManagerR4JoinsArmedExpiryCallback(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("real expiry timer did not fire")
 	}
-	require.NoError(t, manager.CloseContext(context.Background()))
 	waitCtx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
+	require.ErrorIs(t, manager.CloseContext(waitCtx), context.DeadlineExceeded, "a close waiter must not report completion while its callback is held")
 	require.ErrorIs(t, manager.WaitClosed(waitCtx), context.DeadlineExceeded, "the owner reported completion while its armed callback was still executing")
 	unblock()
 	finalCtx, finalCancel := context.WithTimeout(context.Background(), time.Second)

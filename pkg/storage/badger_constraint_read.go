@@ -18,8 +18,11 @@ func (b *BadgerEngine) keyConstraintNodes(ctx context.Context, idx *CompositeInd
 	}
 	var nodes []*Node
 	var captureErr error
-	err := b.withReadView(func(w *WriteBehindBuffer) {
-		ids = idx.LookupFull(values...)
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) {
+		ids, captureErr = idx.LookupFull(ctx, values...)
+		if captureErr != nil {
+			return
+		}
 		if w == nil {
 			return
 		}

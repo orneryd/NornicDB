@@ -46,7 +46,7 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 				calls := 0
 				var ids []EdgeID
 				var hit bool
-				view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+				view, err := b.captureReadView(t.Context(), func(w *WriteBehindBuffer) {
 					calls++
 					require.Nil(t, w, "only overlay selection is skipped")
 					ids, hit = b.adjCacheLoad("test:holder", true)

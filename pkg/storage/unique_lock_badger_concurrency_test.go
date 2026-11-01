@@ -228,7 +228,10 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	if len(nodes) != 1 || nodes[0].ID != nodeID || nodes[0].Properties["uid"] != uid || storedRevision(nodes[0]) != int64(loser.revision) {
 		t.Fatalf("same-UID final nodes = %#v, want one node %s at retry revision %d", nodes, nodeID, loser.revision)
 	}
-	cachedID, found, constrained, _ := schema.LookupUniqueConstraintValue("Function", "uid", uid)
+	cachedID, found, constrained, _, uniqueLookupErr1 := schema.LookupUniqueConstraintValue(t.Context(), "Function", "uid", uid)
+	if uniqueLookupErr1 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+	}
 	if !constrained || !found || cachedID != nodeID {
 		t.Fatalf("same-UID cache = (%s, %v, %v), want (%s, true, true)", cachedID, found, constrained, nodeID)
 	}
@@ -359,7 +362,10 @@ func assertBadgerUniqueFunctionExactness(t *testing.T, engine *BadgerEngine, sch
 		if storedRevision(node) != int64(revision) {
 			t.Fatalf("node %s revision = %#v, want %d", node.ID, node.Properties["revision"], revision)
 		}
-		cachedID, found, constrained, _ := schema.LookupUniqueConstraintValue("Function", "uid", uid)
+		cachedID, found, constrained, _, uniqueLookupErr2 := schema.LookupUniqueConstraintValue(t.Context(), "Function", "uid", uid)
+		if uniqueLookupErr2 != nil {
+			t.Errorf("unique index read failed: %v", uniqueLookupErr2)
+		}
 		if !constrained || !found || cachedID != node.ID {
 			t.Fatalf("Function.uid cache for %q = (%s, %v, %v), want (%s, true, true)", uid, cachedID, found, constrained, node.ID)
 		}

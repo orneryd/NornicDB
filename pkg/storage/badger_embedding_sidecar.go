@@ -247,7 +247,7 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 		physical = item.Version()
 		if err := item.Value(func(value []byte) error {
 			var err error
-			stored, err = b.decodeNode(namespaceForNodeID(embedded.ID), value)
+			stored, err = b.decodeNodeProjected(txn, namespaceForNodeID(embedded.ID), value, nil)
 			return err
 		}); err != nil {
 			return err
@@ -355,6 +355,9 @@ func (b *BadgerEngine) freshEmbeddingSidecarMeta(read embeddingRecordReader, nod
 // node buffered by write-behind answers with its buffered state, as GetNode
 // does; a buffered delete is gone.
 func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
+	// This context-free owner has no request cancellation; its read capture
+	// shares the synchronous operation's lifetime.
+
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
 		return nil, err
 	}
@@ -367,7 +370,7 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 	}
 	var state bufferedEntityState
 	var meta map[string]any
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(context.Background(), func(w *WriteBehindBuffer) {
 		state = w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
 	}, func(txn *badger.Txn) error {
 		if state.found {
@@ -386,7 +389,7 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 		}
 		return item.Value(func(val []byte) error {
 			namespace, _, _ := ParseDatabasePrefix(string(id))
-			node, err := b.decodeNode(namespace, val)
+			node, err := b.decodeNodeProjected(txn, namespace, val, nil)
 			if err != nil {
 				return err
 			}

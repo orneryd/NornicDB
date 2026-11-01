@@ -83,7 +83,7 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 				if len(c.Properties) > 1 {
 					err = v.transaction.checkNodeKeyConstraint(v.ctx, node, c)
 				} else {
-					err = v.transaction.checkUniqueConstraint(node, c)
+					err = v.transaction.checkUniqueConstraint(v.ctx, node, c)
 				}
 				if err != nil {
 					return err
@@ -110,7 +110,9 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 			if value == nil {
 				continue
 			}
-			if existingNode, found, constrained, cacheComplete := v.schema.LookupUniqueConstraintValue(c.Label, prop, value); constrained && cacheComplete {
+			if existingNode, found, constrained, cacheComplete, err := v.schema.LookupUniqueConstraintValue(v.ctx, c.Label, prop, value); err != nil {
+				return err
+			} else if constrained && cacheComplete {
 				if found && existingNode != v.exclude {
 					return uniqueConstraintViolation(c.Label, prop, value, existingNode)
 				}
@@ -269,7 +271,7 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 			return err
 		}
 
-		existingNode, err := b.decodeNode(namespace, nodeBytes)
+		existingNode, err := b.decodeNodeProjected(txn, namespace, nodeBytes, nil)
 		if err != nil {
 			return err
 		}
@@ -328,7 +330,7 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 			return err
 		}
 
-		existingNode, err := b.decodeNode(namespace, nodeBytes)
+		existingNode, err := b.decodeNodeProjected(txn, namespace, nodeBytes, nil)
 		if err != nil {
 			return err
 		}
@@ -426,7 +428,7 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace st
 	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
 	if fullLabel {
 		runTemporalConstraintScanHook()
-		it := b.newNodeIndexReader(txn, namespace+":", labelIndexPrefix(c.Label), "")
+		it := b.newLabelIndexReader(context.Background(), txn, namespace+":", c.Label, "", storedRead, false)
 		defer it.Close()
 		for it.Next() {
 			id := it.NodeID()
@@ -610,7 +612,7 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 			return err
 		}
 
-		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
+		existingEdge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), edgeBytes, edgeID)
 		if err != nil {
 			return err
 		}
@@ -752,7 +754,7 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 			return err
 		}
 
-		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
+		existingEdge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), edgeBytes, edgeID)
 		if err != nil {
 			return err
 		}
@@ -837,7 +839,7 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 		}); err != nil {
 			return err
 		}
-		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
+		existingEdge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), edgeBytes, edgeID)
 		if err != nil {
 			return err
 		}
@@ -940,7 +942,7 @@ func (b *BadgerEngine) readNodeLabelsInTxn(txn *badger.Txn, nodeID NodeID) ([]st
 	}); err != nil {
 		return nil, err
 	}
-	node, err := b.decodeNode(namespaceForNodeID(nodeID), nodeBytes)
+	node, err := b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), nodeBytes, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1013,7 +1015,7 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		}); err != nil {
 			return err
 		}
-		edge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
+		edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), edgeBytes, edgeID)
 		if err != nil {
 			return err
 		}

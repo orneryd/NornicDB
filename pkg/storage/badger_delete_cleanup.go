@@ -136,6 +136,6 @@ func (b *BadgerEngine) compactDeletedEntries(ctx context.Context) error {
 		return err
 	}
 	return recoverBadgerClosedPanic(func() error {
-		return b.db.DropPrefix(ctx, prefixDropOptions{metadata: true}, deleteCleanupMarkerKey)
+		return b.db.DropPrefix(ctx, prefixDropOptions{metadata: true, mode: purgePrefixVersions}, deleteCleanupMarkerKey)
 	})
 }

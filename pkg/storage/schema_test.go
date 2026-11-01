@@ -116,7 +116,10 @@ func TestSchemaManager(t *testing.T) {
 
 		sm.ApplyUniqueValue("User", "age", int(1), "node1", ValidatedUniqueClaim)
 
-		got, found, constrained, _ := sm.LookupUniqueConstraintValue("User", "age", int64(1))
+		got, found, constrained, _, uniqueLookupErr1 := sm.LookupUniqueConstraintValue(t.Context(), "User", "age", int64(1))
+		if uniqueLookupErr1 != nil {
+			t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+		}
 		require.True(t, constrained)
 		require.True(t, found)
 		assert.Equal(t, NodeID("node1"), got)
@@ -134,7 +137,10 @@ func TestSchemaManager(t *testing.T) {
 		require.NoError(t, sm.AddUniqueConstraint("test_tags_unique", "User", "tags"))
 
 		require.NotPanics(t, func() {
-			nodeID, valueFound, constraintExists, _ := sm.LookupUniqueConstraintValue("User", "tags", []string{"a"})
+			nodeID, valueFound, constraintExists, _, uniqueLookupErr2 := sm.LookupUniqueConstraintValue(t.Context(), "User", "tags", []string{"a"})
+			if uniqueLookupErr2 != nil {
+				t.Errorf("unique index read failed: %v", uniqueLookupErr2)
+			}
 			require.Empty(t, nodeID)
 			require.True(t, constraintExists)
 			require.False(t, valueFound)
@@ -763,19 +769,19 @@ func TestCompositeIndexOperations(t *testing.T) {
 		})
 
 		// Full lookup
-		results := idx.LookupFull("US", "NYC", "10001")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC", "10001"))
 		if len(results) != 1 || results[0] != "user1" {
 			t.Errorf("Expected [user1], got %v", results)
 		}
 
 		// Non-existent lookup
-		results = idx.LookupFull("US", "NYC", "99999")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC", "99999"))
 		if results != nil {
 			t.Errorf("Expected nil for non-existent key, got %v", results)
 		}
 
 		// Partial lookup should fail with LookupFull
-		results = idx.LookupFull("US", "NYC")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 		if results != nil {
 			t.Errorf("Expected nil for partial key with LookupFull, got %v", results)
 		}
@@ -809,25 +815,25 @@ func TestCompositeIndexOperations(t *testing.T) {
 		})
 
 		// Prefix lookup: country only
-		results := idx.LookupPrefix("US")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 		if len(results) != 3 {
 			t.Errorf("Expected 3 US users, got %d: %v", len(results), results)
 		}
 
 		// Prefix lookup: country + city
-		results = idx.LookupPrefix("US", "NYC")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC"))
 		if len(results) != 2 {
 			t.Errorf("Expected 2 NYC users, got %d: %v", len(results), results)
 		}
 
 		// Full key via LookupPrefix should work too
-		results = idx.LookupPrefix("US", "NYC", "10001")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC", "10001"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 user for full prefix, got %d", len(results))
 		}
 
 		// Empty prefix should return nil
-		results = idx.LookupPrefix()
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context()))
 		if results != nil {
 			t.Errorf("Expected nil for empty prefix, got %v", results)
 		}
@@ -845,20 +851,20 @@ func TestCompositeIndexOperations(t *testing.T) {
 
 		// Index and verify
 		idx.IndexNode("user1", props)
-		results := idx.LookupFull("US", "NYC")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 		if len(results) != 1 {
 			t.Fatal("Index failed")
 		}
 
 		// Remove and verify
 		idx.RemoveNode("user1", props)
-		results = idx.LookupFull("US", "NYC")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 		if results != nil {
 			t.Errorf("Expected nil after removal, got %v", results)
 		}
 
 		// Prefix should also be gone
-		results = idx.LookupPrefix("US")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 		if results != nil {
 			t.Errorf("Expected nil prefix after removal, got %v", results)
 		}
@@ -877,18 +883,18 @@ func TestCompositeIndexOperations(t *testing.T) {
 		})
 
 		// Should be findable by prefix
-		results := idx.LookupPrefix("US")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result for prefix, got %d", len(results))
 		}
 
-		results = idx.LookupPrefix("US", "NYC")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result for full available prefix, got %d", len(results))
 		}
 
 		// But not findable by full lookup (missing property)
-		results = idx.LookupFull("US", "NYC", "10001")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC", "10001"))
 		if results != nil {
 			t.Errorf("Expected nil for full lookup on partial data, got %v", results)
 		}
@@ -905,9 +911,9 @@ func TestCompositeIndexOperations(t *testing.T) {
 		idx.IndexNode("user3", map[string]interface{}{"country": "US", "city": "NYC"})
 
 		// Filter to only even-numbered users (user2)
-		results := idx.LookupWithFilter(func(id NodeID) bool {
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupWithFilter(t.Context(), func(id NodeID) bool {
 			return id == "user2"
-		}, "US", "NYC")
+		}, "US", "NYC"))
 
 		if len(results) != 1 || results[0] != "user2" {
 			t.Errorf("Expected [user2], got %v", results)
@@ -966,8 +972,8 @@ func TestCompositeIndexConcurrency(t *testing.T) {
 				idx.IndexNode(nodeID, props)
 
 				// Lookup
-				idx.LookupFull(fmt.Sprintf("a-%d", gid), fmt.Sprintf("b-%d", i))
-				idx.LookupPrefix(fmt.Sprintf("a-%d", gid))
+				checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), fmt.Sprintf("a-%d", gid), fmt.Sprintf("b-%d", i)))
+				checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), fmt.Sprintf("a-%d", gid)))
 
 				// Remove every other
 				if i%2 == 0 {
@@ -1035,7 +1041,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		}
 
 		// A nil lookup therefore finds nothing through the index.
-		results := idx.LookupFull(nil, "test")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), nil, "test"))
 		if len(results) != 0 {
 			t.Errorf("Expected 0 results with nil key, got %d", len(results))
 		}
@@ -1051,7 +1057,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 			"b": "test",
 		})
 
-		results := idx.LookupFull("", "test")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "", "test"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result with empty string, got %d", len(results))
 		}
@@ -1068,13 +1074,13 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 			"bool_val":  true,
 		})
 
-		results := idx.LookupFull(42, 3.14, true)
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), 42, 3.14, true))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result with complex types, got %d", len(results))
 		}
 
 		// Different types should not match
-		results = idx.LookupFull("42", 3.14, true)
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "42", 3.14, true))
 		if len(results) != 0 {
 			t.Errorf("Expected 0 results for wrong type, got %d", len(results))
 		}
@@ -1092,7 +1098,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		idx.IndexNode("user1", props)
 
 		// Should still only have one entry
-		results := idx.LookupFull("x", "y")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "x", "y"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result (no duplicates), got %d", len(results))
 		}
@@ -1153,20 +1159,29 @@ func BenchmarkCompositeIndex(b *testing.B) {
 	})
 
 	b.Run("LookupFull", func(b *testing.B) {
+		ctx := b.Context()
 		for i := 0; i < b.N; i++ {
-			idx.LookupFull("country-1", "city-1", "zip-1")
+			if _, err := idx.LookupFull(ctx, "country-1", "city-1", "zip-1"); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 
 	b.Run("LookupPrefix", func(b *testing.B) {
+		ctx := b.Context()
 		for i := 0; i < b.N; i++ {
-			idx.LookupPrefix("country-1")
+			if _, err := idx.LookupPrefix(ctx, "country-1"); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 
 	b.Run("LookupPrefixTwoProps", func(b *testing.B) {
+		ctx := b.Context()
 		for i := 0; i < b.N; i++ {
-			idx.LookupPrefix("country-1", "city-1")
+			if _, err := idx.LookupPrefix(ctx, "country-1", "city-1"); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 }
@@ -1520,14 +1535,14 @@ func TestCompositeIndex_LookupWithFilter(t *testing.T) {
 	idx.IndexNode("test:n3", map[string]interface{}{"country": "UK", "city": "LDN"})
 
 	// Filter by prefix "US", then apply filter to only keep n1
-	results := idx.LookupWithFilter(func(id NodeID) bool {
+	results := checkedIndexRead[[]NodeID](t)(idx.LookupWithFilter(t.Context(), func(id NodeID) bool {
 		return id == "test:n1"
-	}, "US")
+	}, "US"))
 	assert.Len(t, results, 1)
 	assert.Equal(t, NodeID("test:n1"), results[0])
 
 	// Filter with no prefix match
-	results = idx.LookupWithFilter(func(id NodeID) bool { return true }, "JP")
+	results = checkedIndexRead[[]NodeID](t)(idx.LookupWithFilter(t.Context(), func(id NodeID) bool { return true }, "JP"))
 	assert.Nil(t, results)
 }
 
@@ -1560,15 +1575,15 @@ func TestSchemaManager_LookupPrefix_FullMatch(t *testing.T) {
 	idx.IndexNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
 
 	// LookupPrefix with all properties is a full match
-	results := idx.LookupPrefix("US", "NYC")
+	results := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC"))
 	assert.Len(t, results, 1)
 
 	// LookupPrefix with no values returns nil
-	results = idx.LookupPrefix()
+	results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context()))
 	assert.Nil(t, results)
 
 	// LookupPrefix with too many values returns nil
-	results = idx.LookupPrefix("US", "NYC", "extra")
+	results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC", "extra"))
 	assert.Nil(t, results)
 }
 
@@ -1586,20 +1601,20 @@ func TestCompositeIndex_RemoveNode(t *testing.T) {
 	idx.IndexNode("test:n2", map[string]interface{}{"country": "US", "city": "LA"})
 
 	// Verify indexed
-	results := idx.LookupFull("US", "NYC")
+	results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 	assert.Len(t, results, 1)
-	prefixResults := idx.LookupPrefix("US")
+	prefixResults := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 	assert.Len(t, prefixResults, 2)
 
 	// Remove n1
 	idx.RemoveNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
 
 	// Full lookup for NYC should return empty
-	results = idx.LookupFull("US", "NYC")
+	results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 	assert.Len(t, results, 0)
 
 	// Prefix lookup for US should only have n2
-	prefixResults = idx.LookupPrefix("US")
+	prefixResults = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 	assert.Len(t, prefixResults, 1)
 }
 
@@ -1612,9 +1627,9 @@ func TestSchemaManager_PropertyIndexTopK(t *testing.T) {
 	require.NoError(t, sm.PropertyIndexInsert("MongoDocument", "sourceId", NodeID("n4"), "src-004"))
 	require.NoError(t, sm.PropertyIndexInsert("MongoDocument", "sourceId", NodeID("n-nil"), nil))
 
-	asc := sm.PropertyIndexTopK("MongoDocument", "sourceId", 2, false)
+	asc := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "MongoDocument", "sourceId", 2, false))
 	require.Equal(t, []NodeID{"n1", "n2"}, asc)
 
-	desc := sm.PropertyIndexTopK("MongoDocument", "sourceId", 2, true)
+	desc := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "MongoDocument", "sourceId", 2, true))
 	require.Equal(t, []NodeID{"n4", "n3"}, desc)
 }

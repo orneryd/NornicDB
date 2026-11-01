@@ -271,7 +271,7 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	var overlay []*Node
 	var touched map[NodeID]bool
 	var captureErr error
-	err = b.withReadView(func(w *WriteBehindBuffer) {
+	err = b.withReadView(ctx, func(w *WriteBehindBuffer) {
 		pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
 		if err != nil {
 			captureErr = err

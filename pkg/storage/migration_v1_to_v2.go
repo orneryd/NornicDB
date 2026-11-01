@@ -153,7 +153,7 @@ func (b *BadgerEngine) rebuildSecondaryIndexesForV2() (v1ToV2IndexStats, error) 
 		if err := b.ensureOpen(false); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
-		if err := b.db.DropPrefix(context.Background(), prefixDropOptions{}, []byte{p}); err != nil {
+		if err := b.db.DropPrefix(context.Background(), prefixDropOptions{mode: purgePrefixVersions}, []byte{p}); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
 	}
@@ -216,7 +216,7 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 				if !ok {
 					return fmt.Errorf("v1→v2 index rebuild: node %q lacks namespace prefix", nodeID)
 				}
-				node, err := b.decodeNode(namespace, item.value)
+				node, err := b.decodeNodeProjected(txn, namespace, item.value, nil)
 				if err != nil {
 					return fmt.Errorf("decode v2 node %q: %w", nodeID, err)
 				}
@@ -300,7 +300,7 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
 		err = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			for _, item := range batch {
 				edgeID := EdgeID(string(item.key[1:]))
-				edge, err := b.decodeEdgeBodyByID(item.value, edgeID)
+				edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), item.value, edgeID)
 				if err != nil {
 					return fmt.Errorf("decode v2 edge %q: %w", edgeID, err)
 				}

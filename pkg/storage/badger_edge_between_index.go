@@ -87,7 +87,7 @@ func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection
 		if len(key) > 1 {
 			edgeID = EdgeID(key[1:])
 		}
-		edge, err := b.decodeEdgeBodyByID(val, edgeID)
+		edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 		if err == nil {
 			err = b.writeEdgeBetweenIndexesInTxn(txn, edge)
 		}

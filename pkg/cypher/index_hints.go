@@ -345,11 +345,17 @@ func ApplyIndexHint(ctx context.Context, store storage.Engine, schema *storage.S
 	}
 
 	// Try to use the property index for O(1) lookup
-	nodeIDs := propertyIndexLookup(store, schema, hint.Label, hint.Property, propertyValue)
+	nodeIDs, err := propertyIndexLookup(ctx, store, schema, hint.Label, hint.Property, propertyValue)
+	if err != nil {
+		return nil, err
+	}
 	if nodeIDs != nil {
 		// Index exists and was used! Get the actual nodes.
 		var result []*storage.Node
 		for _, nodeID := range nodeIDs {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			node, err := store.GetNode(nodeID)
 			if err == nil && node != nil {
 				result = append(result, node)

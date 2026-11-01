@@ -221,6 +221,9 @@ const (
 // for a stored existence check: it avoids materializing a cache hit and returns
 // no node image, while preserving the same admission, decode, and error behavior.
 func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheMode nodeReadCacheMode) (*Node, error) {
+	// This context-free owner has no request cancellation; its read capture
+	// shares the synchronous operation's lifetime.
+
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -261,7 +264,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 	// The cached callback resolves the requested buffered key while the owner
 	// holds the retirement lock. Only a miss needs a transaction; no overlay
 	// for this key remains to capture, and no decode closure is built on a hit.
-	view, err := b.captureReadView(nil, readViewOptions{scope: namespaceForNodeID(id), cached: cached})
+	view, err := b.captureReadView(context.Background(), nil, readViewOptions{scope: namespaceForNodeID(id), cached: cached})
 	loaded := view != nil
 	var sourceTs uint64
 	if view != nil {
@@ -386,6 +389,9 @@ func (b *BadgerEngine) readNodeMetadata(id NodeID, v readVisibility, hydration n
 // key exists, without reading or decoding the record. It doesn't answer while
 // decay filtering can hide a node at read time, or when the lookup fails.
 func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
+	// This context-free owner has no request cancellation; its read capture
+	// shares the synchronous operation's lifetime.
+
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
 		return false, false
 	}
@@ -395,7 +401,7 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 	}
 	if b.writeBehind != nil {
 		var state bufferedEntityState
-		err := b.withReadView(func(w *WriteBehindBuffer) {
+		err := b.withReadView(context.Background(), func(w *WriteBehindBuffer) {
 			state = w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
 		}, func(txn *badger.Txn) error {
 			if state.found {

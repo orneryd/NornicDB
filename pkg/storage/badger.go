@@ -183,6 +183,8 @@ type BadgerEngine struct {
 	// prefixDrops records prefix deletes for the transactions open across
 	// them (prefixDroppedSince).
 	prefixDrops prefixDrops
+	// Positive proof for views at/after a durably completed label index.
+	labelIndexReadyAt atomic.Uint64
 	// pendingCandidates accelerates the durable pending-embedding index. Adds
 	// are published by the common commit writer only after a successful commit.
 	pendingCandidates           pendingEmbeddingCandidates

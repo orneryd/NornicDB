@@ -385,7 +385,8 @@ func removeEntityUUIDIndexEntries(tb testing.TB, store *storage.NamespacedEngine
 		if !match(uuid) {
 			continue
 		}
-		ids := schema.PropertyIndexLookup("Entity", "uuid", uuid)
+		ids, lookupErr := schema.PropertyIndexLookup(ctx, "Entity", "uuid", uuid)
+		require.NoError(tb, lookupErr)
 		require.NotEmpty(tb, ids)
 		for _, id := range ids {
 			require.NoError(tb, schema.PropertyIndexDelete("Entity", "uuid", id, uuid))
@@ -417,7 +418,9 @@ func TestGraphitiScenarioE2E_BulkEdgeSaveIndexedEntityMatchesSurviveIncompleteIn
 		return uuid == "entity-000003" || uuid == "entity-000007" || uuid == "entity-000011" || uuid == "entity-000017"
 	})
 	require.Equal(t, 4, removed)
-	require.Empty(t, schema.PropertyIndexLookup("Entity", "uuid", "entity-000003"))
+	missingIDs, lookupErr := schema.PropertyIndexLookup(ctx, "Entity", "uuid", "entity-000003")
+	require.NoError(t, lookupErr)
+	require.Empty(t, missingIDs)
 
 	res, err = exec.Execute(ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})
 	require.NoError(t, err)

@@ -53,29 +53,62 @@ const (
 // indexBackfillReady reads the selected family marker. Labels require the exact
 // current scheme byte; relationship backfill retains key-presence semantics.
 func (b *BadgerEngine) indexBackfillReady(kind startupIndexKind) (bool, error) {
+	var ready bool
+	err := b.db.View(func(txn *badger.Txn) error {
+		var err error
+		ready, err = readStartupIndexReadiness(txn, kind)
+		return err
+	})
+	return ready, err
+}
+
+// readStartupIndexReadiness interprets the established marker in the reader's
+// own snapshot. It shares startup's label-version and edge-presence contracts.
+func readStartupIndexReadiness(txn *badger.Txn, kind startupIndexKind) (bool, error) {
 	key := labelIndexReadyKey
 	if kind == startupEdgeBetweenIndex {
 		key = edgeBetweenIndexReadyKey
 	}
+	item, err := txn.Get(key)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if kind == startupEdgeBetweenIndex {
+		return true, nil
+	}
 	var ready bool
-	err := b.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(key)
-		if err == nil {
-			if kind == startupEdgeBetweenIndex {
-				ready = true
-				return nil
-			}
-			return item.Value(func(value []byte) error {
-				ready = len(value) == 1 && value[0] == labelIndexSchemeVersion
-				return nil
-			})
-		}
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			return nil
-		}
-		return err
+	err = item.Value(func(value []byte) error {
+		ready = len(value) == 1 && value[0] == labelIndexSchemeVersion
+		return nil
 	})
 	return ready, err
+}
+
+// rememberIndexReadiness is the single writer of the runtime readiness proof.
+// A positive fact comes only from a committed marker or startup's verified
+// marker; older physical snapshots must still read their own marker. Rebuild
+// and restore invalidate this proof before replacing index state.
+func (b *BadgerEngine) rememberIndexReadiness(kind startupIndexKind, ready bool) {
+	if kind != startupLabelIndex {
+		return
+	}
+	var timestamp uint64
+	if ready {
+		timestamp = b.db.oracle.published.Load()
+	}
+	b.labelIndexReadyAt.Store(timestamp)
+}
+
+// labelIndexReadyInTxn avoids a metadata read only when this captured view is
+// at/after the proven complete index. The persisted marker format is unchanged.
+func (b *BadgerEngine) labelIndexReadyInTxn(txn *badger.Txn) (bool, error) {
+	if timestamp := b.labelIndexReadyAt.Load(); timestamp != 0 && txn.ReadTs() >= timestamp {
+		return true, nil
+	}
+	return readStartupIndexReadiness(txn, startupLabelIndex)
 }
 
 // markIndexBackfillReady records the selected family's established marker image.
@@ -84,9 +117,13 @@ func (b *BadgerEngine) markIndexBackfillReady(ctx context.Context, kind startupI
 	if kind == startupEdgeBetweenIndex {
 		key, version = edgeBetweenIndexReadyKey, 1
 	}
-	return b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	err := b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return txn.Set(key, []byte{version})
 	})
+	if err == nil {
+		b.rememberIndexReadiness(kind, true)
+	}
+	return err
 }
 
 type startupIndexKind uint8
@@ -114,6 +151,7 @@ func (b *BadgerEngine) startIndexBackfill(kind startupIndexKind, mode indexBackf
 			return err
 		}
 		if ready {
+			b.rememberIndexReadiness(kind, true)
 			return nil
 		}
 		prefix := []byte{prefixNode}
@@ -214,7 +252,13 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if err := b.db.DropPrefix(ctx, prefixDropOptions{engine: b}, []byte{prefixLabelIndex}); err != nil {
+	b.rememberIndexReadiness(startupLabelIndex, false)
+	// A forced rebuild cannot retain a marker for the index being cleared.
+	if err := b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error { return txn.Delete(labelIndexReadyKey) }); err != nil {
+		return 0, fmt.Errorf("clear label index before rebuild (invalidate readiness): %w", err)
+	}
+	// The common deletion owner retains index versions for older snapshots.
+	if err := b.db.DropPrefix(ctx, prefixDropOptions{engine: b, metadata: true}, []byte{prefixLabelIndex}); err != nil {
 		return 0, fmt.Errorf("clear label index before rebuild: %w", err)
 	}
 	scan := storedRecordScan{
@@ -237,7 +281,7 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 			// either.
 			return 0, false, nil
 		}
-		node, err := b.decodeNode(namespace, val)
+		node, err := b.decodeNodeProjected(txn, namespace, val, nil)
 		if err != nil {
 			return 0, false, fmt.Errorf("decode node %q for label rebuild: %w", nodeID, err)
 		}

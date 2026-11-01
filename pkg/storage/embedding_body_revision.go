@@ -1,6 +1,9 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+import (
+	"context"
+	"github.com/dgraph-io/badger/v4"
+)
 
 // EmbeddingBodyRevision is an opaque snapshot identity. A durable read uses
 // Badger's body-key version. An acknowledged buffered read uses its existing
@@ -19,6 +22,9 @@ func (revision EmbeddingBodyRevision) isZero() bool {
 // publication. A buffered ACK and its materialized body are the same revision;
 // caller timestamps and notification delivery are not revision evidence.
 func (revision EmbeddingBodyRevision) MatchesNode(node *Node) (bool, error) {
+	// This context-free owner has no request cancellation; its read capture
+	// shares the synchronous operation's lifetime.
+
 	if node == nil {
 		return false, nil
 	}
@@ -31,7 +37,7 @@ func (revision EmbeddingBodyRevision) MatchesNode(node *Node) (bool, error) {
 		return false, nil
 	}
 	var same bool
-	err := state.embeddingOwner.withReadView(nil, func(txn *badger.Txn) error {
+	err := state.embeddingOwner.withReadView(context.Background(), nil, func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(state.embeddingOwnerID))
 		if err != nil {
 			return err
@@ -60,9 +66,12 @@ func (revision EmbeddingBodyRevision) matches(b *BadgerEngine, txn *badger.Txn, 
 // The ordered event drainer supplies the publication boundary; an acknowledged
 // buffered body takes precedence over the physical body, as in snapshot reads.
 func (b *BadgerEngine) embeddingRevisionIsCurrent(id NodeID, revision EmbeddingBodyRevision, proof ...embeddingPublicationProof) (bool, error) {
+	// This context-free owner has no request cancellation; its read capture
+	// shares the synchronous operation's lifetime.
+
 	var buffered *Node
 	proven := false
-	view, err := b.captureReadView(nil, readViewOptions{scope: namespaceForNodeID(id), cached: func(w *WriteBehindBuffer) (bool, error) {
+	view, err := b.captureReadView(context.Background(), nil, readViewOptions{scope: namespaceForNodeID(id), cached: func(w *WriteBehindBuffer) (bool, error) {
 		state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
 		if !state.found {
 			if len(proof) != 0 && proof[0].matches(b, id, revision) {

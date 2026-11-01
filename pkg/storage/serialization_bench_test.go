@@ -77,7 +77,7 @@ func BenchmarkDeserializeNode(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := eng.decodeNode(ns, data); err != nil {
+		if _, err := eng.decodeNodeProjected(nil, ns, data, nil); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -102,7 +102,7 @@ func BenchmarkDecodeTokenizedPropertiesGraphitiVector(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		out, err := eng.decodeTokenizedProperties("test", data)
+		out, err := eng.decodeTokenizedPropertiesProjected(nil, "test", data, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -124,7 +124,7 @@ func BenchmarkDeserializeNodeGraphitiVector(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		out, err := eng.decodeNode(ns, data)
+		out, err := eng.decodeNodeProjected(nil, ns, data, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -147,7 +147,7 @@ func BenchmarkDeserializeNodeGraphitiVectorProjectedScalars(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		out, err := eng.decodeNodeProjected(ns, data, include)
+		out, err := eng.decodeNodeProjected(nil, ns, data, include)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -178,7 +178,7 @@ func BenchmarkDeserializeEdge(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := eng.decodeEdgeBodyWithID(ns, data, edge.ID); err != nil {
+		if _, err := eng.decodeEdgeBodyWithID(nil, ns, data, edge.ID); err != nil {
 			b.Fatal(err)
 		}
 	}

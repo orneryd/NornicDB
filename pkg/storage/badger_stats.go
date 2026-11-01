@@ -553,7 +553,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 			var node *Node
 			if err = item.Value(func(value []byte) error {
 				var decodeErr error
-				node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), value)
+				node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), value, nil)
 				return decodeErr
 			}); err != nil {
 				return err
@@ -843,7 +843,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		}
 		return err
 	}
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
 		}
@@ -908,7 +908,7 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 				if opts.WithEmbeddings {
 					node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				} else {
-					node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), val)
+					node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), val, nil)
 				}
 				return decodeErr
 			})
@@ -1031,7 +1031,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		}
 		return err
 	}
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
 		}
@@ -1056,7 +1056,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 			var edge *Edge
 			err := item.Value(func(val []byte) error {
 				var decErr error
-				edge, decErr = b.decodeEdgeBodyByID(val, edgeID)
+				edge, decErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 				return decErr
 			})
 			if err != nil {

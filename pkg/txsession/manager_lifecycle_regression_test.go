@@ -116,9 +116,17 @@ func TestManagerOpenRacingCloseRollsBackUnregisteredTransaction(t *testing.T) {
 	}
 	var releaseOnce sync.Once
 	releaseBegin := func() { releaseOnce.Do(func() { close(engine.release) }) }
-	t.Cleanup(releaseBegin)
 	manager := NewManager(time.Hour, nil)
-	t.Cleanup(func() { _ = manager.Close() })
+	t.Cleanup(func() {
+		joinCtx, joinCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer joinCancel()
+		if err := manager.CloseContext(joinCtx); err != nil {
+			t.Errorf("manager did not reach actual completion during cleanup: %v", err)
+		}
+	})
+	// Cleanups run last-registered-first, so the BEGIN gate is released before
+	// the manager is joined even when an assertion fails.
+	t.Cleanup(releaseBegin)
 	executor := cypher.NewStorageExecutor(engine)
 	opened := make(chan error, 1)
 	go func() {
@@ -128,12 +136,30 @@ func TestManagerOpenRacingCloseRollsBackUnregisteredTransaction(t *testing.T) {
 	select {
 	case <-engine.entered:
 	case <-time.After(3 * time.Second):
-		releaseBegin()
 		t.Fatal("BEGIN did not reach the injected gate")
 	}
-	if err := manager.Close(); err != nil {
-		t.Fatalf("close with no registered sessions failed: %v", err)
+
+	// The accepted BEGIN is opening work the manager owns. A bounded
+	// CloseContext reports its own deadline instead of joining that work.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	closed := make(chan error, 1)
+	go func() { closed <- manager.CloseContext(ctx) }()
+	select {
+	case err := <-closed:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("bounded CloseContext returned %v with BEGIN held, want deadline exceeded", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("bounded CloseContext joined the accepted opening work instead of its deadline")
 	}
+	if !manager.work.Closing() {
+		t.Fatal("bounded CloseContext did not close admission")
+	}
+	if _, err := manager.OpenWithExecutorForOwner(context.Background(), "nornic", executor, ""); err == nil || !strings.Contains(err.Error(), "transaction manager is closed") {
+		t.Fatalf("closed manager admitted a new transaction: %v", err)
+	}
+
 	releaseBegin()
 	select {
 	case err := <-opened:
@@ -142,6 +168,20 @@ func TestManagerOpenRacingCloseRollsBackUnregisteredTransaction(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("open did not roll back after Close rejected registration")
+	}
+	if executor.HasActiveTransaction() {
+		t.Fatal("rejected opening left its underlying transaction active")
+	}
+	manager.mu.RLock()
+	registered := len(manager.sessions)
+	manager.mu.RUnlock()
+	if registered != 0 {
+		t.Fatalf("rejected opening published %d registered session(s)", registered)
+	}
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer waitCancel()
+	if err := manager.WaitClosed(waitCtx); err != nil {
+		t.Fatalf("manager did not observe actual completion of the rejected open: %v", err)
 	}
 }
 

@@ -328,7 +328,7 @@ func TestNodeRuntimeStoredBodyExcludesProvenanceAndReadsIdentity(t *testing.T) {
 	}))
 	require.NotEmpty(t, body)
 	require.Equal(t, nodeFormatTokenizedV1, body[0], "the stored body is the unchanged V2 format")
-	decoded, err := engine.decodeNode("runtime", body)
+	decoded, err := engine.decodeNodeProjected(nil, "runtime", body, nil)
 	require.NoError(t, err)
 	requireRuntimeMetadata(t, "decoded store", decoded, NodeRuntimeMetadata{
 		Database:                   "",

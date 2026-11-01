@@ -2178,27 +2178,32 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 }
 
 // getNodeFromBadgerSnapshotProjectedLocked reads and decodes a node from the
-// transaction's pinned snapshot, projecting to the requested properties.
+// transaction's pinned snapshot, projecting to the requested properties. The
+// decode runs inside the snapshot view so the body's property tokens resolve
+// through the names that snapshot holds.
 func (tx *BadgerTransaction) getNodeFromBadgerSnapshotProjectedLocked(nodeID NodeID, include map[string]struct{}) (*Node, error) {
 	key := nodeKey(nodeID)
-	var nodeBytes []byte
+	var node *Node
+	var decodeErr error
 	err := tx.withSnapshotViewLocked(func(rtxn *badger.Txn) error {
 		item, err := rtxn.Get(key)
 		if err != nil {
 			return err
 		}
 		return item.Value(func(val []byte) error {
-			nodeBytes = append([]byte{}, val...)
+			node, decodeErr = tx.engine.decodeNodeProjected(rtxn, namespaceForNodeID(nodeID), val, include)
 			return nil
 		})
 	})
-	if err == badger.ErrKeyNotFound {
+	switch {
+	case decodeErr != nil:
+		return nil, decodeErr
+	case err == badger.ErrKeyNotFound:
 		return nil, ErrNotFound
-	}
-	if err != nil {
+	case err != nil:
 		return nil, fmt.Errorf("reading node: %w", err)
 	}
-	return tx.engine.decodeNodeProjected(namespaceForNodeID(nodeID), nodeBytes, include)
+	return node, nil
 }
 
 // RelationshipEndpointVisible implements RelationshipEndpointChecker with the
@@ -3271,24 +3276,27 @@ func (tx *BadgerTransaction) AcknowledgedBuffered() bool {
 // have an MVCC head record.
 func (tx *BadgerTransaction) getNodeFromBadgerSnapshotLocked(nodeID NodeID) (*Node, error) {
 	key := nodeKey(nodeID)
-	var nodeBytes []byte
+	var node *Node
+	var decodeErr error
 	err := tx.withSnapshotViewLocked(func(rtxn *badger.Txn) error {
 		item, err := rtxn.Get(key)
 		if err != nil {
 			return err
 		}
 		return item.Value(func(val []byte) error {
-			nodeBytes = append([]byte{}, val...)
+			node, decodeErr = tx.engine.decodeNodeProjected(rtxn, namespaceForNodeID(nodeID), val, nil)
 			return nil
 		})
 	})
-	if err == badger.ErrKeyNotFound {
+	switch {
+	case decodeErr != nil:
+		return nil, decodeErr
+	case err == badger.ErrKeyNotFound:
 		return nil, ErrNotFound
-	}
-	if err != nil {
+	case err != nil:
 		return nil, fmt.Errorf("reading node: %w", err)
 	}
-	return tx.engine.decodeNode(namespaceForNodeID(nodeID), nodeBytes)
+	return node, nil
 }
 
 // getCommittedEdgeLocked reads a committed relationship for the
@@ -3324,7 +3332,7 @@ func (tx *BadgerTransaction) getCommittedEdgeReadLocked(edgeID EdgeID, v readVis
 		}); err != nil {
 			return nil, fmt.Errorf("reading edge value: %w", err)
 		}
-		return tx.engine.decodeEdgeBodyByID(edgeBytes, edgeID)
+		return tx.engine.decodeEdgeBodyWithID(tx.badgerTx, namespaceForEdgeID(edgeID), edgeBytes, edgeID)
 	}
 	edge, err := readEntityAtWithView(tx.engine, edgeID, tx.readTS, mvccEntityRead{visibility: v}, tx.withSnapshotViewLocked, (*BadgerEngine).getEdgeAtInTxn)
 	if err == ErrNotVisibleAtSnapshot {
@@ -3713,7 +3721,12 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID Node
 		if sameNodeUniqueClaim(before, pending, c.Label, prop) {
 			continue
 		}
-		existing, found, constrained, complete := schema.LookupUniqueConstraintValue(c.Label, prop, val)
+		// Commit conflict classification is owned by accepted publication (and
+		// the context-free snapshot continuation API), independent of a statement.
+		existing, found, constrained, complete, err := schema.LookupUniqueConstraintValue(context.Background(), c.Label, prop, val)
+		if err != nil {
+			return err
+		}
 		if !constrained || !complete || !found {
 			continue
 		}
@@ -3916,7 +3929,7 @@ func (tx *BadgerTransaction) validateNodeConstraints(ctx context.Context, node *
 // (see pinNamespaceFromIDLocked), so the in-tx scan does not need to
 // re-filter by namespace prefix. The committed-data fallback still filters
 // because the label index spans all namespaces.
-func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) error {
+func (tx *BadgerTransaction) checkUniqueConstraint(ctx context.Context, node *Node, c Constraint) error {
 	prop := c.Properties[0]
 	value := node.Properties[prop]
 
@@ -3928,7 +3941,7 @@ func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) err
 		return err
 	}
 
-	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, prop, value, func(*Node) error {
+	if err := tx.forEachPendingCandidateLocked(ctx, node.ID, c.Label, prop, value, func(*Node) error {
 		message := localization.StorageValidationNodeUniqueInTransaction(prop, value)
 		return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{prop}, message, nil)
 	}); err != nil {
@@ -3936,7 +3949,9 @@ func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) err
 	}
 
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	if existingNode, found, constrained, cacheComplete := schema.LookupUniqueConstraintValue(c.Label, prop, value); constrained && cacheComplete {
+	if existingNode, found, constrained, cacheComplete, err := schema.LookupUniqueConstraintValue(ctx, c.Label, prop, value); err != nil {
+		return err
+	} else if constrained && cacheComplete {
 		if found && existingNode != node.ID && !tx.committedNodeSupersededLocked(existingNode) {
 			return uniqueConstraintViolation(c.Label, prop, value, existingNode)
 		}
@@ -4022,9 +4037,17 @@ func runCommitTailHook() {
 // so candidates are also checked with compareValues: the result is exactly
 // what the full pass found.
 // Caller holds tx.mu; visit must not write to the transaction.
-func (tx *BadgerTransaction) forEachPendingCandidateLocked(self NodeID, label, property string, value interface{}, visit func(*Node) error) error {
+func (tx *BadgerTransaction) forEachPendingCandidateLocked(ctx context.Context, self NodeID, label, property string, value interface{}, visit func(*Node) error) error {
 	if valueKey, ok := indexValueKey(value); ok {
-		for _, id := range tx.pendingValueMatchesLocked(label, property, valueKey) {
+		ids, err := tx.pendingValueMatchesLocked(ctx, label, property, valueKey)
+		if err != nil {
+			return err
+		}
+		var cancellation bulkReadCancellation
+		for _, id := range ids {
+			if err := cancellation.check(ctx); err != nil {
+				return err
+			}
 			if id == self {
 				continue
 			}
@@ -4034,9 +4057,13 @@ func (tx *BadgerTransaction) forEachPendingCandidateLocked(self NodeID, label, p
 				}
 			}
 		}
-		return nil
+		return ctx.Err()
 	}
+	var cancellation bulkReadCancellation
 	for id, n := range tx.pendingNodes {
+		if err := cancellation.check(ctx); err != nil {
+			return err
+		}
 		if id == self || !hasLabel(n.Labels, label) || !compareValues(n.Properties[property], value) {
 			continue
 		}
@@ -4044,7 +4071,7 @@ func (tx *BadgerTransaction) forEachPendingCandidateLocked(self NodeID, label, p
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 // writeBehindKeyCandidatesLocked returns the newest buffered version of the
@@ -4107,7 +4134,7 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(ctx context.Context, node *N
 	// All pending nodes share the transaction's pinned namespace by
 	// invariant; the namespace-prefix filter that used to live here is
 	// redundant.
-	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, c.Properties[0], values[0], func(n *Node) error {
+	if err := tx.forEachPendingCandidateLocked(ctx, node.ID, c.Label, c.Properties[0], values[0], func(n *Node) error {
 		for i := 1; i < len(c.Properties); i++ {
 			if !compareValues(n.Properties[c.Properties[i]], values[i]) {
 				return nil
@@ -4288,7 +4315,7 @@ func (tx *BadgerTransaction) checkTemporalConstraint(ctx context.Context, node *
 	// All pending nodes share the transaction's pinned namespace by
 	// invariant; only the committed-data scan still needs the prefix filter
 	// because the label index spans namespaces.
-	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, spec.keyProps[0], node.Properties[spec.keyProps[0]], collides); err != nil {
+	if err := tx.forEachPendingCandidateLocked(ctx, node.ID, c.Label, spec.keyProps[0], node.Properties[spec.keyProps[0]], collides); err != nil {
 		return err
 	}
 

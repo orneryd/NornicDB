@@ -61,6 +61,9 @@ func filterEdgesBetween(edges []*Edge, startID, endID NodeID, edgeType string, p
 // hides that row, and buffered live edges of the type are appended
 // (PR #1043 read-overlay parity — MERGE identity reads).
 func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	// This context-free owner has no request cancellation; its read capture
+	// shares the synchronous operation's lifetime.
+
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(endID)); err != nil {
 		return nil, err
 	}
@@ -76,7 +79,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
 	var captureErr error
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+	view, err := b.captureReadView(context.Background(), func(w *WriteBehindBuffer) {
 		// MatchEdgesBetween keeps its existing public API (no caller context):
 		// context.Background is the true lifetime at this context-free boundary.
 		pendingBetween, err := b.readBufferedEntities(context.Background(), w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
@@ -185,7 +188,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 				return err
 			}
 			if err := item.Value(func(data []byte) error {
-				candidate, _, _, err := b.decodeEdgeCompactV2(namespaceForEdgeID(edgeID), data, compactEdgeProjection{Start: startNum, End: endNum, Include: include})
+				candidate, _, _, err := b.decodeEdgeCompactV2(txn, namespaceForEdgeID(edgeID), data, compactEdgeProjection{Start: startNum, End: endNum, Include: include})
 				if err != nil {
 					return err
 				}
@@ -196,7 +199,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 				if candidate.Type != edgeType || b.filterEntityByDecay(visibleRead, candidate, nowNanos) || !match(candidate) {
 					return nil
 				}
-				edge, err := b.decodeEdgeBodyByID(data, edgeID)
+				edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), data, edgeID)
 				if err != nil {
 					return err
 				}

@@ -39,7 +39,7 @@ func (b *BadgerEngine) captureAdjacencyReader(ctx context.Context, nodeID NodeID
 	reader.engine, reader.nodeID, reader.visibility = b, nodeID, v
 	reader.adjGen, reader.edgeGen = b.adjCacheGen.current(), b.edgeCacheGen.current()
 	var captureErr error
-	reader.view, err = b.captureReadView(func(w *WriteBehindBuffer) {
+	reader.view, err = b.captureReadView(ctx, func(w *WriteBehindBuffer) {
 		if wantOut {
 			reader.out.ids, reader.out.hit = b.adjCacheLoad(nodeID, true)
 			if w != nil {

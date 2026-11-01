@@ -153,7 +153,7 @@ func (b *BadgerEngine) readEdgeSuppressionState(edgeID EdgeID) (bool, string, er
 			return err
 		}
 		return item.Value(func(val []byte) error {
-			edge, err := b.decodeEdgeBodyByID(val, edgeID)
+			edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 			if err != nil {
 				return err
 			}

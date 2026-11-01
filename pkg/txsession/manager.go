@@ -391,9 +391,10 @@ func (m *Manager) Close() error {
 // completion: rollbacks, leased requests, expiry timers and terminal
 // observers. Every caller, first or repeated, joins the same completion and
 // receives the same outcomes; ctx bounds only this caller's wait.
+// A nil context is a programmer error and panics before closing admission.
 func (m *Manager) CloseContext(ctx context.Context) error {
 	if ctx == nil {
-		ctx = context.Background()
+		panic("txsession: CloseContext requires a non-nil context")
 	}
 	m.beginClose()
 	return m.work.Shutdown(ctx, nil)

@@ -48,7 +48,7 @@ func snapshotTranscoderBody(t *testing.T, engine *BadgerEngine, edge *Edge) []by
 func checkSnapshotTranscoder(t *testing.T, engine *BadgerEngine, edge *Edge, strip string) bool {
 	t.Helper()
 	body := snapshotTranscoderBody(t, engine, edge)
-	decoded, err := engine.decodeEdgeBodyByID(body, edge.ID)
+	decoded, err := engine.decodeEdgeBodyWithID(nil, namespaceForEdgeID(edge.ID), body, edge.ID)
 	require.NoError(t, err)
 	if strip != "" {
 		decoded.ID = EdgeID(strings.TrimPrefix(string(decoded.ID), strip))

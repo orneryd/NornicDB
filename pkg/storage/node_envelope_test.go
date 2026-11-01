@@ -73,14 +73,14 @@ func TestNodeEnvelopeModes(t *testing.T) {
 	for name, read := range map[string]func([]byte) error{
 		"metadata": func(data []byte) error { _, err := decodeStoredNodeLabels(data); return err },
 		"selected": func(data []byte) error {
-			node, err := b.decodeNodeProjected("test", data, map[string]struct{}{"payload": {}})
+			node, err := b.decodeNodeProjected(nil, "test", data, map[string]struct{}{"payload": {}})
 			if err == nil {
 				require.Equal(t, strings.Repeat("p", 64), node.Properties["payload"])
 			}
 			return err
 		},
 		"full": func(data []byte) error {
-			node, err := b.decodeNode("test", data)
+			node, err := b.decodeNodeProjected(nil, "test", data, nil)
 			if err == nil {
 				require.Len(t, node.NamedEmbeddings["default"], 16)
 				require.Len(t, node.ChunkEmbeddings, 1)

@@ -31,7 +31,7 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 	// What a (P, k) index holds for "a" and "b" in committed state.
 	committedA := func() []NodeID { return []NodeID{"db:kept", "db:moved", "db:gone", "db:unlabeled"} }
 	lookup := func(tx *BadgerTransaction, committed []NodeID, label, property string, value interface{}) []string {
-		ids := tx.MergePendingPropertyMatches(committed, label, property, value)
+		ids := checkedIndexRead[[]NodeID](t)(tx.MergePendingPropertyMatches(t.Context(), committed, label, property, value))
 		out := make([]string, 0, len(ids))
 		for _, id := range ids {
 			out = append(out, string(id))

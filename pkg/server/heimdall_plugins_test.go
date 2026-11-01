@@ -182,17 +182,21 @@ func (p *failingCleanupPlugin) Shutdown() error { p.shutdowns++; return p.shutdo
 func TestPluginCleanupContinuesAfterStopFailure(t *testing.T) {
 	heimdall.ResetSubsystemManagerForTests()
 	t.Cleanup(heimdall.ResetSubsystemManagerForTests)
+	// Exercise the supported constructor, including its plugin-stop enrollment.
+	s, _ := setupTestServer(t)
 	manager := heimdall.GetSubsystemManager()
 	plugin := &failingCleanupPlugin{stopErr: errors.New("stop failed"), shutdownErr: errors.New("shutdown failed")}
 	require.NoError(t, manager.RegisterPlugin(plugin, "", true))
-	s := &Server{heimdallSubsystem: manager}
-	err := s.stopHeimdallPlugins()
+	s.heimdallSubsystem = manager
+	err := s.Stop(context.Background())
 	require.ErrorIs(t, err, plugin.stopErr)
 	require.ErrorIs(t, err, plugin.shutdownErr)
 	require.Equal(t, 1, plugin.stops)
 	require.Equal(t, 1, plugin.shutdowns)
 	require.Empty(t, manager.ExternalActions())
-	require.NoError(t, s.stopHeimdallPlugins())
+	again := s.Stop(context.Background())
+	require.ErrorIs(t, again, plugin.stopErr)
+	require.ErrorIs(t, again, plugin.shutdownErr)
 	require.Equal(t, 1, plugin.stops)
 	require.Equal(t, 1, plugin.shutdowns)
 }

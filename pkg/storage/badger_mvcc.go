@@ -356,7 +356,7 @@ func (b *BadgerEngine) loadEdgeForAdjacencyTombstoneInTxn(txn *badger.Txn, id Ed
 		var edge *Edge
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+			edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), val, id)
 			return decodeErr
 		}); err != nil {
 			return nil, err
@@ -680,7 +680,7 @@ func (b *BadgerEngine) archiveEdgePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, i
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), val, id)
 		return decodeErr
 	}); err != nil {
 		return fmt.Errorf("archiving edge %s: decoding primary: %w", id, err)
@@ -1182,7 +1182,7 @@ func (b *BadgerEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID Nod
 
 func (b *BadgerEngine) BatchGetNodesLatestVisible(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	// Author: storage-format-owners lane (Codex), 1 November 2026.
-	if err := b.pendingReadConflict(readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids, nodeReadCtx: ctx}); err != nil {
+	if err := b.pendingReadConflict(readNodeIDsScope, "", ids, ctx); err != nil {
 		return nil, err
 	}
 
@@ -1212,7 +1212,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(ctx context.Context, tx
 	// or after the current head version and the entity is live, the body
 	// comes from the primary nodeKey. Otherwise we fall back to historic
 	// mvccNodeVersionKey records (only present when retention > 0).
-	it := b.newNodeIndexReader(txn, scope, []byte{prefixMVCCNodeHead}, "")
+	it := b.newNodeIndexReader(ctx, txn, scope, []byte{prefixMVCCNodeHead}, "")
 	defer it.Close()
 
 	nowNanos := DecayScoringTime()
@@ -1370,7 +1370,7 @@ func (b *BadgerEngine) iterateEdgesAtInTxn(ctx context.Context, txn *badger.Txn,
 				return getErr
 			} else {
 				if err := item.Value(func(val []byte) error {
-					decoded, decodeErr := b.decodeEdgeBodyByID(val, edgeID)
+					decoded, decodeErr := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 					if decodeErr != nil {
 						return decodeErr
 					}
@@ -1681,7 +1681,7 @@ type edgeMVCCBootstrapKind struct{}
 func (edgeMVCCBootstrapKind) entityKeyspacePrefix() byte { return prefixEdge }
 
 func (edgeMVCCBootstrapKind) decodeBody(b *BadgerEngine, txn *badger.Txn, data []byte, id EdgeID) (*Edge, bool, error) {
-	edge, err := b.decodeEdgeBodyByID(data, id)
+	edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), data, id)
 	if err != nil || edge == nil {
 		return edge, edge == nil, err
 	}

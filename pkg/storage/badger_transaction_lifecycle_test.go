@@ -58,12 +58,15 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	require.NoError(t, tx.StageSchemaChanges())
 	require.NoError(t, view.BackfillPropertyIndex("Account", "id", map[NodeID]interface{}{"schema_lifetime:later": int64(2)}))
 	require.NoError(t, tx.Commit())
-	require.Equal(t, []NodeID{"schema_lifetime:created"}, committed.PropertyIndexLookup("Account", "id", int64(1)))
-	require.Empty(t, committed.PropertyIndexLookup("Account", "id", int64(2)))
+	require.Equal(t, []NodeID{"schema_lifetime:created"}, checkedIndexRead[[]NodeID](t)(committed.PropertyIndexLookup(t.Context(), "Account", "id", int64(1))))
+	require.Empty(t, checkedIndexRead[[]NodeID](t)(committed.PropertyIndexLookup(t.Context(), "Account", "id", int64(2))))
 	require.Equal(t, []NodeID{"schema_lifetime:created"}, committed.compositeIndexes["created_composite"].fullIndex["created"])
 	require.Equal(t, []NodeID{"schema_lifetime:created"}, committed.compositeIndexes["created_composite"].prefixIndex["created"])
 	require.Equal(t, float64(1), committed.rangeIndexes["created_range"].nodeValue["schema_lifetime:created"])
-	_, found, exists, complete := committed.LookupUniqueConstraintValue("Account", "uid", "created")
+	_, found, exists, complete, uniqueLookupErr1 := committed.LookupUniqueConstraintValue(t.Context(), "Account", "uid", "created")
+	if uniqueLookupErr1 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+	}
 	require.True(t, found)
 	require.True(t, exists)
 	require.True(t, complete)

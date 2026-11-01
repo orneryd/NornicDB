@@ -390,6 +390,10 @@ type lifecycleWrite struct {
 	// suppressions: it holds suppressionWriteMu, so the end of a deleted
 	// entity's stored suppression does not run across it.
 	suppressions bool
+	// bindingDomain is the property-key binding domain the write admitted
+	// with; a change by the time it finishes means stored token meanings were
+	// replaced and the identity cut must advance.
+	bindingDomain uint64
 }
 
 // beginLifecycleWrite admits a write that replaces or removes stored state
@@ -428,6 +432,7 @@ func (b *BadgerEngine) beginLifecycleWrite(ctx context.Context, dropped string) 
 		return lifecycleWrite{}, err
 	}
 	l.suppressions = true
+	_, l.bindingDomain = b.propKeyDict.walBindingState()
 	if dropped != "" {
 		b.startPrefixDrop(dropped)
 		l.dropped = true
@@ -477,6 +482,15 @@ func (l lifecycleWrite) finish() {
 		return
 	}
 	if l.dropped {
+		// Finish the dictionary-retirement cut before making the sequence
+		// stable: older snapshots must resolve persisted identities, newer views
+		// may reuse the current immutable string bindings. Only a write that
+		// changed existing token meanings retires anything; a maintenance pass
+		// that rewrites indexes or derived state leaves every stored body's
+		// bindings in force, so it must not invalidate those views.
+		if _, domain := l.b.propKeyDict.walBindingState(); domain != l.bindingDomain {
+			l.b.prefixDrops.identityCut.Store(l.b.db.oracle.published.Load() + 1)
+		}
 		l.b.prefixDrops.seq.Add(1)
 	}
 	if l.suppressions {
@@ -497,6 +511,7 @@ type prefixDrops struct {
 	pending      map[string]*namespaceDropIntent
 	mu           sync.Mutex
 	seq          atomic.Uint64
+	identityCut  atomic.Uint64
 	start        map[string]uint64
 }
 

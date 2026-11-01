@@ -71,7 +71,7 @@ func codecRoundTripNode(t *testing.T, n *Node) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return eng.decodeNode(namespace, data)
+	return eng.decodeNodeProjected(nil, namespace, data, nil)
 }
 
 // buildV2NodeBody encodes a Node through the engine's V2 codec and
@@ -115,7 +115,7 @@ func codecRoundTripEdge(t *testing.T, e *Edge) (*Edge, error) {
 	if err != nil {
 		return nil, err
 	}
-	return eng.decodeEdgeBodyWithID(namespace, data, e.ID)
+	return eng.decodeEdgeBodyWithID(nil, namespace, data, e.ID)
 }
 
 // testNode creates a test node with the given ID.
@@ -1347,7 +1347,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		for _, n := range nodes {
 			require.NoError(t, schema1.PropertyIndexInsert("MongoDocument", "sourceId", n.ID, n.Properties["sourceId"]))
 		}
-		before := schema1.PropertyIndexLookup("MongoDocument", "sourceId", "src-002")
+		before := checkedIndexRead[[]NodeID](t)(schema1.PropertyIndexLookup(t.Context(), "MongoDocument", "sourceId", "src-002"))
 		require.Len(t, before, 1)
 		require.Equal(t, NodeID(prefixTestID("doc-2")), before[0])
 
@@ -1358,7 +1358,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		defer engine2.Close()
 
 		schema2 := engine2.GetSchemaForNamespace("test")
-		after := schema2.PropertyIndexLookup("MongoDocument", "sourceId", "src-002")
+		after := checkedIndexRead[[]NodeID](t)(schema2.PropertyIndexLookup(t.Context(), "MongoDocument", "sourceId", "src-002"))
 		require.Len(t, after, 1, "property index entries should be rebuilt on restart")
 		require.Equal(t, NodeID(prefixTestID("doc-2")), after[0])
 	})

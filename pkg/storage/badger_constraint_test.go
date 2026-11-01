@@ -118,7 +118,11 @@ func TestBadgerTransactionUniqueConstraintUsesRegisteredValueIndex(t *testing.T)
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	if got, found, constrained, _ := schema.LookupUniqueConstraintValue("User", "email", "alice@example.com"); !constrained || !found || got != firstID {
+	if got, found, constrained, _, uniqueLookupErr1 := schema.LookupUniqueConstraintValue(t.Context(), "User", "email", "alice@example.com"); uniqueLookupErr1 != nil || !constrained || !found || got != firstID {
+		if uniqueLookupErr1 != nil {
+			t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+		}
+
 		t.Fatalf("LookupUniqueConstraintValue() = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
 	}
 	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
@@ -183,14 +187,26 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
 		t.Fatalf("rebuildUniqueConstraintValues failed: %v", err)
 	}
-	if got, found, constrained, _ := schema.LookupUniqueConstraintValue("User", "age", int(1)); !constrained || !found || got != firstID {
+	if got, found, constrained, _, uniqueLookupErr2 := schema.LookupUniqueConstraintValue(t.Context(), "User", "age", int(1)); uniqueLookupErr2 != nil || !constrained || !found || got != firstID {
+		if uniqueLookupErr2 != nil {
+			t.Errorf("unique index read failed: %v", uniqueLookupErr2)
+		}
+
 		t.Fatalf("LookupUniqueConstraintValue(int) = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
 	}
 
-	if got, found, constrained, _ := schema.LookupUniqueConstraintValue("User", "age", float64(1)); !constrained || !found || got != firstID {
+	if got, found, constrained, _, uniqueLookupErr3 := schema.LookupUniqueConstraintValue(t.Context(), "User", "age", float64(1)); uniqueLookupErr3 != nil || !constrained || !found || got != firstID {
+		if uniqueLookupErr3 != nil {
+			t.Errorf("unique index read failed: %v", uniqueLookupErr3)
+		}
+
 		t.Fatalf("LookupUniqueConstraintValue() = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
 	}
-	if got, found, constrained, cacheComplete := schema.LookupUniqueConstraintValue("User", "age", float64(1)); !constrained || !cacheComplete || !found || got != firstID {
+	if got, found, constrained, cacheComplete, uniqueLookupErr4 := schema.LookupUniqueConstraintValue(t.Context(), "User", "age", float64(1)); uniqueLookupErr4 != nil || !constrained || !cacheComplete || !found || got != firstID {
+		if uniqueLookupErr4 != nil {
+			t.Errorf("unique index read failed: %v", uniqueLookupErr4)
+		}
+
 		t.Fatalf("lookupUniqueConstraintValueForValidation() = (%q, %v, %v, %v), want (%q, true, true, true)", got, found, cacheComplete, constrained, firstID)
 	}
 	constraints := schema.GetConstraintsForLabels([]string{"User"})
@@ -212,7 +228,7 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 	if err := tx2.validateNodeConstraints(context.Background(), duplicate); err == nil {
 		t.Fatal("expected direct unique constraint validation failure")
 	}
-	if err := tx2.checkUniqueConstraint(duplicate, constraints[0]); err == nil {
+	if err := tx2.checkUniqueConstraint(t.Context(), duplicate, constraints[0]); err == nil {
 		t.Fatal("expected direct unique constraint check failure")
 	}
 	_, err = tx2.CreateNode(duplicate)

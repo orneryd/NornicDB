@@ -114,19 +114,6 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 	return buf.Bytes(), nil
 }
 
-// decodeTokenizedProperties reverses encodeTokenizedProperties using
-// the dictionary's in-memory reverse map. Returns an empty map (not
-// nil) when the payload is absent so callers can range over the result
-// without nil-checking.
-//
-// The decoder pairs a homegrown varint reader for the IDs with a
-// streaming msgpack decoder for the values. We keep the byte-level
-// position tracking explicit because we need to alternate between the
-// two encodings without re-creating the decoder per pair.
-func (b *BadgerEngine) decodeTokenizedProperties(namespace string, data []byte) (map[string]any, error) {
-	return b.decodeTokenizedPropertiesProjected(namespace, data, nil)
-}
-
 func propertyProjectionSet(properties []string) map[string]struct{} {
 	if properties == nil {
 		return nil
@@ -138,7 +125,23 @@ func propertyProjectionSet(properties []string) map[string]struct{} {
 	return out
 }
 
-func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data []byte, include map[string]struct{}) (map[string]any, error) {
+// decodeTokenizedPropertiesProjected reverses encodeTokenizedProperties using
+// the name authority of the caller's view. txn is the Badger transaction whose
+// snapshot the body was read from: each stored token resolves to the reverse
+// entry that snapshot holds, so a namespace a DROP emptied and re-created
+// cannot rename the properties of a body stored before it. A nil txn is the
+// context-free standalone boundary - a body that belongs to no stored
+// snapshot, such as the one a write has just encoded - and resolves through the
+// in-memory dictionary.
+//
+// Returns an empty map (not nil) when the payload is absent so callers can
+// range over the result without nil-checking.
+//
+// The decoder pairs a homegrown varint reader for the IDs with a
+// streaming msgpack decoder for the values. We keep the byte-level
+// position tracking explicit because we need to alternate between the
+// two encodings without re-creating the decoder per pair.
+func (b *BadgerEngine) decodeTokenizedPropertiesProjected(txn *badger.Txn, namespace string, data []byte, include map[string]struct{}) (map[string]any, error) {
 	if len(data) == 0 {
 		return map[string]any{}, nil
 	}
@@ -183,8 +186,11 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 		if _, err := reader.Seek(int64(n), io.SeekCurrent); err != nil {
 			return nil, fmt.Errorf("decoding tokenized properties: advance past key %d: %w", i, err)
 		}
-		name, ok := b.propKeyDict.lookup(namespace, id)
-		if !ok {
+		name, found, err := b.readStoredBinding(txn, storedBinding{kind: propertyNameBinding, namespace: namespace, number: id})
+		if err != nil {
+			return nil, fmt.Errorf("reading property key id %d for namespace %q: %w", id, namespace, err)
+		}
+		if !found {
 			return nil, fmt.Errorf("property key id %d not in dictionary for namespace %q", id, namespace)
 		}
 		if include != nil {

@@ -110,6 +110,7 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	}
 	defer db.oracle.releaseReads()
 
+	b.rememberIndexReadiness(startupLabelIndex, false)
 	if err := db.DropAll(context.Background()); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
@@ -378,7 +379,13 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
 	// partial drop failure so future claims rebuild from the durable index.
 	defer b.InvalidatePendingEmbeddingsIndex()
-	if err := b.db.DropPrefix(context.Background(), prefixDropOptions{}, dropPrefixes...); err != nil {
+	mode := retainPrefixSnapshots
+	if recovery {
+		// Recovery runs before exposure or while Restore excludes/drains reads.
+		// Its held-read capability must not open an ordinary commit read.
+		mode = purgePrefixVersions
+	}
+	if err := b.db.DropPrefix(context.Background(), prefixDropOptions{mode: mode}, dropPrefixes...); err != nil {
 		return 0, 0, nil, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
 	// A whole-namespace drop keeps admission fenced until its schema owner

@@ -357,7 +357,7 @@ func BenchmarkLabelRecordReads(b *testing.B) {
 			visited := 0
 			read := func(id NodeID, item *badger.Item) error {
 				return item.Value(func(value []byte) error {
-					node, err := eng.decodeNodeProjected(namespaceForNodeID(id), value, include)
+					node, err := eng.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
 					if err != nil {
 						return err
 					}

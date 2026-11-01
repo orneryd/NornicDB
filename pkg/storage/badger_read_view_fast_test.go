@@ -45,7 +45,7 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 	require.NoError(t, b.FlushWriteBehind(nil))
 	calls := 0
 	var value int64
-	view, err := b.captureReadView(nil, readViewOptions{scope: "test", cached: func(w *WriteBehindBuffer) (bool, error) {
+	view, err := b.captureReadView(t.Context(), nil, readViewOptions{scope: "test", cached: func(w *WriteBehindBuffer) (bool, error) {
 		calls++
 		if calls == 1 {
 			tx, err := b.BeginTransaction()
@@ -72,7 +72,7 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 	b := snapshotOverlayFixture(t)
 	var overlay []*Node
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) { overlay, _, _ = w.allNodesOverlayLocked(context.Background()) }, readViewOptions{longLived: true})
+	view, err := b.captureReadView(t.Context(), func(w *WriteBehindBuffer) { overlay, _, _ = w.allNodesOverlayLocked(context.Background()) }, readViewOptions{longLived: true})
 	require.NoError(t, err)
 	require.Nil(t, view.txn)
 	require.Len(t, overlay, 2)

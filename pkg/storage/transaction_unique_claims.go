@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -72,7 +73,7 @@ func sameNodeUniqueClaim(before, after *Node, label, property string) bool {
 // overwrite an acknowledged key change. Entity authority is already held by
 // PublishCommit. The current read bypasses unversioned caches and shares the
 // existing buffered/storage read cut and projected body decoder.
-func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked() error {
+func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked(ctx context.Context) error {
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
 	if len(tx.pendingNodes) == 0 || !schema.HasUniqueValueTracking() {
 		return nil
@@ -96,7 +97,7 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked() error {
 	// overlay map and opens one Badger read transaction rather than one per node.
 	var buffered map[NodeID]*Node
 	entered := false
-	err := tx.engine.withReadView(func(buffer *WriteBehindBuffer) {
+	err := tx.engine.withReadView(ctx, func(buffer *WriteBehindBuffer) {
 		if buffer == nil {
 			return
 		}

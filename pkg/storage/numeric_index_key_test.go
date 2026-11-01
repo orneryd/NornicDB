@@ -57,9 +57,9 @@ func TestPropertyIndexNumericKeysExact(t *testing.T) {
 	key, _ = indexValueKey(uint(9007199254740993))
 	require.Equal(t, uint64(9007199254740993), key)
 
-	require.Equal(t, []NodeID{ids[2]}, schema.PropertyIndexLookup("P", "id", int64(9007199254740993)))
-	require.Equal(t, []NodeID{ids[1]}, schema.PropertyIndexLookup("P", "id", float64(9007199254740992)))
-	require.Equal(t, []NodeID{ids[4]}, schema.PropertyIndexLookup("P", "id", int64(9007199254740995)))
+	require.Equal(t, []NodeID{ids[2]}, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "P", "id", int64(9007199254740993))))
+	require.Equal(t, []NodeID{ids[1]}, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "P", "id", float64(9007199254740992))))
+	require.Equal(t, []NodeID{ids[4]}, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "P", "id", int64(9007199254740995))))
 
 	for _, bound := range []interface{}{int64(9007199254740992), float64(9007199254740992), uint64(9007199254740993), int64(math.MaxInt64), 0x1p63} {
 		for _, inclusive := range []bool{false, true} {
@@ -75,7 +75,7 @@ func TestPropertyIndexNumericKeysExact(t *testing.T) {
 						want = append(want, ids[i])
 					}
 				}
-				got, ok := schema.PropertyIndexRange("P", "id", bounds)
+				got, ok := checkedIndexRange[[]NodeID](t)(schema.PropertyIndexRange(t.Context(), "P", "id", bounds))
 				require.True(t, ok)
 				require.Equal(t, sorted(want), sorted(got), "bound %v (%T) upper=%v inclusive=%v", bound, bound, upper, inclusive)
 			}
@@ -93,11 +93,11 @@ func TestPropertyIndexNumericKeysExact(t *testing.T) {
 	}
 	for _, descending := range []bool{false, true} {
 		var visited []NodeID
-		require.True(t, schema.VisitPropertyIndexGroupsInRange("P", "id", descending, PropertyIndexBounds{}, func(group []NodeID) bool {
+		require.True(t, checkedIndexRead[bool](t)(schema.VisitPropertyIndexGroupsInRange(t.Context(), "P", "id", descending, PropertyIndexBounds{}, func(group []NodeID) bool {
 			require.Len(t, group, 1, "every value is its own group")
 			visited = append(visited, group...)
 			return true
-		}))
+		})))
 		want := append([]NodeID(nil), order...)
 		if descending {
 			for i, j := 0, len(want)-1; i < j; i, j = i+1, j-1 {
@@ -114,7 +114,8 @@ func TestPropertyIndexNumericKeysExact(t *testing.T) {
 		require.True(t, ok)
 		idx.values[k] = []NodeID{"x"}
 	}
-	keys, narrowed := idx.sortedKeyRangeLocked(PropertyIndexBounds{Lower: int64(9007199254740992), HasLower: true})
+	keys, narrowed, err := idx.sortedKeyRangeLocked(t.Context(), PropertyIndexBounds{Lower: int64(9007199254740992), HasLower: true})
+	require.NoError(t, err)
 	require.True(t, narrowed)
 	require.Len(t, keys, 7) // 2^53+1 .. 2^53+4, MaxInt64, MaxUint64, 2^63
 	for _, k := range keys {

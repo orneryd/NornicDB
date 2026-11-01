@@ -195,24 +195,32 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 	var err error
 	usedIndex := false
 	if wherePart != "" {
-		if candidates, used, idxErr := e.tryCollectNodesFromIDIn(ctx, nodePat, wherePart, params); idxErr == nil && used {
+		if candidates, used, idxErr := e.tryCollectNodesFromIDIn(ctx, nodePat, wherePart, params); idxErr != nil {
+			return nil, false, idxErr
+		} else if used {
 			nodes = candidates
 			usedIndex = true
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr != nil {
+				return nil, false, idxErr
+			} else if used {
 				nodes = candidates
 				usedIndex = true
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr != nil {
+				return nil, false, idxErr
+			} else if used {
 				nodes = candidates
 				usedIndex = true
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr != nil {
+				return nil, false, idxErr
+			} else if used {
 				nodes = candidates
 				usedIndex = true
 			}

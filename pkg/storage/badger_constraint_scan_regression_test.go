@@ -72,9 +72,9 @@ func TestBadgerConstraintScansRecordErrors(t *testing.T) {
 					var decodeErr error
 					if scan.isNode {
 						key = nodeKey("test:source")
-						_, decodeErr = engine.decodeNode("test", record.value)
+						_, decodeErr = engine.decodeNodeProjected(nil, "test", record.value, nil)
 					} else {
-						_, decodeErr = engine.decodeEdgeBodyByID(record.value, "test:edge")
+						_, decodeErr = engine.decodeEdgeBodyWithID(nil, namespaceForEdgeID("test:edge"), record.value, "test:edge")
 					}
 					if !record.missing {
 						require.Error(t, decodeErr)
@@ -137,7 +137,7 @@ func TestBadgerConstraintPolicyOtherNodeRecordErrors(t *testing.T) {
 					if missing {
 						require.NoError(t, err)
 					} else {
-						_, decodeErr := engine.decodeNode("test", []byte("corrupt-record"))
+						_, decodeErr := engine.decodeNodeProjected(nil, "test", []byte("corrupt-record"), nil)
 						require.ErrorContains(t, err, decodeErr.Error())
 					}
 				})
@@ -184,7 +184,7 @@ func TestBadgerConstraintEdgePolicyEndpointRecordErrors(t *testing.T) {
 							if record.missing {
 								require.NoError(t, err, "missing endpoints are handled by other validation")
 							} else {
-								_, decodeErr := engine.decodeNode("test", record.value)
+								_, decodeErr := engine.decodeNodeProjected(nil, "test", record.value, nil)
 								require.Error(t, decodeErr)
 								require.ErrorContains(t, err, decodeErr.Error(), "endpoint corruption must not bypass policy validation")
 							}

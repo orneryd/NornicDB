@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"sort"
@@ -63,8 +64,11 @@ func (kinds propertyIndexKeyKinds) seekable(bound interface{}) bool {
 // for it. Keys outside the returned range fail the bound; the caller still
 // tests the bound on the keys returned when narrowed is false.
 // Caller holds idx.mu as sortedKeysViewLocked requires.
-func (idx *PropertyIndex) sortedKeyRangeLocked(bounds PropertyIndexBounds) (keys []interface{}, narrowed bool) {
-	keys, kinds := idx.sortedKeysViewLocked()
+func (idx *PropertyIndex) sortedKeyRangeLocked(ctx context.Context, bounds PropertyIndexBounds) (keys []interface{}, narrowed bool, err error) {
+	keys, kinds, err := idx.sortedKeysViewLocked(ctx)
+	if err != nil {
+		return nil, false, err
+	}
 	low, high := 0, len(keys)
 	lowerApplied, upperApplied := !bounds.HasLower, !bounds.HasUpper
 	if bounds.HasLower && kinds.seekable(bounds.Lower) {
@@ -84,5 +88,8 @@ func (idx *PropertyIndex) sortedKeyRangeLocked(bounds PropertyIndexBounds) (keys
 	if high < low {
 		high = low
 	}
-	return keys[low:high], lowerApplied && upperApplied
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return keys[low:high], lowerApplied && upperApplied, nil
 }

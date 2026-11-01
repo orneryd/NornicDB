@@ -41,7 +41,7 @@ func roundTripValueThroughCodec(t *testing.T, eng *BadgerEngine, key string, val
 		_ = eng.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	out, err := eng.decodeTokenizedProperties("ns", data)
+	out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", data, nil)
 	require.NoError(t, err)
 	return out[key]
 }
@@ -290,11 +290,11 @@ func TestNamespaceIsolation_PropKeyDict(t *testing.T) {
 	})
 
 	// Each namespace decodes its own payload correctly.
-	out1, err := eng.decodeTokenizedProperties("ns1", data["ns1"])
+	out1, err := eng.decodeTokenizedPropertiesProjected(nil, "ns1", data["ns1"], nil)
 	require.NoError(t, err)
 	assert.Equal(t, "v1", out1["k"])
 
-	out2, err := eng.decodeTokenizedProperties("ns2", data["ns2"])
+	out2, err := eng.decodeTokenizedPropertiesProjected(nil, "ns2", data["ns2"], nil)
 	require.NoError(t, err)
 	assert.Equal(t, "v2", out2["k"])
 
@@ -304,7 +304,7 @@ func TestNamespaceIsolation_PropKeyDict(t *testing.T) {
 		_, err := eng.encodeTokenizedProperties(txn, namespace, map[string]any{"only_ns1": true})
 		return err
 	})
-	out2, err = eng.decodeTokenizedProperties("ns2", data["ns2"])
+	out2, err = eng.decodeTokenizedPropertiesProjected(nil, "ns2", data["ns2"], nil)
 	require.NoError(t, err)
 	assert.Equal(t, payloads["ns2"], out2)
 
@@ -367,7 +367,7 @@ func TestEncodeTokenizedProperties_ZeroLengthBuffer(t *testing.T) {
 	require.NotEmpty(t, data, "empty map must encode to a single-byte (count=0) payload, not zero bytes")
 	assert.Equal(t, byte(0x00), data[0], "first byte must be uvarint(0) for an empty map")
 
-	out, err := eng.decodeTokenizedProperties("ns", data)
+	out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", data, nil)
 	require.NoError(t, err)
 	assert.Empty(t, out)
 }
@@ -416,7 +416,7 @@ func TestDecodeTokenizedProperties_DuplicateKeyOverwrites(t *testing.T) {
 	body = appendUvarint(body, keyID) // id 2 (same id)
 	body = append(body, val2...)      // "second"
 
-	out, err := eng.decodeTokenizedProperties("ns", body)
+	out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", body, nil)
 	require.NoError(t, err)
 	require.Len(t, out, 1, "duplicate IDs must collapse into a single map entry")
 	assert.Equal(t, "second", out["k"], "last value wins on duplicate ID")
@@ -446,7 +446,7 @@ func TestRoundTrip_LargePropertyMap(t *testing.T) {
 		return nil
 	}))
 
-	out, err := eng.decodeTokenizedProperties("ns", data)
+	out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", data, nil)
 	require.NoError(t, err)
 	assert.Len(t, out, 1000)
 	for i := 0; i < 1000; i += 137 { // spot-check a sample

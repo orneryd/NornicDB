@@ -42,7 +42,7 @@ func TestSnapshotOverlayCaptureClasses(t *testing.T) {
 			var deleted bool
 			var touchedNodes map[NodeID]bool
 			var touchedEdges map[EdgeID]bool
-			view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+			view, err := b.captureReadView(t.Context(), func(w *WriteBehindBuffer) {
 				switch class {
 				case "point", "batch-projection":
 					point = w.entityStateLocked(bufferedNodeEntity, "test:a")
@@ -76,7 +76,7 @@ func TestSnapshotOverlayCaptureClasses(t *testing.T) {
 			item, err := view.txn.Get(nodeKey("test:a"))
 			require.NoError(t, err)
 			require.NoError(t, item.Value(func(value []byte) error {
-				n, err := b.decodeNode("test", value)
+				n, err := b.decodeNodeProjected(view.txn, "test", value, nil)
 				require.NoError(t, err)
 				require.Equal(t, int64(1), n.Properties["v"])
 				return nil
@@ -271,8 +271,8 @@ func TestSnapshotOverlaySchemaAndCounterRetirement(t *testing.T) {
 	schema := b.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddPropertyIndex("live_v", "Live", []string{"v"}))
 	check := func() {
-		require.ElementsMatch(t, []NodeID{"test:a", "test:new"}, schema.PropertyIndexLookup("Live", "v", int64(2)))
-		require.Empty(t, schema.PropertyIndexLookup("Live", "v", int64(1)))
+		require.ElementsMatch(t, []NodeID{"test:a", "test:new"}, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Live", "v", int64(2))))
+		require.Empty(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Live", "v", int64(1))))
 		n, err := b.NodeCount()
 		require.NoError(t, err)
 		require.Equal(t, int64(3), n)
@@ -310,7 +310,7 @@ func TestSnapshotOverlayLateSchemaTracking(t *testing.T) {
 	// A newly tracked property must use the same retained entity population.
 	schema := b.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddPropertyIndex("late_v", "Live", []string{"v"}))
-	require.ElementsMatch(t, []NodeID{"test:a", "test:new"}, schema.PropertyIndexLookup("Live", "v", int64(2)))
+	require.ElementsMatch(t, []NodeID{"test:a", "test:new"}, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Live", "v", int64(2))))
 	b.writeBehind.removeDrained(generation)
 }
 

@@ -102,7 +102,10 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 		// No peer can commit a key this transaction already holds.
 		return nil
 	}
-	nodeID, found, complete := tx.mergeAdmissionHolder(schema, namespace, key, props)
+	nodeID, found, complete, err := tx.mergeAdmissionHolder(ctx, schema, namespace, key, props)
+	if err != nil {
+		return err
+	}
 	if found && !write {
 		return tx.catchUpToNode(nodeID)
 	}
@@ -127,7 +130,11 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 	}
 	tx.mergeKeyReleases[key.lock] = release
 	tx.mu.Unlock()
-	if nodeID, found, _ := tx.mergeAdmissionHolder(schema, namespace, key, props); found {
+	nodeID, found, _, err = tx.mergeAdmissionHolder(ctx, schema, namespace, key, props)
+	if err != nil {
+		return err
+	}
+	if found {
 		if write {
 			if err := tx.settleBufferedNode(ctx, nodeID); err != nil {
 				return err
@@ -179,21 +186,29 @@ func (tx *BadgerTransaction) settleBufferedNode(ctx context.Context, nodeID Node
 // snapshot. Scalar admission retains its existing cache contract; composite
 // admission takes the candidate of the constraint's complete equality index
 // that commit validation would reject the tuple for (committedKeyHolder).
-func (tx *BadgerTransaction) mergeAdmissionHolder(schema *SchemaManager, namespace string, key mergeAdmissionKey, props map[string]interface{}) (NodeID, bool, bool) {
+func (tx *BadgerTransaction) mergeAdmissionHolder(ctx context.Context, schema *SchemaManager, namespace string, key mergeAdmissionKey, props map[string]interface{}) (NodeID, bool, bool, error) {
 	label, properties := key.lock.label, key.properties
 	if len(properties) == 1 {
-		nodeID, found, _, complete := schema.LookupUniqueConstraintValue(label, properties[0], props[properties[0]])
-		return nodeID, found, complete
+		nodeID, found, _, complete, err := schema.LookupUniqueConstraintValue(ctx, label, properties[0], props[properties[0]])
+		return nodeID, found, complete, err
 	}
 	idx := schema.filledKeyIndex(label, properties)
 	if idx == nil {
-		return "", false, false
+		return "", false, false, nil
 	}
 	hash, _ := key.lock.value.(string)
-	for _, id := range idx.lookupFullHash(hash) {
+	ids, err := idx.lookupFullHash(ctx, hash)
+	if err != nil {
+		return "", false, false, err
+	}
+	var cancellation bulkReadCancellation
+	for _, id := range ids {
+		if err := cancellation.check(ctx); err != nil {
+			return "", false, false, err
+		}
 		if tx.engine.committedKeyHolder(id, namespace, label, properties, props) != nil {
-			return id, true, true
+			return id, true, true, nil
 		}
 	}
-	return "", false, true
+	return "", false, true, ctx.Err()
 }

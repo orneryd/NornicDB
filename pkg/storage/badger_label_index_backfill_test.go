@@ -23,6 +23,8 @@ import (
 // range, simulating a legacy or partial store. No ranges retains planted entries.
 func wipeLabelIndexAndMarker(t *testing.T, eng *BadgerEngine, prefixes ...byte) {
 	t.Helper()
+	// This raw fixture replacement also invalidates the engine's live proof.
+	eng.rememberIndexReadiness(startupLabelIndex, false)
 	for _, prefix := range prefixes {
 		require.NoError(t, eng.db.DropPrefix(context.Background(), prefixDropOptions{}, []byte{prefix}))
 	}

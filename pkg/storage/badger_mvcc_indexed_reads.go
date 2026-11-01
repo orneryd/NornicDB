@@ -100,7 +100,7 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 			var node *Node
 			if err := item.Value(func(val []byte) error {
 				namespace := namespaceForNodeID(id)
-				decoded, decodeErr := b.decodeNodeProjected(namespace, val, include)
+				decoded, decodeErr := b.decodeNodeProjected(txn, namespace, val, include)
 				if decodeErr != nil {
 					return decodeErr
 				}
@@ -244,7 +244,7 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	defer deregister()
 
 	return view(func(txn *badger.Txn) error {
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it := b.newLabelIndexReader(ctx, txn, scope, label, "", v, true)
 		defer it.Close()
 		var cancel bulkReadCancellation
 		for it.Next() {
@@ -340,7 +340,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			return emit(node)
 		}
 
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), afterNodeID)
+		it := b.newLabelIndexReader(ctx, txn, scope, label, afterNodeID, v, false)
 		defer it.Close()
 		var pending []NodeID
 		lookups := 0
@@ -352,7 +352,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if err := cancel.check(ctx); err != nil {
 				return err
 			}
-			indexKey := it.Item().Key()
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
 			if b.checksIndexTombstones(v) && hasIndexTombstone(txn, indexKey) {
 				continue
