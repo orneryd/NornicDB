@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"errors"
 	"fmt"
@@ -83,7 +87,7 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 		"node/explicit-update-no-buffer/sync",
 	} {
 		t.Run(scenario, func(t *testing.T) {
-			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: strings.HasSuffix(scenario, "/sync"), manualDrain: true})
+			engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{synchronous: strings.HasSuffix(scenario, "/sync"), manualDrain: true})
 			_, err := engine.CreateNode(listenerOrderNode("initial"))
 			require.NoError(t, err)
 			require.NoError(t, engine.CreateEdge(listenerOrderEdge("initial")))
@@ -164,7 +168,6 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 			if !finished {
 				return // deadlocked: the engine stays behind
 			}
-			t.Cleanup(func() { _ = engine.Close() })
 			require.NoError(t, writeErr)
 			require.True(t, called.Load(), "the listener ran")
 			if !ranAfterWrite.Load() {
@@ -192,7 +195,7 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 // listener that writes back to the same entity, and the listener's write
 // lands after it.
 func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	_, err := engine.CreateNode(listenerOrderNode("initial"))
 	require.NoError(t, err)
 	require.NoError(t, engine.FlushWriteBehind(nil))
@@ -233,7 +236,6 @@ func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 	if !finished {
 		return
 	}
-	t.Cleanup(func() { _ = engine.Close() })
 	require.False(t, waitedForListener.Load(), "the ordered write waited for a listener of the replay")
 	require.NoError(t, writeErr)
 	require.NoError(t, flushErr)
@@ -248,8 +250,7 @@ func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 func TestOrderedWriteWaitsForAnInFlightReplay(t *testing.T) {
 	for _, route := range []string{"delete", "direct-update", "explicit-update"} {
 		t.Run(route, func(t *testing.T) {
-			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-			t.Cleanup(func() { _ = engine.Close() })
+			engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 			// apply is wrapped before any commit signals the flusher.
 			var slow atomic.Bool
 			apply := engine.writeBehind.apply
@@ -299,7 +300,7 @@ func TestListenerWriteBackAfterSuppressionRewrite(t *testing.T) {
 	node := func(labels []string, v string) *Node {
 		return &Node{ID: "test:n", Labels: labels, Properties: map[string]any{"v": v}, CreatedAt: old, UpdatedAt: old}
 	}
-	engine := newDecayWriteBehindEngine(t, t.TempDir())
+	engine, _ := newDecayWriteBehindEngine(t, t.TempDir())
 	_, err := engine.CreateNode(node([]string{"Untargeted"}, "initial"))
 	require.NoError(t, err)
 	require.NoError(t, engine.FlushWriteBehind(nil))
@@ -330,7 +331,6 @@ func TestListenerWriteBackAfterSuppressionRewrite(t *testing.T) {
 	if !finished {
 		return
 	}
-	t.Cleanup(func() { _ = engine.Close() })
 	require.NoError(t, rewriteErr)
 	require.True(t, called.Load())
 	require.NoError(t, listenerErr)

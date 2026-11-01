@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -44,7 +46,7 @@ func newIssue638E2EStore(t *testing.T) (*storage.NamespacedEngine, *storage.Badg
 	t.Helper()
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	fixtureowner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	probe := &getEdgesByTypeProbe{Engine: store}
 	exec := NewStorageExecutor(probe)
@@ -218,7 +220,6 @@ func TestOptionalOrderCountThroughAsyncStorage(t *testing.T) {
 	}
 	require.NoError(t, err)
 	async := base
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
 	store := storage.NewNamespacedEngine(async, "nornic")
 	for _, node := range []*storage.Node{
 		{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "With orders"}},

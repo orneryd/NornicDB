@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -19,7 +21,7 @@ func TestStoredReadViewHiddenIntegrity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			for _, phase := range []string{"idle", "busy", "retired"} {
 				t.Run(phase, func(t *testing.T) {
-					b := newWriteBehindTestEngine(t, time.Hour)
+					b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 					b.writeBehind.Close()
 					var holder *Node
 					if keyHolder {
@@ -95,7 +97,7 @@ func TestStoredReadViewHiddenIntegrity(t *testing.T) {
 // Transaction integrity reads must use the same captured adjacency boundary
 // as public traversals, rather than rebuilding an independent buffer/disk view.
 func TestStoredReadViewTransactionIncidenceAcrossReplay(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	b.writeBehind.Close()
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := b.CreateNode(&Node{ID: id})

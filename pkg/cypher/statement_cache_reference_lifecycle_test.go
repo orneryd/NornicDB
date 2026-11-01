@@ -1,11 +1,14 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
 	"sync"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
@@ -17,7 +20,7 @@ func TestStatementCacheFamilySurvivingUseOwner(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = manager.Close() })
+			fixtureowner.Own(t, manager)
 			for _, name := range []string{"sol_live", "sol_removed"} {
 				if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 					t.Fatal(err)
@@ -79,7 +82,7 @@ func TestStatementCacheFamilyPublicColdAndRetiredOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "sol_leaf"}); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +153,7 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			for _, name := range []string{"cache_live", "cache_removed"} {
 				if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 					t.Fatal(err)
@@ -275,7 +278,7 @@ func TestStatementCacheFamilyDynamicFabricReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cache_leaf"}); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +346,7 @@ func TestStatementCacheFamilyConcurrentReferenceRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	if err := manager.CreateAlias(t.Context(), "cache_concurrent_alias", "nornic"); err != nil {
 		t.Fatal(err)
 	}

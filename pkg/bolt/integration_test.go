@@ -4,6 +4,8 @@
 // the Cypher query executor, simulating real-world Neo4j driver usage.
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -150,18 +152,11 @@ func startBoltIntegrationServer(t *testing.T, store storage.Engine) (*Server, in
 	server.listener = listener
 
 	errCh := make(chan error, 1)
-	t.Cleanup(func() {
-		if err := server.Close(); err != nil {
-			t.Fatalf("close server: %v", err)
-		}
-		if err := <-errCh; err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	})
-
 	go func() {
 		errCh <- server.serve()
 	}()
+	// Own closes the server, then reports serve's result.
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { return <-errCh }), server)
 	return server, addr.Port
 }
 
@@ -172,10 +167,8 @@ func serveBoltIntegrationServer(t *testing.T, server *Server) int {
 	port := listener.Addr().(*net.TCPAddr).Port
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
-	t.Cleanup(func() {
-		_ = server.Close()
-		requireNoError(t, <-done)
-	})
+	// Own closes the server, then reports Serve's result.
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { return <-done }), server)
 	return port
 }
 
@@ -248,7 +241,6 @@ func TestBoltCypherIntegration(t *testing.T) {
 	}
 
 	server := New(config, executor)
-	defer server.Close()
 
 	port := serveBoltIntegrationServer(t, server)
 
@@ -818,11 +810,7 @@ func TestBoltIntegration_G2GVersionNodesFallbackRowShape_ServerStack(t *testing.
 	walStore := storage.NewWALEngine(baseStore, wal)
 	asyncStore := walStore
 	store := storage.NewNamespacedEngine(asyncStore, "test")
-	t.Cleanup(func() {
-		requireNoError(t, wal.Close())
-		requireNoError(t, asyncStore.Close())
-		requireNoError(t, baseStore.Close())
-	})
+	fixtureowner.Own(t, asyncStore, wal)
 
 	_, port := startBoltIntegrationServer(t, store)
 	conn := openBoltTestConn(t, port)
@@ -970,7 +958,6 @@ func TestBoltExplicitTransactionRollbackRevertsCreate(t *testing.T) {
 	}
 
 	server := New(config, executor)
-	defer server.Close()
 
 	port := serveBoltIntegrationServer(t, server)
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
@@ -1051,7 +1038,6 @@ func TestBoltServerStress(t *testing.T) {
 	// Start server
 	config := &Config{Port: 0, MaxConnections: 50}
 	server := New(config, executor)
-	defer server.Close()
 
 	port := serveBoltIntegrationServer(t, server)
 
@@ -1157,7 +1143,6 @@ func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 	}
 
 	server := New(config, executor)
-	defer server.Close()
 
 	port := serveBoltIntegrationServer(t, server)
 
@@ -1223,7 +1208,6 @@ func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
 
 	config := &Config{Port: 0, MaxConnections: 10}
 	server := New(config, executor)
-	defer server.Close()
 
 	port := serveBoltIntegrationServer(t, server)
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
@@ -1287,7 +1271,6 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
-	defer badgerEngine.Close()
 
 	asyncBase := badgerEngine
 	store := storage.NewNamespacedEngine(asyncBase, "test")
@@ -1296,7 +1279,6 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 
 	config := &Config{Port: 0, MaxConnections: 10}
 	server := New(config, executor)
-	defer server.Close()
 
 	port := serveBoltIntegrationServer(t, server)
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))

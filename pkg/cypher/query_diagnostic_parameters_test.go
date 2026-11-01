@@ -1,6 +1,9 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"testing"
 
@@ -11,7 +14,7 @@ import (
 func TestQueryDiagnosticParametersUsePreparedCredentialSpansWithoutEffects(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "existing_diagnostic", []multidb.ConstituentRef{{Alias: "seed", DatabaseName: "nornic", Type: "local", AccessMode: "read"}}))
 	const secret = "synthetic-prepared-password-58371"
 	for _, query := range []string{

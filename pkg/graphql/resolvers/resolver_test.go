@@ -1,8 +1,11 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -29,7 +32,6 @@ func testDB(t *testing.T) *nornicdb.DB {
 		},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
 	return db
 }
 
@@ -86,8 +88,8 @@ func createEdgeViaCypher(t *testing.T, resolver *Resolver, sourceID, targetID, e
 }
 
 func TestNewResolver(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 
 	assert.NotNil(t, resolver)
@@ -98,6 +100,7 @@ func TestNewResolver(t *testing.T) {
 
 func TestNewResolver_RequiresDBManager(t *testing.T) {
 	db := testDB(t)
+	t.Cleanup(func() { db.Close() })
 
 	// Should panic if dbManager is nil
 	assert.Panics(t, func() {
@@ -111,8 +114,8 @@ func TestNewResolver_RequiresDBManager(t *testing.T) {
 
 func TestQueryNode(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -141,8 +144,8 @@ func TestQueryNode(t *testing.T) {
 
 func TestGetCypherExecutor_WiresDatabaseManager(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 
 	exec, err := resolver.getCypherExecutor(ctx, "")
@@ -157,8 +160,8 @@ func TestGetCypherExecutor_WiresDatabaseManager(t *testing.T) {
 
 func TestQueryNodes(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -181,8 +184,8 @@ func TestQueryNodes(t *testing.T) {
 
 func TestQueryAllNodes(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -224,8 +227,8 @@ func TestQueryAllNodes(t *testing.T) {
 
 func TestQueryNodeCount(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -254,8 +257,8 @@ func TestQueryNodeCount(t *testing.T) {
 
 func TestQueryRelationship(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -281,8 +284,8 @@ func TestQueryRelationship(t *testing.T) {
 
 func TestQueryRelationshipsBetween(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -300,8 +303,8 @@ func TestQueryRelationshipsBetween(t *testing.T) {
 
 func TestQueryStats(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -319,8 +322,8 @@ func TestQueryStats(t *testing.T) {
 
 func TestQueryLabels(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -337,8 +340,8 @@ func TestQueryLabels(t *testing.T) {
 
 func TestQueryCypher(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -369,8 +372,8 @@ func TestQueryCypher(t *testing.T) {
 
 func TestQueryShortestPath(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -412,8 +415,8 @@ func TestQueryShortestPath(t *testing.T) {
 
 func TestQueryNeighborhood(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -464,8 +467,8 @@ func TestQueryNeighborhood(t *testing.T) {
 
 func TestMutationCreateNode(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -491,8 +494,8 @@ func TestMutationCreateNode(t *testing.T) {
 
 func TestMutationUpdateNode(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -521,8 +524,8 @@ func TestMutationUpdateNode(t *testing.T) {
 
 func TestMutationDeleteNode(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -546,8 +549,8 @@ func TestMutationDeleteNode(t *testing.T) {
 
 func TestMutationBulkCreateNodes(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -571,8 +574,8 @@ func TestMutationBulkCreateNodes(t *testing.T) {
 
 func TestMutationBulkDeleteNodes(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -590,8 +593,8 @@ func TestMutationBulkDeleteNodes(t *testing.T) {
 
 func TestMutationCreateRelationship(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -617,8 +620,8 @@ func TestMutationCreateRelationship(t *testing.T) {
 
 func TestMutationDeleteRelationship(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -635,8 +638,8 @@ func TestMutationDeleteRelationship(t *testing.T) {
 
 func TestMutationMergeNode(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -673,8 +676,8 @@ func TestMutationMergeNode(t *testing.T) {
 
 func TestMutationExecuteCypher(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -693,8 +696,8 @@ func TestMutationExecuteCypher(t *testing.T) {
 
 func TestMutationClearAll(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -723,8 +726,8 @@ func TestMutationClearAll(t *testing.T) {
 
 func TestMutationRebuildSearchIndex(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -741,8 +744,8 @@ func TestMutationRebuildSearchIndex(t *testing.T) {
 
 func TestNodeRelationships(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	nr := &nodeResolver{resolver}
 
@@ -790,8 +793,8 @@ func TestNodeRelationships(t *testing.T) {
 
 func TestNodeNeighbors(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	nr := &nodeResolver{resolver}
 
@@ -847,8 +850,8 @@ func TestNodeNeighbors(t *testing.T) {
 
 func TestRelationshipStartNode(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	rr := &relationshipResolver{resolver}
 
@@ -867,8 +870,8 @@ func TestRelationshipStartNode(t *testing.T) {
 
 func TestRelationshipEndNode(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	rr := &relationshipResolver{resolver}
 
@@ -948,8 +951,8 @@ func TestDbEdgeToModel(t *testing.T) {
 
 func TestGraphQLQueryAdditionalCoverage(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -1029,8 +1032,8 @@ func TestGraphQLQueryAdditionalCoverage(t *testing.T) {
 
 func TestGraphQLMutationAdditionalCoverage(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 
@@ -1096,8 +1099,8 @@ func TestGraphQLMutationAdditionalCoverage(t *testing.T) {
 
 func TestGraphQLNodeAndSubscriptionAdditionalCoverage(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	nr := &nodeResolver{resolver}
 
@@ -1210,8 +1213,8 @@ func TestStorageModelConversionHelpers(t *testing.T) {
 
 func TestQuerySimilarAdditionalCoverage(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -1259,8 +1262,8 @@ func TestQuerySimilarAdditionalCoverage(t *testing.T) {
 
 func TestNamespacedCypherHelperAdditionalCoverage(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 
 	t.Run("create edge reports missing node diagnostics", func(t *testing.T) {
@@ -1408,8 +1411,8 @@ func TestNamespacedCypherHelperAdditionalCoverage(t *testing.T) {
 
 func TestResolverAccessControlAdditionalCoverage(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 
 	t.Run("cypher executor enforces database access mode", func(t *testing.T) {
@@ -1481,8 +1484,8 @@ func TestResolverAccessControlAdditionalCoverage(t *testing.T) {
 
 func TestQuerySearchAndStatsAdditionalCoverage(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -1550,8 +1553,8 @@ func TestQuerySearchAndStatsAdditionalCoverage(t *testing.T) {
 
 func TestResolverNamespacedErrorAndFallbackCoverage(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
@@ -1622,8 +1625,8 @@ func TestResolverNamespacedErrorAndFallbackCoverage(t *testing.T) {
 
 func TestMutationAndRelationshipErrorCoverage(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	mr := &mutationResolver{resolver}
 	rr := &relationshipResolver{resolver}
@@ -1685,8 +1688,8 @@ func TestCoerceResultNodeID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGraphqlDatabaseManagerAdapter(t *testing.T) {
-	db := testDB(t)
-	manager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	manager := testutil.DatabaseManager(t, db, closeDB)
 	adapter := &graphqlDatabaseManagerAdapter{ExecutionCatalog: catalogadapter.ForExecution(manager)}
 
 	t.Run("Exists", func(t *testing.T) {

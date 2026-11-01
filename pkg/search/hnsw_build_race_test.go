@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -18,7 +20,6 @@ import (
 func TestHNSWInitialBuildKeepsChangesThatRaceIt(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewService(engine, 3, nil)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "before", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
 
@@ -48,7 +49,6 @@ func TestHNSWInitialBuildKeepsChangesThatRaceIt(t *testing.T) {
 func TestHNSWFailedInitialBuildStopsRecording(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewService(engine, 3, nil)
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
 		require.NoError(t, svc.IndexNode(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0, 0}}}))

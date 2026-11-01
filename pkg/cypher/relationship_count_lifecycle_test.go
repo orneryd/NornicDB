@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -15,7 +17,6 @@ func TestRelationshipCountRemainsExactAfterDetachDeleteAndRecreate(t *testing.T)
 		fixtureowner.Own(t, base)
 	}
 	require.NoError(t, err)
-	defer func() { require.NoError(t, base.Close()) }()
 
 	store := storage.NewNamespacedEngine(base, "count_lifecycle")
 	exec := NewStorageExecutor(store)

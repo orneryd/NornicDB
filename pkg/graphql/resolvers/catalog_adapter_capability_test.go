@@ -1,6 +1,9 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
@@ -12,7 +15,8 @@ import (
 )
 
 func TestGraphQLAdapterRequiredContractAndCapabilityMatrix(t *testing.T) {
-	manager := testutil.DatabaseManager(t, testDB(t))
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	manager := testutil.DatabaseManager(t, db, closeDB)
 	adapter := &graphqlDatabaseManagerAdapter{ExecutionCatalog: catalogadapter.ForExecution(manager)}
 
 	t.Run("required contract is preserved", func(t *testing.T) {

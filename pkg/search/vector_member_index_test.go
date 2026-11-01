@@ -1,5 +1,7 @@
 package search
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -18,7 +20,7 @@ func memberIndexService(t *testing.T) (*Service, *storage.Node) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	svc := NewService(engine, 2, nil)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	fixtureowner.Own(t, svc)
 	var candidates []Candidate
 	for n := 0; n < 2*stageBatch; n++ {
 		id := fmt.Sprintf("rival-%03d", n)

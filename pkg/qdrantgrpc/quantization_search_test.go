@@ -1,5 +1,7 @@
 package qdrantgrpc
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -26,7 +28,7 @@ func requireCollectionHNSWReady(t *testing.T, ctx context.Context, dbm *multidb.
 	require.NoError(t, err)
 	svc, err := provider(name, store)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	fixtureowner.Own(t, svc)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	require.EventuallyWithT(t, func(c *assert.CollectT) {

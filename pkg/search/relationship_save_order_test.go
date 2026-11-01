@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -33,7 +35,7 @@ func TestRelationshipEmbeddingPersistsBeforePublication(t *testing.T) {
 				}
 				return result, nil
 			}
-			svc := startRelationshipService(t, engine, embed, func(s *Service) {
+			svc, closeSvc := startRelationshipService(t, engine, embed, func(s *Service) {
 				s.SetPersistenceEnabled(true)
 				s.SetFulltextIndexPath(path)
 				s.EnableRelationshipSearch(embed)
@@ -54,10 +56,10 @@ func TestRelationshipEmbeddingPersistsBeforePublication(t *testing.T) {
 			require.Len(t, saved, 2)
 			require.Len(t, saved["r1"].Vectors, chunks)
 			require.Len(t, saved["r1"].Spans, chunks)
-			require.NoError(t, svc.Close())
+			closeSvc()
 
 			var calls atomic.Int64
-			restarted := startRelationshipService(t, engine, func(ctx context.Context, edge *storage.Edge) (RelationshipEmbedding, error) {
+			restarted, _ := startRelationshipService(t, engine, func(ctx context.Context, edge *storage.Edge) (RelationshipEmbedding, error) {
 				calls.Add(1)
 				return embed(ctx, edge)
 			}, func(s *Service) {
@@ -77,7 +79,7 @@ func TestRelationshipEmbeddingCloseJoinsSave(t *testing.T) {
 	unblock := func() { once.Do(func() { close(release) }) }
 	defer unblock()
 	embed := &countingEmbed{}
-	svc := startRelationshipService(t, engine, embed.embed, func(s *Service) {
+	svc, _ := startRelationshipService(t, engine, embed.embed, func(s *Service) {
 		s.SetPersistenceEnabled(true)
 		s.SetFulltextIndexPath(filepath.Join(t.TempDir(), "bm25"))
 		s.EnableRelationshipSearch(embed.embed)

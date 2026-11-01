@@ -1,7 +1,10 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -17,7 +20,7 @@ func solR2CacheExecutor(t *testing.T) *StorageExecutor {
 		require.NoError(t, err)
 	}
 	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	fixtureowner.Own(t, svc)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 64, TTL: time.Hour})
 	exec.SetSearchService(svc)

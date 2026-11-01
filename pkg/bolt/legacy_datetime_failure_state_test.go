@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -11,7 +13,6 @@ import (
 
 func TestLegacyDateTimeWireSignatureFailurePreservesState(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 	for _, target := range []struct {
 		name, address string

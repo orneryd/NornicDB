@@ -1,5 +1,7 @@
 package cypher
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -17,12 +19,16 @@ import (
 func TestTemporalIndexedEqualitySurvivesRestart(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		dir := t.TempDir()
-		open := func() (*storage.BadgerEngine, *StorageExecutor) {
-			base, err := runtimeFixtureOwner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+		open := func() (*StorageExecutor, func()) {
+			base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+			var closeBase func()
+			if base != nil {
+				_, closeBase = runtimeFixtureOwner.OwnWithClose(t, base)
+			}
 			require.NoError(t, err)
-			return base, NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"))
+			return NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic")), closeBase
 		}
-		base, exec := open()
+		exec, closeBase := open()
 		ctx := context.Background()
 		run := func(query string) [][]interface{} {
 			t.Helper()
@@ -46,9 +52,9 @@ func TestTemporalIndexedEqualitySurvivesRestart(t *testing.T) {
 			}
 		}
 		check("after write")
-		require.NoError(t, base.Close())
-		base, exec = open()
+		closeBase()
+		exec, closeBase = open()
 		check("after restart")
-		require.NoError(t, base.Close())
+		closeBase()
 	}
 }

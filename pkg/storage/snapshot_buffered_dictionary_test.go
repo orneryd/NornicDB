@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"path/filepath"
 	"testing"
@@ -17,7 +19,6 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = source.Close() })
 	initial := []*Node{
 		{ID: "binding:a", Properties: map[string]any{"alpha": "before-alpha"}},
 		{ID: "binding:b", Properties: map[string]any{"beta": "before-beta"}},
@@ -37,8 +38,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	walDir := t.TempDir()
 	wal, err := NewWAL(walDir, DefaultWALConfig())
 	require.NoError(t, err)
-	journal := NewWALEngine(source, wal)
-	t.Cleanup(func() { _ = journal.Close() })
+	_, closeJournal := fixtureowner.OwnWithClose(t, NewWALEngine(source, wal))
 	tx, err := source.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("binding"))
@@ -51,7 +51,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	require.NoError(t, source.FlushWriteBehind(nil))
-	require.NoError(t, journal.Close())
+	closeJournal()
 	entries, err := ReadWALEntriesFromDir(walDir)
 	require.NoError(t, err)
 	buffered := 0
@@ -72,9 +72,12 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 			snapshotPath := filepath.Join(t.TempDir(), "snapshot.bin")
 			require.NoError(t, SaveSnapshot(&Snapshot{Timestamp: time.Now(), Nodes: []*Node{first, initial[2], last}, Edges: []*Edge{initialEdge}, Version: "1.0"}, snapshotPath))
 			dir := t.TempDir()
-			fresh, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+			fresh, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+			var closeFresh func()
+			if fresh != nil {
+				_, closeFresh = fixtureowner.OwnWithClose(t, fresh)
+			}
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = fresh.Close() })
 			result, _, err := RecoverIntoEngine(fresh, walDir, snapshotPath)
 			require.NoError(t, err)
 			require.Zero(t, result.Failed, "%s", result.Summary())
@@ -82,7 +85,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, final.Properties, got.Properties, "physical WAL must retain property names after semantic snapshot restoration")
 			// Reopen to exercise persisted bodies rather than the replay cache.
-			require.NoError(t, fresh.Close())
+			closeFresh()
 			fresh, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 			require.NoError(t, err)
 			got, err = fresh.GetNode("binding:a")

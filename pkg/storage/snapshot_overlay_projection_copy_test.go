@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -14,7 +16,7 @@ import (
 // Preserve the reviewer's public-path allocation probe: excluded vectors must
 // not contribute payload-sized allocations to a stripped projected scan.
 func TestReviewerStrippedProjectionCopyCost(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	b.writeBehind.Close()
 	vectors := make([][]float32, 32)
 	for i := range vectors {
@@ -66,9 +68,8 @@ func TestSnapshotOverlayStrippedStreamOwnership(t *testing.T) {
 						fixtureowner.Own(t, b)
 					}
 					require.NoError(t, err)
-					t.Cleanup(func() { require.NoError(t, b.Close()) })
 				} else {
-					b = newWriteBehindTestEngine(t, time.Hour)
+					b, _ = newWriteBehindTestEngine(t, t, time.Hour)
 					b.writeBehind.Close()
 				}
 				node := &Node{ID: "test:owned", Labels: []string{"Doc"}, Properties: map[string]any{"keep": "ack", "drop": "retained"},

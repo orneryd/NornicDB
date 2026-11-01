@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -105,7 +107,6 @@ func TestIndexCatalog_CollectIndexKeys(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = engine.Close() })
 			if kind == "node" {
 				// Seed a numID so the compact collector returns the expected keys.
 				if err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -42,9 +44,11 @@ func TestWALUnknownVersionDoesNotTruncateDuringRecovery(t *testing.T) {
 				_, _, err = RecoverIntoEngine(target, dir, "")
 			} else {
 				var target *MemoryEngine
-				target, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+				target, _, err = RecoverFromWALWithResult(dir, "")
+				target = fixtureowner.Track(t, target, ErrStorageClosed)
 				if target != nil {
-					_ = target.Close()
+					_, closeTarget := fixtureowner.OwnWithClose(t, target)
+					closeTarget()
 				}
 			}
 			assert.ErrorContains(t, err, "unsupported WAL version")

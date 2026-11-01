@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -174,7 +176,6 @@ func TestSearchRerankExtraApplyMMRBranches(t *testing.T) {
 
 func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { engine.Close() })
 	svc := NewService(engine, 2, nil)
 	ctx := context.Background()
 
@@ -222,7 +223,6 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 
 func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { engine.Close() })
 	svc := NewService(engine, 2, nil)
 
 	longPrefix := strings.Repeat("предисловие ", 80)

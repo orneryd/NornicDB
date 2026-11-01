@@ -1,6 +1,9 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -40,7 +43,7 @@ func TestDatabaseDropTargetAdmission(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 					require.NoError(t, err)
-					t.Cleanup(func() { require.NoError(t, manager.Close()) })
+					fixtureowner.Own(t, manager)
 					adapter := &testDatabaseManagerAdapter{manager: manager}
 					require.NoError(t, adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "source"}))
 					if tc.composite {

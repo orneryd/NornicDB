@@ -1,5 +1,7 @@
 package txsession
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -282,7 +284,6 @@ func TestManagerOpenWithExecutorCompositeBeginSupported(t *testing.T) {
 
 func TestManagerCommitCompletionOutlivesRequest(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = store.Close() })
 	executor := cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic"))
 	mgr := NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return executor, nil })
 	session, err := mgr.Open(context.Background(), "nornic")

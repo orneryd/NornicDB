@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -14,13 +16,13 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
 	options := BadgerOptions{DataDir: dataDir, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
-			_ = engine.Close()
 		}
 	})
 
@@ -58,7 +60,7 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 		return nil
 	}))
 	require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
-	require.NoError(t, engine.Close())
+	closeEngine()
 	engine = nil
 
 	unexpected, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
@@ -116,13 +118,13 @@ func TestV3MigrationPreservesLegacyEdgeHistory(t *testing.T) {
 				EngineOptions:    EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}},
 			}
 			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+			var closeEngine func()
 			if engine != nil {
-				fixtureowner.Own(t, engine)
+				_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 			}
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				if engine != nil {
-					_ = engine.Close()
 				}
 			})
 			startID, endID := tc.start, tc.end
@@ -151,7 +153,7 @@ func TestV3MigrationPreservesLegacyEdgeHistory(t *testing.T) {
 				require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS", Properties: tc.replacement}}))
 			}
 			require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
-			require.NoError(t, engine.Close())
+			closeEngine()
 			engine = nil
 			options.AllowStorageUpgrade = true
 			engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))

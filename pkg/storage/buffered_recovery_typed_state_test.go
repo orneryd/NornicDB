@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -33,21 +35,26 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 		for _, mutation := range []string{"update", "equal_type", "repeat", "delete"} {
 			t.Run(mutation+map[bool]string{false: "/replay", true: "/startup"}[startup], func(t *testing.T) {
 				dir := t.TempDir()
-				open := func() (*BadgerEngine, *WAL) {
+				open := func() (*BadgerEngine, *WAL, func()) {
 					engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+					var closeEngine func()
 					if engine != nil {
-						fixtureowner.Own(t, engine)
+						_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 					}
 					require.NoError(t, err)
 					cfg := DefaultWALConfig()
 					cfg.Dir = filepath.Join(dir, "wal")
 					cfg.BatchSyncInterval = time.Hour
 					wal, err := NewWAL(cfg.Dir, cfg)
+					var closeFixture func()
+					if wal != nil {
+						_, closeFixture = fixtureowner.OwnWithClose(t, wal, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+					}
 					require.NoError(t, err)
 					engine.SetBufferedCommitWAL(wal)
-					return engine, wal
+					return engine, wal, closeFixture
 				}
-				engine, wal := open()
+				engine, wal, closeFixture := open()
 				initial := map[string]any{"v": float64(1), "time": time.Date(2026, 10, 15, 1, 2, 3, 0, time.UTC), "bytes": []byte{1, 2, 3}}
 				tx, err := engine.BeginTransaction()
 				require.NoError(t, err)
@@ -97,15 +104,8 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				require.True(t, tx.AcknowledgedBuffered())
 				entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
 				require.NoError(t, err)
-				crashClose(t, engine, wal)
-				recovered, wal2 := open()
-				closed := false
-				t.Cleanup(func() {
-					if !closed {
-						_ = wal2.Close()
-						_ = recovered.Close()
-					}
-				})
+				crashClose(t, engine, fixtureowner.CloseFunc(func() error { closeFixture(); return nil }))
+				recovered, wal2, closeRecovered := open()
 				if startup {
 					n, err := RecoverBufferedCommits(recovered, wal2)
 					require.NoError(t, err)
@@ -142,11 +142,8 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				clear(recovered.edgeCache)
 				recovered.edgeCacheMu.Unlock()
 				check("evicted")
-				require.NoError(t, wal2.Close())
-				require.NoError(t, recovered.Close())
-				closed = true
-				recovered, wal2 = open()
-				closed = false
+				closeRecovered()
+				recovered, wal2, _ = open()
 				check("reopened")
 			})
 		}
@@ -186,20 +183,25 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 	for _, startup := range []bool{false, true} {
 		t.Run(map[bool]string{false: "replay", true: "startup"}[startup], func(t *testing.T) {
 			dir := t.TempDir()
-			open := func() (*BadgerEngine, *WAL) {
+			open := func() (*BadgerEngine, *WAL, func()) {
 				b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+				var closeEngine func()
 				if b != nil {
-					fixtureowner.Own(t, b)
+					_, closeEngine = fixtureowner.OwnWithClose(t, b)
 				}
 				require.NoError(t, err)
 				cfg := DefaultWALConfig()
 				cfg.Dir = filepath.Join(dir, "wal")
 				w, err := NewWAL(cfg.Dir, cfg)
+				var closeFixture func()
+				if w != nil {
+					_, closeFixture = fixtureowner.OwnWithClose(t, w, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+				}
 				require.NoError(t, err)
 				b.SetBufferedCommitWAL(w)
-				return b, w
+				return b, w, closeFixture
 			}
-			b, w := open()
+			b, w, closeFixture := open()
 			tx, err := b.BeginTransaction()
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("test"))
@@ -218,9 +220,8 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 			require.True(t, tx.AcknowledgedBuffered())
 			entries, err := ReadWALEntriesFromDir(w.Config().Dir)
 			require.NoError(t, err)
-			crashClose(t, b, w)
-			b, w = open()
-			t.Cleanup(func() { _ = w.Close(); _ = b.Close() })
+			crashClose(t, b, fixtureowner.CloseFunc(func() error { closeFixture(); return nil }))
+			b, w, _ = open()
 			if startup {
 				_, err = RecoverBufferedCommits(b, w)
 				require.NoError(t, err)

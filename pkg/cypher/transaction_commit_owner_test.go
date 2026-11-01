@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -30,7 +32,6 @@ func TestTransactionCommitUsesManagedOwner(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			base := runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			t.Cleanup(func() { _ = base.Close() })
 			engine := &recordingManagedCommitEngine{NamespacedEngine: storage.NewNamespacedEngine(base, "managed")}
 			executor := NewStorageExecutor(engine)
 			ctx := context.Background()

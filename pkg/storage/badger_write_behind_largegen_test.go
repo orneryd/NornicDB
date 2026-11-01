@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 // Regression controls for large-generation write-behind flush and token draining.
 
 import (
@@ -35,7 +37,7 @@ func flushLargeWriteBehindGeneration(t *testing.T, engine *BadgerEngine, n int, 
 }
 
 func TestWriteBehind_LargeGenerationFlushSpansBadgerBatches(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	const n = 25000
 	flushLargeWriteBehindGeneration(t, engine, n, func(i int) *Node {
@@ -54,7 +56,7 @@ func TestWriteBehind_LargeGenerationFlushSpansBadgerBatches(t *testing.T) {
 // re-entered the commit gate's RLock and deadlocked against the flusher's
 // own exclusive Lock. The token batches must ride the large commit.
 func TestWriteBehind_LargeGenerationFlushWithPropertyTokens(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	const n = 25000
 	flushLargeWriteBehindGeneration(t, engine, n, func(i int) *Node {

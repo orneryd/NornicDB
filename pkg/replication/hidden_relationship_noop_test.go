@@ -1,5 +1,7 @@
 package replication_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -100,7 +102,7 @@ func TestRepeatedHiddenRelationshipMergeKeepsFollowerConverged(t *testing.T) {
 				replicated := replication.NewReplicatedEngine(bases[0], fanout, time.Second)
 				manager, err := multidb.NewDatabaseManager(t.Context(), replicated, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = manager.Close() })
+				runtimeFixtureOwner.Own(t, manager)
 				managed, err := manager.GetStorage("nornic")
 				require.NoError(t, err)
 				exec := cypher.NewStorageExecutor(managed)

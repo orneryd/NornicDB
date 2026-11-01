@@ -1,9 +1,12 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/require"
 )
@@ -101,7 +104,7 @@ func TestGraphFunctionsOutsideComposite(t *testing.T) {
 func createCompositeTestManager(t *testing.T, name string, refs []multidb.ConstituentRef) (*multidb.DatabaseManager, *testDatabaseManagerAdapter) {
 	t.Helper()
 	mgr := newCompositeNativeManager(t, nil)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 
 	for _, ref := range refs {
 		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: ref.DatabaseName}))

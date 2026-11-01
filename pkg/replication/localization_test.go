@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -77,7 +79,6 @@ func TestReplicationLocalizedStorageAdapterCause(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, adapter.Close())
-		require.NoError(t, engine.Close())
 	})
 
 	err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte{0x81, 0xa1, 'x'}, Timestamp: time.Now()})

@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -28,7 +30,6 @@ func (e *resultHeaderBenchExecutor) ExecuteQueryWithRecord(ctx context.Context, 
 // field dispatch, including the formerly incorrect nested-RETURN fallback.
 func BenchmarkResultHeaderFabricDispatch(b *testing.B) {
 	store := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	b.Cleanup(func() { _ = store.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(store, "neo4j"))
 	adapter := &resultHeaderBenchExecutor{exec: exec}
 	local := fabric.NewLocalFragmentExecutor(adapter, func(string) (storage.Engine, error) { return store, nil })
@@ -54,7 +55,7 @@ func BenchmarkResultHeaderFabricEmptyChain(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	b.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(b, manager)
 	for _, database := range []string{"header_first", "header_second"} {
 		if err := manager.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: database}); err != nil {
 			b.Fatal(err)

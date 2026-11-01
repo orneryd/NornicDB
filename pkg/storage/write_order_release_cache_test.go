@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync"
@@ -14,7 +16,7 @@ import (
 // create ordered right after a node delete, in that window, must not read the
 // deleted node's cached image and acknowledge a relationship to it.
 func TestOrderReleaseEvictsCachedImages(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := b.CreateNode(&Node{ID: id})
 		require.NoError(t, err)

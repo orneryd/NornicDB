@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -15,7 +17,7 @@ import (
 // Force the real lock order using existing physical/publication hooks. A failed
 // schedule releases the schema persister with an error, then joins both writers.
 func TestBufferedReplayDoesNotHoldCommitGateWhileReadingSchema(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true, lowMemory: true, wal: true})
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true, lowMemory: true, wal: true})
 	schema := b.GetSchemaForNamespace("test")
 	require.NoError(t, schema.RegisterTokens([]string{"Ingest"}, []string{"BEFORE"}))
 	const nodes = 6000

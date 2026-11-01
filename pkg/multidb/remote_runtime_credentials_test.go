@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"strings"
 	"testing"
@@ -33,7 +35,7 @@ func TestRemoteRuntimeCredentials(t *testing.T) {
 			}
 			manager, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
 			require.NoError(t, err)
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			ref := ConstituentRef{Alias: "remote", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: test.uri, User: test.user, Password: test.password, AuthMode: test.mode}
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "runtime", []ConstituentRef{ref}))
 			stored, err := manager.GetCompositeConstituents("runtime")
@@ -47,9 +49,8 @@ func TestRemoteRuntimeCredentials(t *testing.T) {
 			require.NotContains(t, node.Properties["data"], password)
 			require.NotContains(t, stored[0].URI, "@")
 			for _, name := range []string{"runtime.remote", "runtime"} {
-				engine, err := manager.GetStorageWithAuth(name, test.token)
+				_, err := manager.GetStorageWithAuth(name, test.token)
 				require.NoError(t, err)
-				defer engine.Close()
 				actual := received[len(received)-1]
 				require.Equal(t, test.wantUser, actual.User)
 				require.Equal(t, test.wantPass, actual.Password)
@@ -74,7 +75,6 @@ func TestRemoteRuntimeCredentialErrorsAreRedacted(t *testing.T) {
 	}
 	manager, _, err := newCredentialPersistenceFixture(t, config)
 	require.NoError(t, err)
-	defer manager.Close()
 	err = manager.CreateCompositeDatabase(t.Context(), "invalid_uri", []ConstituentRef{{Alias: "remote", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://admin:" + password + "@%invalid"}})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), password)

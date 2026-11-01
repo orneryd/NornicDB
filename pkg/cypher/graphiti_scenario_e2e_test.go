@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -729,8 +731,9 @@ LIMIT $limit`
 	}
 
 	base1, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	var closeBase func()
 	if base1 != nil {
-		fixtureowner.Own(t, base1)
+		_, closeBase = fixtureowner.OwnWithClose(t, base1)
 	}
 	require.NoError(t, err)
 	store1 := storage.NewNamespacedEngine(base1, "test")
@@ -775,7 +778,7 @@ LIMIT $limit`
 	require.Equal(t, extractUUIDs(freshFirst.tailNoTempRows), extractUUIDs(freshRepeat.tailNoTempRows))
 	require.Equal(t, extractUUIDs(freshFirst.tailTempRows), extractUUIDs(freshRepeat.tailTempRows))
 
-	require.NoError(t, base1.Close())
+	closeBase()
 
 	base2, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)

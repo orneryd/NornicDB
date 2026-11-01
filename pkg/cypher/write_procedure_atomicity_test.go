@@ -1,10 +1,13 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -52,7 +55,7 @@ func TestWriteProcedureStatementAtomicity(t *testing.T) {
 		t.Run("composite fragment/"+fragment, func(t *testing.T) {
 			manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = manager.Close() })
+			fixtureowner.Own(t, manager)
 			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "atomic_shard"}))
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "atomic_comp", []multidb.ConstituentRef{{
 				Alias: "shard", DatabaseName: "atomic_shard", Type: "local", AccessMode: "read_write",
@@ -117,7 +120,7 @@ func TestWriteProcedureCallbackAtomicityAcrossCarriers(t *testing.T) {
 func TestWriteProcedureFabricRegistrationReload(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "reload_shard"}))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "reload_comp", []multidb.ConstituentRef{{
 		Alias: "shard", DatabaseName: "reload_shard", Type: "local", AccessMode: "read_write",

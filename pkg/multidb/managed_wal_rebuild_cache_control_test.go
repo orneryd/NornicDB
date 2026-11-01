@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/binary"
 	"fmt"
@@ -24,9 +26,13 @@ type managedCatalogDiskAudit struct {
 
 func auditManagedCatalogDisk(t *testing.T, dataDir string, base *storage.BadgerEngine) managedCatalogDiskAudit {
 	t.Helper()
-	db, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dataDir).WithReadOnly(true).WithLogger(nil)))
+	db, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dataDir).WithReadOnly(true).WithLogger(nil)))
+	var closeDB func()
+	if db != nil {
+		_, closeDB = fixtureowner.OwnWithClose(t, db)
+	}
 	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
+	defer closeDB()
 	audit := managedCatalogDiskAudit{forward: map[string]uint64{}, reverse: map[uint64]string{}, cachedForward: map[string]uint64{}, cachedReverse: map[uint64]string{}}
 	// The engine is closed, so its retained dictionary cannot be written.
 	// Reflection reads primitive map entries without unsafe or a product seam.
@@ -123,14 +129,15 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 						result.Record(entry, storage.ReplayWALEntry(base, entry))
 					}
 					require.Zero(t, result.Failed, "%s errors=%+v", result.Summary(), result.Errors)
-					manager, err := NewDatabaseManager(t.Context(), storage.NewWALEngine(base, wal), nil)
+					stack, closeStack := fixtureowner.OwnWithClose(t, storage.NewWALEngine(base, wal))
+					manager, err := NewDatabaseManager(t.Context(), stack, nil)
 					if err != nil {
-						_ = wal.Close()
-						_ = base.Close()
+						closeStack()
 						audit := auditManagedCatalogDisk(t, dataDir, base)
 						assertManagedCacheInverse(t, audit, generation)
 						t.Fatalf("managed open after WAL-only rebuild generation=%d: %v", generation, err)
 					}
+					_, closeManager := fixtureowner.OwnWithClose(t, manager)
 					if generation == 0 {
 						require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "binding_model"}))
 					}
@@ -161,7 +168,7 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 						}
 						require.NoError(t, base.FlushWriteBehind(nil))
 					}
-					require.NoError(t, manager.Close())
+					closeManager()
 					audit := auditManagedCatalogDisk(t, dataDir, base)
 					assertManagedCacheInverse(t, audit, generation)
 					if generation == 2 && writeBehind && implicit {

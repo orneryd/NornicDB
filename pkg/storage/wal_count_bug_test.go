@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -30,13 +32,12 @@ func newWALCountEngine(t *testing.T) *WALEngine {
 	t.Helper()
 	tmpDir := t.TempDir()
 
-	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(tmpDir))
+	badger, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = badger.Close() })
 
 	wal, err := NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = wal.Close() })
+	runtimeFixtureOwner.Own(t, wal)
 
 	return NewWALEngine(badger, wal)
 }

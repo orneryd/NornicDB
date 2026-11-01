@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"errors"
 	"fmt"
@@ -17,10 +19,9 @@ func TestWriteBehindMemoryAdmissionRejectsBeforeWAL(t *testing.T) {
 		return memory.Sample{Used: 1, Ceiling: 1 << 30}, nil
 	}, time.Now)
 	require.NoError(t, policy.Refresh())
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
-	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
@@ -43,10 +44,8 @@ func TestRejectedBufferedCommitClearsDetachedDictionaryEntries(t *testing.T) {
 		return memory.Sample{Used: 1, Ceiling: 1 << 30}, nil
 	}, time.Now)
 	require.NoError(t, policy.Refresh())
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
-	wal := engine.bufferedCommitWAL
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	engine.memoryPolicy = policy
-	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
@@ -88,10 +87,8 @@ func TestWriteBehindMemoryReservationEndsAfterFlush(t *testing.T) {
 		return memory.Sample{Used: 1, Ceiling: 1 << 30}, nil
 	}, time.Now)
 	require.NoError(t, policy.Refresh())
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
-	wal := engine.bufferedCommitWAL
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	engine.memoryPolicy = policy
-	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))

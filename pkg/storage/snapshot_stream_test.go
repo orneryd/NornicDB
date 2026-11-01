@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -72,7 +74,6 @@ func TestStreamingSnapshotRoundTripAndFooter(t *testing.T) {
 
 func TestWriteSnapshotUsesEmbeddingFreeNodeStream(t *testing.T) {
 	engine := &embeddingFreeSnapshotSpy{MemoryEngine: newTestMemoryEngine(t)}
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	_, err := engine.CreateNode(&Node{
 		ID:              "nornic:document",
 		Labels:          []string{"Document"},

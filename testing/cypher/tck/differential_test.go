@@ -1,5 +1,7 @@
 package tck
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -30,9 +32,12 @@ func TestGh531_BoltNativeKnowledgeRouting(t *testing.T) {
 				config.SetParserType(parser)
 				t.Cleanup(func() { config.SetParserType(previous) })
 				engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+				var closeEngine func()
+				if engine != nil {
+					_, closeEngine = runtimeFixtureOwner.OwnWithClose(t, engine)
+				}
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = engine.Close() })
-				driver, shutdown := startConformanceServerWithEngine(t, engine)
+				driver, shutdown := startConformanceServerWithEngine(t, engine, closeEngine)
 				defer shutdown()
 				require.Equal(t, parser, config.GetParserType())
 				ctx := context.Background()

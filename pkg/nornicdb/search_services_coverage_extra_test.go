@@ -1,5 +1,7 @@
 package nornicdb
 
+// Author of fixture cleanup changes: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -25,7 +27,6 @@ func newCoverageSearchDB(t testing.TB) *DB {
 
 func TestSearchServices_Coverage_EmptyDBNameHelpers(t *testing.T) {
 	db := newCoverageSearchDB(t)
-	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	status := db.GetDatabaseSearchStatus("")
 	require.Equal(t, "not_initialized", status.Phase)
@@ -35,7 +36,6 @@ func TestSearchServices_Coverage_EmptyDBNameHelpers(t *testing.T) {
 
 func TestSearchServices_Coverage_StartBuildGuardsAndNilContext(t *testing.T) {
 	db := newCoverageSearchDB(t)
-	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	db.startSearchIndexBuild(nil, nil)
 	db.startSearchIndexBuild(&dbSearchService{}, nil)
@@ -55,13 +55,11 @@ func TestSearchServices_Coverage_StartBuildGuardsAndNilContext(t *testing.T) {
 func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 	t.Run("guards nil entry", func(t *testing.T) {
 		db := newCoverageSearchDB(t)
-		t.Cleanup(func() { _ = db.baseStorage.Close() })
 		db.ensurePendingFlush(nil)
 	})
 
 	t.Run("returns early when flush already running", func(t *testing.T) {
 		db := newCoverageSearchDB(t)
-		t.Cleanup(func() { _ = db.baseStorage.Close() })
 		svc := search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"), 3, nil)
 		entry := &dbSearchService{
 			dbName:              "tenant",
@@ -84,7 +82,6 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 
 	t.Run("startBackgroundTask false resets pendingFlushRunning", func(t *testing.T) {
 		db := newCoverageSearchDB(t)
-		t.Cleanup(func() { _ = db.baseStorage.Close() })
 		db.closed = true
 		svc := search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"), 3, nil)
 		entry := &dbSearchService{
@@ -109,7 +106,6 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 
 func TestSearchServices_Coverage_EnsureBuiltAndStartedDefaultBranches(t *testing.T) {
 	db := newCoverageSearchDB(t)
-	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	db.SetDbSearchFlagsResolver(func(dbName string) (bool, bool, string, string) {
 		if dbName == db.defaultDatabaseName() {
@@ -129,7 +125,6 @@ func TestSearchServices_Coverage_EnsureBuiltAndStartedDefaultBranches(t *testing
 
 func TestSearchServices_Coverage_EnsureBuildStartedUsesBackgroundWhenBuildCtxNil(t *testing.T) {
 	db := newCoverageSearchDB(t)
-	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	db.SetDbSearchFlagsResolver(func(dbName string) (bool, bool, string, string) {
 		return true, false, "startup", "startup"
@@ -144,7 +139,6 @@ func TestSearchServices_Coverage_EnsureBuildStartedUsesBackgroundWhenBuildCtxNil
 
 func TestSearchServices_Coverage_EventAndClusteringNilContextBranches(t *testing.T) {
 	db := newCoverageSearchDB(t)
-	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	db.indexNodeFromEvent(nil)
 	db.runClusteringOnceAllDatabases(context.Background())

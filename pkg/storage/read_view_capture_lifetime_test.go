@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -37,7 +39,7 @@ func TestCaptureReadViewPanicReleasesReadView(t *testing.T) {
 // buffered population leaves a canceled read doing work nobody will consume,
 // so every candidate and deletion loop the copy runs polls the read's context.
 func TestBufferedOverlayCopyReportsCallerCancellation(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	const buffered = 600
 	for i := 0; i < buffered; i++ {
 		bufferedCreate(t, engine, &Node{
@@ -80,7 +82,7 @@ func TestBufferedOverlayCopyReportsCallerCancellation(t *testing.T) {
 // Retirement includes candidate enumeration, not just suppressing the visit
 // callback while still walking the rest of a buffered generation.
 func TestBufferedOverlayCancellationStopsCandidateEnumeration(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	const total = 2 * bulkReadCancellationInterval
 	for i := 0; i < total; i++ {
 		bufferedCreate(t, engine, &Node{ID: NodeID(prefixTestID(fmt.Sprintf("retire-%d", i)))})

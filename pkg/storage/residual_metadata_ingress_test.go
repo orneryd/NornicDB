@@ -1,5 +1,7 @@
 package storage_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"testing"
@@ -17,7 +19,6 @@ func TestResidualMetadataIngressOwnership(t *testing.T) {
 		t.Run(origin, func(t *testing.T) {
 			b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			b.SetChangeCapture("test", storage.ChangeCaptureFull)
 			tx, err := b.BeginTransaction()
 			require.NoError(t, err)
@@ -70,7 +71,6 @@ func TestResidualBatchSerializationOwnsInput(t *testing.T) {
 	require.NoError(t, err)
 	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	found := false
 	for _, entry := range entries {
 		if entry.Operation == storage.OpCreateNode {

@@ -1,6 +1,9 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/require"
@@ -21,7 +24,7 @@ func TestNativeCompositeReservedKeywordsAreASCII(t *testing.T) {
 				cfg.RemoteCredentialEncryptionKey = "synthetic-ascii-keyword-key"
 				manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), cfg)
 				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, manager.Close()) })
+				fixtureowner.Own(t, manager)
 				engine, err := manager.GetStorage("nornic")
 				require.NoError(t, err)
 				executor := NewStorageExecutor(engine)

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -23,14 +25,18 @@ func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
 		for _, rollback := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/rollback=%v", outcome, rollback), func(t *testing.T) {
 				dir := t.TempDir()
-				open := func() *BadgerEngine {
-					b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+				open := func() (*BadgerEngine, func()) {
+					b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+					var closeFixture func()
+					if b != nil {
+						_, closeFixture = fixtureowner.OwnWithClose(t, b)
+					}
 					require.NoError(t, err)
 					b.SetEmbeddingsEnabled(true)
 					b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
-					return b
+					return b, closeFixture
 				}
-				b := open()
+				b, closeB := open()
 				original := &Node{ID: "test:chunks", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same"}, CreatedAt: time.Unix(1700000000, 0).UTC(), UpdatedAt: time.Unix(1700000000, 1).UTC(), ChunkEmbeddings: [][]float32{vector(0.25), vector(0.5)}, EmbedMeta: map[string]any{"embedding_model": "original", "chunk_count": 2}}
 				_, err := b.CreateNode(original)
 				require.NoError(t, err)
@@ -73,8 +79,8 @@ func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
 				} else {
 					require.NoError(t, tx.CommitContext(context.Background()))
 				}
-				require.NoError(t, b.Close())
-				b = open()
+				closeB()
+				b, closeB = open()
 				got, err := b.GetStoredNode(original.ID)
 				require.NoError(t, err)
 				require.Equal(t, wantVectors, got.ChunkEmbeddings)

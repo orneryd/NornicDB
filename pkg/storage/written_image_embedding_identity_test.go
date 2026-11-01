@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -22,7 +24,6 @@ func TestWrittenImageKeepsRuntimeEmbeddingIdentity(t *testing.T) {
 				t.Run(fmt.Sprintf("%T/write-behind=%v/explicit=%v", value, buffered, explicit), func(t *testing.T) {
 					engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 					require.NoError(t, err)
-					t.Cleanup(func() { _ = engine.Close() })
 					_, err = engine.CreateNode(&Node{ID: "test:n", Labels: []string{"N"}, Properties: map[string]any{"v": "old"}})
 					require.NoError(t, err)
 					updated := make(chan *Node, 4)

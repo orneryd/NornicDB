@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // PR1655 current-release acceptance reproductions (fail-first).
 //
 // A writer stages a write against a target that exists when it stages it. A
@@ -137,14 +139,13 @@ func pr1655AcceptanceFlushes() []bool { return []bool{false, true} }
 // commit, and no timer can move the schedule.
 func openPR1655AcceptanceEngine(t *testing.T, writeBehind bool) *BadgerEngine {
 	t.Helper()
-	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             t.TempDir(),
 		LowMemory:           true,
 		WriteBehind:         writeBehind,
 		WriteBehindInterval: time.Hour,
 	}))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	return engine
 }
 

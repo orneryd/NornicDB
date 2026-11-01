@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -29,7 +31,6 @@ func (engine failingProjectedLabelEngine) StreamNodesByLabelProjected(ctx contex
 
 func TestProjectedLabelWrappers_PropagateBackingScanError(t *testing.T) {
 	backing := newTestMemoryEngine(t)
-	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	readErr := errors.New("projected label scan failed")
 	failing := failingProjectedLabelEngine{Engine: backing, err: readErr}
 
@@ -39,7 +40,6 @@ func TestProjectedLabelWrappers_PropagateBackingScanError(t *testing.T) {
 
 func TestWALEngine_GetNodesByLabelPropagatesBackingError(t *testing.T) {
 	backing := newTestMemoryEngine(t)
-	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	readErr := errors.New("label scan failed")
 	wal := NewWALEngine(failingLabelScanEngine{Engine: backing, err: readErr}, nil)
 	nodes, err := wal.GetNodesByLabel(context.Background(), "Evidence")
@@ -171,7 +171,6 @@ func TestNamespacedWAL_StreamNodesByLabelProjected(t *testing.T) {
 
 func TestProjectedLabelWrappers_UnsupportedBackendReturnsError(t *testing.T) {
 	backing := newTestMemoryEngine(t)
-	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	unsupported := struct{ Engine }{backing}
 
 	visited := false

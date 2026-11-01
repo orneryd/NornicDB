@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
@@ -21,9 +23,7 @@ func startTransactionLifecycleServer(t *testing.T) (*storage.MemoryEngine, int) 
 	t.Helper()
 
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	fixtureowner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	return base, startTransactionLifecycleServerWithStore(t, store)
 }
@@ -226,7 +226,6 @@ func TestBoltDuplicateBeginPreservesOriginalTransactionExecutor(t *testing.T) {
 	originalBase := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	otherBase := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
-		require.NoError(t, originalBase.Close())
 		require.NoError(t, otherBase.Close())
 	})
 	original := &countingTransactionEngine{Engine: originalBase, inner: originalBase}

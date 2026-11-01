@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/binary"
 	"encoding/json"
@@ -51,7 +53,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	for _, rotate := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rotate=%v", rotate), func(t *testing.T) {
-			source := reviewBindingEngine(t, t.TempDir())
+			source, _ := reviewBindingEngine(t, t.TempDir())
 			baseline := &Snapshot{Nodes: []*Node{{ID: "epoch:a", Properties: map[string]any{"alpha": "before"}}, {ID: "other:boundary"}, {ID: "epoch:b"}}}
 			for _, node := range baseline.Nodes {
 				_, err := source.CreateNode(node)
@@ -107,7 +109,11 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 						}
 						crashDir := t.TempDir()
 						require.NoError(t, os.WriteFile(filepath.Join(crashDir, "wal.log"), bytes[:cut], 0600))
-						dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
+						dest, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
+						var closeDest func()
+						if dest != nil {
+							_, closeDest = fixtureowner.OwnWithClose(t, dest)
+						}
 						require.NoError(t, err)
 						result, _, err := RecoverIntoEngine(dest, crashDir, baselinePath)
 						require.NoError(t, err)
@@ -128,7 +134,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 							require.Empty(t, b.Properties)
 						}
 						assertPropertyDictionaryBijection(t, dest)
-						require.NoError(t, dest.Close())
+						closeDest()
 					}
 					if physical.Operation == OpBufferedCommit {
 						applied++
@@ -147,7 +153,11 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			require.NoError(t, SaveSnapshot(snapshot, snapshotPath))
 			update("epoch:a", map[string]any{"alpha": "a2", "beta": "b2"})
 			check := func(alpha, beta string) {
-				dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
+				dest, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
+				var closeDest func()
+				if dest != nil {
+					_, closeDest = fixtureowner.OwnWithClose(t, dest)
+				}
 				require.NoError(t, err)
 				result, _, err := RecoverIntoEngine(dest, walDir, snapshotPath)
 				require.NoError(t, err)
@@ -159,7 +169,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "b1", b.Properties["beta"])
 				assertPropertyDictionaryBijection(t, dest)
-				require.NoError(t, dest.Close())
+				closeDest()
 			}
 			check("a2", "b2") // snapshot published, original WAL still present
 			require.NoError(t, wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate))
@@ -184,7 +194,6 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &transported))
 	dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, dest.Close()) })
 	_, err = dest.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
 	require.NoError(t, err)
 	require.NoError(t, ReplayWALEntry(dest, transported))
@@ -293,14 +302,14 @@ func TestWALPropertyEpochMatchingPrefixCannotAuthorizeLegacyAfterReopen(t *testi
 	require.NoError(t, legacy.Append(OpBufferedCommit, &unbound))
 	require.NoError(t, legacy.Close())
 	dir := t.TempDir()
-	dest := reviewBindingEngine(t, dir)
+	dest, closeDest := reviewBindingEngine(t, dir)
 	_, err = dest.CreateNode(&Node{ID: "perf:seed", Properties: map[string]any{"property_000": int64(0)}})
 	require.NoError(t, err)
 	_, err = dest.CreateNode(&Node{ID: "perf:later", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
 	require.NoError(t, ReplayWALEntry(dest, first)) // every entry in this epoch matches
-	require.NoError(t, dest.Close())
-	dest = reviewBindingEngine(t, dir)
+	closeDest()
+	dest, closeDest = reviewBindingEngine(t, dir)
 	_, err = RecoverBufferedCommitsAtOpen(dest, legacy)
 	require.ErrorContains(t, err, "missing property name binding")
 	node, err := dest.GetNode("perf:later")

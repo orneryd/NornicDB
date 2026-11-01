@@ -1,6 +1,9 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +23,7 @@ func TestCompositeAdministrationConsumesCompleteInput(t *testing.T) {
 				t.Cleanup(func() { config.SetParserType(previous) })
 				manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, manager.Close()) })
+				fixtureowner.Own(t, manager)
 				refs := []multidb.ConstituentRef{{Alias: "kept", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"}}
 				require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "complete_input", refs))
 				engine, err := manager.GetStorage("nornic")

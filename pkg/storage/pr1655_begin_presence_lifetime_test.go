@@ -1,8 +1,11 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -19,7 +22,7 @@ func pr1655PresenceLifetimeEngine(t *testing.T) (*BadgerEngine, *memory.Policy) 
 	require.NoError(t, policy.Refresh())
 	// These cases explicitly control each flush and inspect its exact generation.
 	// Adaptive background draining may replace that generation before capture.
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{
 		lowMemory: true, manualDrain: true, memoryPolicy: policy,
 	})
 	return engine, policy
@@ -40,11 +43,12 @@ func pr1655PresenceLifetimeReader(t *testing.T, engine *BadgerEngine) *BadgerTra
 	t.Helper()
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		if tx.IsActive() {
-			require.NoError(t, tx.Rollback())
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error {
+		if !tx.IsActive() {
+			return nil
 		}
-	})
+		return tx.Rollback()
+	}))
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NotNil(t, tx.beginPresence)
 	return tx

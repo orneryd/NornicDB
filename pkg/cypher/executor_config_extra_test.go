@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -32,9 +34,7 @@ func (testInferenceManager) Chat(ctx context.Context, req heimdall.ChatRequest) 
 
 func TestStorageExecutor_ConfigSettersAndFlush(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 	async := inner
-	defer async.Close()
 
 	exec := NewStorageExecutor(async)
 	require.NotNil(t, exec)

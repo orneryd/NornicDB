@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -23,7 +25,6 @@ type candidateFilterReadSpy struct {
 
 func BenchmarkTypeOnlyCandidateFilterFromMetadata(b *testing.B) {
 	service := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
-	b.Cleanup(func() { require.NoError(b, service.engine.Close()) })
 	results := make([]indexResult, 1000)
 	for i := range results {
 		id := fmt.Sprintf("doc-%d", i)
@@ -80,7 +81,6 @@ func (s *candidateFilterReadSpy) GetNodeWithoutEmbeddings(id storage.NodeID) (*s
 
 func TestCandidateFiltersUseEmbeddingFreeBatchReads(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	spy := &candidateFilterReadSpy{
 		Engine: base,
 		lightNodes: map[storage.NodeID]*storage.Node{
@@ -108,7 +108,6 @@ func TestCandidateFiltersUseEmbeddingFreeBatchReads(t *testing.T) {
 
 func TestTypeOnlyCandidateFilterUsesInMemoryMetadata(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	spy := &candidateFilterReadSpy{
 		Engine: base,
 		lightNodes: map[storage.NodeID]*storage.Node{

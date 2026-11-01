@@ -1,6 +1,9 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,13 +21,13 @@ func BenchmarkBufferedRecovery(b *testing.B) {
 			b.StopTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
 				dir := b.TempDir()
-				engine := newWriteBehindTestEngine(b, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+				engine, closeEngine := newWriteBehindTestEngine(b, b, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 				wal := engine.bufferedCommitWAL
 				for i := 0; i < count; i++ {
 					bufferedCreate(b, engine, &Node{ID: NodeID("test:" + strconv.Itoa(i)), Labels: []string{"L"}, Properties: map[string]any{"payload": strings.Repeat("x", 8<<10)}})
 				}
-				crashClose(b, engine, wal)
-				engine = newWriteBehindTestEngine(b, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+				crashClose(b, engine, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+				engine, closeEngine = newWriteBehindTestEngine(b, b, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 				wal = engine.bufferedCommitWAL
 				b.StartTimer()
 				replayed, err := RecoverBufferedCommits(engine, wal)
@@ -34,8 +37,7 @@ func BenchmarkBufferedRecovery(b *testing.B) {
 				got, err := engine.NodeCountByLabelInNamespace("test", "L")
 				require.NoError(b, err)
 				require.EqualValues(b, count, got)
-				require.NoError(b, engine.Close())
-				require.NoError(b, wal.Close())
+				closeEngine()
 			}
 		})
 	}

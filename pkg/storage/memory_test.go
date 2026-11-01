@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -14,7 +16,6 @@ import (
 func TestNewMemoryEngine(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	require.NotNil(t, engine)
-	defer engine.Close()
 
 	// Verify engine is functional through public interface
 	nodeCount, err := engine.NodeCount()
@@ -72,7 +73,7 @@ func TestMemoryEngine_CreateNode(t *testing.T) {
 
 	t.Run("closed engine", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		engine.Close()
+		require.NoError(t, engine.Close())
 
 		_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("node-1"))})
 		assert.ErrorIs(t, err, ErrStorageClosed)
@@ -131,7 +132,7 @@ func TestMemoryEngine_GetNode(t *testing.T) {
 		engine := newTestMemoryEngine(t)
 		_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("node-1"))})
 		require.NoError(t, err)
-		engine.Close()
+		require.NoError(t, engine.Close())
 
 		_, err = engine.GetNode(NodeID(prefixTestID("node-1")))
 		assert.ErrorIs(t, err, ErrStorageClosed)
@@ -627,7 +628,7 @@ func TestMemoryEngine_GetNodesByLabel(t *testing.T) {
 
 	t.Run("closed engine", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		engine.Close()
+		require.NoError(t, engine.Close())
 		_, err := engine.GetNodesByLabel(context.Background(), "Test")
 		assert.ErrorIs(t, err, ErrStorageClosed)
 	})
@@ -959,7 +960,7 @@ func TestMemoryEngine_Close(t *testing.T) {
 
 	t.Run("all operations fail after close", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		engine.Close()
+		require.NoError(t, engine.Close())
 
 		_, err := engine.NodeCount()
 		assert.Error(t, err) // BadgerDB returns different error type
@@ -1174,7 +1175,6 @@ func TestMemoryEngine_ImplementsEngine(t *testing.T) {
 
 func TestAllNodes(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Test empty storage
 	t.Run("empty_storage", func(t *testing.T) {
@@ -1245,7 +1245,7 @@ func TestAllNodes(t *testing.T) {
 	t.Run("closed_engine", func(t *testing.T) {
 		closedEngine := newTestMemoryEngine(t)
 		closedEngine.CreateNode(&Node{ID: NodeID(prefixTestID("test")), Labels: []string{"Test"}})
-		closedEngine.Close()
+		require.NoError(t, closedEngine.Close())
 
 		if nodes, err := closedEngine.AllNodes(context.Background()); err == nil || len(nodes) != 0 {
 			t.Errorf("Closed engine must report the failed read: len=%d err=%v", len(nodes), err)
@@ -1255,7 +1255,6 @@ func TestAllNodes(t *testing.T) {
 
 func TestGetEdgeBetween(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Create nodes
 	engine.CreateNode(&Node{ID: NodeID(prefixTestID("alice")), Labels: []string{"Person"}})
@@ -1336,7 +1335,7 @@ func TestGetEdgeBetween(t *testing.T) {
 		closedEngine.CreateNode(&Node{ID: NodeID(prefixTestID("a")), Labels: []string{"X"}})
 		closedEngine.CreateNode(&Node{ID: NodeID(prefixTestID("b")), Labels: []string{"X"}})
 		closedEngine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e")), Type: "T", StartNode: NodeID(prefixTestID("a")), EndNode: NodeID(prefixTestID("b"))})
-		closedEngine.Close()
+		require.NoError(t, closedEngine.Close())
 
 		edge := closedEngine.GetEdgeBetween(NodeID(prefixTestID("a")), NodeID(prefixTestID("b")), "T")
 		if edge != nil {
@@ -1347,7 +1346,6 @@ func TestGetEdgeBetween(t *testing.T) {
 
 func TestGetInDegree(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Create nodes
 	engine.CreateNode(&Node{ID: NodeID(prefixTestID("center")), Labels: []string{"Node"}})
@@ -1386,7 +1384,7 @@ func TestGetInDegree(t *testing.T) {
 		closedEngine.CreateNode(&Node{ID: NodeID(prefixTestID("x")), Labels: []string{"X"}})
 		closedEngine.CreateNode(&Node{ID: NodeID(prefixTestID("y")), Labels: []string{"X"}})
 		closedEngine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e")), Type: "T", StartNode: NodeID(prefixTestID("y")), EndNode: NodeID(prefixTestID("x"))})
-		closedEngine.Close()
+		require.NoError(t, closedEngine.Close())
 
 		degree := closedEngine.GetInDegree(NodeID(prefixTestID("x")))
 		if degree != 0 {
@@ -1397,7 +1395,6 @@ func TestGetInDegree(t *testing.T) {
 
 func TestGetOutDegree(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Create nodes
 	engine.CreateNode(&Node{ID: NodeID(prefixTestID("center")), Labels: []string{"Node"}})
@@ -1434,7 +1431,7 @@ func TestGetOutDegree(t *testing.T) {
 		closedEngine.CreateNode(&Node{ID: NodeID(prefixTestID("x")), Labels: []string{"X"}})
 		closedEngine.CreateNode(&Node{ID: NodeID(prefixTestID("y")), Labels: []string{"X"}})
 		closedEngine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e")), Type: "T", StartNode: NodeID(prefixTestID("x")), EndNode: NodeID(prefixTestID("y"))})
-		closedEngine.Close()
+		require.NoError(t, closedEngine.Close())
 
 		degree := closedEngine.GetOutDegree(NodeID(prefixTestID("x")))
 		if degree != 0 {

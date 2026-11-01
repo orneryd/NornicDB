@@ -1,6 +1,9 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 
 	"context"
@@ -16,8 +19,8 @@ import (
 )
 
 func TestSubscriptionsRevalidateDatabaseRead(t *testing.T) {
-	db := testDB(t)
-	manager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	manager := testutil.DatabaseManager(t, db, closeDB)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "revocation_named"}))
 	resolver := NewResolver(db, manager)
 	t.Cleanup(resolver.EventBroker.Close)

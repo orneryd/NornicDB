@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -16,7 +18,6 @@ import (
 // check the field is only read under pipelineMu.
 func TestGetOrCreateVectorPipelineConcurrentWithReset(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewService(engine, 4, nil)
 	for i := 0; i < 8; i++ {
 		require.NoError(t, svc.IndexNode(&storage.Node{

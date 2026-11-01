@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -77,7 +80,7 @@ func newFabricAtomicityFixture(t *testing.T) *fabricAtomicityFixture {
 		}
 	}
 	mgr := newCompositeNativeManager(t, config)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 	constituents := []multidb.ConstituentRef{}
 	for _, db := range []string{"one", "two"} {
 		require.NoError(t, mgr.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: db}))

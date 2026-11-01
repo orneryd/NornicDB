@@ -1,5 +1,7 @@
 package nornicdb
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -93,7 +95,6 @@ func TestDB_Coverage_UnwrapToBadgerEngine_NonBadgerChain(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	wrapper := &unwrapOnlyEngine{Engine: base, inner: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	t.Cleanup(func() { _ = wrapper.inner.Close() })
 	require.Nil(t, unwrapToBadgerEngine(wrapper))
 }
 

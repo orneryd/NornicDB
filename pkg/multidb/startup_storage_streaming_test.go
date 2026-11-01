@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -142,7 +144,6 @@ func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 	engine.Engine = engine.MemoryEngine
 	engine.StoredEntityReader = engine.MemoryEngine
 	engine.ScopedStoredEntityReader = engine.MemoryEngine
-	t.Cleanup(func() { _ = engine.Close() })
 
 	nodes := []*storage.Node{
 		{ID: "nornic:ordinary", Labels: []string{"Application"}, Properties: map[string]interface{}{"payload": strings.Repeat("x", 4096)}},
@@ -198,7 +199,6 @@ func TestStorageSizeReconciliationStreamsEntities(t *testing.T) {
 	engine.Engine = engine.MemoryEngine
 	engine.StoredEntityReader = engine.MemoryEngine
 	engine.ScopedStoredEntityReader = engine.MemoryEngine
-	t.Cleanup(func() { _ = engine.Close() })
 	node := &storage.Node{ID: "nornic:node", Labels: []string{"Application"}, Properties: map[string]interface{}{"payload": strings.Repeat("x", 4096)}}
 	edge := &storage.Edge{ID: "nornic:edge", StartNode: node.ID, EndNode: node.ID, Type: "SELF", Properties: map[string]interface{}{"weight": int64(1)}}
 	_, err := engine.MemoryEngine.CreateNode(node)

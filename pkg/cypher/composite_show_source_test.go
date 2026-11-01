@@ -1,8 +1,11 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 // Author: credentials lane (Codex). Public command-head contract regressions
 // for #1525; the catalog and shared lexical/name owners remain dependencies.
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -52,7 +55,7 @@ func TestCompositeShowSourceProducts(t *testing.T) {
 	t.Run("composite listings", func(t *testing.T) {
 		manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, manager.Close()) })
+		fixtureowner.Own(t, manager)
 		require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "lookup_names", []multidb.ConstituentRef{
 			{Alias: "local", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 		}))

@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/binary"
@@ -72,8 +74,9 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	ctx := context.Background()
 
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	var closeBase func()
 	if base != nil {
-		fixtureowner.Own(t, base)
+		_, closeBase = fixtureowner.OwnWithClose(t, base)
 	}
 	require.NoError(t, err)
 
@@ -89,11 +92,12 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 		UpdatedAt: time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, err)
-	require.NoError(t, base.Close())
+	closeBase()
 
 	rawDB, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+	var closeRawDB func()
 	if rawDB != nil {
-		fixtureowner.Own(t, rawDB)
+		_, closeRawDB = fixtureowner.OwnWithClose(t, rawDB)
 	}
 	require.NoError(t, err)
 
@@ -116,7 +120,7 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 		binary.BigEndian.PutUint64(buf, testStorageVersionV1)
 		return txn.Set(testSchemaVersionKey(), buf)
 	}))
-	require.NoError(t, rawDB.Close())
+	closeRawDB()
 
 	plan, err := multidb.NewCatalogUpgradeV4("system", "")
 	require.NoError(t, err)

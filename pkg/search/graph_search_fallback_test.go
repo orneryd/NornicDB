@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -13,7 +15,7 @@ import (
 func TestGraphSearchFallbackReflectsBothKinds(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
-	svc := startRelationshipService(t, engine, nil, nil)
+	svc, _ := startRelationshipService(t, engine, nil, nil)
 	require.NoError(t, svc.BuildIndexes(ctx))
 
 	opts := DefaultSearchOptions()

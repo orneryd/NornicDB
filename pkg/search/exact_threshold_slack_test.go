@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -28,7 +30,6 @@ func TestXhigh014fPublicThresholdSlackProbe(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			t.Cleanup(func() { _ = base.Close() })
 			engine := storage.NewNamespacedEngine(base, "threshold")
 			service := NewService(engine, 2, nil)
 			t.Cleanup(func() { _ = service.Close() })

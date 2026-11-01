@@ -1,5 +1,7 @@
 package cypher_test
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -12,10 +14,6 @@ import (
 func newTestMemoryEngine(t testing.TB) *storage.MemoryEngine {
 	t.Helper()
 	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() {
-		if err := engine.Close(); err != nil {
-			t.Errorf("close test store: %v", err)
-		}
-	})
+	runtimeFixtureOwner.Own(t, engine)
 	return engine
 }

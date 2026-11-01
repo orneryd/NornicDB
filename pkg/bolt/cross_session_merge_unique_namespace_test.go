@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -128,9 +130,7 @@ func TestBoltDatabaseManagerExecuteWriteUniqueMerge_BackendPopulations(t *testin
 			}
 			mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() {
-				_ = mgr.Close()
-			})
+			fixtureowner.Own(t, mgr)
 
 			server := NewWithDatabaseManager(&Config{
 				Port:            0,
@@ -241,9 +241,7 @@ func TestBoltDatabaseManagerMergeExistingNodeAfterLateSchemaBootstrap(t *testing
 	base := storage.NewWALEngine(badger, wal)
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = mgr.Close()
-	})
+	fixtureowner.Own(t, mgr)
 
 	server := NewWithDatabaseManager(&Config{
 		Port:            0,

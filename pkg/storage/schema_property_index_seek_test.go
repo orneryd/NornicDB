@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"math"
@@ -61,7 +63,6 @@ func TestPropertyIndexKeyRangeNarrowsOnlyOneKind(t *testing.T) {
 
 func TestVisitPropertyIndexGroupsInRange(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
 	for i := 0; i < 10; i++ {
@@ -106,7 +107,6 @@ func TestVisitPropertyIndexGroupsInRange(t *testing.T) {
 // no reader may rebuild the cache under the shared read lock (#942).
 func TestPropertyIndexRangeConcurrentReaders(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
 	create := func(i int) error {
@@ -156,7 +156,6 @@ func TestPropertyIndexRangeConcurrentReaders(t *testing.T) {
 // direction.
 func TestVisitPropertyIndexGroupsInRangeEqualKeysOfTwoTypes(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
 	for id, value := range map[string]interface{}{"nornic:a": int64(1), "nornic:b": int64(2), "nornic:c": "2", "nornic:d": int64(3)} {

@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -209,7 +211,6 @@ func TestFastPath_CreateDeleteRel_HelperBranches(t *testing.T) {
 func BenchmarkFastPath_WithLimit(b *testing.B) {
 	baseEngine := newTestMemoryEngine(b)
 	asyncBase := baseEngine
-	defer asyncBase.Close()
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 
 	// Setup
@@ -244,7 +245,6 @@ func BenchmarkFastPath_WithLimit(b *testing.B) {
 func BenchmarkFastPath_LDBC(b *testing.B) {
 	baseEngine := newTestMemoryEngine(b)
 	asyncBase := baseEngine
-	defer asyncBase.Close()
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 
 	// Setup

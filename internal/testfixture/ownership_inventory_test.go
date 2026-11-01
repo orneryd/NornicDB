@@ -1,5 +1,7 @@
 package testfixture
 
+// Author of fixture cleanup changes: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"encoding/json"
@@ -528,7 +530,9 @@ func allocationRegistered(call *ast.CallExpr, parents map[ast.Node]ast.Node, inf
 	}
 	wrapper, ok := parents[expression].(*ast.CallExpr)
 	if !ok {
-		return false
+		return fixtureAdjacentConstructorTrack(expression, parents, func(function ast.Expr) bool {
+			return allocationKey(allocationObj(function, info)) == fixtureImport+".Track"
+		})
 	}
 	key := allocationKey(allocationObj(wrapper.Fun, info))
 	if (key == fixtureImport+".Track" || key == fixtureImport+".TrackProcess") && len(wrapper.Args) >= 2 && wrapper.Args[1] == expression {

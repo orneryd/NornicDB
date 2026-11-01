@@ -1,5 +1,7 @@
 package replication
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"testing"
@@ -45,10 +47,10 @@ func TestMessagePackReplicationPreservesCypherTypedProperties(t *testing.T) {
 		require.NoError(t, err)
 		from, err := NewStorageAdapterWithWAL(source, t.TempDir())
 		require.NoError(t, err)
-		fixtureowner.OwnChecked(t, from)
+		fixtureowner.Own(t, from)
 		to, err := NewStorageAdapterWithWAL(target, t.TempDir())
 		require.NoError(t, err)
-		fixtureowner.OwnChecked(t, to)
+		fixtureowner.Own(t, to)
 		var data bytes.Buffer
 		require.NoError(t, from.WriteSnapshot(&data))
 		require.NoError(t, to.RestoreSnapshot(&data))

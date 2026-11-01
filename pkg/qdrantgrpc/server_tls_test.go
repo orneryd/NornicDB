@@ -1,5 +1,7 @@
 package qdrantgrpc
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"crypto/ecdsa"
@@ -84,7 +86,7 @@ func dialGRPCTestClient(t *testing.T, address string, transport credentials.Tran
 	t.Helper()
 	connection, err := grpc.NewClient(address, grpc.WithTransportCredentials(transport))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	fixtureowner.Own(t, connection)
 	return connection
 }
 

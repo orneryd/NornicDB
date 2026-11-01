@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -20,7 +22,6 @@ func TestResidualDecisionContainsPhysicalAction(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), LowMemory: route == "large"}))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			_, err = b.CreateNode(&Node{ID: "test:physical", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
 			tx, err := b.BeginTransaction()

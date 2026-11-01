@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"github.com/stretchr/testify/require"
@@ -10,7 +12,7 @@ import (
 func TestPreparedEntityCommitPreservesProducerMode(t *testing.T) {
 	for _, mode := range []EntityCommitMode{CommitModeExplicit, CommitModeImplicit, CommitModeDirect} {
 		t.Run(map[EntityCommitMode]string{CommitModeExplicit: "explicit", CommitModeImplicit: "implicit-single", CommitModeDirect: "direct"}[mode], func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
+			b, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 			tx, err := BeginEntityTransaction(b, mode)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("test"))

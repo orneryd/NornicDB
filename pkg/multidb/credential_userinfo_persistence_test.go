@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"net/url"
@@ -31,6 +33,7 @@ func TestCredentialUsernameOnlyCatalogPersistence(t *testing.T) {
 			}
 			mgr, err := NewDatabaseManager(t.Context(), engine, cfg)
 			require.NoError(t, err)
+			_, closeManager := fixtureowner.OwnWithClose(t, mgr)
 			endpoint := &url.URL{Scheme: "http", Host: "example.invalid", User: url.User(username)}
 			if form == "empty" {
 				endpoint.User = url.UserPassword(username, "")
@@ -50,7 +53,7 @@ func TestCredentialUsernameOnlyCatalogPersistence(t *testing.T) {
 			} else {
 				require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "probe", []ConstituentRef{ref}))
 			}
-			require.NoError(t, mgr.Close())
+			closeManager()
 			if form == "legacy-normalized" {
 				markClosedASCIICatalogFixtureV3(t, dir)
 			}
@@ -63,6 +66,7 @@ func TestCredentialUsernameOnlyCatalogPersistence(t *testing.T) {
 				require.NoError(t, err)
 				mgr, err = NewDatabaseManager(t.Context(), engine, cfg)
 				require.NoError(t, err)
+				_, closeManager = fixtureowner.OwnWithClose(t, mgr)
 				node, err := storage.NewNamespacedEngine(engine, "system").GetNode(storage.NodeID(metadataNodeID))
 				require.NoError(t, err)
 				if strings.Contains(node.Properties["data"].(string), username) || strings.Contains(node.Properties["data"].(string), url.PathEscape(username)) {
@@ -70,7 +74,7 @@ func TestCredentialUsernameOnlyCatalogPersistence(t *testing.T) {
 				}
 				_, err = mgr.GetStorage("probe.r")
 				require.NoError(t, err)
-				require.NoError(t, mgr.Close())
+				closeManager()
 			}
 		})
 	}

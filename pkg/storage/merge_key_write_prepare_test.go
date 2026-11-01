@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -106,7 +108,7 @@ func TestPrepareMergeNodeForWriteBufferedAdmission(t *testing.T) {
 		drained bool
 	}{{"lands buffered commit", false}, {"after buffer drained", true}} {
 		t.Run(tc.name, func(t *testing.T) {
-			engine := newWriteBehindTestEngine(t, time.Hour)
+			engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			schema := engine.GetSchemaForNamespace("test")
 			require.NoError(t, schema.AddConstraint(Constraint{Name: "u_k", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
 			require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))

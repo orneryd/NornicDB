@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -14,15 +16,16 @@ import (
 // env overrides, if any); ownership of the service, its scope and its indexing
 // stays here.
 
-// newVectorService creates the fixture engine and the Service over it at dims,
-// closing both when the test ends.
-func newVectorService(t testing.TB, dims int, namespace string) (*Service, storage.Engine) {
+// newVectorService creates the fixture engine and Service. adoptService is
+// supplied only by cases that already adopted the Service through HNSW readiness;
+// other callers keep their existing raw service cleanup.
+func newVectorService(t testing.TB, dims int, namespace string, adoptService ...bool) (*Service, storage.Engine) {
 	t.Helper()
 	var engine storage.Engine = fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	if namespace != "" {
 		engine = storage.NewNamespacedEngine(engine, namespace)
 	}
-	svc := ownVectorService(t, engine, dims)
+	svc := ownVectorService(t, engine, dims, adoptService...)
 	return svc, engine
 }
 
@@ -49,9 +52,13 @@ func enableVectorClustering(t testing.TB, svc *Service, numClusters int) {
 
 // ownVectorService owns only Service construction/closure. Callers retain their
 // engine, dimensions and persistence/metrics configuration.
-func ownVectorService(t testing.TB, engine storage.Engine, dims int) *Service {
+func ownVectorService(t testing.TB, engine storage.Engine, dims int, adoptService ...bool) *Service {
 	t.Helper()
 	svc := NewService(engine, dims, nil)
-	t.Cleanup(func() { closeAfterBuilds(t, svc) })
+	if len(adoptService) != 0 && adoptService[0] {
+		fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { return closeAfterBuilds(t, svc) }))
+	} else {
+		t.Cleanup(func() { closeAfterBuilds(t, svc) })
+	}
 	return svc
 }

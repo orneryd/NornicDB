@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -49,7 +51,6 @@ func TestConstraintCreationValueEquivalence(t *testing.T) {
 								}
 								require.NoError(t, err)
 								base = b
-								t.Cleanup(func() { _ = b.Close() })
 							} else {
 								base = newTestMemoryEngine(t)
 							}

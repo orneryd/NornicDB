@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync/atomic"
@@ -10,7 +12,7 @@ import (
 )
 
 func TestPreparedBufferedCommitCapturesStoredImagesOnce(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 	_, err := b.CreateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 	var reads atomic.Int64

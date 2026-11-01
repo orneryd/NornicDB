@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -11,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -23,7 +26,7 @@ func newRemoteModeExecutor(t *testing.T, policies [2]string) (*StorageExecutor, 
 	t.Helper()
 	remote, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = remote.Close() })
+	fixtureowner.Own(t, remote)
 	var stores [2]storage.Engine
 	for i, name := range []string{"remote_one", "remote_two"} {
 		require.NoError(t, remote.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
@@ -155,7 +158,7 @@ func newRemoteModeExecutor(t *testing.T, policies [2]string) (*StorageExecutor, 
 	}
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), configuration)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "remote_modes", []multidb.ConstituentRef{
 		{Alias: "one", DatabaseName: "remote_one", Type: "remote", AccessMode: "read_write", URI: endpoint.URL},
 		{Alias: "two", DatabaseName: "remote_two", Type: "remote", AccessMode: "read_write", URI: endpoint.URL},

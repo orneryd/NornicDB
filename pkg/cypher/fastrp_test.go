@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -30,7 +32,6 @@ func setupFastRPTestStorage(t *testing.T) storage.Engine {
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	t.Cleanup(func() { _ = baseEngine.Close() })
 	// Wrap with NamespacedEngine to ensure prefixed IDs
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	return engine

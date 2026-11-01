@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // gh728_where_family_test.go — regression tests for #728 (WHERE family
 // convergence): multi-MATCH WHERE chains, non-boolean WHERE predicates, and
 // WITH … WHERE at the start of a correlated CALL body.
@@ -22,9 +24,7 @@ func newGh728Executor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "gh728")
 	return NewStorageExecutor(store)
 }

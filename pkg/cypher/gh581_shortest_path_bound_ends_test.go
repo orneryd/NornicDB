@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // gh581_shortest_path_bound_ends_test.go — regression tests for #581
 // (consolidated with #721): shortestPath / allShortestPaths over variables
 // bound by an earlier clause, OPTIONAL MATCH shortestPath projection, and
@@ -22,9 +24,7 @@ func newGh581Executor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "gh581")
 	return NewStorageExecutor(store)
 }

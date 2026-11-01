@@ -1,6 +1,12 @@
 package nornicdb
 
-import "testing"
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
+import (
+	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+)
 
 // closeTestDBOnCleanup closes a hand-built test DB before the storage
 // cleanups the test registered earlier (t.Cleanup runs last-in, first-out).
@@ -10,5 +16,5 @@ import "testing"
 // tasks running against it (#589).
 func closeTestDBOnCleanup(t *testing.T, db *DB) {
 	t.Helper()
-	t.Cleanup(func() { _ = db.Close() })
+	fixtureowner.Own(t, db)
 }

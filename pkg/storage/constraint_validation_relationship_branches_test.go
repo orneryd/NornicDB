@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -42,7 +44,6 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 			Engine: newTestMemoryEngine(t),
 			err:    errors.New("scan boom"),
 		}
-		t.Cleanup(func() { _ = eng.Engine.Close() })
 
 		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
 			Type:       ConstraintUnique,
@@ -62,7 +63,6 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 				{ID: "test:e1", Type: "REL", Properties: map[string]interface{}{"k": 1}},
 			},
 		}
-		t.Cleanup(func() { _ = eng.Engine.Close() })
 
 		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
 			Type:       ConstraintPropertyType,
@@ -82,7 +82,6 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 				{ID: "test:e1", Type: "REL", Properties: map[string]interface{}{"k1": "x"}},
 			},
 		}
-		t.Cleanup(func() { _ = eng.Engine.Close() })
 
 		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
 			Type:       ConstraintRelationshipKey,
@@ -102,7 +101,6 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 				{ID: "test:e1", Type: "REL", Properties: map[string]interface{}{"k": "x"}},
 			},
 		}
-		t.Cleanup(func() { _ = eng.Engine.Close() })
 
 		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
 			Type:       ConstraintType("nonexistent"),

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -186,7 +188,6 @@ func TestRecoverySnapshotSaveRestoreAcrossRoutes(t *testing.T) {
 			assert.True(t, snapshot.Timestamp.Equal(loaded.Timestamp))
 			memory, _, err := runtimeFixtureOwner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.TempDir(), path))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = memory.Close() })
 			target := newTestMemoryEngine(t)
 			_, status, err := RecoverIntoEngine(target, t.TempDir(), path)
 			require.NoError(t, err)
@@ -274,10 +275,15 @@ func TestRecoveryMaterializedSnapshotKeepsLargeEntitySupport(t *testing.T) {
 	require.NoError(t, file.Close())
 	// Memory recovery retains its pre-existing 64KiB Badger value ceiling;
 	// its storage error must be reached after the large frame was decoded.
-	restored, _, err := runtimeFixtureOwner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.TempDir(), path))
+	restored, _, err := RecoverFromWALWithResult(t.TempDir(), path)
+	restored = runtimeFixtureOwner.Track(t, restored, ErrStorageClosed)
+	var closeRestored func()
+	if restored != nil {
+		_, closeRestored = runtimeFixtureOwner.OwnWithClose(t, restored)
+	}
 	require.ErrorContains(t, err, "exceeded 65536 limit")
 	if restored != nil {
-		_ = restored.Close()
+		closeRestored()
 	}
 	target, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)

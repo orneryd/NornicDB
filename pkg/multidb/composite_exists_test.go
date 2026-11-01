@@ -1,5 +1,7 @@
 package multidb
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -13,7 +15,7 @@ func TestGetStorageWithAuth_ConstituentDotted_Local(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	seedCompositeTestCatalog(t, mgr, []string{"shard_local"}, "cmp", []ConstituentRef{
 		{Alias: "a", DatabaseName: "shard_local", Type: "local", AccessMode: "read_write"},
@@ -41,7 +43,7 @@ func TestGetStorageWithAuth_ConstituentDotted_RemoteFactory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	if err := mgr.CreateCompositeDatabase(t.Context(), "cmp_remote", []ConstituentRef{
 		{Alias: "r", DatabaseName: "tenant_r", Type: "remote", AccessMode: "read_write", URI: "http://remote"},
@@ -84,7 +86,7 @@ func TestCatalogNameExistence(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewDatabaseManager failed: %v", err)
 			}
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			if test.database != "" {
 				if err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: test.database}); err != nil {
 					t.Fatalf("CreateDatabase failed: %v", err)

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -16,8 +18,9 @@ import (
 func TestManualSuppression(t *testing.T) {
 	dir := t.TempDir()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 	for _, id := range []NodeID{"test:a", "test:b"} {
@@ -49,7 +52,7 @@ func TestManualSuppression(t *testing.T) {
 	hidden(t, engine)
 
 	// Kept across a reopen.
-	require.NoError(t, engine.Close())
+	closeEngine()
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })

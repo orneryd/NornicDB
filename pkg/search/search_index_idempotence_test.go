@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -85,6 +87,7 @@ func BenchmarkSearchServiceIndexNodeUnchangedVector_CopyScaleHNSW(b *testing.B) 
 	}
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(b, err)
+	fixtureowner.Own(b, svc)
 	requireHNSWReady(b, svc)
 
 	target := &storage.Node{

@@ -1,5 +1,7 @@
 package storage_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"math"
@@ -18,13 +20,16 @@ func TestResidualPropertyOwnership(t *testing.T) {
 	for _, route := range []string{"direct", "transaction", "buffered"} {
 		t.Run(route, func(t *testing.T) {
 			dir := t.TempDir()
-			open := func() *storage.BadgerEngine {
-				b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: route == "buffered", WriteBehindInterval: time.Hour}))
+			open := func() (*storage.BadgerEngine, func()) {
+				b, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: route == "buffered", WriteBehindInterval: time.Hour}))
+				var closeFixture func()
+				if b != nil {
+					_, closeFixture = fixtureowner.OwnWithClose(t, b)
+				}
 				require.NoError(t, err)
-				return b
+				return b, closeFixture
 			}
-			b := open()
-			t.Cleanup(func() { _ = b.Close() })
+			b, closeB := open()
 			duration := &cypher.CypherDuration{Days: 1}
 			props := map[string]any{"nested": map[string]any{"list": []any{duration, "original"}}}
 			metadata := map[string]any{"nested": []any{int64(1), "original"}}
@@ -58,8 +63,8 @@ func TestResidualPropertyOwnership(t *testing.T) {
 			require.Equal(t, "original", second.Properties["nested"].(map[string]any)["list"].([]any)[1])
 			require.Equal(t, "original", second.EmbedMeta["nested"].([]any)[1])
 			require.NoError(t, b.FlushWriteBehind(nil))
-			require.NoError(t, b.Close())
-			b = open()
+			closeB()
+			b, closeB = open()
 			cold, err := b.GetStoredNode(node.ID)
 			require.NoError(t, err)
 			require.Equal(t, cold.Properties, second.Properties)
@@ -71,7 +76,6 @@ func TestResidualPropertyOwnership(t *testing.T) {
 func TestResidualUint64PropertyList(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.CreateNode(&storage.Node{ID: "test:uints", Properties: map[string]any{"xs": []uint64{1, math.MaxUint64}}})
 	require.NoError(t, err)
 	n, err := b.GetStoredNode("test:uints")

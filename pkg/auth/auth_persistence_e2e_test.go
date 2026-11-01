@@ -1,5 +1,7 @@
 package auth
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"errors"
@@ -26,25 +28,26 @@ func TestAdminPasswordChangeSurvivesBootstrapRestart(t *testing.T) {
 	authConfig.BcryptCost = bcrypt.MinCost
 	authConfig.JWTSecret = []byte("test-jwt-secret-at-least-32-bytes")
 
-	openAndBootstrap := func() (*Authenticator, *storage.BadgerEngine, storage.Engine, error) {
+	openAndBootstrap := func() (*Authenticator, func(), storage.Engine, error) {
 		engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+		var closeEngine func()
 		if engine != nil {
-			fixtureowner.Own(t, engine)
+			_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 		}
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, closeEngine, nil, err
 		}
 		systemStorage := storage.NewNamespacedEngine(engine, "system")
 		authenticator, err := NewAuthenticator(authConfig, systemStorage)
 		if err != nil {
-			_ = engine.Close()
-			return nil, nil, nil, err
+			closeEngine()
+			return nil, closeEngine, nil, err
 		}
 		_, bootstrapErr := authenticator.CreateUser(username, initialPassword, []Role{RoleAdmin})
-		return authenticator, engine, systemStorage, bootstrapErr
+		return authenticator, closeEngine, systemStorage, bootstrapErr
 	}
 
-	authenticator, engine, systemStorage, err := openAndBootstrap()
+	authenticator, closeEngine, systemStorage, err := openAndBootstrap()
 	require.NoError(t, err)
 	_, _, err = authenticator.Authenticate(username, initialPassword, "127.0.0.1", "e2e")
 	require.NoError(t, err)
@@ -73,14 +76,13 @@ func TestAdminPasswordChangeSurvivesBootstrapRestart(t *testing.T) {
 	require.True(t, ok)
 	require.NotEqual(t, initialHash, changedHash)
 	require.NoError(t, bcrypt.CompareHashAndPassword([]byte(changedHash), []byte(changedPassword)))
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	// The literal default is part of the schema key "password_hash", so only
 	// the unique changed credential can be checked reliably at raw-byte level.
 	assertDirectoryExcludesPlaintext(t, dataDir, changedPassword)
 
-	reloadedAuth, reloadedEngine, reloadedStorage, bootstrapErr := openAndBootstrap()
-	t.Cleanup(func() { _ = reloadedEngine.Close() })
+	reloadedAuth, _, reloadedStorage, bootstrapErr := openAndBootstrap()
 	require.ErrorIs(t, bootstrapErr, ErrUserExists,
 		"bootstrap must not overwrite an existing admin user")
 

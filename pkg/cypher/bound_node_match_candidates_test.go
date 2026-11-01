@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -45,7 +47,7 @@ func (s *boundMatchCandidateEngine) StreamNodesByLabelProjected(ctx context.Cont
 func newBoundMatchCandidateStore(t testing.TB, size int) *storage.NamespacedEngine {
 	t.Helper()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "bound_match")
 	for i := 0; i < size; i++ {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Item"}, Properties: map[string]interface{}{"k": int64(1)}})

@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -17,9 +19,8 @@ func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 	t.Helper()
 	dir := t.TempDir()
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
-	fixtureowner.Own(t, engine)
+	_, closeEngine := fixtureowner.OwnWithClose(t, engine)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "test"}))
@@ -30,7 +31,7 @@ func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 	for i := 0; i < 4; i++ {
 		g.link(t, storage.NodeID(fmt.Sprintf("doc-%d", i)), "hub", "BACK")
 	}
-	require.NoError(t, engine.Close())
+	closeEngine()
 	// Corrupt offline, then let the engine reopen with its managed commit oracle.
 	raw, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
 	require.NoError(t, err)

@@ -1,5 +1,7 @@
 package qdrantgrpc
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -60,11 +62,9 @@ func startSharedIndexServer(t *testing.T, dbm *multidb.DatabaseManager, base sto
 	require.NoError(t, srv.Start())
 	conn, err := grpc.NewClient(srv.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	stop := func() {
-		_ = conn.Close()
-		srv.Stop()
-	}
-	t.Cleanup(stop)
+	// Own closes the client connection, then stops the server. A test can
+	// stop both earlier through stop, which is the same owner close.
+	_, stop := fixtureowner.OwnWithClose(t, fixtureowner.CloseFunc(func() error { srv.Stop(); return nil }), conn)
 	return sharedIndexServer{points: qpb.NewPointsClient(conn), collections: qpb.NewCollectionsClient(conn), stop: stop}
 }
 
@@ -144,6 +144,7 @@ func TestSharedIndexRestartBoundaries(t *testing.T) {
 			}
 			dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 			require.NoError(t, err)
+			_, closeManager := fixtureowner.OwnWithClose(t, dbm)
 			provider := sharedSearchProvider()
 			first := startSharedIndexServer(t, dbm, base, provider)
 			createCosineCollection(t, ctx, first.collections, tc.collection, 4)
@@ -152,7 +153,7 @@ func TestSharedIndexRestartBoundaries(t *testing.T) {
 			}
 			first.stop()
 			if tc.cold {
-				require.NoError(t, dbm.Close())
+				closeManager()
 				disk, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
 				if disk != nil {
 					fixtureowner.Own(t, disk)
@@ -161,7 +162,7 @@ func TestSharedIndexRestartBoundaries(t *testing.T) {
 				base = disk
 				dbm, err = multidb.NewDatabaseManager(t.Context(), base, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, dbm.Close()) })
+				fixtureowner.Own(t, dbm)
 				// Both the database manager and its search-service cache are reconstructed.
 				provider = sharedSearchProvider()
 			}

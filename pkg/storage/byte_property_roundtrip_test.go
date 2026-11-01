@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
@@ -9,8 +11,9 @@ import (
 func TestBytePropertyRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	disk, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeDisk func()
 	if disk != nil {
-		fixtureowner.Own(t, disk)
+		_, closeDisk = fixtureowner.OwnWithClose(t, disk)
 	}
 	require.NoError(t, err)
 	values := [][]byte{{0, 127, 128, 255}, {}}
@@ -40,12 +43,11 @@ func TestBytePropertyRoundTrip(t *testing.T) {
 		require.Equal(t, values[0], e.Properties["v"])
 	}
 	mem := newTestMemoryEngine(t)
-	defer mem.Close()
 	write(mem)
 	read(mem)
 	write(disk)
 	read(disk)
-	require.NoError(t, disk.Close())
+	closeDisk()
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer reopened.Close()

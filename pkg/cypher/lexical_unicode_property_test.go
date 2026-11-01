@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/require"
@@ -51,7 +54,7 @@ func TestLexicalUnicodeBoundaryScanners(t *testing.T) {
 func TestCredentialUnicodeOutput(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	previous := otel.GetTracerProvider()
@@ -126,7 +129,7 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 		t.Run(removal, func(t *testing.T) {
 			manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = manager.Close() })
+			fixtureowner.Own(t, manager)
 			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "g"}))
 			if removal == "alias" {
 				require.NoError(t, manager.CreateAlias(t.Context(), "selected", "g"))

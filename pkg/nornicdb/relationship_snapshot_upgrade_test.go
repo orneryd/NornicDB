@@ -1,5 +1,7 @@
 package nornicdb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -53,7 +55,11 @@ func TestOpenUpgradesRelationshipSnapshotsOnExistingV4Store(t *testing.T) {
 			require.NoError(t, db.Close())
 			readStoredNode := func() []byte {
 				t.Helper()
-				store, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
+				store, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
+				var closeStore func()
+				if store != nil {
+					_, closeStore = fixtureowner.OwnWithClose(t, store)
+				}
 				require.NoError(t, err)
 				var value []byte
 				require.NoError(t, store.View(func(tx *badger.Txn) error {
@@ -64,7 +70,7 @@ func TestOpenUpgradesRelationshipSnapshotsOnExistingV4Store(t *testing.T) {
 					value, err = item.ValueCopy(nil)
 					return err
 				}))
-				require.NoError(t, store.Close())
+				closeStore()
 				return value
 			}
 			beforeNode := readStoredNode()

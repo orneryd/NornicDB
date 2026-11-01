@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -221,7 +223,6 @@ func TestPR1655InvalidRequestRejected(t *testing.T) {
 // existing accepted-transaction prepare path at its leader.
 func TestPR1655LeaderNormalizesRequest(t *testing.T) {
 	backing := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	engine := storage.NewNamespacedEngine(backing, "test")
 	adapter, err := NewStorageAdapterWithWAL(engine, t.TempDir())
 	require.NoError(t, err)

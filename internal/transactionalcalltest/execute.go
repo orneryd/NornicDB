@@ -1,5 +1,7 @@
 package transactionalcalltest
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -15,7 +17,7 @@ func CheckExecute(t *testing.T) {
 	ctx := context.Background()
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	fixtureowner.Own(t, base)
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))
 	Check(t, func(t *testing.T, sample Case) Outcome {
 		_, err := exec.Execute(ctx, Reset, nil)

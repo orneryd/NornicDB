@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -18,14 +20,15 @@ import (
 // profile has an 8 MB memtable, so one Badger batch holds about 13,000
 // entries and a few thousand nodes already need several batches.
 
-func openLargeCommitTestEngine(t *testing.T, dir string) *BadgerEngine {
+func openLargeCommitTestEngine(t *testing.T, dir string) (*BadgerEngine, func()) {
 	t.Helper()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true}))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
-	return engine
+	return engine, closeEngine
 }
 
 func largeCommitNodeID(i int) NodeID { return NodeID(fmt.Sprintf("test:big-%d", i)) }
@@ -69,7 +72,7 @@ func countBatches(t *testing.T) *atomic.Int64 {
 
 func TestLargeCommit_CommitsBeyondOneBatchAndSurvivesReopen(t *testing.T) {
 	dir := t.TempDir()
-	engine := openLargeCommitTestEngine(t, dir)
+	engine, closeEngine := openLargeCommitTestEngine(t, dir)
 	batches := countBatches(t)
 
 	const n = 6000
@@ -88,9 +91,8 @@ func TestLargeCommit_CommitsBeyondOneBatchAndSurvivesReopen(t *testing.T) {
 	require.Len(t, edges, 1)
 	requireNoLargeCommitIntent(t, engine)
 
-	require.NoError(t, engine.Close())
-	engine = openLargeCommitTestEngine(t, dir)
-	defer engine.Close()
+	closeEngine()
+	engine, closeEngine = openLargeCommitTestEngine(t, dir)
 	require.Equal(t, n, countBigNodes(t, engine))
 	node, err := engine.GetNode(largeCommitNodeID(n - 1))
 	require.NoError(t, err)
@@ -99,8 +101,7 @@ func TestLargeCommit_CommitsBeyondOneBatchAndSurvivesReopen(t *testing.T) {
 }
 
 func TestLargeCommit_DeleteBeyondOneBatch(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 
 	const n = 6000
 	tx, err := engine.BeginTransaction()
@@ -138,8 +139,7 @@ func TestLargeCommit_DeleteBeyondOneBatch(t *testing.T) {
 // Readers see none of a large commit until all of it is written, and they
 // never wait for it.
 func TestLargeCommit_NoPartialVisibilityAndReadersDoNotWait(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 
 	const n = 6000
 	var midCommitReads atomic.Int64
@@ -193,8 +193,7 @@ func TestLargeCommit_NoPartialVisibilityAndReadersDoNotWait(t *testing.T) {
 // Ordinary writers wait for a large commit to publish instead of landing
 // between its batches, and continue afterwards.
 func TestLargeCommit_OrdinaryWritersWaitForPublication(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 
 	var once sync.Once
 	writerDone := make(chan error, 1)
@@ -231,8 +230,7 @@ func TestLargeCommit_OrdinaryWritersWaitForPublication(t *testing.T) {
 // A large commit that fails after writing some batches leaves no trace, and
 // the engine keeps working.
 func TestLargeCommit_FailureRollsBackWrittenBatches(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 
 	_, err := engine.CreateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
@@ -273,7 +271,7 @@ func TestLargeCommit_FailureRollsBackWrittenBatches(t *testing.T) {
 // opened again.
 func TestLargeCommit_CrashMidCommitRollsBackOnOpen(t *testing.T) {
 	dir := t.TempDir()
-	engine := openLargeCommitTestEngine(t, dir)
+	engine, closeEngine := openLargeCommitTestEngine(t, dir)
 	_, err := engine.CreateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 
@@ -293,10 +291,9 @@ func TestLargeCommit_CrashMidCommitRollsBackOnOpen(t *testing.T) {
 	stageLargeCreate(t, tx, 6000)
 	require.Error(t, tx.Commit())
 	restore()
-	_ = engine.Close()
+	closeEngine()
 
-	engine = openLargeCommitTestEngine(t, dir)
-	defer engine.Close()
+	engine, closeEngine = openLargeCommitTestEngine(t, dir)
 	require.Zero(t, countBigNodes(t, engine))
 	base, err := engine.GetNode("test:base")
 	require.NoError(t, err)
@@ -312,8 +309,7 @@ func TestLargeCommit_CrashMidCommitRollsBackOnOpen(t *testing.T) {
 // A transaction that read an entity a concurrent commit then changed fails
 // as a conflict, and none of its large commit is written.
 func TestLargeCommit_ConflictCoversTheWholeTransaction(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 	_, err := engine.CreateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 
@@ -339,8 +335,7 @@ func TestLargeCommit_ConflictCoversTheWholeTransaction(t *testing.T) {
 // Deletes inside a transaction archive superseded bodies while a snapshot
 // reader is open; a large delete keeps the reader's snapshot intact.
 func TestLargeCommit_DeleteWithOpenSnapshotReader(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 	const n = 6000
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
@@ -373,8 +368,7 @@ func TestLargeCommit_DeleteWithOpenSnapshotReader(t *testing.T) {
 // it used to fail with "This transaction has been discarded" and leave the
 // database half-dropped (#819).
 func TestDeleteByPrefix_FlushesPeriodicallyAndCompletes(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 	const n = 15000
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
@@ -419,7 +413,6 @@ func TestManagedBadger_RecoversInterruptedLargeCommit(t *testing.T) {
 
 	m, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
-	defer m.Close()
 	require.NoError(t, m.View(func(txn *badger.Txn) error {
 		requireValue(t, txn, "k1", "a")
 		requireValue(t, txn, "k2", "b")
@@ -435,7 +428,6 @@ func TestManagedBadger_RecoversInterruptedLargeCommit(t *testing.T) {
 func TestManagedBadger_FirstBatchConflictWritesNothing(t *testing.T) {
 	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil)))
 	require.NoError(t, err)
-	defer m.Close()
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
 
 	txn, readTs, err := m.beginTxn(true)
@@ -465,8 +457,9 @@ func TestManagedBadger_OpensUnmanagedStoreBothWays(t *testing.T) {
 	dir := t.TempDir()
 	opts := badger.DefaultOptions(dir).WithLogger(nil)
 	raw, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(opts))
+	var closeRaw func()
 	if raw != nil {
-		fixtureowner.Own(t, raw)
+		_, closeRaw = fixtureowner.OwnWithClose(t, raw)
 	}
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
@@ -474,9 +467,13 @@ func TestManagedBadger_OpensUnmanagedStoreBothWays(t *testing.T) {
 			return txn.Set([]byte(fmt.Sprintf("old-%d", i)), []byte("v"))
 		}))
 	}
-	require.NoError(t, raw.Close())
+	closeRaw()
 
-	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
+	m, err := fixtureowner.TrackResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
+	var closeManaged func()
+	if m != nil {
+		_, closeManaged = fixtureowner.OwnWithClose(t, m)
+	}
 	require.NoError(t, err)
 	require.NoError(t, m.View(func(txn *badger.Txn) error {
 		requireValue(t, txn, "old-9", "v")
@@ -487,7 +484,7 @@ func TestManagedBadger_OpensUnmanagedStoreBothWays(t *testing.T) {
 		requireValue(t, txn, "old-9", "new")
 		return nil
 	}))
-	require.NoError(t, m.Close())
+	closeManaged()
 
 	raw, err = fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(opts))
 	require.NoError(t, err)
@@ -565,7 +562,7 @@ func TestLargeCommit_ManyNewPropertyNames(t *testing.T) {
 	} {
 		t.Run(shape.name, func(t *testing.T) {
 			dir := t.TempDir()
-			engine := openLargeCommitTestEngine(t, dir)
+			engine, closeEngine := openLargeCommitTestEngine(t, dir)
 			tx, err := engine.BeginTransaction()
 			require.NoError(t, err)
 			for i := 0; i < shape.nodes; i++ {
@@ -577,10 +574,9 @@ func TestLargeCommit_ManyNewPropertyNames(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, tx.Commit())
-			require.NoError(t, engine.Close())
+			closeEngine()
 
-			engine = openLargeCommitTestEngine(t, dir)
-			defer engine.Close()
+			engine, closeEngine = openLargeCommitTestEngine(t, dir)
 			require.Equal(t, shape.nodes, countBigNodes(t, engine))
 			last := shape.nodes - 1
 			node, err := engine.GetNode(largeCommitNodeID(last))

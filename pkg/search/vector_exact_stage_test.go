@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -64,7 +66,7 @@ func exactStageService(t *testing.T, generator, quantization string) *Service {
 	if generator == "brute" {
 		t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 	}
-	svc, engine := newVectorService(t, exactStageDims, "nornic")
+	svc, engine := newVectorService(t, exactStageDims, "nornic", generator == "hnsw")
 	if generator == "kmeans" || generator == "ivf_hnsw" {
 		enableVectorClustering(t, svc, 4)
 	}
@@ -287,7 +289,7 @@ func TestMultiChunkNodeKeepsItsBestChunkUnderCompression(t *testing.T) {
 			t.Setenv(EnvSearchResultCacheEnabled, "false")
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", mode)
-			svc, engine := newVectorService(t, 2, "nornic")
+			svc, engine := newVectorService(t, 2, "nornic", true)
 			indexVectorNodes(t, svc, engine,
 				&storage.Node{ID: "multi", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0.6, 0.8}, {0.9, 0.4358899}}})
 			requireHNSWReady(t, svc)

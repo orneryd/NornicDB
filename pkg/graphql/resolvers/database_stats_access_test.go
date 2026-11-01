@@ -1,6 +1,9 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 
 	"context"
@@ -13,8 +16,8 @@ import (
 )
 
 func TestGraphQLStatsRequireSelectedDatabaseRead(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	query := &queryResolver{NewResolver(db, dbManager)}
 
 	_, err := db.GetStorage().CreateNode(&storage.Node{ID: "default-node", Labels: []string{"DefaultDoc"}})

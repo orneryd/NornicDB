@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -139,7 +141,11 @@ func testCatalogV4ResumesPendingReplayAfterTransformFailure(t *testing.T, versio
 	}
 	// The previously authorized recovery marker is enough to finish after a
 	// crash or transform failure; replay receipts prevent applying it twice.
-	engine, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true, CatalogUpgradeV4: plan}))
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true, CatalogUpgradeV4: plan}))
+	var closeEngine func()
+	if engine != nil {
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+	}
 	require.NoError(t, err)
 	require.Equal(t, []string{"pending", "pending"}, seen)
 	node, err := engine.GetNode("system:databases:metadata")
@@ -151,7 +157,7 @@ func testCatalogV4ResumesPendingReplayAfterTransformFailure(t *testing.T, versio
 	require.False(t, formatPending)
 	// The explicit close below is the lifetime boundary this fixture is
 	// inspected through, so it is registered without a second owner.
-	require.NoError(t, engine.Close())
+	closeEngine()
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true, CatalogUpgradeV4: plan}))
 	require.NoError(t, err)
 	t.Cleanup(func() {

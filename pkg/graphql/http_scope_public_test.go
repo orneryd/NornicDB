@@ -1,7 +1,10 @@
 package graphql
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +22,7 @@ import (
 func TestGraphQLHTTPReservationComposition(t *testing.T) {
 	for _, outcome := range []string{"GET-large", "POST-large", "POST-chunked-large", "headers-large", "GET-small", "POST-small", "GET-invalid", "POST-invalid", "graphql-transport-ws", "graphql-ws"} {
 		t.Run(outcome, func(t *testing.T) {
-			db := testDB(t)
+			db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
 			limit := int64(128 << 10)
 			upgraded := outcome == "graphql-transport-ws" || outcome == "graphql-ws"
 			if upgraded {
@@ -27,7 +30,7 @@ func TestGraphQLHTTPReservationComposition(t *testing.T) {
 			}
 			policy := memory.NewPolicy(limit, 0, time.Minute, func() (memory.Sample, error) { return memory.Sample{Used: 1}, nil }, time.Now)
 			require.NoError(t, policy.Refresh())
-			h := newHandler(db, testutil.DatabaseManager(t, db), policy)
+			h := newHandler(db, testutil.DatabaseManager(t, db, closeDB), policy)
 			returned := make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				defer close(returned)

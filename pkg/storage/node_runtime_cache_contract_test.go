@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -61,7 +63,7 @@ func runtimeNewEngine(t *testing.T) *BadgerEngine {
 	t.Helper()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	fixtureowner.Own(t, engine)
 	engine.SetEmbeddingsEnabled(false)
 	return engine
 }

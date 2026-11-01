@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -23,7 +25,7 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 				require.NoError(t, err)
 				manager, err := NewDatabaseManager(t.Context(), engine, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = manager.Close() })
+				runtimeFixtureOwner.Own(t, manager)
 				store, err := manager.GetStorage("nornic")
 				require.NoError(t, err)
 				tracker := store.(*sizeTrackingEngine)

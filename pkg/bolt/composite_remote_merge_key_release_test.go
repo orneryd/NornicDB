@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -94,7 +96,7 @@ func TestCompositeExplicitTx_FailureRollsBackRemoteParticipant(t *testing.T) {
 					},
 				})
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = mgr.Close() })
+				fixtureowner.Own(t, mgr)
 				require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_rk", []multidb.ConstituentRef{
 					{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: fmt.Sprintf("bolt://127.0.0.1:%d", port), AuthMode: "oidc_forwarding"},
 				}))
@@ -185,37 +187,60 @@ type stallingProxy struct {
 	target   string
 	stalled  atomic.Bool
 	mu       sync.Mutex
-	conns    []net.Conn
+	conns    []func()
+	pumps    sync.WaitGroup
+	// close closes the listener and connections through the owner; a test
+	// calls it early to make the remote unresponsive.
+	close func()
 }
 
 func startStallingProxy(t *testing.T, targetPort int) (*stallingProxy, int) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
+	_, closeListener := fixtureowner.OwnWithClose(t, listener)
 	p := &stallingProxy{listener: listener, target: fmt.Sprintf("127.0.0.1:%d", targetPort)}
-	go p.serve()
-	t.Cleanup(p.close)
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		p.serve(t)
+	}()
+	_, p.close = fixtureowner.OwnWithClose(t, fixtureowner.CloseFunc(func() error {
+		closeListener()
+		// Finish accepting before taking the last set of connection closers.
+		<-serveDone
+		p.closeConnections()
+		// A pump can have started the same owner closer first. Join it so
+		// that close's outcome is recorded before this fixture boundary ends.
+		p.pumps.Wait()
+		return nil // Every actual release above reports through the owner.
+	}))
 	return p, listener.Addr().(*net.TCPAddr).Port
 }
 
-func (p *stallingProxy) serve() {
+func (p *stallingProxy) serve(owner fixtureowner.Owner) {
 	for {
 		client, err := p.listener.Accept()
 		if err != nil {
 			return
 		}
+		_, closeClient := fixtureowner.OwnWithClose(owner, client)
 		upstream, err := net.Dial("tcp", p.target)
 		if err != nil {
-			_ = client.Close()
+			closeClient()
 			continue
 		}
+		_, closeUpstream := fixtureowner.OwnWithClose(owner, upstream)
 		p.mu.Lock()
-		p.conns = append(p.conns, client, upstream)
+		p.conns = append(p.conns, closeClient, closeUpstream)
 		p.mu.Unlock()
+		p.pumps.Add(2)
 		go func() {
+			defer p.pumps.Done()
 			_, _ = io.Copy(upstream, client)
-			_ = upstream.Close()
+			closeUpstream()
 		}()
 		go func() {
+			defer p.pumps.Done()
 			buf := make([]byte, 32*1024)
 			for {
 				n, err := upstream.Read(buf)
@@ -225,7 +250,7 @@ func (p *stallingProxy) serve() {
 					}
 				}
 				if err != nil {
-					_ = client.Close()
+					closeClient()
 					return
 				}
 			}
@@ -234,12 +259,11 @@ func (p *stallingProxy) serve() {
 }
 
 // close drops every connection, which unblocks a client still waiting.
-func (p *stallingProxy) close() {
-	_ = p.listener.Close()
+func (p *stallingProxy) closeConnections() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, conn := range p.conns {
-		_ = conn.Close()
+	for _, closeConnection := range p.conns {
+		closeConnection()
 	}
 }
 
@@ -267,7 +291,7 @@ func TestCompositeExplicitTx_FailureDoesNotWaitOnUnresponsiveRemote(t *testing.T
 				},
 			})
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = mgr.Close() })
+			fixtureowner.Own(t, mgr)
 			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "st_local"}))
 			local, err := mgr.GetStorage("st_local")
 			require.NoError(t, err)

@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -63,6 +65,7 @@ func TestR73ReviewHTTPQueryCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal("manager setup failed")
 	}
+	_, closeManager := fixtureowner.OwnWithClose(t, manager)
 	ref := ConstituentRef{
 		Alias: "remote", DatabaseName: "remote", Type: "remote", AccessMode: "read_write",
 		URI: server.URL + "/proxy?" + rawQuery,
@@ -78,9 +81,7 @@ func TestR73ReviewHTTPQueryCredentials(t *testing.T) {
 	if strings.Contains(persisted, "first+value") || strings.Contains(persisted, "first%2Bvalue") {
 		t.Fatal("configured query credential remained in plaintext metadata")
 	}
-	if err := manager.Close(); err != nil {
-		t.Fatal("manager close failed")
-	}
+	closeManager()
 
 	inner, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	if err != nil {
@@ -90,8 +91,8 @@ func TestR73ReviewHTTPQueryCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal("manager reopen failed")
 	}
+	fixtureowner.Own(t, manager)
 	t.Cleanup(func() {
-		_ = manager.Close()
 		for _, remote := range factoryEngines {
 			_ = remote.Close()
 		}

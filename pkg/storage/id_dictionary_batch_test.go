@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
@@ -14,8 +16,9 @@ import (
 func TestIDDict_CounterSurvivesRestart(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "dict")
 	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	var closeEng func()
 	if eng != nil {
-		fixtureowner.Own(t, eng)
+		_, closeEng = fixtureowner.OwnWithClose(t, eng)
 	}
 	require.NoError(t, err)
 
@@ -28,7 +31,7 @@ func TestIDDict_CounterSurvivesRestart(t *testing.T) {
 	}
 	nodeMaxBefore, _ := eng.idDict.CounterUsage()
 	require.Equal(t, uint64(3), nodeMaxBefore)
-	require.NoError(t, eng.Close())
+	closeEng()
 
 	// Reopen. loadFromBadger must pick the counter up.
 	eng2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
@@ -85,8 +88,9 @@ func TestIDDict_BulkTxnCommitsCounterOnce(t *testing.T) {
 func TestIDDict_RollbackDoesNotPersistCounter(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "dict-rollback")
 	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	var closeEng func()
 	if eng != nil {
-		fixtureowner.Own(t, eng)
+		_, closeEng = fixtureowner.OwnWithClose(t, eng)
 	}
 	require.NoError(t, err)
 
@@ -109,7 +113,7 @@ func TestIDDict_RollbackDoesNotPersistCounter(t *testing.T) {
 	eng.idDict.txnMu.Unlock()
 	require.False(t, stillThere)
 
-	require.NoError(t, eng.Close())
+	closeEng()
 
 	// Reopen: persisted counter should reflect only the committed node.
 	eng2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))

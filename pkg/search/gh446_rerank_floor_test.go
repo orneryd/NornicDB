@@ -1,5 +1,7 @@
 package search
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // gh446_rerank_floor_test.go — regression tests for #446: the compressed
 // (IVF/PQ) rescoring floor from profile.RerankTopK must not be clamped by
 // the request-derived candidate limits. A request for k=10 still scores
@@ -13,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 func gh446ServiceRecallFixture(t testing.TB) (*VectorSearchPipeline, *SearchOptions) {
@@ -20,7 +24,7 @@ func gh446ServiceRecallFixture(t testing.TB) (*VectorSearchPipeline, *SearchOpti
 	const floor = 32
 	vectors, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vectors.Close()) })
+	fixtureowner.Own(t, vectors)
 	index := &IVFPQIndex{
 		profile:   IVFPQProfile{Dimensions: 2, NProbe: 2, RerankTopK: floor},
 		centroids: [][]float32{{0.1, 0}, {0.9, 0}},

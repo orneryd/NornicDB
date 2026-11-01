@@ -1,6 +1,8 @@
 // Package search tests
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -109,14 +111,13 @@ func newNamespacedEngine(tb testing.TB) storage.Engine {
 	// calls share this root, so Windows file capabilities close before removal.
 	_ = tb.TempDir()
 	base := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	tb.Cleanup(func() { base.Close() })
 	return storage.NewNamespacedEngine(base, "nornic")
 }
 
 func newHybridRerankBudgetService(tb testing.TB, count int) *Service {
 	engine := newNamespacedEngine(tb)
 	service := NewService(engine, 2, nil)
-	tb.Cleanup(func() { require.NoError(tb, service.Close()) })
+	fixtureowner.Own(tb, service)
 	for index := 0; index < count; index++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%03d", index))
 		node := &storage.Node{
@@ -1418,7 +1419,6 @@ func TestSearchService_BuildIndexes_ForcedRebuildOnSettingsMismatch(t *testing.T
 
 func TestSearchService_BuildIndexes_DoesNotReuseDiskIndexesWhenStorageEmpty(t *testing.T) {
 	root := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { root.Close() })
 	base := storage.NewNamespacedEngine(root, "test")
 	_, err := base.CreateNode(&storage.Node{
 		ID:              "stale-1",

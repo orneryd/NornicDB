@@ -1,8 +1,11 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -24,7 +27,7 @@ func TestCompositeAlterPublicAdmission(t *testing.T) {
 			cfg.RemoteCredentialEncryptionKey = "synthetic-admission-key"
 			manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), cfg)
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, manager.Close()) })
+			fixtureowner.Own(t, manager)
 			engine, err := manager.GetStorage("nornic")
 			require.NoError(t, err)
 			executor := NewStorageExecutor(engine)
@@ -85,7 +88,7 @@ func TestCompositePreparedCommandExplain(t *testing.T) {
 			t.Cleanup(func() { config.SetParserType(previous) })
 			manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, manager.Close()) })
+			fixtureowner.Own(t, manager)
 			engine := cachedstoragefixture.CachedStorage[storage.Engine](t, func() (storage.Engine, error) {
 				return manager.GetStorage("nornic")
 			})

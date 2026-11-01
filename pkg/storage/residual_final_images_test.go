@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -22,7 +24,6 @@ func TestResidualFinalCacheImages(t *testing.T) {
 			t.Run(route+"/"+ending, func(t *testing.T) {
 				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: route == "buffered", LowMemory: route == "large", WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = b.Close() })
 				for _, id := range []NodeID{"test:a", "test:b", "test:middle"} {
 					_, err := b.CreateNode(&Node{ID: id})
 					require.NoError(t, err)
@@ -156,7 +157,6 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 		t.Run(fmt.Sprintf("buffered=%v", buffered), func(t *testing.T) {
 			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			for _, id := range []NodeID{"test:keep-a", "test:keep-b"} {
 				_, err := b.CreateNode(&Node{ID: id, Properties: map[string]any{"v": int64(1)}})
 				require.NoError(t, err)

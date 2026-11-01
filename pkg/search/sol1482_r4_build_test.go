@@ -1,5 +1,7 @@
 package search
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,7 +13,7 @@ func TestSol1482R4BuildSkipsSupersededRefresh(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	_, err := engine.CreateNode(buildWriteNode("nornic:a", "snapshotword", []float32{1, 0, 0}))
 	require.NoError(t, err)
 	_, err = engine.CreateNode(buildWriteNode("nornic:b", "endword", []float32{0, 1, 0}))
@@ -28,7 +30,7 @@ func TestSol1482R4BuildSkipsSupersededRefresh(t *testing.T) {
 	// The newer refresh has reserved but has not read yet. A skipped queued
 	// refresh must not mark its ID written and remove the build's own copy.
 	require.NoError(t, engine.CreateEdge(edge))
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:a"}, buildWriteSearchIDs(t, svc, "snapshotword"))
 	require.Empty(t, buildWriteSearchIDs(t, svc, "staleword"))

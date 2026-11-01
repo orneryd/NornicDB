@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -11,7 +13,7 @@ import (
 
 func snapshotOverlayFixture(t *testing.T) *BadgerEngine {
 	t.Helper()
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	b.writeBehind.Close()
 	for _, id := range []NodeID{"test:a", "test:b", "test:gone"} {
 		bufferedCreate(t, b, &Node{ID: id, Labels: []string{"Old"}, Properties: map[string]any{"v": int64(1)}})

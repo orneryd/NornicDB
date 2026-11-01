@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/binary"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -83,5 +85,4 @@ func TestNewBadgerEngineWithOptions_ValidEncryptionKey(t *testing.T) {
 	}
 	require.NoError(t, err)
 	require.NotNil(t, engine)
-	require.NoError(t, engine.Close())
 }

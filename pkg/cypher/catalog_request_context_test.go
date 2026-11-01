@@ -1,7 +1,10 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -47,7 +50,7 @@ func TestCatalogCommandsPreserveRequestContext(t *testing.T) {
 	inner := newTestMemoryEngine(t)
 	manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	adapter := &catalogRequestContextAdapter{optionsTestManager: optionsTestManager{&testDatabaseManagerAdapter{manager: manager}}}
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(inner, "nornic"))
 	executor.SetDatabaseManager(adapter)

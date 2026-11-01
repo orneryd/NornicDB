@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"net/url"
@@ -40,6 +42,7 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 			}
 			manager, err := NewDatabaseManager(t.Context(), inner, cfg)
 			require.NoError(t, err)
+			_, closeManager := fixtureowner.OwnWithClose(t, manager)
 			ref := ConstituentRef{Alias: "r", Type: "remote", DatabaseName: "remote", AccessMode: "read", URI: "http://example.test?region=keep&password=" + secret + "&password=" + secret + "&api_key=" + secret + "&api_key=" + secret + "&X-Amz-Signature=" + secret + "&X-Amz-Signature=" + secret}
 			ref.URI += "&fixture_seal=" + secret + "&fixture_seal=" + secret + "#token=" + secret + "&token=" + secret + "&fixture_seal=" + secret
 			if legacy {
@@ -53,7 +56,7 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 			} else {
 				require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "probe", []ConstituentRef{ref}))
 			}
-			require.NoError(t, manager.Close())
+			closeManager()
 			if legacy {
 				markClosedASCIICatalogFixtureV3(t, dir)
 			}
@@ -66,6 +69,7 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 				require.NoError(t, err)
 				manager, err = NewDatabaseManager(t.Context(), inner, cfg)
 				require.NoError(t, err)
+				_, closeManager = fixtureowner.OwnWithClose(t, manager)
 				node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
 				require.NoError(t, err)
 				if strings.Contains(node.Properties["data"].(string), secret) {
@@ -73,7 +77,7 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 				}
 				_, err = manager.GetStorage("probe.r")
 				require.NoError(t, err)
-				require.NoError(t, manager.Close())
+				closeManager()
 			}
 		})
 	}

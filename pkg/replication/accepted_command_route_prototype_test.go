@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -50,17 +52,17 @@ func newAcceptedReplicationFixture(t *testing.T, base, peer storage.Engine, conf
 	t.Helper()
 	local, err := NewStorageAdapterWithWAL(base, t.TempDir())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, local.Close()) })
+	fixtureowner.Own(t, local)
 	mirror := &acceptedMirrorStorage{Storage: local}
 	if peer != nil {
 		remote, err := NewStorageAdapterWithWAL(peer, t.TempDir())
 		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, remote.Close()) })
+		fixtureowner.Own(t, remote)
 		mirror.peer = remote
 	}
 	r := NewStandaloneReplicator(config, mirror)
 	require.NoError(t, r.Start(context.Background()))
-	t.Cleanup(func() { require.NoError(t, r.Shutdown()) })
+	fixtureowner.Own(t, fixtureowner.CloseFunc(r.Shutdown))
 	return r, mirror
 }
 
@@ -131,7 +133,7 @@ func TestDatabaseDropPreservesAcceptedCatalogAcknowledgementError(t *testing.T) 
 	engine := NewReplicatedEngine(base, r, time.Second)
 	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "victim"}))
 	view, err := manager.GetStorage("victim")
 	require.NoError(t, err)

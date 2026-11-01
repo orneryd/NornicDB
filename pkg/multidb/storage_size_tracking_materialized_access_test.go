@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -19,7 +21,6 @@ func (e *materializedAccessRecordingEngine) RecordMaterializedAccess(entityID st
 
 func TestSizeTrackingEnginePreservesMaterializedAccess(t *testing.T) {
 	inner := &materializedAccessRecordingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	t.Cleanup(func() { _ = inner.Close() })
 	wrapped := newSizeTrackingEngine(inner, nil, "nornic")
 	recorder, ok := wrapped.(interface{ RecordMaterializedAccess(string) })
 	require.True(t, ok)

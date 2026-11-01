@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"testing"
@@ -21,8 +23,7 @@ func TestPendingCandidatesStaleMarkerCleanupSpansBatches(t *testing.T) {
 	staleID := func(i int) NodeID { return NodeID(fmt.Sprintf("test:a-%06d", i)) }
 	for _, kind := range []string{"missing", "excluded"} {
 		t.Run(kind, func(t *testing.T) {
-			e := openLargeCommitTestEngine(t, t.TempDir())
-			t.Cleanup(func() { e.Close() })
+			e, _ := openLargeCommitTestEngine(t, t.TempDir())
 			e.SetEmbeddingsEnabled(true)
 			switch kind {
 			case "missing":

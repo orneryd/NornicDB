@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -41,7 +43,7 @@ func requireBulkCounts(t *testing.T, engine *BadgerEngine, nodes, edges int64) {
 
 func TestBulkOperations_BeyondOneBatchSurviveReopen(t *testing.T) {
 	dir := t.TempDir()
-	engine := openLargeCommitTestEngine(t, dir)
+	engine, closeEngine := openLargeCommitTestEngine(t, dir)
 	batches := countBatches(t)
 
 	const n = 6000
@@ -55,9 +57,8 @@ func TestBulkOperations_BeyondOneBatchSurviveReopen(t *testing.T) {
 	requireBulkCounts(t, engine, n, n)
 	requireNoLargeCommitIntent(t, engine)
 
-	require.NoError(t, engine.Close())
-	engine = openLargeCommitTestEngine(t, dir)
-	defer engine.Close()
+	closeEngine()
+	engine, closeEngine = openLargeCommitTestEngine(t, dir)
 	requireBulkCounts(t, engine, n, n)
 	byLabel, err := engine.GetNodesByLabel(context.Background(), "Bulk")
 	require.NoError(t, err)
@@ -87,8 +88,7 @@ func TestBulkOperations_BeyondOneBatchSurviveReopen(t *testing.T) {
 }
 
 func TestBulkCreate_RejectedItemWritesNothing(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 
 	existing := bulkTestNodes(2, "existing")
 	require.NoError(t, engine.BulkCreateNodes(existing))
@@ -111,8 +111,7 @@ func TestBulkCreate_RejectedItemWritesNothing(t *testing.T) {
 }
 
 func TestBulkDelete_SkipsMissingAndRepeatedIDs(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 
 	nodes := bulkTestNodes(4, "del")
 	require.NoError(t, engine.BulkCreateNodes(nodes))
@@ -143,7 +142,7 @@ func TestBulkCreateNodes_IndexesNodesWaitingForEmbedding(t *testing.T) {
 }
 
 func TestBulkOperations_ClosedEngine(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 	require.NoError(t, engine.Close())
 	// No namespace to load: the transaction itself reports the closed engine.
 	require.ErrorIs(t, engine.BulkDeleteEdges([]EdgeID{""}), ErrStorageClosed)
@@ -152,8 +151,7 @@ func TestBulkOperations_ClosedEngine(t *testing.T) {
 }
 
 func TestEncodeFailuresAreLocalized(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 	nodes := bulkTestNodes(2, "enc")
 	require.NoError(t, engine.BulkCreateNodes(nodes))
 	bad := map[string]any{"bad": make(chan int)}
@@ -174,8 +172,7 @@ func TestEncodeFailuresAreLocalized(t *testing.T) {
 }
 
 func TestTransactionEdgeIDChecks(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 	nodes := bulkTestNodes(2, "chk")
 	require.NoError(t, engine.BulkCreateNodes(nodes))
 	existing := &Edge{ID: "test:chk-e", StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R"}
@@ -198,8 +195,7 @@ func TestTransactionEdgeIDChecks(t *testing.T) {
 }
 
 func TestEngineWriteUnits(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 	failure := errors.New("unit failed")
 	err := engine.commitEngineWrite(context.Background(), nil, engineWriteOptions{units: []func(txn *badger.Txn) error{
 		func(txn *badger.Txn) error { return txn.Set([]byte("unit-a"), []byte("a")) },
@@ -243,7 +239,6 @@ func TestRecoveryReportsBulkWriteFailures(t *testing.T) {
 		}
 	}
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 	err := restoreLegacySnapshot(&failingBulkEngine{Engine: engine, nodesErr: failure}, snapshot())
 	require.ErrorIs(t, err, failure)
 	require.ErrorContains(t, err, "failed to restore nodes")

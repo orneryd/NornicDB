@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -36,26 +38,23 @@ const (
 // nodes that own the numbers the source gave the mutated endpoints, and they
 // are exactly the nodes a source-number-based replay would corrupt.
 type foreignNumericReplayFixture struct {
-	source     *BadgerEngine
-	dest       *BadgerEngine
-	destDir    string
-	srcStart   uint64 // source number of foreignStartNode
-	srcEnd     uint64 // source number of foreignEndNode
-	holderNode NodeID // destination node that owns srcStart
-	holderEnd  NodeID // destination node that owns srcEnd
+	source           *BadgerEngine
+	closeSourceOwner func()
+	closeDestOwner   func()
+	dest             *BadgerEngine
+	destDir          string
+	srcStart         uint64 // source number of foreignStartNode
+	srcEnd           uint64 // source number of foreignEndNode
+	holderNode       NodeID // destination node that owns srcStart
+	holderEnd        NodeID // destination node that owns srcEnd
 }
 
 func newForeignNumericReplayFixture(t *testing.T) *foreignNumericReplayFixture {
 	t.Helper()
 
-	source := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
+	source, closeSource := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 	destDir := t.TempDir()
-	dest := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: destDir})
-	t.Cleanup(func() {
-		if source.bufferedCommitWAL != nil {
-			_ = source.bufferedCommitWAL.Close()
-		}
-	})
+	dest, closeDest := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: destDir})
 
 	for i := 0; i < foreignNodeCount; i++ {
 		id := NodeID(fmt.Sprintf("test:n%d", i))
@@ -68,7 +67,7 @@ func newForeignNumericReplayFixture(t *testing.T) *foreignNumericReplayFixture {
 		require.NoError(t, err)
 	}
 
-	f := &foreignNumericReplayFixture{source: source, dest: dest, destDir: destDir}
+	f := &foreignNumericReplayFixture{source: source, dest: dest, destDir: destDir, closeSourceOwner: closeSource, closeDestOwner: closeDest}
 
 	var ok bool
 	f.srcStart, ok = source.idDict.lookupNodeNumID(foreignStartNode)
@@ -133,19 +132,19 @@ func (f *foreignNumericReplayFixture) replay(t *testing.T, entry WALEntry) {
 // under test from here on.
 func (f *foreignNumericReplayFixture) closeSource(t *testing.T) {
 	t.Helper()
-	if f.source.bufferedCommitWAL != nil {
-		require.NoError(t, f.source.bufferedCommitWAL.Close())
-		f.source.bufferedCommitWAL = nil
-	}
-	require.NoError(t, f.source.Close())
+	// Detach the source journal before draining the source, as this fixture
+	// requires no new source authority after the retained replay entry. The
+	// captured owner still retires and reports both the engine and that WAL.
+	f.source.bufferedCommitWAL = nil
+	f.closeSourceOwner()
 }
 
 // reopenDestination closes the destination and opens a new engine on the same
 // data directory so later assertions read persisted state.
 func (f *foreignNumericReplayFixture) reopenDestination(t *testing.T) {
 	t.Helper()
-	require.NoError(t, f.dest.Close())
-	f.dest = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: f.destDir})
+	f.closeDestOwner()
+	f.dest, f.closeDestOwner = newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: f.destDir})
 	f.dest.invalidateCachesAfterRestore()
 }
 

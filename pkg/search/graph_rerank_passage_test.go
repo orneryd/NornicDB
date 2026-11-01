@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"strings"
 	"testing"
@@ -29,7 +31,7 @@ func TestGraphRerankGetsTheMatchedPassage(t *testing.T) {
 	russian := strings.Repeat("объяснение связи ", 95)
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "linked", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"search_text": long, "text": "unopted " + long}}))
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "russian", StartNode: "a", EndNode: "c", Type: "LINK", Properties: map[string]any{"search_text": russian}}))
-	svc := startRelationshipService(t, engine, nil, func(s *Service) {
+	svc, _ := startRelationshipService(t, engine, nil, func(s *Service) {
 		s.SetRelationshipFulltextProperties([]string{"search_text"})
 	})
 	const budget = 300

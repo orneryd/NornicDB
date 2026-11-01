@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync"
@@ -22,9 +24,8 @@ func TestResidualWALAcceptanceAdmission(t *testing.T) {
 			t.Cleanup(func() { _ = wal.Close() })
 			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			owner := NewWALEngine(b, wal)
-			t.Cleanup(func() { _ = owner.Close() })
+			fixtureowner.Own(t, owner)
 			tx, err := b.BeginTransaction()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })

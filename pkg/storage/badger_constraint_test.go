@@ -1,6 +1,8 @@
 // Package storage - Comprehensive constraint enforcement tests.
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -826,15 +828,16 @@ func setupTestBadgerEngine(t *testing.T) (*BadgerEngine, func()) {
 	dir := fmt.Sprintf("/tmp/badger-test-%d", os.Getpid())
 
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	closeEngine := func() {}
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
 
 	cleanup := func() {
-		engine.Close()
+		closeEngine()
 		os.RemoveAll(dir)
 	}
 

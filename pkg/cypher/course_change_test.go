@@ -1,11 +1,14 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/contextslot"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"log/slog"
 	"strings"
 	"testing"
@@ -58,7 +61,7 @@ func TestCourseChangeUseConsumers(t *testing.T) {
 func TestCourseChangeGraphNamedGraph(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "graph"}))
 	graph, err := manager.GetStorage("graph")
 	require.NoError(t, err)
@@ -97,6 +100,6 @@ func newCourseChangeCredentialFixture(t *testing.T) *StorageExecutor {
 	require.NoError(t, err)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	return executor
 }

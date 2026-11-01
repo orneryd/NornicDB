@@ -1,5 +1,7 @@
 package server
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -55,7 +57,7 @@ func TestCompositeExplicitTx_ExpiredFailureRollsBackHTTPParticipant(t *testing.T
 		},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_h", []multidb.ConstituentRef{
 		{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: httpRemote.URL, AuthMode: "oidc_forwarding"},
 	}))

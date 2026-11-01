@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -283,7 +285,6 @@ func TestNilIndexHintContext(t *testing.T) {
 
 func TestApplyAndValidateIndexHints(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	defer base.Close()
 	eng := storage.NewNamespacedEngine(base, "test")
 	schema := eng.GetSchema()
 

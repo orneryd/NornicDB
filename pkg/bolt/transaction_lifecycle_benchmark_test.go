@@ -1,5 +1,7 @@
 package bolt
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -95,11 +97,7 @@ func BenchmarkBoltExplicitTransactionDisjoint(b *testing.B) {
 func startBoltTransactionBenchmarkServer(b *testing.B) int {
 	b.Helper()
 	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	b.Cleanup(func() {
-		if err := base.Close(); err != nil {
-			b.Errorf("close benchmark store: %v", err)
-		}
-	})
+	runtimeFixtureOwner.Own(b, base)
 	mgr := &mockDBManager{
 		stores: map[string]storage.Engine{
 			"nornic": storage.NewNamespacedEngine(base, "nornic"),
@@ -119,14 +117,8 @@ func startBoltTransactionBenchmarkServer(b *testing.B) int {
 	server.listener = listener
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.serve() }()
-	b.Cleanup(func() {
-		if err := server.Close(); err != nil {
-			b.Errorf("close benchmark server: %v", err)
-		}
-		if err := <-errCh; err != nil {
-			b.Errorf("serve benchmark server: %v", err)
-		}
-	})
+	// Own closes the server, then reports serve's result.
+	runtimeFixtureOwner.Own(b, runtimeFixtureOwner.CloseFunc(func() error { return <-errCh }), server)
 	return listener.Addr().(*net.TCPAddr).Port
 }
 

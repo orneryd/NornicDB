@@ -1,7 +1,10 @@
 package graphql
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,14 +21,14 @@ func TestPredecodeReservationLifetime(t *testing.T) {
 	for _, protocol := range []string{"graphql-transport-ws", "graphql-ws"} {
 		for _, outcome := range []string{"invalid-init-array", "invalid-init-string", "bad-envelope", "wrong-first-message", "drop-before-init", "drop-partial-init", "cancel-partial-init", "pressure", "capacity", "operation-error", "normal-close"} {
 			t.Run(protocol+"/"+outcome, func(t *testing.T) {
-				db := testDB(t)
+				db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
 				used := int64(1)
 				if outcome == "pressure" {
 					used = 512 << 10
 				}
 				policy := memory.NewPolicy(512<<10, 0, time.Minute, func() (memory.Sample, error) { return memory.Sample{Used: used}, nil }, time.Now)
 				require.NoError(t, policy.Refresh())
-				h := newHandler(db, testutil.DatabaseManager(t, db), policy)
+				h := newHandler(db, testutil.DatabaseManager(t, db, closeDB), policy)
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				returned := make(chan struct{})

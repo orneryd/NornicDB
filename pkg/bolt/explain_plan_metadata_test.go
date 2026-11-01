@@ -1,5 +1,7 @@
 package bolt
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // explain_plan_metadata_test.go — end-to-end plan delivery over Bolt (#744 §2):
 // the driver's ResultSummary must expose the plan for EXPLAIN and the profiled
 // plan for PROFILE, read straight from the PULL SUCCESS metadata.
@@ -21,9 +23,7 @@ import (
 func newStatementFramingSession(t *testing.T, modes ...neo4jdriver.AccessMode) neo4jdriver.SessionWithContext {
 	t.Helper()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	runtimeFixtureOwner.Own(t, base)
 	mgr := &mockDBManager{
 		stores: map[string]storage.Engine{
 			"nornic": storage.NewNamespacedEngine(base, "nornic"),
@@ -44,9 +44,7 @@ func newStatementFramingSession(t *testing.T, modes ...neo4jdriver.AccessMode) n
 		neo4jdriver.NoAuth(),
 	)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, driver.Close(context.Background()))
-	})
+	runtimeFixtureOwner.Own(t, runtimeFixtureOwner.CloseFunc(func() error { return driver.Close(context.Background()) }))
 	require.NoError(t, driver.VerifyConnectivity(ctx))
 
 	mode := neo4jdriver.AccessModeWrite
@@ -57,9 +55,7 @@ func newStatementFramingSession(t *testing.T, modes ...neo4jdriver.AccessMode) n
 		AccessMode:   mode,
 		DatabaseName: "nornic",
 	})
-	t.Cleanup(func() {
-		require.NoError(t, session.Close(ctx))
-	})
+	runtimeFixtureOwner.Own(t, runtimeFixtureOwner.CloseFunc(func() error { return session.Close(ctx) }))
 	return session
 }
 

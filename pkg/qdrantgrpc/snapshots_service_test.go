@@ -1,5 +1,7 @@
 package qdrantgrpc
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -57,7 +59,7 @@ func (e *snapshotErrEngine) StreamNodesWithOptions(ctx context.Context, opts sto
 }
 
 func setupSnapshotsTest(t *testing.T) (*SnapshotsService, *PointsService, CollectionStore, string, func()) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	base, closeBase := fixtureowner.OwnWithClose(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	collections, err := NewDatabaseCollectionStore(dbm, nil)
@@ -108,11 +110,7 @@ func setupSnapshotsTest(t *testing.T) (*SnapshotsService, *PointsService, Collec
 	})
 	require.NoError(t, err)
 
-	cleanup := func() {
-		base.Close()
-	}
-
-	return snapshotsService, pointsService, collections, snapshotDir, cleanup
+	return snapshotsService, pointsService, collections, snapshotDir, closeBase
 }
 
 func TestSnapshotsService_Create(t *testing.T) {

@@ -1,8 +1,11 @@
 package graphql
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,13 +28,12 @@ func testDB(t *testing.T) *nornicdb.DB {
 		},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
 	return db
 }
 
 func TestNewHandler(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	handler := NewHandler(db, dbManager)
 
 	assert.NotNil(t, handler)
@@ -40,8 +42,8 @@ func TestNewHandler(t *testing.T) {
 }
 
 func TestHandler_ServeHTTP(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	handler := NewHandler(db, dbManager)
 
 	t.Run("handles introspection query", func(t *testing.T) {
@@ -206,8 +208,8 @@ func TestHandler_ServeHTTP(t *testing.T) {
 }
 
 func TestHandler_Playground(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	handler := NewHandler(db, dbManager)
 
 	t.Run("returns playground handler", func(t *testing.T) {
@@ -227,8 +229,8 @@ func TestHandler_Playground(t *testing.T) {
 }
 
 func TestGraphQL_EndToEnd(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	handler := NewHandler(db, dbManager)
 
 	// Create nodes

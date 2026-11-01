@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"testing"
 	"time"
@@ -8,9 +12,7 @@ import (
 )
 
 func TestPendingCandidatesBufferedFlush(t *testing.T) {
-	e := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
-	wal := e.bufferedCommitWAL
-	t.Cleanup(func() { _ = e.Close(); _ = wal.Close() })
+	e, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	e.SetEmbeddingsEnabled(true)
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	tx, err := e.BeginTransaction()

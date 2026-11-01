@@ -1,5 +1,7 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -20,6 +22,7 @@ func subscriptionTestContext(database string, mode auth.DatabaseAccessMode, acce
 
 func TestGraphQLSubscriptionsRequireSelectedDatabaseRead(t *testing.T) {
 	db := testDB(t)
+	t.Cleanup(func() { db.Close() })
 	dbManager, err := multidb.NewDatabaseManager(t.Context(), db.GetBaseStorageForManager(), nil)
 	require.NoError(t, err)
 	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "named"}))

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -27,7 +29,7 @@ func TestTemporalKeyHash_IsStableAcrossProcesses(t *testing.T) {
 // A store whose temporal index predates the stable key format (no format
 // marker) is rebuilt on a clean start before the index is trusted.
 func TestTemporalIndexFormat_CleanStartRebuildsOldFormat(t *testing.T) {
-	engine, dir := createTestBadgerEngineOnDisk(t)
+	engine, dir, closeEngine := createTestBadgerEngineOnDisk(t)
 	sm := engine.GetSchemaForNamespace("test")
 	require.NoError(t, sm.AddConstraint(factWindow))
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{factWindow}))
@@ -41,7 +43,7 @@ func TestTemporalIndexFormat_CleanStartRebuildsOldFormat(t *testing.T) {
 	}))
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixTemporalIndex))
 	require.NoError(t, engine.MarkCleanShutdown(context.Background()))
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)

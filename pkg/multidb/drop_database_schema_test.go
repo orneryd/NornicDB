@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -64,11 +66,11 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 		require.NoError(t, err)
 		manager, err := NewDatabaseManager(t.Context(), inner, nil)
 		require.NoError(t, err)
+		_, closeManager := fixtureowner.OwnWithClose(t, manager)
 		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"}))
 		addSchema(t, manager)
 		require.NoError(t, manager.DropDatabase(t.Context(), "tenant_a"))
-		require.NoError(t, manager.Close())
-		require.NoError(t, inner.Close())
+		closeManager()
 
 		reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 		require.NoError(t, err)

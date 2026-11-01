@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/binary"
@@ -69,8 +71,9 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 
@@ -97,7 +100,7 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 	// The committed entities are durable; only the counter write is lost.
 	rewindPersistedIDCounter(t, engine1, idCounterNodeKey, nodeCounterBefore)
 	rewindPersistedIDCounter(t, engine1, idCounterEdgeKey, edgeCounterBefore)
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
@@ -152,8 +155,9 @@ func TestIDDictionary_ReopenKeepsAHigherPersistedCounter(t *testing.T) {
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 	_, err = engine1.CreateNode(&Node{ID: "solo:1", Labels: []string{"L"}})
@@ -162,7 +166,7 @@ func TestIDDictionary_ReopenKeepsAHigherPersistedCounter(t *testing.T) {
 	// allocations had been rolled back after the counter write.
 	rewindPersistedIDCounter(t, engine1, idCounterNodeKey, 1_000)
 	rewindPersistedIDCounter(t, engine1, idCounterEdgeKey, 2_000)
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)

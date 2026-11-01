@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -58,7 +60,6 @@ func TestXhighExactThresholdPopulationBoundary(t *testing.T) {
 	}
 	t.Run("public_start_pull", func(t *testing.T) {
 		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-		t.Cleanup(func() { _ = base.Close() })
 		engine := storage.NewNamespacedEngine(base, "threshold")
 		service := NewService(engine, 2, nil)
 		t.Cleanup(func() { _ = service.Close() })

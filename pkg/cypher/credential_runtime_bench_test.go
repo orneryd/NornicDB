@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"testing"
 
@@ -20,7 +22,7 @@ func BenchmarkManagedCredentialRuntime(b *testing.B) {
 			}
 			manager, err := multidb.NewDatabaseManager(b.Context(), fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), cfg)
 			require.NoError(b, err)
-			defer manager.Close()
+			fixtureowner.Own(b, manager)
 			require.NoError(b, manager.CreateCompositeDatabase(b.Context(), "probe", []multidb.ConstituentRef{
 				{Alias: "winner", Type: "remote", AccessMode: "read", DatabaseName: "remote", URI: "http://synthetic%2Fusername-871429@example.invalid"},
 			}))

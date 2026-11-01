@@ -1,6 +1,8 @@
 // Package search tests for K-means clustered search integration
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -15,7 +17,6 @@ import (
 
 func newNamespacedMemoryEngine(t *testing.T) storage.Engine {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { base.Close() })
 	return storage.NewNamespacedEngine(base, "nornic")
 }
 
@@ -347,6 +348,7 @@ func TestVectorSearchOnly_UsesClusterWhenAvailable(t *testing.T) {
 	assert.NotNil(t, response)
 
 	// Without clustering, the default graph becomes ready in the background.
+	fixtureowner.Own(t, svc)
 	requireHNSWReady(t, svc)
 	response, err = svc.vectorSearchOnly(ctx, embedding, opts)
 	require.NoError(t, err)

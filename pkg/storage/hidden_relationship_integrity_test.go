@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -143,15 +147,16 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			open := func() *BadgerEngine {
+			open := func() (*BadgerEngine, func()) {
 				engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: writeBehind, WriteBehindInterval: time.Hour}))
+				var closeFixture func()
 				if engine != nil {
-					fixtureowner.Own(t, engine)
+					_, closeFixture = fixtureowner.OwnWithClose(t, engine)
 				}
 				require.NoError(t, err)
-				return engine
+				return engine, closeFixture
 			}
-			engine := open()
+			engine, closeEngine := open()
 			setupHiddenGraph(t, engine)
 
 			err := deleteInTransaction(t, engine, func(tx *BadgerTransaction) error {
@@ -187,9 +192,8 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 			}
 			requireHubDeleted(t, engine)
 
-			require.NoError(t, engine.Close())
-			engine = open()
-			t.Cleanup(func() { _ = engine.Close() })
+			closeEngine()
+			engine, closeEngine = open()
 			requireHubDeleted(t, engine)
 		})
 	}
@@ -199,8 +203,7 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 // relationships it removed: the commit's recorded writes include them.
 func TestWriteBehindReplayRemovesHiddenRelationships(t *testing.T) {
 	dir := t.TempDir()
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
-	wal := engine.bufferedCommitWAL
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	setupHiddenGraph(t, engine)
 
 	tx, err := engine.BeginTransaction()
@@ -210,12 +213,11 @@ func TestWriteBehindReplayRemovesHiddenRelationships(t *testing.T) {
 	require.NoError(t, tx.DeleteGraphNode("test:hub", CascadeEdges))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	crashClose(t, engine, wal)
+	crashClose(t, engine, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
 
-	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	recovered, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 
 	wal2 := recovered.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 	_, err = RecoverBufferedCommits(recovered, wal2)
 	require.NoError(t, err)
 	requireHubDeleted(t, recovered)

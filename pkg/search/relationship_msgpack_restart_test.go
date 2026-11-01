@@ -1,9 +1,12 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,7 +48,7 @@ func TestRelationshipSnapshotUpgradeReusesVectorsOnRestart(t *testing.T) {
 	require.Equal(t, want, got)
 
 	embed := &countingEmbed{}
-	restarted := startRelationshipService(t, engine, embed.embed, func(s *Service) {
+	restarted, closeRestarted := startRelationshipService(t, engine, embed.embed, func(s *Service) {
 		s.SetPersistenceEnabled(true)
 		s.SetFulltextIndexPath(path)
 	})
@@ -65,7 +68,7 @@ func TestRelationshipSnapshotUpgradeReusesVectorsOnRestart(t *testing.T) {
 	for id, expected := range want.Entries {
 		require.Equal(t, expected, actual[id])
 	}
-	require.NoError(t, restarted.Close())
+	closeRestarted()
 	require.Zero(t, embed.calls.Load(), "restart must not regenerate migrated vectors")
 }
 
@@ -85,7 +88,15 @@ func TestRelationshipSnapshotWithoutUpgradeDoesNotOverwrite(t *testing.T) {
 			file := path + relationshipVectorsFileSuffix
 			require.NoError(t, os.WriteFile(file, tc.data, 0o600))
 			embed := &countingEmbed{}
-			svc := startRelationshipService(t, engine, embed.embed, func(s *Service) {
+			var boundary fixtureowner.Boundary
+			t.Cleanup(func() {
+				closeErr := boundary.Close()
+				require.Error(t, closeErr)
+				if tc.upgradeErr {
+					require.ErrorIs(t, closeErr, ErrRelationshipSnapshotUpgradeRequired)
+				}
+			})
+			svc, _ := startRelationshipService(&boundary, engine, embed.embed, func(s *Service) {
 				s.SetPersistenceEnabled(true)
 				s.SetFulltextIndexPath(path)
 			})

@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"reflect"
@@ -13,22 +15,26 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-func wireFixture(t *testing.T, buffered bool, dataDirs ...string) (*storage.BadgerEngine, *StorageAdapter) {
+func wireFixture(t *testing.T, buffered bool, dataDirs ...string) (*storage.BadgerEngine, *StorageAdapter, func(), func()) {
 	t.Helper()
 	dir := t.TempDir()
 	if len(dataDirs) > 0 {
 		dir = dataDirs[0]
 	}
-	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	b, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             dir,
 		WriteBehind:         buffered,
 		WriteBehindInterval: time.Hour,
 	}))
+	var closeBase func()
+	if b != nil {
+		_, closeBase = fixtureowner.OwnWithClose(t, b)
+	}
 	require.NoError(t, err)
 	a, err := NewStorageAdapterWithWAL(b, t.TempDir())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, a)
-	return b, a
+	_, closeAdapter := fixtureowner.OwnWithClose(t, a)
+	return b, a, closeBase, closeAdapter
 }
 
 func wireCommand(t *testing.T, id string, ops ...storage.Operation) *Command {
@@ -47,7 +53,7 @@ func wireEdge(id, start, end, value string) *storage.Edge {
 }
 
 func TestPrototypeTransactionWireAtomicAndReceipt(t *testing.T) {
-	b, a := wireFixture(t, false)
+	b, a, _, _ := wireFixture(t, false)
 	for _, id := range []string{"a", "b", "gone"} {
 		_, err := b.CreateNode(wireNode(id, "old"))
 		require.NoError(t, err)
@@ -121,7 +127,7 @@ func TestPrototypeTransactionWireAtomicAndReceipt(t *testing.T) {
 func TestPrototypeTransactionWireRejectsVersionAndNamespace(t *testing.T) {
 	for _, kind := range []string{"version", "namespace", "endpoint"} {
 		t.Run(kind, func(t *testing.T) {
-			b, a := wireFixture(t, false)
+			b, a, _, _ := wireFixture(t, false)
 			ops := []storage.Operation{{Type: storage.OpCreateNode, Node: wireNode("a", "value")}}
 			var command *Command
 			switch kind {
@@ -156,7 +162,7 @@ func wireDictionaryIdentity(t *testing.T, b *storage.BadgerEngine, key string) s
 	dir := t.TempDir()
 	w, err := storage.NewWAL(dir, storage.DefaultWALConfig())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, w)
+	fixtureowner.Own(t, w)
 	b.SetBufferedCommitWAL(w)
 	tx, err := b.BeginTransaction()
 	require.NoError(t, err)
@@ -189,8 +195,8 @@ func wireDictionaryIdentity(t *testing.T, b *storage.BadgerEngine, key string) s
 	return ""
 }
 func TestPrototypeTransactionWireUsesDestinationDictionaries(t *testing.T) {
-	source, _ := wireFixture(t, true)
-	destination, peer := wireFixture(t, true)
+	source, _, _, _ := wireFixture(t, true)
+	destination, peer, _, _ := wireFixture(t, true)
 	sourceID := wireDictionaryIdentity(t, source, "alpha")
 	destinationID := wireDictionaryIdentity(t, destination, "beta")
 	require.NotEqual(t, sourceID, destinationID)
@@ -232,20 +238,24 @@ func TestPrototypeTransactionWireUsesDestinationDictionaries(t *testing.T) {
 // restaging alone cannot certify an originating leader transaction's outcome.
 func TestPrototypeTransactionReceiptSurvivesReopen(t *testing.T) {
 	dir := t.TempDir()
-	open := func() (*storage.BadgerEngine, *StorageAdapter) {
-		b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	open := func() (*storage.BadgerEngine, *StorageAdapter, func(), func()) {
+		b, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+		var closeBase func()
+		if b != nil {
+			_, closeBase = fixtureowner.OwnWithClose(t, b)
+		}
 		require.NoError(t, err)
 		a, err := NewStorageAdapterWithWAL(b, t.TempDir())
 		require.NoError(t, err)
-		fixtureowner.OwnChecked(t, a)
-		return b, a
+		_, closeAdapter := fixtureowner.OwnWithClose(t, a)
+		return b, a, closeBase, closeAdapter
 	}
-	b, a := open()
+	b, a, closeBase, closeAdapter := open()
 	command := wireCommand(t, "durable-receipt", storage.Operation{Type: storage.OpCreateNode, Node: wireNode("durable", "value")})
 	require.NoError(t, a.ApplyCommand(command))
-	require.NoError(t, a.Close())
-	require.NoError(t, b.Close())
-	b, a = open()
+	closeAdapter()
+	closeBase()
+	b, a, closeBase, closeAdapter = open()
 	var events atomic.Int64
 	b.OnNodeCreated(func(*storage.Node) { events.Add(1) })
 	require.NoError(t, a.ApplyCommand(command))
@@ -264,9 +274,9 @@ func TestPrototypeTransactionCommandPreservesExistingEnum(t *testing.T) {
 }
 
 func TestPrototypeTransactionWireAllStoredSemanticFields(t *testing.T) {
-	source, _ := wireFixture(t, false)
+	source, _, _, _ := wireFixture(t, false)
 	destinationDir := t.TempDir()
-	destination, peer := wireFixture(t, false, destinationDir)
+	destination, peer, closeDestination, closePeer := wireFixture(t, false, destinationDir)
 	for _, b := range []*storage.BadgerEngine{source, destination} {
 		_, err := b.CreateNode(wireNode("target", "endpoint"))
 		require.NoError(t, err)
@@ -330,8 +340,8 @@ func TestPrototypeTransactionWireAllStoredSemanticFields(t *testing.T) {
 	require.NoError(t, err)
 	assertStoredNodeParity(t, nextStored, nodePeer)
 	assertStoredEdgeParity(t, nextStoredEdge, edgePeer)
-	require.NoError(t, peer.Close())
-	require.NoError(t, destination.Close())
+	closePeer()
+	closeDestination()
 	reopened, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(destinationDir))
 	require.NoError(t, err)
 	persistedNode, err := reopened.GetStoredNode(node.ID)
@@ -388,7 +398,7 @@ func TestPrototypeTransactionSemanticFieldInventory(t *testing.T) {
 }
 
 func TestPrototypeTransactionCodecAllStoredFields(t *testing.T) {
-	b, _ := wireFixture(t, false)
+	b, _, _, _ := wireFixture(t, false)
 	node := wireNode("codec", "value")
 	node.EmbedMeta = map[string]any{"chunk_count": int8(1), "embedding_model": "synthetic"}
 	{
@@ -425,9 +435,9 @@ func TestPrototypeTransactionCodecAllStoredFields(t *testing.T) {
 }
 
 func TestPrototypeTransactionWireLargeVectorUpdateParity(t *testing.T) {
-	source, _ := wireFixture(t, false)
+	source, _, _, _ := wireFixture(t, false)
 	destinationDir := t.TempDir()
-	destination, peer := wireFixture(t, false, destinationDir)
+	destination, peer, closeDestination, closePeer := wireFixture(t, false, destinationDir)
 	node := wireNode("large-vector", "value")
 	node.ChunkEmbeddings = [][]float32{{1}}
 	_, err := source.CreateNode(node)
@@ -447,8 +457,8 @@ func TestPrototypeTransactionWireLargeVectorUpdateParity(t *testing.T) {
 	require.Len(t, authoritative.ChunkEmbeddings, 1)
 	require.Len(t, authoritative.ChunkEmbeddings[0], 16000)
 	require.NoError(t, peer.ApplyCommand(wireCommand(t, "large-vector", storage.Operation{Type: storage.OpUpdateNode, Node: authoritative})))
-	require.NoError(t, peer.Close())
-	require.NoError(t, destination.Close())
+	closePeer()
+	closeDestination()
 	destination, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(destinationDir))
 	require.NoError(t, err)
 	got, err := destination.GetStoredNode(node.ID)

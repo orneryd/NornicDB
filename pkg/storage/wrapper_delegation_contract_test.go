@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // The wrapper delegation contract: every method on the Engine contract and on
 // every optional capability interface exposed by the production wrapper stack
 // (WAL, Async, Namespaced, Composite, size-tracking) MUST be handled — never
@@ -26,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -533,12 +536,12 @@ func newWrapperDelegationStack(t *testing.T, name string, spy *delegationSpyEngi
 	case "wal":
 		walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = walLog.Close() })
+		fixtureowner.Own(t, walLog)
 		return NewWALEngine(spy, walLog)
 	case "namespaced+wal":
 		walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = walLog.Close() })
+		fixtureowner.Own(t, walLog)
 		inner := NewWALEngine(spy, walLog)
 		return NewNamespacedEngine(inner, "tenant")
 	default:

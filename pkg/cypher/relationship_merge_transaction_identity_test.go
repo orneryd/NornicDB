@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -165,8 +167,9 @@ func TestUnwindRelationshipMergeIdentityNormalizesNumericReplayValues(t *testing
 	ctx := context.Background()
 	dir := t.TempDir()
 	baseStore, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	var closeBase func()
 	if baseStore != nil {
-		fixtureowner.Own(t, baseStore)
+		_, closeBase = fixtureowner.OwnWithClose(t, baseStore)
 	}
 	require.NoError(t, err)
 	store := storage.NewNamespacedEngine(baseStore, "test")
@@ -185,7 +188,7 @@ SET rel.last_seen = row.last_seen`
 	_, err = exec.Execute(ctx, query, params)
 	require.NoError(t, err)
 	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch)
-	require.NoError(t, baseStore.Close())
+	closeBase()
 
 	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
@@ -207,8 +210,9 @@ func TestUnwindRelationshipMergeIdentityNormalizesTypedSliceReplayValues(t *test
 	ctx := context.Background()
 	dir := t.TempDir()
 	baseStore, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	var closeBase func()
 	if baseStore != nil {
-		fixtureowner.Own(t, baseStore)
+		_, closeBase = fixtureowner.OwnWithClose(t, baseStore)
 	}
 	require.NoError(t, err)
 	store := storage.NewNamespacedEngine(baseStore, "test")
@@ -227,7 +231,7 @@ SET rel.last_seen = row.last_seen`
 	_, err = exec.Execute(ctx, query, params)
 	require.NoError(t, err)
 	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch)
-	require.NoError(t, baseStore.Close())
+	closeBase()
 
 	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)

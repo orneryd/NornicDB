@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -14,7 +16,7 @@ import (
 func setupDeleteGuardFixture(t *testing.T) (*StorageExecutor, storage.Engine) {
 	t.Helper()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

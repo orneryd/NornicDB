@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"os"
@@ -35,7 +37,7 @@ func TestRelationshipChunkMatchesCarryTheirSpans(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bm25")
-	svc := startRelationshipService(t, engine, embed, func(s *Service) {
+	svc, _ := startRelationshipService(t, engine, embed, func(s *Service) {
 		s.SetPersistenceEnabled(true)
 		s.SetFulltextIndexPath(path)
 	})

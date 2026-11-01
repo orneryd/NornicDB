@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // gh640_merge_whole_pattern_test.go — regression tests for #640 (consolidated
 // with #694): MERGE relationship-pattern semantics and the findMergeNode
 // AllNodes() scan.
@@ -31,9 +33,7 @@ func newGh640Executor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "gh640")
 	return NewStorageExecutor(store)
 }

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
@@ -11,7 +13,6 @@ func TestTerminalFailureClearedByIdempotentBodyUpdate(t *testing.T) {
 	for _, route := range []string{"direct", "transaction"} {
 		t.Run(route, func(t *testing.T) {
 			b := newSidecarTestBadger(t)
-			defer b.Close()
 			n := sidecarTestNode(t, b, "terminal-reset", map[string]any{"text": "same"}, time.Now())
 			require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, n.ID, nil, map[string]any{"embedding_failed": true}, time.Time{})))
 			body, err := b.GetNode(n.ID)
@@ -37,8 +38,9 @@ func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 			t.Run(layout+time.Duration(writes).String(), func(t *testing.T) {
 				dir := t.TempDir()
 				b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+				var closeB func()
 				if b != nil {
-					fixtureowner.Own(t, b)
+					_, closeB = fixtureowner.OwnWithClose(t, b)
 				}
 				require.NoError(t, err)
 				b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
@@ -65,7 +67,7 @@ func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: v, Policy: ClientNodeEdits}))
 				}
 				require.NoError(t, tx.Commit())
-				require.NoError(t, b.Close())
+				closeB()
 				b, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 				require.NoError(t, err)
 				defer b.Close()
@@ -86,7 +88,6 @@ func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 
 func TestTransactionRetainedSidecarConflictsWithWorker(t *testing.T) {
 	b := newSidecarTestBadger(t)
-	defer b.Close()
 	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	n := sidecarTestNode(t, b, "conflict", map[string]any{"text": "source"}, at)
@@ -111,7 +112,6 @@ func TestTransactionRetainedSidecarRejectsUnavailableMetadata(t *testing.T) {
 	for _, failure := range []string{"writer", "snapshot", "staged"} {
 		t.Run(failure, func(t *testing.T) {
 			b := newSidecarTestBadger(t)
-			defer b.Close()
 			b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 			n := sidecarTestNode(t, b, "errors", map[string]any{"text": "source"}, at)
@@ -146,7 +146,6 @@ func TestTransactionRetainedSidecarMetadataStates(t *testing.T) {
 	for _, state := range []string{"absent", "deleted", "nil", "stale", "writer"} {
 		t.Run(state, func(t *testing.T) {
 			b := newSidecarTestBadger(t)
-			defer b.Close()
 			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 			n := sidecarTestNode(t, b, "states", map[string]any{"text": "source"}, at)
 			tx, err := b.BeginTransaction()

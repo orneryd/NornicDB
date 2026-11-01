@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -100,7 +102,9 @@ func TestBadgerEngine_Backup(t *testing.T) {
 			fixtureowner.Own(t, engine)
 		}
 		require.NoError(t, err)
-		engine.Close()
+		if err := engine.Close(); err != nil {
+			t.Fatalf("close engine: %v", err)
+		}
 
 		// Try to backup closed engine
 		err = engine.Backup(backupPath)
@@ -166,8 +170,9 @@ func TestBadgerEngine_RestoreReloadsSchema(t *testing.T) {
 
 	targetDir := t.TempDir()
 	target, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
+	var closeTarget func()
 	if target != nil {
-		fixtureowner.Own(t, target)
+		_, closeTarget = fixtureowner.OwnWithClose(t, target)
 	}
 	require.NoError(t, err)
 	require.NoError(t, target.Restore(backupPath))
@@ -177,7 +182,7 @@ func TestBadgerEngine_RestoreReloadsSchema(t *testing.T) {
 		Properties: map[string]interface{}{"key": "k1"},
 	})
 	require.Error(t, err)
-	require.NoError(t, target.Close())
+	closeTarget()
 
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
 	require.NoError(t, err)
@@ -198,8 +203,9 @@ func TestBadgerEngine_RestoreReplacesTargetSystemRecords(t *testing.T) {
 
 	targetDir := t.TempDir()
 	target, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
+	var closeTarget func()
 	if target != nil {
-		fixtureowner.Own(t, target)
+		_, closeTarget = fixtureowner.OwnWithClose(t, target)
 	}
 	require.NoError(t, err)
 	_, err = target.CreateNode(&Node{
@@ -209,7 +215,7 @@ func TestBadgerEngine_RestoreReplacesTargetSystemRecords(t *testing.T) {
 	require.NoError(t, target.Restore(backupPath))
 	_, err = target.GetNode(NodeID("system:target"))
 	require.ErrorIs(t, err, ErrNotFound)
-	require.NoError(t, target.Close())
+	closeTarget()
 
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
 	require.NoError(t, err)

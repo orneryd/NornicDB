@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -53,7 +55,6 @@ func (c *countingEmbed) embed(_ context.Context, edge *storage.Edge) (Relationsh
 func relationshipTestEngine(t *testing.T) storage.Engine {
 	t.Helper()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
 		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"name": "doc " + string(id)}})
@@ -64,16 +65,15 @@ func relationshipTestEngine(t *testing.T) storage.Engine {
 	return engine
 }
 
-func startRelationshipService(t *testing.T, engine storage.Engine, embed RelationshipEmbedFunc, configure func(*Service)) *Service {
-	t.Helper()
-	svc := NewService(engine, 3, nil)
-	t.Cleanup(func() { _ = svc.Close() })
+func startRelationshipService(owner fixtureowner.Owner, engine storage.Engine, embed RelationshipEmbedFunc, configure func(*Service)) (*Service, func()) {
+	owner.Helper()
+	svc, closeService := fixtureowner.OwnWithClose(owner, NewService(engine, 3, nil))
 	if configure != nil {
 		configure(svc)
 	}
 	svc.EnableRelationshipSearch(embed)
 	svc.StartRelationshipIndex()
-	return svc
+	return svc, closeService
 }
 
 // waitRelationshipVectors waits for the expected vector population and any
@@ -125,7 +125,7 @@ func TestRelationshipSearch(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
 	embed := &countingEmbed{}
-	svc := startRelationshipService(t, engine, embed.embed, nil)
+	svc, _ := startRelationshipService(t, engine, embed.embed, nil)
 	require.True(t, svc.RelationshipSearchEnabled())
 	waitRelationshipVectors(t, svc, 2)
 
@@ -182,7 +182,7 @@ func TestRelationshipSearchFollowsWrites(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
 	embed := &countingEmbed{}
-	svc := startRelationshipService(t, engine, embed.embed, nil)
+	svc, _ := startRelationshipService(t, engine, embed.embed, nil)
 	waitRelationshipVectors(t, svc, 2)
 	opts := &SearchOptions{Limit: 10, Relationships: true}
 
@@ -237,28 +237,28 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 		svc.SetFulltextIndexPath(path)
 	}
 	first := &countingEmbed{}
-	svc := startRelationshipService(t, engine, first.embed, persisted)
+	svc, closeSvc := startRelationshipService(t, engine, first.embed, persisted)
 	waitRelationshipVectors(t, svc, 2, relationshipSnapshotPublished)
-	require.NoError(t, svc.Close())
+	closeSvc()
 
 	edge, err := engine.GetEdge("r2")
 	require.NoError(t, err)
 	edge.Properties["reason"] = "quarrel about river dates"
 	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 	second := &countingEmbed{}
-	svc = startRelationshipService(t, engine, second.embed, persisted)
+	svc, closeSvc = startRelationshipService(t, engine, second.embed, persisted)
 	waitRelationshipVectors(t, svc, 2, relationshipSnapshotPublished)
 	require.Equal(t, int64(1), second.calls.Load(), "only the changed relationship is embedded")
 	response, err := svc.SearchRelationships(ctx, "span", wordVector("span"), &SearchOptions{Limit: 1, Relationships: true})
 	require.NoError(t, err)
 	require.Equal(t, storage.EdgeID("r1"), response.Results[0].Relationship.ID)
-	require.NoError(t, svc.Close())
+	closeSvc()
 
 	// No embedder yet: nothing embedded, and a search still works by keyword.
 	failing := &countingEmbed{}
 	failing.fail.Store(true)
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r4", StartNode: "c", EndNode: "a", Type: "CITES", Properties: map[string]any{"reason": "granite"}}))
-	svc = startRelationshipService(t, engine, failing.embed, persisted)
+	svc, closeSvc = startRelationshipService(t, engine, failing.embed, persisted)
 	require.Eventually(t, func() bool { return failing.calls.Load() >= 1 }, 5*time.Second, 10*time.Millisecond)
 	response, err = svc.SearchRelationships(ctx, "granite", nil, &SearchOptions{Relationships: true})
 	require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestRelationshipSearchDisabled(t *testing.T) {
 	nilService.EnableRelationshipSearch(nil)
 
 	// Keyword-only, without an embed function: no vectors, keyword hits.
-	keyword := startRelationshipService(t, relationshipTestEngine(t), nil, nil)
+	keyword, _ := startRelationshipService(t, relationshipTestEngine(t), nil, nil)
 	response, err := keyword.SearchRelationships(context.Background(), "zephyrine", wordVector("bridge"), nil)
 	require.NoError(t, err)
 	require.Len(t, response.Results, 1)
@@ -313,7 +313,7 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	engine := relationshipTestEngine(t)
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r5", StartNode: "a", EndNode: "c", Type: "CITES", Properties: map[string]any{"title": "Twin", "description": "first twin", "content": "twin content"}}))
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r6", StartNode: "c", EndNode: "a", Type: "CITES", Properties: map[string]any{"title": "Twin", "description": "first twin", "text": "twin content"}}))
-	svc := startRelationshipService(t, engine, nil, nil)
+	svc, _ := startRelationshipService(t, engine, nil, nil)
 	response, err := svc.SearchRelationships(ctx, "twin", nil, &SearchOptions{Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, response.Results, 1)
@@ -380,7 +380,7 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	t.Cleanup(func() { relationshipEmbedRetryDelay = previous })
 	flaky := &countingEmbed{}
 	flaky.fail.Store(true)
-	retrying := startRelationshipService(t, relationshipTestEngine(t), flaky.embed, nil)
+	retrying, _ := startRelationshipService(t, relationshipTestEngine(t), flaky.embed, nil)
 	require.Eventually(t, func() bool { return flaky.calls.Load() >= 2 }, 5*time.Second, 10*time.Millisecond, "retried")
 	flaky.fail.Store(false)
 	waitRelationshipVectors(t, retrying, 2)
@@ -401,7 +401,7 @@ func TestRelationshipSearchTiesOrderByID(t *testing.T) {
 	same := func(context.Context, *storage.Edge) (RelationshipEmbedding, error) {
 		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	}
-	svc := startRelationshipService(t, relationshipTestEngine(t), same, nil)
+	svc, _ := startRelationshipService(t, relationshipTestEngine(t), same, nil)
 	waitRelationshipVectors(t, svc, 2)
 	response, err := svc.SearchRelationships(ctx, "unmatched", []float32{1, 0, 0}, &SearchOptions{Limit: 5})
 	require.NoError(t, err)
@@ -415,7 +415,7 @@ func TestRelationshipSearchTiesOrderByID(t *testing.T) {
 		}
 		return RelationshipEmbedding{}, nil
 	}
-	svc = startRelationshipService(t, relationshipTestEngine(t), onlyR1, nil)
+	svc, _ = startRelationshipService(t, relationshipTestEngine(t), onlyR1, nil)
 	waitRelationshipVectors(t, svc, 1)
 	response, err = svc.SearchRelationships(ctx, "quarrel", []float32{1, 0, 0}, &SearchOptions{Limit: 5})
 	require.NoError(t, err)
@@ -432,7 +432,7 @@ func TestRelationshipSearchTiesOrderByID(t *testing.T) {
 func TestRelationshipSearchEmbedsReportedCopy(t *testing.T) {
 	engine := relationshipTestEngine(t)
 	embed := &countingEmbed{}
-	svc := startRelationshipService(t, engine, embed.embed, nil)
+	svc, _ := startRelationshipService(t, engine, embed.embed, nil)
 	waitRelationshipVectors(t, svc, 2)
 	svc.IndexRelationship(&storage.Edge{ID: "unread", StartNode: "a", EndNode: "c", Type: "CITES", Properties: map[string]any{"reason": "a bridge not yet stored"}})
 	waitRelationshipVectors(t, svc, 3)
@@ -447,7 +447,7 @@ func TestRelationshipSearchMatches(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
 	embed := &countingEmbed{}
-	svc := startRelationshipService(t, engine, embed.embed, nil)
+	svc, _ := startRelationshipService(t, engine, embed.embed, nil)
 	waitRelationshipVectors(t, svc, 2)
 
 	opts := DefaultSearchOptions()

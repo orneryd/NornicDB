@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -608,11 +610,6 @@ func TestStreamingFallbackAndCollectionHelpers(t *testing.T) {
 				{ID: "e2", Type: "LIKES"},
 			},
 		}
-		t.Cleanup(func() {
-			if closer, ok := engine.Engine.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-		})
 
 		var nodeIDs []NodeID
 		require.NoError(t, StreamNodesWithFallback(context.Background(), engine, 1, func(node *Node) error {
@@ -647,11 +644,6 @@ func TestStreamingFallbackAndCollectionHelpers(t *testing.T) {
 			allNodes: []*Node{{ID: "n1"}},
 			allEdges: []*Edge{{ID: "e1", Type: "REL"}},
 		}
-		t.Cleanup(func() {
-			if closer, ok := engine.Engine.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-		})
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -678,11 +670,6 @@ func TestStreamingFallbackAndCollectionHelpers(t *testing.T) {
 			nodeErr: errors.New("all nodes failed"),
 			edgeErr: errors.New("all edges failed"),
 		}
-		t.Cleanup(func() {
-			if closer, ok := engine.Engine.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-		})
 
 		err := StreamNodesWithFallback(context.Background(), engine, 1, func(node *Node) error { return nil })
 		require.ErrorContains(t, err, "all nodes failed")
@@ -704,11 +691,6 @@ func TestLoaderEmbeddingFinderAndWALDegradedHelpers(t *testing.T) {
 				{ID: "needs", Labels: []string{"Doc"}, Properties: map[string]any{"text": "embed me"}},
 			},
 		}
-		t.Cleanup(func() {
-			if closer, ok := exportable.Engine.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-		})
 		got := FindNodeNeedingEmbedding(exportable)
 		require.NotNil(t, got)
 		assert.Equal(t, NodeID("needs"), got.ID)
@@ -742,11 +724,6 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 				{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"email": "a@example.com", "id": "1", "name": "alice"}},
 			},
 		}
-		t.Cleanup(func() {
-			if closer, ok := engine.Engine.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-		})
 
 		require.NoError(t, ValidateConstraintOnCreationForEngine(engine, Constraint{
 			Type:       ConstraintUnique,

@@ -1,5 +1,7 @@
 package bolt
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
@@ -16,7 +18,6 @@ func TestBoltExplicitTransactionsCreateIndependentSameLabelNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Badger store: %v", err)
 	}
-	t.Cleanup(func() { _ = baseStore.Close() })
 	store := storage.NewNamespacedEngine(baseStore, "neo4j")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 

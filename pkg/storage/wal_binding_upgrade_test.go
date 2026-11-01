@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"fmt"
@@ -12,14 +14,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func reviewBindingEngine(t *testing.T, dir string) *BadgerEngine {
+func reviewBindingEngine(t *testing.T, dir string) (*BadgerEngine, func()) {
 	t.Helper()
-	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4(), WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+	b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4(), WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+	var closeEngine func()
+	if b != nil {
+		_, closeEngine = fixtureowner.OwnWithClose(t, b)
+	}
 	require.NoError(t, err)
 	// Keep crash fixtures pending even after an explicit flush adapts the delay.
 	b.writeBehind.SetDelayBounds(time.Hour, time.Hour)
-	t.Cleanup(func() { _ = b.Close() })
-	return b
+	return b, closeEngine
 }
 
 // The old writer exported only fresh keys. These transactions use a key that
@@ -30,7 +35,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			t.Cleanup(config.WithWALEnabled())
 			dir := t.TempDir()
-			source := reviewBindingEngine(t, dir)
+			source, _ := reviewBindingEngine(t, dir)
 			_, err := source.CreateNode(&Node{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}})
 			require.NoError(t, err)
 			require.NoError(t, source.FlushWriteBehind(nil))
@@ -76,7 +81,6 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 			if route == "snapshot" {
 				dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = dest.Close() })
 				path := filepath.Join(t.TempDir(), "snapshot.bin")
 				require.NoError(t, SaveSnapshot(&Snapshot{Nodes: []*Node{
 					{ID: "legacy:b", Properties: map[string]any{"other": "keep"}},
@@ -96,7 +100,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				assertPropertyDictionaryBijection(t, dest)
 				return
 			}
-			recovered := reviewBindingEngine(t, dir)
+			recovered, _ := reviewBindingEngine(t, dir)
 			require.NotNil(t, recovered.writeBehind)
 			legacyEntries, err := ReadWALEntriesFromDir(legacy.Config().Dir)
 			require.NoError(t, err)
@@ -128,7 +132,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 // prefix never supplies authority for a later record.
 func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	source := reviewBindingEngine(t, t.TempDir())
+	source, _ := reviewBindingEngine(t, t.TempDir())
 	capture, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = capture.Close() })
@@ -151,7 +155,7 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 	}
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 	require.NoError(t, err)
-	destination := reviewBindingEngine(t, t.TempDir())
+	destination, _ := reviewBindingEngine(t, t.TempDir())
 	index := 0
 	for _, entry := range entries {
 		if entry.Operation != OpBufferedCommit {
@@ -186,9 +190,9 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	for _, restart := range []bool{false, true} {
 		t.Run(fmt.Sprint(restart), func(t *testing.T) {
-			source := reviewBindingEngine(t, t.TempDir())
+			source, _ := reviewBindingEngine(t, t.TempDir())
 			destDir := t.TempDir()
-			dest := reviewBindingEngine(t, destDir)
+			dest, closeDest := reviewBindingEngine(t, destDir)
 			for _, ns := range []string{"growth", "other"} {
 				for _, b := range []*BadgerEngine{source, dest} {
 					// Same node order, reversed property dictionary. Extra keys
@@ -256,8 +260,8 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 					}
 				}
 				require.Equal(t, 3, applied)
-				require.NoError(t, dest.Close())
-				dest = reviewBindingEngine(t, destDir)
+				closeDest()
+				dest, closeDest = reviewBindingEngine(t, destDir)
 			}
 			n, err := RecoverBufferedCommits(dest, wal)
 			require.NoError(t, err)
@@ -267,8 +271,8 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 			} else {
 				require.Equal(t, 6, n)
 			}
-			require.NoError(t, dest.Close())
-			dest = reviewBindingEngine(t, destDir)
+			closeDest()
+			dest, closeDest = reviewBindingEngine(t, destDir)
 			assertPropertyDictionaryBijection(t, dest)
 			for _, ns := range []string{"growth", "other"} {
 				node, err := dest.GetNode(NodeID(ns + ":a"))
@@ -307,7 +311,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
 			require.True(t, tx.AcknowledgedBuffered())
-			third := reviewBindingEngine(t, t.TempDir())
+			third, _ := reviewBindingEngine(t, t.TempDir())
 			n, err = RecoverBufferedCommits(third, secondLog)
 			require.NoError(t, err)
 			require.Equal(t, 1, n)

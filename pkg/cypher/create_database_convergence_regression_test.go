@@ -1,8 +1,11 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -16,7 +19,7 @@ func newCreateDatabaseRegressionExecutor(t *testing.T) (*StorageExecutor, *multi
 	t.Helper()
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	adapter := &testDatabaseManagerAdapter{manager: manager}
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	exec.SetDatabaseManager(adapter)

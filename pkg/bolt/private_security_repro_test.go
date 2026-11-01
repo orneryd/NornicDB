@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -27,7 +29,6 @@ func TestPrivateReproBoltBareBeginPoolReuse(t *testing.T) {
 	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
-	t.Cleanup(func() { _ = server.Close() })
 	port := startBoltTestServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth(), func(c *neo4jdriver.Config) {
@@ -62,14 +63,13 @@ func TestPrivateReproBoltConstituentAccess(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_denied"}))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "private_cmp", []multidb.ConstituentRef{
 		{Alias: "b", DatabaseName: "private_denied", Type: "local", AccessMode: "read_write"},
 	}))
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	server.SetDatabaseAccessModeResolver(func([]string) auth.DatabaseAccessMode { return privateReproAccessMode{} })
-	t.Cleanup(func() { _ = server.Close() })
 	port := startBoltTestServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())

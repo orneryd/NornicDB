@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -177,7 +179,6 @@ func newLoadCSVParticipantExecutor(t *testing.T, accessMode string) (*StorageExe
 	cfg := multidb.DefaultConfig()
 	cfg.RemoteEngineFactory = func(multidb.ConstituentRef, string) (storage.Engine, error) { return remote, nil }
 	manager := newCompositeNativeManager(t, cfg)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "comp", []multidb.ConstituentRef{
 		{Alias: "csv", DatabaseName: "neo4j", Type: "remote", AccessMode: accessMode, URI: "neo4j://127.0.0.1:1"},
 	}))

@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // gh741_explicit_tx_staged_delete_test.go — regression tests for #741: in an
 // explicit transaction, a relationship the transaction created and then removed
 // (DELETE r or DETACH DELETE of an endpoint) must not fail COMMIT with
@@ -22,9 +24,7 @@ func newGh741Executor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "gh741")
 	return NewStorageExecutor(store)
 }

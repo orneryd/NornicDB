@@ -1,7 +1,10 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -11,7 +14,7 @@ func TestAcceptedWALNativeStartupLineage(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		t.Run(map[bool]string{false: "direct", true: "buffered"}[buffered], func(t *testing.T) {
 			dir := t.TempDir()
-			b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
+			b, closeB := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
 			w := b.bufferedCommitWAL
 			owner := NewWALEngine(b, w)
 			mode := CommitModeDirect
@@ -33,8 +36,8 @@ func TestAcceptedWALNativeStartupLineage(t *testing.T) {
 				require.True(t, tx.AcknowledgedBuffered())
 				require.Positive(t, b.writeBehind.PendingOps())
 			}
-			crashClose(t, b, w)
-			b = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
+			crashClose(t, b, fixtureowner.CloseFunc(func() error { closeB(); return nil }))
+			b, closeB = newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
 			w = b.bufferedCommitWAL
 			n, err := RecoverBufferedCommitsAtOpen(b, w)
 			require.NoError(t, err)
@@ -56,9 +59,8 @@ func TestAcceptedWALNativeStartupLineage(t *testing.T) {
 			require.Zero(t, n)
 			_, _, err = NewWALEngine(b, w).DeleteByPrefix("test:")
 			require.NoError(t, err)
-			require.NoError(t, b.Close())
-			require.NoError(t, w.Close())
-			b = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
+			closeB()
+			b, closeB = newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
 			w = b.bufferedCommitWAL
 			_, err = RecoverBufferedCommitsAtOpen(b, w)
 			require.NoError(t, err)
@@ -72,7 +74,7 @@ func TestAcceptedWALNativeStartupLineage(t *testing.T) {
 }
 
 func TestAcceptedBufferedReceiptVisibleBeforeFlush(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 	tx, err := BeginEntityTransaction(b, CommitModeImplicit)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
@@ -124,7 +126,7 @@ func TestAcceptedWALUnappliedRecordStartup(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		t.Run(map[bool]string{false: "direct", true: "buffered"}[buffered], func(t *testing.T) {
 			dir := t.TempDir()
-			b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
+			b, closeB := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
 			w := b.bufferedCommitWAL
 			payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "unapplied-startup", Operations: []Operation{{Type: OpCreateNode, Node: &Node{ID: "test:new", Properties: map[string]any{"v": int64(42)}}}}, Mode: CommitModeImplicit})
 			require.NoError(t, err)
@@ -132,8 +134,8 @@ func TestAcceptedWALUnappliedRecordStartup(t *testing.T) {
 			seq := w.Sequence()
 			_, err = b.GetStoredNode("test:new")
 			require.ErrorIs(t, err, ErrNotFound)
-			crashClose(t, b, w)
-			b = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
+			crashClose(t, b, fixtureowner.CloseFunc(func() error { closeB(); return nil }))
+			b, _ = newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
 			w = b.bufferedCommitWAL
 			n, err := RecoverBufferedCommitsAtOpen(b, w)
 			require.NoError(t, err)

@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"errors"
 	"fmt"
@@ -34,7 +36,6 @@ func TestRuntimeQueryCredentialErrorsAreRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal("manager setup failed")
 	}
-	defer manager.Close()
 	err = manager.CreateCompositeDatabase(t.Context(), "r73query", []ConstituentRef{{
 		Alias: "remote", DatabaseName: "nornic", Type: "remote", AccessMode: "read",
 		URI: "https://example.invalid/?api_key=" + marker,

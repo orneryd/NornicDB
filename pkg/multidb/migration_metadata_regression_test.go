@@ -1,6 +1,9 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"testing"
 	"time"
@@ -22,8 +25,10 @@ func TestLegacyMigrationPreservesEveryEntityField(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, inner.CreateEdge(edge))
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
+	if manager != nil {
+		fixtureowner.Own(t, manager)
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
 	got, err := inner.GetNode("nornic:a")
 	require.NoError(t, err)
 	want := *storage.CopyNode(node)

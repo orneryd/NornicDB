@@ -1,10 +1,13 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,7 +18,6 @@ import (
 // on composite root are rejected.
 func TestCompositeDatabase_EndToEnd(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 	manager, _ := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	adapter := &testDatabaseManagerAdapter{manager: manager}
 
@@ -90,7 +92,6 @@ func TestCompositeDatabase_EndToEnd(t *testing.T) {
 // Neo4j requires USE <composite>.<alias> for data queries; here we target constituents directly.
 func TestCompositeDatabase_ComplexQuery(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 	manager, _ := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	adapter := &testDatabaseManagerAdapter{manager: manager}
 
@@ -149,10 +150,9 @@ func TestCompositeDatabase_ComplexQuery(t *testing.T) {
 // Neo4j requires USE <composite>.<alias> for data queries; here we target the constituent directly.
 func TestCompositeDatabase_QueryWithRelationships(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 	manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 
 	adapter := &testDatabaseManagerAdapter{manager: manager}
 
@@ -212,7 +212,6 @@ func TestCompositeDatabase_QueryWithRelationships(t *testing.T) {
 // TestCompositeDatabase_AlterCompositeDatabase tests ALTER COMPOSITE DATABASE commands
 func TestCompositeDatabase_AlterCompositeDatabase(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 	manager, _ := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	adapter := &testDatabaseManagerAdapter{manager: manager}
 

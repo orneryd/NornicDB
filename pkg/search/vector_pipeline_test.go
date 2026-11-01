@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -292,6 +294,7 @@ func TestVectorSearchCandidatesStrategySelection(t *testing.T) {
 				_, ok := svc.vectorPipeline.candidateGen.(*BruteForceCandidateGen)
 				require.True(t, ok)
 			} else {
+				fixtureowner.Own(t, svc)
 				requireHNSWReady(t, svc)
 				_, ok := svc.vectorPipeline.candidateGen.(*HNSWCandidateGen)
 				require.True(t, ok)

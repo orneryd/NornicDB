@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -12,7 +14,7 @@ import (
 func TestWriteBehind_TypedNodeEdgeIdentityAPI(t *testing.T) {
 	for _, shared := range []bool{true, false} {
 		t.Run(fmt.Sprintf("shared=%v", shared), func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, time.Hour)
+			b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			node := &Node{ID: "test:collision", Labels: []string{"Person"}}
 			_, err := b.CreateNode(node)
 			require.NoError(t, err)

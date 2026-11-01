@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"path/filepath"
 	"testing"
@@ -15,12 +17,13 @@ func TestRelationshipVectorsFollowTheEmbedPolicy(t *testing.T) {
 	engine := relationshipTestEngine(t)
 	path := filepath.Join(t.TempDir(), "bm25")
 	persisted := func(policy string, embed *countingEmbed) *Service {
-		return startRelationshipService(t, engine, embed.embed, func(s *Service) {
+		service, _ := startRelationshipService(t, engine, embed.embed, func(s *Service) {
 			s.SetPersistenceEnabled(true)
 			s.SetFulltextIndexPath(path)
 			s.EnableRelationshipSearch(embed.embed)
 			s.SetRelationshipEmbedPolicy(policy)
 		})
+		return service
 	}
 	first := &countingEmbed{}
 	firstService := persisted("include=search_text", first)

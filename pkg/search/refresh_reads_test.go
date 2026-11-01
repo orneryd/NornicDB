@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync/atomic"
@@ -25,7 +27,6 @@ func (e *countingReadEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 // reservation still pending reads: discarding the newer one restores it.
 func TestRetiredRefreshReadsNothing(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	engine := &countingReadEngine{Engine: store}
 	svc := NewService(engine, 2, nil)

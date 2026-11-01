@@ -1,10 +1,13 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/internal/testutil"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -19,8 +22,8 @@ func TestGraphQLExecutorFollowsSearchResetAndSharesCursors(t *testing.T) {
 		Memory: config.MemoryConfig{SearchCursorMax: 2},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	manager := testutil.DatabaseManager(t, db)
+	_, closeDB := fixtureowner.OwnWithClose(t, db)
+	manager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, manager)
 	name := manager.DefaultDatabaseName()
 	store, err := manager.GetStorage(name)

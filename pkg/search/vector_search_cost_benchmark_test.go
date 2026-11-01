@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -17,11 +19,11 @@ import (
 // closeAfterBuilds closes svc once no background HNSW build of it is in
 // flight: a build outliving its test would run the package's build hooks
 // inside another test.
-func closeAfterBuilds(tb testing.TB, svc *Service) {
+func closeAfterBuilds(tb testing.TB, svc *Service) error {
 	for deadline := time.Now().Add(30 * time.Second); svc.hnswRebuildInFlight.Load() && time.Now().Before(deadline); {
 		time.Sleep(time.Millisecond)
 	}
-	_ = svc.Close()
+	return svc.Close()
 }
 
 // selectiveClusteredService is review r4's Service fixture: 2,000 documents

@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -13,15 +15,11 @@ import (
 func TestGH461_AutocommitCreatedRelationshipVisibleAcrossTransactionsAndReopen(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir}))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		if engine != nil {
-			_ = engine.Close()
-		}
-	})
 
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(engine, "nornic")
@@ -56,7 +54,7 @@ func TestGH461_AutocommitCreatedRelationshipVisibleAcrossTransactionsAndReopen(t
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(5), "x"}}, readback.Rows)
 
-	require.NoError(t, engine.Close())
+	closeEngine()
 	engine = nil
 	engine, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir}))
 	if engine != nil {

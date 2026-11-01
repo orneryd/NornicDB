@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -17,9 +19,12 @@ import (
 // under it, and the node reads back as created again, also from storage.
 func TestPruneOrdersAfterBufferedRecreate(t *testing.T) {
 	dir := t.TempDir()
-	b, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	var closeB func()
+	if b != nil {
+		_, closeB = runtimeFixtureOwner.OwnWithClose(t, b)
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 
 	_, err = b.CreateNode(&Node{ID: "test:p", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
@@ -52,10 +57,9 @@ func TestPruneOrdersAfterBufferedRecreate(t *testing.T) {
 	require.Equal(t, int64(2), latest.Properties["v"])
 	require.Zero(t, countKeysWithPrefix(t, b, prefixIDFreelist), "the prune freed the ID of a node created again")
 
-	require.NoError(t, b.Close())
+	closeB()
 	b, err = runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	latest, err = b.GetNodeLatestVisible("test:p")
 	require.NoError(t, err, "after reopen, the node created again has no latest version")
 	require.Equal(t, int64(2), latest.Properties["v"])

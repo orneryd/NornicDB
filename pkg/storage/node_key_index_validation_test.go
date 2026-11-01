@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -113,11 +115,11 @@ func (n *Node) withProp(k string, v interface{}) *Node {
 // The owned key index is in memory only: reopening a database rebuilds and
 // fills it, so validation keeps using it after a restart.
 func TestNodeKeyIndex_FilledAfterReopen(t *testing.T) {
-	engine, dir := createTestBadgerEngineOnDisk(t)
+	engine, dir, closeEngine := createTestBadgerEngineOnDisk(t)
 	sm := engine.GetSchemaForNamespace("test")
 	require.NoError(t, sm.AddConstraint(factKey))
 	commitNodes(t, engine, factNode("a", 1, "name", 1))
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)

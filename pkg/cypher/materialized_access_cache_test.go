@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -39,7 +41,6 @@ func (e *accessCountingEngine) take() []string {
 // nothing.
 func TestMaterializedAccessRecordedOnCacheHits(t *testing.T) {
 	inner := &accessCountingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	t.Cleanup(func() { _ = inner.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(inner, "test"))
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:AccessT {v: 1})-[:ACCESS_R]->(:AccessT {v: 2})", nil)

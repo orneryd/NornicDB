@@ -1,5 +1,7 @@
 package bolt
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -27,7 +29,7 @@ func TestReview1477R2PublicBearerTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	config := DefaultConfig()
 	config.Authenticator = review1477BearerAuthenticator{}
 	server := NewWithDatabaseManager(config, nil, manager)

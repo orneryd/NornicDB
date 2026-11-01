@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
@@ -122,7 +124,7 @@ func TestBoltExplicitTransactionTerminalPathsRecordSinglePersistentWALAbort(t *t
 			wal, err := storage.NewWAL(walDir, nil)
 			require.NoError(t, err)
 			walStore := storage.NewWALEngine(badger, wal)
-			t.Cleanup(func() { require.NoError(t, walStore.Close()) })
+			fixtureowner.Own(t, walStore)
 			store := storage.NewNamespacedEngine(walStore, "nornic")
 			port := startTransactionLifecycleServerWithStore(t, store)
 			baselineReaders := badger.ActiveReaders()

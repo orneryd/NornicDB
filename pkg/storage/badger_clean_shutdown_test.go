@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -25,8 +27,9 @@ func (c *cancelAfterInitialCheckContext) Err() error {
 func TestCleanShutdownMarkerIsConsumedByNextStartup(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "db")
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 
@@ -34,7 +37,7 @@ func TestCleanShutdownMarkerIsConsumedByNextStartup(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, clean)
 	require.NoError(t, engine.MarkCleanShutdown(context.Background()))
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	restarted, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
@@ -96,11 +99,11 @@ func TestCleanShutdownMarkerTraversesWALStorageStack(t *testing.T) {
 	require.NoError(t, err)
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(directory, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
-	stack := NewWALEngine(badgerEngine, wal)
+	stack, closeStack := fixtureowner.OwnWithClose(t, NewWALEngine(badgerEngine, wal))
 	_, err = stack.CreateNode(&Node{ID: "nornic:pending", Labels: []string{"Document"}})
 	require.NoError(t, err)
 	require.NoError(t, stack.MarkCleanShutdown(context.Background()))
-	require.NoError(t, stack.Close())
+	closeStack()
 
 	restarted, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)

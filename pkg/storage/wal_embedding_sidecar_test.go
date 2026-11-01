@@ -1,6 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,7 +21,7 @@ func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
 	wal, err := NewWAL(dir, nil)
 	require.NoError(t, err)
 	engine := NewWALEngine(base, wal)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	fixtureowner.Own(t, engine)
 
 	wasEnabled := config.WithWALEnabled()
 	defer wasEnabled()

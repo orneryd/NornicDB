@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"github.com/stretchr/testify/require"
 	"sync"
@@ -8,7 +10,7 @@ import (
 )
 
 func TestBufferedPublicationCallbacksKeepAcknowledgedRevision(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	var mu sync.Mutex
 	calls := map[string]int{}
 	record := func(name string) { mu.Lock(); calls[name]++; mu.Unlock() }

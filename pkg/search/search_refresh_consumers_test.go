@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -52,7 +54,6 @@ func runOrphanObservation(t *testing.T, scenario orphanObservationCase) {
 	t.Helper()
 	ctx := context.Background()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	barrier := &orphanReadBarrier{Engine: store, PauseGate: fixtureowner.NewPauseGate(), missingOnly: scenario.missingOnly}
 	svc := NewService(barrier, 2, nil)

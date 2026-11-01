@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -16,7 +18,7 @@ func relationshipUniqueCommitFixture(t testing.TB, existing int, constraints ...
 	t.Helper()
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	runtimeFixtureOwner.Own(t, engine)
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err = engine.CreateNode(&Node{ID: id})
 		require.NoError(t, err)

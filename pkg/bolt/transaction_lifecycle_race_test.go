@@ -1,5 +1,7 @@
 package bolt
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -40,9 +42,7 @@ func TestBoltExplicitTransactionCommitTimeoutArbitration(t *testing.T) {
 // sole terminal owner and its durable write must not be rolled back or relabeled.
 func testBoltCommitWinsBeforeTransactionTimeout(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	executor := newControlledTransactionExecutor(store)
 	releaseCommit := make(chan struct{})
@@ -89,9 +89,7 @@ func testBoltCommitWinsBeforeTransactionTimeout(t *testing.T) {
 // deterministic and requiring the Neo4j-compatible timeout failure.
 func testBoltTransactionTimeoutWinsBeforeCommit(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	executor := newControlledTransactionExecutor(store)
 	port := startControlledTransactionServer(t, executor)

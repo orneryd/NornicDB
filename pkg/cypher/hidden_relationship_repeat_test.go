@@ -1,5 +1,7 @@
 package cypher
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -35,7 +37,6 @@ func openHiddenRelationshipStorage(t *testing.T, buffered bool) (*storage.Badger
 		DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour,
 	}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = base.Close() })
 	return base, NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"))
 }
 

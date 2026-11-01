@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"errors"
 	"testing"
@@ -10,7 +12,7 @@ import (
 )
 
 func TestEndpointExistenceReadUsesStoredReadContract(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	check := func(id NodeID) {
 		t.Helper()
 		_, want := engine.GetStoredNode(id)

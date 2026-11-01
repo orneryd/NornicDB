@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"testing"
 	"time"
@@ -12,7 +14,7 @@ import (
 func TestSnapshotOverlayQueryNodeVectorModes(t *testing.T) {
 	for _, tc := range lazyEmbeddingCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, time.Hour)
+			b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			b.writeBehind.Close()
 			id := NodeID("test:query")
 			tc.create(t, b, id)

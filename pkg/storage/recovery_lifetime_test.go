@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"os"
@@ -20,12 +22,12 @@ func recoveryOpenStores() int {
 func requireRecoveryStoresClosed(t *testing.T) {
 	t.Helper()
 	before := recoveryOpenStores()
-	t.Cleanup(func() {
-		after := recoveryOpenStores()
-		if after != before {
-			t.Errorf("recovery left stores open after error/cleanup: before=%d after=%d", before, after)
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error {
+		if after := recoveryOpenStores(); after != before {
+			return fmt.Errorf("recovery left stores open after error/cleanup: before=%d after=%d", before, after)
 		}
-	})
+		return nil
+	}))
 }
 
 func TestRecoveryErrorLifetime(t *testing.T) {

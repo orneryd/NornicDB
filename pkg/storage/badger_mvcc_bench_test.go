@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -36,7 +38,7 @@ const mvccBenchRetainedVersions = 4096
 // head-only (MaxVersionsPerKey = 0), under which prior versions aren't
 // archived, so the history and prune benchmarks would read or prune
 // nothing (#731).
-func newMVCCHistoryBenchEngine(b *testing.B) *MemoryEngine {
+func newMVCCHistoryBenchEngine(b *testing.B) (*MemoryEngine, func()) {
 	b.Helper()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory: true,
@@ -44,33 +46,32 @@ func newMVCCHistoryBenchEngine(b *testing.B) *MemoryEngine {
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: mvccBenchRetainedVersions},
 		},
 	}))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(b, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(b, engine)
 	}
 	if err != nil {
 		b.Fatal(err)
 	}
-	return &MemoryEngine{BadgerEngine: engine}
+	return &MemoryEngine{BadgerEngine: engine}, closeEngine
 }
 
-func seedConcurrentPruneBenchEngine(b *testing.B, nodeCount, initialVersions int) *MemoryEngine {
+func seedConcurrentPruneBenchEngine(b *testing.B, nodeCount, initialVersions int) (*MemoryEngine, func()) {
 	b.Helper()
-	engine := newMVCCHistoryBenchEngine(b)
+	engine, closeEngine := newMVCCHistoryBenchEngine(b)
 	for i := 0; i < nodeCount; i++ {
 		id := NodeID(prefixTestID(fmt.Sprintf("bench-prune-concurrent-%03d", i)))
 		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
 		if err != nil {
-			_ = engine.Close()
 			b.Fatal(err)
 		}
 		for version := 2; version <= initialVersions; version++ {
 			if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": version, "node": i}}}); err != nil {
-				_ = engine.Close()
 				b.Fatal(err)
 			}
 		}
 	}
-	return engine
+	return engine, closeEngine
 }
 
 func startConcurrentPruneBenchWriter(engine *MemoryEngine, nodeCount int) func() error {
@@ -131,8 +132,7 @@ func mvccBenchHeadVersion(b *testing.B, engine *MemoryEngine, nodeID NodeID) MVC
 
 func buildMVCCBenchChain(b *testing.B, chainLength int) mvccBenchChain {
 	b.Helper()
-	engine := newMVCCHistoryBenchEngine(b)
-	b.Cleanup(func() { _ = engine.Close() })
+	engine, _ := newMVCCHistoryBenchEngine(b)
 
 	nodeID := NodeID(prefixTestID(fmt.Sprintf("bench-chain-%d", chainLength)))
 	versions := make([]MVCCVersion, 0, chainLength)
@@ -170,8 +170,7 @@ func benchmarkMVCCChainPosition(b *testing.B, chainLength int, selector func([]M
 
 func buildMVCCTombstoneBenchChain(b *testing.B, cycles int) mvccTombstoneBenchChain {
 	b.Helper()
-	engine := newMVCCHistoryBenchEngine(b)
-	b.Cleanup(func() { _ = engine.Close() })
+	engine, _ := newMVCCHistoryBenchEngine(b)
 
 	nodeID := NodeID(prefixTestID(fmt.Sprintf("bench-tombstone-chain-%d", cycles)))
 	liveVersions := make([]MVCCVersion, 0, cycles)
@@ -440,31 +439,25 @@ func BenchmarkBadgerEngine_PruneMVCCVersions(b *testing.B) {
 		b.Run(fmt.Sprintf("versions=%d", versionsPerKey), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				engine := newMVCCHistoryBenchEngine(b)
+				engine, closeEngine := newMVCCHistoryBenchEngine(b)
 				nodeID := NodeID(prefixTestID(fmt.Sprintf("bench-prune-%d-%03d", versionsPerKey, i)))
 				_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
 				if err != nil {
-					_ = engine.Close()
 					b.Fatal(err)
 				}
 				for version := 2; version <= versionsPerKey; version++ {
 					if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": version}}}); err != nil {
-						_ = engine.Close()
 						b.Fatal(err)
 					}
 				}
 				deleted, err := engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 2})
 				if err != nil {
-					_ = engine.Close()
 					b.Fatal(err)
 				}
 				if deleted == 0 {
-					_ = engine.Close()
 					b.Fatal("expected prune to delete versions")
 				}
-				if err := engine.Close(); err != nil {
-					b.Fatal(err)
-				}
+				closeEngine()
 			}
 		})
 	}
@@ -474,7 +467,7 @@ func BenchmarkBadgerEngine_PruneMVCCVersions_WithConcurrentWrites(b *testing.B) 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		engine := seedConcurrentPruneBenchEngine(b, 64, 8)
+		engine, closeEngine := seedConcurrentPruneBenchEngine(b, 64, 8)
 		stopWriter := startConcurrentPruneBenchWriter(engine, 64)
 		time.Sleep(20 * time.Millisecond)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -483,15 +476,12 @@ func BenchmarkBadgerEngine_PruneMVCCVersions_WithConcurrentWrites(b *testing.B) 
 		b.StopTimer()
 		cancel()
 		writerErr := stopWriter()
-		closeErr := engine.Close()
+		closeEngine()
 		if err != nil {
 			b.Fatal(err)
 		}
 		if writerErr != nil {
 			b.Fatal(writerErr)
-		}
-		if closeErr != nil {
-			b.Fatal(closeErr)
 		}
 		b.ReportMetric(float64(deleted), "versions/prune")
 	}

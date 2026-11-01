@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -729,7 +731,7 @@ func TestPolicySchemaTransactionFailures(t *testing.T) {
 			if boundary == "namespace" {
 				namespace = ""
 			}
-			transaction := runtimeFixtureOwner.NamespaceTransaction(t, engine.BeginTransaction, namespace)
+			transaction := runtimeFixtureOwner.NamespaceTransaction(t, engine.BeginTransaction, namespace, ErrTransactionClosed)
 
 			if boundary == "read" {
 				transaction.badgerTx.Discard()

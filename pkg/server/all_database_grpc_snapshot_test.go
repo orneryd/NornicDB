@@ -1,5 +1,7 @@
 package server
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -65,15 +67,16 @@ func TestAllDatabaseGRPCSnapshotsIncludeSystemAdmission(t *testing.T) {
 			description := response.GetSnapshotDescription()
 			require.NotNil(t, description)
 			restored, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(t.TempDir(), "restore")))
+			var closeRestored func()
 			if restored != nil {
-				fixtureowner.Own(t, restored)
+				_, closeRestored = fixtureowner.OwnWithClose(t, restored)
 			}
 			require.NoError(t, err)
 			require.NoError(t, restored.Restore(filepath.Join(cfg.SnapshotDir, "full", description.GetName())))
 			node, err := restored.GetNode("system:grpc-system-sentinel")
 			require.NoError(t, err)
 			require.Equal(t, "review-owned-grpc-system-data", node.Properties["value"])
-			require.NoError(t, restored.Close())
+			closeRestored()
 			t.Logf("public snapshot size=%d; granted artifact contains the system sentinel", description.GetSize())
 		}
 		_, listErr := snapshots.ListFull(caller, &qpb.ListFullSnapshotsRequest{})

@@ -1,8 +1,11 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -88,6 +91,7 @@ func TestRuntimeStrategyTransition_DisabledByDefaultDoesNotScheduleBuild(t *test
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
+	fixtureowner.Own(t, svc)
 	requireHNSWReady(t, svc)
 
 	for i := 0; i < 8; i++ {
@@ -112,6 +116,7 @@ func TestRuntimeStrategy_HNSWDefaultIndexesLiveWrites(t *testing.T) {
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
+	fixtureowner.Own(t, svc)
 	requireHNSWReady(t, svc)
 
 	for i := 0; i < 8; i++ {

@@ -1,5 +1,7 @@
 package nornicdb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -38,14 +40,18 @@ func TestCredentialVoyageEmbeddingSpacePersistence(t *testing.T) {
 		provider, err := embed.NewEmbedder(context.Background(), &embed.Config{Provider: "voyage", APIURL: endpoint.String(), APIKey: "synthetic-key-871429", Model: "voyage-fixture", Dimensions: 2})
 		require.NoError(t, err)
 		dir := t.TempDir()
-		engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+		engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+		var closeEngine func()
+		if engine != nil {
+			_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+		}
 		require.NoError(t, err)
 		node := &storage.Node{ID: "docs:credential-free", Properties: map[string]any{"content": "synthetic document"}}
 		_, err = engine.CreateNode(node)
 		require.NoError(t, err)
 		worker := NewEmbedWorker(provider, &sequenceEmbeddingEngine{Engine: engine, nodes: []*storage.Node{node}}, &EmbedWorkerConfig{NumWorkers: 0, MaxRetries: 1, ChunkSize: 512})
 		require.True(t, worker.processNextBatch())
-		require.NoError(t, engine.Close())
+		closeEngine()
 		engine, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 		require.NoError(t, err)
 		stored, err := engine.GetNode(node.ID)

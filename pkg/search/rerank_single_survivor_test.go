@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"strings"
@@ -32,7 +34,7 @@ func (r keepOneReranker) Rerank(_ context.Context, _ string, candidates []Rerank
 func TestRerankSingleSurvivorAndHeaderBudget(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
-	svc := startRelationshipService(t, engine, nil, nil)
+	svc, _ := startRelationshipService(t, engine, nil, nil)
 	svc.SetReranker(keepOneReranker{keep: "bridge"})
 	opts := DefaultSearchOptions()
 	pool := func() []*graphCandidate {

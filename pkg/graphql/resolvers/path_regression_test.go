@@ -1,7 +1,10 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/internal/testutil"
 	"testing"
 
@@ -11,8 +14,8 @@ import (
 )
 
 func TestGraphQLPathBoundsAndEnumeration(t *testing.T) {
-	db := testDB(t)
-	resolver := NewResolver(db, testutil.DatabaseManager(t, db))
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	resolver := NewResolver(db, testutil.DatabaseManager(t, db, closeDB))
 	qr := &queryResolver{resolver}
 	ctx := context.Background()
 	a := createNodeViaCypher(t, resolver, []string{"PathNode"}, map[string]interface{}{"name": "a"})
@@ -75,8 +78,8 @@ func TestGraphQLPathBoundsAndEnumeration(t *testing.T) {
 }
 
 func TestGraphQLPathOwnerControls(t *testing.T) {
-	db := testDB(t)
-	manager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	manager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, manager)
 	qr := &queryResolver{resolver}
 	ctx := context.Background()

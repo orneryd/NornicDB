@@ -1,6 +1,8 @@
 // Tests for constraint enforcement in storage operations.
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"strings"
 	"testing"
@@ -8,7 +10,6 @@ import (
 
 func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
 	// Add unique constraint
@@ -62,7 +63,6 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 	t.Run("bulk create registers unique values", func(t *testing.T) {
 		// Create a new engine for this test
 		base2 := newTestMemoryEngine(t)
-		defer base2.Close()
 		engine2 := NewNamespacedEngine(base2, "test")
 
 		err := engine2.GetSchema().AddUniqueConstraint("unique_email", "User", "email")
@@ -108,7 +108,6 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 
 	t.Run("bulk create with no constraints succeeds", func(t *testing.T) {
 		base3 := newTestMemoryEngine(t)
-		defer base3.Close()
 		engine3 := NewNamespacedEngine(base3, "test")
 
 		// No constraints - bulk create should work with any data

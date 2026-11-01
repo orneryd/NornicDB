@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"testing"
 	"time"
@@ -41,7 +43,7 @@ func BenchmarkEndpointStoredNodeExistenceReadBuffered(b *testing.B) {
 			name = "pending"
 		}
 		b.Run(name, func(b *testing.B) {
-			engine := newWriteBehindTestEngine(b, time.Hour, writeBehindTestOptions{manualDrain: true})
+			engine, _ := newWriteBehindTestEngine(b, b, time.Hour, writeBehindTestOptions{manualDrain: true})
 			id := NodeID("test:product-12345")
 			node := &Node{ID: id, Labels: []string{"Product"}, Properties: map[string]any{"name": "product 12345", "category": "hardware", "sku": "SKU-12345", "price": 12.5, "stock": int64(25)}}
 			if pending {

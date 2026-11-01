@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sort"
@@ -38,7 +40,7 @@ func (r recordingGraphReranker) Rerank(_ context.Context, _ string, candidates [
 func TestGraphRerankReadsCandidateTextFromStorage(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
-	svc := startRelationshipService(t, engine, nil, nil)
+	svc, _ := startRelationshipService(t, engine, nil, nil)
 	var contents []string
 	svc.SetReranker(recordingGraphReranker{contents: &contents})
 	opts := DefaultSearchOptions()
@@ -106,7 +108,7 @@ func TestGraphRerankRelationshipTextReadsItsPropertyList(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "opted", StartNode: "a", EndNode: "c", Type: "LINK", Properties: map[string]any{"search_text": "why they are linked", "text": "unopted metadata zephyrcensus"}}))
-	svc := startRelationshipService(t, engine, nil, func(s *Service) {
+	svc, _ := startRelationshipService(t, engine, nil, func(s *Service) {
 		s.SetFulltextProperties([]string{"text", "search_text"})
 		s.SetRelationshipFulltextProperties([]string{"search_text"})
 	})

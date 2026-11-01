@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -7,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/contextslot"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"log/slog"
 	"os"
 	"strings"
@@ -26,7 +29,7 @@ import (
 func acceptedSourceOutputObserver(t *testing.T) func(*testing.T, string, []string) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	previous := otel.GetTracerProvider()
@@ -136,7 +139,7 @@ func TestCredentialAcceptedSourceSpanMapping(t *testing.T) {
 	contextslot.Get[cyphertext.CredentialSet](ctx).Source = cyphertext.SourceFor(ctx, query)
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	_, err = executor.executeCompositeCommand(ctx, source.Text, compositeCreateCommand)

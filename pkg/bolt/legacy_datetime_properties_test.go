@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"fmt"
@@ -35,7 +37,6 @@ func TestLegacyDateTimeGraphPropertiesNeo4j526(t *testing.T) {
 		for i, value := range legacyDateTimeCases(t) {
 			t.Run(fmt.Sprintf("%s/%d", protocol.name, i), func(t *testing.T) {
 				inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-				t.Cleanup(func() { require.NoError(t, inner.Close()) })
 				store := storage.NewNamespacedEngine(inner, "datetime")
 				for _, id := range []storage.NodeID{"a", "b"} {
 					_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"DateTimeFixture"}, Properties: map[string]any{"id": string(id), "t": value}})

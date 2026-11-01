@@ -1,5 +1,7 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"github.com/orneryd/nornicdb/pkg/multidb"
 
@@ -12,8 +14,8 @@ import (
 )
 
 func TestStatementCacheFamilyGraphQLDropCycles(t *testing.T) {
-	db := testDB(t)
-	manager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	manager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, manager)
 	var executor *cypher.StorageExecutor
 	fixtureowner.RunCatalogDropCycles(t, 64, "cache_graphql_",

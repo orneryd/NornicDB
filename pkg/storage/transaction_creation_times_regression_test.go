@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"testing"
 	"time"
@@ -23,7 +25,6 @@ func TestTransactionCreationTimesRegression(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				eng := newTestMemoryEngine(t)
-				t.Cleanup(func() { require.NoError(t, eng.Close()) })
 				tx, err := eng.BeginTransaction()
 				require.NoError(t, err)
 				defer tx.Rollback()

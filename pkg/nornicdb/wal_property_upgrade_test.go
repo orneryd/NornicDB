@@ -1,5 +1,7 @@
 package nornicdb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"os"
 	"path/filepath"
@@ -18,7 +20,11 @@ func TestOpenMigratesGenuinePreIdentityWAL(t *testing.T) {
 	dir := fixtureowner.ExtractZip(t, filepath.Join("..", "storage", "testdata", "wal-pre-identity", "release.zip"), "data/")
 	readPersistedStore := func() map[string][]byte {
 		t.Helper()
-		engine, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
+		engine, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
+		var closeEngine func()
+		if engine != nil {
+			_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+		}
 		require.NoError(t, err)
 		entries := make(map[string][]byte)
 		require.NoError(t, engine.View(func(tx *badger.Txn) error {
@@ -34,7 +40,7 @@ func TestOpenMigratesGenuinePreIdentityWAL(t *testing.T) {
 			}
 			return nil
 		}))
-		require.NoError(t, engine.Close())
+		closeEngine()
 		return entries
 	}
 	before := readPersistedStore()

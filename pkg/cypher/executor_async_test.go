@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -259,7 +261,7 @@ func TestExecuteImplicitAsync_CreateSet_RemainsTransactional(t *testing.T) {
 
 	walEngine := storage.NewWALEngine(badgerEngine, wal)
 	asyncBase := walEngine
-	defer asyncBase.Close()
+	fixtureowner.Own(t, asyncBase, wal)
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -582,7 +584,6 @@ func TestBenchmarkMatchCreateDelete_WithBadger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
-	defer badgerEngine.Close()
 
 	// Match production order: Badger -> Namespaced (IDs must be prefixed for Badger).
 	engine := storage.NewNamespacedEngine(badgerEngine, "test")
@@ -716,7 +717,6 @@ func TestBenchmarkMatchCreateDelete_Badger_LargeDataset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
-	defer badgerEngine.Close()
 
 	asyncBase := badgerEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")

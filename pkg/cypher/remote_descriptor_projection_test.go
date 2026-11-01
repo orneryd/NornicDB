@@ -1,7 +1,10 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -38,11 +41,11 @@ func TestDescriptorPublicShowAndBothCatalogBuildersUseSafeViews(t *testing.T) {
 	}
 	manager, err := multidb.NewDatabaseManager(t.Context(), inner, cfg)
 	require.NoError(t, err)
+	fixtureowner.Own(t, manager)
 	t.Cleanup(func() {
 		for _, remote := range remotes {
 			_ = remote.Close()
 		}
-		_ = manager.Close()
 	})
 	engine, err := manager.GetStorage("nornic")
 	require.NoError(t, err)

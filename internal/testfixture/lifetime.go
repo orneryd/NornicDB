@@ -1,10 +1,14 @@
 package testfixture
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"errors"
 	"fmt"
 	"reflect"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -15,6 +19,82 @@ type lifetimeEntry struct {
 	resource    Closer
 	closedError error
 	site        string
+}
+
+// releaseOutcomes holds each owner's release outcome until its last cleanup.
+var releaseOutcomes sync.Map
+
+// releaseOutcome is the state of the releases one owner runs. A tracked
+// lifetime may be released by a wrapper, a release function or the resource
+// itself, and only the test knows which. The audit therefore reads the owner's
+// outcome: after any failed or unfinished release, the owner has reported it,
+// and probing or closing again could block on the state that release holds.
+type releaseOutcome struct {
+	mu                sync.Mutex
+	started, finished int
+	failed            bool
+}
+
+// outcomeOf returns owner's outcome, registering its removal on first use, so
+// the removal runs after every cleanup registered later.
+func outcomeOf(owner Owner) *releaseOutcome {
+	if !reflect.TypeOf(owner).Comparable() {
+		return &releaseOutcome{}
+	}
+	if outcome, ok := releaseOutcomes.Load(owner); ok {
+		return outcome.(*releaseOutcome)
+	}
+	outcome, loaded := releaseOutcomes.LoadOrStore(owner, &releaseOutcome{})
+	if !loaded {
+		owner.Cleanup(func() {
+			releaseOutcomes.Delete(owner)
+			outcome.(*releaseOutcome).passToAncestors(owner)
+		})
+	}
+	return outcome.(*releaseOutcome)
+}
+
+// passToAncestors hands a failed or unfinished release to the enclosing tests.
+// A lifetime tracked on a parent test may be released on a subtest, whose
+// cleanups all finish before the parent's audit runs. A subtest's failure also
+// fails its parents, so this suppresses audits only on tests that have failed.
+func (outcome *releaseOutcome) passToAncestors(owner Owner) {
+	named, ok := owner.(interface{ Name() string })
+	if !ok || !outcome.reported() {
+		return
+	}
+	releaseOutcomes.Range(func(key, value any) bool {
+		if ancestor, ok := key.(interface{ Name() string }); ok && strings.HasPrefix(named.Name(), ancestor.Name()+"/") {
+			inherited := value.(*releaseOutcome)
+			inherited.mu.Lock()
+			inherited.failed = true
+			inherited.mu.Unlock()
+		}
+		return true
+	})
+}
+
+// closeOwned closes resource for Own and records the outcome for the audits.
+func closeOwned(owner Owner, resource Closer) error {
+	outcome := outcomeOf(owner)
+	outcome.mu.Lock()
+	outcome.started++
+	outcome.mu.Unlock()
+	err := resource.Close()
+	outcome.mu.Lock()
+	outcome.finished++
+	if err != nil {
+		outcome.failed = true
+	}
+	outcome.mu.Unlock()
+	return err
+}
+
+// reported is true when a release failed or has not finished.
+func (outcome *releaseOutcome) reported() bool {
+	outcome.mu.Lock()
+	defer outcome.mu.Unlock()
+	return outcome.failed || outcome.started != outcome.finished
 }
 
 // Track registers a fixture with its actual testing.T, B or F. Owner remains
@@ -118,7 +198,8 @@ func track[T Closer](owner Owner, resource T, closedError error, site string) T 
 		return resource
 	}
 	entry := lifetimeEntry{resource: resource, closedError: closedError, site: site}
-	owner.Cleanup(func() { entry.audit(owner) })
+	outcomeOf(owner)
+	owner.Cleanup(func() { owner.Helper(); entry.audit(owner) })
 	return resource
 }
 
@@ -135,6 +216,9 @@ func (entry lifetimeEntry) isClosed() (bool, bool) {
 
 func (entry lifetimeEntry) audit(owner Owner) {
 	owner.Helper()
+	if outcomeOf(owner).reported() {
+		return
+	}
 	closed, supported := entry.isClosed()
 	if closed {
 		return
@@ -147,9 +231,5 @@ func (entry lifetimeEntry) audit(owner Owner) {
 	if closeErr != nil {
 		message += fmt.Sprintf("; disposal failed: %v", closeErr)
 	}
-	if checked, ok := owner.(interface{ Errorf(string, ...any) }); ok {
-		checked.Errorf("%s", message)
-		return
-	}
-	panic(message)
+	owner.Errorf("%s", message)
 }

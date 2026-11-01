@@ -1,7 +1,10 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"github.com/orneryd/nornicdb/internal/contextslot"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -15,7 +18,7 @@ func TestFoundationNativeDropAliasIdentity(t *testing.T) {
 		t.Run(alias, func(t *testing.T) {
 			manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, manager.Close()) })
+			fixtureowner.Own(t, manager)
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "drop_names", []multidb.ConstituentRef{
 				{Alias: alias, DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 				{Alias: "kept", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
@@ -40,7 +43,7 @@ func TestFoundationNativeQuotedNames(t *testing.T) {
 		config.RemoteCredentialEncryptionKey = "foundation-native-name-key"
 		manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), config)
 		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, manager.Close()) })
+		fixtureowner.Own(t, manager)
 		executor := NewStorageExecutor(newTestMemoryEngine(t))
 		executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 		ctx := contextslot.Ensure[cyphertext.CredentialSet](t.Context())

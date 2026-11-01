@@ -1,9 +1,12 @@
 package main
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 const solSecret = "synthetic-sol-review-credential-62487319"
@@ -74,14 +79,18 @@ func solStart(t *testing.T, bin string, env []string, args ...string) {
 		f.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
+	// Own stops the process, then reports a log that disclosed the credential.
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		cancel()
-		f.Close()
+		closeErr := f.Close()
 		data, _ := os.ReadFile(f.Name())
-		solAbsent(t, "process logs", data)
-	})
+		if bytes.Contains(data, []byte(solSecret)) {
+			return errors.Join(closeErr, errors.New("process logs disclosed synthetic credential; output withheld"))
+		}
+		return closeErr
+	}))
 }
 
 func solGet(t *testing.T, target string) []byte {

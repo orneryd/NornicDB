@@ -1,5 +1,7 @@
 package search
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -19,7 +21,6 @@ import (
 // construction paused and exercise the exact fallback instead.
 func requireHNSWReady(t testing.TB, svc *Service) {
 	t.Helper()
-	t.Cleanup(func() { _ = svc.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, err := svc.getOrCreateHNSWIndex(ctx, svc.VectorIndexDimensions())
@@ -245,7 +246,6 @@ func TestHNSWCancelledPreparationDoesNotStartCPUFallback(t *testing.T) {
 
 func TestHNSWBuildDefersSnapshotWhileVectorsAreReplaced(t *testing.T) {
 	svc := NewService(newNamespacedEngine(t), 3, nil)
-	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "old", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 	svc.hnswVectorsChanging.Store(true)
 	pipeline, err := svc.getOrCreateVectorPipeline(context.Background())
@@ -256,6 +256,7 @@ func TestHNSWBuildDefersSnapshotWhileVectorsAreReplaced(t *testing.T) {
 	require.NoError(t, svc.RemoveNode("old"))
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "new", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
 	svc.hnswVectorsChanging.Store(false)
+	fixtureowner.Own(t, svc)
 	requireHNSWReady(t, svc)
 	results, err := svc.hnswIndex.Search(context.Background(), []float32{0, 1, 0}, 5, -1)
 	require.NoError(t, err)

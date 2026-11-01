@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"testing"
@@ -15,7 +17,7 @@ func TestReplicationPropertyBindingsUseNames(t *testing.T) {
 		require.NoError(t, err)
 		a, err := NewStorageAdapterWithWAL(b, t.TempDir())
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
+		fixtureowner.Own(t, a)
 		return b, a
 	}
 	source, leader := open()

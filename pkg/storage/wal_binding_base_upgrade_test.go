@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"os"
 	"path/filepath"
@@ -20,14 +22,18 @@ func TestWALBindingGenuinePreIdentityUpgrade(t *testing.T) {
 		t.Run(fixture, func(t *testing.T) {
 			root := fixtureowner.ExtractZip(t, filepath.Join("testdata", "wal-pre-identity", fixture+".zip"), "")
 			dataDir, walDir := filepath.Join(root, "data"), filepath.Join(root, "wal")
-			old, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dataDir).WithReadOnly(true).WithLogger(nil)))
+			old, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dataDir).WithReadOnly(true).WithLogger(nil)))
+			var closeOld func()
+			if old != nil {
+				_, closeOld = fixtureowner.OwnWithClose(t, old)
+			}
 			require.NoError(t, err)
 			require.NoError(t, old.View(func(tx *badger.Txn) error {
 				_, err := tx.Get(walPropertyIdentityKey)
 				require.ErrorIs(t, err, badger.ErrKeyNotFound)
 				return nil
 			}))
-			require.NoError(t, old.Close())
+			closeOld()
 			path := filepath.Join(walDir, "wal.log")
 			raw, err := os.ReadFile(path)
 			require.NoError(t, err)
@@ -37,7 +43,7 @@ func TestWALBindingGenuinePreIdentityUpgrade(t *testing.T) {
 			w, err := NewWAL(walDir, DefaultWALConfig())
 			require.ErrorIs(t, err, ErrWALUnsupportedVersion)
 			require.Nil(t, w)
-			b := reviewBindingEngine(t, dataDir)
+			b, closeB := reviewBindingEngine(t, dataDir)
 			before, err := b.GetNode("upgrade:a")
 			require.NoError(t, err)
 			require.Contains(t, before.Properties, "value")
@@ -50,9 +56,8 @@ func TestWALBindingGenuinePreIdentityUpgrade(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, before.Properties, after.Properties)
 			assertPropertyDictionaryBijection(t, b)
-			require.NoError(t, b.Close())
-			reopened := reviewBindingEngine(t, dataDir)
-			defer reopened.Close()
+			closeB()
+			reopened, _ := reviewBindingEngine(t, dataDir)
 			persisted, err := reopened.GetNode("upgrade:a")
 			require.NoError(t, err)
 			require.Equal(t, before.Properties, persisted.Properties)

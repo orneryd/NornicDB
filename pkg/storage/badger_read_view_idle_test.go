@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -19,7 +21,7 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 				name = mode + "/long-lived"
 			}
 			t.Run(name, func(t *testing.T) {
-				b := newWriteBehindTestEngine(t, time.Hour)
+				b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 				b.writeBehind.Close()
 				_, err := b.CreateNode(&Node{ID: "test:holder", Labels: []string{"L"}})
 				require.NoError(t, err)
@@ -116,7 +118,7 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 			name = "retired"
 		}
 		t.Run(name, func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, time.Hour)
+			b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			b.writeBehind.Close()
 			for _, id := range []NodeID{"test:a", "test:b"} {
 				_, err := b.CreateNode(&Node{ID: id})

@@ -15,6 +15,8 @@
 //	both with a single BatchGetNodes call.
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -32,7 +34,6 @@ import (
 func newFilterTestEngine(tb testing.TB) storage.Engine {
 	tb.Helper()
 	eng := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	tb.Cleanup(func() { eng.Close() })
 	return eng
 }
 

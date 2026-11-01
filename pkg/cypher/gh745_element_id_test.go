@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // gh745_element_id_test.go — regression tests for #745: element ids must
 // identify the entity's own database on every route. Section 3: an entity
 // returned through a composite subquery keeps its constituent's identity.
@@ -19,7 +21,7 @@ func TestGh745_CompositeSubqueryElementIDNamesConstituent(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "pcomp_other"}))
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "pcomp", []multidb.ConstituentRef{

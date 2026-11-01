@@ -1,10 +1,13 @@
 package search
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"math"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +23,7 @@ func quantizationCachedService(t *testing.T) *Service {
 	_, err := store.CreateNode(&storage.Node{ID: "one", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}})
 	require.NoError(t, err)
 	svc := NewService(store, 4, nil)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	fixtureowner.Own(t, svc)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.NotNil(t, svc.resultCache)
 	return svc

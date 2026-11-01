@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"fmt"
@@ -16,15 +18,15 @@ func TestCatalogRegistrationSnapshotReopenConsistency(t *testing.T) {
 		for _, unrelated := range []bool{false, true} {
 			t.Run(fmt.Sprintf("reopen=%v/unrelated=%v", reopen, unrelated), func(t *testing.T) {
 				dir := t.TempDir()
-				open := func() *DatabaseManager {
+				open := func() (*DatabaseManager, func()) {
 					native, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
 					require.NoError(t, err)
 					manager, err := NewDatabaseManager(t.Context(), native, nil)
 					require.NoError(t, err)
-					t.Cleanup(func() { _ = manager.Close() })
-					return manager
+					_, closeManager := fixtureowner.OwnWithClose(t, manager)
+					return manager, closeManager
 				}
-				manager := open()
+				manager, closeManager := open()
 				for _, database := range []string{"db1", "db2"} {
 					require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: database}))
 					engine, err := manager.GetStorage(database)
@@ -67,8 +69,8 @@ func TestCatalogRegistrationSnapshotReopenConsistency(t *testing.T) {
 					assert.Equal(t, admitted, stored(), "another catalog mutation must not drop hidden registrations")
 				}
 				if reopen {
-					require.NoError(t, manager.Close())
-					manager = open()
+					closeManager()
+					manager, closeManager = open()
 					assert.Equal(t, admitted, stored(), "reopening retains full stored state")
 				}
 				view, err := manager.GetStorage("cmp.winner")

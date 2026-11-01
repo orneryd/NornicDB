@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -7,7 +9,7 @@ import (
 )
 
 func TestWriteBehindCountsDuringCommitPublication(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	type reading struct {
 		name  string
 		value int64

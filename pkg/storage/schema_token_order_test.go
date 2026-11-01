@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -75,8 +77,9 @@ func TestSchemaTokenOrderConcurrent(t *testing.T) {
 func TestSchemaTokenOrderReloadAndNamespaceIsolation(t *testing.T) {
 	path := t.TempDir()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 	first := NewNamespacedEngine(engine, "first")
@@ -87,7 +90,7 @@ func TestSchemaTokenOrderReloadAndNamespaceIsolation(t *testing.T) {
 	require.NoError(t, first.DeleteEdge("y"))
 	require.NoError(t, first.DeleteEdge("x"))
 	require.NoError(t, first.DeleteNode("b"))
-	require.NoError(t, engine.Close())
+	closeEngine()
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })

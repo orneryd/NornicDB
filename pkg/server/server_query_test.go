@@ -1,5 +1,7 @@
 package server
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -115,19 +117,12 @@ func TestHandleOpenTransaction_CompositeRemoteOpenSucceeds(t *testing.T) {
 	server, auth := setupTestServer(t)
 	token := getAuthToken(t, auth, "admin")
 
-	var remoteEngines []storage.Engine
-	t.Cleanup(func() {
-		for _, engine := range remoteEngines {
-			_ = engine.Close()
-		}
-	})
 	dbManager, err := multidb.NewDatabaseManager(t.Context(), server.db.GetBaseStorageForManager(), &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(_ multidb.ConstituentRef, authToken string) (storage.Engine, error) {
 			_ = authToken
 			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			remoteEngines = append(remoteEngines, engine)
 			return engine, nil
 		},
 	})
@@ -224,19 +219,12 @@ func TestDatabaseScopedExecutorAuthBranches(t *testing.T) {
 	require.False(t, server.databaseHasRemoteConstituent("missing_db"))
 
 	var tokenSeen string
-	var remoteEngines []storage.Engine
-	t.Cleanup(func() {
-		for _, engine := range remoteEngines {
-			_ = engine.Close()
-		}
-	})
 	dbManager, err := multidb.NewDatabaseManager(t.Context(), server.db.GetBaseStorageForManager(), &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(_ multidb.ConstituentRef, authToken string) (storage.Engine, error) {
 			tokenSeen = authToken
 			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			remoteEngines = append(remoteEngines, engine)
 			return engine, nil
 		},
 	})

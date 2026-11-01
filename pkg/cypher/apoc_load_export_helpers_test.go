@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/csv"
@@ -125,7 +127,6 @@ func TestApocLoadExportHelpers_CallApocLoadJsonArray_Branches(t *testing.T) {
 
 func TestApocLoadExportHelpers_CallApocImportJson_FromFile(t *testing.T) {
 	eng := newTestMemoryEngine(t)
-	defer eng.Close()
 	e := NewStorageExecutor(eng)
 	e.SetAllowLocalAPOCFileAccess(true)
 
@@ -154,7 +155,6 @@ func TestApocLoadExportHelpers_CallApocImportJson_FromFile(t *testing.T) {
 
 func TestApocLoadExportHelpers_LoadJsonFromURL_AndQueryExports(t *testing.T) {
 	eng := newTestMemoryEngine(t)
-	defer eng.Close()
 	e := NewStorageExecutor(eng)
 	e.SetAllowLocalAPOCFileAccess(true)
 	e.SetAllowRemoteAPOCURLAccess(true)

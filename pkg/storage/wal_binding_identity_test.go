@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"fmt"
@@ -17,7 +19,7 @@ func TestWALPropertyIdentityForeignAndRestoreRotation(t *testing.T) {
 	for _, mode := range []string{"matching-import", "snapshot", "native-restore"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
-			b := reviewBindingEngine(t, dir)
+			b, closeB := reviewBindingEngine(t, dir)
 			_, err := b.CreateNode(&Node{ID: "perf:seed", Properties: map[string]any{"property_000": int64(0)}})
 			require.NoError(t, err)
 			before := b.walPropertySource.identity
@@ -44,8 +46,8 @@ func TestWALPropertyIdentityForeignAndRestoreRotation(t *testing.T) {
 			require.NotEqual(t, before, after)
 			require.True(t, b.walPropertySource.foreign)
 			assertPropertyDictionaryBijection(t, b)
-			require.NoError(t, b.Close())
-			b = reviewBindingEngine(t, dir)
+			closeB()
+			b, closeB = reviewBindingEngine(t, dir)
 			require.Equal(t, after, b.walPropertySource.identity)
 			require.True(t, b.walPropertySource.foreign)
 			assertPropertyDictionaryBijection(t, b)

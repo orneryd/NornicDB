@@ -1,7 +1,10 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"testing"
 
@@ -13,8 +16,8 @@ import (
 )
 
 func TestSelectedAliasScopeDirectReads(t *testing.T) {
-	db := testDB(t)
-	manager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	manager := testutil.DatabaseManager(t, db, closeDB)
 	require.NoError(t, manager.CreateAlias(t.Context(), "selected_alias", "nornic"))
 	_, err := db.GetStorage().CreateNode(&storage.Node{ID: "alias-seed", Labels: []string{"Seed"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 	require.NoError(t, err)
@@ -60,8 +63,8 @@ func TestSelectedAliasScopeDirectReads(t *testing.T) {
 }
 
 func TestSelectedAliasSubscriptionsObserveRevocation(t *testing.T) {
-	db := testDB(t)
-	manager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	manager := testutil.DatabaseManager(t, db, closeDB)
 	require.NoError(t, manager.CreateAlias(t.Context(), "selected_alias", "nornic"))
 	resolver := NewResolver(db, manager)
 	subscriptions := resolver.Subscription()

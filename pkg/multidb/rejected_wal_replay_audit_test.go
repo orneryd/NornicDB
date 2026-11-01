@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -48,7 +50,6 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 			require.NoError(t, manager.Close())
 			recovered, _, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(dir, ""))
 			require.NoError(t, err)
-			defer recovered.Close()
 			if entity == "node" {
 				n, e := storage.GetStoredNode(recovered, storage.NodeID(db+":n"))
 				require.NoError(t, e)

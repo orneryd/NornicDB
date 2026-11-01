@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -27,7 +29,6 @@ func TestTransactionStorageWrapper_PrefixHelpers(t *testing.T) {
 
 func TestTransactionStorageWrapper_CreateGetDelete_WithNamespace(t *testing.T) {
 	eng := newTestMemoryEngine(t)
-	defer eng.Close()
 	tx, err := eng.BeginTransaction()
 	require.NoError(t, err)
 
@@ -101,7 +102,6 @@ func TestTransactionStorageWrapper_NamespaceIsolation(t *testing.T) {
 
 func TestTransactionStorageWrapper_BulkOps_AndCounts(t *testing.T) {
 	eng := newTestMemoryEngine(t)
-	defer eng.Close()
 
 	// Seed underlying storage first so the transaction snapshot can read/delete them.
 	_, err := eng.CreateNode(&storage.Node{ID: "test:r1", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
@@ -177,7 +177,6 @@ func TestTransactionStorageWrapper_BulkOps_AndCounts(t *testing.T) {
 
 func TestTransactionStorageWrapper_BulkOps_WithNamespace(t *testing.T) {
 	eng := newTestMemoryEngine(t)
-	defer eng.Close()
 
 	tx, err := eng.BeginTransaction()
 	require.NoError(t, err)
@@ -214,7 +213,6 @@ func TestTransactionStorageWrapper_BulkOps_WithNamespace(t *testing.T) {
 
 func TestTransactionStorageWrapper_BulkDeleteEdges_WithNamespaceInvalidatesPreloadedCaches(t *testing.T) {
 	eng := newTestMemoryEngine(t)
-	defer eng.Close()
 
 	ns := storage.NewNamespacedEngine(eng, "tenant")
 	_, err := ns.CreateNode(&storage.Node{ID: "a", Labels: []string{"Entity"}})
@@ -266,7 +264,6 @@ func TestTransactionStorageWrapper_ToUserNode_NilSafe(t *testing.T) {
 
 func TestTransactionStorageWrapper_BulkDelete_ErrorPaths(t *testing.T) {
 	eng := newTestMemoryEngine(t)
-	defer eng.Close()
 
 	tx, err := eng.BeginTransaction()
 	require.NoError(t, err)
@@ -283,7 +280,6 @@ func TestTransactionStorageWrapper_BulkDelete_ErrorPaths(t *testing.T) {
 
 func TestTransactionStorageWrapper_BulkCreate_ErrorPaths(t *testing.T) {
 	eng := newTestMemoryEngine(t)
-	defer eng.Close()
 
 	tx, err := eng.BeginTransaction()
 	require.NoError(t, err)

@@ -1,7 +1,10 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/google/uuid"
@@ -18,8 +21,8 @@ import (
 // read on it.
 func TestSearchAndSimilarReadTheSelectedDatabase(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 	nr := &nodeResolver{resolver}
@@ -79,8 +82,8 @@ func TestSearchAndSimilarReadTheSelectedDatabase(t *testing.T) {
 // cover each constituent.
 func TestSearchAndSimilarRefuseCompositeDatabase(t *testing.T) {
 	ctx := context.Background()
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 	nr := &nodeResolver{resolver}

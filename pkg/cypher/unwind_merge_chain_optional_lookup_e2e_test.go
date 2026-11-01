@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -15,9 +17,7 @@ func newTestBadgerNamespacedStore(t *testing.T) storage.Engine {
 	t.Helper()
 	baseStore, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, baseStore.Close())
-	})
+	fixtureowner.Own(t, baseStore)
 	return storage.NewNamespacedEngine(baseStore, "test")
 }
 
@@ -32,10 +32,7 @@ func newTestServerLikeNamespacedStore(t *testing.T) storage.Engine {
 	require.NoError(t, err)
 	walStore := storage.NewWALEngine(baseStore, wal)
 	asyncStore := walStore
-	t.Cleanup(func() {
-		require.NoError(t, wal.Close())
-		require.NoError(t, asyncStore.Close())
-	})
+	fixtureowner.Own(t, asyncStore, wal)
 	return storage.NewNamespacedEngine(asyncStore, "test")
 }
 

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"fmt"
@@ -13,9 +15,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 )
 
-// This fixture is copied unchanged onto the actual release base by the remote
-// compatibility driver. All data operations use APIs present on that base. The new
-// head's test adapter substitutes its constructor entry point for own-WAL reads.
+// The compatibility driver exercises these public data operations across release
+// versions. Fixture ownership supplies teardown. The current-head test adapter
+// selects constructor-based recovery for reads of the database's own WAL.
 var walDowngradeRecovery = RecoverBufferedCommits
 
 func TestWALPublicDowngradeFixture(t *testing.T) {
@@ -107,7 +109,7 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 			}
 		}
 	}
-	journal := NewWALEngine(b, w)
+	_, closeJournal := fixtureowner.OwnWithClose(t, NewWALEngine(b, w))
 	if strings.HasPrefix(mode, "write") && mode != "write-clean-foreign" || mode == "old-update" {
 		value := int64(2)
 		if mode == "old-update" {
@@ -134,12 +136,12 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 			os.Exit(23)
 		}
 	}
-	check(journal.Close())
+	closeJournal()
 }
 
 // A synchronous native restore still invalidates the old dictionary authority.
 // This case deliberately performs no snapshot compaction before clean shutdown.
-// The remote driver copies this fixture unchanged onto the old reader too.
+// The synchronous restore workload also exercises the old reader.
 func walDowngradeSynchronousRestore(t *testing.T, dir, mode string, cfg *WALConfig) {
 	t.Helper()
 	check := func(err error) {
@@ -150,20 +152,21 @@ func walDowngradeSynchronousRestore(t *testing.T, dir, mode string, cfg *WALConf
 	}
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store"), WriteBehind: false}))
 	check(err)
-	t.Cleanup(func() { _ = b.Close() })
 	w, err := NewWAL(filepath.Join(dir, "wal"), cfg)
 	check(err)
-	t.Cleanup(func() { _ = w.Close() })
-	journal := NewWALEngine(b, w)
+	journal, closeJournal := fixtureowner.OwnWithClose(t, NewWALEngine(b, w))
 	if strings.HasPrefix(mode, "write-") {
-		source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "source"), WriteBehind: false}))
+		source, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "source"), WriteBehind: false}))
+		var closeSource func()
+		if source != nil {
+			_, closeSource = fixtureowner.OwnWithClose(t, source)
+		}
 		check(err)
-		t.Cleanup(func() { _ = source.Close() })
 		_, err = source.CreateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2), "beta": "sync"}})
 		check(err)
 		backup := filepath.Join(dir, "native.backup")
 		check(source.Backup(backup))
-		check(source.Close())
+		closeSource()
 		check(b.Restore(backup))
 		_, err = journal.CreateNode(&Node{ID: "upgrade:sync-marker", Properties: map[string]any{"after": true}})
 		check(err)
@@ -183,7 +186,7 @@ func walDowngradeSynchronousRestore(t *testing.T, dir, mode string, cfg *WALConf
 		fmt.Println("WAL_COMPAT_CRASH_AFTER_SYNC_RESTORE")
 		os.Exit(23)
 	}
-	check(journal.Close())
+	closeJournal()
 }
 
 func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir string) {
@@ -202,7 +205,7 @@ func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir s
 	check(source.FlushWriteBehind(nil))
 	wal, err := NewWAL(logDir, DefaultWALConfig())
 	check(err)
-	journal := NewWALEngine(source, wal)
+	_, closeJournal := fixtureowner.OwnWithClose(t, NewWALEngine(source, wal))
 	tx, err := source.BeginTransaction()
 	check(err)
 	check(tx.SetNamespace("upgrade"))
@@ -212,7 +215,7 @@ func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir s
 	if !tx.AcknowledgedBuffered() {
 		t.Fatal("foreign fixture did not use a buffered record")
 	}
-	check(journal.Close())
+	closeJournal()
 	result, _, err := RecoverIntoEngine(destination, logDir, "")
 	check(err)
 	if result.Applied != 1 || result.Failed != 0 {

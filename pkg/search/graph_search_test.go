@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -17,7 +19,7 @@ func TestSearchGraph(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
 	embed := &countingEmbed{}
-	svc := startRelationshipService(t, engine, embed.embed, nil)
+	svc, _ := startRelationshipService(t, engine, embed.embed, nil)
 	waitRelationshipVectors(t, svc, 2)
 	for _, node := range []*storage.Node{
 		{ID: "span-node", Labels: []string{"Note"}, Properties: map[string]any{"content": "a span"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}},

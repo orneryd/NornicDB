@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -205,7 +207,7 @@ func TestEdgeTypeCounts_TransactionPaths(t *testing.T) {
 }
 
 func TestEdgeTypeCounts_ReopenRebuildsDrift(t *testing.T) {
-	engine, dir := createTestBadgerEngineOnDisk(t)
+	engine, dir, closeEngine := createTestBadgerEngineOnDisk(t)
 	seedEdgeCountNodes(t, engine, "a", "b")
 	require.NoError(t, engine.CreateEdge(testEdge("e1", "a", "b", "KNOWS")))
 
@@ -222,7 +224,7 @@ func TestEdgeTypeCounts_ReopenRebuildsDrift(t *testing.T) {
 		return txn.Delete(edgeTypeCountReadyKey)
 	})
 	require.NoError(t, err)
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)

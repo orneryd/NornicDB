@@ -1,8 +1,11 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 // Author: credentials lane (Codex). Public administration identity regression;
 // grammar selection must preserve the existing procedure mode contract.
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -13,7 +16,7 @@ import (
 func TestCompositeAdministrationProcedureModes(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "system"))
 	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	for _, c := range []struct {

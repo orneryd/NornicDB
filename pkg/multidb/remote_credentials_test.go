@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -100,7 +102,6 @@ func TestIsCredentialFreeSimpleHTTPURL(t *testing.T) {
 
 func TestPrecomputedAliasStorageLookupDoesNotAllocate(t *testing.T) {
 	remote := runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer remote.Close()
 	manager := &DatabaseManager{
 		databases: map[string]*DatabaseInfo{
 			"probe": &DatabaseInfo{Type: "composite", Constituents: []ConstituentRef{{Alias: "remote", DatabaseName: "remote", Type: "remote", URI: "http://example.test", AuthMode: "user_password", User: "fixture-user", Password: "fixture-password"}}},

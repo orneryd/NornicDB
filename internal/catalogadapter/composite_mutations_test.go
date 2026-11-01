@@ -1,5 +1,7 @@
 package catalogadapter
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -61,7 +63,7 @@ func TestCatalogRetainConversionAndPublication(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	adapter := Catalog{Manager: manager}
 	ref := multidb.ConstituentRef{Alias: "first", DatabaseName: "nornic", Type: "local", AccessMode: "read"}
 	require.EqualError(t, adapter.CreateCompositeDatabase(t.Context(), "invalid", []interface{}{ref, 123}), "invalid constituent type at index 1")

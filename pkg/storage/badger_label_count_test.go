@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/binary"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -104,8 +106,9 @@ func TestBadgerEngine_LabelCountMetadataRebuildsOnReopenWhenDriftDetected(t *tes
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 	_, err = engine1.CreateNode(&Node{ID: "db1:n1", Labels: []string{"Person", "Employee"}})
@@ -121,7 +124,7 @@ func TestBadgerEngine_LabelCountMetadataRebuildsOnReopenWhenDriftDetected(t *tes
 		}
 		return txn.Set(labelCountReadyKey, []byte{1})
 	}))
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)

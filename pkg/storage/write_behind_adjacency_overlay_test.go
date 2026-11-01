@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -61,7 +63,7 @@ func readAdjacencySnapshot(t *testing.T, engine *BadgerEngine, nodeIDs []NodeID)
 // between-index lookups and every edge counter before the flush lands them,
 // and the pre-flush view must equal the post-flush view.
 func TestWriteBehind_AdjacencyOverlayMatchesFlushedView(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	const users = 50
 	const friends = 40
@@ -119,7 +121,7 @@ func TestWriteBehind_AdjacencyOverlayMatchesFlushedView(t *testing.T) {
 // creating the same relationship through GetEdgeBetween/GetEdgesBetween
 // twice, while every write is buffered, must leave exactly one edge.
 func TestWriteBehind_MergeDoesNotDuplicateBufferedEdges(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	bufferedCreate(t, engine, &Node{ID: "test:a", Labels: []string{"User"}})
 	bufferedCreate(t, engine, &Node{ID: "test:b", Labels: []string{"User"}})
 	edge := &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "Friend"}
@@ -144,7 +146,7 @@ func TestWriteBehind_MergeDoesNotDuplicateBufferedEdges(t *testing.T) {
 // deleting a node whose relationships are all buffered must remove every
 // incident edge before the flush, and leave no orphans after it.
 func TestWriteBehind_DetachDeleteLeavesNoOrphans(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	bufferedCreate(t, engine, &Node{ID: "test:a", Labels: []string{"User"}})
 	bufferedCreate(t, engine, &Node{ID: "test:b", Labels: []string{"User"}})
 	bufferedCreate(t, engine, &Node{ID: "test:c", Labels: []string{"User"}})

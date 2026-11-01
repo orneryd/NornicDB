@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
@@ -10,20 +12,25 @@ import (
 
 func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	dir := t.TempDir()
-	open := func() (*BadgerEngine, *WAL) {
+	open := func() (*BadgerEngine, *WAL, func()) {
 		b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+		var closeEngine func()
 		if b != nil {
-			fixtureowner.Own(t, b)
+			_, closeEngine = fixtureowner.OwnWithClose(t, b)
 		}
 		require.NoError(t, err)
 		cfg := DefaultWALConfig()
 		cfg.Dir = filepath.Join(dir, "wal")
 		w, err := NewWAL(cfg.Dir, cfg)
+		var closeFixture func()
+		if w != nil {
+			_, closeFixture = fixtureowner.OwnWithClose(t, w, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+		}
 		require.NoError(t, err)
 		b.SetBufferedCommitWAL(w)
-		return b, w
+		return b, w, closeFixture
 	}
-	b, w := open()
+	b, w, closeFixture := open()
 	tx, err := b.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
@@ -64,9 +71,8 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 		}
 	}
 	require.Len(t, versions, 3)
-	crashClose(t, b, w)
-	b, w = open()
-	t.Cleanup(func() { _ = w.Close(); _ = b.Close() })
+	crashClose(t, b, fixtureowner.CloseFunc(func() error { closeFixture(); return nil }))
+	b, w, closeFixture = open()
 	count, err := RecoverBufferedCommits(b, w)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
@@ -89,8 +95,7 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	clear(b.edgeCache)
 	b.edgeCacheMu.Unlock()
 	check("evicted")
-	require.NoError(t, w.Close())
-	require.NoError(t, b.Close())
-	b, w = open()
+	closeFixture()
+	b, w, _ = open()
 	check("reopened")
 }

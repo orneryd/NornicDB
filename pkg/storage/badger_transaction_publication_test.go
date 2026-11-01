@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync"
@@ -194,7 +198,7 @@ func (c *publicationContextCheckpoint) Err() error {
 }
 
 func TestPublishCommitRechecksDetachedOwnershipUnderLock(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: true})
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{synchronous: true})
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	defer func() {
@@ -224,7 +228,7 @@ func TestPublishCommitRechecksDetachedOwnershipUnderLock(t *testing.T) {
 func TestClientLifecycleRechecksDetachedOwnershipUnderLock(t *testing.T) {
 	for _, operation := range []string{"active", "rollback"} {
 		t.Run(operation, func(t *testing.T) {
-			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: true})
+			engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{synchronous: true})
 			tx, err := engine.BeginTransaction()
 			require.NoError(t, err)
 			t.Cleanup(func() {

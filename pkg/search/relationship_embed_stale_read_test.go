@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync"
@@ -45,7 +47,7 @@ func TestRelationshipEmbedsTheIndexedVersionOverAStaleRead(t *testing.T) {
 		}
 		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	}
-	svc := startRelationshipService(t, engine, embed, nil)
+	svc, _ := startRelationshipService(t, engine, embed, nil)
 	<-svc.relationshipSearch().ready
 
 	original, err := engine.Engine.GetEdge("r1")
@@ -85,7 +87,7 @@ func TestRelationshipEmbeddingSupersededByALaterWrite(t *testing.T) {
 		}
 		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	}
-	svc := startRelationshipService(t, engine, embed, nil)
+	svc, _ := startRelationshipService(t, engine, embed, nil)
 	rs := svc.relationshipSearch()
 	<-rs.ready
 

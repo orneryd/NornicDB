@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -19,7 +21,7 @@ func TestSearchRelationshipsWhereFiltersBeforeLimit(t *testing.T) {
 		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("x%02d", i)), StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"reason": "zephyrine"}}))
 	}
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "keep", StartNode: "c", EndNode: "a", Type: "CITES", Properties: map[string]any{"reason": "zephyrine with a much longer explanation of the river crossing and its history"}}))
-	svc := startRelationshipService(t, engine, nil, nil)
+	svc, _ := startRelationshipService(t, engine, nil, nil)
 
 	var seen []string
 	fromC := func(edge *storage.Edge, start, end *storage.Node) bool {

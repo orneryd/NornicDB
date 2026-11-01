@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -26,7 +30,7 @@ func TestOperationLegacyReplacementFlagIsDecodeOnly(t *testing.T) {
 // are rejected; a current record still needs the source numeric bindings.
 func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	dir := t.TempDir()
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
@@ -61,10 +65,9 @@ func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	require.NoError(t, wal.AppendWithDatabase(OpBufferedCommit, payload, "test"))
 	require.NoError(t, wal.Sync())
 
-	crashClose(t, engine, wal)
-	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	crashClose(t, engine, runtimeFixtureOwner.CloseFunc(func() error { closeEngine(); return nil }))
+	engine, _ = newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal = engine.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal.Close(); _ = engine.Close() })
 	_, err = RecoverBufferedCommits(engine, wal)
 	require.NoError(t, err)
 
@@ -104,7 +107,6 @@ func TestEdgeUpdateKeepsPhysicalCounts(t *testing.T) {
 					DataDir: t.TempDir(), WriteBehind: writeBehind, WriteBehindInterval: time.Hour,
 				}))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = engine.Close() })
 				for _, node := range []*Node{
 					{ID: "test:a", Labels: []string{"Source"}},
 					{ID: "test:b", Labels: []string{"Target"}},

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -23,7 +25,6 @@ func TestResidualPublicationDecisionRoutes(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/veto=%v", route, veto), func(t *testing.T) {
 				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), LowMemory: route == "large", WriteBehind: route == "buffered", WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = b.Close() })
 				tx, err := b.BeginTransaction()
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })

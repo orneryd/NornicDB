@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
@@ -222,8 +224,9 @@ func TestPerNamespaceMVCC_LegacyGlobalCounterSeedsNewNamespace(t *testing.T) {
 func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *testing.T) {
 	dir := t.TempDir()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 
@@ -235,7 +238,7 @@ func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *tes
 	require.Equal(t, uint64(0), persistedBeforeClose,
 		"non-transactional writes do not persist the namespace sequence, so reopen must recover from MVCC heads")
 
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)

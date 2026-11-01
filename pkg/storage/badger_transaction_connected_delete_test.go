@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"errors"
 	"testing"
@@ -10,7 +12,6 @@ import (
 
 func TestDeleteConnectedNode(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 	for _, node := range []*Node{{ID: "test:a"}, {ID: "test:b"}, {ID: "test:c"}} {
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)

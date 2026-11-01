@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -23,7 +25,7 @@ type writeBehindTestOptions struct {
 	memoryPolicy *memory.Policy
 }
 
-func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...writeBehindTestOptions) *BadgerEngine {
+func newWriteBehindTestEngine(t testing.TB, owner fixtureowner.Owner, interval time.Duration, options ...writeBehindTestOptions) (*BadgerEngine, func()) {
 	t.Helper()
 	var opts writeBehindTestOptions
 	if len(options) > 0 {
@@ -42,8 +44,9 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		WriteBehindInterval: interval,
 		MemoryPolicy:        opts.memoryPolicy,
 	}))
+	var closeNow func()
 	if engine != nil {
-		fixtureowner.OwnChecked(t, engine)
+		_, closeNow = fixtureowner.OwnWithClose(owner, engine)
 	}
 	require.NoError(t, err)
 	if opts.manualDrain && engine.writeBehind != nil {
@@ -56,12 +59,13 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		walCfg.BatchSyncInterval = time.Hour
 		wal, err := NewWAL(walCfg.Dir, walCfg)
 		if wal != nil {
-			fixtureowner.OwnChecked(t, wal, engine)
+			closeEngine := closeNow
+			_, closeNow = fixtureowner.OwnWithClose(owner, wal, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
 		}
 		require.NoError(t, err)
 		engine.SetBufferedCommitWAL(wal)
 	}
-	return engine
+	return engine, closeNow
 }
 
 func bufferedWrite(t testing.TB, engine *BadgerEngine, write func(*BadgerTransaction) error) {
@@ -81,7 +85,7 @@ func bufferedCreate(t testing.TB, engine *BadgerEngine, node *Node) {
 }
 
 func TestWriteBehind_BufferedCommitVisibleBeforeFlush(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
 
@@ -93,7 +97,7 @@ func TestWriteBehind_BufferedCommitVisibleBeforeFlush(t *testing.T) {
 }
 
 func TestWriteBehind_FlushLandsInBadger(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
 
@@ -110,7 +114,7 @@ func TestWriteBehind_FlushLandsInBadger(t *testing.T) {
 }
 
 func TestWriteBehind_MultipleCommitsApplyInOrder(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
 
@@ -136,7 +140,7 @@ func TestWriteBehind_MultipleCommitsApplyInOrder(t *testing.T) {
 }
 
 func TestWriteBehind_BufferedDeleteHidesAndPersists(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}})
 	require.NoError(t, engine.FlushWriteBehind(nil))
@@ -161,7 +165,7 @@ func TestWriteBehind_BufferedDeleteHidesAndPersists(t *testing.T) {
 // see acknowledged-but-unflushed writes through the overlay immediately, not
 // only after the background flush lands them.
 func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	for i := 0; i < 5; i++ {
 		bufferedCreate(t, engine, &Node{
@@ -265,7 +269,7 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 }
 
 func TestWriteBehind_ExplicitBeginDrainsBufferedWrites(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}})
 	require.Greater(t, engine.writeBehind.PendingOps(), 0)
@@ -316,7 +320,7 @@ func TestWriteBehind_CloseDrainsAndPersists(t *testing.T) {
 // (and re-applies their derived-count deltas), and the replay later grinds
 // through tombstoned-head fallback iterators.
 func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	// a -> b and b -> c: deleting a and b in separate buffered statements
 	// reaches the a->b relationship from both endpoints.
@@ -413,7 +417,7 @@ func mustEdgeCount(t *testing.T, engine *BadgerEngine) int64 {
 // generation before the next bounded batch runs: the second batch must see
 // the already-applied relationship as gone through Badger, not re-delete it.
 func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 
 	bufferedCreate(t, engine, &Node{ID: "test:a", Labels: []string{"N"}})
 	bufferedCreate(t, engine, &Node{ID: "test:b", Labels: []string{"N"}})
@@ -506,7 +510,7 @@ func TestWriteBehind_PropertyIndexBufferedGenerations(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			engine := newWriteBehindTestEngine(t, time.Hour)
+			engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			schema := engine.GetSchemaForNamespace("test")
 			require.NoError(t, schema.AddPropertyIndex("user_id_idx", "User", []string{"id"}))
 			node := func(id, version int64) *Node {

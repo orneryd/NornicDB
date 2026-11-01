@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -17,7 +19,7 @@ func TestRelationshipSearchReadsItsOwnPropertyList(t *testing.T) {
 	engine := relationshipTestEngine(t)
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "opted", StartNode: "a", EndNode: "c", Type: "LINK", Properties: map[string]any{"search_text": "harbour explanation", "text": "user note harbour"}}))
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "plain", StartNode: "c", EndNode: "a", Type: "LINK", Properties: map[string]any{"text": "harbour note"}}))
-	svc := startRelationshipService(t, engine, nil, func(s *Service) {
+	svc, _ := startRelationshipService(t, engine, nil, func(s *Service) {
 		s.SetFulltextProperties([]string{"text", "search_text"})
 		s.SetRelationshipFulltextProperties([]string{" search_text ", "search_text"})
 	})
@@ -33,7 +35,7 @@ func TestRelationshipSearchReadsItsOwnPropertyList(t *testing.T) {
 	}
 
 	// Unset, the node list applies.
-	fallback := startRelationshipService(t, engine, nil, func(s *Service) {
+	fallback, _ := startRelationshipService(t, engine, nil, func(s *Service) {
 		s.SetFulltextProperties([]string{"text"})
 	})
 	require.Equal(t, []string{"text"}, fallback.RelationshipFulltextProperties())

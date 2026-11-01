@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"encoding/gob"
@@ -79,7 +81,7 @@ func TestV4ReplicationWALUpgradePreservesSemanticCommand(t *testing.T) {
 
 	adapter, err := NewStorageAdapterWithWAL(engine, dir)
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, adapter)
+	_, closeAdapter := fixtureowner.OwnWithClose(t, adapter)
 	entries, err := adapter.GetWALEntries(0, 10)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
@@ -90,7 +92,7 @@ func TestV4ReplicationWALUpgradePreservesSemanticCommand(t *testing.T) {
 	require.Len(t, ops, 1)
 	require.Equal(t, map[string]any{"count": int64(9)}, ops[0].Node.Properties)
 	require.Equal(t, map[string]any{"source": "replication"}, ops[0].Node.EmbedMeta)
-	require.NoError(t, adapter.Close())
+	closeAdapter()
 	changed, err = storage.UpgradeWALV4(dir, storage.WALV4UpgradeOptions{Transform: TranscodeV4WALPayload})
 	require.NoError(t, err)
 	require.False(t, changed)

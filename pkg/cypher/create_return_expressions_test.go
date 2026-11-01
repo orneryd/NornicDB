@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -36,7 +38,6 @@ func newAsyncStackExecutor(t testing.TB) *StorageExecutor {
 	engine := storage.NewWALEngine(badger, wal)
 	t.Cleanup(func() {
 		_ = wal.Close()
-		_ = badger.Close()
 	})
 	return NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 }

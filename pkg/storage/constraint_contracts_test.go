@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -860,7 +862,6 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBadgerEngineInMemory: %v", err)
 	}
-	t.Cleanup(func() { _ = engine.Close() })
 
 	if _, err := engine.CreateNode(&Node{ID: "tenant::n1"}); err != nil {
 		t.Fatalf("create n1: %v", err)

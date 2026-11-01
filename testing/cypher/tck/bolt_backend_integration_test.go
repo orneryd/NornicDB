@@ -1,7 +1,10 @@
 package tck
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
+	"errors"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
@@ -35,14 +38,14 @@ func TestGh775_TypedNodeIndexRouting(t *testing.T) {
 	for _, mode := range []TransactionMode{AutocommitMode, ExplicitTransactionMode} {
 		t.Run(string(mode), func(t *testing.T) {
 			engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+			var closeEngine func()
 			if engine != nil {
-				fixtureowner.Own(t, engine)
+				_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = engine.Close() })
-			driver, shutdown := startConformanceServerWithEngine(t, engine)
+			driver, shutdown := startConformanceServerWithEngine(t, engine, closeEngine)
 			defer shutdown()
 			backend, err := NewBoltBackend(BoltBackendConfig{Driver: driver, DatabaseName: "nornic", Mode: mode})
 			if err != nil {
@@ -192,20 +195,20 @@ func TestBoltBackendResetClearsSchemaArtifacts(t *testing.T) {
 func startConformanceServer(t *testing.T) (neo4j.DriverWithContext, func()) {
 	t.Helper()
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	if err != nil {
 		t.Fatalf("create Badger engine: %v", err)
 	}
-	return startConformanceServerWithEngine(t, engine)
+	return startConformanceServerWithEngine(t, engine, closeEngine)
 }
 
-func startConformanceServerWithEngine(t *testing.T, engine storage.Engine) (neo4j.DriverWithContext, func()) {
+func startConformanceServerWithEngine(t *testing.T, engine storage.Engine, closeEngine func()) (neo4j.DriverWithContext, func()) {
 	t.Helper()
 	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	if err != nil {
-		_ = engine.Close()
 		t.Fatalf("create conformance database manager: %v", err)
 	}
 	config := bolt.DefaultConfig()
@@ -215,46 +218,38 @@ func startConformanceServerWithEngine(t *testing.T, engine storage.Engine) (neo4
 	server := bolt.NewWithDatabaseManager(config, nil, manager)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		_ = engine.Close()
 		t.Fatalf("listen for Bolt server: %v", err)
 	}
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- server.Serve(listener) }()
+	_, closeServer := fixtureowner.OwnWithClose(t, fixtureowner.CloseFunc(func() error {
+		closeErr := server.Close()
+		select {
+		case serveErr := <-serverDone:
+			return errors.Join(closeErr, serveErr)
+		case <-time.After(5 * time.Second):
+			return errors.Join(closeErr, errors.New("Bolt server did not stop"))
+		}
+	}))
 
 	driver, err := neo4j.NewDriverWithContext("bolt://"+listener.Addr().String(), neo4j.NoAuth())
 	if err != nil {
-		_ = server.Close()
-		_ = engine.Close()
 		t.Fatalf("create Bolt driver: %v", err)
 	}
+	_, closeDriver := fixtureowner.OwnWithClose(t, fixtureowner.CloseFunc(func() error {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer closeCancel()
+		return driver.Close(closeCtx)
+	}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := driver.VerifyConnectivity(ctx); err != nil {
-		_ = driver.Close(ctx)
-		_ = server.Close()
-		_ = engine.Close()
 		t.Fatalf("verify Bolt connectivity: %v", err)
 	}
 
 	return driver, func() {
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer closeCancel()
-		if err := driver.Close(closeCtx); err != nil {
-			t.Errorf("close Bolt driver: %v", err)
-		}
-		if err := server.Close(); err != nil {
-			t.Errorf("close Bolt server: %v", err)
-		}
-		select {
-		case err := <-serverDone:
-			if err != nil {
-				t.Errorf("serve Bolt: %v", err)
-			}
-		case <-time.After(5 * time.Second):
-			t.Error("Bolt server did not stop")
-		}
-		if err := engine.Close(); err != nil {
-			t.Errorf("close storage engine: %v", err)
-		}
+		closeDriver()
+		closeServer()
+		closeEngine()
 	}
 }

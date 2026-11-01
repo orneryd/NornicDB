@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -12,16 +14,19 @@ import (
 
 func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.T) {
 	dir := t.TempDir()
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	var boundary runtimeFixtureOwner.Boundary
+	defer func() {
+		require.ErrorContains(t, boundary.Close(), "cannot unmarshal string")
+	}()
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
 	bufferedCreate(t, engine, &Node{ID: "test:bounded", Labels: []string{"L"}, Properties: map[string]any{"payload": strings.Repeat("x", 5<<20)}})
 	require.NoError(t, wal.Append(OpBufferedCommit, "invalid buffered commit"))
-	crashClose(t, engine, wal)
+	crashClose(t, engine, runtimeFixtureOwner.CloseFunc(func() error { closeEngine(); return nil }))
 
-	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	engine, _ = newWriteBehindTestEngine(t, &boundary, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	// The deliberately invalid tail cannot receive a clean-downgrade proof.
-	// Assert that refusal before the shared fixture owner repeats Close.
-	t.Cleanup(func() { require.ErrorContains(t, engine.Close(), "cannot unmarshal string") })
+	// The explicit boundary records that expected failure at the owner release.
 
 	wal = engine.bufferedCommitWAL
 	replayed, err := RecoverBufferedCommits(engine, wal)
@@ -43,7 +48,7 @@ func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.
 // mirrors BadgerEngine.Close's teardown minus the write-behind drain. WAL is
 // closed normally because its records already reached the kernel page cache
 // from the forced append flush.
-func crashClose(t testing.TB, engine *BadgerEngine, wal *WAL) {
+func crashClose(t testing.TB, engine *BadgerEngine, release runtimeFixtureOwner.Closer) {
 	t.Helper()
 	engine.stopIndexBackfill(startupEdgeBetweenIndex)
 	engine.stopIndexBackfill(startupLabelIndex)
@@ -67,14 +72,14 @@ func crashClose(t testing.TB, engine *BadgerEngine, wal *WAL) {
 	engine.mu.Unlock()
 	require.NoError(t, db.Close())
 	engine.writeBarrier.Unlock()
-	require.NoError(t, wal.Close())
+	require.NoError(t, release.Close())
 }
 
 func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	dir := t.TempDir()
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
-	// No cleanup for engine/wal: crashClose below tears them down.
+	// crashClose stops without draining; the owner closer retires the WAL.
 
 	// Buffered, acknowledged create: nothing reaches Badger, the payload
 	// reaches the WAL.
@@ -99,10 +104,10 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	require.True(t, found, "expected an OpBufferedCommit entry in the WAL")
 
 	// Simulate kill -9: the buffer is lost, Badger has nothing.
-	crashClose(t, engine, wal)
+	crashClose(t, engine, runtimeFixtureOwner.CloseFunc(func() error { closeEngine(); return nil }))
 
 	// Reopen a fresh engine + WAL on the same directories.
-	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	recovered, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal2 := recovered.bufferedCommitWAL
 
 	// Before recovery the node is gone from Badger.
@@ -126,8 +131,7 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 
 func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	dir := t.TempDir()
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
-	wal := engine.bufferedCommitWAL
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
@@ -142,10 +146,9 @@ func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	require.Zero(t, engine.writeBehind.PendingOps())
 
 	// Graceful close (flushes again — a no-op — and closes).
-	require.NoError(t, wal.Close())
-	require.NoError(t, engine.Close())
+	closeEngine()
 
-	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	recovered, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 
 	wal2 := recovered.bufferedCommitWAL
 
@@ -169,7 +172,7 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 
 	// Produce a buffered commit payload on a throwaway engine, then grab its
 	// serialized form from the WAL.
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
@@ -189,7 +192,7 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, bufferedEntry.Data)
-	crashClose(t, engine, wal)
+	crashClose(t, engine, runtimeFixtureOwner.CloseFunc(func() error { closeEngine(); return nil }))
 
 	// A fresh Badger engine, no WAL wiring needed: ReplayWALEntry must apply
 	// the payload through the buffered-commit application path.

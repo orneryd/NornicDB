@@ -1,7 +1,10 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -18,8 +21,7 @@ import (
 // flush, and after a crash and replay of the write-behind log.
 func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T) {
 	dir := t.TempDir()
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
-	wal := engine.bufferedCommitWAL
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	_, err := engine.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"v": "initial"}})
 	require.NoError(t, err)
@@ -69,10 +71,9 @@ func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T)
 
 	// Crash before the flush: replay lands the buffered commit after the
 	// explicit commit already in Badger.
-	crashClose(t, engine, wal)
-	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	crashClose(t, engine, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+	recovered, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal2 := recovered.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 	_, err = RecoverBufferedCommits(recovered, wal2)
 	require.NoError(t, err)
 	recovered.invalidateCachesAfterRestore()

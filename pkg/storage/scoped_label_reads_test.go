@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // Label reads in one database skip the other databases' label-index entries
 // before reading their nodes (#851): the label index is shared by every
 // database, and a scan in a small database decoded a large one's nodes.
@@ -39,7 +41,6 @@ func serverStack(t *testing.T) (*BadgerEngine, *WALEngine) {
 	engine := NewWALEngine(badger, wal)
 	t.Cleanup(func() {
 		_ = wal.Close()
-		_ = badger.Close()
 	})
 	return badger, engine
 }

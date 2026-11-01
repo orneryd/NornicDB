@@ -1,5 +1,7 @@
 package fabric_test
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -45,7 +47,6 @@ func (l *headerBoundaryLocal) ExecuteQueryWithRecord(ctx context.Context, _ stri
 func TestResultHeaderFabricBoundary(t *testing.T) {
 	ctx := context.Background()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "neo4j"))
 	adapter := &headerBoundaryLocal{exec: exec, cache: map[string]resultmetadata.Names{}}
 	catalog := fabric.NewCatalog()

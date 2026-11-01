@@ -1,7 +1,10 @@
 package resolvers
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/internal/testutil"
 	"testing"
 	"time"
@@ -337,8 +340,8 @@ func TestEventBroker_Close(t *testing.T) {
 // =============================================================================
 
 func TestSubscription_NodeCreated_Integration(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 
 	require.NotNil(t, resolver.EventBroker)
@@ -376,8 +379,8 @@ func TestSubscription_NodeCreated_Integration(t *testing.T) {
 }
 
 func TestSubscription_NodeUpdated_Integration(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -418,8 +421,8 @@ func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 }
 
 func TestSubscription_NodeDeleted_Integration(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -453,8 +456,8 @@ func TestSubscription_NodeDeleted_Integration(t *testing.T) {
 }
 
 func TestSubscription_RelationshipCreated_Integration(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -506,8 +509,8 @@ func TestSubscription_RelationshipCreated_Integration(t *testing.T) {
 }
 
 func TestSubscription_RelationshipDeleted_Integration(t *testing.T) {
-	db := testDB(t)
-	dbManager := testutil.DatabaseManager(t, db)
+	db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+	dbManager := testutil.DatabaseManager(t, db, closeDB)
 	resolver := NewResolver(db, dbManager)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -562,8 +565,8 @@ func TestSubscriptionResolver_NodeCreated(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			db := testDB(t)
-			resolver := NewResolver(db, testutil.DatabaseManager(t, db))
+			db, closeDB := fixtureowner.OwnWithClose(t, testDB(t))
+			resolver := NewResolver(db, testutil.DatabaseManager(t, db, closeDB))
 			var labels []string
 			if brokerAvailable {
 				labels = []string{"Person"}

@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -36,7 +38,7 @@ func (d *adjacencyDirectionalFailure) GetIncomingEdges(ctx context.Context, _ No
 }
 
 func TestAdjacencyDispatcherPreservesActualDecoratorAndErrorPolicy(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	b.writeBehind.Close()
 	rows := []*Edge{{ID: "test:r", StartNode: "test:hub", EndNode: "test:a"}}
 	decorated := &adjacencyOverrideDecorator{BadgerEngine: b, rows: rows}
@@ -68,7 +70,7 @@ func TestAdjacencyDispatcherPreservesActualDecoratorAndErrorPolicy(t *testing.T)
 }
 
 func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	b.writeBehind.Close()
 	for _, id := range []NodeID{"test:hub", "test:a", "test:b"} {
 		_, err := b.CreateNode(&Node{ID: id})

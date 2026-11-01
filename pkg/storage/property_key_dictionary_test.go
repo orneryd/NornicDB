@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/binary"
@@ -151,8 +153,9 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 func TestPropertyKeyDict_NovelKeySurvivesCleanReopen(t *testing.T) {
 	dir := t.TempDir()
 	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	var closeFirst func()
 	if first != nil {
-		fixtureowner.Own(t, first)
+		_, closeFirst = fixtureowner.OwnWithClose(t, first)
 	}
 	require.NoError(t, err)
 
@@ -163,7 +166,7 @@ func TestPropertyKeyDict_NovelKeySurvivesCleanReopen(t *testing.T) {
 	}
 	_, err = first.CreateNode(node)
 	require.NoError(t, err)
-	require.NoError(t, first.Close())
+	closeFirst()
 
 	second, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
@@ -181,8 +184,9 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 	dir := t.TempDir()
 
 	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	var closeFirst func()
 	if first != nil {
-		fixtureowner.Own(t, first)
+		_, closeFirst = fixtureowner.OwnWithClose(t, first)
 	}
 	require.NoError(t, err)
 
@@ -200,7 +204,7 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 		return nil
 	}))
 	require.NoError(t, first.propKeyDict.persistTxnCounters(metadataBatches{db: first.db, ctx: context.Background()}, counters))
-	require.NoError(t, first.Close())
+	closeFirst()
 
 	// Reopen — V0 store with no bodies, so the upgrade gate doesn't
 	// trigger and the runner advances straight to V2 silently.
@@ -233,8 +237,9 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 	dir := t.TempDir()
 	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	var closeFirst func()
 	if first != nil {
-		fixtureowner.Own(t, first)
+		_, closeFirst = fixtureowner.OwnWithClose(t, first)
 	}
 	require.NoError(t, err)
 
@@ -253,7 +258,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
 		return txn.Delete(propKeyCounterKey("ns"))
 	}))
-	require.NoError(t, first.Close())
+	closeFirst()
 
 	second, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
@@ -538,8 +543,9 @@ func TestPropKeyDictCounters_NilEngine(t *testing.T) {
 func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 	dir := t.TempDir()
 	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	var closeFirst func()
 	if first != nil {
-		fixtureowner.Own(t, first)
+		_, closeFirst = fixtureowner.OwnWithClose(t, first)
 	}
 	require.NoError(t, err)
 
@@ -564,7 +570,7 @@ func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 		bad := []byte{prefixPropKeyCounter, 100, 'a'}
 		return txn.Set(bad, []byte{0x01})
 	}))
-	require.NoError(t, first.Close())
+	closeFirst()
 
 	second, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err, "engine must skip malformed dict entries rather than refuse to open")
@@ -581,8 +587,9 @@ func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 func TestPropertyKeyDict_HydrateRejectsMalformedForwardValue(t *testing.T) {
 	dir := t.TempDir()
 	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	var closeFirst func()
 	if first != nil {
-		fixtureowner.Own(t, first)
+		_, closeFirst = fixtureowner.OwnWithClose(t, first)
 	}
 	require.NoError(t, err)
 
@@ -592,7 +599,7 @@ func TestPropertyKeyDict_HydrateRejectsMalformedForwardValue(t *testing.T) {
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(key, []byte{})
 	}))
-	require.NoError(t, first.Close())
+	closeFirst()
 
 	_, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.Error(t, err)
@@ -604,15 +611,16 @@ func TestPropertyKeyDict_HydrateRejectsMalformedForwardValue(t *testing.T) {
 func TestPropertyKeyDict_HydrateRejectsMalformedCounterValue(t *testing.T) {
 	dir := t.TempDir()
 	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	var closeFirst func()
 	if first != nil {
-		fixtureowner.Own(t, first)
+		_, closeFirst = fixtureowner.OwnWithClose(t, first)
 	}
 	require.NoError(t, err)
 
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(propKeyCounterKey("ns"), []byte{})
 	}))
-	require.NoError(t, first.Close())
+	closeFirst()
 
 	_, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.Error(t, err)

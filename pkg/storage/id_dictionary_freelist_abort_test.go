@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -253,7 +255,7 @@ func TestNumericFreelistParallelReservationsAreUnique(t *testing.T) {
 
 func TestRejectedBufferedCommitDropsUnpersistedIDBeforeRetry(t *testing.T) {
 	dir := t.TempDir()
-	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, manualDrain: true})
+	b, closeB := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, manualDrain: true})
 	require.NoError(t, b.bufferedCommitWAL.Close())
 	tx, err := b.BeginTransaction()
 	require.NoError(t, err)
@@ -271,7 +273,7 @@ func TestRejectedBufferedCommitDropsUnpersistedIDBeforeRetry(t *testing.T) {
 	require.NoError(t, err)
 	_, pending = b.idDict.nodePendingWriter("test:rejected")
 	require.False(t, pending)
-	require.NoError(t, b.Close())
+	closeB()
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })

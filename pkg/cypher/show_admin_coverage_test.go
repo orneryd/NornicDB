@@ -1,6 +1,9 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 
 	"context"
@@ -234,9 +237,7 @@ func TestShowSchemaValueHelpers(t *testing.T) {
 func TestShowDatabasesListsAliases(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, manager.Close())
-	})
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateAlias(t.Context(), "zeta", "nornic"))
 	require.NoError(t, manager.CreateAlias(t.Context(), "alpha", "nornic"))
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))

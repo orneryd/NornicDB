@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -49,11 +51,11 @@ func TestManagedFollowerPreservesSingleItemBulkProducerMode(t *testing.T) {
 			t.Cleanup(config.WithWALEnabled())
 			base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
-			fixtureowner.OwnChecked(t, base)
+			fixtureowner.Own(t, base)
 			walDir := t.TempDir()
 			wal, err := storage.NewWAL(walDir, &storage.WALConfig{Dir: walDir, SyncMode: "immediate"})
 			require.NoError(t, err)
-			fixtureowner.OwnChecked(t, wal, base)
+			fixtureowner.Own(t, wal, base)
 			base.SetBufferedCommitWAL(wal)
 			adapter, err := NewStorageAdapterWithWAL(base, t.TempDir())
 			require.NoError(t, err)
@@ -64,11 +66,10 @@ func TestManagedFollowerPreservesSingleItemBulkProducerMode(t *testing.T) {
 			t.Cleanup(func() { _ = leader.Shutdown() })
 			local, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = local.Close() })
 			follower := NewReplicatedEngine(local, &producerModeFollower{Replicator: leader, leader: leader}, time.Second)
 			manager, err := multidb.NewDatabaseManager(t.Context(), follower, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = manager.Close() })
+			fixtureowner.Own(t, manager)
 			managed, err := manager.GetStorage("nornic")
 			require.NoError(t, err)
 			require.NoError(t, base.FlushWriteBehind(nil))

@@ -7,6 +7,8 @@
 // 4. Committed transactions persist through recovery
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -27,7 +29,6 @@ import (
 // TestUndoCreateNode verifies that creating a node can be undone.
 func TestUndoCreateNode(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
 	// Create WAL entry for node creation
@@ -66,7 +67,6 @@ func TestUndoCreateNode(t *testing.T) {
 // TestUndoUpdateNode verifies that updating a node can be undone.
 func TestUndoUpdateNode(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
 	// Create original node
@@ -112,7 +112,6 @@ func TestUndoUpdateNode(t *testing.T) {
 // TestUndoDeleteNode verifies that deleting a node can be undone.
 func TestUndoDeleteNode(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
 	// Create node to delete
@@ -160,7 +159,6 @@ func TestUndoDeleteNode(t *testing.T) {
 // TestUndoWithoutBeforeImage verifies error on missing undo data.
 func TestUndoWithoutBeforeImage(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
 	// Create WAL entry for update WITHOUT before image

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -17,17 +19,20 @@ import (
 func TestColdBufferedWriteAfterReopen(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	dir := t.TempDir()
-	open := func() *BadgerEngine {
-		b, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+	open := func() (*BadgerEngine, func()) {
+		b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+		var closeFixture func()
+		if b != nil {
+			_, closeFixture = runtimeFixtureOwner.OwnWithClose(t, b)
+		}
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = b.Close() })
-		return b
+		return b, closeFixture
 	}
-	b := open()
+	b, closeB := open()
 	_, err := b.CreateNode(&Node{ID: "cold:a", Properties: map[string]any{"value": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, b.Close())
-	b = open()
+	closeB()
+	b, closeB = open()
 	wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wal.Close() })

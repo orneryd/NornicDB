@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -13,7 +15,7 @@ import (
 
 func TestPolicySchemaLookupAndClosedTransaction(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, "lookup")
+	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, "lookup", storage.ErrTransactionClosed)
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "lookup"))
 	executor.txContext = &TransactionContext{tx: tx, active: true}
 	_, view, err := executor.knowledgePolicyContext("")

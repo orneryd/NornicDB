@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bufio"
 	"bytes"
@@ -84,7 +86,7 @@ func TestWALPropertyEpochSynchronousRestoreCleanStop(t *testing.T) {
 func testWALPropertyEpochCleanStop(t *testing.T, walFirst bool) {
 	t.Cleanup(config.WithWALEnabled())
 	dir, logDir := t.TempDir(), t.TempDir()
-	source := reviewBindingEngine(t, dir)
+	source, _ := reviewBindingEngine(t, dir)
 	_, err := source.CreateNode(&Node{ID: "close:a", Properties: map[string]any{"alpha": int64(1)}})
 	require.NoError(t, err)
 	require.NoError(t, source.FlushWriteBehind(nil))
@@ -220,14 +222,14 @@ func TestWALPropertyEpochCleanProofInvalidatedByForeignRestore(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	for _, restore := range []bool{false, true} {
 		dir := t.TempDir()
-		dest := reviewBindingEngine(t, dir)
+		dest, _ := reviewBindingEngine(t, dir)
 		require.NoError(t, dest.beginSemanticPropertyRestore())
 		w, err := NewWAL(t.TempDir(), DefaultWALConfig())
 		require.NoError(t, err)
 		dest.SetBufferedCommitWAL(w)
 		require.NoError(t, dest.Close())
 		require.NoError(t, w.Close())
-		dest = reviewBindingEngine(t, dir)
+		dest, _ = reviewBindingEngine(t, dir)
 		require.True(t, dest.walPropertySource.clean)
 		identity := dest.walPropertySource.identity
 		if restore {
@@ -238,7 +240,7 @@ func TestWALPropertyEpochCleanProofInvalidatedByForeignRestore(t *testing.T) {
 		require.False(t, dest.walPropertySource.clean)
 		require.NotEqual(t, identity, dest.walPropertySource.identity)
 		require.NoError(t, dest.Close())
-		dest = reviewBindingEngine(t, dir)
+		dest, _ = reviewBindingEngine(t, dir)
 		require.False(t, dest.walPropertySource.clean)
 	}
 }
@@ -249,7 +251,7 @@ func TestWALPropertyEpochCleanProofInvalidatedByForeignRestore(t *testing.T) {
 // clean close seals that control in place.
 func TestWALPropertyEpochRestoreRearmsAuthority(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	dest := reviewBindingEngine(t, t.TempDir())
+	dest, _ := reviewBindingEngine(t, t.TempDir())
 	w, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close() })
@@ -568,7 +570,6 @@ func TestWALPropertyEpochSynchronousForeignProofWithoutControl(t *testing.T) {
 	require.NoFileExists(t, walPropertyEpochUnsealedPath(w.Config().Dir))
 	b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	require.True(t, b.walPropertySource.foreign)
 	require.True(t, b.walPropertySource.clean)
 }

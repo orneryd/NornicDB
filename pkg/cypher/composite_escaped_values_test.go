@@ -1,7 +1,10 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -26,7 +29,7 @@ func TestCompositeNativeDoubledBacktickValues(t *testing.T) {
 			inner := newTestMemoryEngine(t)
 			manager, err := multidb.NewDatabaseManager(t.Context(), inner, cfg)
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, manager.Close()) })
+			fixtureowner.Own(t, manager)
 			engine, err := manager.GetStorage("nornic")
 			require.NoError(t, err)
 			executor := NewStorageExecutor(engine)

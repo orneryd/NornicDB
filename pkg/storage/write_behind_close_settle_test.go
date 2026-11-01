@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"sync"
@@ -21,7 +23,7 @@ func TestCloseWaitsForInFlightListener(t *testing.T) {
 		"delivered by Close's final drain":    time.Hour,
 	} {
 		t.Run(name, func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, interval)
+			b, _ := newWriteBehindTestEngine(t, t, interval)
 			started := make(chan struct{})
 			release := make(chan struct{})
 			var once sync.Once
@@ -79,7 +81,7 @@ func TestCloseWaitsForInFlightListener(t *testing.T) {
 // worker delivers that generation's notifications: its listener runs with
 // the barrier free.
 func TestFlushReleasesBarrierBeforeWorkerListeners(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	claimed, applied := make(chan struct{}), make(chan struct{})
 	apply := b.writeBehind.apply
 	var once sync.Once
@@ -129,7 +131,7 @@ func TestFlushReleasesBarrierBeforeWorkerListeners(t *testing.T) {
 func TestFlushSettlesGenerationAppliedOutsideTheDrain(t *testing.T) {
 	for _, claimed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("claimed=%v", claimed), func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, time.Hour)
+			b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			bufferedCreate(t, b, &Node{ID: "test:direct"})
 			b.writeBehind.rotate()
 			b.writeBehind.mu.RLock()

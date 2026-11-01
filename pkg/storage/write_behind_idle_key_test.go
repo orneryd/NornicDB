@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"testing"
 	"time"
@@ -10,7 +12,7 @@ import (
 // Permanent copy of review r1's deterministic regression: an acknowledged
 // holder must remain visible to NODE KEY validation after buffer retirement.
 func TestWriteBehind_NodeKeyAfterBufferRetirement(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	b.writeBehind.Close()
 	sm := b.GetSchemaForNamespace("test")
 	require.NoError(t, sm.AddConstraint(factKey))
@@ -35,7 +37,7 @@ func TestWriteBehind_IdleFilledKeyConstraints(t *testing.T) {
 				name = string(kind) + "/retired"
 			}
 			t.Run(name, func(t *testing.T) {
-				b := newWriteBehindTestEngine(t, time.Hour)
+				b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 				b.writeBehind.Close()
 				constraint := factKey
 				constraint.Type = kind

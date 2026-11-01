@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"testing"
 
@@ -28,7 +30,6 @@ func TestEmbeddingPendingCounterPublicWrappers(t *testing.T) {
 				// stream fallback with the same real storage eligibility rules.
 				base = &pendingStreamEngine{Engine: memory}
 			}
-			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			one := NewNamespacedEngine(base, "one")
 			two := NewNamespacedEngine(base, "two")
 			for _, store := range []*NamespacedEngine{one, two} {

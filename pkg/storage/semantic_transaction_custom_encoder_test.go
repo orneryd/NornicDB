@@ -1,10 +1,13 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"testing"
 	"time"
@@ -161,7 +164,7 @@ func TestSemanticTransactionCustomPropertyDepthBoundary(t *testing.T) {
 // addition to the direct transaction codec regression above.
 func TestSemanticTransactionCustomPropertyWALRecovery(t *testing.T) {
 	dir := t.TempDir()
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, manualDrain: true})
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, manualDrain: true})
 	wal := engine.bufferedCommitWAL
 	tx, err := BeginEntityTransaction(engine, CommitModeImplicit)
 	require.NoError(t, err)
@@ -173,8 +176,8 @@ func TestSemanticTransactionCustomPropertyWALRecovery(t *testing.T) {
 	receipt, err := NewWALEngine(engine, wal).SubmitEntityCommit(context.Background(), prepared, nil)
 	require.NoError(t, err)
 	require.NoError(t, receipt.Wait(context.Background()))
-	crashClose(t, engine, wal)
-	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, manualDrain: true})
+	crashClose(t, engine, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+	engine, _ = newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, manualDrain: true})
 	_, err = RecoverBufferedCommitsAtOpen(engine, engine.bufferedCommitWAL)
 	require.NoError(t, err)
 	got, err := engine.GetStoredNode("test:n")

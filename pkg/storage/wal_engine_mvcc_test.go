@@ -1,7 +1,10 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,9 +16,7 @@ func newLoggedMVCCDelegationWAL(t *testing.T, engine Engine) *WALEngine {
 	t.Helper()
 	log, err := NewWAL(filepath.Join(t.TempDir(), "wal"), nil)
 	require.NoError(t, err)
-	wal := NewWALEngine(engine, log)
-	t.Cleanup(func() { require.NoError(t, wal.Close()) })
-	return wal
+	return fixtureowner.Own(t, NewWALEngine(engine, log))
 }
 
 func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {

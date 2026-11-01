@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"strings"
@@ -13,7 +15,7 @@ import (
 // Buffered replay must retain the same accounting-before-listeners boundary
 // as an immediate commit, even when the publication callback drives the flush.
 func TestBufferedCommitPublicationBeforeReplayListener(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	// Control exactly where replay runs without changing the public commit
 	// or flush paths; this is the listener-order fixture's stopped-worker mode.
 	engine.writeBehind.Close()
@@ -51,7 +53,7 @@ func TestRejectedBufferedCommitAllowsLaterPublication(t *testing.T) {
 		return memory.Sample{Used: 1, Ceiling: 1 << 30}, nil
 	}, time.Now)
 	require.NoError(t, policy.Refresh())
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	engine.writeBehind.Close()
 	engine.memoryPolicy = policy
 	var observed []NodeID

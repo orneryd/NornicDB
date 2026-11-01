@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"sync"
 	"testing"
@@ -14,7 +16,7 @@ import (
 // its own already-published generation, while original waiters still await
 // the drain's settlement after dispatch.
 func TestReplayNotificationRetiresGenerationBeforeConcurrentListenerFlush(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	applied := make(chan *CommitBuffer, 1)
 	resume := make(chan struct{})
 	var resumeOnce sync.Once
@@ -102,7 +104,7 @@ func TestReplayNotificationRetiresGenerationBeforeConcurrentListenerFlush(t *tes
 }
 
 func TestReplayFailedApplyKeepsGenerationForRetry(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	notified := 0
 	b.OnNodeCreated(func(*Node) { notified++ })
 	bufferedCreate(t, b, &Node{ID: "test:retry-retirement"})

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 // Regression test for issue #183. The reporter saw `MATCH (n:Foo)` returning
 // zero rows after restart for restored / pre-existing nodes, while
 // `labels(n)` and property-based selection still found them.
@@ -43,8 +45,9 @@ func TestLabelIndex_SurvivesEngineReopen(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+			var closeEngine1 func()
 			if engine1 != nil {
-				fixtureowner.Own(t, engine1)
+				_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 			}
 			require.NoError(t, err)
 			_, err = engine1.CreateNode(tc.node)
@@ -54,7 +57,7 @@ func TestLabelIndex_SurvivesEngineReopen(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, pre, 1, "in-session GetNodesByLabel must find the node")
 			}
-			require.NoError(t, engine1.Close())
+			closeEngine1()
 			engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine2.Close() })
@@ -98,8 +101,9 @@ func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			before, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+			var closeBefore func()
 			if before != nil {
-				fixtureowner.Own(t, before)
+				_, closeBefore = fixtureowner.OwnWithClose(t, before)
 			}
 			require.NoError(t, err)
 			var writer Engine = before
@@ -137,7 +141,7 @@ func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 				}
 				require.Len(t, got, want, "pre-reopen index population")
 			}
-			require.NoError(t, before.Close())
+			closeBefore()
 			after, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = after.Close() })
@@ -173,13 +177,14 @@ func TestLabelIndex_DiskKeyExistsAfterReopen(t *testing.T) {
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 	_, err = engine1.CreateNode(&Node{ID: "test:disk-1", Labels: []string{"DiskCheck"}})
 	require.NoError(t, err)
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	// Reopen and walk the label-index key range directly.
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
@@ -212,8 +217,9 @@ func TestLabelIndex_IDDictionaryReverseMapPopulatedOnReopen(t *testing.T) {
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 	_, err = engine1.CreateNode(&Node{ID: "test:dict-1", Labels: []string{"L"}})
@@ -223,7 +229,7 @@ func TestLabelIndex_IDDictionaryReverseMapPopulatedOnReopen(t *testing.T) {
 	// confirm the reverse map carries it after reopen.
 	num, ok := engine1.idDict.lookupNodeNumID("test:dict-1")
 	require.True(t, ok, "node must have a numID after CreateNode")
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
@@ -244,8 +250,9 @@ func TestLabelIndex_QueryMatchesPropertyAndLabelFunctions(t *testing.T) {
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
@@ -256,7 +263,7 @@ func TestLabelIndex_QueryMatchesPropertyAndLabelFunctions(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)

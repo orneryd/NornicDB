@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"testing"
@@ -40,11 +42,11 @@ func TestWALPropertyAuthorityRejectsInvalidRecords(t *testing.T) {
 
 func TestWALPropertyAuthorityRejectsCorruptIdentity(t *testing.T) {
 	dir := t.TempDir()
-	b := reviewBindingEngine(t, dir)
+	b, closeB := reviewBindingEngine(t, dir)
 	require.NoError(t, b.db.Update(func(tx *badger.Txn) error {
 		return tx.Set(walPropertyIdentityKey, []byte("invalid-identity"))
 	}))
-	require.NoError(t, b.Close())
+	closeB()
 	_, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.ErrorContains(t, err, "invalid property dictionary identity")
 }
@@ -63,8 +65,8 @@ func TestWALPropertyOwnLegacyStagedDrain(t *testing.T) {
 }
 
 func TestWALPropertyLosslessLegacyEdge(t *testing.T) {
-	source := reviewBindingEngine(t, t.TempDir())
-	destination := reviewBindingEngine(t, t.TempDir())
+	source, _ := reviewBindingEngine(t, t.TempDir())
+	destination, _ := reviewBindingEngine(t, t.TempDir())
 	for _, b := range []*BadgerEngine{source, destination} {
 		for _, id := range []NodeID{"named:a", "named:b"} {
 			_, err := b.CreateNode(&Node{ID: id})

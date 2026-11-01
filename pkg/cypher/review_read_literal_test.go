@@ -1,10 +1,13 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +18,7 @@ func TestReviewR73ReadLiteralData(t *testing.T) {
 			t.Run(fmt.Sprintf("body=%s/explicit=%v", body, explicit), func(t *testing.T) {
 				manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = manager.Close() })
+				fixtureowner.Own(t, manager)
 				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "r73one"}))
 				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "r73two"}))
 				require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "r73comp", []multidb.ConstituentRef{

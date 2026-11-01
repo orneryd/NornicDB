@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -93,7 +95,7 @@ func TestDynamicLabelRoutedClientBoundary(t *testing.T) {
 func TestDynamicLabelPublicDatabaseRouting(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "dynamic_target"}))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "dynamic_composite", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "dynamic_target", Type: "local", AccessMode: "read_write"},
@@ -149,7 +151,7 @@ func TestDynamicLabelPublicRemoteFabric(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "dynamic_remote", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "neo4j", URI: uri, Type: "remote", AccessMode: "read_write", AuthMode: "oidc_forwarding"},
 	}))

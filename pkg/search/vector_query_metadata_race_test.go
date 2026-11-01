@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -17,7 +19,6 @@ import (
 // process).
 func TestVectorQueriesWhileNodesAreIndexed(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewService(engine, 3, nil)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "n0", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 

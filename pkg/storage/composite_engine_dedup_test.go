@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -10,7 +12,6 @@ import (
 
 func TestCompositeEngine_GetNodesByLabelPropagatesConstituentError(t *testing.T) {
 	backing := newTestMemoryEngine(t)
-	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	readErr := errors.New("constituent label scan failed")
 	composite := NewCompositeEngine(
 		map[string]Engine{"failed": failingLabelScanEngine{Engine: backing, err: readErr}},
@@ -25,8 +26,6 @@ func TestCompositeEngine_GetNodesByLabelPropagatesConstituentError(t *testing.T)
 func TestCompositeEngine_StreamNodesByLabelProjected(t *testing.T) {
 	first := newTestMemoryEngine(t)
 	second := newTestMemoryEngine(t)
-	t.Cleanup(func() { require.NoError(t, first.Close()) })
-	t.Cleanup(func() { require.NoError(t, second.Close()) })
 	shared := NodeID(prefixTestID("shared-projected"))
 	unique := NodeID(prefixTestID("unique-projected"))
 	for _, engine := range []*MemoryEngine{first, second} {
@@ -61,7 +60,6 @@ func TestCompositeEngine_StreamNodesByLabelProjected(t *testing.T) {
 
 func TestCompositeEngine_StreamNodesByLabelProjectedUnsupportedConstituent(t *testing.T) {
 	backing := newTestMemoryEngine(t)
-	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	unsupported := struct{ Engine }{backing}
 	composite := NewCompositeEngine(
 		map[string]Engine{"supported": backing, "unsupported": unsupported}, nil,

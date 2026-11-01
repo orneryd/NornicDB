@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"encoding/gob"
@@ -49,8 +51,9 @@ func TestLegacySerializerMigration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+			var closeDB func()
 			if db != nil {
-				fixtureowner.Own(t, db)
+				_, closeDB = fixtureowner.OwnWithClose(t, db)
 			}
 			require.NoError(t, err)
 
@@ -61,7 +64,7 @@ func TestLegacySerializerMigration(t *testing.T) {
 				writeLegacyGobEdge(t, db, edge)
 			}
 			if tc.dry {
-				require.NoError(t, db.Close())
+				closeDB()
 				stats, err := MigrateBadgerToMsgpack(dir, SerializerMigrationOptions{DryRun: true, BatchSize: 10})
 				require.NoError(t, err)
 				require.True(t, stats.HasLegacyData)
@@ -82,7 +85,7 @@ func TestLegacySerializerMigration(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 0, stats2.NodesConverted+stats2.EdgesConverted+stats2.EmbeddingsConverted)
 			require.Greater(t, stats2.SkippedExisting, 0)
-			require.NoError(t, db.Close())
+			closeDB()
 
 			// Reopen via the engine and confirm reads still work. The data
 			// directory is at V0 (msgpack-headered bodies, no schema version)
@@ -168,8 +171,9 @@ func TestDetectStoredSerializer(t *testing.T) {
 	t.Run("detects gob and msgpack payloads", func(t *testing.T) {
 		gobDir := t.TempDir()
 		gobDB, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(gobDir).WithLogger(nil)))
+		var closeGobDB func()
 		if gobDB != nil {
-			fixtureowner.Own(t, gobDB)
+			_, closeGobDB = fixtureowner.OwnWithClose(t, gobDB)
 		}
 		require.NoError(t, err)
 		writeLegacyGobNode(t, gobDB, &Node{ID: "detect:gob", Labels: []string{"Test"}})
@@ -178,7 +182,7 @@ func TestDetectStoredSerializer(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, hasData)
 		require.Equal(t, detectedGob, serializer)
-		require.NoError(t, gobDB.Close())
+		closeGobDB()
 
 		msgpackDir := t.TempDir()
 		msgpackEngine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: msgpackDir}))

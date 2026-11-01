@@ -1,5 +1,7 @@
 package nornicdb
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -49,7 +51,7 @@ func (e *idleCountingEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) erro
 func idleTestWorker(t *testing.T, workers int) (*EmbedWorker, *idleCountingEngine) {
 	t.Helper()
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	fixtureowner.Own(t, base)
 	base.SetEmbeddingsEnabled(true)
 	store := &idleCountingEngine{Engine: storage.NewNamespacedEngine(base, "idle")}
 	config := DefaultEmbedWorkerConfig()
@@ -129,14 +131,15 @@ func TestEmbedWorkerIdleEnqueueRacesEmptyClaim(t *testing.T) {
 func TestEmbedWorkerIdleStartupPendingAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	var closeBase func()
 	if base != nil {
-		fixtureowner.Own(t, base)
+		_, closeBase = fixtureowner.OwnWithClose(t, base)
 	}
 	require.NoError(t, err)
 	base.SetEmbeddingsEnabled(true)
 	store := storage.NewNamespacedEngine(base, "idle")
 	idleTestCreate(t, store, "persisted")
-	require.NoError(t, base.Close())
+	closeBase()
 	base, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })

@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -30,7 +32,7 @@ func TestCompositeRemoteCredentialErrorOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal("manager setup failed")
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	for _, scheme := range []string{"http", "bolt"} {
 		endpoint := scheme + "://admin:" + password + "@127.0.0.1:1"
@@ -82,7 +84,7 @@ func TestCompositeRemoteCredentialOutput(t *testing.T) {
 				if err != nil {
 					t.Fatal("manager setup failed; details withheld")
 				}
-				defer manager.Close()
+				fixtureowner.Own(t, manager)
 				engine, err := manager.GetStorage("nornic")
 				if err != nil {
 					t.Fatal("storage setup failed")

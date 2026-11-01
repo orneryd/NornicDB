@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -40,14 +42,14 @@ func TestRelationshipEmbeddingPersistsWithRelativeIndexPath(t *testing.T) {
 	require.NoError(t, err)
 
 	reused := &countingEmbed{}
-	restarted := startRelationshipService(t, engine, reused.embed, func(s *Service) {
+	restarted, closeRestarted := startRelationshipService(t, engine, reused.embed, func(s *Service) {
 		s.SetPersistenceEnabled(true)
 		s.SetFulltextIndexPath("bm25")
 	})
 	<-restarted.relationshipSearch().ready
 	require.Equal(t, 2, restarted.RelationshipEmbeddingCount())
 	require.Zero(t, reused.calls.Load())
-	require.NoError(t, restarted.Close())
+	closeRestarted()
 }
 
 // Use the configured platform helper at the post-rename boundary. Its failure

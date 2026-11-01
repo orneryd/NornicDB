@@ -1,5 +1,7 @@
 package qdrantgrpc
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -21,7 +23,6 @@ func TestPR1655PointMutationDoesNotAcknowledgeFailedObservation(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-				t.Cleanup(func() { require.NoError(t, engine.Close()) })
 				if closed {
 					require.NoError(t, engine.Close())
 				}

@@ -1,11 +1,14 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -54,11 +57,10 @@ func newGDSBenchmarkExecutor(b *testing.B) (*StorageExecutor, []string) {
 		}
 	}
 	exec := NewStorageExecutor(engine)
-	b.Cleanup(func() {
-		if _, err := exec.Execute(context.Background(), "CALL gds.graph.drop('gds-bench', false)", nil); err != nil {
-			b.Error(err)
-		}
-	})
+	fixtureowner.Own(b, fixtureowner.CloseFunc(func() error {
+		_, err := exec.Execute(context.Background(), "CALL gds.graph.drop('gds-bench', false)", nil)
+		return err
+	}))
 	return exec, ids
 }
 

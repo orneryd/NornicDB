@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -59,15 +61,11 @@ func TestGH475_StoredListSubscriptAndHeadInMatch(t *testing.T) {
 func TestGH475_StoredMixedListAcrossBadgerReopenAndSnapshot(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir}))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		if engine != nil {
-			_ = engine.Close()
-		}
-	})
 	store := storage.NewNamespacedEngine(engine, "gh475_disk")
 	_, err = store.CreateNode(&storage.Node{
 		ID: "one", Labels: []string{"A"},
@@ -103,7 +101,7 @@ func TestGH475_StoredMixedListAcrossBadgerReopenAndSnapshot(t *testing.T) {
 	}
 
 	t.Run("live", func(t *testing.T) { check(t, false) })
-	require.NoError(t, engine.Close())
+	closeEngine()
 	engine = nil
 	engine, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir}))
 	if engine != nil {

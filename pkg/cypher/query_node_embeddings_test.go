@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -37,7 +39,6 @@ func newColdLargeEmbeddingGraph(tb testing.TB, docs int) *largeEmbeddingGraph {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() { _ = engine.Close() })
 	return newLargeEmbeddingGraphOn(tb, docs, engine)
 }
 

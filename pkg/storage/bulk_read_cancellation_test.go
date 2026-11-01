@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 // Deterministic caller-cancellation coverage for the storage bulk-read
 // routes. Each route is exercised three ways on one fixture: a live caller
 // context that must return the exact population, a caller context that is
@@ -137,7 +139,7 @@ func TestBulkReadCancellationLabelStreamRetires(t *testing.T) {
 		t.Run(fmt.Sprintf("write-behind=%t", buffered), func(t *testing.T) {
 			var b *BadgerEngine
 			if buffered {
-				b = newWriteBehindTestEngine(t, time.Hour)
+				b, _ = newWriteBehindTestEngine(t, t, time.Hour)
 			} else {
 				b = createTestBadgerEngine(t)
 			}
@@ -465,7 +467,7 @@ func TestBulkReadCancellationHotAdjacencyKernelRetires(t *testing.T) {
 // overlay owner directly: a canceled caller retires the overlay copy instead
 // of publishing a population nobody consumes.
 func TestBulkReadCancellationOverlayCaptureKernelRetires(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	expected := seedCancellationNodes(t, b, cancellationRouteRecords, true)
 	require.Positive(t, b.writeBehind.PendingOps())
 	ctx := context.Background()

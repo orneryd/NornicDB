@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"testing"
 	"time"
@@ -18,7 +20,6 @@ func TestPR1655RawObservedRequestCannotEnterApplyWAL(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			for _, id := range []storage.NodeID{"test:a", "test:b"} {
 				_, err := base.CreateNode(pr1655Node(id, map[string]any{"v": "before"}))
 				require.NoError(t, err)
@@ -60,7 +61,6 @@ func TestPR1655RawObservedRequestCannotEnterApplyWAL(t *testing.T) {
 func TestPR1655ObservedRequestsNormalizeBeforeReplicaApply(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	peer := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, base.Close()); require.NoError(t, peer.Close()) })
 	for _, engine := range []storage.Engine{base, peer} {
 		for _, id := range []storage.NodeID{"test:a", "test:b"} {
 			_, err := engine.CreateNode(pr1655Node(id, map[string]any{"v": "before"}))

@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"net/http"
@@ -60,7 +62,6 @@ func TestDescriptorPersistedCatalogReopenAuthenticatesHTTPExactly(t *testing.T) 
 			for attempt := 0; attempt < 2; attempt++ {
 				inner, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = inner.Close() })
 				system := storage.NewNamespacedEngine(inner, "system")
 				if attempt == 0 {
 					_, err = system.CreateNode(&storage.Node{ID: metadataNodeID, Labels: []string{"_System", "_Metadata"}, Properties: map[string]any{"type": "databases", "data": secured}})
@@ -78,11 +79,11 @@ func TestDescriptorPersistedCatalogReopenAuthenticatesHTTPExactly(t *testing.T) 
 				}
 				manager, err := NewDatabaseManager(t.Context(), inner, cfg)
 				require.NoError(t, err)
+				_, closeManager := fixtureowner.OwnWithClose(t, manager)
 				t.Cleanup(func() {
 					for _, engine := range engines {
 						_ = engine.Close()
 					}
-					_ = manager.Close()
 				})
 				selected, err := manager.GetStorageWithAuth("descriptor.r", "")
 				if err != nil {
@@ -120,7 +121,7 @@ func TestDescriptorPersistedCatalogReopenAuthenticatesHTTPExactly(t *testing.T) 
 				for _, engine := range engines {
 					require.NoError(t, engine.Close())
 				}
-				require.NoError(t, manager.Close())
+				closeManager()
 			}
 			require.Equal(t, int32(2), accepted.Load())
 		})

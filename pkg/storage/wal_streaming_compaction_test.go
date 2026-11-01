@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -18,7 +20,7 @@ func TestAutoCompactionWritesRecoverableStreamingSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	engine := newTestMemoryEngine(t)
 	walEngine := NewWALEngine(engine, wal)
-	t.Cleanup(func() { require.NoError(t, walEngine.Close()) })
+	fixtureowner.Own(t, walEngine)
 	walmart := NodeID("nornic:walmart")
 	target := NodeID("nornic:target")
 	_, err = walEngine.CreateNode(&Node{ID: walmart, Labels: []string{"Store"}})
@@ -53,7 +55,7 @@ func TestAutoCompactionSkipsSnapshotWhenWALHasNotAdvanced(t *testing.T) {
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
 	walEngine := NewWALEngine(newTestMemoryEngine(t), wal)
-	t.Cleanup(func() { require.NoError(t, walEngine.Close()) })
+	fixtureowner.Own(t, walEngine)
 	walEngine.snapshotDir = filepath.Join(root, "snapshots")
 	require.NoError(t, walEngine.createSnapshotAndCompact())
 	initialPaths, err := filepath.Glob(filepath.Join(walEngine.snapshotDir, "snapshot-*.json"))
@@ -90,7 +92,7 @@ func BenchmarkIdleAutoCompaction(b *testing.B) {
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate"})
 	require.NoError(b, err)
 	walEngine := NewWALEngine(fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)), wal)
-	b.Cleanup(func() { require.NoError(b, walEngine.Close()) })
+	fixtureowner.Own(b, walEngine)
 	walEngine.snapshotDir = filepath.Join(root, "snapshots")
 	_, err = walEngine.CreateNode(&Node{ID: "nornic:document"})
 	require.NoError(b, err)

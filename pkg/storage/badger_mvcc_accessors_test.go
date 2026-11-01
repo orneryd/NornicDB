@@ -10,7 +10,10 @@
 // callback always has a non-nil concrete value to read.
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -113,5 +116,5 @@ func registerAccessorSnapshot(t *testing.T, engine *BadgerEngine) {
 	t.Helper()
 	deregister, err := engine.acquireSnapshotReader(SnapshotReaderInfo{SnapshotVersion: MVCCVersion{}, StartTime: time.Now()})
 	require.NoError(t, err)
-	t.Cleanup(deregister)
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { deregister(); return nil }))
 }

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -12,8 +14,9 @@ import (
 func TestGH448_EmbeddingWritebackPersistsAcrossBadgerReopen(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dataDir}))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 	store := NewNamespacedEngine(engine, "gh448_disk")
@@ -30,7 +33,7 @@ func TestGH448_EmbeddingWritebackPersistsAcrossBadgerReopen(t *testing.T) {
 	staged, err := store.GetNodesByLabel(context.Background(), "Doc")
 	require.NoError(t, err)
 	require.Len(t, staged, 2)
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dataDir}))
 	require.NoError(t, err)
