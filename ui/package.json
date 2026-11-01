@@ -17,7 +17,7 @@
     "lucide-react": "^1.48.0",
     "neo4j-driver": "^6.2.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.4",
     "remark-gfm": "^4.0.1",
