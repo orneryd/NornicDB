@@ -80,7 +80,7 @@ query
     ;
 
 useClause
-    : USE useGraphPrefix invocationName useGraphArguments? {p.useReferenceComplete()}?
+    : USE useGraphPrefix invocationName useGraphArguments? {p.useReferenceComplete()}
     ;
 
 // EXPLAIN/PROFILE prefix
@@ -101,21 +101,21 @@ showCommand
             showTail?
     ;
 
-// The kind SHOW … CONSTRAINTS lists. PROPERTY UNIQUE[NESS] is Cypher 25's;
+// The kind SHOW Ã¢â‚¬Â¦ CONSTRAINTS lists. PROPERTY UNIQUE[NESS] is Cypher 25's;
 // the executor rejects it in a Cypher 5 statement (showConstraintKindOf).
 showConstraintKind
     : ALL
     | (NODE | RELATIONSHIP | REL)? (UNIQUE | UNIQUENESS | KEY | PROPERTY? (EXIST | EXISTENCE | UNIQUE | UNIQUENESS) | PROPERTY TYPE)
     ;
 
-// SHOW … WHERE …, or SHOW … YIELD … [WHERE …] [ORDER BY …] [SKIP …] [LIMIT …]
-// then RETURN …, or (Cypher 25 composition) any query over the yielded columns.
+// SHOW Ã¢â‚¬Â¦ WHERE Ã¢â‚¬Â¦, or SHOW Ã¢â‚¬Â¦ YIELD Ã¢â‚¬Â¦ [WHERE Ã¢â‚¬Â¦] [ORDER BY Ã¢â‚¬Â¦] [SKIP Ã¢â‚¬Â¦] [LIMIT Ã¢â‚¬Â¦]
+// then RETURN Ã¢â‚¬Â¦, or (Cypher 25 composition) any query over the yielded columns.
 showTail
     : where
     | YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? regularQuery?
     ;
 
-// TERMINATE TRANSACTION[S] id[, id …] [YIELD …]
+// TERMINATE TRANSACTION[S] id[, id Ã¢â‚¬Â¦] [YIELD Ã¢â‚¬Â¦]
 terminateCommand
     : TERMINATE (TRANSACTION | TRANSACTIONS) expression (COMMA expression)* (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? regularQuery?)?
     ;
@@ -255,7 +255,7 @@ withSt
     ;
 
 embeddingSt
-    : {p.EmbeddingOptionTerminal()}? WITH EMBEDDING
+    : WITH {p.EmbeddingOptionTerminal()}? EMBEDDING
     ;
 
 skipSt
@@ -286,7 +286,7 @@ orderSt
     : ORDER BY orderItem (COMMA orderItem)*
     ;
 
-// Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
+// Reads may follow writes without a WITH (CREATE Ã¢â‚¬Â¦ MATCH Ã¢â‚¬Â¦ RETURN), as in
 // Neo4j 5 and 25. The embedding option ends the query grammatically, so a
 // nonterminal WITH EMBEDDING can only be the multiPartQ projection.
 singlePartQ
@@ -1000,8 +1000,9 @@ useGraphPrefix
     : {p.useGraphKeyword()}? ID
     | {!p.useGraphKeyword()}?
     ;
+// The standalone prefix leaves opaque followers to routing, not grammar prediction.
 useReferencePrefix
-    : useClause .* EOF
+    : useClause
     ;
 
 // These entry views declare routing and scanner vocabulary in the grammar,

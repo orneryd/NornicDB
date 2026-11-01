@@ -2,6 +2,7 @@ package antlr
 
 import (
 	"context"
+	antlr4 "github.com/antlr4-go/antlr/v4"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
@@ -135,7 +136,12 @@ type UseReferenceError struct {
 func (*UseReferenceError) Error() string { return "invalid USE reference" }
 
 // A selector cannot stop before a dotted part or before its argument list.
-func (p *CypherParser) useReferenceComplete() bool {
+// Completion is an end-of-rule action, not a prediction predicate. The same
+// grammar rejection and diagnostic are retained without making invocation-name
+// lookahead cross an opaque predicate in its follower.
+func (p *CypherParser) useReferenceComplete() {
 	next := p.GetTokenStream().LA(1)
-	return next != CypherParserDOT && next != CypherParserLPAREN && !(next == CypherParserFLOAT && strings.HasPrefix(p.GetTokenStream().LT(1).GetText(), "."))
+	if next == CypherParserDOT || next == CypherParserLPAREN || next == CypherParserFLOAT && strings.HasPrefix(p.GetTokenStream().LT(1).GetText(), ".") {
+		p.SetError(antlr4.NewFailedPredicateException(p, "p.useReferenceComplete()", ""))
+	}
 }
