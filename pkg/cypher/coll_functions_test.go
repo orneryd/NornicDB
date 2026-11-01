@@ -137,11 +137,11 @@ func TestCollFunctionsMatchNeo4j(t *testing.T) {
 		}
 		return []interface{}{int64(1)}, nil
 	}}
-	_, err = fnCollSort(call, nil)
+	_, err = fnCollSort(context.Background(), call, nil)
 	require.ErrorContains(t, err, "coll.sort")
-	_, err = fnCollFlatten(call, []string{"l", "1", "2"})
+	_, err = fnCollFlatten(context.Background(), call, []string{"l", "1", "2"})
 	require.Error(t, err)
-	_, err = fnCollDistinct(call, []string{"fail"})
+	_, err = fnCollDistinct(context.Background(), call, []string{"fail"})
 	require.ErrorIs(t, err, failed)
 
 	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name WHERE name STARTS WITH 'coll.' RETURN collect(name) AS fns", nil)

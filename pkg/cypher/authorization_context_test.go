@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -24,8 +25,8 @@ func TestAuthorizeQueryCanceledClassification(t *testing.T) {
 				defer cancel()
 				ctx, want = expired, context.DeadlineExceeded
 			case "reader checkpoint":
-				checkpoint := newCheckpointContext(2, nil)
-				defer checkpoint.cancel()
+				checkpoint := fixtureowner.NewCheckpointContext(2, nil)
+				defer checkpoint.Cancel()
 				ctx, want = checkpoint, context.Canceled
 			}
 			checks := 0

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -17,7 +18,7 @@ import (
 
 func TestBadgerEngine_AllNodes_Empty(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	nodes, err := b.AllNodes()
+	nodes, err := b.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, nodes)
 }
@@ -28,14 +29,14 @@ func TestBadgerEngine_AllNodes_WithData(t *testing.T) {
 	_, err := b.CreateNode(n)
 	require.NoError(t, err)
 
-	nodes, err := b.AllNodes()
+	nodes, err := b.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(nodes), 1)
 }
 
 func TestBadgerEngine_AllEdges_Empty(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	edges, err := b.AllEdges()
+	edges, err := b.AllEdges(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, edges)
 }
@@ -59,14 +60,14 @@ func TestBadgerEngine_AllEdges_WithData(t *testing.T) {
 	err = b.CreateEdge(e)
 	require.NoError(t, err)
 
-	edges, err := b.AllEdges()
+	edges, err := b.AllEdges(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(edges), 1)
 }
 
 func TestBadgerEngine_BatchGetNodes_Empty(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	result, err := b.BatchGetNodes([]NodeID{})
+	result, err := b.BatchGetNodes(context.Background(), []NodeID{})
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -77,14 +78,14 @@ func TestBadgerEngine_BatchGetNodes_WithData(t *testing.T) {
 	id, err := b.CreateNode(n)
 	require.NoError(t, err)
 
-	result, err := b.BatchGetNodes([]NodeID{id})
+	result, err := b.BatchGetNodes(context.Background(), []NodeID{id})
 	require.NoError(t, err)
 	assert.Len(t, result, 1)
 }
 
 func TestBadgerEngine_BatchGetNodes_Missing(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	result, err := b.BatchGetNodes([]NodeID{NodeID(prefixTestID("nonexist"))})
+	result, err := b.BatchGetNodes(context.Background(), []NodeID{NodeID(prefixTestID("nonexist"))})
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -146,7 +147,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Person", staleID, b.db.oracle.published.Load())
 
 		var visited []NodeID
-		err = b.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+		err = b.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool {
 			visited = append(visited, id)
 			return true
 		})
@@ -158,7 +159,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		assert.NotEqual(t, staleID, cachedID)
 
 		visited = visited[:0]
-		err = b.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+		err = b.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool {
 			visited = append(visited, id)
 			return false
 		})
@@ -174,7 +175,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		_, err := b.CreateNode(stored)
 		require.NoError(t, err)
 
-		result, err := b.BatchGetNodes([]NodeID{"", cached.ID, stored.ID, NodeID(prefixTestID("batch-missing"))})
+		result, err := b.BatchGetNodes(context.Background(), []NodeID{"", cached.ID, stored.ID, NodeID(prefixTestID("batch-missing"))})
 		require.NoError(t, err)
 		require.Len(t, result, 2)
 		assert.Equal(t, "cached", result[cached.ID].Properties["name"])
@@ -193,7 +194,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		b.cacheStoreNode(n1, b.db.oracle.published.Load())
 		b.cacheStoreNode(n2, b.db.oracle.published.Load())
 
-		result, err := b.BatchGetNodes([]NodeID{n1.ID, n2.ID})
+		result, err := b.BatchGetNodes(context.Background(), []NodeID{n1.ID, n2.ID})
 		require.NoError(t, err)
 		require.Len(t, result, 2)
 		require.NotSame(t, n1, result[n1.ID])
@@ -212,10 +213,10 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 			return txn.Set(nodeKey(corruptID), []byte("not-a-node"))
 		}))
 
-		result, err := b.BatchGetNodes([]NodeID{valid.ID, corruptID, NodeID(prefixTestID("batch-missing"))})
+		result, err := b.BatchGetNodes(context.Background(), []NodeID{valid.ID, corruptID, NodeID(prefixTestID("batch-missing"))})
 		require.Error(t, err)
 		require.Nil(t, result)
-		result, err = b.BatchGetNodes([]NodeID{valid.ID, NodeID(prefixTestID("batch-missing"))})
+		result, err = b.BatchGetNodes(context.Background(), []NodeID{valid.ID, NodeID(prefixTestID("batch-missing"))})
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 		assert.Equal(t, valid.ID, result[valid.ID].ID)
@@ -224,15 +225,15 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 	t.Run("BatchGetNodes returns error when view transaction fails", func(t *testing.T) {
 		b := createTestBadgerEngine(t)
 		require.NoError(t, b.Close())
-		_, err := b.BatchGetNodes([]NodeID{NodeID(prefixTestID("after-close"))})
+		_, err := b.BatchGetNodes(context.Background(), []NodeID{NodeID(prefixTestID("after-close"))})
 		require.Error(t, err)
 	})
 
 	t.Run("edge query helpers validate ids and reject corrupt payloads", func(t *testing.T) {
 		b := createTestBadgerEngine(t)
-		_, err := b.GetOutgoingEdges("")
+		_, err := b.GetOutgoingEdges(context.Background(), "")
 		require.ErrorIs(t, err, ErrInvalidID)
-		_, err = b.GetIncomingEdges("")
+		_, err = b.GetIncomingEdges(context.Background(), "")
 		require.ErrorIs(t, err, ErrInvalidID)
 
 		start := testNode(prefixTestID("edge-start"))
@@ -269,15 +270,15 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 			return txn.Set(edgeKey(corruptID), []byte("not-an-edge"))
 		}))
 
-		outgoing, err := b.GetOutgoingEdges(start.ID)
+		outgoing, err := b.GetOutgoingEdges(context.Background(), start.ID)
 		require.Error(t, err)
 		require.Nil(t, outgoing)
 
-		incoming, err := b.GetIncomingEdges(end.ID)
+		incoming, err := b.GetIncomingEdges(context.Background(), end.ID)
 		require.Error(t, err)
 		require.Nil(t, incoming)
 
-		byType, err := b.GetEdgesByType("REL")
+		byType, err := b.GetEdgesByType(context.Background(), "REL")
 		require.Error(t, err)
 		require.Nil(t, byType)
 	})
@@ -364,7 +365,7 @@ func TestBadgerEngine_BulkCreateNodes_Extra(t *testing.T) {
 	err := b.BulkCreateNodes(nodes)
 	require.NoError(t, err)
 
-	all, err := b.AllNodes()
+	all, err := b.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(all), 2)
 
@@ -620,30 +621,18 @@ func TestNodeConfigStore_AddToNodeDenyList(t *testing.T) {
 func TestBadgerEngine_ForEachNodeIDByLabel_EarlyStop(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	// Create several nodes with the same label
-	for i := 0; i < 5; i++ {
-		n := &Node{
+	assertLabelVisitorStopsAfterTwo(t, "Batch", func(i int) *Node {
+		return &Node{
 			ID:         NodeID(prefixTestID(fmt.Sprintf("each-n%d", i))),
 			Labels:     []string{"Batch"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := engine.CreateNode(n)
-		require.NoError(t, err)
-	}
-
-	// Visit and stop after 2
-	var visited []NodeID
-	err := engine.ForEachNodeIDByLabel("Batch", func(id NodeID) bool {
-		visited = append(visited, id)
-		return len(visited) < 2 // stop after 2
-	})
-	require.NoError(t, err)
-	assert.Len(t, visited, 2)
+	}, engine.CreateNode, engine.ForEachNodeIDByLabel)
 }
 
 func TestBadgerEngine_ForEachNodeIDByLabel_NilVisitor(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	err := engine.ForEachNodeIDByLabel("Person", nil)
+	err := engine.ForEachNodeIDByLabel(context.Background(), "Person", nil)
 	assert.NoError(t, err) // nil visitor is a no-op
 }
 
@@ -655,7 +644,7 @@ func TestBadgerEngine_ForEachNodeIDByLabel_ClosedEngine(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
-	err = engine.ForEachNodeIDByLabel("Person", func(id NodeID) bool { return true })
+	err = engine.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool { return true })
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
 
@@ -696,7 +685,7 @@ func TestBadgerEngine_GetEdgesByType_EmptyType(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("ete-e1")), StartNode: n1.ID, EndNode: n2.ID, Type: "KNOWS", Properties: map[string]interface{}{}}))
 
 	// Empty type returns all edges
-	edges, err := engine.GetEdgesByType("")
+	edges, err := engine.GetEdgesByType(context.Background(), "")
 	require.NoError(t, err)
 	assert.Len(t, edges, 1)
 }
@@ -720,7 +709,7 @@ func TestBadgerEngine_GetEdgesByType_CacheEviction(t *testing.T) {
 
 	// Query them all to populate and overflow cache
 	for i := 0; i < 200; i++ {
-		edges, err := engine.GetEdgesByType(fmt.Sprintf("TYPE_%d", i))
+		edges, err := engine.GetEdgesByType(context.Background(), fmt.Sprintf("TYPE_%d", i))
 		require.NoError(t, err)
 		assert.Len(t, edges, 1)
 	}
@@ -728,13 +717,13 @@ func TestBadgerEngine_GetEdgesByType_CacheEviction(t *testing.T) {
 
 func TestBadgerEngine_GetOutgoingEdges_EmptyID(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	_, err := engine.GetOutgoingEdges("")
+	_, err := engine.GetOutgoingEdges(context.Background(), "")
 	assert.ErrorIs(t, err, ErrInvalidID)
 }
 
 func TestBadgerEngine_GetIncomingEdges_EmptyID(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	_, err := engine.GetIncomingEdges("")
+	_, err := engine.GetIncomingEdges(context.Background(), "")
 	assert.ErrorIs(t, err, ErrInvalidID)
 }
 
@@ -1091,7 +1080,7 @@ func TestBadgerEngine_UpdateNode_UpsertNewNode(t *testing.T) {
 	assert.Equal(t, "Alice", got.Properties["name"])
 
 	// Verify label index was created
-	nodes, err := engine.GetNodesByLabel("Person")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	found := false
 	for _, n := range nodes {
@@ -1120,14 +1109,14 @@ func TestBadgerEngine_UpdateNode_LabelChange(t *testing.T) {
 	require.NoError(t, err)
 
 	// Old label should not find it
-	persons, err := engine.GetNodesByLabel("Person")
+	persons, err := engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	for _, n := range persons {
 		assert.NotEqual(t, node.ID, n.ID)
 	}
 
 	// New label should find it
-	employees, err := engine.GetNodesByLabel("Employee")
+	employees, err := engine.GetNodesByLabel(context.Background(), "Employee")
 	require.NoError(t, err)
 	found := false
 	for _, n := range employees {

@@ -9,6 +9,7 @@ import (
 
 	"strings"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -168,11 +169,9 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 // strings, booleans and numbers are filed under keys that are equal exactly
 // when the values are equal in Cypher (1 and 1.0 share a key).
 func propertyIndexMissIsAuthoritative(value interface{}) bool {
-	switch value.(type) {
-	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return true
-	}
-	return false
+	// Null is not an authoritative property-index miss: it still needs the
+	// existing scan path. Primitive type recognition is shared with APOC search.
+	return value != nil && valueconvert.NativeScalar(value)
 }
 
 func splitTopLevelOrTerms(expr string) []string {
@@ -300,7 +299,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			if err := edge.SetEndpoints(mergeStartNode, mergeEndNode); err != nil {
 				return nil, err
 			}
-			createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties)
+			createdEdge, created, createErr := createRelationshipForMerge(ctx, e, store, edge, parsedPattern.properties)
 			if createErr != nil {
 				return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
 			}
@@ -353,7 +352,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := prepareMergeKeys(ctx, store, labels, matchProps, mergeNodeWritesFromContext(ctx).writes(varName)); err != nil {
 			return nil, err
 		}
-		existingNode, err = e.findMergeNode(store, labels, matchProps)
+		existingNode, err = e.findMergeNode(ctx, store, labels, matchProps)
 		if err != nil {
 			return nil, err
 		}
@@ -378,7 +377,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 			}
 			// A concurrent MERGE created it first: this MERGE matched it.
-			recoveredNode, findErr := e.findMergeNode(store, labels, matchProps)
+			recoveredNode, findErr := e.findMergeNode(ctx, store, labels, matchProps)
 			if findErr != nil {
 				return nil, findErr
 			}

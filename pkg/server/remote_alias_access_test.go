@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -57,7 +58,7 @@ func checkRemoteAliasAccess(t *testing.T, noAuth bool) {
 	write := makeRequest(t, coordinator, http.MethodPost, "/db/nornic/tx/commit", map[string]any{"statements": []map[string]any{{"statement": "USE restricted.read_write CREATE (:AliasWriteControl)"}}}, token)
 	require.NoError(t, json.Unmarshal(write.Body.Bytes(), &response))
 	require.Empty(t, response.Errors, write.Body.String())
-	controls, err := store.GetNodesByLabel("AliasWriteControl")
+	controls, err := store.GetNodesByLabel(context.Background(), "AliasWriteControl")
 	require.NoError(t, err)
 	require.Len(t, controls, 1)
 
@@ -101,7 +102,7 @@ func checkRemoteAliasAccess(t *testing.T, noAuth bool) {
 							// of statement admission. Assert its existing refusal explicitly.
 							require.Len(t, tx.Errors, 1, opened.Body.String())
 							require.Contains(t, tx.Errors[0].Message, "engine does not support transactions")
-							nodes, err := store.GetNodesByLabel("AliasDeniedWrite")
+							nodes, err := store.GetNodesByLabel(context.Background(), "AliasDeniedWrite")
 							require.NoError(t, err)
 							require.Empty(t, nodes)
 							return
@@ -119,7 +120,7 @@ func checkRemoteAliasAccess(t *testing.T, noAuth bool) {
 					} else {
 						require.Contains(t, strings.ToLower(denied.Errors[0].Message), "read-only")
 					}
-					nodes, err := store.GetNodesByLabel("AliasDeniedWrite")
+					nodes, err := store.GetNodesByLabel(context.Background(), "AliasDeniedWrite")
 					require.NoError(t, err)
 					require.Empty(t, nodes, "the actual authenticated remote must remain unchanged")
 				})

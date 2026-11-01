@@ -67,7 +67,7 @@ func TestSol1482R3EdgeEventsWithoutRelationshipText(t *testing.T) {
 	w[1] = 1
 	_, err := db.ExecuteCypher(ctx, "CREATE (:Doc)-[:CITES {vec:$v}]->(:Doc)", map[string]any{"v": v})
 	require.NoError(t, err)
-	edges, err := db.storage.AllEdges()
+	edges, err := db.storage.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	edge := edges[0]

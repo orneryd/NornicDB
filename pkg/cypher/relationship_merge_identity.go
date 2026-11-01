@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -117,6 +118,7 @@ func (e *StorageExecutor) newRelationshipMergeEdgeID(
 }
 
 func createRelationshipForMerge(
+	ctx context.Context,
 	e *StorageExecutor,
 	store storage.Engine,
 	edge *storage.Edge,
@@ -131,7 +133,7 @@ func createRelationshipForMerge(
 	for {
 		nonReflexiveIdentity := relationshipMergeIdentityContainsNaN(matchProps)
 		if len(matchProps) > 0 && !nonReflexiveIdentity {
-			existing, err := selectRelationshipMergeCreateID(store, edge, matchProps)
+			existing, err := selectRelationshipMergeCreateID(ctx, store, edge, matchProps)
 			if err != nil {
 				return nil, false, err
 			}
@@ -183,6 +185,7 @@ func createRelationshipForMerge(
 // is required before transactional CreateEdge because a transaction can buffer
 // a snapshot-visible committed ID without returning ErrAlreadyExists.
 func selectRelationshipMergeCreateID(
+	ctx context.Context,
 	store storage.Engine,
 	edge *storage.Edge,
 	matchProps map[string]interface{},
@@ -204,7 +207,7 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-	edges, err := store.GetEdgesBetween(edge.StartNode, edge.EndNode)
+	edges, err := store.GetEdgesBetween(ctx, edge.StartNode, edge.EndNode)
 	if err != nil {
 		return nil, err
 	}

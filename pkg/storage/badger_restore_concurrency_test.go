@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -83,7 +84,7 @@ func TestBadgerEngine_RestoreWithConcurrentReaders(t *testing.T) {
 			return nil
 		})
 		go reader(func() error {
-			all, err := engine.AllNodes()
+			all, err := engine.AllNodes(context.Background())
 			if err != nil {
 				return err
 			}

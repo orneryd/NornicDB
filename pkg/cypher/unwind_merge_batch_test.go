@@ -125,7 +125,7 @@ RETURN count(h) AS prepared
 	require.Equal(t, int64(72), toInt64ForTest(t, res.Rows[0][0]))
 	require.True(t, exec.LastHotPathTrace().UnwindSimpleMergeBatch, "expected unwind simple merge batch hot path")
 
-	nodes, err := store.GetNodesByLabel("BenchmarkHop")
+	nodes, err := store.GetNodesByLabel(ctx, "BenchmarkHop")
 	require.NoError(t, err)
 	require.Len(t, nodes, 72)
 	for _, n := range nodes {
@@ -194,7 +194,7 @@ RETURN count(n) AS prepared
 	require.Equal(t, int64(2), toInt64ForTest(t, res.Rows[0][0]))
 	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch, "expected generalized unwind merge chain hot path")
 
-	nodes, err := store.GetNodesByLabel("Annotation")
+	nodes, err := store.GetNodesByLabel(ctx, "Annotation")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	for _, node := range nodes {
@@ -269,7 +269,7 @@ RETURN count(f) AS prepared
 	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch, "expected generalized unwind merge chain hot path")
 	require.Zero(t, atomic.LoadInt64(&store.edgeBetweenCalls), "batch-created File endpoints should not scan existing relationship fanout")
 
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Len(t, edges, 4, "duplicate file row must reuse batch-created relationships")
 }
@@ -307,7 +307,7 @@ RETURN count(n) AS prepared
 	require.Equal(t, int64(1), toInt64ForTest(t, res.Rows[0][0]))
 	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch, "expected generalized unwind merge chain hot path")
 
-	nodes, err := store.GetNodesByLabel("Annotation")
+	nodes, err := store.GetNodesByLabel(ctx, "Annotation")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, "annotation-1", nodes[0].Properties["uid"])
@@ -401,7 +401,7 @@ RETURN count(n) AS prepared
 	require.Equal(t, []string{"prepared"}, res.Columns)
 	require.Equal(t, [][]interface{}{{int64(2)}}, res.Rows)
 
-	nodes, err := store.GetNodesByLabel("Annotation")
+	nodes, err := store.GetNodesByLabel(ctx, "Annotation")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	seen := make(map[interface{}]bool, len(nodes))
@@ -445,7 +445,7 @@ RETURN count(h) AS prepared
 	require.Equal(t, int64(2), toInt64ForTest(t, res.Rows[0][0]))
 	require.True(t, exec.LastHotPathTrace().UnwindSimpleMergeBatch, "expected unwind simple merge batch hot path")
 
-	nodes, err := store.GetNodesByLabel("BenchmarkHop")
+	nodes, err := store.GetNodesByLabel(ctx, "BenchmarkHop")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	for _, n := range nodes {
@@ -480,7 +480,7 @@ RETURN count(h) AS prepared
 	require.Equal(t, int64(3), toInt64ForTest(t, res.Rows[0][0]))
 	require.True(t, exec.LastHotPathTrace().UnwindSimpleMergeBatch, "expected unwind simple merge batch hot path")
 
-	nodes, err := store.GetNodesByLabel("BenchmarkHop")
+	nodes, err := store.GetNodesByLabel(ctx, "BenchmarkHop")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	for _, n := range nodes {
@@ -517,7 +517,7 @@ RETURN count(t) AS prepared
 	require.Equal(t, int64(3), toInt64ForTest(t, res.Rows[0][0]))
 	require.True(t, exec.LastHotPathTrace().UnwindSimpleMergeBatch, "expected unwind simple merge batch hot path")
 
-	nodes, err := store.GetNodesByLabel("TranslatedText")
+	nodes, err := store.GetNodesByLabel(ctx, "TranslatedText")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	for _, n := range nodes {
@@ -553,7 +553,7 @@ RETURN count(t) AS prepared
 	require.Equal(t, int64(2), toInt64ForTest(t, res.Rows[0][0]))
 	require.True(t, exec.LastHotPathTrace().UnwindSimpleMergeBatch, "expected unwind simple merge batch hot path")
 
-	nodes, err := store.GetNodesByLabel("TranslatedText")
+	nodes, err := store.GetNodesByLabel(ctx, "TranslatedText")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
@@ -585,82 +585,57 @@ RETURN count(t) AS prepared
 	require.True(t, seenString, "expected string translationId row to remain distinct")
 }
 
-func TestUnwindMergeBatch_MultiPropertyMerge_NestedMapValuesAreRejected(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	require.NoError(t, store.GetSchema().AddCompositeIndex("idx_nested_map_translation_key_lang", "TranslatedText", []string{"translationId", "language"}))
-
-	rows := []map[string]interface{}{
-		{
-			"translationId":  map[string]interface{}{"id": 1, "meta": map[string]interface{}{"kind": "n"}},
-			"language":       "es",
-			"translatedText": "nested-numeric",
-		},
-		{
-			"translationId":  map[string]interface{}{"id": "1", "meta": map[string]interface{}{"kind": "n"}},
-			"language":       "es",
-			"translatedText": "nested-string",
-		},
-	}
-
-	res, err := exec.Execute(ctx, `
+func TestUnwindMergeBatch_MultiPropertyMerge_InvalidValuesAreRejected(t *testing.T) {
+	for _, test := range []struct {
+		name, index string
+		rows        []map[string]interface{}
+	}{
+		{name: "TestUnwindMergeBatch_MultiPropertyMerge_NestedMapValuesAreRejected", index: "idx_nested_map_translation_key_lang", rows: []map[string]interface{}{
+			{
+				"translationId":  map[string]interface{}{"id": 1, "meta": map[string]interface{}{"kind": "n"}},
+				"language":       "es",
+				"translatedText": "nested-numeric",
+			},
+			{
+				"translationId":  map[string]interface{}{"id": "1", "meta": map[string]interface{}{"kind": "n"}},
+				"language":       "es",
+				"translatedText": "nested-string",
+			},
+		}},
+		{name: "TestUnwindMergeBatch_MultiPropertyMerge_NestedSliceValuesAreRejected", index: "idx_nested_slice_translation_key_lang", rows: []map[string]interface{}{
+			{
+				"translationId":  []interface{}{1, "alpha", nil, map[string]interface{}{"flag": true}},
+				"language":       "es",
+				"translatedText": "slice-numeric",
+			},
+			{
+				"translationId":  []interface{}{"1", "alpha", nil, map[string]interface{}{"flag": true}},
+				"language":       "es",
+				"translatedText": "slice-string",
+			},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(base, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			require.NoError(t, store.GetSchema().AddCompositeIndex(test.index, "TranslatedText", []string{"translationId", "language"}))
+			_, err := exec.Execute(ctx, `
 UNWIND $rows AS row
 MERGE (t:TranslatedText {translationId: row.translationId, language: row.language})
 ON CREATE SET t.translatedText = row.translatedText
 ON MATCH SET t.translatedText = row.translatedText
 RETURN count(t) AS prepared
-`, map[string]interface{}{"rows": rows})
-	// A map, or a list holding a map or null, is not a property value
-	// (#583): the batch MERGE fails and writes nothing.
-	_ = res
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "TypeError")
-
-	nodes, err := store.GetNodesByLabel("TranslatedText")
-	require.NoError(t, err)
-	require.Len(t, nodes, 0)
-}
-
-func TestUnwindMergeBatch_MultiPropertyMerge_NestedSliceValuesAreRejected(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	require.NoError(t, store.GetSchema().AddCompositeIndex("idx_nested_slice_translation_key_lang", "TranslatedText", []string{"translationId", "language"}))
-
-	rows := []map[string]interface{}{
-		{
-			"translationId":  []interface{}{1, "alpha", nil, map[string]interface{}{"flag": true}},
-			"language":       "es",
-			"translatedText": "slice-numeric",
-		},
-		{
-			"translationId":  []interface{}{"1", "alpha", nil, map[string]interface{}{"flag": true}},
-			"language":       "es",
-			"translatedText": "slice-string",
-		},
+`, map[string]interface{}{"rows": test.rows})
+			// Both invalid property shapes must fail without writing any batch member.
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "TypeError")
+			nodes, err := store.GetNodesByLabel(ctx, "TranslatedText")
+			require.NoError(t, err)
+			require.Len(t, nodes, 0)
+		})
 	}
-
-	res, err := exec.Execute(ctx, `
-UNWIND $rows AS row
-MERGE (t:TranslatedText {translationId: row.translationId, language: row.language})
-ON CREATE SET t.translatedText = row.translatedText
-ON MATCH SET t.translatedText = row.translatedText
-RETURN count(t) AS prepared
-`, map[string]interface{}{"rows": rows})
-	// A map, or a list holding a map or null, is not a property value
-	// (#583): the batch MERGE fails and writes nothing.
-	_ = res
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "TypeError")
-
-	nodes, err := store.GetNodesByLabel("TranslatedText")
-	require.NoError(t, err)
-	require.Len(t, nodes, 0)
 }
 
 func TestGenericMerge_MultiPropertyLookup_UsesCompositeSchemaPath(t *testing.T) {

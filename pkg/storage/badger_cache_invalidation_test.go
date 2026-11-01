@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ func TestBadgerEngine_AllNodesPopulatesNodeCache(t *testing.T) {
 	engine.nodeCache = make(map[NodeID]*Node, engine.nodeCacheMaxEntries)
 	engine.nodeCacheMu.Unlock()
 
-	nodes, err := engine.AllNodes()
+	nodes, err := engine.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, node.ID, nodes[0].ID)
@@ -56,7 +57,7 @@ func TestBadgerEngine_NodeCacheNormalizesHomogeneousPropertyArrays(t *testing.T)
 	_, err := engine.CreateNode(node)
 	require.NoError(t, err)
 
-	nodes, err := engine.AllNodes()
+	nodes, err := engine.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.IsType(t, []float64{}, nodes[0].Properties["embedding"])
@@ -78,7 +79,7 @@ func TestBadgerEngine_UpdateEdge_UpdatesTypeIndexAndInvalidatesCache(t *testing.
 	require.NoError(t, err)
 
 	// Warm the edge-type cache for KNOWS.
-	knows, err := engine.GetEdgesByType("KNOWS")
+	knows, err := engine.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	require.Len(t, knows, 1)
 	require.Equal(t, edge.ID, knows[0].ID)
@@ -88,11 +89,11 @@ func TestBadgerEngine_UpdateEdge_UpdatesTypeIndexAndInvalidatesCache(t *testing.
 	require.NoError(t, err)
 
 	// Old type should be empty (both index updated + cache invalidated).
-	knows, err = engine.GetEdgesByType("KNOWS")
+	knows, err = engine.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	require.Len(t, knows, 0)
 
-	likes, err := engine.GetEdgesByType("LIKES")
+	likes, err := engine.GetEdgesByType(context.Background(), "LIKES")
 	require.NoError(t, err)
 	require.Len(t, likes, 1)
 	require.Equal(t, edge.ID, likes[0].ID)

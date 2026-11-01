@@ -13,6 +13,30 @@ import (
 
 var errStartupMaterialization = errors.New("startup must not materialize the full corpus")
 
+// streamStoredEntities is the streaming kernel the startup engine's node and
+// edge streams share: read the entities for ctx, then visit each accepted
+// entity, stopping on context cancellation or a visitor error. accept reports
+// whether an entity is visited and carries the per-stream bookkeeping; nil
+// accepts every entity.
+func streamStoredEntities[T any](ctx context.Context, read func(context.Context) ([]T, error), accept func(T) bool, visit func(T) error) error {
+	entities, err := read(ctx)
+	if err != nil {
+		return err
+	}
+	for _, entity := range entities {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if accept != nil && !accept(entity) {
+			continue
+		}
+		if err := visit(entity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type startupStreamingEngine struct {
 	storage.Engine
 	storage.StoredEntityReader
@@ -39,48 +63,24 @@ func (e *startupStreamingEngine) WithStoredEntityRead(kind storage.StoredEntityR
 	return read()
 }
 
-func (e *startupStreamingEngine) AllNodes() ([]*storage.Node, error) {
+func (e *startupStreamingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	e.allNodesCalls++
 	return nil, errStartupMaterialization
 }
 
-func (e *startupStreamingEngine) AllEdges() ([]*storage.Edge, error) {
+func (e *startupStreamingEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	e.allEdgesCalls++
 	return nil, errStartupMaterialization
 }
 
 func (e *startupStreamingEngine) StreamNodes(ctx context.Context, visit func(*storage.Node) error) error {
 	e.nodeStreamCalls++
-	nodes, err := e.MemoryEngine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := visit(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamStoredEntities(ctx, e.MemoryEngine.AllNodes, nil, visit)
 }
 
 func (e *startupStreamingEngine) StreamEdges(ctx context.Context, visit func(*storage.Edge) error) error {
 	e.edgeStreamCalls++
-	edges, err := e.MemoryEngine.AllEdges()
-	if err != nil {
-		return err
-	}
-	for _, edge := range edges {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := visit(edge); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamStoredEntities(ctx, e.MemoryEngine.AllEdges, nil, visit)
 }
 
 func (e *startupStreamingEngine) StreamNodeChunks(ctx context.Context, chunkSize int, visit func([]*storage.Node) error) error {
@@ -107,23 +107,13 @@ func (e *startupStreamingEngine) StreamNodeChunks(ctx context.Context, chunkSize
 
 func (e *startupStreamingEngine) StreamNodesByPrefix(ctx context.Context, prefix string, visit func(*storage.Node) error) error {
 	e.prefixes = append(e.prefixes, prefix)
-	nodes, err := e.MemoryEngine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	return streamStoredEntities(ctx, e.MemoryEngine.AllNodes, func(node *storage.Node) bool {
 		if !strings.HasPrefix(string(node.ID), prefix) {
-			continue
+			return false
 		}
 		e.prefixCallbackRuns++
-		if err := visit(node); err != nil {
-			return err
-		}
-	}
-	return nil
+		return true
+	}, visit)
 }
 
 // StreamNodesWithOptions models the unified kernel explicitly so the embedded
@@ -131,28 +121,19 @@ func (e *startupStreamingEngine) StreamNodesByPrefix(ctx context.Context, prefix
 func (e *startupStreamingEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
 	// An unprefixed stream is a whole-store node stream, as StreamNodes is
 	// (storage sizing streams stored nodes this way).
-	if opts.Prefix == "" {
+	prefix := opts.Prefix
+	if prefix == "" {
 		e.nodeStreamCalls++
 	} else {
-		e.prefixes = append(e.prefixes, opts.Prefix)
+		e.prefixes = append(e.prefixes, prefix)
 	}
-	nodes, err := e.MemoryEngine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if opts.Prefix != "" && !strings.HasPrefix(string(node.ID), opts.Prefix) {
-			continue
+	return streamStoredEntities(ctx, e.MemoryEngine.AllNodes, func(node *storage.Node) bool {
+		if prefix != "" && !strings.HasPrefix(string(node.ID), prefix) {
+			return false
 		}
 		e.prefixCallbackRuns++
-		if err := visit(node); err != nil {
-			return err
-		}
-	}
-	return nil
+		return true
+	}, visit)
 }
 
 // Regression: initially reported in #373.

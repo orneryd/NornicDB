@@ -39,7 +39,8 @@
     "IForStContext": "effect",
     "IQueryCallStContext": "effect",
     "ICallSubqueryContext": "effect",
-    "IUseClauseContext": "children"
+    "IUseClauseContext": "children",
+    "ILoadCSVStContext": "effect"
   },
   "IUpdatingStatementContext": {
     "ICreateStContext": "effect",

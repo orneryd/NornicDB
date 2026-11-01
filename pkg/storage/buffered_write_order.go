@@ -207,7 +207,10 @@ func (w *WriteBehindBuffer) holdsEntities(e writtenEntities) bool {
 	}
 	for _, id := range e.deletedNodes {
 		for _, outgoing := range [...]bool{true, false} {
-			if live, touched, _ := w.edgeAdjacencyOverlayLocked(id, outgoing); len(live) > 0 || len(touched) > 0 {
+			// The hold check is the write path's own copy with no caller context to
+			// cancel it: context.Background is its lifetime.
+			live, touched, _, _ := w.edgeAdjacencyOverlayLocked(context.Background(), id, outgoing)
+			if len(live) > 0 || len(touched) > 0 {
 				return true
 			}
 		}
@@ -639,12 +642,14 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
 			}
 		}
 	}
+	// Serving a buffered delete reads the deleted node's committed adjacency on
+	// the write's own lifetime (context.Background), not a statement read's.
 	for id := range tx.deletedNodes {
-		out, err := tx.engine.GetStoredOutgoingEdges(id)
+		out, err := tx.engine.GetStoredOutgoingEdges(context.Background(), id)
 		if err != nil {
 			return err
 		}
-		in, err := tx.engine.GetStoredIncomingEdges(id)
+		in, err := tx.engine.GetStoredIncomingEdges(context.Background(), id)
 		if err != nil {
 			return err
 		}

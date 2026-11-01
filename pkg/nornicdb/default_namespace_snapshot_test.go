@@ -82,7 +82,7 @@ func TestOpenResolvedNamespace(t *testing.T) {
 				if _, err := db.ExecuteCypher(context.Background(), "CREATE (:NamespaceFixture {value: 1})", nil); err != nil {
 					t.Fatal(err)
 				}
-				nodes, err := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), want).GetNodesByLabel("NamespaceFixture")
+				nodes, err := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), want).GetNodesByLabel(t.Context(), "NamespaceFixture")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -101,7 +101,7 @@ func TestOpenResolvedNamespace(t *testing.T) {
 					if got := reopened.GetStorage().(*storage.NamespacedEngine).Namespace(); got != want {
 						t.Errorf("reopen namespace=%q want=%q", got, want)
 					}
-					nodes, err := storage.NewNamespacedEngine(reopened.GetBaseStorageForManager(), want).GetNodesByLabel("NamespaceFixture")
+					nodes, err := storage.NewNamespacedEngine(reopened.GetBaseStorageForManager(), want).GetNodesByLabel(t.Context(), "NamespaceFixture")
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -145,7 +145,7 @@ func TestExistingNamespaceSelectionDoesNotMigrate(t *testing.T) {
 		name string
 		want int
 	}{{"nornic", 1}, {"tenant_fixture", 0}} {
-		nodes, err := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), test.name).AllNodes()
+		nodes, err := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), test.name).AllNodes(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}

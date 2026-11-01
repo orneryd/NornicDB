@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -32,13 +33,13 @@ func (c testGraphCatalog) CompositeGraphs() ([]string, bool) { return c.graphs, 
 
 func TestGraphNamesListsCompositeGraphs(t *testing.T) {
 	ctx := graphTestContext([]string{"cmp.a", "cmp.b"}, true, nil)
-	value, found, err := EvaluateFunction("graph.names", nil, ctx)
+	value, found, err := EvaluateFunction(context.Background(), "graph.names", nil, ctx)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, []interface{}{"cmp.a", "cmp.b"}, value)
 
 	// A composite database with no graphs lists none.
-	value, found, err = EvaluateFunction("GRAPH.NAMES", nil, graphTestContext(nil, true, nil))
+	value, found, err = EvaluateFunction(context.Background(), "GRAPH.NAMES", nil, graphTestContext(nil, true, nil))
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, []interface{}{}, value)
@@ -54,7 +55,7 @@ func TestGraphFunctionsAreUnknownOutsideComposite(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, function := range []string{"graph.names", "graph.propertiesByName"} {
-				value, found, err := EvaluateFunction(function, []string{"'cmp.a'"}, tc.ctx)
+				value, found, err := EvaluateFunction(context.Background(), function, []string{"'cmp.a'"}, tc.ctx)
 				require.True(t, found)
 				require.Nil(t, value)
 				var unknown *UnknownFunctionError
@@ -72,7 +73,7 @@ func TestGraphPropertiesByName(t *testing.T) {
 
 	t.Run("a graph of the composite is an empty map", func(t *testing.T) {
 		for _, arg := range []string{"a", "upper"} {
-			value, found, err := EvaluateFunction("graph.propertiesByName", []string{arg}, ctx)
+			value, found, err := EvaluateFunction(context.Background(), "graph.propertiesByName", []string{arg}, ctx)
 			require.NoError(t, err)
 			require.True(t, found)
 			require.Equal(t, map[string]interface{}{}, value)
@@ -80,7 +81,7 @@ func TestGraphPropertiesByName(t *testing.T) {
 	})
 
 	t.Run("a name that is no graph of the composite is Graph not found", func(t *testing.T) {
-		value, found, err := EvaluateFunction("graph.propertiesByName", []string{"missing"}, ctx)
+		value, found, err := EvaluateFunction(context.Background(), "graph.propertiesByName", []string{"missing"}, ctx)
 		require.True(t, found)
 		require.Nil(t, value)
 		var notFound *GraphNotFoundError
@@ -90,7 +91,7 @@ func TestGraphPropertiesByName(t *testing.T) {
 	})
 
 	t.Run("a non-string name is an argument type error", func(t *testing.T) {
-		_, _, err := EvaluateFunction("graph.propertiesByName", []string{"number"}, ctx)
+		_, _, err := EvaluateFunction(context.Background(), "graph.propertiesByName", []string{"number"}, ctx)
 		var argErr *ArgumentTypeError
 		require.ErrorAs(t, err, &argErr)
 		require.Equal(t, "graph.propertiesByName", argErr.Function)
@@ -98,15 +99,15 @@ func TestGraphPropertiesByName(t *testing.T) {
 	})
 
 	t.Run("wrong argument count", func(t *testing.T) {
-		_, _, err := EvaluateFunction("graph.propertiesByName", nil, ctx)
+		_, _, err := EvaluateFunction(context.Background(), "graph.propertiesByName", nil, ctx)
 		require.EqualError(t, err, "Insufficient parameters for function 'graph.propertiesByName'")
-		_, _, err = EvaluateFunction("graph.propertiesByName", []string{"a", "a"}, ctx)
+		_, _, err = EvaluateFunction(context.Background(), "graph.propertiesByName", []string{"a", "a"}, ctx)
 		require.EqualError(t, err, "Too many parameters for function 'graph.propertiesByName'")
 		// An empty argument list may arrive as one empty argument.
-		names, _, err := EvaluateFunction("graph.names", []string{" "}, ctx)
+		names, _, err := EvaluateFunction(context.Background(), "graph.names", []string{" "}, ctx)
 		require.NoError(t, err)
 		require.NotNil(t, names)
-		_, _, err = EvaluateFunction("graph.names", []string{"1"}, ctx)
+		_, _, err = EvaluateFunction(context.Background(), "graph.names", []string{"1"}, ctx)
 		require.EqualError(t, err, "Too many parameters for function 'graph.names'")
 		var count *ParameterCountError
 		require.ErrorAs(t, err, &count)
@@ -115,7 +116,7 @@ func TestGraphPropertiesByName(t *testing.T) {
 	})
 
 	t.Run("an argument that fails to evaluate fails the call", func(t *testing.T) {
-		_, _, err := EvaluateFunction("graph.propertiesByName", []string{"boom"}, ctx)
+		_, _, err := EvaluateFunction(context.Background(), "graph.propertiesByName", []string{"boom"}, ctx)
 		require.EqualError(t, err, "eval failed")
 	})
 }

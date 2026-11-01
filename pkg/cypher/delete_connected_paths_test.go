@@ -31,7 +31,7 @@ func TestForeachDeleteOfConnectedNode(t *testing.T) {
 	for _, query := range []string{"BEGIN", deleteBound, "MATCH (:T)<-[r:LINK]-() DELETE r", "COMMIT"} {
 		require.NoError(t, run(query), query)
 	}
-	left, err := engine.GetNodesByLabel("F")
+	left, err := engine.GetNodesByLabel(ctx, "F")
 	require.NoError(t, err)
 	require.Empty(t, left)
 }
@@ -45,14 +45,14 @@ type adjacencyFailingEngine struct {
 	incomingOnly bool
 }
 
-func (f adjacencyFailingEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (f adjacencyFailingEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if f.incomingOnly {
 		return nil, nil
 	}
 	return nil, errAdjacencyRead
 }
 
-func (f adjacencyFailingEngine) GetIncomingEdges(storage.NodeID) ([]*storage.Edge, error) {
+func (f adjacencyFailingEngine) GetIncomingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
 	return nil, errAdjacencyRead
 }
 

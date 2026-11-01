@@ -23,11 +23,11 @@ type mergeConflictEngine struct {
 	createTried       bool
 }
 
-func (e *mergeConflictEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *mergeConflictEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if e.lookupFailure != nil && (!e.lookupAfterCreate || e.createTried) {
 		return nil, e.lookupFailure
 	}
-	return e.Engine.GetNodesByLabel(label)
+	return e.Engine.GetNodesByLabel(ctx, label)
 }
 
 func (e *mergeConflictEngine) createFailure() error {

@@ -76,14 +76,14 @@ func TestPeriodicCallerSeesBatchesAndKeepsOuterRollback(t *testing.T) {
 							}
 							require.NoError(t, err)
 						}
-						outer, err := store.GetNodesByLabel("U5PeriodicOuter")
+						outer, err := store.GetNodesByLabel(ctx, "U5PeriodicOuter")
 						require.NoError(t, err)
 						wantOuter := 2
 						if failure {
 							wantOuter = 0
 						}
 						require.Len(t, outer, wantOuter)
-						batch, err := store.GetNodesByLabel(label)
+						batch, err := store.GetNodesByLabel(ctx, label)
 						require.NoError(t, err)
 						if explicit && failure {
 							if periodic == "iterate" {

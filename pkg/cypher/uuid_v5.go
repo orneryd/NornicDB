@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"crypto/sha1"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -15,7 +16,7 @@ func init() {
 // fnUUIDv5 is uuid.v5(namespace, name): the version 5 (SHA-1, name-based)
 // UUID of name in namespace (RFC 9562), a UUID or its text. The same
 // namespace and name always give the same UUID. Null in, null out.
-func fnUUIDv5(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnUUIDv5(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 2 {
 		return nil, argumentCountError("uuid.v5", "2", len(args))
 	}
@@ -39,7 +40,5 @@ func fnUUIDv5(ctx cypherfn.Context, args []string) (interface{}, error) {
 	_, _ = digest.Write([]byte(name))
 	var u CypherUUID
 	copy(u.bits[:], digest.Sum(nil))
-	u.bits[6] = u.bits[6]&0x0f | 0x50 // version 5
-	u.bits[8] = u.bits[8]&0x3f | 0x80 // RFC 9562 variant
-	return u, nil
+	return uuidWithVersion(u, 5), nil
 }

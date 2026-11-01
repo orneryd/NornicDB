@@ -76,14 +76,27 @@ func TestExplainYieldKeepsIncomingColumns(t *testing.T) {
 	}
 }
 
-func TestStatementColumnsPreservesUnknownYieldScope(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "explain-yield-fallback"))
-	// LOAD CSV is unsupported by execution. Every projection has the same
-	// deliberate owner error; it cannot succeed with a guessed partial header.
+// LOAD CSV is a reading clause of the shared grammar, so its record variable
+// is a declared binding of the statement scope: the header owner resolves the
+// statement's columns from that scope and the YIELD scope after it, and never
+// from a guessed partial projection.
+func TestStatementColumnsResolveLoadCSVScope(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "load-csv-scope"))
 	prefix := "LOAD CSV FROM 'file:///rows.csv' AS row CALL db.labels() YIELD label AS kind "
-	for _, projection := range []string{"RETURN *", "RETURN *, 1 AS extra", "RETURN kind, 1 AS extra"} {
-		columns, err := exec.StatementResultColumns(prefix+projection, RawSource)
-		require.Error(t, err)
-		require.Nil(t, columns)
+	for _, tc := range []struct {
+		projection string
+		columns    []string
+	}{
+		{"RETURN *", []string{"kind", "row"}},
+		{"RETURN *, 1 AS extra", []string{"kind", "row", "extra"}},
+		{"RETURN kind, 1 AS extra", []string{"kind", "extra"}},
+		{"RETURN row AS r", []string{"r"}},
+	} {
+		columns, err := exec.StatementResultColumns(prefix+tc.projection, RawSource)
+		require.NoError(t, err, tc.projection)
+		require.Equal(t, tc.columns, columns, tc.projection)
 	}
+	// A name the LOAD CSV clause does not bind is reported, not projected.
+	_, err := exec.StatementResultColumns(prefix+"RETURN missing AS k", RawSource)
+	require.ErrorContains(t, err, "missing")
 }

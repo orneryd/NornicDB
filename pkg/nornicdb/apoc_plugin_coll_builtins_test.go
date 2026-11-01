@@ -2,13 +2,9 @@ package nornicdb
 
 import (
 	"context"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 	"testing"
 
-	"github.com/orneryd/nornicdb/internal/pluginbuild"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,18 +27,9 @@ func TestBundledAPOCPluginLeavesCollectionBuiltIns(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the APOC plugin")
 	}
-	source, err := filepath.Abs(filepath.Join("..", "..", "apoc", "plugin-src", "apoc"))
-	require.NoError(t, err)
-	plugins := t.TempDir()
-	buildConfig, err := pluginbuild.Running()
-	require.NoError(t, err)
-	args := append([]string{"build"}, buildConfig.Flags...)
-	args = append(args, "-buildmode=plugin", "-o", filepath.Join(plugins, "apoc.so"), "apoc_plugin.go")
-	build := exec.Command("go", args...)
-	build.Dir = source
-	build.Env = append(os.Environ(), buildConfig.Env...)
-	out, err := build.CombinedOutput()
-	require.NoError(t, err, "go build apoc plugin: %s", out)
+	// The plugin runtime loads the bundled plugin once per test process, so the
+	// build is shared with the other checks that need the real apoc.so.
+	plugins := bundledAPOCPluginDir(t)
 
 	resetPluginTestState()
 	lookup, list := cypher.PluginFunctionLookup, cypher.PluginFunctionList

@@ -29,7 +29,7 @@ type lookupEngine struct {
 	err error
 }
 
-func (l *lookupEngine) ForEachNodeIDByLabel(_ string, visit func(NodeID) bool) error {
+func (l *lookupEngine) ForEachNodeIDByLabel(ctx context.Context, _ string, visit func(NodeID) bool) error {
 	if l.err != nil {
 		return l.err
 	}
@@ -70,14 +70,14 @@ func (l *captureLogger) Log(level string, msg string, fields map[string]any) {
 	l.entries = append(l.entries, entry)
 }
 
-func (e *exportableOnlyEngine) AllNodes() ([]*Node, error) {
+func (e *exportableOnlyEngine) AllNodes(ctx context.Context) ([]*Node, error) {
 	if e.nodeErr != nil {
 		return nil, e.nodeErr
 	}
 	return e.allNodes, nil
 }
 
-func (e *exportableOnlyEngine) AllEdges() ([]*Edge, error) {
+func (e *exportableOnlyEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 	if e.edgeErr != nil {
 		return nil, e.edgeErr
 	}
@@ -122,7 +122,7 @@ func (e *exportableOnlyEngine) StreamNodesWithOptions(ctx context.Context, opts 
 	return nil
 }
 
-func (e *constraintValidationEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (e *constraintValidationEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -203,10 +203,10 @@ func TestTemporalHelpers(t *testing.T) {
 
 func TestLabelNodeIDLookupHelpers(t *testing.T) {
 	t.Run("invalid engine", func(t *testing.T) {
-		_, err := FirstNodeIDByLabel(nil, "Person")
+		_, err := FirstNodeIDByLabel(context.Background(), nil, "Person")
 		require.ErrorIs(t, err, ErrInvalidData)
 
-		ids, err := NodeIDsByLabel(nil, "Person", 1)
+		ids, err := NodeIDsByLabel(context.Background(), nil, "Person", 1)
 		require.ErrorIs(t, err, ErrInvalidData)
 		require.Nil(t, ids)
 	})
@@ -215,11 +215,11 @@ func TestLabelNodeIDLookupHelpers(t *testing.T) {
 		base := newTestMemoryEngine(t)
 		engine := &lookupEngine{Engine: base, ids: []NodeID{"n1", "n2", "n3"}}
 
-		id, err := FirstNodeIDByLabel(engine, "Person")
+		id, err := FirstNodeIDByLabel(context.Background(), engine, "Person")
 		require.NoError(t, err)
 		require.Equal(t, NodeID("n1"), id)
 
-		ids, err := NodeIDsByLabel(engine, "Person", 2)
+		ids, err := NodeIDsByLabel(context.Background(), engine, "Person", 2)
 		require.NoError(t, err)
 		require.Equal(t, []NodeID{"n1", "n2"}, ids)
 	})
@@ -227,11 +227,11 @@ func TestLabelNodeIDLookupHelpers(t *testing.T) {
 	t.Run("lookup engine errors and empty", func(t *testing.T) {
 		wantErr := errors.New("boom")
 		engine := &lookupEngine{Engine: newTestMemoryEngine(t), err: wantErr}
-		_, err := FirstNodeIDByLabel(engine, "Person")
+		_, err := FirstNodeIDByLabel(context.Background(), engine, "Person")
 		require.ErrorIs(t, err, wantErr)
 
 		engine = &lookupEngine{Engine: newTestMemoryEngine(t)}
-		_, err = FirstNodeIDByLabel(engine, "Person")
+		_, err = FirstNodeIDByLabel(context.Background(), engine, "Person")
 		require.ErrorIs(t, err, ErrNotFound)
 	})
 
@@ -242,15 +242,15 @@ func TestLabelNodeIDLookupHelpers(t *testing.T) {
 		_, err = engine.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}})
 		require.NoError(t, err)
 
-		id, err := FirstNodeIDByLabel(engine, "Person")
+		id, err := FirstNodeIDByLabel(context.Background(), engine, "Person")
 		require.NoError(t, err)
 		require.NotEmpty(t, id)
 
-		ids, err := NodeIDsByLabel(engine, "Person", 1)
+		ids, err := NodeIDsByLabel(context.Background(), engine, "Person", 1)
 		require.NoError(t, err)
 		require.Len(t, ids, 1)
 
-		allIDs, err := NodeIDsByLabel(engine, "Missing", 0)
+		allIDs, err := NodeIDsByLabel(context.Background(), engine, "Missing", 0)
 		require.NoError(t, err)
 		require.Empty(t, allIDs)
 	})

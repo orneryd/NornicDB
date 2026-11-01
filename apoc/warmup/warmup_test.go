@@ -1,13 +1,14 @@
 package warmup
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
 
 // setupTestStorage creates a mock storage with test data
-func setupTestStorage() {
+func setupTestStorage() (*Functions, storage.Storage) {
 	mockStore := storage.NewInMemoryStorage()
 
 	// Add test nodes using CreateNode
@@ -20,15 +21,15 @@ func setupTestStorage() {
 	mockStore.CreateRelationship(2, 3, "WORKS_AT", map[string]interface{}{"since": 2021})
 	mockStore.CreateRelationship(1, 2, "KNOWS", map[string]interface{}{})
 
-	// Set the global storage
-	Storage = mockStore
+	// Bind one instance to this backend; the warmup cache belongs to it too.
+	return New(mockStore), mockStore
 }
 
 func TestRun(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
-	result := Run()
+	result := functions.Run(context.Background())
 
 	nodesLoaded, ok := result["nodesLoaded"].(int)
 	if !ok || nodesLoaded != 3 {
@@ -45,75 +46,75 @@ func TestRun(t *testing.T) {
 		t.Error("Result should include timeTaken")
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestRunWithParams(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
 	// Test with label filter
 	params := map[string]interface{}{
 		"labels": []string{"Person"},
 	}
 
-	result := RunWithParams(params)
+	result := functions.RunWithParams(context.Background(), params)
 
 	nodesLoaded, ok := result["nodesLoaded"].(int)
 	if !ok || nodesLoaded != 2 {
 		t.Errorf("Expected nodesLoaded=2 (only Person), got %v", result["nodesLoaded"])
 	}
 
-	Clear()
+	functions.Clear()
 
 	// Test with relationship type filter
 	params = map[string]interface{}{
 		"types": []string{"WORKS_AT"},
 	}
 
-	result = RunWithParams(params)
+	result = functions.RunWithParams(context.Background(), params)
 
 	relsLoaded, ok := result["relationshipsLoaded"].(int)
 	if !ok || relsLoaded != 2 {
 		t.Errorf("Expected relationshipsLoaded=2 (only WORKS_AT), got %v", result["relationshipsLoaded"])
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestNodes(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
-	result := Nodes([]string{"Person"})
+	result := functions.Nodes(context.Background(), []string{"Person"})
 
 	nodesLoaded, ok := result["nodesLoaded"].(int)
 	if !ok || nodesLoaded != 2 {
 		t.Errorf("Expected nodesLoaded=2, got %v", result["nodesLoaded"])
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestRelationships(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
-	result := Relationships([]string{"KNOWS"})
+	result := functions.Relationships(context.Background(), []string{"KNOWS"})
 
 	relsLoaded, ok := result["relationshipsLoaded"].(int)
 	if !ok || relsLoaded != 1 {
 		t.Errorf("Expected relationshipsLoaded=1, got %v", result["relationshipsLoaded"])
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestIndexes(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
-	result := Indexes()
+	result := functions.Indexes(context.Background())
 
 	if result == nil {
 		t.Error("Indexes() returned nil")
@@ -124,14 +125,14 @@ func TestIndexes(t *testing.T) {
 		t.Errorf("Expected indexesLoaded >= 1, got %v", result["indexesLoaded"])
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestProperties(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
-	result := Properties([]string{"name", "age"})
+	result := functions.Properties(context.Background(), []string{"name", "age"})
 
 	if result == nil {
 		t.Error("Properties() returned nil")
@@ -142,17 +143,17 @@ func TestProperties(t *testing.T) {
 		t.Errorf("Expected propertiesLoaded >= 1, got %v", result["propertiesLoaded"])
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestStats(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
 	// Run warmup first
-	Run()
+	functions.Run(context.Background())
 
-	stats := Stats()
+	stats := functions.Stats()
 
 	if stats["nodesCached"] != 3 {
 		t.Errorf("Expected nodesCached=3, got %v", stats["nodesCached"])
@@ -163,88 +164,89 @@ func TestStats(t *testing.T) {
 	}
 
 	// Test cache hits
-	GetCachedNode(1)
-	GetCachedNode(1) // second hit
+	functions.GetCachedNode(1)
+	functions.GetCachedNode(1) // second hit
 
-	stats = Stats()
+	stats = functions.Stats()
 	if stats["cacheHits"].(int64) < 2 {
 		t.Errorf("Expected cacheHits >= 2, got %v", stats["cacheHits"])
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestClear(t *testing.T) {
-	setupTestStorage()
-	Run()
+	functions, _ := setupTestStorage()
+	functions.Run(context.Background())
 
 	// Should have cached items
-	stats := Stats()
+	stats := functions.Stats()
 	if stats["itemsCached"].(int) == 0 {
 		t.Error("Should have cached items before Clear()")
 	}
 
 	// Clear
-	result := Clear()
+	result := functions.Clear()
 	if result["cleared"] != true {
 		t.Error("Clear() should return cleared=true")
 	}
 
 	// Now should be empty
-	stats = Stats()
+	stats = functions.Stats()
 	if stats["itemsCached"].(int) != 0 {
 		t.Errorf("Should have 0 items after Clear(), got %v", stats["itemsCached"])
 	}
 }
 
 func TestStatus(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
 	// Before warmup
-	status := Status()
+	status := functions.Status()
 	if status["running"] != false {
 		t.Error("Should not be running initially")
 	}
 
 	// Run warmup
-	Run()
+	functions.Run(context.Background())
 
 	// After warmup
-	status = Status()
+	status = functions.Status()
 	if status["lastRun"] == nil {
 		t.Error("Should have lastRun after Run()")
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestProgress(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
 	// Before warmup - 0%
-	progress := Progress()
+	progress := functions.Progress(context.Background())
 	pct, ok := progress["percentage"].(float64)
 	if !ok || pct != 0 {
 		t.Errorf("Expected 0%% progress before warmup, got %v", progress["percentage"])
 	}
 
 	// Run warmup
-	Run()
+	functions.Run(context.Background())
 
 	// After warmup - 100%
-	progress = Progress()
+	progress = functions.Progress(context.Background())
 	pct, ok = progress["percentage"].(float64)
 	if !ok || pct != 100 {
 		t.Errorf("Expected 100%% progress after warmup, got %v", progress["percentage"])
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestSchedule(t *testing.T) {
-	result := Schedule("0 4 * * *")
+	functions, _ := setupTestStorage()
+	result := functions.Schedule("0 4 * * *")
 	if result == nil {
 		t.Error("Schedule() returned nil")
 	}
@@ -259,11 +261,11 @@ func TestSchedule(t *testing.T) {
 }
 
 func TestOptimize(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
 	// Before warmup - should recommend running warmup
-	result := Optimize()
+	result := functions.Optimize()
 	if result["optimized"] != true {
 		t.Error("Optimize() should return optimized=true")
 	}
@@ -274,21 +276,21 @@ func TestOptimize(t *testing.T) {
 	}
 
 	// After warmup
-	Run()
-	result = Optimize()
+	functions.Run(context.Background())
+	result = functions.Optimize()
 	if result["optimized"] != true {
 		t.Error("Optimize() should return optimized=true after warmup")
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestCache(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, _ := setupTestStorage()
+	functions.Clear()
 
 	queries := []string{"MATCH (n:Person) RETURN n", "MATCH (n:Company) RETURN n"}
-	result := Cache(queries)
+	result := functions.Cache(queries)
 
 	if result == nil {
 		t.Error("Cache() returned nil")
@@ -299,16 +301,16 @@ func TestCache(t *testing.T) {
 		t.Errorf("Expected queriesWarmed=2, got %v", result["queriesWarmed"])
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestGetCachedNode(t *testing.T) {
-	setupTestStorage()
-	Clear()
-	Run()
+	functions, _ := setupTestStorage()
+	functions.Clear()
+	functions.Run(context.Background())
 
 	// Test hit
-	node, found := GetCachedNode(1)
+	node, found := functions.GetCachedNode(1)
 	if !found {
 		t.Error("Should find cached node 1")
 	}
@@ -317,21 +319,21 @@ func TestGetCachedNode(t *testing.T) {
 	}
 
 	// Test miss
-	_, found = GetCachedNode(999)
+	_, found = functions.GetCachedNode(999)
 	if found {
 		t.Error("Should not find non-existent node")
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestGetCachedRelationship(t *testing.T) {
-	setupTestStorage()
-	Clear()
-	Run()
+	functions, _ := setupTestStorage()
+	functions.Clear()
+	functions.Run(context.Background())
 
 	// Test hit - relationship IDs are auto-generated starting at 1
-	rel, found := GetCachedRelationship(1)
+	rel, found := functions.GetCachedRelationship(1)
 	if !found {
 		t.Error("Should find cached relationship 1")
 	}
@@ -340,20 +342,20 @@ func TestGetCachedRelationship(t *testing.T) {
 	}
 
 	// Test miss
-	_, found = GetCachedRelationship(999)
+	_, found = functions.GetCachedRelationship(999)
 	if found {
 		t.Error("Should not find non-existent relationship")
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestGetNodesByLabel(t *testing.T) {
-	setupTestStorage()
-	Clear()
-	Run()
+	functions, _ := setupTestStorage()
+	functions.Clear()
+	functions.Run(context.Background())
 
-	nodes, found := GetNodesByLabel("Person")
+	nodes, found := functions.GetNodesByLabel("Person")
 	if !found {
 		t.Error("Should find nodes by label 'Person'")
 	}
@@ -362,20 +364,20 @@ func TestGetNodesByLabel(t *testing.T) {
 	}
 
 	// Test non-existent label
-	_, found = GetNodesByLabel("NonExistent")
+	_, found = functions.GetNodesByLabel("NonExistent")
 	if found {
 		t.Error("Should not find non-existent label")
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestGetRelationshipsByType(t *testing.T) {
-	setupTestStorage()
-	Clear()
-	Run()
+	functions, _ := setupTestStorage()
+	functions.Clear()
+	functions.Run(context.Background())
 
-	rels, found := GetRelationshipsByType("WORKS_AT")
+	rels, found := functions.GetRelationshipsByType("WORKS_AT")
 	if !found {
 		t.Error("Should find relationships by type 'WORKS_AT'")
 	}
@@ -384,22 +386,22 @@ func TestGetRelationshipsByType(t *testing.T) {
 	}
 
 	// Test non-existent type
-	_, found = GetRelationshipsByType("NonExistent")
+	_, found = functions.GetRelationshipsByType("NonExistent")
 	if found {
 		t.Error("Should not find non-existent type")
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestSubgraph(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, backend := setupTestStorage()
+	functions.Clear()
 
 	// Get a node from storage to use as start node
-	nodes, _ := Storage.AllNodes()
+	nodes, _ := backend.AllNodes(context.Background())
 
-	result := Subgraph(nodes[0], 2)
+	result := functions.Subgraph(nodes[0], 2)
 
 	if result == nil {
 		t.Error("Subgraph() returned nil")
@@ -410,17 +412,17 @@ func TestSubgraph(t *testing.T) {
 		t.Errorf("Expected nodesLoaded >= 1, got %v", result["nodesLoaded"])
 	}
 
-	Clear()
+	functions.Clear()
 }
 
 func TestPath(t *testing.T) {
-	setupTestStorage()
-	Clear()
+	functions, backend := setupTestStorage()
+	functions.Clear()
 
-	nodes, _ := Storage.AllNodes()
-	rels, _ := Storage.AllRelationships()
+	nodes, _ := backend.AllNodes(context.Background())
+	rels, _ := backend.AllRelationships(context.Background())
 
-	result := Path(nodes, rels)
+	result := functions.Path(nodes, rels)
 
 	if result == nil {
 		t.Error("Path() returned nil")
@@ -436,5 +438,5 @@ func TestPath(t *testing.T) {
 		t.Errorf("Expected relationshipsLoaded=%d, got %v", len(rels), result["relationshipsLoaded"])
 	}
 
-	Clear()
+	functions.Clear()
 }

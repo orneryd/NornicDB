@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -25,50 +26,42 @@ func scopedLabelOrderFixture(t *testing.T) *BadgerEngine {
 	return engine
 }
 
-func orderedScopedIDs(nodes []*Node) []NodeID {
-	ids := make([]NodeID, 0, len(nodes))
-	for _, node := range nodes {
-		ids = append(ids, node.ID)
-	}
-	return ids
-}
-
 func TestScopedLabelReadersPreserveOrderAndExactMembership(t *testing.T) {
 	engine := scopedLabelOrderFixture(t)
 	want := []NodeID{"a:z", "a:a", "a:m"}
-	nodes, err := engine.GetNodesByLabelInScope("a:", "Person")
+	nodes, err := engine.GetNodesByLabelInScope(context.Background(), "a:", "Person")
 	require.NoError(t, err)
-	require.Equal(t, want, orderedScopedIDs(nodes))
+	require.Equal(t, want, testNodeIDs(nodes))
 	first, err := engine.GetFirstNodeByLabelInScope("a:", "Person")
 	require.NoError(t, err)
 	require.Equal(t, want[0], first.ID)
 	var streamed []*Node
-	require.NoError(t, engine.StreamNodesByLabelProjectedInScope("a:", "Person", []string{"id"}, func(node *Node) error {
+	require.NoError(t, engine.StreamNodesByLabelProjectedInScope(context.Background(), "a:", "Person", []string{"id"}, func(node *Node) error {
 		require.Equal(t, map[string]any{"id": string(node.ID)}, node.Properties)
 		streamed = append(streamed, node)
 		return nil
 	}))
-	require.Equal(t, want, orderedScopedIDs(streamed))
-	nodes, err = engine.GetNodesByLabelVisibleAtInScope("a:", "Person", engine.currentMVCCReadVersion("a"))
+	require.Equal(t, want, testNodeIDs(streamed))
+	nodes, err = engine.GetNodesByLabelVisibleAtInScope(context.Background(), "a:", "Person", engine.currentMVCCReadVersion("a"))
 	require.NoError(t, err)
-	require.Equal(t, want, orderedScopedIDs(nodes))
+	require.Equal(t, want, testNodeIDs(nodes))
 	for _, query := range []struct{ scope, label string }{{"missing:", "Person"}, {"a:", "Missing"}} {
-		nodes, err := engine.GetNodesByLabelInScope(query.scope, query.label)
+		nodes, err := engine.GetNodesByLabelInScope(context.Background(), query.scope, query.label)
 		require.NoError(t, err)
 		require.Empty(t, nodes)
 		first, err := engine.GetFirstNodeByLabelInScope(query.scope, query.label)
 		require.NoError(t, err)
 		require.Nil(t, first)
 	}
-	nodes, err = engine.GetNodesByLabelInScope("a:", "person")
+	nodes, err = engine.GetNodesByLabelInScope(context.Background(), "a:", "person")
 	require.NoError(t, err)
-	require.Equal(t, []NodeID{"a:lower"}, orderedScopedIDs(nodes))
-	nodes, err = engine.GetNodesByLabelInScope("", "Person")
+	require.Equal(t, []NodeID{"a:lower"}, testNodeIDs(nodes))
+	nodes, err = engine.GetNodesByLabelInScope(context.Background(), "", "Person")
 	require.NoError(t, err)
-	require.Equal(t, []NodeID{"a:z", "b:z", "a:a", "a:m", "ab:foreign"}, orderedScopedIDs(nodes))
+	require.Equal(t, []NodeID{"a:z", "b:z", "a:a", "a:m", "ab:foreign"}, testNodeIDs(nodes))
 	stop := errors.New("caller stopped")
 	visits := 0
-	require.ErrorIs(t, engine.StreamNodesByLabelProjectedInScope("a:", "Person", nil, func(*Node) error {
+	require.ErrorIs(t, engine.StreamNodesByLabelProjectedInScope(context.Background(), "a:", "Person", nil, func(*Node) error {
 		visits++
 		return stop
 	}), stop)
@@ -81,7 +74,7 @@ func TestScopedLabelSnapshotResumeSurvivesLiveDictionaryEviction(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("a"))
 	defer tx.Rollback()
-	require.ErrorIs(t, tx.StreamNodesByLabelProjected("Person", nil, func(node *Node) error {
+	require.ErrorIs(t, tx.StreamNodesByLabelProjected(context.Background(), "Person", nil, func(node *Node) error {
 		require.Equal(t, NodeID("a:z"), node.ID)
 		return ErrIterationStopped
 	}), ErrIterationStopped)
@@ -91,7 +84,7 @@ func TestScopedLabelSnapshotResumeSurvivesLiveDictionaryEviction(t *testing.T) {
 	engine.idDict.forgetNodeCache("a:z")
 	engine.idDict.forgetNodeCache("a:m")
 	var ids []NodeID
-	require.NoError(t, tx.StreamNodesByLabelProjected("Person", nil, func(node *Node) error {
+	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Person", nil, func(node *Node) error {
 		ids = append(ids, node.ID)
 		return nil
 	}))
@@ -125,11 +118,11 @@ func TestScopedLabelReadersKeepBufferedReplacementVisibility(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, first)
 		require.Equal(t, NodeID("test:new"), first.ID)
-		nodes, err := engine.GetNodesByLabelInScope("test:", "Person")
+		nodes, err := engine.GetNodesByLabelInScope(context.Background(), "test:", "Person")
 		require.NoError(t, err)
 		require.Equal(t, []string{"test:add-label", "test:new"}, sortedIDs(nodes))
 		var streamed []*Node
-		require.NoError(t, engine.StreamNodesByLabelProjectedInScope("test:", "Person", []string{"v"}, func(node *Node) error {
+		require.NoError(t, engine.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Person", []string{"v"}, func(node *Node) error {
 			streamed = append(streamed, node)
 			return nil
 		}))
@@ -165,11 +158,11 @@ func TestScopedLabelBufferedMembershipUsesNewestGeneration(t *testing.T) {
 	require.Empty(t, nodes)
 	require.True(t, touched[person.ID], "newer label removal shadows the draining membership")
 	require.Empty(t, buffer.LabelNodes("Person"))
-	require.Equal(t, []NodeID{other.ID}, orderedScopedIDs(buffer.LabelNodes("Other")))
+	require.Equal(t, []NodeID{other.ID}, testNodeIDs(buffer.LabelNodes("Other")))
 	// One generation has now touched both labels. Replacing its current
 	// body again must neither emit stale memberships nor duplicate the ID.
 	buffer.AppendCommit(bufferedCommit{ops: []Operation{{Type: OpUpdateNode, OldNode: other, Node: person}}})
-	require.Equal(t, []NodeID{person.ID}, orderedScopedIDs(buffer.LabelNodes("Person")))
+	require.Equal(t, []NodeID{person.ID}, testNodeIDs(buffer.LabelNodes("Person")))
 	require.Empty(t, buffer.LabelNodes("Other"))
 }
 
@@ -177,7 +170,7 @@ func TestScopedLabelSnapshotCursorErrors(t *testing.T) {
 	engine := scopedLabelOrderFixture(t)
 	for _, scope := range []string{"", "a:"} {
 		var ids []NodeID
-		err := engine.streamNodesByLabelFromPhysicalSnapshotAfter(scope, "Person", engine.withView, nil, "missing:n", func(node *Node) error {
+		err := engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(context.Background(), scope, "Person", engine.withView, nil, "missing:n", visibleRead, func(node *Node) error {
 			ids = append(ids, node.ID)
 			return nil
 		})
@@ -185,7 +178,7 @@ func TestScopedLabelSnapshotCursorErrors(t *testing.T) {
 		require.Empty(t, ids)
 	}
 	var resumed []NodeID
-	require.NoError(t, engine.streamNodesByLabelFromPhysicalSnapshotAfter("", "Person", engine.withView, nil, "a:z", func(node *Node) error {
+	require.NoError(t, engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(context.Background(), "", "Person", engine.withView, nil, "a:z", visibleRead, func(node *Node) error {
 		resumed = append(resumed, node.ID)
 		return nil
 	}))
@@ -194,7 +187,7 @@ func TestScopedLabelSnapshotCursorErrors(t *testing.T) {
 	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(nodeIDForwardKey("a:z"), []byte{1})
 	}))
-	require.ErrorIs(t, engine.streamNodesByLabelFromPhysicalSnapshotAfter("a:", "Person", engine.withView, nil, "a:z", func(*Node) error {
+	require.ErrorIs(t, engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(context.Background(), "a:", "Person", engine.withView, nil, "a:z", visibleRead, func(*Node) error {
 		t.Fatal("corrupt cursor must not produce rows")
 		return nil
 	}), ErrInvalidData)
@@ -209,12 +202,12 @@ func TestScopedLabelIgnoresMalformedAndUnresolvedMemberships(t *testing.T) {
 		return txn.Set(labelIndexKey("Person", ^uint64(0)), nil)
 	}))
 	for _, scope := range []string{"a:", ""} {
-		nodes, err := engine.GetNodesByLabelInScope(scope, "Person")
+		nodes, err := engine.GetNodesByLabelInScope(context.Background(), scope, "Person")
 		require.NoError(t, err)
 		want := []NodeID{"a:z", "a:a", "a:m"}
 		if scope == "" {
 			want = []NodeID{"a:z", "b:z", "a:a", "a:m", "ab:foreign"}
 		}
-		require.Equal(t, want, orderedScopedIDs(nodes))
+		require.Equal(t, want, testNodeIDs(nodes))
 	}
 }

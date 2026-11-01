@@ -91,11 +91,12 @@ func (s *storeTransaction) DeleteNode(id storage.NodeID) error {
 func (s *storeTransaction) GetNode(id storage.NodeID) (*storage.Node, error) {
 	return s.tx.GetNode(id)
 }
-func (s *storeTransaction) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	return s.tx.GetNodesByLabel(label)
+func (s *storeTransaction) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return s.tx.GetNodesByLabel(ctx, label)
 }
-func (s *storeTransaction) AllNodes() ([]*storage.Node, error) { return s.tx.AllNodes() }
-func (s *storeTransaction) GetAllNodes() []*storage.Node       { return s.tx.GetAllNodes() }
+func (s *storeTransaction) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return s.tx.AllNodes(ctx)
+}
 
 func (s *storeTransaction) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
 	return s.tx.StreamNodesWithOptions(ctx, opts, visit)

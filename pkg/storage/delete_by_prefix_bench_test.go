@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -46,8 +47,8 @@ func BenchmarkBadgerEngine_DeleteByPrefix(b *testing.B) {
 		}
 
 		// Populate caches so DROP behavior is realistic.
-		_, _ = engine.GetNodesByLabel("Person")
-		_, _ = engine.GetEdgesByType("KNOWS")
+		_, _ = engine.GetNodesByLabel(context.Background(), "Person")
+		_, _ = engine.GetEdgesByType(context.Background(), "KNOWS")
 
 		b.StartTimer()
 		_, _, err := engine.DeleteByPrefix(dbPrefix)

@@ -9,6 +9,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -77,14 +78,28 @@ func findOpDurationSampleCount(t *testing.T, reg *prometheus.Registry, op string
 	return 0
 }
 
-// TestStorageOp_ObservesGet drives Get and confirms a sample is recorded
-// on op_duration_seconds{op="get"}.
-func TestStorageOp_ObservesGet(t *testing.T) {
-	be, reg, _, _ := setupAttachedEngine(t)
-	// Issue a Get even on missing data — observation runs before the
-	// not-found path returns.
-	_, _ = be.GetNode("nornic:nope")
-	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, "get"), uint64(1))
+// TestStorageOp_ObservesReads pins the metric's operation label and sample
+// count for both point misses and whole-graph scans using one assertion owner.
+func TestStorageOp_ObservesReads(t *testing.T) {
+	for _, tc := range []struct {
+		name, operation string
+		read            func(*BadgerEngine)
+		minimum         uint64
+	}{
+		{name: "TestStorageOp_ObservesGet", operation: "get", minimum: 1,
+			read: func(be *BadgerEngine) { _, _ = be.GetNode("nornic:nope") }},
+		{name: "TestStorageOp_ObservesScan", operation: "scan", minimum: 2,
+			read: func(be *BadgerEngine) {
+				_, _ = be.AllNodes(context.Background())
+				_, _ = be.AllEdges(context.Background())
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			be, reg, _, _ := setupAttachedEngine(t)
+			tc.read(be)
+			require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, tc.operation), tc.minimum)
+		})
+	}
 }
 
 // TestStorageOp_ObservesPut drives CreateNode + UpdateNode and confirms
@@ -119,15 +134,6 @@ func TestStorageOp_ObservesDelete(t *testing.T) {
 		op:       "delete",
 		minCount: uint64(1),
 	})
-}
-
-// TestStorageOp_ObservesScan drives AllNodes / AllEdges and confirms
-// samples on op="scan".
-func TestStorageOp_ObservesScan(t *testing.T) {
-	be, reg, _, _ := setupAttachedEngine(t)
-	_, _ = be.AllNodes()
-	_, _ = be.AllEdges()
-	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, "scan"), uint64(2))
 }
 
 // TestStorageOp_NoOpWithoutAttach: when metrics are not attached, no

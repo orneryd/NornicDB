@@ -1,6 +1,8 @@
 package cypher
 
-import "context"
+import (
+	"context"
+)
 
 // executeTransactionBatch owns only the batch's commits. The outer statement
 // keeps its transaction, so ordinary writes roll back with that statement.

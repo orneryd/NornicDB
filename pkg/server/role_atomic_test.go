@@ -66,7 +66,7 @@ func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
 			_, err = users.CreateUser("worker", "password123", []auth.Role{"ops"})
 			require.NoError(t, err)
 			require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops"))
-			before, err := system.AllNodes()
+			before, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			fired := false
 			if fail {
@@ -78,7 +78,7 @@ func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
 			if fail {
 				require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
 				require.True(t, fired, resp.Body.String())
-				after, err := system.AllNodes()
+				after, err := system.AllNodes(ctx)
 				require.NoError(t, err)
 				require.ElementsMatch(t, before, after)
 				name = "ops"
@@ -121,7 +121,7 @@ func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
 			_, err = users.CreateUser("worker", "password123", []auth.Role{"ops", auth.RoleViewer})
 			require.NoError(t, err)
 			require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops"))
-			before, err := system.AllNodes()
+			before, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			fired := false
 			if fail {
@@ -134,7 +134,7 @@ func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
 			if fail {
 				require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
 				require.True(t, fired, resp.Body.String())
-				after, err := system.AllNodes()
+				after, err := system.AllNodes(ctx)
 				require.NoError(t, err)
 				require.ElementsMatch(t, before, after)
 				require.True(t, server.roleStore.Exists("ops"))

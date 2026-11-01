@@ -31,9 +31,9 @@ func (s *embeddingFreeReadSpy) GetNode(id NodeID) (*Node, error) {
 	return s.Engine.GetNode(id)
 }
 
-func (s *embeddingFreeReadSpy) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+func (s *embeddingFreeReadSpy) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	s.fullBatchReads++
-	return s.Engine.BatchGetNodes(ids)
+	return s.Engine.BatchGetNodes(ctx, ids)
 }
 
 func (s *embeddingFreeReadSpy) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
@@ -41,9 +41,9 @@ func (s *embeddingFreeReadSpy) GetNodeWithoutEmbeddings(id NodeID) (*Node, error
 	return s.Engine.(NodeWithoutEmbeddingsReader).GetNodeWithoutEmbeddings(id)
 }
 
-func (s *embeddingFreeReadSpy) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]*Node, error) {
+func (s *embeddingFreeReadSpy) BatchGetNodesWithoutEmbeddings(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	s.lightBatchReads++
-	return s.Engine.(BatchNodeWithoutEmbeddingsReader).BatchGetNodesWithoutEmbeddings(ids)
+	return s.Engine.(BatchNodeWithoutEmbeddingsReader).BatchGetNodesWithoutEmbeddings(ctx, ids)
 }
 
 func TestEmbeddingFreeBatchReadsTraverseNamespacedWALStack(t *testing.T) {
@@ -77,7 +77,7 @@ func TestEmbeddingFreeBatchReadsTraverseNamespacedWALStack(t *testing.T) {
 	require.NoError(t, err)
 
 	require.True(t, tenant.BatchGetNodesWithoutEmbeddingsSupported())
-	light, err := tenant.BatchGetNodesWithoutEmbeddings([]NodeID{node.ID, pending.ID})
+	light, err := tenant.BatchGetNodesWithoutEmbeddings(context.Background(), []NodeID{node.ID, pending.ID})
 	require.NoError(t, err)
 	require.Equal(t, []string{"Transcript"}, light[node.ID].Labels)
 	require.Equal(t, "ready", light[node.ID].Properties["state"])
@@ -274,9 +274,9 @@ func TestEmbeddingFreeBatchCapabilityRejectsUnsupportedInnerEngine(t *testing.T)
 		ChunkEmbeddings: [][]float32{make([]float32, 4096)},
 	})
 	require.NoError(t, err)
-	_, err = tenant.BatchGetNodesWithoutEmbeddings([]NodeID{"cached"})
+	_, err = tenant.BatchGetNodesWithoutEmbeddings(context.Background(), []NodeID{"cached"})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = wal.BatchGetNodesWithoutEmbeddings([]NodeID{"missing"})
+	_, err = wal.BatchGetNodesWithoutEmbeddings(context.Background(), []NodeID{"missing"})
 	require.ErrorIs(t, err, ErrNotImplemented)
 }
 
@@ -318,7 +318,7 @@ func BenchmarkNamespacedWALBatchNodeReads(b *testing.B) {
 	b.Run("embedding_free", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			if _, err := tenant.BatchGetNodesWithoutEmbeddings(ids); err != nil {
+			if _, err := tenant.BatchGetNodesWithoutEmbeddings(context.Background(), ids); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -326,7 +326,7 @@ func BenchmarkNamespacedWALBatchNodeReads(b *testing.B) {
 	b.Run("full", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			if _, err := tenant.BatchGetNodes(ids); err != nil {
+			if _, err := tenant.BatchGetNodes(context.Background(), ids); err != nil {
 				b.Fatal(err)
 			}
 		}

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 )
 
@@ -18,11 +19,14 @@ func (b *BadgerEngine) nativeDeletionFootprint(id string, isEdge bool) (writtenE
 			edges = append(edges, edge)
 		}
 	} else {
-		outgoing, err := b.GetStoredOutgoingEdges(NodeID(id))
+		// Deletion footprint is a write-owned integrity read: its lifetime is
+		// the accepted write's own (context.Background), never a statement
+		// read's context.
+		outgoing, err := b.GetStoredOutgoingEdges(context.Background(), NodeID(id))
 		if err != nil {
 			return writtenEntities{}, err
 		}
-		incoming, err := b.GetStoredIncomingEdges(NodeID(id))
+		incoming, err := b.GetStoredIncomingEdges(context.Background(), NodeID(id))
 		if err != nil {
 			return writtenEntities{}, err
 		}

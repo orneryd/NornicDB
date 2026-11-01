@@ -58,15 +58,72 @@ import (
 	"github.com/orneryd/nornicdb/apoc/xml"
 )
 
-// Global state
+// Global state. The registered functions are one immutable registry bound to
+// one storage backend; a reconfiguration publishes a complete replacement
+// instead of rebinding the functions an admitted caller already holds.
 var (
-	functions map[string]Function
-	config    *Config
-	store     storage.Storage
-	mu        sync.RWMutex
-	initOnce  sync.Once
-	initErr   error
+	config   *Config
+	mu       sync.RWMutex
+	initOnce sync.Once
+	initErr  error
+	active   *functionRegistry
 )
+
+// functionRegistry is one complete publication of the APOC function table bound
+// to a single storage backend. Nothing mutates it after publication, so a
+// retained *registry.Callable always answers from the backend it was built for.
+type functionRegistry struct {
+	backend   storage.Storage
+	functions map[string]Function
+}
+
+// boundFunctions are the backend-bound module instances one registry uses.
+// Helpers with no backend or instance-state dependency stay free functions and
+// are registered directly.
+type boundFunctions struct {
+	label     *label.Functions
+	meta      *meta.BoundFunctions
+	neighbors *neighbors.Functions
+	node      *apocnode.Functions
+	nodes     *nodes.Functions
+	path      *path.Functions
+	paths     *paths.Functions
+	refactor  *refactor.Functions
+	rel       *apocrel.Functions
+	schema    *schema.Functions
+	search    *search.Functions
+	stats     *stats.Functions
+	warmup    *warmup.Functions
+}
+
+// newBoundFunctions builds every module instance for one backend.
+func newBoundFunctions(backend storage.Storage) *boundFunctions {
+	return &boundFunctions{
+		label:     label.New(backend),
+		meta:      meta.New(backend),
+		neighbors: neighbors.New(backend),
+		node:      apocnode.New(backend),
+		nodes:     nodes.New(backend),
+		path:      path.New(backend),
+		paths:     paths.New(backend),
+		refactor:  refactor.New(backend),
+		rel:       apocrel.New(backend),
+		schema:    schema.New(backend),
+		search:    search.New(backend),
+		stats:     stats.New(backend),
+		warmup:    warmup.New(backend),
+	}
+}
+
+// buildRegistry compiles a complete function table for backend. A registration
+// failure returns the error and publishes nothing.
+func buildRegistry(backend storage.Storage) (*functionRegistry, error) {
+	functions := make(map[string]Function)
+	if err := registerAllFunctions(functions, newBoundFunctions(backend)); err != nil {
+		return nil, err
+	}
+	return &functionRegistry{backend: backend, functions: functions}, nil
+}
 
 // Function represents a registered APOC function.
 type Function struct {
@@ -78,42 +135,59 @@ type Function struct {
 }
 
 // Initialize sets up APOC with storage and configuration.
-// This should be called once at application startup.
+// This should be called once at application startup. The registry it publishes
+// is bound to the supplied backend; module helpers keep that backend for their
+// whole lifetime.
 func Initialize(storage storage.Storage, cfg *Config) error {
 	initOnce.Do(func() {
-		store = storage
 		if cfg == nil {
 			config = DefaultConfig()
 		} else {
 			config = cfg
 		}
 
-		// Inject storage into subpackages
-		label.SetStorage(storage)
-		// TODO: Add SetStorage for other packages as they're implemented
-		// apoccypher.SetStorage(storage)
-		// apoclog.SetStorage(storage)
-		// xml.SetStorage(storage)
+		built, err := buildRegistry(storage)
+		if err != nil {
+			initErr = err
+			return
+		}
 
-		functions = make(map[string]Function)
-		initErr = registerAllFunctions()
+		mu.Lock()
+		active = built
+		mu.Unlock()
 	})
 	return initErr
 }
 
-// SetStorage updates the storage backend (for testing or reconfiguration).
-func SetStorage(s storage.Storage) {
+// SetStorage publishes a new default registry bound to s for future lookups.
+// Handlers that were already admitted keep the backend they were built with:
+// a *registry.Callable retains its own bound function, and nothing rebinds it.
+// A registration failure publishes nothing and leaves the previous registry
+// authoritative, so the error is the only effect of a rejected rebuild.
+func SetStorage(s storage.Storage) error {
+	built, err := buildRegistry(s)
+	if err != nil {
+		return err
+	}
+
 	mu.Lock()
-	defer mu.Unlock()
-	store = s
+	active = built
+	mu.Unlock()
+	return nil
 }
 
-// GetStorage returns the current storage backend for use by APOC functions.
-// This allows subpackages to access the database without tight coupling.
+// GetStorage returns the storage backend of the published default registry.
+// Handlers are bound to that backend when the registry is built; this is the
+// registry's own backend, not a rebindable owner. It is nil before Initialize
+// publishes a registry.
 func GetStorage() storage.Storage {
 	mu.RLock()
 	defer mu.RUnlock()
-	return store
+
+	if active == nil {
+		return nil
+	}
+	return active.backend
 }
 
 // Call executes an APOC function by name.
@@ -130,14 +204,17 @@ func Call(name string, args []interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("function %s is disabled by configuration", name)
 	}
 
-	// Get function
-	fn, exists := functions[name]
+	// Get function from the registry published for this backend
+	if active == nil {
+		return nil, fmt.Errorf("function %s not found", name)
+	}
+	fn, exists := active.functions[name]
 	if !exists {
 		return nil, fmt.Errorf("function %s not found", name)
 	}
 
-	// Call function based on type
-	return callFunction(fn.Handler, args)
+	// Invoke the admitted owner with the root catalog's argument policy.
+	return fn.Handler.CallWithPolicy(args, nil, registry.APOCArguments)
 }
 
 // IsAvailable checks if a function is registered and enabled.
@@ -145,7 +222,11 @@ func IsAvailable(name string) bool {
 	mu.RLock()
 	defer mu.RUnlock()
 
-	_, exists := functions[name]
+	if active == nil {
+		return false
+	}
+
+	_, exists := active.functions[name]
 	return exists && config.IsEnabled(name)
 }
 
@@ -154,8 +235,12 @@ func List() []string {
 	mu.RLock()
 	defer mu.RUnlock()
 
-	names := make([]string, 0, len(functions))
-	for name := range functions {
+	if active == nil {
+		return []string{}
+	}
+
+	names := make([]string, 0, len(active.functions))
+	for name := range active.functions {
 		if config.IsEnabled(name) {
 			names = append(names, name)
 		}
@@ -168,8 +253,12 @@ func ListByCategory(category string) []string {
 	mu.RLock()
 	defer mu.RUnlock()
 
+	if active == nil {
+		return []string{}
+	}
+
 	names := make([]string, 0)
-	for name, fn := range functions {
+	for name, fn := range active.functions {
 		if fn.Category == category && config.IsEnabled(name) {
 			names = append(names, name)
 		}
@@ -183,7 +272,10 @@ func Categories() []string {
 	defer mu.RUnlock()
 
 	cats := make(map[string]bool)
-	for _, fn := range functions {
+	if active == nil {
+		return []string{}
+	}
+	for _, fn := range active.functions {
 		if config.IsCategoryEnabled(fn.Category) {
 			cats[fn.Category] = true
 		}
@@ -201,7 +293,10 @@ func GetInfo(name string) (*Function, bool) {
 	mu.RLock()
 	defer mu.RUnlock()
 
-	fn, exists := functions[name]
+	if active == nil {
+		return nil, false
+	}
+	fn, exists := active.functions[name]
 	if !exists || !config.IsEnabled(name) {
 		return nil, false
 	}
@@ -209,9 +304,9 @@ func GetInfo(name string) (*Function, bool) {
 	return &fn, true
 }
 
-// register adds a function to the registry.
+// register adds a function to the table under construction.
 // Author: Codex NOR-184 lane. Admission occurs before publishing a handler.
-func registerFunction(name, category string, function interface{}, description string, examples []string) error {
+func registerFunction(functions map[string]Function, name, category string, function interface{}, description string, examples []string) error {
 	handler, err := registry.Compile(function)
 	if errors.Is(err, registry.ErrNonScalarResult) {
 		// Existing tuple declarations remain metadata-only, as before: neither
@@ -231,12 +326,13 @@ func registerFunction(name, category string, function interface{}, description s
 	return nil
 }
 
-// registerAllFunctions registers all APOC functions at startup.
-// This is called once during initialization.
-func registerAllFunctions() error {
+// registerAllFunctions builds one complete function table for the backend-bound
+// module instances in fns. It writes only into the table it was given, so a
+// registration failure leaves the published registry untouched.
+func registerAllFunctions(functions map[string]Function, fns *boundFunctions) error {
 	var registrationError error
 	register := func(name, category string, function interface{}, description string, examples []string) {
-		registrationError = errors.Join(registrationError, registerFunction(name, category, function, description, examples))
+		registrationError = errors.Join(registrationError, registerFunction(functions, name, category, function, description, examples))
 	}
 	// ========================================
 	// Collection Functions (apoc.coll.*)
@@ -543,7 +639,6 @@ func registerAllFunctions() error {
 	// ========================================
 	// Algorithm Functions (apoc.algo.*)
 	// ========================================
-	register("apoc.algo.pageRank", "algo", algo.PageRank, "PageRank algorithm", []string{"apoc.algo.pageRank(nodes) => ranked"})
 	register("apoc.algo.betweennessCentrality", "algo", algo.BetweennessCentrality, "Betweenness centrality", []string{"apoc.algo.betweennessCentrality(nodes) => scores"})
 	register("apoc.algo.closenessCentrality", "algo", algo.ClosenessCentrality, "Closeness centrality", []string{"apoc.algo.closenessCentrality(nodes) => scores"})
 	register("apoc.algo.degreeCentrality", "algo", algo.DegreeCentrality, "Degree centrality", []string{"apoc.algo.degreeCentrality(nodes) => scores"})
@@ -708,10 +803,10 @@ func registerAllFunctions() error {
 	// ========================================
 	// Label Functions (apoc.label.*)
 	// ========================================
-	register("apoc.label.exists", "label", label.Exists, "Label exists", []string{"apoc.label.exists(node, 'Person') => true"})
-	register("apoc.label.list", "label", label.List, "List labels", []string{"apoc.label.list() => ['Person', 'Company']"})
-	register("apoc.label.count", "label", label.Count, "Count label", []string{"apoc.label.count('Person') => 100"})
-	register("apoc.label.nodes", "label", label.Nodes, "Nodes with label", []string{"apoc.label.nodes('Person') => nodes"})
+	register("apoc.label.exists", "label", fns.label.Exists, "Label exists", []string{"apoc.label.exists(node, 'Person') => true"})
+	register("apoc.label.list", "label", fns.label.List, "List labels", []string{"apoc.label.list() => ['Person', 'Company']"})
+	register("apoc.label.count", "label", fns.label.Count, "Count label", []string{"apoc.label.count('Person') => 100"})
+	register("apoc.label.nodes", "label", fns.label.Nodes, "Nodes with label", []string{"apoc.label.nodes('Person') => nodes"})
 	register("apoc.label.add", "label", label.Add, "Add label", []string{"apoc.label.add(node, 'Person') => node"})
 	register("apoc.label.remove", "label", label.Remove, "Remove label", []string{"apoc.label.remove(node, 'Person') => node"})
 	register("apoc.label.replace", "label", label.Replace, "Replace labels", []string{"apoc.label.replace(node, ['Old'], ['New']) => node"})
@@ -729,8 +824,8 @@ func registerAllFunctions() error {
 	register("apoc.label.normalize", "label", label.Normalize, "Normalize label", []string{"apoc.label.normalize('person') => 'Person'"})
 	register("apoc.label.pattern", "label", label.Pattern, "Label pattern", []string{"apoc.label.pattern('Person') => pattern"})
 	register("apoc.label.fromPattern", "label", label.FromPattern, "From pattern", []string{"apoc.label.fromPattern(pattern) => labels"})
-	register("apoc.label.stats", "label", label.Stats, "Label stats", []string{"apoc.label.stats() => stats"})
-	register("apoc.label.search", "label", label.Search, "Search labels", []string{"apoc.label.search('Pers*') => labels"})
+	register("apoc.label.stats", "label", fns.label.Stats, "Label stats", []string{"apoc.label.stats() => stats"})
+	register("apoc.label.search", "label", fns.label.Search, "Search labels", []string{"apoc.label.search('Pers*') => labels"})
 	register("apoc.label.compare", "label", label.Compare, "Compare labels", []string{"apoc.label.compare(node1, node2) => result"})
 	register("apoc.label.toString", "label", label.ToString, "Labels to string", []string{"apoc.label.toString(labels) => 'Person:Employee'"})
 	register("apoc.label.fromString", "label", label.FromString, "Labels from string", []string{"apoc.label.fromString('Person:Employee') => ['Person','Employee']"})
@@ -783,9 +878,9 @@ func registerAllFunctions() error {
 	// ========================================
 	// Meta Functions (apoc.meta.*)
 	// ========================================
-	register("apoc.meta.schema", "meta", meta.Schema, "Database schema", []string{"apoc.meta.schema() => schema"})
-	register("apoc.meta.graph", "meta", meta.Graph, "Meta graph", []string{"apoc.meta.graph() => graph"})
-	register("apoc.meta.stats", "meta", meta.Stats, "Database stats", []string{"apoc.meta.stats() => stats"})
+	register("apoc.meta.schema", "meta", fns.meta.Schema, "Database schema", []string{"apoc.meta.schema() => schema"})
+	register("apoc.meta.graph", "meta", fns.meta.Graph, "Meta graph", []string{"apoc.meta.graph() => graph"})
+	register("apoc.meta.stats", "meta", fns.meta.Stats, "Database stats", []string{"apoc.meta.stats() => stats"})
 	register("apoc.meta.type", "meta", meta.Type, "Get type", []string{"apoc.meta.type(value) => 'STRING'"})
 	register("apoc.meta.typeOf", "meta", meta.TypeOf, "Type of value", []string{"apoc.meta.typeOf(value) => 'STRING'"})
 	register("apoc.meta.types", "meta", meta.Types, "Get all types", []string{"apoc.meta.types(map) => {key:'STRING',...}"})
@@ -793,15 +888,14 @@ func registerAllFunctions() error {
 	register("apoc.meta.relTypeProperties", "meta", meta.RelTypeProperties, "Rel type props", []string{"apoc.meta.relTypeProperties() => props"})
 	register("apoc.meta.data", "meta", meta.Data, "Meta data", []string{"apoc.meta.data() => data"})
 	register("apoc.meta.subGraph", "meta", meta.SubGraph, "Meta subgraph", []string{"apoc.meta.subGraph({labels:['Person']}) => graph"})
-	register("apoc.meta.graphSample", "meta", meta.GraphSample, "Sample graph", []string{"apoc.meta.graphSample() => sample"})
 	register("apoc.meta.isType", "meta", meta.IsType, "Check type", []string{"apoc.meta.isType(value, 'STRING') => true"})
-	register("apoc.meta.cypherType", "meta", meta.CypherType, "Cypher type", []string{"apoc.meta.cypherType(value) => 'STRING'"})
+	register("apoc.meta.cypherType", "meta", meta.Type, "Cypher type", []string{"apoc.meta.cypherType(value) => 'STRING'"})
 	register("apoc.meta.isNode", "meta", meta.IsNode, "Is node", []string{"apoc.meta.isNode(value) => true"})
 	register("apoc.meta.isRelationship", "meta", meta.IsRelationship, "Is relationship", []string{"apoc.meta.isRelationship(value) => true"})
 	register("apoc.meta.isPath", "meta", meta.IsPath, "Is path", []string{"apoc.meta.isPath(value) => true"})
-	register("apoc.meta.nodeLabels", "meta", meta.NodeLabels, "All labels", []string{"apoc.meta.nodeLabels() => ['Person',...]"})
-	register("apoc.meta.relTypes", "meta", meta.RelTypes, "All rel types", []string{"apoc.meta.relTypes() => ['KNOWS',...]"})
-	register("apoc.meta.propertyKeys", "meta", meta.PropertyKeys, "All prop keys", []string{"apoc.meta.propertyKeys() => ['name',...]"})
+	register("apoc.meta.nodeLabels", "meta", fns.meta.NodeLabels, "All labels", []string{"apoc.meta.nodeLabels() => ['Person',...]"})
+	register("apoc.meta.relTypes", "meta", fns.meta.RelTypes, "All rel types", []string{"apoc.meta.relTypes() => ['KNOWS',...]"})
+	register("apoc.meta.propertyKeys", "meta", fns.meta.PropertyKeys, "All prop keys", []string{"apoc.meta.propertyKeys() => ['name',...]"})
 	register("apoc.meta.constraints", "meta", meta.Constraints, "Get constraints", []string{"apoc.meta.constraints() => constraints"})
 	register("apoc.meta.indexes", "meta", meta.Indexes, "Get indexes", []string{"apoc.meta.indexes() => indexes"})
 	register("apoc.meta.procedures", "meta", meta.Procedures, "List procedures", []string{"apoc.meta.procedures() => procedures"})
@@ -810,12 +904,12 @@ func registerAllFunctions() error {
 	register("apoc.meta.config", "meta", meta.Config, "Get config", []string{"apoc.meta.config() => config"})
 	register("apoc.meta.compare", "meta", meta.Compare, "Compare schemas", []string{"apoc.meta.compare(schema1, schema2) => diff"})
 	register("apoc.meta.validate", "meta", meta.Validate, "Validate schema", []string{"apoc.meta.validate(schema) => valid"})
-	register("apoc.meta.export", "meta", meta.Export, "Export schema", []string{"apoc.meta.export() => schema"})
+	register("apoc.meta.export", "meta", fns.meta.Schema, "Export schema", []string{"apoc.meta.export() => schema"})
 	register("apoc.meta.import", "meta", meta.Import, "Import schema", []string{"apoc.meta.import(schema) => result"})
-	register("apoc.meta.cypherTypes", "meta", meta.CypherTypes, "Cypher types", []string{"apoc.meta.cypherTypes(map) => types"})
-	register("apoc.meta.diff", "meta", meta.Diff, "Diff schemas", []string{"apoc.meta.diff(s1, s2) => diff"})
-	register("apoc.meta.snapshot", "meta", meta.Snapshot, "Schema snapshot", []string{"apoc.meta.snapshot() => snapshot"})
-	register("apoc.meta.restore", "meta", meta.Restore, "Restore schema", []string{"apoc.meta.restore(snapshot) => result"})
+	register("apoc.meta.cypherTypes", "meta", meta.Types, "Cypher types", []string{"apoc.meta.cypherTypes(map) => types"})
+	register("apoc.meta.diff", "meta", meta.Compare, "Diff schemas", []string{"apoc.meta.diff(s1, s2) => diff"})
+	register("apoc.meta.snapshot", "meta", fns.meta.Schema, "Schema snapshot", []string{"apoc.meta.snapshot() => snapshot"})
+	register("apoc.meta.restore", "meta", meta.Import, "Restore schema", []string{"apoc.meta.restore(snapshot) => result"})
 	register("apoc.meta.analyze", "meta", meta.Analyze, "Analyze database", []string{"apoc.meta.analyze() => analysis"})
 	register("apoc.meta.cardinality", "meta", meta.Cardinality, "Get cardinality", []string{"apoc.meta.cardinality('Person') => count"})
 	register("apoc.meta.pattern", "meta", meta.Pattern, "Schema pattern", []string{"apoc.meta.pattern() => pattern"})
@@ -825,16 +919,16 @@ func registerAllFunctions() error {
 	// ========================================
 	// Nodes Functions (apoc.nodes.*)
 	// ========================================
-	register("apoc.nodes.get", "nodes", nodes.Get, "Get nodes", []string{"apoc.nodes.get([1,2,3]) => nodes"})
-	register("apoc.nodes.delete", "nodes", nodes.Delete, "Delete nodes", []string{"apoc.nodes.delete(nodes) => count"})
-	register("apoc.nodes.link", "nodes", nodes.Link, "Link nodes", []string{"apoc.nodes.link(nodes, 'NEXT') => rels"})
-	register("apoc.nodes.collapse", "nodes", nodes.Collapse, "Collapse nodes", []string{"apoc.nodes.collapse(nodes) => node"})
+	register("apoc.nodes.get", "nodes", fns.nodes.Get, "Get nodes", []string{"apoc.nodes.get([1,2,3]) => nodes"})
+	register("apoc.nodes.delete", "nodes", fns.nodes.Delete, "Delete nodes", []string{"apoc.nodes.delete(nodes) => count"})
+	register("apoc.nodes.link", "nodes", fns.nodes.Link, "Link nodes", []string{"apoc.nodes.link(nodes, 'NEXT') => rels"})
+	register("apoc.nodes.collapse", "nodes", fns.nodes.Collapse, "Collapse nodes", []string{"apoc.nodes.collapse(nodes) => node"})
 	register("apoc.nodes.group", "nodes", nodes.Group, "Group nodes", []string{"apoc.nodes.group(['label'], ['prop']) => groups"})
 	register("apoc.nodes.distinct", "nodes", nodes.Distinct, "Distinct nodes", []string{"apoc.nodes.distinct(nodes) => unique"})
-	register("apoc.nodes.connected", "nodes", nodes.Connected, "Connected nodes", []string{"apoc.nodes.connected(node1, node2) => true"})
-	register("apoc.nodes.isDense", "nodes", nodes.IsDense, "Is dense node", []string{"apoc.nodes.isDense(node) => true"})
-	register("apoc.nodes.relationships", "nodes", nodes.Relationships, "Node relationships", []string{"apoc.nodes.relationships(node) => rels"})
-	register("apoc.nodes.cycles", "nodes", nodes.Cycles, "Find cycles", []string{"apoc.nodes.cycles(nodes) => cycles"})
+	register("apoc.nodes.connected", "nodes", fns.nodes.Connected, "Connected nodes", []string{"apoc.nodes.connected(node1, node2) => true"})
+	register("apoc.nodes.isDense", "nodes", fns.nodes.IsDense, "Is dense node", []string{"apoc.nodes.isDense(node) => true"})
+	register("apoc.nodes.relationships", "nodes", fns.nodes.Relationships, "Node relationships", []string{"apoc.nodes.relationships(node) => rels"})
+	register("apoc.nodes.cycles", "nodes", fns.nodes.Cycles, "Find cycles", []string{"apoc.nodes.cycles(nodes) => cycles"})
 	register("apoc.nodes.partition", "nodes", nodes.Partition, "Partition nodes", []string{"apoc.nodes.partition(nodes, predicate) => [matching, nonMatching]"})
 	register("apoc.nodes.intersect", "nodes", nodes.Intersect, "Intersect nodes", []string{"apoc.nodes.intersect(nodes1, nodes2) => common"})
 	register("apoc.nodes.union", "nodes", nodes.Union, "Union nodes", []string{"apoc.nodes.union(nodes1, nodes2) => all"})
@@ -845,7 +939,7 @@ func registerAllFunctions() error {
 	register("apoc.nodes.reduce", "nodes", nodes.Reduce, "Reduce nodes", []string{"apoc.nodes.reduce(nodes, fn, init) => result"})
 	register("apoc.nodes.distinctRels", "nodes", nodes.DistinctRels, "Distinct rels", []string{"apoc.nodes.distinctRels(node) => rels"})
 	register("apoc.nodes.toMap", "nodes", nodes.ToMap, "Nodes to map", []string{"apoc.nodes.toMap(nodes) => map"})
-	register("apoc.nodes.fromMap", "nodes", nodes.FromMap, "Nodes from map", []string{"apoc.nodes.fromMap(map) => nodes"})
+	register("apoc.nodes.fromMap", "nodes", fns.nodes.FromMap, "Nodes from map", []string{"apoc.nodes.fromMap(map) => nodes"})
 	register("apoc.nodes.batch", "nodes", nodes.Batch, "Batch nodes", []string{"apoc.nodes.batch(nodes, batchSize, fn) => results"})
 
 	// ========================================
@@ -893,12 +987,12 @@ func registerAllFunctions() error {
 	// ========================================
 	// Path Functions (apoc.path.*)
 	// ========================================
-	register("apoc.path.subgraphNodes", "path", path.SubgraphNodes, "Subgraph nodes", []string{"apoc.path.subgraphNodes(start, config) => nodes"})
-	register("apoc.path.subgraphAll", "path", path.SubgraphAll, "All subgraph", []string{"apoc.path.subgraphAll(start, config) => {nodes,rels}"})
-	register("apoc.path.expandConfig", "path", path.ExpandConfig, "Expand with config", []string{"apoc.path.expandConfig(start, config) => paths"})
-	register("apoc.path.spanningTree", "path", path.SpanningTree, "Spanning tree", []string{"apoc.path.spanningTree(start, config) => paths"})
-	register("apoc.path.shortestPath", "path", path.ShortestPath, "Shortest path", []string{"apoc.path.shortestPath(start, end) => path"})
-	register("apoc.path.allShortestPaths", "path", path.AllShortestPaths, "All shortest paths", []string{"apoc.path.allShortestPaths(start, end) => paths"})
+	register("apoc.path.subgraphNodes", "path", fns.path.SubgraphNodes, "Subgraph nodes", []string{"apoc.path.subgraphNodes(start, config) => nodes"})
+	register("apoc.path.subgraphAll", "path", fns.path.SubgraphAll, "All subgraph", []string{"apoc.path.subgraphAll(start, config) => {nodes,rels}"})
+	register("apoc.path.expandConfig", "path", fns.path.ExpandConfig, "Expand with config", []string{"apoc.path.expandConfig(start, config) => paths"})
+	register("apoc.path.spanningTree", "path", fns.path.SpanningTree, "Spanning tree", []string{"apoc.path.spanningTree(start, config) => paths"})
+	register("apoc.path.shortestPath", "path", fns.path.ShortestPath, "Shortest path", []string{"apoc.path.shortestPath(start, end) => path"})
+	register("apoc.path.allShortestPaths", "path", fns.path.AllShortestPaths, "All shortest paths", []string{"apoc.path.allShortestPaths(start, end) => paths"})
 	register("apoc.path.combine", "path", path.Combine, "Combine paths", []string{"apoc.path.combine(path1, path2) => path"})
 	register("apoc.path.elements", "path", path.Elements, "Path elements", []string{"apoc.path.elements(path) => elements"})
 	register("apoc.path.slice", "path", path.Slice, "Slice path", []string{"apoc.path.slice(path, 0, 3) => subpath"})
@@ -906,22 +1000,22 @@ func registerAllFunctions() error {
 	// ========================================
 	// Paths Functions (apoc.paths.*)
 	// ========================================
-	register("apoc.paths.all", "paths", paths.All, "All paths", []string{"apoc.paths.all(start, end, maxLength) => paths"})
-	register("apoc.paths.shortest", "paths", paths.Shortest, "Shortest path", []string{"apoc.paths.shortest(start, end) => path"})
-	register("apoc.paths.longest", "paths", paths.Longest, "Longest path", []string{"apoc.paths.longest(start, end, maxLength) => path"})
-	register("apoc.paths.simple", "paths", paths.Simple, "Simple paths", []string{"apoc.paths.simple(start, end) => paths"})
-	register("apoc.paths.cycles", "paths", paths.Cycles, "Find cycles", []string{"apoc.paths.cycles(start) => cycles"})
-	register("apoc.paths.kShortest", "paths", paths.KShortest, "K shortest paths", []string{"apoc.paths.kShortest(start, end, k) => paths"})
-	register("apoc.paths.count", "paths", paths.Count, "Count paths", []string{"apoc.paths.count(start, end) => count"})
-	register("apoc.paths.exists", "paths", paths.Exists, "Path exists", []string{"apoc.paths.exists(start, end) => true"})
-	register("apoc.paths.elementary", "paths", paths.Elementary, "Elementary paths", []string{"apoc.paths.elementary(start, end) => paths"})
-	register("apoc.paths.disjoint", "paths", paths.Disjoint, "Disjoint paths", []string{"apoc.paths.disjoint(start, end) => paths"})
-	register("apoc.paths.edgeDisjoint", "paths", paths.EdgeDisjoint, "Edge disjoint paths", []string{"apoc.paths.edgeDisjoint(start, end) => paths"})
-	register("apoc.paths.hamiltonian", "paths", paths.Hamiltonian, "Hamiltonian path", []string{"apoc.paths.hamiltonian(nodes) => path"})
+	register("apoc.paths.all", "paths", fns.paths.All, "All paths", []string{"apoc.paths.all(start, end, maxLength) => paths"})
+	register("apoc.paths.shortest", "paths", fns.paths.Shortest, "Shortest path", []string{"apoc.paths.shortest(start, end) => path"})
+	register("apoc.paths.longest", "paths", fns.paths.Longest, "Longest path", []string{"apoc.paths.longest(start, end, maxLength) => path"})
+	register("apoc.paths.simple", "paths", fns.paths.Simple, "Simple paths", []string{"apoc.paths.simple(start, end) => paths"})
+	register("apoc.paths.cycles", "paths", fns.paths.Cycles, "Find cycles", []string{"apoc.paths.cycles(start) => cycles"})
+	register("apoc.paths.kShortest", "paths", fns.paths.KShortest, "K shortest paths", []string{"apoc.paths.kShortest(start, end, k) => paths"})
+	register("apoc.paths.count", "paths", fns.paths.Count, "Count paths", []string{"apoc.paths.count(start, end) => count"})
+	register("apoc.paths.exists", "paths", fns.paths.Exists, "Path exists", []string{"apoc.paths.exists(start, end) => true"})
+	register("apoc.paths.elementary", "paths", fns.paths.Elementary, "Elementary paths", []string{"apoc.paths.elementary(start, end) => paths"})
+	register("apoc.paths.disjoint", "paths", fns.paths.Disjoint, "Disjoint paths", []string{"apoc.paths.disjoint(start, end) => paths"})
+	register("apoc.paths.edgeDisjoint", "paths", fns.paths.EdgeDisjoint, "Edge disjoint paths", []string{"apoc.paths.edgeDisjoint(start, end) => paths"})
+	register("apoc.paths.hamiltonian", "paths", fns.paths.Hamiltonian, "Hamiltonian path", []string{"apoc.paths.hamiltonian(nodes) => path"})
 	register("apoc.paths.eulerian", "paths", paths.Eulerian, "Eulerian path", []string{"apoc.paths.eulerian(nodes) => path"})
-	register("apoc.paths.withLength", "paths", paths.WithLength, "Paths with length", []string{"apoc.paths.withLength(start, end, length) => paths"})
-	register("apoc.paths.withinLength", "paths", paths.WithinLength, "Paths within length", []string{"apoc.paths.withinLength(start, end, maxLength) => paths"})
-	register("apoc.paths.distance", "paths", paths.Distance, "Path distance", []string{"apoc.paths.distance(start, end) => distance"})
+	register("apoc.paths.withLength", "paths", fns.paths.WithLength, "Paths with length", []string{"apoc.paths.withLength(start, end, length) => paths"})
+	register("apoc.paths.withinLength", "paths", fns.paths.WithinLength, "Paths within length", []string{"apoc.paths.withinLength(start, end, maxLength) => paths"})
+	register("apoc.paths.distance", "paths", fns.paths.Distance, "Path distance", []string{"apoc.paths.distance(start, end) => distance"})
 	register("apoc.paths.common", "paths", paths.Common, "Common paths", []string{"apoc.paths.common(path1, path2) => common"})
 	register("apoc.paths.unique", "paths", paths.Unique, "Unique paths", []string{"apoc.paths.unique(paths) => unique"})
 	register("apoc.paths.merge", "paths", paths.Merge, "Merge paths", []string{"apoc.paths.merge(path1, path2) => merged"})
@@ -946,11 +1040,11 @@ func registerAllFunctions() error {
 	// Schema Functions (apoc.schema.*)
 	// ========================================
 	register("apoc.schema.assert", "schema", schema.Assert, "Assert schema", []string{"apoc.schema.assert(indexes, constraints) => result"})
-	register("apoc.schema.nodes", "schema", schema.Nodes, "Node schema", []string{"apoc.schema.nodes() => schema"})
-	register("apoc.schema.relationships", "schema", schema.Relationships, "Rel schema", []string{"apoc.schema.relationships() => schema"})
+	register("apoc.schema.nodes", "schema", fns.schema.Nodes, "Node schema", []string{"apoc.schema.nodes() => schema"})
+	register("apoc.schema.relationships", "schema", fns.schema.Relationships, "Rel schema", []string{"apoc.schema.relationships() => schema"})
 	register("apoc.schema.nodeConstraints", "schema", schema.NodeConstraints, "Node constraints", []string{"apoc.schema.nodeConstraints() => constraints"})
 	register("apoc.schema.nodeIndexes", "schema", schema.NodeIndexes, "Node indexes", []string{"apoc.schema.nodeIndexes() => indexes"})
-	register("apoc.schema.properties", "schema", schema.Properties, "Schema properties", []string{"apoc.schema.properties('Person') => props"})
+	register("apoc.schema.properties", "schema", fns.meta.PropertyKeys, "Schema properties", []string{"apoc.schema.properties('Person') => props"})
 	register("apoc.schema.createIndex", "schema", schema.CreateIndex, "Create index", []string{"apoc.schema.createIndex('Person', ['name']) => index"})
 	register("apoc.schema.dropIndex", "schema", schema.DropIndex, "Drop index", []string{"apoc.schema.dropIndex('Person', ['name']) => dropped"})
 	register("apoc.schema.createConstraint", "schema", schema.CreateConstraint, "Create constraint", []string{"apoc.schema.createConstraint('Person', ['name']) => constraint"})
@@ -959,55 +1053,57 @@ func registerAllFunctions() error {
 	register("apoc.schema.relationshipIndexes", "schema", schema.RelationshipIndexes, "Rel indexes", []string{"apoc.schema.relationshipIndexes() => indexes"})
 	register("apoc.schema.nodeConstraintExists", "schema", schema.NodeConstraintExists, "Constraint exists", []string{"apoc.schema.nodeConstraintExists('Person', ['name']) => true"})
 	register("apoc.schema.nodeIndexExists", "schema", schema.NodeIndexExists, "Index exists", []string{"apoc.schema.nodeIndexExists('Person', ['name']) => true"})
-	register("apoc.schema.propertiesDistinct", "schema", schema.PropertiesDistinct, "Distinct properties", []string{"apoc.schema.propertiesDistinct('Person', 'name') => values"})
-	register("apoc.schema.labels", "schema", schema.Labels, "Get labels", []string{"apoc.schema.labels() => labels"})
-	register("apoc.schema.types", "schema", schema.Types, "Get rel types", []string{"apoc.schema.types() => types"})
-	register("apoc.schema.info", "schema", schema.Info, "Schema info", []string{"apoc.schema.info() => info"})
+	register("apoc.schema.propertiesDistinct", "schema", fns.schema.PropertiesDistinct, "Distinct properties", []string{"apoc.schema.propertiesDistinct('Person', 'name') => values"})
+	register("apoc.schema.labels", "schema", fns.schema.Labels, "Get labels", []string{"apoc.schema.labels() => labels"})
+	register("apoc.schema.types", "schema", fns.schema.Types, "Get rel types", []string{"apoc.schema.types() => types"})
+	register("apoc.schema.info", "schema", fns.schema.Info, "Schema info", []string{"apoc.schema.info() => info"})
 	register("apoc.schema.createUniqueConstraint", "schema", schema.CreateUniqueConstraint, "Create unique", []string{"apoc.schema.createUniqueConstraint('Person', ['name']) => constraint"})
 	register("apoc.schema.createExistsConstraint", "schema", schema.CreateExistsConstraint, "Create exists", []string{"apoc.schema.createExistsConstraint('Person', 'name') => constraint"})
 	register("apoc.schema.createNodeKeyConstraint", "schema", schema.CreateNodeKeyConstraint, "Create node key", []string{"apoc.schema.createNodeKeyConstraint('Person', ['name']) => constraint"})
 	register("apoc.schema.validate", "schema", schema.Validate, "Validate schema", []string{"apoc.schema.validate() => valid"})
 	register("apoc.schema.compare", "schema", schema.Compare, "Compare schemas", []string{"apoc.schema.compare(s1, s2) => diff"})
-	register("apoc.schema.export", "schema", schema.Export, "Export schema", []string{"apoc.schema.export() => schema"})
+	register("apoc.schema.export", "schema", fns.schema.Info, "Export schema", []string{"apoc.schema.export() => schema"})
 	register("apoc.schema.import", "schema", schema.Import, "Import schema", []string{"apoc.schema.import(schema) => result"})
-	register("apoc.schema.snapshot", "schema", schema.Snapshot, "Schema snapshot", []string{"apoc.schema.snapshot() => snapshot"})
-	register("apoc.schema.restore", "schema", schema.Restore, "Restore schema", []string{"apoc.schema.restore(snapshot) => result"})
-	register("apoc.schema.stats", "schema", schema.Stats, "Schema stats", []string{"apoc.schema.stats() => stats"})
+	register("apoc.schema.snapshot", "schema", fns.schema.Info, "Schema snapshot", []string{"apoc.schema.snapshot() => snapshot"})
+	register("apoc.schema.restore", "schema", schema.Import, "Restore schema", []string{"apoc.schema.restore(snapshot) => result"})
+	register("apoc.schema.stats", "schema", fns.schema.Stats, "Schema stats", []string{"apoc.schema.stats() => stats"})
 	register("apoc.schema.analyze", "schema", schema.Analyze, "Analyze schema", []string{"apoc.schema.analyze() => analysis"})
 	register("apoc.schema.optimize", "schema", schema.Optimize, "Optimize schema", []string{"apoc.schema.optimize() => result"})
 
 	// ========================================
 	// Search Functions (apoc.search.*)
 	// ========================================
-	register("apoc.search.node", "search", search.Node, "Search node", []string{"apoc.search.node('Person', 'name', 'Alice') => nodes"})
-	register("apoc.search.nodeAll", "search", search.NodeAll, "Search all nodes", []string{"apoc.search.nodeAll('Person', {name:'Alice'}) => nodes"})
-	register("apoc.search.nodeReduced", "search", search.NodeReduced, "Reduced search", []string{"apoc.search.nodeReduced('Person', props) => nodes"})
-	register("apoc.search.parallel", "search", search.Parallel, "Parallel search", []string{"apoc.search.parallel(queries) => results"})
-	register("apoc.search.fullText", "search", search.FullText, "Full text search", []string{"apoc.search.fullText('index', 'query') => results"})
-	register("apoc.search.fuzzy", "search", search.Fuzzy, "Fuzzy search", []string{"apoc.search.fuzzy('Person', 'name', 'Alise') => nodes"})
-	register("apoc.search.regex", "search", search.Regex, "Regex search", []string{"apoc.search.regex('Person', 'name', 'A.*') => nodes"})
-	register("apoc.search.prefix", "search", search.Prefix, "Prefix search", []string{"apoc.search.prefix('Person', 'name', 'Al') => nodes"})
-	register("apoc.search.suffix", "search", search.Suffix, "Suffix search", []string{"apoc.search.suffix('Person', 'email', '.com') => nodes"})
-	register("apoc.search.contains", "search", search.Contains, "Contains search", []string{"apoc.search.contains('Person', 'name', 'ice') => nodes"})
-	register("apoc.search.range", "search", search.Range, "Range search", []string{"apoc.search.range('Person', 'age', 18, 65) => nodes"})
-	register("apoc.search.in", "search", search.In, "In search", []string{"apoc.search.in('Person', 'name', ['Alice','Bob']) => nodes"})
-	register("apoc.search.notIn", "search", search.NotIn, "Not in search", []string{"apoc.search.notIn('Person', 'name', ['Alice']) => nodes"})
-	register("apoc.search.exists", "search", search.Exists, "Property exists", []string{"apoc.search.exists('Person', 'email') => nodes"})
-	register("apoc.search.missing", "search", search.Missing, "Property missing", []string{"apoc.search.missing('Person', 'email') => nodes"})
-	register("apoc.search.null", "search", search.Null, "Is null", []string{"apoc.search.null('Person', 'email') => nodes"})
-	register("apoc.search.notNull", "search", search.NotNull, "Is not null", []string{"apoc.search.notNull('Person', 'email') => nodes"})
-	register("apoc.search.match", "search", search.Match, "Pattern match", []string{"apoc.search.match('Person', 'name', 'Al*') => nodes"})
-	register("apoc.search.score", "search", search.Score, "Search score", []string{"apoc.search.score(node, query) => score"})
+	register("apoc.search.node", "search", fns.search.Node, "Search node", []string{"apoc.search.node('Person', 'name', 'Alice') => nodes"})
+	register("apoc.search.nodeAll", "search", fns.search.NodeAll, "Search all nodes", []string{"apoc.search.nodeAll('Person', {name:'Alice'}) => nodes"})
+	register("apoc.search.nodeReduced", "search", fns.search.NodeReduced, "Reduced search", []string{"apoc.search.nodeReduced('Person', props) => nodes"})
+	register("apoc.search.parallel", "search", fns.search.Parallel, "Parallel search", []string{"apoc.search.parallel(queries) => results"})
+	register("apoc.search.fullText", "search", fns.search.FullText, "Full text search", []string{"apoc.search.fullText('index', 'query') => results"})
+	register("apoc.search.fuzzy", "search", fns.search.Fuzzy, "Fuzzy search", []string{"apoc.search.fuzzy('Person', 'name', 'Alise') => nodes"})
+	register("apoc.search.regex", "search", fns.search.Regex, "Regex search", []string{"apoc.search.regex('Person', 'name', 'A.*') => nodes"})
+	register("apoc.search.prefix", "search", fns.search.Prefix, "Prefix search", []string{"apoc.search.prefix('Person', 'name', 'Al') => nodes"})
+	register("apoc.search.suffix", "search", fns.search.Suffix, "Suffix search", []string{"apoc.search.suffix('Person', 'email', '.com') => nodes"})
+	register("apoc.search.contains", "search", fns.search.Contains, "Contains search", []string{"apoc.search.contains('Person', 'name', 'ice') => nodes"})
+	register("apoc.search.range", "search", fns.search.Range, "Range search", []string{"apoc.search.range('Person', 'age', 18, 65) => nodes"})
+	register("apoc.search.in", "search", fns.search.In, "In search", []string{"apoc.search.in('Person', 'name', ['Alice','Bob']) => nodes"})
+	register("apoc.search.notIn", "search", fns.search.NotIn, "Not in search", []string{"apoc.search.notIn('Person', 'name', ['Alice']) => nodes"})
+	register("apoc.search.exists", "search", fns.search.Exists, "Property exists", []string{"apoc.search.exists('Person', 'email') => nodes"})
+	register("apoc.search.missing", "search", fns.search.Missing, "Property missing", []string{"apoc.search.missing('Person', 'email') => nodes"})
+	register("apoc.search.null", "search", fns.search.Null, "Is null", []string{"apoc.search.null('Person', 'email') => nodes"})
+	register("apoc.search.notNull", "search", fns.search.NotNull, "Is not null", []string{"apoc.search.notNull('Person', 'email') => nodes"})
+	register("apoc.search.match", "search", fns.search.Match, "Pattern match", []string{"apoc.search.match('Person', 'name', 'Al*') => nodes"})
+	register("apoc.search.score", "search", fns.search.Score, "Search score", []string{"apoc.search.score(node, query) => score"})
 	register("apoc.search.highlight", "search", search.Highlight, "Highlight matches", []string{"apoc.search.highlight(text, query) => highlighted"})
-	register("apoc.search.suggest", "search", search.Suggest, "Suggestions", []string{"apoc.search.suggest('Person', 'name', 'Ali') => suggestions"})
-	register("apoc.search.autocomplete", "search", search.Autocomplete, "Autocomplete", []string{"apoc.search.autocomplete('Person', 'name', 'Al') => completions"})
-	register("apoc.search.didYouMean", "search", search.DidYouMean, "Did you mean", []string{"apoc.search.didYouMean('Person', 'name', 'Alise') => 'Alice'"})
+	// One canonical suggestion owner answers both names: Suggest takes an optional
+	// limit (default suggestionLimit), so autocomplete needs no Go wrapper.
+	register("apoc.search.suggest", "search", fns.search.Suggest, "Suggestions", []string{"apoc.search.suggest('Person', 'name', 'Ali') => suggestions"})
+	register("apoc.search.autocomplete", "search", fns.search.Suggest, "Autocomplete", []string{"apoc.search.autocomplete('Person', 'name', 'Al') => completions"})
+	register("apoc.search.didYouMean", "search", fns.search.DidYouMean, "Did you mean", []string{"apoc.search.didYouMean('Person', 'name', 'Alise') => 'Alice'"})
 	register("apoc.search.index", "search", search.Index, "Create index", []string{"apoc.search.index('Person', ['name']) => index"})
 	register("apoc.search.dropIndex", "search", search.DropIndex, "Drop index", []string{"apoc.search.dropIndex('Person', ['name']) => dropped"})
 	register("apoc.search.reindex", "search", search.Reindex, "Rebuild index", []string{"apoc.search.reindex('Person') => reindexed"})
-	register("apoc.search.nodeAny", "search", search.NodeAny, "Search any", []string{"apoc.search.nodeAny('Person', props) => nodes"})
-	register("apoc.search.multiSearchAll", "search", search.MultiSearchAll, "Multi search all", []string{"apoc.search.multiSearchAll(queries) => results"})
-	register("apoc.search.multiSearchAny", "search", search.MultiSearchAny, "Multi search any", []string{"apoc.search.multiSearchAny(queries) => results"})
+	register("apoc.search.nodeAny", "search", fns.search.NodeAny, "Search any", []string{"apoc.search.nodeAny('Person', props) => nodes"})
+	register("apoc.search.multiSearchAll", "search", fns.search.MultiSearchAll, "Multi search all", []string{"apoc.search.multiSearchAll(queries) => results"})
+	register("apoc.search.multiSearchAny", "search", fns.search.MultiSearchAny, "Multi search any", []string{"apoc.search.multiSearchAny(queries) => results"})
 
 	// ========================================
 	// Temporal Functions (apoc.temporal.*)
@@ -1112,13 +1208,20 @@ func registerAllFunctions() error {
 	// Load Functions (apoc.load.*)
 	// ========================================
 	register("apoc.load.json", "load", load.Json, "Load JSON", []string{"apoc.load.json('/path/to/file.json') => data"})
-	register("apoc.load.jsonStream", "load", load.JsonStream, "Stream JSON", []string{"apoc.load.jsonStream('/path/to/file.json') => stream"})
-	register("apoc.load.jsonArray", "load", load.JsonArray, "Load JSON array", []string{"apoc.load.jsonArray('/path/to/file.json') => array"})
+	// Both JSON row shapes are registered against the canonical JSONItems factory:
+	// apoc.load.jsonStream publishes a document's items (an array, or one item for
+	// any other document); apoc.load.jsonArray requires an array. The same
+	// DocumentItems handler feeds the native apoc.load.json procedures.
+	register("apoc.load.jsonStream", "load", load.JSONItems(load.DocumentItems), "Stream JSON", []string{"apoc.load.jsonStream('/path/to/file.json') => stream"})
+	register("apoc.load.jsonArray", "load", load.JSONItems(load.RequireArray), "Load JSON array", []string{"apoc.load.jsonArray('/path/to/file.json') => array"})
 	register("apoc.load.jsonParams", "load", load.JsonParams, "Load JSON params", []string{"apoc.load.jsonParams(url, params) => data"})
 	register("apoc.load.csv", "load", load.Csv, "Load CSV", []string{"apoc.load.csv('/path/to/file.csv') => rows"})
-	register("apoc.load.csvStream", "load", load.CsvStream, "Stream CSV", []string{"apoc.load.csvStream('/path/to/file.csv') => stream"})
+	// apoc.load.csvStream is the same handler as apoc.load.csv; the two Cypher
+	// names share one Go entry point rather than a forwarding alias.
+	register("apoc.load.csvStream", "load", load.Csv, "Stream CSV", []string{"apoc.load.csvStream('/path/to/file.csv') => stream"})
 	register("apoc.load.xml", "load", load.Xml, "Load XML", []string{"apoc.load.xml('/path/to/file.xml') => data"})
-	register("apoc.load.xmlSimple", "load", load.XmlSimple, "Load simple XML", []string{"apoc.load.xmlSimple('/path/to/file.xml') => data"})
+	// apoc.load.xmlSimple is the same handler as apoc.load.xml.
+	register("apoc.load.xmlSimple", "load", load.Xml, "Load simple XML", []string{"apoc.load.xmlSimple('/path/to/file.xml') => data"})
 	register("apoc.load.html", "load", load.Html, "Load HTML", []string{"apoc.load.html(url) => document"})
 	register("apoc.load.jdbc", "load", load.Jdbc, "Load JDBC", []string{"apoc.load.jdbc(url, 'SELECT...') => rows"})
 	register("apoc.load.jdbcUpdate", "load", load.JdbcUpdate, "JDBC update", []string{"apoc.load.jdbcUpdate(url, 'UPDATE...') => count"})
@@ -1139,7 +1242,11 @@ func registerAllFunctions() error {
 	register("apoc.load.graphQL", "load", load.GraphQL, "Load GraphQL", []string{"apoc.load.graphQL(url, query) => data"})
 	register("apoc.load.rest", "load", load.Rest, "Load REST", []string{"apoc.load.rest(url) => response"})
 	register("apoc.load.binary", "load", load.Binary, "Load binary", []string{"apoc.load.binary('/path/to/file') => bytes"})
-	register("apoc.load.stream", "load", load.Stream, "Load stream", []string{"apoc.load.stream(reader) => data"})
+	// apoc.load.stream registers the same canonical byte loader: a statement
+	// retires its context when Execute returns, so a reader handed out as a
+	// value could not be read afterwards. Both names accept the source and an
+	// optional config map. apoc/load.Stream keeps the Go reader API.
+	register("apoc.load.stream", "load", load.Binary, "Load stream", []string{"apoc.load.stream('/path/to/file') => bytes"})
 
 	// ========================================
 	// Log Functions (apoc.log.*)
@@ -1173,37 +1280,37 @@ func registerAllFunctions() error {
 	// ========================================
 	// Neighbors Functions (apoc.neighbors.*)
 	// ========================================
-	register("apoc.neighbors.atHop", "neighbors", neighbors.AtHop, "Neighbors at hop", []string{"apoc.neighbors.atHop(node, 'TYPE', 2) => nodes"})
-	register("apoc.neighbors.toHop", "neighbors", neighbors.ToHop, "Neighbors to hop", []string{"apoc.neighbors.toHop(node, 'TYPE', 3) => nodes"})
-	register("apoc.neighbors.bfs", "neighbors", neighbors.BFS, "BFS neighbors", []string{"apoc.neighbors.bfs(node, 'TYPE') => nodes"})
-	register("apoc.neighbors.dfs", "neighbors", neighbors.DFS, "DFS neighbors", []string{"apoc.neighbors.dfs(node, 'TYPE') => nodes"})
-	register("apoc.neighbors.count", "neighbors", neighbors.Count, "Count neighbors", []string{"apoc.neighbors.count(node) => count"})
-	register("apoc.neighbors.exists", "neighbors", neighbors.Exists, "Has neighbors", []string{"apoc.neighbors.exists(node, 'TYPE') => bool"})
+	register("apoc.neighbors.atHop", "neighbors", fns.neighbors.AtHop, "Neighbors at hop", []string{"apoc.neighbors.atHop(node, 'TYPE', 2) => nodes"})
+	register("apoc.neighbors.toHop", "neighbors", fns.neighbors.ToHop, "Neighbors to hop", []string{"apoc.neighbors.toHop(node, 'TYPE', 3) => nodes"})
+	register("apoc.neighbors.bfs", "neighbors", fns.neighbors.ToHop, "BFS neighbors", []string{"apoc.neighbors.bfs(node, 'TYPE', 5) => nodes"})
+	register("apoc.neighbors.dfs", "neighbors", fns.neighbors.DFS, "DFS neighbors", []string{"apoc.neighbors.dfs(node, 'TYPE') => nodes"})
+	register("apoc.neighbors.count", "neighbors", fns.neighbors.Count, "Count neighbors", []string{"apoc.neighbors.count(node) => count"})
+	register("apoc.neighbors.exists", "neighbors", fns.neighbors.Exists, "Has neighbors", []string{"apoc.neighbors.exists(node, 'TYPE') => bool"})
 
 	// ========================================
 	// Node Functions (apoc.node.*)
 	// ========================================
-	register("apoc.node.degree", "node", apocnode.Degree, "Node degree", []string{"apoc.node.degree(node) => degree"})
-	register("apoc.node.degreeIn", "node", apocnode.DegreeIn, "In-degree", []string{"apoc.node.degreeIn(node) => degree"})
-	register("apoc.node.degreeOut", "node", apocnode.DegreeOut, "Out-degree", []string{"apoc.node.degreeOut(node) => degree"})
+	register("apoc.node.degree", "node", fns.node.Degree, "Node degree", []string{"apoc.node.degree(node) => degree"})
+	register("apoc.node.degreeIn", "node", fns.node.DegreeIn, "In-degree", []string{"apoc.node.degreeIn(node) => degree"})
+	register("apoc.node.degreeOut", "node", fns.node.DegreeOut, "Out-degree", []string{"apoc.node.degreeOut(node) => degree"})
 	register("apoc.node.id", "node", apocnode.ID, "Node ID", []string{"apoc.node.id(node) => id"})
 	register("apoc.node.labels", "node", apocnode.Labels, "Node labels", []string{"apoc.node.labels(node) => labels"})
 	register("apoc.node.properties", "node", apocnode.Properties, "Node props", []string{"apoc.node.properties(node) => props"})
 	register("apoc.node.property", "node", apocnode.Property, "Node property", []string{"apoc.node.property(node, 'key') => value"})
 	register("apoc.node.hasLabel", "node", apocnode.HasLabel, "Has label", []string{"apoc.node.hasLabel(node, 'Label') => bool"})
 	register("apoc.node.hasLabels", "node", apocnode.HasLabels, "Has labels", []string{"apoc.node.hasLabels(node, ['L1','L2']) => bool"})
-	register("apoc.node.relationshipTypes", "node", apocnode.RelationshipTypes, "Rel types", []string{"apoc.node.relationshipTypes(node) => types"})
-	register("apoc.node.relationshipTypesIn", "node", apocnode.RelationshipTypesIn, "In rel types", []string{"apoc.node.relationshipTypesIn(node) => types"})
-	register("apoc.node.relationshipTypesOut", "node", apocnode.RelationshipTypesOut, "Out rel types", []string{"apoc.node.relationshipTypesOut(node) => types"})
-	register("apoc.node.relationships", "node", apocnode.Relationships, "Node rels", []string{"apoc.node.relationships(node) => rels"})
-	register("apoc.node.relationshipsIn", "node", apocnode.RelationshipsIn, "In rels", []string{"apoc.node.relationshipsIn(node) => rels"})
-	register("apoc.node.relationshipsOut", "node", apocnode.RelationshipsOut, "Out rels", []string{"apoc.node.relationshipsOut(node) => rels"})
-	register("apoc.node.relationshipExists", "node", apocnode.RelationshipExists, "Rel exists", []string{"apoc.node.relationshipExists(node, 'TYPE') => bool"})
-	register("apoc.node.connected", "node", apocnode.Connected, "Connected", []string{"apoc.node.connected(n1, n2) => bool"})
-	register("apoc.node.neighbors", "node", apocnode.Neighbors, "Neighbors", []string{"apoc.node.neighbors(node) => nodes"})
-	register("apoc.node.neighborsIn", "node", apocnode.NeighborsIn, "In neighbors", []string{"apoc.node.neighborsIn(node) => nodes"})
-	register("apoc.node.neighborsOut", "node", apocnode.NeighborsOut, "Out neighbors", []string{"apoc.node.neighborsOut(node) => nodes"})
-	register("apoc.node.isDense", "node", apocnode.IsDense, "Is dense", []string{"apoc.node.isDense(node) => bool"})
+	register("apoc.node.relationshipTypes", "node", fns.node.RelationshipTypes, "Rel types", []string{"apoc.node.relationshipTypes(node) => types"})
+	register("apoc.node.relationshipTypesIn", "node", fns.node.RelationshipTypesIn, "In rel types", []string{"apoc.node.relationshipTypesIn(node) => types"})
+	register("apoc.node.relationshipTypesOut", "node", fns.node.RelationshipTypesOut, "Out rel types", []string{"apoc.node.relationshipTypesOut(node) => types"})
+	register("apoc.node.relationships", "node", fns.node.Relationships, "Node rels", []string{"apoc.node.relationships(node) => rels"})
+	register("apoc.node.relationshipsIn", "node", fns.node.RelationshipsIn, "In rels", []string{"apoc.node.relationshipsIn(node) => rels"})
+	register("apoc.node.relationshipsOut", "node", fns.node.RelationshipsOut, "Out rels", []string{"apoc.node.relationshipsOut(node) => rels"})
+	register("apoc.node.relationshipExists", "node", fns.node.RelationshipExists, "Rel exists", []string{"apoc.node.relationshipExists(node, 'TYPE') => bool"})
+	register("apoc.node.connected", "node", fns.node.Connected, "Connected", []string{"apoc.node.connected(n1, n2) => bool"})
+	register("apoc.node.neighbors", "node", fns.node.Neighbors, "Neighbors", []string{"apoc.node.neighbors(node) => nodes"})
+	register("apoc.node.neighborsIn", "node", fns.node.NeighborsIn, "In neighbors", []string{"apoc.node.neighborsIn(node) => nodes"})
+	register("apoc.node.neighborsOut", "node", fns.node.NeighborsOut, "Out neighbors", []string{"apoc.node.neighborsOut(node) => nodes"})
+	register("apoc.node.isDense", "node", fns.node.IsDense, "Is dense", []string{"apoc.node.isDense(node) => bool"})
 	register("apoc.node.toMap", "node", apocnode.ToMap, "To map", []string{"apoc.node.toMap(node) => map"})
 	register("apoc.node.fromMap", "node", apocnode.FromMap, "From map", []string{"apoc.node.fromMap(map) => node"})
 	register("apoc.node.setProperty", "node", apocnode.SetProperty, "Set prop", []string{"apoc.node.setProperty(node, 'key', val) => node"})
@@ -1223,24 +1330,24 @@ func registerAllFunctions() error {
 	// ========================================
 	register("apoc.refactor.mergeNodes", "refactor", refactor.MergeNodes, "Merge nodes", []string{"apoc.refactor.mergeNodes(nodes, config) => merged"})
 	register("apoc.refactor.mergeRelationships", "refactor", refactor.MergeRelationships, "Merge rels", []string{"apoc.refactor.mergeRelationships(rels, config) => merged"})
-	register("apoc.refactor.cloneNodes", "refactor", refactor.CloneNodes, "Clone nodes", []string{"apoc.refactor.cloneNodes(nodes) => clones"})
-	register("apoc.refactor.cloneSubgraph", "refactor", refactor.CloneSubgraph, "Clone subgraph", []string{"apoc.refactor.cloneSubgraph(nodes, rels) => cloned"})
-	register("apoc.refactor.collapseNode", "refactor", refactor.CollapseNode, "Collapse node", []string{"apoc.refactor.collapseNode(nodes, 'TYPE') => rel"})
-	register("apoc.refactor.extractNode", "refactor", refactor.ExtractNode, "Extract node", []string{"apoc.refactor.extractNode(rel, labels) => node"})
+	register("apoc.refactor.cloneNodes", "refactor", fns.refactor.CloneNodes, "Clone nodes", []string{"apoc.refactor.cloneNodes(nodes) => clones"})
+	register("apoc.refactor.cloneSubgraph", "refactor", fns.refactor.CloneSubgraph, "Clone subgraph", []string{"apoc.refactor.cloneSubgraph(nodes, rels) => cloned"})
+	register("apoc.refactor.collapseNode", "refactor", fns.refactor.CollapseNode, "Collapse node", []string{"apoc.refactor.collapseNode(nodes, 'TYPE') => rel"})
+	register("apoc.refactor.extractNode", "refactor", fns.refactor.ExtractNode, "Extract node", []string{"apoc.refactor.extractNode(rel, labels) => node"})
 	register("apoc.refactor.normalizeAsBoolean", "refactor", refactor.NormalizeAsBoolean, "Normalize bool", []string{"apoc.refactor.normalizeAsBoolean(node, prop) => node"})
 	register("apoc.refactor.categorizeProperty", "refactor", refactor.CategorizeProperty, "Categorize prop", []string{"apoc.refactor.categorizeProperty(node, prop, newLabel) => result"})
-	register("apoc.refactor.renameLabel", "refactor", refactor.RenameLabel, "Rename label", []string{"apoc.refactor.renameLabel('Old', 'New') => count"})
-	register("apoc.refactor.renameType", "refactor", refactor.RenameType, "Rename type", []string{"apoc.refactor.renameType('OLD', 'NEW') => count"})
-	register("apoc.refactor.renameProperty", "refactor", refactor.RenameProperty, "Rename prop", []string{"apoc.refactor.renameProperty('old', 'new') => count"})
+	register("apoc.refactor.renameLabel", "refactor", fns.refactor.RenameLabel, "Rename label", []string{"apoc.refactor.renameLabel('Old', 'New') => count"})
+	register("apoc.refactor.renameType", "refactor", fns.refactor.RenameType, "Rename type", []string{"apoc.refactor.renameType('OLD', 'NEW') => count"})
+	register("apoc.refactor.renameProperty", "refactor", fns.refactor.RenameProperty, "Rename prop", []string{"apoc.refactor.renameProperty('old', 'new') => count"})
 	register("apoc.refactor.setType", "refactor", refactor.SetType, "Set type", []string{"apoc.refactor.setType(rel, 'NEW_TYPE') => rel"})
 	register("apoc.refactor.invertRelationship", "refactor", refactor.InvertRelationship, "Invert rel", []string{"apoc.refactor.invertRelationship(rel) => rel"})
 	register("apoc.refactor.redirectRelationship", "refactor", refactor.RedirectRelationship, "Redirect rel", []string{"apoc.refactor.redirectRelationship(rel, newTarget) => rel"})
 	register("apoc.refactor.from", "refactor", refactor.From, "Change start", []string{"apoc.refactor.from(rel, newStart) => rel"})
-	register("apoc.refactor.deleteAndReconnect", "refactor", refactor.DeleteAndReconnect, "Delete reconnect", []string{"apoc.refactor.deleteAndReconnect(node, 'TYPE') => count"})
-	register("apoc.refactor.cloneSubgraphFromPaths", "refactor", refactor.CloneSubgraphFromPaths, "Clone from paths", []string{"apoc.refactor.cloneSubgraphFromPaths(paths) => cloned"})
+	register("apoc.refactor.deleteAndReconnect", "refactor", fns.refactor.DeleteAndReconnect, "Delete reconnect", []string{"apoc.refactor.deleteAndReconnect(node, 'TYPE') => count"})
+	register("apoc.refactor.cloneSubgraphFromPaths", "refactor", fns.refactor.CloneSubgraphFromPaths, "Clone from paths", []string{"apoc.refactor.cloneSubgraphFromPaths(paths) => cloned"})
 	register("apoc.refactor.changeType", "refactor", refactor.ChangeType, "Change type", []string{"apoc.refactor.changeType(rel, 'NEW') => rel"})
-	register("apoc.refactor.normalize", "refactor", refactor.Normalize, "Normalize", []string{"apoc.refactor.normalize(data) => normalized"})
-	register("apoc.refactor.denormalize", "refactor", refactor.Denormalize, "Denormalize", []string{"apoc.refactor.denormalize(data) => denormalized"})
+	register("apoc.refactor.normalize", "refactor", fns.refactor.Normalize, "Normalize", []string{"apoc.refactor.normalize(data) => normalized"})
+	register("apoc.refactor.denormalize", "refactor", fns.refactor.Denormalize, "Denormalize", []string{"apoc.refactor.denormalize(data) => denormalized"})
 
 	// ========================================
 	// Rel Functions (apoc.rel.*)
@@ -1249,18 +1356,18 @@ func registerAllFunctions() error {
 	register("apoc.rel.type", "rel", apocrel.Type, "Rel type", []string{"apoc.rel.type(rel) => type"})
 	register("apoc.rel.properties", "rel", apocrel.Properties, "Rel props", []string{"apoc.rel.properties(rel) => props"})
 	register("apoc.rel.property", "rel", apocrel.Property, "Rel property", []string{"apoc.rel.property(rel, 'key') => value"})
-	register("apoc.rel.startNode", "rel", apocrel.StartNode, "Start node", []string{"apoc.rel.startNode(rel) => node"})
-	register("apoc.rel.endNode", "rel", apocrel.EndNode, "End node", []string{"apoc.rel.endNode(rel) => node"})
-	register("apoc.rel.nodes", "rel", apocrel.Nodes, "Rel nodes", []string{"apoc.rel.nodes(rel) => [start, end]"})
+	register("apoc.rel.startNode", "rel", fns.rel.StartNode, "Start node", []string{"apoc.rel.startNode(rel) => node"})
+	register("apoc.rel.endNode", "rel", fns.rel.EndNode, "End node", []string{"apoc.rel.endNode(rel) => node"})
+	register("apoc.rel.nodes", "rel", fns.rel.Nodes, "Rel nodes", []string{"apoc.rel.nodes(rel) => [start, end]"})
 	register("apoc.rel.setProperty", "rel", apocrel.SetProperty, "Set prop", []string{"apoc.rel.setProperty(rel, 'key', val) => rel"})
 	register("apoc.rel.setProperties", "rel", apocrel.SetProperties, "Set props", []string{"apoc.rel.setProperties(rel, map) => rel"})
 	register("apoc.rel.removeProperty", "rel", apocrel.RemoveProperty, "Remove prop", []string{"apoc.rel.removeProperty(rel, 'key') => rel"})
 	register("apoc.rel.removeProperties", "rel", apocrel.RemoveProperties, "Remove props", []string{"apoc.rel.removeProperties(rel, ['k1']) => rel"})
 	register("apoc.rel.toMap", "rel", apocrel.ToMap, "To map", []string{"apoc.rel.toMap(rel) => map"})
 	register("apoc.rel.fromMap", "rel", apocrel.FromMap, "From map", []string{"apoc.rel.fromMap(map) => rel"})
-	register("apoc.rel.exists", "rel", apocrel.Exists, "Rel exists", []string{"apoc.rel.exists(id) => bool"})
-	register("apoc.rel.delete", "rel", apocrel.Delete, "Delete rel", []string{"apoc.rel.delete(rel) => deleted"})
-	register("apoc.rel.clone", "rel", apocrel.Clone, "Clone rel", []string{"apoc.rel.clone(rel) => cloned"})
+	register("apoc.rel.exists", "rel", fns.rel.Exists, "Rel exists", []string{"apoc.rel.exists(id) => bool"})
+	register("apoc.rel.delete", "rel", fns.rel.Delete, "Delete rel", []string{"apoc.rel.delete(rel) => deleted"})
+	register("apoc.rel.clone", "rel", fns.rel.Clone, "Clone rel", []string{"apoc.rel.clone(rel) => cloned"})
 	register("apoc.rel.reverse", "rel", apocrel.Reverse, "Reverse rel", []string{"apoc.rel.reverse(rel) => reversed"})
 	register("apoc.rel.isType", "rel", apocrel.IsType, "Is type", []string{"apoc.rel.isType(rel, 'TYPE') => bool"})
 	register("apoc.rel.isAnyType", "rel", apocrel.IsAnyType, "Is any type", []string{"apoc.rel.isAnyType(rel, ['T1','T2']) => bool"})
@@ -1270,7 +1377,7 @@ func registerAllFunctions() error {
 	register("apoc.rel.compare", "rel", apocrel.Compare, "Compare", []string{"apoc.rel.compare(r1, r2) => result"})
 	register("apoc.rel.weight", "rel", apocrel.Weight, "Get weight", []string{"apoc.rel.weight(rel, 'prop') => weight"})
 	register("apoc.rel.direction", "rel", apocrel.Direction, "Get direction", []string{"apoc.rel.direction(rel, node) => 'OUT'"})
-	register("apoc.rel.otherNode", "rel", apocrel.OtherNode, "Other node", []string{"apoc.rel.otherNode(rel, node) => otherNode"})
+	register("apoc.rel.otherNode", "rel", fns.rel.OtherNode, "Other node", []string{"apoc.rel.otherNode(rel, node) => otherNode"})
 	register("apoc.rel.isLoop", "rel", apocrel.IsLoop, "Is loop", []string{"apoc.rel.isLoop(rel) => bool"})
 	register("apoc.rel.isBetween", "rel", apocrel.IsBetween, "Is between", []string{"apoc.rel.isBetween(rel, n1, n2) => bool"})
 	register("apoc.rel.isDirectedBetween", "rel", apocrel.IsDirectedBetween, "Directed between", []string{"apoc.rel.isDirectedBetween(rel, from, to) => bool"})
@@ -1327,7 +1434,7 @@ func registerAllFunctions() error {
 	// ========================================
 	// Stats Functions (apoc.stats.*)
 	// ========================================
-	register("apoc.stats.degrees", "stats", stats.Degrees, "Degree stats", []string{"apoc.stats.degrees(nodes) => stats"})
+	register("apoc.stats.degrees", "stats", fns.stats.Degrees, "Degree stats", []string{"apoc.stats.degrees(nodes) => stats"})
 	register("apoc.stats.mean", "stats", stats.Mean, "Mean", []string{"apoc.stats.mean(values) => mean"})
 	register("apoc.stats.median", "stats", stats.Median, "Median", []string{"apoc.stats.median(values) => median"})
 	register("apoc.stats.mode", "stats", stats.Mode, "Mode", []string{"apoc.stats.mode(values) => mode"})
@@ -1354,21 +1461,21 @@ func registerAllFunctions() error {
 	// ========================================
 	// Warmup Functions (apoc.warmup.*)
 	// ========================================
-	register("apoc.warmup.run", "warmup", warmup.Run, "Run warmup", []string{"apoc.warmup.run() => stats"})
-	register("apoc.warmup.runWithParams", "warmup", warmup.RunWithParams, "Run with params", []string{"apoc.warmup.runWithParams(config) => stats"})
-	register("apoc.warmup.nodes", "warmup", warmup.Nodes, "Warmup nodes", []string{"apoc.warmup.nodes() => count"})
-	register("apoc.warmup.relationships", "warmup", warmup.Relationships, "Warmup rels", []string{"apoc.warmup.relationships() => count"})
-	register("apoc.warmup.indexes", "warmup", warmup.Indexes, "Warmup indexes", []string{"apoc.warmup.indexes() => count"})
-	register("apoc.warmup.properties", "warmup", warmup.Properties, "Warmup props", []string{"apoc.warmup.properties() => count"})
-	register("apoc.warmup.subgraph", "warmup", warmup.Subgraph, "Warmup subgraph", []string{"apoc.warmup.subgraph(config) => stats"})
-	register("apoc.warmup.path", "warmup", warmup.Path, "Warmup path", []string{"apoc.warmup.path(pattern) => stats"})
-	register("apoc.warmup.cache", "warmup", warmup.Cache, "Cache stats", []string{"apoc.warmup.cache() => stats"})
-	register("apoc.warmup.stats", "warmup", warmup.Stats, "Warmup stats", []string{"apoc.warmup.stats() => stats"})
-	register("apoc.warmup.clear", "warmup", warmup.Clear, "Clear cache", []string{"apoc.warmup.clear() => cleared"})
-	register("apoc.warmup.optimize", "warmup", warmup.Optimize, "Optimize cache", []string{"apoc.warmup.optimize() => optimized"})
-	register("apoc.warmup.schedule", "warmup", warmup.Schedule, "Schedule warmup", []string{"apoc.warmup.schedule(cron) => scheduled"})
-	register("apoc.warmup.status", "warmup", warmup.Status, "Warmup status", []string{"apoc.warmup.status() => status"})
-	register("apoc.warmup.progress", "warmup", warmup.Progress, "Warmup progress", []string{"apoc.warmup.progress() => progress"})
+	register("apoc.warmup.run", "warmup", fns.warmup.Run, "Run warmup", []string{"apoc.warmup.run() => stats"})
+	register("apoc.warmup.runWithParams", "warmup", fns.warmup.RunWithParams, "Run with params", []string{"apoc.warmup.runWithParams(config) => stats"})
+	register("apoc.warmup.nodes", "warmup", fns.warmup.Nodes, "Warmup nodes", []string{"apoc.warmup.nodes() => count"})
+	register("apoc.warmup.relationships", "warmup", fns.warmup.Relationships, "Warmup rels", []string{"apoc.warmup.relationships() => count"})
+	register("apoc.warmup.indexes", "warmup", fns.warmup.Indexes, "Warmup indexes", []string{"apoc.warmup.indexes() => count"})
+	register("apoc.warmup.properties", "warmup", fns.warmup.Properties, "Warmup props", []string{"apoc.warmup.properties() => count"})
+	register("apoc.warmup.subgraph", "warmup", fns.warmup.Subgraph, "Warmup subgraph", []string{"apoc.warmup.subgraph(config) => stats"})
+	register("apoc.warmup.path", "warmup", fns.warmup.Path, "Warmup path", []string{"apoc.warmup.path(pattern) => stats"})
+	register("apoc.warmup.cache", "warmup", fns.warmup.Cache, "Cache stats", []string{"apoc.warmup.cache() => stats"})
+	register("apoc.warmup.stats", "warmup", fns.warmup.Stats, "Warmup stats", []string{"apoc.warmup.stats() => stats"})
+	register("apoc.warmup.clear", "warmup", fns.warmup.Clear, "Clear cache", []string{"apoc.warmup.clear() => cleared"})
+	register("apoc.warmup.optimize", "warmup", fns.warmup.Optimize, "Optimize cache", []string{"apoc.warmup.optimize() => optimized"})
+	register("apoc.warmup.schedule", "warmup", fns.warmup.Schedule, "Schedule warmup", []string{"apoc.warmup.schedule(cron) => scheduled"})
+	register("apoc.warmup.status", "warmup", fns.warmup.Status, "Warmup status", []string{"apoc.warmup.status() => status"})
+	register("apoc.warmup.progress", "warmup", fns.warmup.Progress, "Warmup progress", []string{"apoc.warmup.progress() => progress"})
 
 	// ========================================
 	// XML Functions (apoc.xml.*)
@@ -1398,9 +1505,4 @@ func registerAllFunctions() error {
 	register("apoc.xml.getNamespace", "xml", xml.GetNamespace, "Get namespace", []string{"apoc.xml.getNamespace(node) => ns"})
 
 	return registrationError
-}
-
-// callFunction preserves root argument admission and delegates all invocation.
-func callFunction(handler *registry.Callable, args []interface{}) (interface{}, error) {
-	return handler.CallWithPolicy(args, nil, registry.APOCArguments)
 }

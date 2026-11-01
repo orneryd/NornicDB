@@ -36,7 +36,7 @@ func TestSourceColumnAgreementRejectsBeforeWrites(t *testing.T) {
 						defer executor.Execute(ctx, "ROLLBACK", nil)
 					}
 					_, executionErr := executor.Execute(ctx, mode+query, nil)
-					nodes, err := store.GetNodesByLabel("SourceColumnEffect")
+					nodes, err := store.GetNodesByLabel(ctx, "SourceColumnEffect")
 					require.NoError(t, err)
 					t.Logf("source-column agreement: executionError=%v, visibleNodes=%d", executionErr, len(nodes))
 					require.Empty(t, nodes, "column agreement is resolved before graph effects")

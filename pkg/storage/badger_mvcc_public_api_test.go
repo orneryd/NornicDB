@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sort"
 	"testing"
 	"time"
@@ -159,7 +160,7 @@ func TestMVCC_BatchGetNodesLatestVisible(t *testing.T) {
 	engine, aliceID, bobID, _ := mvccPublicAPIFixture(t)
 
 	// Both present.
-	got, err := engine.BatchGetNodesLatestVisible([]NodeID{aliceID, bobID})
+	got, err := engine.BatchGetNodesLatestVisible(context.Background(), []NodeID{aliceID, bobID})
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	require.NotNil(t, got[aliceID])
@@ -170,14 +171,14 @@ func TestMVCC_BatchGetNodesLatestVisible(t *testing.T) {
 	// Mix: present + missing. Missing IDs are silently dropped from
 	// the returned map (per the public API contract); the function
 	// does not return an error for them.
-	got, err = engine.BatchGetNodesLatestVisible([]NodeID{aliceID, "test:nope"})
+	got, err = engine.BatchGetNodesLatestVisible(context.Background(), []NodeID{aliceID, "test:nope"})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Contains(t, got, aliceID)
 	require.NotContains(t, got, NodeID("test:nope"))
 
 	// Empty input → empty result, no error.
-	got, err = engine.BatchGetNodesLatestVisible(nil)
+	got, err = engine.BatchGetNodesLatestVisible(context.Background(), nil)
 	require.NoError(t, err)
 	require.Empty(t, got)
 }
@@ -186,7 +187,7 @@ func TestMVCC_IterateLatestVisibleNodes(t *testing.T) {
 	engine, aliceID, bobID, _ := mvccPublicAPIFixture(t)
 
 	var seen []NodeID
-	require.NoError(t, engine.IterateLatestVisibleNodes(func(n *Node) error {
+	require.NoError(t, engine.IterateLatestVisibleNodes(context.Background(), func(n *Node) error {
 		require.NotNil(t, n)
 		seen = append(seen, n.ID)
 		return nil
@@ -197,7 +198,7 @@ func TestMVCC_IterateLatestVisibleNodes(t *testing.T) {
 	// Yield can short-circuit by returning a non-nil error.
 	stopErr := errExampleSentinel
 	count := 0
-	err := engine.IterateLatestVisibleNodes(func(n *Node) error {
+	err := engine.IterateLatestVisibleNodes(context.Background(), func(n *Node) error {
 		count++
 		return stopErr
 	})

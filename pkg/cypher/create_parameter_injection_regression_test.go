@@ -18,12 +18,12 @@ func TestCreateParameterDoesNotInjectAsyncBatchClauses(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Stats.NodesCreated)
 
-	nodes, err := executor.getStorage(ctx).GetNodesByLabel("PT")
+	nodes, err := executor.getStorage(ctx).GetNodesByLabel(ctx, "PT")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, "CREATE (m:Injected {secret: 1})", nodes[0].Properties["r"])
 
-	injected, err := executor.getStorage(ctx).GetNodesByLabel("Injected")
+	injected, err := executor.getStorage(ctx).GetNodesByLabel(ctx, "Injected")
 	require.NoError(t, err)
 	require.Empty(t, injected)
 }

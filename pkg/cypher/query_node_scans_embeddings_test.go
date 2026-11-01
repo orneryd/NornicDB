@@ -152,8 +152,8 @@ type projectedQueryNodeWrapper struct {
 	*queryNodeReadSpy
 }
 
-func (w *projectedQueryNodeWrapper) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
-	return w.Engine.(storage.ProjectedLabelNodeReader).StreamNodesByLabelProjected(label, properties, visit)
+func (w *projectedQueryNodeWrapper) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
+	return w.Engine.(storage.ProjectedLabelNodeReader).StreamNodesByLabelProjected(ctx, label, properties, visit)
 }
 
 func TestQueryNodeScanWritesKeepStoredEmbeddings(t *testing.T) {

@@ -2,6 +2,7 @@
 package louvain
 
 import (
+	"context"
 	"math"
 	"sort"
 )
@@ -22,29 +23,63 @@ func DefaultOptions() Options {
 	return Options{MaxLevels: 10, MaxIterations: 10, Tolerance: 0.0001, Resolution: 1}
 }
 
+// checkStride bounds the steps between context checks inside a scan whose
+// length the graph controls: a node's arcs, a high-degree node's candidate
+// communities, a node's neighbours. A stopped run finishes at most that many
+// steps of the scan in flight. It must be a power of two.
+const checkStride = 1024
+
+// strideCheck reports ctx's error on every checkStride-th step of such a scan.
+// It reads nothing the run computes, so it cannot change a result.
+func strideCheck(ctx context.Context, step int) error {
+	if step&(checkStride-1) != 0 {
+		return nil
+	}
+	return ctx.Err()
+}
+
 // RunUndirected is the shared APOC input adapter and engine. Each indexed
 // relationship is one physical relationship, including parallel relationships
 // and self-loops. The callback supplies stable endpoints in [0,size), weight,
 // and whether both endpoints belong to the selected graph. It is read twice
 // to reserve one adjacency buffer, without copying an adapter's input graph.
 // Only Graph.Link expands a relationship into its two degree contributions.
-func RunUndirected(size, relationshipCount int, relationship func(int) (int, int, float64, bool), options Options) Result {
+// Both passes check ctx before each relationship, and the adapter checks it
+// again before reserving the adjacency buffer, so a stopped run performs no
+// further adaptation or reservation and returns the zero Result with ctx's
+// error.
+func RunUndirected(ctx context.Context, size, relationshipCount int, relationship func(int) (int, int, float64, bool), options Options) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	counts := make([]int, size)
 	for i := 0; i < relationshipCount; i++ {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		source, target, _, included := relationship(i)
 		if included {
 			counts[source]++
 			counts[target]++
 		}
 	}
+	// The caller can stop the run from inside the last relationship of the
+	// counting pass; reserving the adjacency buffer first would do the whole
+	// graph's allocation work after the stop.
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	graph := NewGraph(size, counts)
 	for i := 0; i < relationshipCount; i++ {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		source, target, weight, included := relationship(i)
 		if included {
 			graph.Link(source, target, weight)
 		}
 	}
-	return Run(graph, options)
+	return Run(ctx, graph, options)
 }
 
 // Result is a Louvain run's result: each level's community of every
@@ -62,12 +97,22 @@ type Result struct {
 // one node. A level that leaves as many communities as nodes, or a single
 // one, or gains no more modularity than the tolerance over the level
 // before, ends the run and, unless it is the first, is dropped; at most
-// MaxLevels levels run.
-func Run(graph *Graph, options Options) Result {
+// MaxLevels levels run. Every level, pass, colour class, node sweep and output
+// boundary checks ctx, and every scan whose length the graph controls (a
+// node's arcs, a high-degree node's candidates) checks it once per stride, so
+// a stopped run returns within bounded work with the zero Result and ctx's
+// error; no partial partition is ever returned.
+func Run(ctx context.Context, graph *Graph, options Options) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	// GDS reduces outgoing degrees, rather than reducing every arc into one
 	// running total. These differ under signed floating-point cancellation.
 	graph.total = 0
 	for _, degree := range graph.degree {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		graph.total += degree
 	}
 	if options.Resolution == 0 {
@@ -76,28 +121,60 @@ func Run(graph *Graph, options Options) Result {
 	var run Result
 	size := len(graph.arcs)
 	scratch := newWorkspace(size)
-	membership := identityCommunities(size)
-	representative := identityCommunities(size)
+	membership, err := identityCommunities(ctx, size)
+	if err != nil {
+		return Result{}, err
+	}
+	representative, err := identityCommunities(ctx, size)
+	if err != nil {
+		return Result{}, err
+	}
 	initial := options.Seed
 	previous := 0.0
 	for level := 0; level < options.MaxLevels; level++ {
-		communities := graph.moveNodes(options.MaxIterations, options.Tolerance, initial, options.Resolution, scratch)
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		communities, err := graph.moveNodes(ctx, options.MaxIterations, options.Tolerance, initial, options.Resolution, scratch)
+		if err != nil {
+			return Result{}, err
+		}
 		initial = nil
-		modularity := graph.modularityScratch(communities, options.Resolution, scratch.inside, scratch.totals)
+		modularity, err := graph.modularityScratch(ctx, communities, options.Resolution, scratch.inside, scratch.totals)
+		if err != nil {
+			return Result{}, err
+		}
 		var representatives []int
 		numbered := scratch.numbers[:len(graph.arcs)]
 		clear(numbered)
 		for _, c := range communities {
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
 			if numbered[c] == 0 {
 				numbered[c] = 1
 				representatives = append(representatives, representative[c])
 			}
 		}
-		count := renumberDense(communities, numbered)
-		for i := range membership {
-			membership[i] = communities[membership[i]]
+		count, err := renumberDense(ctx, communities, numbered)
+		if err != nil {
+			return Result{}, err
 		}
-		run.Levels = append(run.Levels, append([]int(nil), membership...))
+		// The level's membership and the level it publishes carry the same
+		// values, so one bounded, checked pass writes both; the published copy
+		// keeps the previous level's slice and the empty graph's nil level.
+		var published []int
+		if nodes := len(membership); nodes > 0 {
+			published = make([]int, nodes)
+		}
+		for i := range membership {
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
+			membership[i] = communities[membership[i]]
+			published[i] = membership[i]
+		}
+		run.Levels = append(run.Levels, published)
 		run.Representatives = append(run.Representatives, representatives)
 		run.Modularities = append(run.Modularities, modularity)
 		converged := level > 0 && !(modularity > previous && modularity-previous > options.Tolerance)
@@ -109,10 +186,13 @@ func Run(graph *Graph, options Options) Result {
 			break
 		}
 		previous = modularity
-		graph = graph.aggregate(communities, count, scratch)
+		graph, err = graph.aggregate(ctx, communities, count, scratch)
+		if err != nil {
+			return Result{}, err
+		}
 		representative = representatives
 	}
-	return run
+	return run, nil
 }
 
 // Dense node/community IDs allow one run-local workspace, reused as levels
@@ -132,19 +212,25 @@ func newWorkspace(size int) *workspace {
 	}
 }
 
-func renumberDense(community, numbers []int) int {
+func renumberDense(ctx context.Context, community, numbers []int) (int, error) {
 	for i := range numbers {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		numbers[i] = -1
 	}
 	count := 0
 	for i, c := range community {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		if numbers[c] == -1 {
 			numbers[c] = count
 			count++
 		}
 		community[i] = numbers[c]
 	}
-	return count
+	return count, nil
 }
 
 // Final is each node's community after the run's last level (a run
@@ -153,29 +239,32 @@ func Final(run Result) []int {
 	return run.Levels[len(run.Levels)-1]
 }
 
-func identityCommunities(size int) []int {
+func identityCommunities(ctx context.Context, size int) ([]int, error) {
 	communities := make([]int, size)
 	for i := range communities {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		communities[i] = i
 	}
-	return communities
+	return communities, nil
 }
 
-// modularity is the graph's modularity for communities: Σ over communities
+// modularityScratch computes the graph's modularity for communities: Σ over communities
 // of in/2m − (tot/2m)², a self-loop counted twice.
-func (g *Graph) modularity(community []int, resolution float64) float64 {
-	inside := make([]float64, len(g.arcs))
-	degree := make([]float64, len(g.arcs))
-	return g.modularityScratch(community, resolution, inside, degree)
-}
-
-func (g *Graph) modularityScratch(community []int, resolution float64, inside, degree []float64) float64 {
+func (g *Graph) modularityScratch(ctx context.Context, community []int, resolution float64, inside, degree []float64) (float64, error) {
 	inside, degree = inside[:len(g.arcs)], degree[:len(g.arcs)]
 	clear(inside)
 	clear(degree)
 	for i, arcs := range g.arcs {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		degree[community[i]] += g.degree[i]
-		for _, arc := range arcs {
+		for ai, arc := range arcs {
+			if err := strideCheck(ctx, ai); err != nil {
+				return 0, err
+			}
 			if community[i] == community[arc.target] {
 				inside[community[i]] += arc.weight
 			}
@@ -184,6 +273,9 @@ func (g *Graph) modularityScratch(community []int, resolution float64, inside, d
 	q := 0.0
 	inverseTotal := 1.0 / g.total
 	for c, d := range degree {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		observed := inside[c]
 		if resolution != 1 {
 			observed *= resolution
@@ -191,7 +283,7 @@ func (g *Graph) modularityScratch(community []int, resolution float64, inside, d
 		// Keep GDS's multiplication order, including underflow and overflow.
 		q += observed - d*d*inverseTotal
 	}
-	return q * inverseTotal
+	return q * inverseTotal, nil
 }
 
 // Graph holds one level's weighted adjacency. Arc preserves a projected
@@ -252,19 +344,27 @@ func (g *Graph) Link(i, j int, w float64) {
 // Passes repeat until one moves nothing, a pass after the first gains no
 // more modularity than the Tolerance, or MaxIterations have run. Nodes
 // start in initial's communities (nil: each its own). It reports each
-// node's community.
-func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, resolution float64, scratch *workspace) []int {
+// node's community. Each class, node and pass checks ctx, a node's arcs and
+// candidates check it once per stride, and a stopped pass returns ctx's error
+// instead of a community.
+func (g *Graph) moveNodes(ctx context.Context, maxIterations int, tolerance float64, initial []int, resolution float64, scratch *workspace) ([]int, error) {
 	size := len(g.arcs)
 	community := scratch.community[:size]
 	communityDegree := scratch.communityDegree[:size]
 	clear(communityDegree)
 	for i := range community {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		community[i] = i
 		if initial != nil {
 			community[i] = initial[i]
 		}
 	}
 	for i := range community {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		communityDegree[community[i]] += g.degree[i]
 	}
 	if g.total == 0 {
@@ -273,17 +373,26 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 		// every degree is zero, every gain is NaN and no node can move.
 		allZero := true
 		for _, degree := range g.degree {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if degree != 0 {
 				allZero = false
 				break
 			}
 		}
 		if allZero {
-			return community
+			return community, nil
 		}
 	}
-	neighbours := g.neighbours()
-	classes := g.colourClasses(neighbours)
+	neighbours, err := g.neighbours(ctx)
+	if err != nil {
+		return nil, err
+	}
+	classes, err := g.colourClasses(ctx, neighbours)
+	if err != nil {
+		return nil, err
+	}
 	before := 0.0
 	next := scratch.next[:size]
 	// Reuse influence storage across nodes and passes. Candidate scores are
@@ -294,16 +403,28 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 	stamp := 0
 	totalSquared := math.Pow(g.total, 2)
 	for iteration := 0; iteration < maxIterations; iteration++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		moves := 0
 		for _, class := range classes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			for _, i := range class {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				current := community[i]
 				// The weight from i to each neighbouring community (its own
 				// self-loops apart).
 				stamp++
 				candidates := scratch.candidates[:0]
 				self := 0.0
-				for _, arc := range g.arcs[i] {
+				for ai, arc := range g.arcs[i] {
+					if err := strideCheck(ctx, ai); err != nil {
+						return nil, err
+					}
 					if arc.target == i {
 						self += arc.weight
 					}
@@ -324,7 +445,10 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 				}
 				ax := communityDegree[current] - ki
 				best, maxGain := current, 0.0
-				for _, c := range candidates {
+				for ci, c := range candidates {
+					if err := strideCheck(ctx, ci); err != nil {
+						return nil, err
+					}
 					weight := influence[c]
 					if c == current {
 						continue
@@ -341,6 +465,9 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 				next[i] = best
 			}
 			for _, i := range class {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				if best := next[i]; best != community[i] {
 					communityDegree[community[i]] -= g.degree[i]
 					communityDegree[best] += g.degree[i]
@@ -354,20 +481,25 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 		}
 		// The tolerance compares each pass with the one before; the first
 		// pass is always followed by a second, as in GDS.
-		after := g.modularityScratch(community, resolution, scratch.inside, scratch.totals)
+		after, err := g.modularityScratch(ctx, community, resolution, scratch.inside, scratch.totals)
+		if err != nil {
+			return nil, err
+		}
 		if iteration > 0 && !(after > before && after-before > tolerance) {
 			break
 		}
 		before = after
 	}
-	return community
+	return community, nil
 }
 
 // colourClasses follows GDS's serial K1 colouring: colour the pending nodes,
 // validate outgoing conflicts, and recolour their sources. Modularity
 // optimization caps this at five rounds independently of MaxIterations.
 // Self-loops never forbid a colour. Classes and their nodes are in order.
-func (g *Graph) colourClasses(neighbours [][]int) [][]int {
+// Each pending node and round checks ctx, and a node's neighbours once per
+// stride.
+func (g *Graph) colourClasses(ctx context.Context, neighbours [][]int) ([][]int, error) {
 	colour := make([]int, len(g.arcs))
 	pending := make([]bool, len(colour))
 	next := make([]bool, len(colour))
@@ -375,15 +507,27 @@ func (g *Graph) colourClasses(neighbours [][]int) [][]int {
 	forbidden := make([]int, len(colour)+1)
 	stamp := 0
 	for i := range colour {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		colour[i], pending[i] = 1000, true
 	}
 	for round := 0; round < 5; round++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for i := range colour {
 			if !pending[i] {
 				continue
 			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			stamp++
-			for _, j := range neighbours[i] {
+			for ni, j := range neighbours[i] {
+				if err := strideCheck(ctx, ni); err != nil {
+					return nil, err
+				}
 				// On small graphs 1000 cannot be selected as a colour, so
 				// its sentinel needs no slot in the forbidden-colour array.
 				if j != i && colour[j] < len(forbidden) {
@@ -392,6 +536,9 @@ func (g *Graph) colourClasses(neighbours [][]int) [][]int {
 			}
 			c := 0
 			for forbidden[c] == stamp {
+				if err := strideCheck(ctx, c); err != nil {
+					return nil, err
+				}
 				c++
 			}
 			colour[i] = c
@@ -402,7 +549,13 @@ func (g *Graph) colourClasses(neighbours [][]int) [][]int {
 			if !pending[i] {
 				continue
 			}
-			for _, j := range neighbours[i] {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			for ni, j := range neighbours[i] {
+				if err := strideCheck(ctx, ni); err != nil {
+					return nil, err
+				}
 				if i != j && colour[i] == colour[j] && !next[j] {
 					next[i], conflicts = true, true
 					break
@@ -416,32 +569,45 @@ func (g *Graph) colourClasses(neighbours [][]int) [][]int {
 	}
 	var classes [][]int
 	for i, c := range colour {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for c >= len(classes) {
 			classes = append(classes, nil)
 		}
 		classes[c] = append(classes[c], i)
 	}
-	return classes
+	return classes, nil
 }
 
 // neighbours lists distinct targets in node order for colouring. Numeric
 // reductions consume the original ordered arcs, including parallel arcs.
-func (g *Graph) neighbours() [][]int {
+// Each node and each stride of its arcs checks ctx.
+func (g *Graph) neighbours(ctx context.Context) ([][]int, error) {
 	lists := make([][]int, len(g.arcs))
 	for i, arcs := range g.arcs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		list := make([]int, len(arcs))
-		for j, arc := range arcs {
-			list[j] = arc.target
+		for ai, arc := range arcs {
+			if err := strideCheck(ctx, ai); err != nil {
+				return nil, err
+			}
+			list[ai] = arc.target
 		}
 		sort.Ints(list)
-		for _, target := range list {
+		for ai, target := range list {
+			if err := strideCheck(ctx, ai); err != nil {
+				return nil, err
+			}
 			if len(lists[i]) == 0 || lists[i][len(lists[i])-1] != target {
 				list[len(lists[i])] = target
 				lists[i] = list[:len(lists[i])+1]
 			}
 		}
 	}
-	return lists
+	return lists, nil
 }
 
 // Renumber numbers communities 0, 1, … by their first
@@ -461,14 +627,20 @@ func Renumber(community []int) int {
 
 // aggregate is the next level's graph: one node per community, the weights
 // between communities summed, and a community's inner weight its
-// self-loop.
-func (g *Graph) aggregate(community []int, count int, scratch *workspace) *Graph {
+// self-loop. Each grouped node and each stride of its arcs checks ctx.
+func (g *Graph) aggregate(ctx context.Context, community []int, count int, scratch *workspace) (*Graph, error) {
 	heads, links := scratch.heads[:count], scratch.links[:len(g.arcs)]
 	for i := range heads {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		heads[i] = -1
 	}
 	// Group source nodes without reordering the reductions of their arcs.
 	for i := len(g.arcs) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		c := community[i]
 		links[i], heads[c] = heads[c], i
 	}
@@ -476,8 +648,17 @@ func (g *Graph) aggregate(community []int, count int, scratch *workspace) *Graph
 	clear(stamps)
 	clear(counts)
 	for source := range heads {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for node := heads[source]; node >= 0; node = links[node] {
-			for _, arc := range g.arcs[node] {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			for ai, arc := range g.arcs[node] {
+				if err := strideCheck(ctx, ai); err != nil {
+					return nil, err
+				}
 				target := community[arc.target]
 				if stamps[target] != source+1 {
 					stamps[target] = source + 1
@@ -486,13 +667,26 @@ func (g *Graph) aggregate(community []int, count int, scratch *workspace) *Graph
 			}
 		}
 	}
+	// A stop the counting pass observed must not reserve the next level.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	next := NewGraph(count, counts)
 	clear(stamps)
 	weights := scratch.weights[:count]
 	for source := range heads {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		ordered := scratch.candidates[:0]
 		for node := heads[source]; node >= 0; node = links[node] {
-			for _, arc := range g.arcs[node] {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			for ai, arc := range g.arcs[node] {
+				if err := strideCheck(ctx, ai); err != nil {
+					return nil, err
+				}
 				target := community[arc.target]
 				if stamps[target] != source+1 {
 					stamps[target], weights[target] = source+1, 0
@@ -503,10 +697,13 @@ func (g *Graph) aggregate(community []int, count int, scratch *workspace) *Graph
 			next.degree[source] += g.degree[node]
 		}
 		sort.Ints(ordered)
-		for _, target := range ordered {
+		for oi, target := range ordered {
+			if err := strideCheck(ctx, oi); err != nil {
+				return nil, err
+			}
 			next.arcs[source] = append(next.arcs[source], weightedArc{target: target, weight: weights[target]})
 		}
 	}
 	next.total = g.total
-	return next
+	return next, nil
 }

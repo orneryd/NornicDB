@@ -80,7 +80,7 @@ func TestAllowlistBatchFailureChangesNothing(t *testing.T) {
 	allowlist := NewAllowlistStore(fault)
 	require.ErrorIs(t, allowlist.SaveMappings(context.Background(), map[string][]string{"a": {"nornic"}, "b": {"system"}}), errRoleMutation)
 	require.Empty(t, allowlist.Allowlist())
-	nodes, err := system.GetNodesByLabel(roleDbAccessLabel)
+	nodes, err := system.GetNodesByLabel(context.Background(), roleDbAccessLabel)
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }
@@ -212,7 +212,9 @@ func TestStoreTransactionReadsItsOwnChangesAndStartFailures(t *testing.T) {
 	require.NoError(t, WithStoreTransaction(ctx, base, func(view storage.Engine) error {
 		_, err := view.CreateNode(&storage.Node{ID: "role:ops", Labels: []string{roleLabel}, Properties: map[string]any{"name": "ops"}})
 		require.NoError(t, err)
-		require.Len(t, view.GetAllNodes(), 1)
+		nodes, readErr := view.AllNodes(ctx)
+		require.NoError(t, readErr)
+		require.Len(t, nodes, 1)
 		projected := 0
 		err = view.(*storeTransaction).StreamNodesWithOptions(ctx, storage.StreamNodesOptions{}, func(*storage.Node) error { projected++; return nil })
 		require.NoError(t, err)
@@ -272,11 +274,11 @@ func TestCoordinatedRoleRenameStagedFailuresChangeNothing(t *testing.T) {
 			require.NoError(t, allowlist.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 			users := &Authenticator{storage: fault, users: map[string]*User{"worker": {Username: "worker", Roles: []Role{"ops"}}}}
 			require.NoError(t, users.saveUser(users.users["worker"], nil))
-			before, err := system.AllNodes()
+			before, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			fault.Operation, fault.ID, fault.Nth = test.op, test.id, test.nth
 			require.ErrorIs(t, roles.RenameRoleWithUsers(ctx, "ops", "new", allowlist, users), errRoleMutation)
-			after, err := system.AllNodes()
+			after, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			require.ElementsMatch(t, before, after)
 			require.True(t, roles.Exists("ops"))

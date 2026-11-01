@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -64,10 +65,10 @@ func TestTransactionDeleteFormerEndpointKeepsMovedEdge(t *testing.T) {
 				require.Equal(t, moved.EndNode, stored.EndNode)
 				_, err = engine.GetStoredNode("test:a")
 				require.ErrorIs(t, err, ErrNotFound)
-				outgoing, err := engine.GetStoredOutgoingEdges(moved.StartNode)
+				outgoing, err := engine.GetStoredOutgoingEdges(context.Background(), moved.StartNode)
 				require.NoError(t, err)
 				require.Len(t, outgoing, 1)
-				incomingEdges, err := engine.GetStoredIncomingEdges(moved.EndNode)
+				incomingEdges, err := engine.GetStoredIncomingEdges(context.Background(), moved.EndNode)
 				require.NoError(t, err)
 				require.Len(t, incomingEdges, 1)
 				count, err := engine.EdgeCountByType("LINK")

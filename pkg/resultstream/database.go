@@ -1,6 +1,8 @@
 package resultstream
 
-import "context"
+import (
+	"context"
+)
 
 type databaseEpoch struct{ generation byte }
 

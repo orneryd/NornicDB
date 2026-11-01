@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -47,13 +48,13 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 		headers, answered, err := tx.OutgoingEdgeHeaders(nodeID)
 		require.NoError(t, err)
 		require.True(t, answered)
-		full, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: nodeID})
+		full, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: nodeID})
 		require.NoError(t, err)
 		require.Equal(t, headerSummary(full), headerSummary(headers), nodeID)
 		headers, answered, err = tx.IncomingEdgeHeaders(nodeID)
 		require.NoError(t, err)
 		require.True(t, answered)
-		full, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: nodeID})
+		full, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: nodeID})
 		require.NoError(t, err)
 		require.Equal(t, headerSummary(full), headerSummary(headers), nodeID)
 	}

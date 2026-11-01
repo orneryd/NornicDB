@@ -97,14 +97,14 @@ func (e *lifecycleDelegateEngine) TopLifecycleDebtKeys(limit int) []storage.MVCC
 	return []storage.MVCCLifecycleDebtKey{{Namespace: "db", LogicalKey: "n1", DebtBytes: int64(limit)}}
 }
 
-func (e *storageSizingErrorEngine) AllNodes() ([]*storage.Node, error) {
+func (e *storageSizingErrorEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	if e.nodesErr != nil {
 		return nil, e.nodesErr
 	}
 	return e.nodes, nil
 }
 
-func (e *storageSizingErrorEngine) AllEdges() ([]*storage.Edge, error) {
+func (e *storageSizingErrorEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	if e.edgesErr != nil {
 		return nil, e.edgesErr
 	}
@@ -180,40 +180,40 @@ func (e *dirtyBranchEngine) GetStoredNode(id storage.NodeID) (*storage.Node, err
 func (e *dirtyBranchEngine) GetStoredEdge(id storage.EdgeID) (*storage.Edge, error) {
 	return e.GetEdge(id)
 }
-func (e *dirtyBranchEngine) GetStoredOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	return e.GetOutgoingEdges(id)
+func (e *dirtyBranchEngine) GetStoredOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return e.GetOutgoingEdges(ctx, id)
 }
-func (e *dirtyBranchEngine) GetStoredIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	return e.GetIncomingEdges(id)
+func (e *dirtyBranchEngine) GetStoredIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return e.GetIncomingEdges(ctx, id)
 }
-func (e *dirtyBranchEngine) GetStoredNodesByLabel(label string) ([]*storage.Node, error) {
-	return storage.GetStoredNodesByLabel(e.Engine, label)
+func (e *dirtyBranchEngine) GetStoredNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return storage.GetStoredNodesByLabel(ctx, e.Engine, label)
 }
-func (e *dirtyBranchEngine) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
-	return storage.StreamStoredNodesByLabelProjected(e.Engine, label, properties, visit)
+func (e *dirtyBranchEngine) StreamStoredNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
+	return storage.StreamStoredNodesByLabelProjected(ctx, e.Engine, label, properties, visit)
 }
 func (e *dirtyBranchEngine) StreamStoredEdgesByType(ctx context.Context, kind string, visit func(*storage.Edge) error) error {
 	return storage.StreamStoredEdgesByType(ctx, e.Engine, kind, visit)
 }
 
-func (e *dirtyBranchEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *dirtyBranchEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	if e.failOutgoingEdges {
 		return nil, errors.New("outgoing unavailable")
 	}
 	if e.outgoingEdges != nil {
 		return e.outgoingEdges, nil
 	}
-	return e.Engine.GetOutgoingEdges(id)
+	return e.Engine.GetOutgoingEdges(ctx, id)
 }
 
-func (e *dirtyBranchEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *dirtyBranchEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	if e.failIncomingEdges {
 		return nil, errors.New("incoming unavailable")
 	}
 	if e.incomingEdges != nil {
 		return e.incomingEdges, nil
 	}
-	return e.Engine.GetIncomingEdges(id)
+	return e.Engine.GetIncomingEdges(ctx, id)
 }
 
 func TestSizeTrackingEngine_MarksDirtyWhenCreatedNodeCannotBeReadBack(t *testing.T) {
@@ -647,7 +647,7 @@ func storageSizeInitialized(t *testing.T, manager *DatabaseManager, dbName strin
 // Storage sizing streams nodes through StreamNodesWithOptions: the fake
 // answers it from its fields, as AllNodes does.
 func (e *storageSizingErrorEngine) StreamNodesWithOptions(_ context.Context, _ storage.StreamNodesOptions, visit func(*storage.Node) error) error {
-	nodes, err := e.AllNodes()
+	nodes, err := e.AllNodes(context.Background())
 	if err != nil {
 		return err
 	}

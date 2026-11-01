@@ -66,7 +66,7 @@ func TestStatementTargetDatabase(t *testing.T) {
 	})
 	ctx := context.Background()
 	count := func(engine storage.Engine, label string) int {
-		nodes, err := engine.GetNodesByLabel(label)
+		nodes, err := engine.GetNodesByLabel(ctx, label)
 		require.NoError(t, err)
 		return len(nodes)
 	}

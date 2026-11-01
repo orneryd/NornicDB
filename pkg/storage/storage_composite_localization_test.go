@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -46,37 +47,37 @@ func TestCompositeEngineLocalizedQueryWrappersPreserveCause(t *testing.T) {
 	}{
 		{name: "outgoing edges", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.outgoingErr = ErrConflict
-			_, err := composite.GetOutgoingEdges("node-1")
+			_, err := composite.GetOutgoingEdges(context.Background(), "node-1")
 			return err
 		}},
 		{name: "incoming edges", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.incomingErr = ErrConflict
-			_, err := composite.GetIncomingEdges("node-1")
+			_, err := composite.GetIncomingEdges(context.Background(), "node-1")
 			return err
 		}},
 		{name: "edges between", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.betweenErr = ErrConflict
-			_, err := composite.GetEdgesBetween("node-1", "node-2")
+			_, err := composite.GetEdgesBetween(context.Background(), "node-1", "node-2")
 			return err
 		}},
 		{name: "edges by type", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.byTypeErr = ErrConflict
-			_, err := composite.GetEdgesByType("REL")
+			_, err := composite.GetEdgesByType(context.Background(), "REL")
 			return err
 		}},
 		{name: "all nodes", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.allNodesErr = ErrConflict
-			_, err := composite.AllNodes()
+			_, err := composite.AllNodes(context.Background())
 			return err
 		}},
 		{name: "all edges", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.allEdgesErr = ErrConflict
-			_, err := composite.AllEdges()
+			_, err := composite.AllEdges(context.Background())
 			return err
 		}},
 		{name: "batch nodes", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.batchGetErr = ErrConflict
-			_, err := composite.BatchGetNodes([]NodeID{"node-1"})
+			_, err := composite.BatchGetNodes(context.Background(), []NodeID{"node-1"})
 			return err
 		}},
 	}

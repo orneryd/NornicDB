@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -28,7 +29,7 @@ func TestTransactionOverlayBoltRoutes(t *testing.T) {
 			require.NoError(t, ReadSuccess(t, conn))
 		}
 		require.Equal(t, [][]interface{}{{int64(0)}}, runBoltQueryAndCollectRecords(t, conn, "MATCH (n:Overlay) RETURN count(n)"))
-		edges, err := base.AllEdges()
+		edges, err := base.AllEdges(context.Background())
 		require.NoError(t, err)
 		require.Empty(t, edges)
 	}

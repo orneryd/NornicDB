@@ -45,7 +45,7 @@ func TestCacheProjectionNestedOwnership(t *testing.T) {
 				{"without-embeddings", func() (*Node, error) { return b.GetNodeWithoutEmbeddings(node.ID) }, false},
 				{"projected", func() (*Node, error) { return b.GetNodeProjected(node.ID, selected) }, true},
 				{"all-nodes", func() (*Node, error) {
-					nodes, err := b.AllNodes()
+					nodes, err := b.AllNodes(context.Background())
 					if err != nil {
 						return nil, err
 					}

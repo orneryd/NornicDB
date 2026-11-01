@@ -181,8 +181,8 @@ type solR3RelationshipSnapshot struct {
 }
 
 func (b *solR3RelationshipSnapshot) open() { b.once.Do(func() { close(b.release) }) }
-func (b *solR3RelationshipSnapshot) AllEdges() ([]*storage.Edge, error) {
-	edges, err := b.Engine.AllEdges()
+func (b *solR3RelationshipSnapshot) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
+	edges, err := b.Engine.AllEdges(ctx)
 	close(b.entered)
 	<-b.release
 	return edges, err

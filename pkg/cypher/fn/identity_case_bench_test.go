@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -28,14 +29,14 @@ func BenchmarkIdentityFunctionPublicLookup(b *testing.B) {
 		}
 	})
 	for _, name := range names {
-		Register(name, func(Context, []string) (interface{}, error) { return int64(7), nil })
+		Register(name, func(_ context.Context, _ Context, _ []string) (interface{}, error) { return int64(7), nil })
 	}
 	ctx := Context{Eval: func(string) (interface{}, error) { return nil, nil }, Now: time.Now}
 	for _, name := range []string{"identity_case.region", "IDENTITY_CASE.REGION", "identity_case.ärea", "IDENTITY_CASE.ÄREA"} {
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				value, found, err := EvaluateFunction(name, nil, ctx)
+				value, found, err := EvaluateFunction(context.Background(), name, nil, ctx)
 				if err != nil || !found || value != int64(7) {
 					b.Fatalf("lookup failed: %v", err)
 				}

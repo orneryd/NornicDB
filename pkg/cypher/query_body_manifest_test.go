@@ -66,6 +66,7 @@ var queryBodyWitnesses = map[string]string{
 	"let":                   "LET v = COUNT { CALL { @X@ } } RETURN v",
 	"filter":                "UNWIND [1] AS u FILTER COUNT { CALL { @X@ } } > 0 RETURN u",
 	"for":                   "FOR u IN [COUNT { CALL { @X@ } }] RETURN u",
+	"load-csv":              "LOAD CSV FROM COUNT { CALL { @X@ } } AS row RETURN 1 AS a",
 	"create":                "CREATE (n {p: COUNT { CALL { @X@ } }})",
 	"delete":                "MATCH (n) DELETE CASE WHEN COUNT { CALL { @X@ } } > 0 THEN n END",
 	"remove":                "MATCH (n) REMOVE n[toString(COUNT { CALL { @X@ } })]",
@@ -114,7 +115,7 @@ var queryBodyManifest = map[string]string{
 	"countSubquery": "count", "collectSubquery": "collect", "returnSt": "return", "projectionBody": "return",
 	"projectionItems": "return", "projectionItem": "return", "withSt": "with", "skipSt": "skip", "limitSt": "limit",
 	"orderItem": "order", "orderSt": "order", "matchSt": "where", "patternWhere": "where", "where": "where",
-	"unwindSt": "unwind", "letSt": "let", "letItem": "let", "filterSt": "filter", "forSt": "for",
+	"unwindSt": "unwind", "letSt": "let", "letItem": "let", "filterSt": "filter", "forSt": "for", "loadCSVSt": "load-csv",
 	"updatingStatement": "create", "createSt": "create", "deleteSt": "delete", "removeSt": "remove",
 	"removeItem": "remove", "foreachSt": "foreach", "queryCallSt": "procedure", "yieldItems": "procedure",
 	"parenExpressionChain": "procedure-argument", "standaloneCall": "procedure-argument", "mergeSt": "merge",
@@ -145,11 +146,11 @@ var queryBodyManifest = map[string]string{
 
 // Every clause kind the pipeline splits a body into says how it ends one.
 func TestQueryBodyEndingsCoverEveryClauseKind(t *testing.T) {
-	for kind := pipelineClauseMatch; kind <= pipelineClauseFilter; kind++ {
+	for kind := pipelineClauseMatch; kind <= pipelineClauseLoadCSV; kind++ {
 		_, listed := queryBodyEndings[kind]
 		require.True(t, listed, "clause kind %d has no queryBodyEndings entry", kind)
 	}
-	require.Len(t, queryBodyEndings, int(pipelineClauseFilter)+1)
+	require.Len(t, queryBodyEndings, int(pipelineClauseLoadCSV)+1)
 	// An update clause concludes a body.
 	for kind := range updatingClauses {
 		require.Empty(t, queryBodyEndings[kind], "update clause kind %d", kind)

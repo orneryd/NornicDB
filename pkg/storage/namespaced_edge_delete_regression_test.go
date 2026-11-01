@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,25 +24,25 @@ func TestNamespacedEngine_BulkDeleteEdgesInvalidatesPreloadedTraversalCaches(t *
 	require.NoError(t, tenant.CreateEdge(mention))
 
 	// Preload both edge-type and adjacency caches through the namespaced wrapper.
-	byType, err := tenant.GetEdgesByType("RELATES_TO")
+	byType, err := tenant.GetEdgesByType(context.Background(), "RELATES_TO")
 	require.NoError(t, err)
 	require.Len(t, byType, 1)
-	outgoingA, err := tenant.GetOutgoingEdges("a")
+	outgoingA, err := tenant.GetOutgoingEdges(context.Background(), "a")
 	require.NoError(t, err)
 	require.Len(t, outgoingA, 1)
-	outgoingEP, err := tenant.GetOutgoingEdges("ep")
+	outgoingEP, err := tenant.GetOutgoingEdges(context.Background(), "ep")
 	require.NoError(t, err)
 	require.Len(t, outgoingEP, 1)
 
 	require.NoError(t, tenant.BulkDeleteEdges([]EdgeID{"r1", "m1"}))
 
-	byType, err = tenant.GetEdgesByType("RELATES_TO")
+	byType, err = tenant.GetEdgesByType(context.Background(), "RELATES_TO")
 	require.NoError(t, err)
 	require.Empty(t, byType)
-	outgoingA, err = tenant.GetOutgoingEdges("a")
+	outgoingA, err = tenant.GetOutgoingEdges(context.Background(), "a")
 	require.NoError(t, err)
 	require.Empty(t, outgoingA)
-	outgoingEP, err = tenant.GetOutgoingEdges("ep")
+	outgoingEP, err = tenant.GetOutgoingEdges(context.Background(), "ep")
 	require.NoError(t, err)
 	require.Empty(t, outgoingEP)
 }

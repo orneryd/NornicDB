@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -43,7 +44,7 @@ func TestFabricParameterAdmissionOrder(t *testing.T) {
 					require.Equal(t, [][]interface{}{{int64(1), int64(7)}}, result.Rows)
 				}
 			}
-			nodes, readErr := store.GetNodesByLabel("FabricParameterAdmissionOrder")
+			nodes, readErr := store.GetNodesByLabel(context.Background(), "FabricParameterAdmissionOrder")
 			require.NoError(t, readErr)
 			require.Len(t, nodes, tc.writes, "admission must precede participant writes")
 		})

@@ -248,17 +248,50 @@ func projectionPlanScope(plan *returnProjectionPlan, previous map[string]struct{
 	return next
 }
 
-func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
+// pipelineProjectionScope is execution's WITH scope transfer: the one owner
+// every pipeline scope consumer uses to establish the variables a WITH clause
+// exports. The transfer is metadata, so it reports the caller's context
+// failure instead of degrading the projection: a statement canceled between a
+// WITH projection and its scope update stops here with the caller's own error
+// instead of continuing with an absent scope (nor20). A clause whose
+// projection cannot be established is an unresolved statement, never an empty
+// scope.
+func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, clause string, imports pipelineRow) (map[string]struct{}, error) {
+	if err := pipelineScopeFailure(ctx); err != nil {
+		return nil, err
+	}
 	projection, _ := splitWithProjection(clause)
 	plan := returnProjectionPlanFor(ctx, "RETURN "+pipelineClauseBody(projection, "WITH"))
+	if !plan.valid {
+		// returnProjectionPlanFor answers a canceled read with no plan: the
+		// context failure is the statement's outcome, not absent metadata.
+		if err := pipelineScopeFailure(ctx); err != nil {
+			return nil, err
+		}
+		return nil, unresolvedStatementError()
+	}
 	next := projectionPlanScope(plan, previous)
 	if next == nil {
-		return nil
+		return nil, unresolvedStatementError()
 	}
 	for name := range imports {
 		next[name] = struct{}{}
 	}
-	return next
+	return next, nil
+}
+
+// pipelineScopeFailure is the scope transfer's context observation: the
+// caller's cancellation stops the statement, and a failure the statement
+// already recorded is reported ahead of it, as pipelineDecline does.
+func pipelineScopeFailure(ctx context.Context) error {
+	err := ctx.Err()
+	if err == nil {
+		return nil
+	}
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return failure
+	}
+	return err
 }
 
 // returnShapeItems returns the trimmed projection items of query's RETURN clause

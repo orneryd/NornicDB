@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -11,13 +12,13 @@ import (
 
 type ccErrScanNodesEngine struct{ Engine }
 
-func (e *ccErrScanNodesEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (e *ccErrScanNodesEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	return nil, errors.New("scan nodes failed")
 }
 
 type ccErrScanEdgesEngine struct{ Engine }
 
-func (e *ccErrScanEdgesEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+func (e *ccErrScanEdgesEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
 	return nil, errors.New("scan edges failed")
 }
 

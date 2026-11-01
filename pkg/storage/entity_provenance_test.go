@@ -29,7 +29,7 @@ func TestNamespacedEntityProvenance(t *testing.T) {
 		require.Equal(t, "5:"+database+":rel", CopyEdge(edge).ElementID("comp"))
 		require.Equal(t, "4:"+database+":same", edge.StartElementID("comp"))
 		require.Equal(t, "4:"+database+":target", edge.EndElementID("comp"))
-		batch, err := store.BatchGetNodes([]NodeID{"same"})
+		batch, err := store.BatchGetNodes(context.Background(), []NodeID{"same"})
 		require.NoError(t, err)
 		require.Equal(t, database, batch["same"].RuntimeMetadata().Database)
 		physical, err := base.GetNode(NodeID(database + ":same"))
@@ -54,17 +54,17 @@ func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
 		map[string]string{"one": "one", "alias": "one", "two": "two"},
 		map[string]string{"one": "read", "alias": "read", "two": "read"},
 	)
-	nodes, err := composite.AllNodes()
+	nodes, err := composite.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Len(t, nodes, 4, "aliases deduplicate, distinct databases do not")
-	nodes, err = composite.GetNodesByLabel("P")
+	nodes, err = composite.GetNodesByLabel(context.Background(), "P")
 	require.NoError(t, err)
 	require.Len(t, nodes, 4)
-	edges, err := composite.AllEdges()
+	edges, err := composite.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, edges, 2)
 	var streamed []*Node
-	require.NoError(t, composite.StreamNodesByLabelProjected("P", nil, func(node *Node) error {
+	require.NoError(t, composite.StreamNodesByLabelProjected(context.Background(), "P", nil, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
@@ -77,7 +77,7 @@ func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
 	}))
 	require.Equal(t, 2, streamedEdges)
 	var ids []NodeID
-	require.NoError(t, composite.ForEachNodeIDByLabel("P", func(id NodeID) bool {
+	require.NoError(t, composite.ForEachNodeIDByLabel(context.Background(), "P", func(id NodeID) bool {
 		ids = append(ids, id)
 		node, err := composite.GetNode(id)
 		require.NoError(t, err)

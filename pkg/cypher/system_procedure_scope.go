@@ -48,17 +48,23 @@ func (systemGraphView) GetEdge(storage.EdgeID) (*storage.Edge, error) {
 	return nil, storage.ErrNotFound
 }
 
-func (systemGraphView) GetNodesByLabel(string) ([]*storage.Node, error) { return nil, nil }
+func (systemGraphView) GetNodesByLabel(ctx context.Context, _ string) ([]*storage.Node, error) {
+	return nil, nil
+}
 
 func (systemGraphView) GetFirstNodeByLabel(string) (*storage.Node, error) {
 	return nil, storage.ErrNotFound
 }
 
-func (systemGraphView) GetOutgoingEdges(storage.NodeID) ([]*storage.Edge, error) { return nil, nil }
+func (systemGraphView) GetOutgoingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
+	return nil, nil
+}
 
-func (systemGraphView) GetIncomingEdges(storage.NodeID) ([]*storage.Edge, error) { return nil, nil }
+func (systemGraphView) GetIncomingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
+	return nil, nil
+}
 
-func (systemGraphView) GetEdgesBetween(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
+func (systemGraphView) GetEdgesBetween(ctx context.Context, _, _ storage.NodeID) ([]*storage.Edge, error) {
 	return nil, nil
 }
 
@@ -66,13 +72,13 @@ func (systemGraphView) GetEdgeBetween(storage.NodeID, storage.NodeID, string) *s
 	return nil
 }
 
-func (systemGraphView) GetEdgesByType(string) ([]*storage.Edge, error) { return nil, nil }
+func (systemGraphView) GetEdgesByType(ctx context.Context, _ string) ([]*storage.Edge, error) {
+	return nil, nil
+}
 
-func (systemGraphView) AllNodes() ([]*storage.Node, error) { return nil, nil }
+func (systemGraphView) AllNodes(ctx context.Context) ([]*storage.Node, error) { return nil, nil }
 
-func (systemGraphView) AllEdges() ([]*storage.Edge, error) { return nil, nil }
-
-func (systemGraphView) GetAllNodes() []*storage.Node { return nil }
+func (systemGraphView) AllEdges(ctx context.Context) ([]*storage.Edge, error) { return nil, nil }
 
 func (systemGraphView) StreamNodesWithOptions(context.Context, storage.StreamNodesOptions, func(*storage.Node) error) error {
 	return nil
@@ -84,7 +90,7 @@ func (systemGraphView) GetOutDegree(storage.NodeID) int { return 0 }
 
 func (systemGraphView) GetSchema() *storage.SchemaManager { return storage.NewSchemaManager() }
 
-func (systemGraphView) BatchGetNodes([]storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (systemGraphView) BatchGetNodes(ctx context.Context, _ []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	return map[storage.NodeID]*storage.Node{}, nil
 }
 

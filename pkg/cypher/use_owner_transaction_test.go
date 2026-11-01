@@ -62,7 +62,7 @@ func TestUseOwnerExplicitTransaction(t *testing.T) {
 				require.NoError(t, err)
 				shard, err := manager.GetStorage("shard_a")
 				require.NoError(t, err)
-				nodes, err := shard.GetNodesByLabel("Probe")
+				nodes, err := shard.GetNodesByLabel(ctx, "Probe")
 				require.NoError(t, err)
 				require.Empty(t, nodes)
 			})

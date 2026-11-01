@@ -310,7 +310,7 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	collection, err := s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, version, filterSet)
+	collection, err := s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, version, filterSet)
 	if err != nil {
 		if err == storage.ErrNotImplemented {
 			s.writeTemporalGraphReconstructionUnsupported(w, r, err)
@@ -378,7 +378,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 			s.writeBoundaryError(w, r, http.StatusBadRequest, versionErr, ErrBadRequest)
 			return
 		}
-		baseline, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, baselineVersion, filterSet)
+		baseline, err = s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, baselineVersion, filterSet)
 		if err != nil {
 			if err == storage.ErrNotImplemented {
 				s.writeTemporalGraphDiffUnsupported(w, r, err)
@@ -389,7 +389,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 		}
 		compareLabel = baselineVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
-		target, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, targetVersion, filterSet)
+		target, err = s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, targetVersion, filterSet)
 		if err != nil {
 			if err == storage.ErrNotImplemented {
 				s.writeTemporalGraphDiffUnsupported(w, r, err)
@@ -399,13 +399,13 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		baseline, err = s.collectLatestInducedSubgraph(engine, req.NodeIDs, filterSet)
+		baseline, err = s.collectLatestInducedSubgraph(r.Context(), engine, req.NodeIDs, filterSet)
 		if err != nil {
 			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 			return
 		}
 
-		target, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, targetVersion, filterSet)
+		target, err = s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, targetVersion, filterSet)
 		if err != nil {
 			if err == storage.ErrNotImplemented {
 				s.writeTemporalGraphDiffUnsupported(w, r, err)
@@ -1153,7 +1153,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	return collection, nil
 }
 
-func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []string, filters graphFilterSet) (graphCollection, error) {
+func (s *Server) collectLatestInducedSubgraph(ctx context.Context, engine storage.Engine, nodeIDs []string, filters graphFilterSet) (graphCollection, error) {
 	collection := newGraphCollection()
 	visible := normalizeNodeIDs(nodeIDs)
 	for _, nodeID := range visible {
@@ -1170,7 +1170,7 @@ func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []s
 		resolvedSet[storage.NodeID(id)] = struct{}{}
 	}
 	for _, startID := range resolvedIDs {
-		edges, err := engine.GetOutgoingEdges(storage.NodeID(startID))
+		edges, err := engine.GetOutgoingEdges(ctx, storage.NodeID(startID))
 		if err != nil {
 			return collection, err
 		}
@@ -1193,7 +1193,7 @@ func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []s
 	return collection, nil
 }
 
-func (s *Server) collectSnapshotInducedSubgraph(engine storage.Engine, nodeIDs []string, version storage.MVCCVersion, filters graphFilterSet) (graphCollection, error) {
+func (s *Server) collectSnapshotInducedSubgraph(ctx context.Context, engine storage.Engine, nodeIDs []string, version storage.MVCCVersion, filters graphFilterSet) (graphCollection, error) {
 	provider, ok := engine.(storage.MVCCVisibilityEngine)
 	if !ok {
 		return graphCollection{}, storage.ErrNotImplemented
@@ -1220,7 +1220,7 @@ func (s *Server) collectSnapshotInducedSubgraph(engine storage.Engine, nodeIDs [
 	for _, id := range resolvedIDs {
 		resolvedSet[storage.NodeID(id)] = struct{}{}
 	}
-	edges, err := indexed.GetEdgesByTypeVisibleAt("", version)
+	edges, err := indexed.GetEdgesByTypeVisibleAt(ctx, "", version)
 	if err != nil {
 		return collection, err
 	}
@@ -1378,7 +1378,7 @@ func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storag
 	var incoming []*storage.Edge
 	if direction != "in" {
 		var err error
-		outgoing, err = engine.GetOutgoingEdges(nodeID)
+		outgoing, err = engine.GetOutgoingEdges(ctx, nodeID)
 		if err != nil {
 			return nil, err
 		}
@@ -1390,7 +1390,7 @@ func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storag
 		default:
 		}
 		var err error
-		incoming, err = engine.GetIncomingEdges(nodeID)
+		incoming, err = engine.GetIncomingEdges(ctx, nodeID)
 		if err != nil {
 			return nil, err
 		}

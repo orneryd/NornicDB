@@ -1,6 +1,8 @@
 package search
 
-import "context"
+import (
+	"context"
+)
 
 // hnswEfKey carries a search's own HNSW beam width (SearchOptions.HNSWEf) from
 // adaptiveVectorSearch to the HNSW-based candidate generators, which the

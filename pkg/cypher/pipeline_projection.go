@@ -474,10 +474,19 @@ func stripExpressionWhitespace(expression string) string {
 	return stripped.String()
 }
 
+// pipelineMaterializedCancelCheck is the number of rows, or sorted entries,
+// between caller-cancellation observations in a materialized operator: the
+// work stays interruptible without a context lookup per copied value.
+const pipelineMaterializedCancelCheck = 1024
+
 // orderPipelineRowsWithScopes is orderPipelineRows with each row's terms
 // evaluated in scopes[i]. A term the row evaluator can't resolve returns
 // false; when an operator of it failed (1/0, a runtime TypeError) that failure
 // is recorded as the statement's error, as for a projection item.
+//
+// The keys, the ordering and the rows' copy-back observe the caller's
+// cancellation and stop with it, recording its error: a materialized ORDER BY
+// never keeps sorting rows its caller no longer waits for.
 func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, terms []orderByTerm) bool {
 	if len(terms) == 0 || len(rows) == 0 {
 		return true
@@ -485,16 +494,25 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 	if len(rows) != len(scopes) {
 		return false
 	}
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
 	type orderValue struct {
 		values []interface{}
 		row    pipelineRow
 	}
-	ordered := make([]orderValue, 0, len(rows))
-	// The sort keys count against the statement's memory limit (#1343).
-	if memoryScopeFromContext(ctx).grow(int64(len(rows))*(sliceHeaderBytes+int64(len(terms))*valueSlotBytes)) != nil {
+	// Each keyed entry owns its slice header and an additional row reference,
+	// besides the key values. Reserve before allocating the keyed entries.
+	if memoryScopeFromContext(ctx).grow(int64(len(rows))*(sliceHeaderBytes+pipelineRowExtraBytes+int64(len(terms))*valueSlotBytes)) != nil {
 		return false
 	}
+	ordered := make([]orderValue, 0, len(rows))
 	for index, row := range rows {
+		if err := ctx.Err(); err != nil {
+			recordExpressionFailure(ctx, err)
+			return false
+		}
 		values := make([]interface{}, len(terms))
 		for termIndex, term := range terms {
 			// The projections' evaluator: subquery values (COUNT { … }) and
@@ -507,9 +525,9 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 		}
 		ordered = append(ordered, orderValue{values: values, row: row})
 	}
-	sort.SliceStable(ordered, func(left, right int) bool {
+	less := func(left, right orderValue) bool {
 		for index, term := range terms {
-			comparison := compareValuesForSort(ordered[left].values[index], ordered[right].values[index])
+			comparison := compareValuesForSort(left.values[index], right.values[index])
 			if comparison == 0 {
 				continue
 			}
@@ -519,8 +537,54 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 			return comparison < 0
 		}
 		return false
-	})
+	}
+	// Rows already in key order, which a label scan ordered by its own key
+	// produces, need no reordering: one comparison per adjacent pair decides
+	// it, so the common healthy case stays cheaper than the library's stable
+	// sort and takes no scratch.
+	alreadyOrdered := true
+	for index := 1; index < len(ordered); index++ {
+		if index%pipelineMaterializedCancelCheck == 0 {
+			if err := ctx.Err(); err != nil {
+				recordExpressionFailure(ctx, err)
+				return false
+			}
+		}
+		if less(ordered[index], ordered[index-1]) {
+			alreadyOrdered = false
+			break
+		}
+	}
+	if alreadyOrdered {
+		return true
+	}
+	// An in-place stable sort keyed by the terms: equal keys keep their input
+	// order, and its comparisons and moves observe the caller's cancellation
+	// at bounded intervals (the library's sort cannot be interrupted). It uses
+	// a logarithmic merge stack, so ordering n rows keeps no n-sized scratch
+	// beyond the keys charged above.
+	sorter := inPlaceStableSort{
+		less: func(left, right int) bool { return less(ordered[left], ordered[right]) },
+		swap: func(left, right int) { ordered[left], ordered[right] = ordered[right], ordered[left] },
+		check: func() bool {
+			if err := ctx.Err(); err != nil {
+				recordExpressionFailure(ctx, err)
+				return false
+			}
+			return true
+		},
+		budget: pipelineMaterializedCancelCheck,
+	}
+	if !sorter.stable(len(ordered)) {
+		return false
+	}
 	for index := range rows {
+		if index%pipelineMaterializedCancelCheck == 0 {
+			if err := ctx.Err(); err != nil {
+				recordExpressionFailure(ctx, err)
+				return false
+			}
+		}
 		rows[index] = ordered[index].row
 	}
 	return true
@@ -768,7 +832,13 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	if plan.star {
 		columns := pipelineWildcardColumns(rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}
-		for _, row := range rows {
+		for rowIndex, row := range rows {
+			if rowIndex%pipelineMaterializedCancelCheck == 0 {
+				if err := ctx.Err(); err != nil {
+					recordExpressionFailure(ctx, err)
+					return nil, false
+				}
+			}
 			projected := make([]interface{}, len(columns))
 			for index, column := range columns {
 				projected[index] = row[column]
@@ -810,6 +880,10 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		}
 		var projectedRows, orderScopes []pipelineRow
 		for _, group := range groups {
+			if err := ctx.Err(); err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil, false
+			}
 			outRow := make([]interface{}, 0, len(projs))
 			for index, projection := range projs {
 				value, ok := group.value(ctx, e, index)
@@ -857,6 +931,10 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 			return nil, false
 		}
 		if !projected {
+			if err := ctx.Err(); err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil, false
+			}
 			if failure := getExpressionFailure(ctx); failure == nil || newPipelineDispatchOutcome(nil, true, failure).state == pipelineDispatchParseRejected {
 				return nil, false
 			}
@@ -878,6 +956,10 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		orderScopes = make([]pipelineRow, 0, len(rows))
 	}
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil, false
+		}
 		projected := make(pipelineRow, len(projs))
 		for _, p := range projs {
 			val, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
@@ -926,7 +1008,13 @@ func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *Exec
 	}
 	projectedRows = applyPipelineWindow(projectedRows, skip, limit)
 	result.Rows = make([][]interface{}, 0, len(projectedRows))
-	for _, projected := range projectedRows {
+	for rowIndex, projected := range projectedRows {
+		if rowIndex%pipelineMaterializedCancelCheck == 0 {
+			if err := ctx.Err(); err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil, false
+			}
+		}
 		outRow := make([]interface{}, len(result.Columns))
 		for index, column := range result.Columns {
 			outRow[index] = projected[column]
@@ -962,6 +1050,10 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 		return sourceProjected, sourceCompleted
 	}
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			recordExpressionFailure(ctx, err)
+			return false, true
+		}
 		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
 		if !evaluated {
 			return false, true

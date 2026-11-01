@@ -7,7 +7,9 @@
 
 package auth
 
-import "context"
+import (
+	"context"
+)
 
 // PrivilegeDatabaseRef identifies the database for privilege checks.
 // Equivalent to Neo4j PrivilegeDatabaseReference (name, owningDatabaseName).

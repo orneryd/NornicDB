@@ -81,7 +81,7 @@ func requireIndexMatchesStorage(t *testing.T, b *BadgerEngine, rebuild func(cont
 // labelled reports whether a label lookup finds the node.
 func labelled(t *testing.T, b *BadgerEngine, label string, id NodeID) bool {
 	t.Helper()
-	nodes, err := b.GetNodesByLabel(label)
+	nodes, err := b.GetNodesByLabel(context.Background(), label)
 	require.NoError(t, err)
 	for _, node := range nodes {
 		if node.ID == id {
@@ -128,14 +128,14 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 		{"create", func(tx *BadgerTransaction) error {
 			return tx.CreateEdge(&Edge{ID: "test:ca", StartNode: "test:c", EndNode: "test:a", Type: "LINK"})
 		}, func(t *testing.T, b *BadgerEngine) {
-			edges, err := b.GetEdgesBetween("test:c", "test:a")
+			edges, err := b.GetEdgesBetween(context.Background(), "test:c", "test:a")
 			require.NoError(t, err)
 			require.Len(t, edges, 1)
 		}},
 		{"delete", func(tx *BadgerTransaction) error {
 			return tx.DeleteEdge("test:ab")
 		}, func(t *testing.T, b *BadgerEngine) {
-			edges, err := b.GetEdgesBetween("test:a", "test:b")
+			edges, err := b.GetEdgesBetween(context.Background(), "test:a", "test:b")
 			require.NoError(t, err)
 			require.Empty(t, edges)
 		}},

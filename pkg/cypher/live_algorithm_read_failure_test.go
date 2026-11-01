@@ -13,7 +13,7 @@ type liveAlgorithmReadFailureEngine struct {
 	failure error
 }
 
-func (e *liveAlgorithmReadFailureEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *liveAlgorithmReadFailureEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	return nil, e.failure
 }
 func TestLiveLinkPredictionPropagatesGraphReadFailure(t *testing.T) {

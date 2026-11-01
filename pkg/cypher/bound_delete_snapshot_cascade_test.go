@@ -23,8 +23,8 @@ type afterOutgoingEdgesEngine struct {
 	hookErr error
 }
 
-func (e *afterOutgoingEdgesEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := e.Engine.GetOutgoingEdges(nodeID)
+func (e *afterOutgoingEdgesEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	edges, err := e.Engine.GetOutgoingEdges(ctx, nodeID)
 	if err != nil || e.fired {
 		return edges, err
 	}

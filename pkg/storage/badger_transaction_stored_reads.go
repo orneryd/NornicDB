@@ -1,6 +1,8 @@
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 // GetStoredNode reads a node through the transaction's snapshot and pending
 // writes, without applying suppression or decay to its committed body.
@@ -14,22 +16,26 @@ func (tx *BadgerTransaction) GetStoredEdge(id EdgeID) (*Edge, error) {
 }
 
 // GetStoredOutgoingEdges returns the transaction's physical outgoing edges.
-func (tx *BadgerTransaction) GetStoredOutgoingEdges(id NodeID) ([]*Edge, error) {
-	return tx.getStoredAdjacentEdges(id, Outgoing)
+func (tx *BadgerTransaction) GetStoredOutgoingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
+	return tx.getStoredAdjacentEdges(ctx, id, Outgoing)
 }
 
 // GetStoredIncomingEdges returns the transaction's physical incoming edges.
-func (tx *BadgerTransaction) GetStoredIncomingEdges(id NodeID) ([]*Edge, error) {
-	return tx.getStoredAdjacentEdges(id, Incoming)
+func (tx *BadgerTransaction) GetStoredIncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
+	return tx.getStoredAdjacentEdges(ctx, id, Incoming)
 }
 
-func (tx *BadgerTransaction) getStoredAdjacentEdges(id NodeID, direction EdgeDirection) ([]*Edge, error) {
+func (tx *BadgerTransaction) getStoredAdjacentEdges(ctx context.Context, id NodeID, direction EdgeDirection) ([]*Edge, error) {
 	edges, err := tx.IncidentEdges(id)
 	if err != nil {
 		return nil, err
 	}
 	result := edges[:0]
+	var cancel bulkReadCancellation
 	for _, edge := range edges {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		if (direction == Outgoing && edge.StartNode == id) || (direction == Incoming && edge.EndNode == id) {
 			result = append(result, edge)
 		}
@@ -38,9 +44,9 @@ func (tx *BadgerTransaction) getStoredAdjacentEdges(id NodeID, direction EdgeDir
 }
 
 // GetStoredNodesByLabel collects the transaction's unfiltered label stream.
-func (tx *BadgerTransaction) GetStoredNodesByLabel(label string) ([]*Node, error) {
+func (tx *BadgerTransaction) GetStoredNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	var nodes []*Node
-	err := tx.StreamStoredNodesByLabelProjected(label, nil, func(node *Node) error {
+	err := tx.StreamStoredNodesByLabelProjected(ctx, label, nil, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	})
@@ -49,8 +55,8 @@ func (tx *BadgerTransaction) GetStoredNodesByLabel(label string) ([]*Node, error
 
 // StreamStoredNodesByLabelProjected preserves label-index and transaction
 // overlay reads while including suppressed and decayed committed nodes.
-func (tx *BadgerTransaction) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	return tx.streamNodesByLabelProjected(label, properties, storedRead, visit)
+func (tx *BadgerTransaction) StreamStoredNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
+	return tx.streamNodesByLabelProjected(ctx, label, properties, storedRead, visit)
 }
 
 // StreamStoredEdgesByType preserves the transaction's type stream and overlay

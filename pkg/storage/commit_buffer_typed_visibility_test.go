@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ func TestWriteBehind_TypedNodeEdgeIdentityAPI(t *testing.T) {
 				defer tx.Rollback()
 				require.NoError(t, tx.SetImplicit(true))
 				require.NoError(t, tx.SetNamespace("test"))
-				edges, err := tx.GetEdgesByType("REL")
+				edges, err := tx.GetEdgesByType(context.Background(), "REL")
 				require.NoError(t, err)
 				require.Empty(t, edges)
 			})

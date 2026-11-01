@@ -47,7 +47,7 @@ func TestFabricWithEmbeddingLocalConstituent(t *testing.T) {
 						}
 						store, err := exec.dbManager.(*testDatabaseManagerAdapter).manager.GetStorage("one")
 						require.NoError(t, err)
-						nodes, err := store.GetNodesByLabel("FabricEmbedded")
+						nodes, err := store.GetNodesByLabel(ctx, "FabricEmbedded")
 						require.NoError(t, err)
 						require.Len(t, nodes, 1)
 						require.NotEmpty(t, nodes[0].ChunkEmbeddings)
@@ -95,7 +95,7 @@ func TestFabricWithEmbeddingFailureRollsBack(t *testing.T) {
 			}
 			store, err := exec.dbManager.(*testDatabaseManagerAdapter).manager.GetStorage("one")
 			require.NoError(t, err)
-			nodes, err := store.GetNodesByLabel("FabricEmbeddingFailure")
+			nodes, err := store.GetNodesByLabel(ctx, "FabricEmbeddingFailure")
 			require.NoError(t, err)
 			require.Empty(t, nodes, "embedding failure must not publish the mutation")
 		})

@@ -224,7 +224,7 @@ func pr1655RunExecuteScenario(t *testing.T, scenario pr1655ExecuteScenario) {
 // pr1655SingleDocID returns the stored ID of the only Doc in the test
 // namespace, so the fixture targets the ID the executor actually minted.
 func pr1655SingleDocID(base *storage.BadgerEngine) (storage.NodeID, error) {
-	nodes, err := base.GetNodesByLabel("Doc")
+	nodes, err := base.GetNodesByLabel(context.Background(), "Doc")
 	if err != nil {
 		return "", err
 	}

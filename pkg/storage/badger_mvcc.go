@@ -438,7 +438,7 @@ func (b *BadgerEngine) getEdgeAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVe
 // scan bounded to the prefix meets each edge's versions oldest first and the
 // last one at or before version decides. (A reverse scan read past the prefix
 // over deleted keys; see badgerPrefixIteratorOptions.)
-func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(txn *badger.Txn, prefix []byte, version MVCCVersion) ([]EdgeID, error) {
+func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(ctx context.Context, txn *badger.Txn, prefix []byte, version MVCCVersion) ([]EdgeID, error) {
 	if len(prefix) == 0 {
 		return nil, nil
 	}
@@ -458,7 +458,13 @@ func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(txn *badger.Txn, pref
 	}
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
+	// The adjacency record walk observes the caller's cancellation once per
+	// entry, so a canceled snapshot traversal retires with its own error.
+	var cancel bulkReadCancellation
 	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		keyEdgeNum, recordVersion, err := extractEdgeNumIDAndMVCCVersionFromAdjacencyKey(it.Item().Key())
 		if err != nil {
 			return nil, err
@@ -1166,15 +1172,15 @@ func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, 
 	return readEntityAtWithView(b, id, version, mvccEntityRead{visibility: visibleRead}, b.withView, (*BadgerEngine).getEdgeAtInTxn)
 }
 
-func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.readAdjacentEdgesAtWithView(nodeID, version, Outgoing, b.withView)
+func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Outgoing, b.withView)
 }
 
-func (b *BadgerEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.readAdjacentEdgesAtWithView(nodeID, version, Incoming, b.withView)
+func (b *BadgerEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Incoming, b.withView)
 }
 
-func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Node, error) {
+func (b *BadgerEngine) BatchGetNodesLatestVisible(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	if err := b.pendingReadConflict(readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids}); err != nil {
 		return nil, err
 	}
@@ -1191,7 +1197,7 @@ func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Nod
 
 // iterateNodesVisibleAtInScopeInTxn walks MVCC heads in the pinned physical
 // snapshot; an empty scope scans all database namespaces.
-func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error, readOptions ...StreamNodesOptions) error {
+func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(ctx context.Context, txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error, readOptions ...StreamNodesOptions) error {
 	opts := nodeScanOptions(readOptions)
 	// Post-refactor: we walk the head keyspace (the definitive list of
 	// live node IDs) and resolve each ID to a body. If the request is at
@@ -1203,7 +1209,13 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 
 	nowNanos := DecayScoringTime()
 	var headBuf []byte
+	// Every head is resolved under the caller's own context: a canceled
+	// read retires here instead of walking the whole node population.
+	var cancel bulkReadCancellation
 	for it.Next() {
+		if err := cancel.check(ctx); err != nil {
+			return err
+		}
 		// it.Item().Key() stays valid until the next Next(); parse in place
 		// instead of copying a fresh slice per entry.
 		key := it.Item().Key()
@@ -1288,7 +1300,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 	return it.Err()
 }
 
-func (b *BadgerEngine) iterateEdgesAtInTxn(txn *badger.Txn, version MVCCVersion, v readVisibility, yield func(*Edge) error, prefixes ...string) error {
+func (b *BadgerEngine) iterateEdgesAtInTxn(ctx context.Context, txn *badger.Txn, version MVCCVersion, v readVisibility, yield func(*Edge) error, prefixes ...string) error {
 	// See iterateNodesVisibleAtInScopeInTxn for the walk-heads pattern and why
 	// we can't just scan the version prefix post-refactor.
 	headPrefix := []byte{prefixMVCCEdgeHead}
@@ -1301,7 +1313,11 @@ func (b *BadgerEngine) iterateEdgesAtInTxn(txn *badger.Txn, version MVCCVersion,
 
 	nowNanos := DecayScoringTime()
 	var headBuf []byte
+	var cancel bulkReadCancellation
 	for it.Rewind(); it.Valid(); it.Next() {
+		if err := cancel.check(ctx); err != nil {
+			return err
+		}
 		key := it.Item().Key()
 		if len(key) != 1+8 {
 			continue

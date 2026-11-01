@@ -24,13 +24,13 @@ func (s *boundMatchCandidateEngine) StreamNodes(context.Context, func(*storage.N
 	return errors.New("unexpected candidate scan for a bound node")
 }
 
-func (s *boundMatchCandidateEngine) AllNodes() ([]*storage.Node, error) {
+func (s *boundMatchCandidateEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	s.scans++
 	return nil, errors.New("unexpected candidate scan for a bound node")
 }
 
-func (s *boundMatchCandidateEngine) StreamNodesByLabelProjected(label string, _ []string, visit func(*storage.Node) error) error {
-	nodes, err := s.Engine.GetNodesByLabel(label)
+func (s *boundMatchCandidateEngine) StreamNodesByLabelProjected(ctx context.Context, label string, _ []string, visit func(*storage.Node) error) error {
+	nodes, err := s.Engine.GetNodesByLabel(ctx, label)
 	if err != nil {
 		return err
 	}

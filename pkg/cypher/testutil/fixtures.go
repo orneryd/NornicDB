@@ -99,7 +99,9 @@ func setupTestExecutorTB(tb testing.TB) *cypher.StorageExecutor {
 //	    store := storage.NewMemoryEngine()
 //	    exec := testutil.SetupTestExecutorWithStore(t, store)
 //	    // Test something and verify storage directly
-//	    nodes := store.GetAllNodes()
+//	    nodes, err := store.AllNodes(t.Context())
+//	    require.NoError(t, err)
+//	    _ = nodes
 //	}
 func SetupTestExecutorWithStore(t *testing.T, store storage.Engine) *cypher.StorageExecutor {
 	t.Helper()

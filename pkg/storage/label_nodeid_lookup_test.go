@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -19,7 +20,7 @@ type firstNodeOnlyEngine struct {
 	err  error
 }
 
-func (e *labelLookupFallbackEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (e *labelLookupFallbackEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -50,7 +51,7 @@ func TestFirstNodeIDByLabel_NamespaceFiltering(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	id, err := FirstNodeIDByLabel(engineA, "Person")
+	id, err := FirstNodeIDByLabel(context.Background(), engineA, "Person")
 	require.NoError(t, err)
 	require.Equal(t, NodeID("node-a"), id)
 }
@@ -71,12 +72,12 @@ func TestFirstNodeIDByLabel_InvalidatesOnDelete(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	id1, err := FirstNodeIDByLabel(engine, "Person")
+	id1, err := FirstNodeIDByLabel(context.Background(), engine, "Person")
 	require.NoError(t, err)
 
 	require.NoError(t, engine.DeleteNode(id1))
 
-	id2, err := FirstNodeIDByLabel(engine, "Person")
+	id2, err := FirstNodeIDByLabel(context.Background(), engine, "Person")
 	require.NoError(t, err)
 
 	if id1 == "node-1" {
@@ -96,16 +97,16 @@ func TestNodeIDsByLabel_FallbackBranches(t *testing.T) {
 		},
 	}
 
-	ids, err := NodeIDsByLabel(engine, "Person", 0)
+	ids, err := NodeIDsByLabel(context.Background(), engine, "Person", 0)
 	require.NoError(t, err)
 	require.Equal(t, []NodeID{"n1", "n2"}, ids)
 
-	ids, err = NodeIDsByLabel(engine, "Person", 1)
+	ids, err = NodeIDsByLabel(context.Background(), engine, "Person", 1)
 	require.NoError(t, err)
 	require.Equal(t, []NodeID{"n1"}, ids)
 
 	engine.err = ErrNotFound
-	_, err = NodeIDsByLabel(engine, "Person", 1)
+	_, err = NodeIDsByLabel(context.Background(), engine, "Person", 1)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -113,17 +114,17 @@ func TestFirstNodeIDByLabel_FallbackBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	engine := &firstNodeOnlyEngine{Engine: base, node: &Node{ID: "n1"}}
 
-	id, err := FirstNodeIDByLabel(engine, "Person")
+	id, err := FirstNodeIDByLabel(context.Background(), engine, "Person")
 	require.NoError(t, err)
 	require.Equal(t, NodeID("n1"), id)
 
 	engine.node = nil
-	id, err = FirstNodeIDByLabel(engine, "Person")
+	id, err = FirstNodeIDByLabel(context.Background(), engine, "Person")
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Empty(t, id)
 
 	engine.err = errors.New("first lookup failed")
-	id, err = FirstNodeIDByLabel(engine, "Person")
+	id, err = FirstNodeIDByLabel(context.Background(), engine, "Person")
 	require.ErrorContains(t, err, "first lookup failed")
 	require.Empty(t, id)
 }

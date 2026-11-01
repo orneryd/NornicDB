@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,53 +63,47 @@ func (e *compositeErrorEngine) GetFirstNodeByLabel(label string) (*Node, error) 
 	return e.MemoryEngine.GetFirstNodeByLabel(label)
 }
 
-func (e *compositeErrorEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	if e.outgoingErr != nil {
-		return nil, e.outgoingErr
-	}
-	return e.MemoryEngine.GetOutgoingEdges(nodeID)
+func (e *compositeErrorEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.outgoingErr, func(ctx context.Context) ([]*Edge, error) {
+		return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
+	})
 }
 
-func (e *compositeErrorEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	if e.incomingErr != nil {
-		return nil, e.incomingErr
-	}
-	return e.MemoryEngine.GetIncomingEdges(nodeID)
+func (e *compositeErrorEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.incomingErr, func(ctx context.Context) ([]*Edge, error) {
+		return e.MemoryEngine.GetIncomingEdges(ctx, nodeID)
+	})
 }
 
-func (e *compositeErrorEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
-	if e.betweenErr != nil {
-		return nil, e.betweenErr
-	}
-	return e.MemoryEngine.GetEdgesBetween(startID, endID)
+func (e *compositeErrorEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.betweenErr, func(ctx context.Context) ([]*Edge, error) {
+		return e.MemoryEngine.GetEdgesBetween(ctx, startID, endID)
+	})
 }
 
-func (e *compositeErrorEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
-	if e.byTypeErr != nil {
-		return nil, e.byTypeErr
-	}
-	return e.MemoryEngine.GetEdgesByType(edgeType)
+func (e *compositeErrorEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.byTypeErr, func(ctx context.Context) ([]*Edge, error) {
+		return e.MemoryEngine.GetEdgesByType(ctx, edgeType)
+	})
 }
 
-func (e *compositeErrorEngine) AllNodes() ([]*Node, error) {
-	if e.allNodesErr != nil {
-		return nil, e.allNodesErr
-	}
-	return e.MemoryEngine.AllNodes()
+func (e *compositeErrorEngine) AllNodes(ctx context.Context) ([]*Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.allNodesErr, func(ctx context.Context) ([]*Node, error) {
+		return e.MemoryEngine.AllNodes(ctx)
+	})
 }
 
-func (e *compositeErrorEngine) AllEdges() ([]*Edge, error) {
-	if e.allEdgesErr != nil {
-		return nil, e.allEdgesErr
-	}
-	return e.MemoryEngine.AllEdges()
+func (e *compositeErrorEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.allEdgesErr, func(ctx context.Context) ([]*Edge, error) {
+		return e.MemoryEngine.AllEdges(ctx)
+	})
 }
 
-func (e *compositeErrorEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+func (e *compositeErrorEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	if e.batchGetErr != nil {
 		return nil, e.batchGetErr
 	}
-	return e.MemoryEngine.BatchGetNodes(ids)
+	return e.MemoryEngine.BatchGetNodes(ctx, ids)
 }
 
 func (e *compositeErrorEngine) NodeCount() (int64, error) {
@@ -164,39 +159,21 @@ func (e *compositeStreamEngine) StreamNodes(_ context.Context, fn func(node *Nod
 	if e.streamNodeErr != nil {
 		return e.streamNodeErr
 	}
-	nodes, err := e.Engine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		if err := fn(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(context.Background(), e.Engine.AllNodes, nil, fn)
 }
 
 func (e *compositeStreamEngine) StreamEdges(_ context.Context, fn func(edge *Edge) error) error {
 	if e.streamEdgeErr != nil {
 		return e.streamEdgeErr
 	}
-	edges, err := e.Engine.AllEdges()
-	if err != nil {
-		return err
-	}
-	for _, edge := range edges {
-		if err := fn(edge); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamFixtureItems(context.Background(), e.Engine.AllEdges, nil, fn)
 }
 
 func (e *compositeStreamEngine) StreamNodeChunks(_ context.Context, chunkSize int, fn func(nodes []*Node) error) error {
 	if e.chunkErr != nil {
 		return e.chunkErr
 	}
-	nodes, err := e.Engine.AllNodes()
+	nodes, err := e.Engine.AllNodes(context.Background())
 	if err != nil {
 		return err
 	}
@@ -414,23 +391,7 @@ func TestCompositeEngine_ReadWriteSelectorsAndDeleteByPrefix(t *testing.T) {
 
 func TestCompositeEngine_CreateNode(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create node
 	node := &Node{
@@ -457,29 +418,13 @@ func TestCompositeEngine_CreateNode(t *testing.T) {
 
 func TestCompositeEngine_GetNode(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes in each constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Get node from first constituent
 	retrieved, err := composite.GetNode(node1.ID)
@@ -499,29 +444,13 @@ func TestCompositeEngine_GetNode(t *testing.T) {
 
 func TestCompositeEngine_CreateEdge(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, _ := compositePairFixture(t)
 
 	// Create nodes in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Create edge
 	edge := &Edge{
@@ -628,23 +557,7 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 
 func TestCompositeEngine_BulkCreateNodes(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create multiple nodes
 	nodes := []*Node{
@@ -776,27 +689,11 @@ func TestCompositeEngine_NodeAccess(t *testing.T) {
 
 func TestCompositeEngine_DeleteNode(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, _ := compositePairFixture(t)
 
 	// Create node in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Delete node
 	err := composite.DeleteNode(node1.ID)
@@ -810,8 +707,7 @@ func TestCompositeEngine_DeleteNode(t *testing.T) {
 
 func TestCompositeEngine_GetEdge(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, _ := compositePairFixture(t)
 
 	// Create nodes and edge in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -820,21 +716,6 @@ func TestCompositeEngine_GetEdge(t *testing.T) {
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Get edge
 	retrieved, err := composite.GetEdge(edge1.ID)
@@ -846,8 +727,7 @@ func TestCompositeEngine_GetEdge(t *testing.T) {
 
 func TestCompositeEngine_UpdateEdge(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, _ := compositePairFixture(t)
 
 	// Create nodes and edge in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -856,21 +736,6 @@ func TestCompositeEngine_UpdateEdge(t *testing.T) {
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Update edge
 	edge1.Properties = map[string]interface{}{"since": 2020}
@@ -910,8 +775,7 @@ func TestCompositeEngine_UpdateEdge(t *testing.T) {
 
 func TestCompositeEngine_DeleteEdge(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, _ := compositePairFixture(t)
 
 	// Create nodes and edge in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -920,21 +784,6 @@ func TestCompositeEngine_DeleteEdge(t *testing.T) {
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Delete edge
 	err := composite.DeleteEdge(edge1.ID)
@@ -946,71 +795,61 @@ func TestCompositeEngine_DeleteEdge(t *testing.T) {
 	assert.Equal(t, ErrNotFound, err)
 }
 
-func TestCompositeEngine_GetNodesByLabel(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+// TestCompositeEngine_NodeReadsAggregateConstituents covers the label-filtered and
+// unfiltered node reads. Both cases share this two-constituent fixture and the same
+// membership assertions; the filter stays in the case's read.
+func TestCompositeEngine_NodeReadsAggregateConstituents(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		read func(context.Context, *CompositeEngine) ([]*Node, error)
+	}{
+		{
+			name: "TestCompositeEngine_GetNodesByLabel",
+			read: func(ctx context.Context, composite *CompositeEngine) ([]*Node, error) {
+				return composite.GetNodesByLabel(ctx, "Person")
+			},
+		},
+		{
+			name: "TestCompositeEngine_AllNodes",
+			read: func(ctx context.Context, composite *CompositeEngine) ([]*Node, error) {
+				return composite.AllNodes(ctx)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create constituent engines
+			composite, engine1, engine2 := compositePairFixture(t)
 
-	// Create nodes with same label in different constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node2)
+			// Create nodes in different constituents
+			node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+			node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+			engine1.CreateNode(node1)
+			engine2.CreateNode(node2)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+			nodes, err := tc.read(context.Background(), composite)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, len(nodes), 2)
 
-	// Get nodes by label
-	nodes, err := composite.GetNodesByLabel("Person")
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(nodes), 2)
-
-	// Verify both nodes are in results
-	nodeMap := make(map[NodeID]bool)
-	for _, node := range nodes {
-		nodeMap[node.ID] = true
+			// Verify both nodes are in results
+			nodeMap := make(map[NodeID]bool)
+			for _, node := range nodes {
+				nodeMap[node.ID] = true
+			}
+			assert.True(t, nodeMap[node1.ID])
+			assert.True(t, nodeMap[node2.ID])
+		})
 	}
-	assert.True(t, nodeMap[node1.ID])
-	assert.True(t, nodeMap[node2.ID])
 }
 
 func TestCompositeEngine_GetFirstNodeByLabel(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes with same label in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Get first node by label
 	node, err := composite.GetFirstNodeByLabel("Person")
@@ -1021,8 +860,7 @@ func TestCompositeEngine_GetFirstNodeByLabel(t *testing.T) {
 
 func TestCompositeEngine_GetOutgoingEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes and edges in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1036,101 +874,55 @@ func TestCompositeEngine_GetOutgoingEdges(t *testing.T) {
 	engine2.CreateNode(node3)
 	engine2.CreateEdge(edge2)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
 	// Get outgoing edges
-	edges, err := composite.GetOutgoingEdges(node1.ID)
+	edges, err := composite.GetOutgoingEdges(context.Background(), node1.ID)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(edges), 1)
 }
 
-func TestCompositeEngine_GetIncomingEdges(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+// TestCompositeEngine_AdjacencyReadsReturnConstituentEdges covers the incoming and
+// between-nodes edge reads over one shared single-constituent population.
+func TestCompositeEngine_AdjacencyReadsReturnConstituentEdges(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		read func(context.Context, *CompositeEngine, NodeID, NodeID) ([]*Edge, error)
+	}{
+		{
+			name: "TestCompositeEngine_GetIncomingEdges",
+			read: func(ctx context.Context, composite *CompositeEngine, node1, node2 NodeID) ([]*Edge, error) {
+				return composite.GetIncomingEdges(ctx, node2)
+			},
+		},
+		{
+			name: "TestCompositeEngine_GetEdgesBetween",
+			read: func(ctx context.Context, composite *CompositeEngine, node1, node2 NodeID) ([]*Edge, error) {
+				return composite.GetEdgesBetween(ctx, node1, node2)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create constituent engines
+			composite, engine1, _ := compositePairFixture(t)
 
-	// Create nodes and edges
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
+			// Create nodes and edge in db1 only
+			node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+			node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+			edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+			engine1.CreateNode(node1)
+			engine1.CreateNode(node2)
+			engine1.CreateEdge(edge1)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
+			edges, err := tc.read(context.Background(), composite, node1.ID, node2.ID)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, len(edges), 1)
+			assert.Equal(t, edge1.ID, edges[0].ID)
+		})
 	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get incoming edges
-	edges, err := composite.GetIncomingEdges(node2.ID)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(edges), 1)
-	assert.Equal(t, edge1.ID, edges[0].ID)
-}
-
-func TestCompositeEngine_GetEdgesBetween(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create nodes and edge
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get edges between nodes
-	edges, err := composite.GetEdgesBetween(node1.ID, node2.ID)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(edges), 1)
-	assert.Equal(t, edge1.ID, edges[0].ID)
 }
 
 func TestCompositeEngine_GetEdgeBetween(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, _ := compositePairFixture(t)
 
 	// Create nodes and edge
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1139,21 +931,6 @@ func TestCompositeEngine_GetEdgeBetween(t *testing.T) {
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Get edge between nodes
 	edge := composite.GetEdgeBetween(node1.ID, node2.ID, "KNOWS")
@@ -1161,185 +938,63 @@ func TestCompositeEngine_GetEdgeBetween(t *testing.T) {
 	assert.Equal(t, edge1.ID, edge.ID)
 }
 
-func TestCompositeEngine_GetEdgesByType(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+// TestCompositeEngine_EdgeReadsAggregateConstituents covers the type-filtered and
+// unfiltered edge reads. Both cases share this two-constituent fixture and the same
+// membership assertions; the type filter stays in the case's read.
+func TestCompositeEngine_EdgeReadsAggregateConstituents(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		read func(context.Context, *CompositeEngine) ([]*Edge, error)
+	}{
+		{
+			name: "TestCompositeEngine_GetEdgesByType",
+			read: func(ctx context.Context, composite *CompositeEngine) ([]*Edge, error) {
+				return composite.GetEdgesByType(ctx, "KNOWS")
+			},
+		},
+		{
+			name: "TestCompositeEngine_AllEdges",
+			read: func(ctx context.Context, composite *CompositeEngine) ([]*Edge, error) {
+				return composite.AllEdges(ctx)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create constituent engines
+			composite, engine1, engine2 := compositePairFixture(t)
 
-	// Create nodes and edges with same type in different constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
-	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node3)
-	engine2.CreateNode(node4)
-	engine2.CreateEdge(edge2)
+			// Create nodes and edges with the same type in different constituents
+			node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+			node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+			node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+			node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
+			edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+			edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
+			engine1.CreateNode(node1)
+			engine1.CreateNode(node2)
+			engine1.CreateEdge(edge1)
+			engine2.CreateNode(node3)
+			engine2.CreateNode(node4)
+			engine2.CreateEdge(edge2)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
+			edges, err := tc.read(context.Background(), composite)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, len(edges), 2)
+
+			// Verify both edges are in results
+			edgeMap := make(map[EdgeID]bool)
+			for _, edge := range edges {
+				edgeMap[edge.ID] = true
+			}
+			assert.True(t, edgeMap[edge1.ID])
+			assert.True(t, edgeMap[edge2.ID])
+		})
 	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get edges by type
-	edges, err := composite.GetEdgesByType("KNOWS")
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(edges), 2)
-
-	// Verify both edges are in results
-	edgeMap := make(map[EdgeID]bool)
-	for _, edge := range edges {
-		edgeMap[edge.ID] = true
-	}
-	assert.True(t, edgeMap[edge1.ID])
-	assert.True(t, edgeMap[edge2.ID])
-}
-
-func TestCompositeEngine_AllNodes(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create nodes in different constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get all nodes
-	nodes, err := composite.AllNodes()
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(nodes), 2)
-
-	// Verify both nodes are in results
-	nodeMap := make(map[NodeID]bool)
-	for _, node := range nodes {
-		nodeMap[node.ID] = true
-	}
-	assert.True(t, nodeMap[node1.ID])
-	assert.True(t, nodeMap[node2.ID])
-}
-
-func TestCompositeEngine_AllEdges(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create nodes and edges in different constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
-	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node3)
-	engine2.CreateNode(node4)
-	engine2.CreateEdge(edge2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get all edges
-	edges, err := composite.AllEdges()
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(edges), 2)
-
-	// Verify both edges are in results
-	edgeMap := make(map[EdgeID]bool)
-	for _, edge := range edges {
-		edgeMap[edge.ID] = true
-	}
-	assert.True(t, edgeMap[edge1.ID])
-	assert.True(t, edgeMap[edge2.ID])
-}
-
-func TestCompositeEngine_GetAllNodes(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create nodes in different constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get all nodes (non-error version)
-	nodes := composite.GetAllNodes()
-	assert.GreaterOrEqual(t, len(nodes), 2)
-
-	// Verify both nodes are in results
-	nodeMap := make(map[NodeID]bool)
-	for _, node := range nodes {
-		nodeMap[node.ID] = true
-	}
-	assert.True(t, nodeMap[node1.ID])
-	assert.True(t, nodeMap[node2.ID])
 }
 
 func TestCompositeEngine_GetInDegree(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, _ := compositePairFixture(t)
 
 	// Create nodes and edges (both edges point to node2)
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1356,21 +1011,6 @@ func TestCompositeEngine_GetInDegree(t *testing.T) {
 	engine1.CreateNode(node3)
 	engine1.CreateEdge(edge2)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
 	// Get in-degree (should count edges from both constituents)
 	degree := composite.GetInDegree(node2.ID)
 	assert.GreaterOrEqual(t, degree, 2)
@@ -1378,8 +1018,7 @@ func TestCompositeEngine_GetInDegree(t *testing.T) {
 
 func TestCompositeEngine_GetOutDegree(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes and edges
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1393,21 +1032,6 @@ func TestCompositeEngine_GetOutDegree(t *testing.T) {
 	engine2.CreateNode(node3)
 	engine2.CreateEdge(edge2)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
 	// Get out-degree (should count edges from both constituents)
 	degree := composite.GetOutDegree(node1.ID)
 	assert.GreaterOrEqual(t, degree, 1)
@@ -1415,8 +1039,7 @@ func TestCompositeEngine_GetOutDegree(t *testing.T) {
 
 func TestCompositeEngine_BulkCreateEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes - put node1 and node2 in engine1, node3 and node4 in engine2
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1427,21 +1050,6 @@ func TestCompositeEngine_BulkCreateEdges(t *testing.T) {
 	engine1.CreateNode(node2)
 	engine2.CreateNode(node3)
 	engine2.CreateNode(node4)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Create edges - edge1 within engine1, edge2 within engine2
 	edges := []*Edge{
@@ -1461,29 +1069,13 @@ func TestCompositeEngine_BulkCreateEdges(t *testing.T) {
 
 func TestCompositeEngine_BulkDeleteNodes(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Delete nodes
 	err := composite.BulkDeleteNodes([]NodeID{node1.ID, node2.ID})
@@ -1498,8 +1090,7 @@ func TestCompositeEngine_BulkDeleteNodes(t *testing.T) {
 
 func TestCompositeEngine_BulkDeleteEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes and edges in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1515,21 +1106,6 @@ func TestCompositeEngine_BulkDeleteEdges(t *testing.T) {
 	engine2.CreateNode(node4)
 	engine2.CreateEdge(edge2)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
 	// Delete edges
 	err := composite.BulkDeleteEdges([]EdgeID{edge1.ID, edge2.ID})
 	require.NoError(t, err)
@@ -1543,23 +1119,7 @@ func TestCompositeEngine_BulkDeleteEdges(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Test routing with database_id property
 	node := &Node{
@@ -1584,23 +1144,7 @@ func TestCompositeEngine_routeWrite_PropertyBased(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_LabelBased(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Test routing with labels only (no properties)
 	node := &Node{
@@ -1615,23 +1159,7 @@ func TestCompositeEngine_routeWrite_LabelBased(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased_Int64(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Non-string database_id is ambiguous and must be rejected.
 	node := &Node{
@@ -1646,23 +1174,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int64(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased_Int(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Non-string database_id is ambiguous and must be rejected.
 	node := &Node{
@@ -1677,23 +1189,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased_NegativeHash(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Non-string database_id is ambiguous and must be rejected.
 	node := &Node{
@@ -1708,23 +1204,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeHash(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased_NegativeInt(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Non-string database_id is ambiguous and must be rejected.
 	node := &Node{
@@ -1739,23 +1219,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeInt(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_LabelBased_NegativeHash(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Label-only routing is ambiguous and must be rejected.
 	node := &Node{
@@ -1770,23 +1234,7 @@ func TestCompositeEngine_routeWrite_LabelBased_NegativeHash(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_NoLabelsNoProperties(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// No explicit routing target must fail for multi-writable composites.
 	node := &Node{
@@ -1801,23 +1249,7 @@ func TestCompositeEngine_routeWrite_NoLabelsNoProperties(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertiesWithoutDatabaseID(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// No explicit routing target must fail for multi-writable composites.
 	node := &Node{
@@ -1906,23 +1338,7 @@ func TestCompositeEngine_UpdateNode_NotFound(t *testing.T) {
 
 func TestCompositeEngine_DeleteNode_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Try to delete non-existent node
 	err := composite.DeleteNode(NodeID(prefixTestID("nonexistent")))
@@ -1932,23 +1348,7 @@ func TestCompositeEngine_DeleteNode_NotFound(t *testing.T) {
 
 func TestCompositeEngine_GetEdge_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Try to get non-existent edge
 	_, err := composite.GetEdge(EdgeID(prefixTestID("nonexistent")))
@@ -1958,23 +1358,7 @@ func TestCompositeEngine_GetEdge_NotFound(t *testing.T) {
 
 func TestCompositeEngine_UpdateEdge_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Try to update non-existent edge
 	edge := &Edge{ID: EdgeID(prefixTestID("nonexistent")), StartNode: NodeID(prefixTestID("node1")), EndNode: NodeID(prefixTestID("node2")), Type: "KNOWS"}
@@ -1985,23 +1369,7 @@ func TestCompositeEngine_UpdateEdge_NotFound(t *testing.T) {
 
 func TestCompositeEngine_DeleteEdge_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Try to delete non-existent edge
 	err := composite.DeleteEdge(EdgeID(prefixTestID("nonexistent")))
@@ -2011,23 +1379,7 @@ func TestCompositeEngine_DeleteEdge_NotFound(t *testing.T) {
 
 func TestCompositeEngine_GetFirstNodeByLabel_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Try to get first node with non-existent label
 	// GetFirstNodeByLabel should return nil, ErrNotFound when not found
@@ -2040,23 +1392,7 @@ func TestCompositeEngine_GetFirstNodeByLabel_NotFound(t *testing.T) {
 
 func TestCompositeEngine_GetEdgeBetween_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Try to get edge between non-existent nodes
 	edge := composite.GetEdgeBetween(NodeID(prefixTestID("node1")), NodeID(prefixTestID("node2")), "KNOWS")
@@ -2065,29 +1401,13 @@ func TestCompositeEngine_GetEdgeBetween_NotFound(t *testing.T) {
 
 func TestCompositeEngine_BulkCreateEdges_Unrouted(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, _ := compositePairFixture(t)
 
 	// Create nodes in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Create edge with non-existent start node (should route to first writable)
 	// But edge creation will fail because nodes don't exist
@@ -2105,8 +1425,7 @@ func TestCompositeEngine_BulkCreateEdges_Unrouted(t *testing.T) {
 
 func TestCompositeEngine_BatchGetNodes(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -2114,23 +1433,8 @@ func TestCompositeEngine_BatchGetNodes(t *testing.T) {
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
 	// Batch get nodes
-	nodes, err := composite.BatchGetNodes([]NodeID{node1.ID, node2.ID, NodeID(prefixTestID("nonexistent"))})
+	nodes, err := composite.BatchGetNodes(context.Background(), []NodeID{node1.ID, node2.ID, NodeID(prefixTestID("nonexistent"))})
 	require.NoError(t, err)
 	assert.Equal(t, 2, len(nodes))
 	assert.NotNil(t, nodes[node1.ID])
@@ -2140,23 +1444,7 @@ func TestCompositeEngine_BatchGetNodes(t *testing.T) {
 
 func TestCompositeEngine_Close(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+	composite, _, _ := compositePairFixture(t)
 
 	// Close composite engine
 	err := composite.Close()
@@ -2165,29 +1453,13 @@ func TestCompositeEngine_Close(t *testing.T) {
 
 func TestCompositeEngine_NodeCount(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Get node count (should sum from all constituents)
 	count, err := composite.NodeCount()
@@ -2197,8 +1469,7 @@ func TestCompositeEngine_NodeCount(t *testing.T) {
 
 func TestCompositeEngine_EdgeCount(t *testing.T) {
 	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+	composite, engine1, engine2 := compositePairFixture(t)
 
 	// Create nodes and edges in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -2213,21 +1484,6 @@ func TestCompositeEngine_EdgeCount(t *testing.T) {
 	engine2.CreateNode(node3)
 	engine2.CreateNode(node4)
 	engine2.CreateEdge(edge2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Get edge count (should sum from all constituents)
 	count, err := composite.EdgeCount()
@@ -2288,37 +1544,37 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		errEngine.returnNilFirstNode = false
 
 		errEngine.outgoingErr = boom
-		_, err = composite.GetOutgoingEdges(okNode.ID)
+		_, err = composite.GetOutgoingEdges(context.Background(), okNode.ID)
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.outgoingErr = nil
 
 		errEngine.incomingErr = boom
-		_, err = composite.GetIncomingEdges(okNode.ID)
+		_, err = composite.GetIncomingEdges(context.Background(), okNode.ID)
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.incomingErr = nil
 
 		errEngine.betweenErr = boom
-		_, err = composite.GetEdgesBetween(okNode.ID, okNode.ID)
+		_, err = composite.GetEdgesBetween(context.Background(), okNode.ID, okNode.ID)
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.betweenErr = nil
 
 		errEngine.byTypeErr = boom
-		_, err = composite.GetEdgesByType("REL")
+		_, err = composite.GetEdgesByType(context.Background(), "REL")
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.byTypeErr = nil
 
 		errEngine.allNodesErr = boom
-		_, err = composite.AllNodes()
+		_, err = composite.AllNodes(context.Background())
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.allNodesErr = nil
 
 		errEngine.allEdgesErr = boom
-		_, err = composite.AllEdges()
+		_, err = composite.AllEdges(context.Background())
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.allEdgesErr = nil
 
 		errEngine.batchGetErr = boom
-		_, err = composite.BatchGetNodes([]NodeID{okNode.ID})
+		_, err = composite.BatchGetNodes(context.Background(), []NodeID{okNode.ID})
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.batchGetErr = nil
 

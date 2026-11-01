@@ -6,6 +6,7 @@ import (
 	apocnodes "github.com/orneryd/nornicdb/apoc/nodes"
 	apocpath "github.com/orneryd/nornicdb/apoc/path"
 	apocrel "github.com/orneryd/nornicdb/apoc/rel"
+	apocstorage "github.com/orneryd/nornicdb/apoc/storage"
 	apoctime "github.com/orneryd/nornicdb/apoc/temporal"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -18,10 +19,18 @@ import (
 
 func nativeAPOCFixture(t *testing.T) *StorageExecutor {
 	t.Helper()
+	// The entity helpers that read the graph are bound to one backend instance;
+	// this fixture admits those handler signatures beside the native catalog and
+	// gives them an independent backend so admission never reaches the graph the
+	// assertions measure.
+	bound := apocstorage.NewInMemoryStorage()
+	nodeFunctions := apocnode.New(bound)
+	relFunctions := apocrel.New(bound)
+	nodesFunctions := apocnodes.New(bound)
 	withPluginFunctions(t, map[string]interface{}{
-		"apoc.node.id": apocnode.ID, "apoc.node.labels": apocnode.Labels, "apoc.node.degree": apocnode.Degree,
-		"apoc.rel.id": apocrel.ID, "apoc.rel.type": apocrel.Type, "apoc.rel.startNode": apocrel.StartNode, "apoc.rel.endNode": apocrel.EndNode,
-		"apoc.nodes.connected": apocnodes.Connected, "apoc.path.elements": apocpath.Elements, "apoc.path.slice": apocpath.Slice, "apoc.path.combine": apocpath.Combine, "apoc.temporal.format": apoctime.Format,
+		"apoc.node.id": apocnode.ID, "apoc.node.labels": apocnode.Labels, "apoc.node.degree": nodeFunctions.Degree,
+		"apoc.rel.id": apocrel.ID, "apoc.rel.type": apocrel.Type, "apoc.rel.startNode": relFunctions.StartNode, "apoc.rel.endNode": relFunctions.EndNode,
+		"apoc.nodes.connected": nodesFunctions.Connected, "apoc.path.elements": apocpath.Elements, "apoc.path.slice": apocpath.Slice, "apoc.path.combine": apocpath.Combine, "apoc.temporal.format": apoctime.Format,
 	})
 	s := storage.NewNamespacedEngine(newTestMemoryEngine(t), "native_apoc")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,8 +37,8 @@ func TestQueryReaderCancellationDoesNotPoisonCompilation(t *testing.T) {
 				pipelineClauseSplits.Lock()
 				delete(pipelineClauseSplits.splits, key)
 				pipelineClauseSplits.Unlock()
-				checkpoint := newCheckpointContext(32, nil)
-				defer checkpoint.cancel()
+				checkpoint := fixtureowner.NewCheckpointContext(32, nil)
+				defer checkpoint.Cancel()
 				ctx := withCypherVersion(checkpoint, "CYPHER "+version+" "+query)
 				clauses, ok := splitPipelineClauses(ctx, query)
 				require.ErrorIs(t, checkpoint.Context.Err(), context.Canceled)
@@ -49,16 +50,16 @@ func TestQueryReaderCancellationDoesNotPoisonCompilation(t *testing.T) {
 				require.False(t, cached, "canceled syntax must not publish a declined split")
 
 				executor := NewStorageExecutor(newTestMemoryEngine(t))
-				checkpoint = newCheckpointContext(32, nil)
-				defer checkpoint.cancel()
+				checkpoint = fixtureowner.NewCheckpointContext(32, nil)
+				defer checkpoint.Cancel()
 				ctx = withCypherVersion(checkpoint, "CYPHER "+version+" "+query)
 				err := executor.validateSemanticScopes(ctx, query)
 				require.ErrorIs(t, err, context.Canceled)
 				require.False(t, executor.semanticValidationCache.contains(key))
 				require.False(t, executor.matchSemanticValidationCache.contains(key))
 
-				checkpoint = newCheckpointContext(32, nil)
-				defer checkpoint.cancel()
+				checkpoint = fixtureowner.NewCheckpointContext(32, nil)
+				defer checkpoint.Cancel()
 				ctx = withCypherVersion(checkpoint, "CYPHER "+version+" "+query)
 				names := resultmetadata.Known(nil)
 				program := executor.projectedStatementScope(ctx, query, names, names, version == "25")

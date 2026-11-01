@@ -120,6 +120,20 @@ func cloneEdge(e *storage.Edge) *storage.Edge {
 	}
 }
 
+// collectEdges walks one edge map once, cloning every edge the caller's
+// predicate keeps. Nothing is preallocated and the zero-value nil slice is
+// returned when no edge matches, so callers keep reporting an empty list rather
+// than an allocated one, and results keep the underlying map order.
+func collectEdges(edges map[storage.EdgeID]*storage.Edge, keep func(*storage.Edge) bool) []*storage.Edge {
+	var out []*storage.Edge
+	for _, edge := range edges {
+		if keep(edge) {
+			out = append(out, cloneEdge(edge))
+		}
+	}
+	return out
+}
+
 func (e *apocAdapterTestEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
 	stored := cloneNode(node)
 	if stored.ID == "" {
@@ -203,7 +217,7 @@ func (e *apocAdapterTestEngine) DeleteEdge(id storage.EdgeID) error {
 	return nil
 }
 
-func (e *apocAdapterTestEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *apocAdapterTestEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	var out []*storage.Node
 	for _, node := range e.nodes {
 		for _, l := range node.Labels {
@@ -217,41 +231,29 @@ func (e *apocAdapterTestEngine) GetNodesByLabel(label string) ([]*storage.Node, 
 }
 
 func (e *apocAdapterTestEngine) GetFirstNodeByLabel(label string) (*storage.Node, error) {
-	nodes, _ := e.GetNodesByLabel(label)
+	nodes, _ := e.GetNodesByLabel(context.Background(), label)
 	if len(nodes) == 0 {
 		return nil, storage.ErrNotFound
 	}
 	return nodes[0], nil
 }
 
-func (e *apocAdapterTestEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
-	var out []*storage.Edge
-	for _, edge := range e.edges {
-		if edge.StartNode == nodeID {
-			out = append(out, cloneEdge(edge))
-		}
-	}
-	return out, nil
+func (e *apocAdapterTestEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return collectEdges(e.edges, func(edge *storage.Edge) bool {
+		return edge.StartNode == nodeID
+	}), nil
 }
 
-func (e *apocAdapterTestEngine) GetIncomingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
-	var out []*storage.Edge
-	for _, edge := range e.edges {
-		if edge.EndNode == nodeID {
-			out = append(out, cloneEdge(edge))
-		}
-	}
-	return out, nil
+func (e *apocAdapterTestEngine) GetIncomingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return collectEdges(e.edges, func(edge *storage.Edge) bool {
+		return edge.EndNode == nodeID
+	}), nil
 }
 
-func (e *apocAdapterTestEngine) GetEdgesBetween(startID, endID storage.NodeID) ([]*storage.Edge, error) {
-	var out []*storage.Edge
-	for _, edge := range e.edges {
-		if edge.StartNode == startID && edge.EndNode == endID {
-			out = append(out, cloneEdge(edge))
-		}
-	}
-	return out, nil
+func (e *apocAdapterTestEngine) GetEdgesBetween(ctx context.Context, startID, endID storage.NodeID) ([]*storage.Edge, error) {
+	return collectEdges(e.edges, func(edge *storage.Edge) bool {
+		return edge.StartNode == startID && edge.EndNode == endID
+	}), nil
 }
 
 func (e *apocAdapterTestEngine) GetEdgeBetween(startID, endID storage.NodeID, edgeType string) *storage.Edge {
@@ -263,17 +265,13 @@ func (e *apocAdapterTestEngine) GetEdgeBetween(startID, endID storage.NodeID, ed
 	return nil
 }
 
-func (e *apocAdapterTestEngine) GetEdgesByType(edgeType string) ([]*storage.Edge, error) {
-	var out []*storage.Edge
-	for _, edge := range e.edges {
-		if edge.Type == edgeType {
-			out = append(out, cloneEdge(edge))
-		}
-	}
-	return out, nil
+func (e *apocAdapterTestEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*storage.Edge, error) {
+	return collectEdges(e.edges, func(edge *storage.Edge) bool {
+		return edge.Type == edgeType
+	}), nil
 }
 
-func (e *apocAdapterTestEngine) AllNodes() ([]*storage.Node, error) {
+func (e *apocAdapterTestEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	var out []*storage.Node
 	for _, node := range e.nodes {
 		out = append(out, cloneNode(node))
@@ -281,7 +279,7 @@ func (e *apocAdapterTestEngine) AllNodes() ([]*storage.Node, error) {
 	return out, nil
 }
 
-func (e *apocAdapterTestEngine) AllEdges() ([]*storage.Edge, error) {
+func (e *apocAdapterTestEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	var out []*storage.Edge
 	for _, edge := range e.edges {
 		out = append(out, cloneEdge(edge))
@@ -289,18 +287,13 @@ func (e *apocAdapterTestEngine) AllEdges() ([]*storage.Edge, error) {
 	return out, nil
 }
 
-func (e *apocAdapterTestEngine) GetAllNodes() []*storage.Node {
-	nodes, _ := e.AllNodes()
-	return nodes
-}
-
 func (e *apocAdapterTestEngine) GetInDegree(nodeID storage.NodeID) int {
-	edges, _ := e.GetIncomingEdges(nodeID)
+	edges, _ := e.GetIncomingEdges(context.Background(), nodeID)
 	return len(edges)
 }
 
 func (e *apocAdapterTestEngine) GetOutDegree(nodeID storage.NodeID) int {
-	edges, _ := e.GetOutgoingEdges(nodeID)
+	edges, _ := e.GetOutgoingEdges(context.Background(), nodeID)
 	return len(edges)
 }
 
@@ -317,7 +310,7 @@ func (e *apocAdapterTestEngine) BulkDeleteNodes(ids []storage.NodeID) error {
 func (e *apocAdapterTestEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
 	return collection.ApplyInOrder(ids, e.DeleteEdge)
 }
-func (e *apocAdapterTestEngine) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (e *apocAdapterTestEngine) BatchGetNodes(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	out := make(map[storage.NodeID]*storage.Node, len(ids))
 	for _, id := range ids {
 		if node, ok := e.nodes[id]; ok {

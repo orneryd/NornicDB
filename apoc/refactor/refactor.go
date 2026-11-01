@@ -5,6 +5,8 @@
 package refactor
 
 import (
+	"context"
+
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
 
@@ -14,8 +16,19 @@ type Node = storage.Node
 // Relationship represents a graph relationship.
 type Relationship = storage.Relationship
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// Functions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for.
+type Functions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
+}
 
 // MergeNodes merges multiple nodes into one.
 //
@@ -84,7 +97,7 @@ func MergeRelationships(rels []*Relationship, config map[string]interface{}) *Re
 // Example:
 //
 //	apoc.refactor.cloneNodes([node1, node2]) => cloned nodes
-func CloneNodes(nodes []*Node) []*Node {
+func (f *Functions) CloneNodes(nodes []*Node) []*Node {
 	cloned := make([]*Node, len(nodes))
 
 	for i, node := range nodes {
@@ -97,7 +110,7 @@ func CloneNodes(nodes []*Node) []*Node {
 			cloned[i].Properties[k] = v
 		}
 
-		created, _ := Storage.CreateNode(cloned[i].Labels, cloned[i].Properties)
+		created, _ := f.backend.CreateNode(cloned[i].Labels, cloned[i].Properties)
 		cloned[i] = created
 	}
 
@@ -109,7 +122,7 @@ func CloneNodes(nodes []*Node) []*Node {
 // Example:
 //
 //	apoc.refactor.cloneSubgraph([node1, node2], [rel1]) => {nodes: [...], rels: [...]}
-func CloneSubgraph(nodes []*Node, rels []*Relationship) map[string]interface{} {
+func (f *Functions) CloneSubgraph(nodes []*Node, rels []*Relationship) map[string]interface{} {
 	idMap := make(map[int64]int64)
 
 	// Clone nodes
@@ -124,7 +137,7 @@ func CloneSubgraph(nodes []*Node, rels []*Relationship) map[string]interface{} {
 			newNodes[i].Properties[k] = v
 		}
 
-		created, _ := Storage.CreateNode(newNodes[i].Labels, newNodes[i].Properties)
+		created, _ := f.backend.CreateNode(newNodes[i].Labels, newNodes[i].Properties)
 		newNodes[i] = created
 		idMap[node.ID] = created.ID
 	}
@@ -142,7 +155,7 @@ func CloneSubgraph(nodes []*Node, rels []*Relationship) map[string]interface{} {
 			newRels[i].Properties[k] = v
 		}
 
-		created, _ := Storage.CreateRelationship(newRels[i].StartNode, newRels[i].EndNode, newRels[i].Type, newRels[i].Properties)
+		created, _ := f.backend.CreateRelationship(newRels[i].StartNode, newRels[i].EndNode, newRels[i].Type, newRels[i].Properties)
 		newRels[i] = created
 	}
 
@@ -157,9 +170,9 @@ func CloneSubgraph(nodes []*Node, rels []*Relationship) map[string]interface{} {
 // Example:
 //
 //	apoc.refactor.collapseNode(node, 'CONNECTED') => relationships created
-func CollapseNode(node *Node, relType string) []*Relationship {
-	incoming, _ := Storage.GetNodeRelationships(node.ID, "", storage.DirectionIncoming)
-	outgoing, _ := Storage.GetNodeRelationships(node.ID, "", storage.DirectionOutgoing)
+func (f *Functions) CollapseNode(node *Node, relType string) []*Relationship {
+	incoming, _ := f.backend.GetNodeRelationships(node.ID, "", storage.DirectionIncoming)
+	outgoing, _ := f.backend.GetNodeRelationships(node.ID, "", storage.DirectionOutgoing)
 
 	newRels := make([]*Relationship, 0)
 
@@ -172,7 +185,7 @@ func CollapseNode(node *Node, relType string) []*Relationship {
 				Properties: make(map[string]interface{}),
 			}
 
-			created, _ := Storage.CreateRelationship(rel.StartNode, rel.EndNode, rel.Type, rel.Properties)
+			created, _ := f.backend.CreateRelationship(rel.StartNode, rel.EndNode, rel.Type, rel.Properties)
 			newRels = append(newRels, created)
 		}
 	}
@@ -185,8 +198,8 @@ func CollapseNode(node *Node, relType string) []*Relationship {
 // Example:
 //
 //	apoc.refactor.extractNode(rel, ['Person'], {name: 'Intermediate'}) => node
-func ExtractNode(rel *Relationship, labels []string, props map[string]interface{}) *Node {
-	created, _ := Storage.CreateNode(labels, props)
+func (f *Functions) ExtractNode(rel *Relationship, labels []string, props map[string]interface{}) *Node {
+	created, _ := f.backend.CreateNode(labels, props)
 
 	// Create two new relationships
 	rel1 := &Relationship{
@@ -195,7 +208,7 @@ func ExtractNode(rel *Relationship, labels []string, props map[string]interface{
 		EndNode:    created.ID,
 		Properties: make(map[string]interface{}),
 	}
-	Storage.CreateRelationship(rel1.StartNode, rel1.EndNode, rel1.Type, rel1.Properties)
+	f.backend.CreateRelationship(rel1.StartNode, rel1.EndNode, rel1.Type, rel1.Properties)
 
 	rel2 := &Relationship{
 		Type:       rel.Type,
@@ -203,7 +216,7 @@ func ExtractNode(rel *Relationship, labels []string, props map[string]interface{
 		EndNode:    rel.EndNode,
 		Properties: make(map[string]interface{}),
 	}
-	Storage.CreateRelationship(rel2.StartNode, rel2.EndNode, rel2.Type, rel2.Properties)
+	f.backend.CreateRelationship(rel2.StartNode, rel2.EndNode, rel2.Type, rel2.Properties)
 
 	return created
 }
@@ -266,8 +279,8 @@ func CategorizeProperty(node *Node, property, newProperty string, categories [][
 // Example:
 //
 //	apoc.refactor.rename.label('OldLabel', 'NewLabel') => count
-func RenameLabel(oldLabel, newLabel string) int {
-	nodes, err := Storage.AllNodes()
+func (f *Functions) RenameLabel(ctx context.Context, oldLabel, newLabel string) int {
+	nodes, err := f.backend.AllNodes(ctx)
 	if err != nil {
 		return 0
 	}
@@ -277,7 +290,7 @@ func RenameLabel(oldLabel, newLabel string) int {
 		for i, label := range node.Labels {
 			if label == oldLabel {
 				node.Labels[i] = newLabel
-				if err := Storage.UpdateNodeLabels(node.ID, node.Labels); err == nil {
+				if err := f.backend.UpdateNodeLabels(node.ID, node.Labels); err == nil {
 					count++
 				}
 				break
@@ -292,8 +305,8 @@ func RenameLabel(oldLabel, newLabel string) int {
 // Example:
 //
 //	apoc.refactor.rename.type('OLD_TYPE', 'NEW_TYPE') => count
-func RenameType(oldType, newType string) int {
-	rels, err := Storage.AllRelationships()
+func (f *Functions) RenameType(ctx context.Context, oldType, newType string) int {
+	rels, err := f.backend.AllRelationships(ctx)
 	if err != nil {
 		return 0
 	}
@@ -301,7 +314,7 @@ func RenameType(oldType, newType string) int {
 	count := 0
 	for _, rel := range rels {
 		if rel.Type == oldType {
-			if err := Storage.UpdateRelationshipType(rel.ID, newType); err == nil {
+			if err := f.backend.UpdateRelationshipType(rel.ID, newType); err == nil {
 				count++
 			}
 		}
@@ -309,23 +322,35 @@ func RenameType(oldType, newType string) int {
 	return count
 }
 
+// renameProperty owns the property-map transition for node and relationship
+// renames. Each caller retains its entity-specific persistence and counts only
+// successful updates. Missing keys are untouched, including nil maps; an
+// existing destination is replaced, and renaming a key to itself still counts.
+func renameProperty(properties map[string]interface{}, oldName, newName string) bool {
+	value, exists := properties[oldName]
+	if !exists {
+		return false
+	}
+	delete(properties, oldName)
+	properties[newName] = value
+	return true
+}
+
 // RenameProperty renames a property on all nodes that have it.
 //
 // Example:
 //
 //	apoc.refactor.rename.nodeProperty('oldName', 'newName') => count
-func RenameProperty(oldName, newName string) int {
-	nodes, err := Storage.AllNodes()
+func (f *Functions) RenameProperty(ctx context.Context, oldName, newName string) int {
+	nodes, err := f.backend.AllNodes(ctx)
 	if err != nil {
 		return 0
 	}
 
 	count := 0
 	for _, node := range nodes {
-		if val, exists := node.Properties[oldName]; exists {
-			delete(node.Properties, oldName)
-			node.Properties[newName] = val
-			if err := Storage.UpdateNode(node.ID, node.Properties); err == nil {
+		if renameProperty(node.Properties, oldName, newName) {
+			if err := f.backend.UpdateNode(node.ID, node.Properties); err == nil {
 				count++
 			}
 		}
@@ -338,18 +363,19 @@ func RenameProperty(oldName, newName string) int {
 // Example:
 //
 //	apoc.refactor.rename.relProperty('oldName', 'newName') => count
-func RenameRelProperty(oldName, newName string) int {
-	rels, err := Storage.AllRelationships()
+func (f *Functions) RenameRelProperty(oldName, newName string) int {
+	// apoc/apoc.go registers no APOC name for this helper, so no statement and
+	// no apoc.Call reaches it: its only entry is a Go call, which carries no
+	// caller context, and its whole-graph read runs on the background lifetime.
+	rels, err := f.backend.AllRelationships(context.Background())
 	if err != nil {
 		return 0
 	}
 
 	count := 0
 	for _, rel := range rels {
-		if val, exists := rel.Properties[oldName]; exists {
-			delete(rel.Properties, oldName)
-			rel.Properties[newName] = val
-			if err := Storage.UpdateRelationship(rel.ID, rel.Properties); err == nil {
+		if renameProperty(rel.Properties, oldName, newName) {
+			if err := f.backend.UpdateRelationship(rel.ID, rel.Properties); err == nil {
 				count++
 			}
 		}
@@ -402,15 +428,15 @@ func From(rel *Relationship, newStart *Node) *Relationship {
 // Example:
 //
 //	apoc.refactor.deleteAndReconnect([node1, node2], 'CONNECTED') => count
-func DeleteAndReconnect(nodes []*Node, relType string) int {
+func (f *Functions) DeleteAndReconnect(nodes []*Node, relType string) int {
 	count := 0
 
 	for _, node := range nodes {
 		// Collapse node first
-		CollapseNode(node, relType)
+		f.CollapseNode(node, relType)
 
 		// Delete node
-		if err := Storage.DeleteNode(node.ID); err == nil {
+		if err := f.backend.DeleteNode(node.ID); err == nil {
 			count++
 		}
 	}
@@ -423,7 +449,7 @@ func DeleteAndReconnect(nodes []*Node, relType string) int {
 // Example:
 //
 //	apoc.refactor.cloneSubgraphFromPaths(paths) => {nodes: [...], rels: [...]}
-func CloneSubgraphFromPaths(paths []map[string]interface{}) map[string]interface{} {
+func (f *Functions) CloneSubgraphFromPaths(paths []map[string]interface{}) map[string]interface{} {
 	nodeSet := make(map[int64]*Node)
 	relSet := make(map[int64]*Relationship)
 
@@ -451,7 +477,7 @@ func CloneSubgraphFromPaths(paths []map[string]interface{}) map[string]interface
 		rels = append(rels, rel)
 	}
 
-	return CloneSubgraph(nodes, rels)
+	return f.CloneSubgraph(nodes, rels)
 }
 
 // ChangeType changes relationship type with properties.
@@ -478,7 +504,7 @@ func ChangeType(rel *Relationship, newType string, config map[string]interface{}
 // Example:
 //
 //	apoc.refactor.normalize(node, 'property', 'NewLabel', 'HAS') => normalized
-func Normalize(node *Node, property, newLabel, relType string) map[string]interface{} {
+func (f *Functions) Normalize(node *Node, property, newLabel, relType string) map[string]interface{} {
 	if val, ok := node.Properties[property]; ok {
 		// Create new node for property value
 		newNode := &Node{
@@ -486,10 +512,10 @@ func Normalize(node *Node, property, newLabel, relType string) map[string]interf
 			Properties: map[string]interface{}{"value": val},
 		}
 
-		created, _ := Storage.CreateNode(newNode.Labels, newNode.Properties)
+		created, _ := f.backend.CreateNode(newNode.Labels, newNode.Properties)
 
 		// Create relationship
-		createdRel, _ := Storage.CreateRelationship(node.ID, created.ID, relType, make(map[string]interface{}))
+		createdRel, _ := f.backend.CreateRelationship(node.ID, created.ID, relType, make(map[string]interface{}))
 
 		// Remove property from original node
 		delete(node.Properties, property)
@@ -508,11 +534,11 @@ func Normalize(node *Node, property, newLabel, relType string) map[string]interf
 // Example:
 //
 //	apoc.refactor.denormalize(node, 'HAS', 'property') => denormalized
-func Denormalize(node *Node, relType, property string) *Node {
-	rels, _ := Storage.GetNodeRelationships(node.ID, relType, storage.DirectionOutgoing)
+func (f *Functions) Denormalize(node *Node, relType, property string) *Node {
+	rels, _ := f.backend.GetNodeRelationships(node.ID, relType, storage.DirectionOutgoing)
 
 	for _, rel := range rels {
-		if targetNode, err := Storage.GetNode(rel.EndNode); err == nil {
+		if targetNode, err := f.backend.GetNode(rel.EndNode); err == nil {
 			if val, ok := targetNode.Properties["value"]; ok {
 				node.Properties[property] = val
 			}

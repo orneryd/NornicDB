@@ -79,7 +79,7 @@ func TestExecuteMergeWithChain_UnboundEndpoint(t *testing.T) {
 	require.Equal(t, result.Rows, repeated.Rows)
 	require.Zero(t, repeated.Stats.NodesCreated)
 	require.Zero(t, repeated.Stats.RelationshipsCreated)
-	nodes, err := store.GetNodesByLabel("Node")
+	nodes, err := store.GetNodesByLabel(ctx, "Node")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	stored, err := exec.Execute(ctx, "MATCH ()-[r:REL]->() RETURN count(r)", nil)

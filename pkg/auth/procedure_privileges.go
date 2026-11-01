@@ -95,7 +95,9 @@ func (p *ProcedurePrivilegeStore) grants() ([]ProcedurePrivilege, error) {
 	if p == nil || p.storage == nil {
 		return nil, nil
 	}
-	nodes, err := p.storage.GetNodesByLabel(procedurePrivilegeLabel)
+	// The auth store's grant enumeration keeps its existing API (no caller
+	// context): it runs on the store's own lifetime.
+	nodes, err := p.storage.GetNodesByLabel(context.Background(), procedurePrivilegeLabel)
 	if err != nil {
 		return nil, err
 	}

@@ -401,7 +401,7 @@ func (f *usePropertyFixture) checkTransaction(ctx context.Context, statement use
 		if err != nil {
 			return err
 		}
-		nodes, err := store.GetNodesByLabel("UsePropertyWrite")
+		nodes, err := store.GetNodesByLabel(ctx, "UsePropertyWrite")
 		if err != nil {
 			return err
 		}

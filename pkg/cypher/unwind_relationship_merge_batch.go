@@ -74,7 +74,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		}
 		rows = append(rows, row)
 	}
-	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, plan.matches)
+	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, plan.matches)
 	if err != nil {
 		return nil, true, err
 	}
@@ -391,7 +391,7 @@ func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwi
 	return true
 }
 
-func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
+func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
 	index := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(matches))
 	schema := store.GetSchema()
 	unique := true
@@ -428,7 +428,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 				}
 			}
 			if len(unresolved) > 0 {
-				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, unresolved)
+				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, unresolved)
 				if err != nil {
 					return nil, false, err
 				}
@@ -443,7 +443,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 			continue
 		}
 
-		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, distinct)
+		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, distinct)
 		if err != nil {
 			return nil, false, err
 		}
@@ -455,9 +455,9 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 	return index, unique, nil
 }
 
-func buildNodeBatchLabelMatchIndex(store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
+func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
 	idx := make(map[string]*storage.Node, len(distinct))
-	nodes, err := store.GetNodesByLabel(key.label)
+	nodes, err := store.GetNodesByLabel(ctx, key.label)
 	if err != nil {
 		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
 	}
@@ -578,6 +578,7 @@ func buildRelationshipBatchReturnRow(row map[string]interface{}, returns []rowFi
 }
 
 func lookupRelationshipBatchExistingEdge(
+	ctx context.Context,
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
@@ -594,7 +595,7 @@ func lookupRelationshipBatchExistingEdge(
 	if _, scanned := scannedPairs[pairKey]; scanned {
 		return nil, nil
 	}
-	edges, err := store.GetEdgesBetween(startID, endID)
+	edges, err := store.GetEdgesBetween(ctx, startID, endID)
 	if err != nil {
 		return nil, localizedError(localization.CypherMergeGetEdgesBetweenFailed(string(startID), string(endID), err), err)
 	}

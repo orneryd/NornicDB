@@ -67,12 +67,12 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	_, _ = engine.GetNodeVisibleAt("test:a", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999})
 	_, _ = engine.GetEdgeLatestVisible("test:e1")
 	_, _ = engine.GetEdgeVisibleAt("test:e1", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999})
-	_, _ = engine.GetNodesByLabelVisibleAt("User", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999})
-	_, _ = engine.GetEdgesByTypeVisibleAt("KNOWS", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999})
-	_, _ = engine.GetEdgesBetweenVisibleAt("test:a", "test:b", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999})
+	_, _ = engine.GetNodesByLabelVisibleAt(context.Background(), "User", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999})
+	_, _ = engine.GetEdgesByTypeVisibleAt(context.Background(), "KNOWS", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999})
+	_, _ = engine.GetEdgesBetweenVisibleAt(context.Background(), "test:a", "test:b", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999})
 
-	_, _ = engine.BatchGetNodesLatestVisible([]NodeID{"test:a", "test:b", "test:c"})
-	require.NoError(t, engine.IterateLatestVisibleNodes(func(n *Node) error { return nil }))
+	_, _ = engine.BatchGetNodesLatestVisible(context.Background(), []NodeID{"test:a", "test:b", "test:c"})
+	require.NoError(t, engine.IterateLatestVisibleNodes(context.Background(), func(n *Node) error { return nil }))
 	require.NoError(t, engine.IterateLatestVisibleEdges(func(e *Edge) error { return nil }))
 
 	// Rebuild/prune paths.

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -60,5 +61,5 @@ func TestBadgerTransaction_TemporalConstraintIgnoresPendingNodesWithOtherKeys(t 
 	otherID := NodeID(prefixTestID("other-account"))
 	tx.pendingNodes[otherID] = &Node{ID: otherID, Labels: []string{"Person"}, Properties: map[string]any{"account": "other", "from": base, "to": base.Add(2 * time.Hour)}}
 	node := &Node{ID: NodeID(prefixTestID("acct")), Labels: []string{"Person"}, Properties: map[string]any{"account": "acct", "from": base, "to": base.Add(time.Hour)}}
-	require.NoError(t, tx.checkTemporalConstraint(node, constraint))
+	require.NoError(t, tx.checkTemporalConstraint(context.Background(), node, constraint))
 }

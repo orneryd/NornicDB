@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"strconv"
@@ -43,7 +44,7 @@ const (
 
 // fnVector is vector(value, dimension, coordinateType): value a list of
 // numbers or its text ('[1, 2]'); null in, null out.
-func fnVector(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnVector(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 3 {
 		return nil, argumentCountError("vector", "3", len(args))
 	}
@@ -166,7 +167,7 @@ func vectorRangeError() error {
 }
 
 // fnVectorDimensionCount is vector_dimension_count(vector).
-func fnVectorDimensionCount(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnVectorDimensionCount(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("vector_dimension_count", "1", len(args))
 	}
@@ -193,7 +194,7 @@ func vectorArgument(value interface{}) (CypherVector, error) {
 }
 
 // fnVectorDistance is vector_distance(a, b, metric).
-func fnVectorDistance(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnVectorDistance(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 3 {
 		return nil, argumentCountError("vector_distance", "3", len(args))
 	}
@@ -247,7 +248,7 @@ func fnVectorDistance(ctx cypherfn.Context, args []string) (interface{}, error) 
 }
 
 // fnVectorNorm is vector_norm(vector, metric): EUCLIDEAN or MANHATTAN.
-func fnVectorNorm(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnVectorNorm(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 2 {
 		return nil, argumentCountError("vector_norm", "2", len(args))
 	}
@@ -278,7 +279,7 @@ func fnVectorNorm(ctx cypherfn.Context, args []string) (interface{}, error) {
 
 // fnUUID is uuid() (a random version 7 UUID), uuid(text) or
 // uuid(msb, lsb); null in, null out.
-func fnUUID(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnUUID(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	switch len(args) {
 	case 0:
 		return newVersion7UUID(time.Now()), nil
@@ -324,7 +325,7 @@ func fnUUIDHalf(most bool) cypherfn.Func {
 	if most {
 		name = "uuid.mostSignificantBits"
 	}
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
 		}

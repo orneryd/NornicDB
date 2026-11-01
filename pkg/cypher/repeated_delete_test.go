@@ -57,7 +57,7 @@ func TestTransactionWrapperBulkDeleteEdgesSkipsDeleted(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	_, err := exec.Execute(context.Background(), "CREATE (:P {id: 'a'})-[:R]->(:P {id: 'b'})", nil)
 	require.NoError(t, err)
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 

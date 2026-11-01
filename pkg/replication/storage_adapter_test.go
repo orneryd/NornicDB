@@ -676,7 +676,7 @@ func TestStorageAdapter_RetiredCypherAndSupportedQueries(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify node was created - check all nodes since ID generation may vary
-		nodes, listErr := adapter.engine.AllNodes()
+		nodes, listErr := adapter.engine.AllNodes(context.Background())
 		require.NoError(t, listErr)
 		require.Len(t, nodes, 1)
 		assert.Equal(t, "Alice", nodes[0].Properties["name"])

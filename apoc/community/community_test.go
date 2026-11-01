@@ -1,6 +1,7 @@
 package community
 
 import (
+	"context"
 	"math"
 	"testing"
 
@@ -107,7 +108,10 @@ func createWeightedGraph() ([]*Node, []*Relationship) {
 
 func TestLouvain(t *testing.T) {
 	nodes, rels := createTestGraph()
-	results := Louvain(nodes, rels, DefaultLouvainConfig())
+	results, err := Louvain(context.Background(), nodes, rels, DefaultLouvainConfig())
+	if err != nil {
+		t.Fatalf("Louvain: %v", err)
+	}
 
 	if len(results) != 8 {
 		t.Errorf("Expected 8 results, got %d", len(results))
@@ -125,7 +129,10 @@ func TestLouvain(t *testing.T) {
 }
 
 func TestLouvainEmptyGraph(t *testing.T) {
-	results := Louvain([]*Node{}, []*Relationship{}, DefaultLouvainConfig())
+	results, err := Louvain(context.Background(), []*Node{}, []*Relationship{}, DefaultLouvainConfig())
+	if err != nil {
+		t.Fatalf("Louvain: %v", err)
+	}
 	if len(results) != 0 {
 		t.Errorf("Expected 0 results for empty graph, got %d", len(results))
 	}
@@ -517,7 +524,10 @@ func TestGetRelWeight(t *testing.T) {
 
 func TestLouvainWithWeights(t *testing.T) {
 	nodes, rels := createWeightedGraph()
-	results := Louvain(nodes, rels, DefaultLouvainConfig())
+	results, err := Louvain(context.Background(), nodes, rels, DefaultLouvainConfig())
+	if err != nil {
+		t.Fatalf("Louvain: %v", err)
+	}
 
 	if len(results) != 4 {
 		t.Errorf("Expected 4 results, got %d", len(results))
@@ -534,11 +544,7 @@ func TestLouvainWithWeights(t *testing.T) {
 }
 
 func BenchmarkLouvain(b *testing.B) {
-	nodes, rels := createTestGraph()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		Louvain(nodes, rels, DefaultLouvainConfig())
-	}
+	runLouvainBenchmark(b, createTestGraph)
 }
 
 func BenchmarkLabelPropagation(b *testing.B) {

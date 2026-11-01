@@ -749,7 +749,7 @@ func BenchmarkFabricCorrelatedSourceTranslationJoin_Profile(b *testing.B) {
 	waitForCount := func(store storage.Engine, label string, want int) {
 		deadline := time.Now().Add(20 * time.Second)
 		for {
-			nodes, err := store.GetNodesByLabel(label)
+			nodes, err := store.GetNodesByLabel(context.Background(), label)
 			if err == nil && len(nodes) >= want {
 				return
 			}

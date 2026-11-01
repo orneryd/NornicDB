@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -112,7 +113,7 @@ func TestTxReads_StreamNodesByLabelProjected_MergesSnapshotAndPendingWrites(t *t
 	require.NoError(t, err)
 
 	var nodes []*Node
-	err = tx.StreamNodesByLabelProjected("Person", []string{"name"}, func(node *Node) error {
+	err = tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"name"}, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	})
@@ -140,7 +141,7 @@ func TestTxReads_StreamNodesByLabelProjected_CallbackCanReadWithPendingWrites(t 
 		t.Run(pass, func(t *testing.T) {
 			var visited []NodeID
 			lockAvailable := true
-			err := tx.StreamNodesByLabelProjected("Person", []string{"name"}, func(node *Node) error {
+			err := tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"name"}, func(node *Node) error {
 				visited = append(visited, node.ID)
 				if !tx.mu.TryLock() {
 					lockAvailable = false
@@ -182,13 +183,13 @@ func BenchmarkTxReads_StreamNodesByLabelProjectedWithPendingWrites(b *testing.B)
 		visited++
 		return nil
 	}
-	require.NoError(b, tx.StreamNodesByLabelProjected("Person", properties, visit))
+	require.NoError(b, tx.StreamNodesByLabelProjected(context.Background(), "Person", properties, visit))
 	require.Equal(b, 4, visited)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
 		visited = 0
-		if err := tx.StreamNodesByLabelProjected("Person", properties, visit); err != nil || visited != 4 {
+		if err := tx.StreamNodesByLabelProjected(context.Background(), "Person", properties, visit); err != nil || visited != 4 {
 			b.Fatalf("stream visited %d nodes: %v", visited, err)
 		}
 	}
@@ -201,7 +202,7 @@ func TestTxReads_StreamNodesByLabelProjected_StopsWithoutMaterializingRemainder(
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	visited := 0
-	err = tx.StreamNodesByLabelProjected("Person", []string{"name"}, func(*Node) error {
+	err = tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"name"}, func(*Node) error {
 		visited++
 		return ErrIterationStopped
 	})
@@ -218,7 +219,7 @@ func TestTxReads_StreamNodesByLabelProjected_ReplaysBoundedPrefixAndResumes(t *t
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	visited := 0
-	err = tx.StreamNodesByLabelProjected("Person", []string{"name"}, func(*Node) error {
+	err = tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"name"}, func(*Node) error {
 		visited++
 		return ErrIterationStopped
 	})
@@ -236,7 +237,7 @@ func TestTxReads_StreamNodesByLabelProjected_ReplaysBoundedPrefixAndResumes(t *t
 	require.NoError(t, err)
 
 	var nodes []*Node
-	err = tx.StreamNodesByLabelProjected("Person", []string{"name"}, func(node *Node) error {
+	err = tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"name"}, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	})
@@ -259,7 +260,7 @@ func TestTxReads_StreamNodesByLabel_UnprojectedPrefixAndLargePayloadGuard(t *tes
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	err = tx.StreamNodesByLabelProjected("Person", nil, func(*Node) error {
+	err = tx.StreamNodesByLabelProjected(context.Background(), "Person", nil, func(*Node) error {
 		return ErrIterationStopped
 	})
 	require.ErrorIs(t, err, ErrIterationStopped)
@@ -269,7 +270,7 @@ func TestTxReads_StreamNodesByLabel_UnprojectedPrefixAndLargePayloadGuard(t *tes
 	_, err = tx.CreateNode(&Node{ID: largeID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Large"}})
 	require.NoError(t, err)
 	seen := make([]NodeID, 0, 5)
-	err = tx.StreamNodesByLabelProjected("Person", nil, func(node *Node) error {
+	err = tx.StreamNodesByLabelProjected(context.Background(), "Person", nil, func(node *Node) error {
 		seen = append(seen, node.ID)
 		return nil
 	})
@@ -321,7 +322,7 @@ func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
 	var uncached NodeID
 	for pass := 0; pass < 2; pass++ {
 		visited := 0
-		require.NoError(t, reader.StreamNodesByLabelProjected("Person", []string{}, func(node *Node) error {
+		require.NoError(t, reader.StreamNodesByLabelProjected(context.Background(), "Person", []string{}, func(node *Node) error {
 			visited++
 			if _, cached := reader.snapshotNodeLabels[node.ID]; !cached {
 				uncached = node.ID
@@ -396,7 +397,7 @@ func TestTxReads_GetNodeUsesUnprojectedSnapshotPrefix(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	err = tx.StreamNodesByLabelProjected("Person", nil, func(*Node) error {
+	err = tx.StreamNodesByLabelProjected(context.Background(), "Person", nil, func(*Node) error {
 		return ErrIterationStopped
 	})
 	require.ErrorIs(t, err, ErrIterationStopped)
@@ -441,7 +442,7 @@ func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *t
 	readNames := func() map[NodeID]string {
 		t.Helper()
 		names := make(map[NodeID]string)
-		err := reader.StreamNodesByLabelProjected("Person", []string{"name"}, func(node *Node) error {
+		err := reader.StreamNodesByLabelProjected(context.Background(), "Person", []string{"name"}, func(node *Node) error {
 			names[node.ID] = node.Properties["name"].(string)
 			return nil
 		})
@@ -624,12 +625,12 @@ func TestTxReads_GetEdgesByType(t *testing.T) {
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Two committed KNOWS edges, no pending.
-	knows, err := tx.GetEdgesByType("KNOWS")
+	knows, err := tx.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e-knows-1", "test:e-knows-2"}, edgeIDs(knows))
 
 	// FOLLOWS has exactly one.
-	follows, err := tx.GetEdgesByType("FOLLOWS")
+	follows, err := tx.GetEdgesByType(context.Background(), "FOLLOWS")
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e-follows"}, edgeIDs(follows))
 
@@ -638,7 +639,7 @@ func TestTxReads_GetEdgesByType(t *testing.T) {
 		ID: "test:e-knows-pending", StartNode: "test:bob", EndNode: "test:dave",
 		Type: "KNOWS",
 	}))
-	knows, err = tx.GetEdgesByType("KNOWS")
+	knows, err = tx.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"test:e-knows-1", "test:e-knows-2", "test:e-knows-pending",
@@ -649,12 +650,12 @@ func TestTxReads_GetEdgesByType(t *testing.T) {
 		ID: "test:e-mentions", StartNode: "test:alice", EndNode: "test:dave",
 		Type: "MENTIONS",
 	}))
-	knows, err = tx.GetEdgesByType("KNOWS")
+	knows, err = tx.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	require.NotContains(t, edgeIDs(knows), "test:e-mentions")
 
 	// Empty type returns nothing (no edge has empty type).
-	none, err := tx.GetEdgesByType("NEVER")
+	none, err := tx.GetEdgesByType(context.Background(), "NEVER")
 	require.NoError(t, err)
 	require.Empty(t, none)
 }
@@ -665,13 +666,13 @@ func TestTxReads_GetNodesByLabel(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	people, err := tx.GetNodesByLabel("Person")
+	people, err := tx.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"test:alice", "test:bob", "test:carol", "test:dave",
 	}, nodeIDs(people))
 
-	engineers, err := tx.GetNodesByLabel("Engineer")
+	engineers, err := tx.GetNodesByLabel(context.Background(), "Engineer")
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:alice"}, nodeIDs(engineers))
 }
@@ -690,24 +691,24 @@ func TestTxReads_GetNodesByLabel_PendingNodeMerges(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	people, err := tx.GetNodesByLabel("Person")
+	people, err := tx.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"test:alice", "test:bob", "test:carol", "test:dave", "test:eve",
 	}, nodeIDs(people))
 
-	designers, err := tx.GetNodesByLabel("Designer")
+	designers, err := tx.GetNodesByLabel(context.Background(), "Designer")
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:eve"}, nodeIDs(designers))
 
 	// Deleted committed node must drop out.
 	require.NoError(t, tx.DeleteGraphNode("test:bob", CascadeEdges))
-	people, err = tx.GetNodesByLabel("Person")
+	people, err = tx.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.NotContains(t, nodeIDs(people), "test:bob")
 
 	// Unknown label returns empty, not error.
-	none, err := tx.GetNodesByLabel("NoSuchLabel")
+	none, err := tx.GetNodesByLabel(context.Background(), "NoSuchLabel")
 	require.NoError(t, err)
 	require.Empty(t, none)
 }
@@ -735,20 +736,17 @@ func TestTxReads_GetFirstNodeByLabel(t *testing.T) {
 	require.Nil(t, got)
 }
 
-func TestTxReads_AllNodesAndGetAllNodes(t *testing.T) {
+func TestTxReads_AllNodes(t *testing.T) {
 	engine := txReadFixture(t)
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	all, err := tx.AllNodes()
+	all, err := tx.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"other:doc", "test:alice", "test:bob", "test:carol", "test:dave",
 	}, nodeIDs(all))
-
-	// GetAllNodes wraps AllNodes and swallows errors.
-	require.Equal(t, nodeIDs(all), nodeIDs(tx.GetAllNodes()))
 
 	// Pending node added, deleted node removed, both reflected.
 	_, err = tx.CreateNode(&Node{
@@ -757,7 +755,7 @@ func TestTxReads_AllNodesAndGetAllNodes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteGraphNode("test:dave", CascadeEdges))
 
-	all, err = tx.AllNodes()
+	all, err = tx.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"other:doc", "test:alice", "test:bob", "test:carol", "test:eve",
@@ -784,7 +782,7 @@ func TestTxReads_MergePendingNodesLocked(t *testing.T) {
 		},
 	}
 
-	merged := tx.mergePendingNodesLocked([]*Node{nil, committedNode, deletedNode, otherNode}, func(node *Node) bool {
+	merged, err := tx.mergePendingNodesLocked(context.Background(), []*Node{nil, committedNode, deletedNode, otherNode}, func(node *Node) bool {
 		if node == nil {
 			return false
 		}
@@ -795,6 +793,7 @@ func TestTxReads_MergePendingNodesLocked(t *testing.T) {
 		}
 		return false
 	})
+	require.NoError(t, err)
 
 	require.Equal(t, []string{"test:alice", "test:carol"}, nodeIDs(merged))
 	require.Equal(t, []string{"Person", "Engineer"}, merged[0].Labels)
@@ -827,9 +826,10 @@ func TestTxReads_MergePendingEdgesLocked(t *testing.T) {
 		},
 	}
 
-	merged := tx.mergePendingEdgesLocked([]*Edge{nil, committedEdge, deletedEdge}, func(edge *Edge) bool {
+	merged, err := tx.mergePendingEdgesLocked(context.Background(), []*Edge{nil, committedEdge, deletedEdge}, func(edge *Edge) bool {
 		return edge != nil && edge.Type == "KNOWS"
 	})
+	require.NoError(t, err)
 
 	require.Equal(t, []string{"test:e1", "test:e3"}, edgeIDs(merged))
 	require.Equal(t, int64(2024), merged[0].Properties["since"])
@@ -839,45 +839,59 @@ func TestTxReads_MergePendingEdgesLocked(t *testing.T) {
 	require.Equal(t, int64(2020), committedEdge.Properties["since"])
 }
 
-func TestTxReads_GetAllNodes_ClosedTransactionReturnsNil(t *testing.T) {
+func TestTxReads_AllNodes_ClosedTransactionReturnsError(t *testing.T) {
 	tx := &BadgerTransaction{Status: TxStatusCommitted}
-	require.Nil(t, tx.GetAllNodes())
+	nodes, err := tx.AllNodes(context.Background())
+	require.ErrorIs(t, err, ErrTransactionClosed)
+	require.Nil(t, nodes)
 }
 
-func BenchmarkTxReads_MergePendingNodesLocked_NoOverlay(b *testing.B) {
+// benchmarkTxReadsMergePendingNodes times mergePendingNodesLocked over 512
+// committed Person nodes. pendingNodes builds the overlay before the timer
+// starts and is nil for the committed-only case.
+func benchmarkTxReadsMergePendingNodes(b *testing.B, pendingNodes func() map[NodeID]*Node) {
+	b.Helper()
 	committed := make([]*Node, 512)
 	for i := range committed {
 		committed[i] = &Node{ID: NodeID("test:n" + strconv.Itoa(i)), Labels: []string{"Person"}}
 	}
-	tx := &BadgerTransaction{Status: TxStatusActive}
+	var overlay map[NodeID]*Node
+	if pendingNodes != nil {
+		overlay = pendingNodes()
+	}
+	tx := &BadgerTransaction{Status: TxStatusActive, pendingNodes: overlay}
 	include := func(node *Node) bool { return node != nil && len(node.Labels) > 0 && node.Labels[0] == "Person" }
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := tx.mergePendingNodesLocked(committed, include); len(got) != 512 {
-			b.Fatalf("expected 512 nodes, got %d", len(got))
+		if got, err := tx.mergePendingNodesLocked(context.Background(), committed, include); err != nil || len(got) != 512 {
+			b.Fatalf("expected 512 nodes, got %d (err %v)", len(got), err)
 		}
 	}
 }
 
-func BenchmarkTxReads_MergePendingNodesLocked_WithOverlay(b *testing.B) {
-	committed := make([]*Node, 512)
+// pendingNodeOverlay replaces the first 64 committed Person nodes with pending
+// Person/Engineer replacements.
+func pendingNodeOverlay() map[NodeID]*Node {
 	pending := make(map[NodeID]*Node, 64)
-	for i := range committed {
-		committed[i] = &Node{ID: NodeID("test:n" + strconv.Itoa(i)), Labels: []string{"Person"}}
-	}
 	for i := 0; i < 64; i++ {
 		id := NodeID("test:n" + strconv.Itoa(i))
 		pending[id] = &Node{ID: id, Labels: []string{"Person", "Engineer"}}
 	}
-	tx := &BadgerTransaction{Status: TxStatusActive, pendingNodes: pending}
-	include := func(node *Node) bool { return node != nil && len(node.Labels) > 0 && node.Labels[0] == "Person" }
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if got := tx.mergePendingNodesLocked(committed, include); len(got) != 512 {
-			b.Fatalf("expected 512 nodes, got %d", len(got))
-		}
+	return pending
+}
+
+func BenchmarkTxReads_MergePendingNodesLocked(b *testing.B) {
+	for _, test := range []struct {
+		name         string
+		pendingNodes func() map[NodeID]*Node
+	}{
+		{name: "committed_512_without_pending_overlay"},
+		{name: "committed_512_with_pending_overlay", pendingNodes: pendingNodeOverlay},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			benchmarkTxReadsMergePendingNodes(b, test.pendingNodes)
+		})
 	}
 }
 
@@ -896,8 +910,8 @@ func BenchmarkTxReads_MergePendingEdgesLocked_WithOverlay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := tx.mergePendingEdgesLocked(committed, include); len(got) != 512 {
-			b.Fatalf("expected 512 edges, got %d", len(got))
+		if got, err := tx.mergePendingEdgesLocked(context.Background(), committed, include); err != nil || len(got) != 512 {
+			b.Fatalf("expected 512 edges, got %d (err %v)", len(got), err)
 		}
 	}
 }
@@ -922,7 +936,7 @@ func TestTxReads_BulkCreateEdges_Success(t *testing.T) {
 		{ID: "test:e-bulk-3", StartNode: "test:alice", EndNode: "test:eve", Type: "BULK"},
 	}))
 
-	got, err := tx.GetEdgesByType("BULK")
+	got, err := tx.GetEdgesByType(context.Background(), "BULK")
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"test:e-bulk-1", "test:e-bulk-2", "test:e-bulk-3",
@@ -1040,7 +1054,7 @@ func TestTxReads_CreateEdgeSingleAndBulkAgree(t *testing.T) {
 // readDirectionalEdges reads one transaction edge-read and returns its edges.
 func readDirectionalEdges(t *testing.T, tx *BadgerTransaction, request TransactionEdgeRead) []*Edge {
 	t.Helper()
-	edges, err := tx.ReadEdges(request)
+	edges, err := tx.ReadEdges(context.Background(), request)
 	require.NoError(t, err)
 	return edges
 }

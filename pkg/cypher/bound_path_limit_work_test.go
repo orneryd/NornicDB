@@ -15,14 +15,14 @@ type boundedPathWorkEngine struct {
 	reads int
 }
 
-func (s *boundedPathWorkEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (s *boundedPathWorkEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	s.reads++
-	edges, err := s.Engine.GetOutgoingEdges(id)
+	edges, err := s.Engine.GetOutgoingEdges(ctx, id)
 	return stableBoundPathEdges(edges), err
 }
-func (s *boundedPathWorkEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (s *boundedPathWorkEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	s.reads++
-	edges, err := s.Engine.GetIncomingEdges(id)
+	edges, err := s.Engine.GetIncomingEdges(ctx, id)
 	return stableBoundPathEdges(edges), err
 }
 func stableBoundPathEdges(edges []*storage.Edge) []*storage.Edge {
