@@ -506,7 +506,7 @@ release ownership, milestones, and verification. Read it before choosing a branc
   Do not include unrelated unreleased feature commits in a maintenance PR.
 - After a maintenance PR merges, sync `main` into `develop`. An active release branch must also include the
   updated `main` before final verification and tagging. Coordinate history changes with the maintainer.
-- PRs targeting `develop` are closed by a governance workflow. A release-branch PR targeting `main` requests full verification on opening and updates, gated by `admin-approved-actions`; other PRs do not automatically start CI. Manual checks also require administrator approval. Automatic develop nightly/canary runs are paused; existing main push and tag publishing triggers remain active.
+- PRs targeting `develop` are closed by a governance workflow. A release-branch PR targeting `main` runs full verification automatically on opening and updates without administrator approval; other PRs do not automatically start CI. Manual checks also require administrator approval. Automatic develop nightly/canary runs are paused; existing main push and tag publishing triggers remain active.
 - Choosing a PR route does not authorize pushing, merging, tagging, or changing repository settings.
 
 ### Temporary local PR verification policy (through October 31, 2026)
