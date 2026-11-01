@@ -83,8 +83,10 @@ func (p *pendingNodeIndex) add(node *Node) {
 
 // addValue indexes node's value of property under label.
 func (p *pendingNodeIndex) addValue(node *Node, label, property string) {
-	valueKey, ok := indexValueKey(node.Properties[property])
-	if !ok {
+	// The pending index mirrors writes the engine already accepted, so the key
+	// has that write's lifetime: it cannot cancel.
+	valueKey, ok, err := indexValueKey(context.Background(), node.Properties[property])
+	if err != nil || !ok {
 		return
 	}
 	key := pendingValueKey{label: label, property: property, value: valueKey}
@@ -114,8 +116,8 @@ func (p *pendingNodeIndex) remove(node *Node) {
 			}
 		}
 		for property := range p.tracked[label] {
-			valueKey, ok := indexValueKey(node.Properties[property])
-			if !ok {
+			valueKey, ok, err := indexValueKey(context.Background(), node.Properties[property])
+			if err != nil || !ok {
 				continue
 			}
 			key := pendingValueKey{label: label, property: property, value: valueKey}
@@ -180,8 +182,14 @@ func (p *pendingNodeIndex) sameEntries(prev, node *Node) bool {
 	}
 	for _, label := range node.Labels {
 		for property := range p.tracked[label] {
-			before, beforeOK := indexValueKey(prev.Properties[property])
-			after, afterOK := indexValueKey(node.Properties[property])
+			before, beforeOK, err := indexValueKey(context.Background(), prev.Properties[property])
+			if err != nil {
+				return false
+			}
+			after, afterOK, err := indexValueKey(context.Background(), node.Properties[property])
+			if err != nil {
+				return false
+			}
 			if beforeOK != afterOK || before != after {
 				return false
 			}
@@ -224,7 +232,10 @@ func (p *pendingNodeIndex) track(ctx context.Context, label, property string, ca
 		if node == nil || !hasLabel(node.Labels, label) {
 			continue
 		}
-		value, ok := indexValueKey(node.Properties[property])
+		value, ok, err := indexValueKey(ctx, node.Properties[property])
+		if err != nil {
+			return err
+		}
 		if !ok {
 			continue
 		}
@@ -264,7 +275,7 @@ type pendingWriteSource interface {
 	unlockPendingWrites()
 	// trackPendingValues indexes these (label, property) pairs of pending
 	// nodes by value.
-	trackPendingValues(pairs []pendingPropertyKey)
+	trackPendingValues(context.Context, []pendingPropertyKey) error
 }
 
 // pendingWriteOwner reports a node with a pending create, update or delete,
@@ -402,7 +413,11 @@ func (sm *SchemaManager) trackPendingPairs() {
 		}
 	}
 	sm.mu.RUnlock()
-	attachment.source.trackPendingValues(pairs)
+	// Schema attachment/DDL publishes accepted maintenance, with no request
+	// context in this existing context-free owner. A failure is an invariant.
+	if err := attachment.source.trackPendingValues(context.Background(), pairs); err != nil {
+		panic(err)
+	}
 }
 
 // beginPendingRead locks the attached source's pending writes and returns

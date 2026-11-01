@@ -7,7 +7,6 @@ import (
 
 	"math/rand"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -232,23 +231,6 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 	}
 }
 
-// pauseAfterSnapshotContext pauses clustering right after k-means copied the
-// population and released the index (the third Err call of a TriggerClustering
-// run: admission check, check under the index locks, first initializer check).
-type pauseAfterSnapshotContext struct {
-	context.Context
-	calls          atomic.Int32
-	paused, resume chan struct{}
-}
-
-func (c *pauseAfterSnapshotContext) Err() error {
-	if c.calls.Add(1) == 3 {
-		close(c.paused)
-		<-c.resume
-	}
-	return c.Context.Err()
-}
-
 func graphHolds(index *HNSWIndex, id string) bool {
 	index.mu.RLock()
 	defer index.mu.RUnlock()
@@ -300,31 +282,15 @@ func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
 					return svc.RemoveNode("seed-0007")
 				}
 				var mutateErr error
-				ctx := &pauseAfterSnapshotContext{Context: context.Background(), paused: make(chan struct{}), resume: make(chan struct{})}
-				if phase == "build" {
-					close(ctx.resume) // no pause in compute
-					ctx.calls.Store(-1 << 20)
-					ivfHNSWBuildHook = func() { mutateErr = mutate() }
-					t.Cleanup(func() { ivfHNSWBuildHook = nil })
-				}
-				done := make(chan error, 1)
-				go func() { done <- svc.TriggerClustering(ctx) }()
+				// Reuse the shared owned component/public coverage fixture. The
+				// public wrapper derives its context, so a caller Err probe cannot
+				// inject into the compute phase. Build uses the real existing hook.
+				fixture := &cgFixture{t: t, svc: svc}
+				applyMutation := func() { mutateErr = mutate() }
 				if phase == "compute" {
-					select {
-					case <-ctx.paused:
-					case err := <-done:
-						t.Fatalf("clustering finished without pausing after its snapshot: %v", err)
-					case <-time.After(time.Minute):
-						t.Fatal("clustering did not reach its snapshot")
-					}
-					mutateErr = mutate()
-					close(ctx.resume)
-				}
-				select {
-				case err := <-done:
-					require.NoError(t, err)
-				case <-time.After(2 * time.Minute):
-					t.Fatal("reclustering did not finish")
+					fixture.duringCompute(applyMutation)
+				} else {
+					fixture.duringBuild(applyMutation)
 				}
 				require.NoError(t, mutateErr)
 

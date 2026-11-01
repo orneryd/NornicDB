@@ -1,11 +1,11 @@
 package storage
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 )
 
 // Schema returns the transaction's isolated schema for purpose. Ordinary DDL
@@ -40,7 +40,7 @@ func (tx *BadgerTransaction) Schema(purpose SchemaPurpose) (*SchemaManager, erro
 		return nil, err
 	}
 	if err == nil {
-		if err := item.Value(func(value []byte) error { return json.Unmarshal(value, definition) }); err != nil {
+		if err := item.Value(func(value []byte) error { return jsontext.Unmarshal(value, definition) }); err != nil {
 			return nil, err
 		}
 	}
@@ -59,12 +59,15 @@ func (tx *BadgerTransaction) Schema(purpose SchemaPurpose) (*SchemaManager, erro
 		if err := tx.admitWriteLocked(); err != nil {
 			return err
 		}
-		blob, err := json.Marshal(updated)
+		// The schema key payload is the canonical JSON encoding shared with the
+		// engine's persistSchemaDefinition: exact string identities admitted by
+		// internal/jsontext survive the write and its published round-trip.
+		blob, err := jsontext.Marshal(updated)
 		if err != nil {
 			return err
 		}
 		persisted := &SchemaDefinition{}
-		if err := json.Unmarshal(blob, persisted); err != nil {
+		if err := jsontext.Unmarshal(blob, persisted); err != nil {
 			return err
 		}
 		if err := tx.badgerTx.Set(schemaKey(tx.namespace), blob); err != nil {

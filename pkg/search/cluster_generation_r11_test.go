@@ -364,7 +364,34 @@ func TestClusterGenerationPolicyRetryCompletesCancelledChange(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cfg := HNSWQuantizationConfig{Mode: HNSWQuantizationBinary}
-	require.ErrorIs(t, f.svc.ConfigureHNSWQuantization(cancelInPolicyApply{ctx, cancel}, cfg), context.Canceled)
+	// Public admission must propagate a real canceled request.
+	cancel()
+	require.ErrorIs(t, f.svc.ConfigureHNSWQuantization(ctx, cfg), context.Canceled)
+	// Lifecycle derivation intentionally hides custom Err probes. Exercise
+	// the same policy publication component after acquiring a real reader;
+	// this proves its phase contract, not public phase injection.
+	ctx, cancel = context.WithCancel(t.Context())
+	defer cancel()
+	owned, release, err := f.svc.beginRead(ctx)
+	require.NoError(t, err)
+	func() {
+		defer release()
+		_, err := f.svc.setHNSWQuantizationOverride(owned, cfg)
+		require.NoError(t, err)
+		err = f.svc.publishClusterGeneration(cancelInPolicyApply{owned, cancel}, clusterPublication{policy: true})
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+		select {
+		case <-ctx.Done():
+		default:
+			t.Fatal("policy probe did not cancel the real request")
+		}
+	}()
+	require.Equal(t, cfg.Mode, f.svc.hnswConfig().Quantization.Mode)
+	f.svc.clusterStateMu.RLock()
+	incompletePolicy := f.svc.clusterGen.policy.Mode
+	f.svc.clusterStateMu.RUnlock()
+	require.NotEqual(t, cfg.Mode, incompletePolicy, "cancellation leaves the generation policy incomplete before retry")
 	require.NoError(t, f.svc.ConfigureHNSWQuantization(context.Background(), cfg))
 	assertClusterGenerationCoherent(t, f.svc, cgAllChecks)
 	// A same-value call on a complete policy changes nothing.

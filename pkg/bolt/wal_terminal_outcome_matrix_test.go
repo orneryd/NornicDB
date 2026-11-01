@@ -186,7 +186,15 @@ func TestBoltWALTerminalOutcomeMatrix(t *testing.T) {
 			if cell.stage == "begin" {
 				server = &boltMatrixBeginRejector{transactionalBoltQueryExecutorAdapter: adapter, before: closeWAL, cause: errors.New(causeText)}
 			}
-			conn := openBoltTestConn(t, startControlledTransactionServer(t, server))
+			// These failures leave the explicit transaction for terminal cleanup.
+			// A closed WAL then rejects its abort record; shutdown must retain
+			// that injected cause rather than report a clean retirement.
+			var shutdownCause error
+			if cell.explicit && cell.closed && (cell.stage == "statement" || cell.stage == "begin") {
+				shutdownCause = storage.ErrWALClosed
+			}
+			conn := openBoltTestConn(t, startControlledTransactionServer(t, server,
+				rollbackShutdownCheck(t, shutdownCause, nil)))
 
 			var code, message string
 			fail := func() {

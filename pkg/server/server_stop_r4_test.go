@@ -14,6 +14,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/retention"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"io"
 	"log"
@@ -207,35 +208,98 @@ type r4ErrorListener struct {
 }
 
 func (l *r4ErrorListener) Close() error { l.closes.Add(1); return l.failure }
+
+// ownedStopHTTP witnesses transport completion separately from the held
+// handler. WaitStopped remains the assertion for the actual lifecycle join.
+type ownedStopHTTP struct {
+	handlerDone, serveDone, requestDone <-chan struct{}
+}
+
+// startOwnedStopHTTP is the fixture's single transport registration and cleanup
+// owner. closeNative explicitly supports a listener whose injected Close reports
+// failure without disposing its underlying OS listener.
+func startOwnedStopHTTP(t *testing.T, s *Server, listener net.Listener, closeNative func() error, gate *stopR2Gate, path string) ownedStopHTTP {
+	t.Helper()
+	requestsCtx, cancelRequests := context.WithCancel(s.shutdown.work.Context())
+	handlerDone := make(chan struct{})
+	server := &http.Server{
+		Handler: s.workMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer close(handlerDone)
+			gate.block()
+			w.WriteHeader(http.StatusOK)
+		})),
+		BaseContext: func(net.Listener) context.Context { return requestsCtx },
+	}
+	// Match Start's listener outcome observation and producer registration;
+	// assigning httpServer alone does not enroll a transport for shutdown.
+	observed := util.ObserveListenerClose(listener, func(err error) { s.shutdown.work.RecordError("HTTP listener close", err) })
+	serveDone, requestDone := make(chan struct{}), make(chan struct{})
+	serving, requesting := false, false
+	t.Cleanup(func() {
+		cancelRequests()
+		gate.open()
+		_ = closeNative() // may differ from the injected listener's Close
+		final, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.beginShutdown(final)
+		var joins []<-chan struct{}
+		if serving {
+			joins = append(joins, serveDone)
+		}
+		if requesting {
+			joins = append(joins, requestDone)
+		}
+		select {
+		case <-gate.entered:
+			joins = append(joins, handlerDone)
+		default:
+		}
+		for _, done := range joins {
+			select {
+			case <-done:
+			case <-final.Done():
+				t.Error("HTTP fixture goroutine did not join during cleanup")
+			}
+		}
+		_ = s.WaitStopped(final)
+		if final.Err() != nil {
+			t.Error("HTTP fixture owner did not actually finish during cleanup")
+		}
+	})
+	s.lifecycleMu.Lock()
+	s.httpServer = server
+	s.listener = observed
+	s.lifecycleMu.Unlock()
+	require.True(t, s.shutdown.work.OnStop(s.stopHTTPServer(server, cancelRequests)))
+	serving = s.runBackground(context.Background(), func(context.Context) {
+		defer close(serveDone)
+		if err := server.Serve(observed); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.shutdown.work.RecordError("", err)
+		}
+	})
+	require.True(t, serving)
+	requesting = true
+	go func() {
+		defer close(requestDone)
+		resp, e := http.Get("http://" + listener.Addr().String() + path)
+		if e == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+	}()
+	return ownedStopHTTP{handlerDone: handlerDone, serveDone: serveDone, requestDone: requestDone}
+}
+
 func TestServerStopR4ForcedCloseOutcome(t *testing.T) {
 	previous := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(previous)
 	s, _ := stopR2Server(t)
 	base, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer base.Close()
 	closeErr := errors.New("r4 listener close failure")
 	listener := &r4ErrorListener{Listener: base, failure: closeErr}
 	gate := newStopR2Gate(t)
-	server := &http.Server{Handler: s.workMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gate.block() }))}
-	s.lifecycleMu.Lock()
-	s.httpServer = server
-	s.listener = listener
-	s.lifecycleMu.Unlock()
-	require.True(t, s.runBackground(context.Background(), func(context.Context) {
-		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.shutdown.work.RecordError("", err)
-		}
-	}))
-	requestDone := make(chan struct{})
-	go func() {
-		defer close(requestDone)
-		resp, e := http.Get("http://" + base.Addr().String())
-		if e == nil {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-		}
-	}()
+	httpWork := startOwnedStopHTTP(t, s, listener, base.Close, gate, "/")
 	stopR2Await(t, gate.entered)
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
@@ -243,9 +307,16 @@ func TestServerStopR4ForcedCloseOutcome(t *testing.T) {
 	// Close intentionally reports failure without closing the listener. The test
 	// releases the real OS listener separately, after the forced owner ran.
 	require.Eventually(t, func() bool { return listener.closes.Load() > 0 }, time.Second, time.Millisecond)
+	select {
+	case <-httpWork.handlerDone:
+		t.Fatal("forced transport close retired a handler before its actual completion")
+	default:
+	}
 	base.Close()
 	gate.open()
-	stopR2Await(t, requestDone)
+	stopR2Await(t, httpWork.handlerDone)
+	stopR2Await(t, httpWork.requestDone)
+	stopR2Await(t, httpWork.serveDone)
 	final, cancelFinal := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancelFinal()
 	outcome := s.WaitStopped(final)

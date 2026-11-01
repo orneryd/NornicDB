@@ -34,7 +34,8 @@ func TestPendingNodeIndexReplaceAddsUnlistedPrev(t *testing.T) {
 
 func mustIndexValueKey(t *testing.T, value any) interface{} {
 	t.Helper()
-	key, ok := indexValueKey(value)
+	key, ok, err := indexValueKey(t.Context(), value)
+	require.NoError(t, err)
 	require.True(t, ok)
 	return key
 }

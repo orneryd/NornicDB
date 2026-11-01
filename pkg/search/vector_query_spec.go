@@ -141,6 +141,9 @@ func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return nil, err
@@ -148,9 +151,6 @@ func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	defer finishRead()
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if requireReady {
 		if err := s.prepareSearchRead(ctx); err != nil {
@@ -204,6 +204,9 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return nil, err
@@ -211,9 +214,6 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	defer finishRead()
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if spec.Limit <= 0 {
 		spec.Limit = 10

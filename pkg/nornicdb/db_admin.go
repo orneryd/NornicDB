@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
@@ -1238,7 +1239,21 @@ func (db *DB) GetIndexes(ctx context.Context) ([]*IndexInfo, error) {
 }
 
 // CreateIndex creates a new index on a label/property combination.
-// Supported types: "property", "fulltext", "vector", "range"
+// Supported types: "property", "btree", "fulltext", "vector", "range"
+//
+// The property and btree types declare the index through the canonical Cypher
+// DDL owner (CREATE INDEX), the same statement a client writes. The
+// declaration and its fill from the stored nodes are staged in one schema
+// transaction and published together at commit, so an equality read that
+// overlaps CreateIndex, and every read after it returns, sees the complete
+// population: the index is either absent (the read scans the label) or filled.
+// Every name is emitted with cyphertext.PrintIdentifier, so a label or
+// property that is not a plain identifier (a dot, comma, backtick or Unicode)
+// keeps its identity.
+//
+// The statement is CREATE INDEX ... IF NOT EXISTS, the canonical duplicate
+// rule: an index that already has this name, or an equivalent index under
+// another name, is left as it is and the call succeeds.
 func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string) error {
 	db.mu.RLock()
 	if db.work.Closing() {
@@ -1258,7 +1273,11 @@ func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string
 
 	switch strings.ToLower(indexType) {
 	case "property", "btree":
-		return schema.AddPropertyIndex(indexName, label, []string{property})
+		statement := "CREATE INDEX " + cyphertext.PrintIdentifier(indexName, nil, cyphertext.RawSource) +
+			" IF NOT EXISTS FOR (n:" + cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource) +
+			") ON (n." + cyphertext.PrintIdentifier(property, nil, cyphertext.RawSource) + ")"
+		_, err := db.ExecuteCypher(ctx, statement, nil)
+		return err
 	case "fulltext":
 		return schema.AddFulltextIndex(indexName, []string{label}, []string{property}, storage.ConstraintEntityNode)
 	case "vector":

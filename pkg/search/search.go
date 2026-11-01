@@ -1866,6 +1866,9 @@ func (s *Service) reconcileClusterPopulation(targetCount int) {
 // be skipped silently and the default non-clustered vector strategy is used.
 // Returns error only if clustering is not enabled or fails unexpectedly.
 func (s *Service) TriggerClustering(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return err
@@ -1877,13 +1880,11 @@ func (s *Service) TriggerClustering(ctx context.Context) error {
 }
 
 // triggerClustering runs with the base operation already owned, either by
-// BuildIndexes or the public TriggerClustering wrapper. lexicalReady, when
+// BuildIndexes or the public TriggerClustering wrapper. Both provide a nonnil
+// owned context; nil normalization belongs to their entry boundaries. lexicalReady, when
 // set, makes the served fulltext available before the generation's lexical
 // state is derived (see buildClusterGeneration).
 func (s *Service) triggerClustering(ctx context.Context, lexicalReady func() error) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if !s.kmeansInProgress.CompareAndSwap(false, true) {
 		s.logPrintf("[K-MEANS] ⏭️  SKIPPED | reason=already_running")
 		return nil

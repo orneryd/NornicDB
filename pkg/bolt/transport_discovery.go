@@ -2,7 +2,6 @@ package bolt
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -16,7 +15,8 @@ import (
 // stored under atomic.Pointer for lock-free reads on the hot path.
 //
 // Returns the initial encoding error if the OAuth config fails URL
-// validation; in that case the server should fail startup.
+// validation, and errServerClosed once the server is stopping; either way the
+// start attempt fails instead of serving a half-published listener.
 func (s *Server) startDiscoveryRefresher(parents ...context.Context) error {
 	initial, err := buildDiscoveryResponse(s.config.OAuthConfig, time.Now())
 	if err != nil {
@@ -30,10 +30,15 @@ func (s *Server) startDiscoveryRefresher(parents ...context.Context) error {
 	}
 	ctx, release, accepted := w.Acquire(parent)
 	if !accepted {
-		return fmt.Errorf("bolt server is closed")
+		return errServerClosed
 	}
 	s.lifecycleMu.Lock()
-	if w.Closing() || s.discoveryStarted {
+	if w.Closing() {
+		s.lifecycleMu.Unlock()
+		release()
+		return errServerClosed
+	}
+	if s.discoveryStarted {
 		s.lifecycleMu.Unlock()
 		release()
 		return nil

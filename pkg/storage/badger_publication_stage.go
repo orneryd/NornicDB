@@ -264,8 +264,11 @@ func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id N
 			if !ok {
 				continue
 			}
-			key, keyed := indexValueKey(value)
-			if !keyed {
+			// Publication keys belong to the commit being ordered, which carries no
+			// request of its own: the key has that commit's lifetime and cannot
+			// cancel.
+			key, keyed, err := indexValueKey(context.Background(), value)
+			if err != nil || !keyed {
 				continue
 			}
 			dependency := uniqueConstraintLockKey{label: rule.label, property: rule.property, value: key}
@@ -308,8 +311,8 @@ func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id E
 				single := [1]string{rule.property}
 				properties = single[:]
 			}
-			values, ok := relationshipConstraintValueKeys(properties, edge.Properties, true)
-			if !ok || len(values) == 0 {
+			values, ok, err := relationshipConstraintValueKeys(context.Background(), properties, edge.Properties, true)
+			if err != nil || !ok || len(values) == 0 {
 				continue
 			}
 			var key interface{} = values[0]

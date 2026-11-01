@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"io"
 	"os"
 	"path/filepath"
@@ -974,7 +975,7 @@ func applySchemaDefinition(engine storage.Engine, path string) error {
 		return err
 	}
 	var def storage.SchemaDefinition
-	if err := json.Unmarshal(contents, &def); err != nil {
+	if err := jsontext.Unmarshal(contents, &def); err != nil {
 		return err
 	}
 	schema := engine.GetSchema()

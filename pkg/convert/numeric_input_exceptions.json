@@ -87,10 +87,6 @@
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
     "sha256": "400b56ff355412fb8666d1165eb51d57a5baa17dd692e50c7637cf1fae32ed16"
   },
-  "pkg/cypher/executor_mutations.go:collectDeleteWithLimitCandidates": {
-    "reason": "DELETE fast-route admission accepts its fixed native list shapes and otherwise declines to the shared pipeline. #1594 adds structural property inspection before row evaluation; no numeric/list conversion is implemented here.",
-    "sha256": "456d33968fe3712556552fdc525954e70ab29ad2ccc1d534fc506621fd4846a9"
-  },
   "pkg/cypher/executor_mutations.go:normalizedCypherValue": {
     "reason": "Runtime/property admission shares temporal/null/container traversal; numeric classification and checked property coercion use ReadNumber/Number.Int64, while runtime numeric carriers stay exact.",
     "sha256": "669666ccb6e2abce773554afd5848d65c33f6174136d3fc4c79b1236e35115f6"

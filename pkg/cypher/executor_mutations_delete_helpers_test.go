@@ -38,51 +38,11 @@ func TestDeleteProjectionCanonicalMultiplicityAndCounters(t *testing.T) {
 	}
 }
 
-func TestDeleteHelpers_CollectCandidatesAndProjection(t *testing.T) {
+func TestDeleteHelpers_ApplyDeleteReturnProjection(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "delete_helpers_cov")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
-
-	_, err := exec.Execute(ctx, `
-CREATE (:Person {id:'p1', team:'red'}),
-       (:Person {id:'p2', team:'blue'}),
-       (:Person {id:'p3', team:'red'})
-`, nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE INDEX person_team_idx IF NOT EXISTS FOR (n:Person) ON (n.team)", nil)
-	require.NoError(t, err)
-
-	nodes, handled, err := exec.collectDeleteWithLimitCandidates(ctx, "RETURN 1", "n", 10, nil)
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Nil(t, nodes)
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person)", "x", 10, nil)
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Nil(t, nodes)
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team = 'red'", "n", 1, nil)
-	require.NoError(t, err)
-	require.True(t, handled)
-	require.Len(t, nodes, 1)
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team IN $teams", "n", 10, map[string]interface{}{"teams": []string{"blue"}})
-	require.NoError(t, err)
-	require.True(t, handled)
-	require.Len(t, nodes, 1)
-	require.Equal(t, "blue", nodes[0].Properties["team"])
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team IN $teams", "n", 10, map[string]interface{}{"teams": int64(1)})
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Nil(t, nodes)
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team > 'a'", "n", 10, nil)
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Nil(t, nodes)
 
 	res := &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
 	// A retained native value carries the source of this fixture's store.
@@ -270,15 +230,4 @@ func TestDeleteHelpers_ClassifyDeleteTargetValue(t *testing.T) {
 	require.Equal(t, storage.NodeID("n1"), classifyDeleteTargetValue("n1").nodeID)
 	require.Equal(t, deleteProjectionNode, classifyDeleteTargetValue(map[string]interface{}{"_nodeId": "n2"}).kind)
 	require.Equal(t, deleteProjectionRelationship, classifyDeleteTargetValue(map[string]interface{}{"_edgeId": "r2"}).kind)
-}
-
-func TestWherePartNodePattern(t *testing.T) {
-	np := nodePatternInfo{labels: []string{"A"}}
-	out := wherePartNodePattern(np, "n")
-	require.Equal(t, "n", out.variable)
-	require.Equal(t, []string{"A"}, out.labels)
-
-	np2 := nodePatternInfo{variable: "x", labels: []string{"B"}}
-	out2 := wherePartNodePattern(np2, "n")
-	require.Equal(t, "x", out2.variable)
 }

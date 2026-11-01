@@ -48,13 +48,17 @@ func TestPropertyIndexNumericKeysExact(t *testing.T) {
 	}
 
 	// Keys: a float64 key only where a float64 holds the value exactly.
-	key, _ := indexValueKey(int64(9007199254740992))
+	key, _, keyErr := indexValueKey(t.Context(), int64(9007199254740992))
+	require.NoError(t, keyErr)
 	require.Equal(t, float64(9007199254740992), key)
-	key, _ = indexValueKey(int64(9007199254740993))
+	key, _, keyErr = indexValueKey(t.Context(), int64(9007199254740993))
+	require.NoError(t, keyErr)
 	require.Equal(t, uint64(9007199254740993), key)
-	key, _ = indexValueKey(int64(-9007199254740993))
+	key, _, keyErr = indexValueKey(t.Context(), int64(-9007199254740993))
+	require.NoError(t, keyErr)
 	require.Equal(t, int64(-9007199254740993), key)
-	key, _ = indexValueKey(uint(9007199254740993))
+	key, _, keyErr = indexValueKey(t.Context(), uint(9007199254740993))
+	require.NoError(t, keyErr)
 	require.Equal(t, uint64(9007199254740993), key)
 
 	require.Equal(t, []NodeID{ids[2]}, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "P", "id", int64(9007199254740993))))
@@ -110,7 +114,8 @@ func TestPropertyIndexNumericKeysExact(t *testing.T) {
 	// An all-number index still narrows by binary search across the forms.
 	idx := &PropertyIndex{values: map[interface{}][]NodeID{}, keysDirty: true}
 	for _, value := range values {
-		k, ok := indexValueKey(value)
+		k, ok, keyErr := indexValueKey(t.Context(), value)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
 		idx.values[k] = []NodeID{"x"}
 	}

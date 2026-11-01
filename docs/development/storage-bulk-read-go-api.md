@@ -13,8 +13,8 @@ a mock with the old signature may silently stop implementing an optional interfa
 | Scoped and MVCC reads | Context-first bulk label/type/adjacency reads, including their namespace and snapshot variants |
 | Stored entity readers | Stored bulk label/adjacency reads and label/type streams, including scoped variants |
 
-The authoritative signatures are in [types.go](../../pkg/storage/types.go) and
-[stored_entity_reader.go](../../pkg/storage/stored_entity_reader.go). Existing
+The authoritative signatures are in [types.go](https://github.com/orneryd/NornicDB/blob/release/v1.4.4/pkg/storage/types.go) and
+[stored_entity_reader.go](https://github.com/orneryd/NornicDB/blob/release/v1.4.4/pkg/storage/stored_entity_reader.go). Existing
 context-bearing streams keep their caller context. Namespace, transaction,
 projection, remote and other adapters must forward the actual context instead of
 substituting a background context. Remote reads additionally retain their existing

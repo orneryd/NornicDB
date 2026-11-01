@@ -21,7 +21,10 @@ func (seen constraintCreationValues) add(ctx context.Context, id string, values 
 		return "", false, err
 	}
 	bucketValues, _ := constraintCreationBucketList(values)
-	key, ok := compositeIndexKeyOf(bucketValues)
+	key, ok, err := compositeIndexKeyOf(ctx, bucketValues)
+	if err != nil {
+		return "", false, err
+	}
 	if !ok {
 		// Keep a bounded candidate bucket for other comparable property values
 		// (e.g. timestamps), rather than turning a large temporal backfill into
@@ -31,11 +34,16 @@ func (seen constraintCreationValues) add(ctx context.Context, id string, values 
 			if err := ctx.Err(); err != nil {
 				return "", false, err
 			}
-			if part, valid := compositeIndexKeyOf(value); valid {
+			if part, valid, err := compositeIndexKeyOf(ctx, value); err != nil {
+				return "", false, err
+			} else if valid {
 				canonical[i] = part
 				continue
 			}
-			part, valid := indexValueKey(value)
+			part, valid, err := indexValueKey(ctx, value)
+			if err != nil {
+				return "", false, err
+			}
 			if !valid {
 				canonical = nil
 				break
@@ -51,7 +59,22 @@ func (seen constraintCreationValues) add(ctx context.Context, id string, values 
 			key = compositeIndexKey(composite.Hash)
 		}
 	}
-	for _, prior := range seen[key] {
+	priorValues := seen[key]
+	if len(priorValues) > 0 {
+		// A tuple with a value unequal to itself cannot match any candidate
+		// under the same constraint equality. Keep at most the first such
+		// tuple in its bucket instead of growing a quadratic collision scan.
+		// Distinct ordinary buckets need no extra value traversal.
+		for _, value := range values {
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
+			if !compareValues(value, value) {
+				return "", false, ctx.Err()
+			}
+		}
+	}
+	for _, prior := range priorValues {
 		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
@@ -78,7 +101,7 @@ func (seen constraintCreationValues) add(ctx context.Context, id string, values 
 	if err := ctx.Err(); err != nil {
 		return "", false, err
 	}
-	seen[key] = append(seen[key], constraintCreationValue{id: id, values: values})
+	seen[key] = append(priorValues, constraintCreationValue{id: id, values: values})
 	return "", false, nil
 }
 

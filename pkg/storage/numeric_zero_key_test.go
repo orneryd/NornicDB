@@ -11,13 +11,15 @@ import (
 // canonical numeric key must be identical for them, not just Go map equality.
 func TestNumericKeyZeroSignsSerializeAlike(t *testing.T) {
 	zeros := []interface{}{math.Copysign(0, -1), 0.0, int64(0), float32(math.Copysign(0, -1)), uint64(0)}
-	key, ok := indexValueKey(zeros[0])
+	key, ok, keyErr := indexValueKey(t.Context(), zeros[0])
+	require.NoError(t, keyErr)
 	require.True(t, ok)
 	require.False(t, math.Signbit(key.(float64)))
 	tuple := Constraint{Type: ConstraintUnique, Label: "Z", Properties: []string{"tenant", "v"}}
 	var hashes, locks, relationships []interface{}
 	for _, zero := range zeros {
-		k, ok := indexValueKey(zero)
+		k, ok, keyErr := indexValueKey(t.Context(), zero)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
 		composite, err := NewCompositeKey(t.Context(), k, uint64(9007199254740993))
 		require.NoError(t, err)
@@ -28,7 +30,8 @@ func TestNumericKeyZeroSignsSerializeAlike(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ok)
 		locks = append(locks, lock)
-		rel, ok := relationshipConstraintValues([]string{"tenant"}, props)
+		rel, ok, keyErr := relationshipConstraintValueKeys(t.Context(), []string{"tenant"}, props, false)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
 		relationships = append(relationships, rel[0])
 	}
@@ -38,13 +41,15 @@ func TestNumericKeyZeroSignsSerializeAlike(t *testing.T) {
 		}
 	}
 	// Non-zero keys and NaN keep their own forms.
-	one, _ := indexValueKey(int64(1))
+	one, _, keyErr := indexValueKey(t.Context(), int64(1))
+	require.NoError(t, keyErr)
 	keyHash, err := NewCompositeKey(t.Context(), key)
 	require.NoError(t, err)
 	oneHash, err := NewCompositeKey(t.Context(), one)
 	require.NoError(t, err)
 	require.NotEqual(t, keyHash.Hash, oneHash.Hash)
 
-	_, ok = relationshipConstraintValues([]string{"v"}, map[string]interface{}{"v": math.NaN()})
+	_, ok, keyErr = relationshipConstraintValueKeys(t.Context(), []string{"v"}, map[string]interface{}{"v": math.NaN()}, false)
+	require.NoError(t, keyErr)
 	require.False(t, ok, "NaN is no equality key")
 }

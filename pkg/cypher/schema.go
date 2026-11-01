@@ -870,7 +870,7 @@ func (e *StorageExecutor) parseCreateIndexDDL(cypher string, prefixKeyword strin
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("ON"), nil)
 	}
 
-	properties := e.parseQualifiedIndexProperties(propsSegment)
+	properties := indexPropertiesFromOnClause(propsSegment, false)
 	if len(properties) == 0 {
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaIndexPropertiesRequired(), nil)
 	}
@@ -938,7 +938,7 @@ func (e *StorageExecutor) parseCreateIndexLegacyDDL(cypher, prefix string) (pars
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
 
-	properties := e.parseIndexProperties(inside)
+	properties := indexPropertiesFromOnClause(inside, true)
 	if len(properties) == 0 {
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaIndexPropertiesRequired(), nil)
 	}
@@ -1171,7 +1171,7 @@ func (e *StorageExecutor) parseCreateFulltextIndexDDL(cypher string) (parsedCrea
 		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
 
-	properties := e.parseQualifiedIndexProperties(propsSegment)
+	properties := indexPropertiesFromOnClause(propsSegment, false)
 	if len(properties) == 0 {
 		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaFulltextPropertiesRequired(), nil)
 	}
@@ -1377,7 +1377,7 @@ func (e *StorageExecutor) parseNodeKeyPropertyList(expr string) ([]string, bool)
 	if !ok || strings.TrimSpace(rest[end:]) != "" {
 		return nil, false
 	}
-	props := e.parseConstraintProperties(inside)
+	props := indexPropertiesFromOnClause(inside, false)
 	return props, true
 }
 
@@ -1509,13 +1509,13 @@ func (e *StorageExecutor) parseRelationshipKeyOrCompositeUniquePredicate(predica
 		if idx := keywordIndexFrom(rest, "IS RELATIONSHIP KEY", 0, defaultKeywordScanOpts()); idx == 0 {
 			end, ok := keywordSpanAt(rest, 0, "IS RELATIONSHIP KEY")
 			if ok && strings.TrimSpace(rest[end:]) == "" {
-				return "rel_key", e.parseConstraintProperties(inside), true
+				return "rel_key", indexPropertiesFromOnClause(inside, false), true
 			}
 		}
 		if idx := keywordIndexFrom(rest, "IS UNIQUE", 0, defaultKeywordScanOpts()); idx == 0 {
 			end, ok := keywordSpanAt(rest, 0, "IS UNIQUE")
 			if ok && strings.TrimSpace(rest[end:]) == "" {
-				return "unique", e.parseConstraintProperties(inside), true
+				return "unique", indexPropertiesFromOnClause(inside, false), true
 			}
 		}
 	}
@@ -1575,7 +1575,7 @@ func (e *StorageExecutor) parseTemporalConstraintPredicate(requireExpr string) (
 			return nil, false
 		}
 	}
-	return e.parseConstraintProperties(inside), true
+	return indexPropertiesFromOnClause(inside, false), true
 }
 
 func (e *StorageExecutor) parseCreateConstraintTemporalDDL(cypher string) (parsedTemporalConstraintDDL, error) {
@@ -2038,16 +2038,6 @@ func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(cypher string) 
 	return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
 }
 
-// parseIndexProperties parses property list from index ON clause.
-//
-// Handles both single and composite property syntax:
-//   - "n.property"           -> ["property"]
-//   - "n.prop1, n.prop2"     -> ["prop1", "prop2"]
-//   - "n.a, n.b, n.c"        -> ["a", "b", "c"]
-func (e *StorageExecutor) parseIndexProperties(propertiesStr string) []string {
-	return e.parseIndexPropertiesWithMode(propertiesStr, true)
-}
-
 // addSchemaConstraint adds constraint and, when it is a single-property
 // uniqueness or node key constraint, fills the property index it owns from
 // the stored nodes (#875), as addPropertyIndex fills a new index: equality
@@ -2152,45 +2142,27 @@ func qualifiedIndexPropertiesWellFormed(propertiesStr string) bool {
 	return true
 }
 
-func (e *StorageExecutor) parseQualifiedIndexProperties(propertiesStr string) []string {
-	return e.parseIndexPropertiesWithMode(propertiesStr, false)
-}
-
-func (e *StorageExecutor) parseIndexPropertiesWithMode(propertiesStr string, allowBare bool) []string {
-	// Split by comma
-	parts := strings.Split(propertiesStr, ",")
-	var properties []string
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		// Extract property name after dot (e.g., "n.prop" -> "prop")
-		if dotIdx := strings.LastIndex(part, "."); dotIdx >= 0 && dotIdx < len(part)-1 {
-			propName := normalizeIdentifierToken(part[dotIdx+1:])
-			if propName != "" {
-				properties = append(properties, propName)
-			}
-		} else if allowBare {
-			// Also support bare property names used by legacy syntax ON :Label(prop)
-			propName := normalizeIdentifierToken(part)
-			if propName != "" {
-				properties = append(properties, propName)
-			}
-		}
-	}
-
-	return properties
-}
-
-func (e *StorageExecutor) parseConstraintProperties(propertiesStr string) []string {
-	parts := strings.Split(propertiesStr, ",")
+// indexPropertiesFromOnClause reads an ON clause's comma-separated items with
+// the shared quote-aware readers: a comma or a dot inside a backtick-quoted
+// name is part of that name, never a separator, and an item is one
+// variable.property reference. allowBare additionally admits the bare property
+// names of the legacy ON :Label(prop) index syntax.
+func indexPropertiesFromOnClause(propertiesStr string, allowBare bool) []string {
+	parts := splitTopLevelComma(propertiesStr)
 	properties := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		if dotIdx := strings.LastIndex(part, "."); dotIdx >= 0 && dotIdx < len(part)-1 {
-			propName := normalizeIdentifierToken(part[dotIdx+1:])
-			if propName != "" {
-				properties = append(properties, propName)
+		if _, property, ok := splitPostfixPropertyAccess(part); ok {
+			if property != "" {
+				properties = append(properties, property)
 			}
+			continue
+		}
+		if !allowBare {
+			continue
+		}
+		if property, ok := isOneSymbolicName(part); ok && property != "" {
+			properties = append(properties, property)
 		}
 	}
 	return properties

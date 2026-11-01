@@ -966,31 +966,95 @@ func (w *WriteBehindBuffer) unlockPendingWrites() {
 
 // trackPendingValues indexes these (label, property) pairs of buffered
 // nodes by value from now on, including the nodes already buffered.
-func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
-	if len(pairs) == 0 {
-		return
+func (w *WriteBehindBuffer) trackPendingValues(ctx context.Context, pairs []pendingPropertyKey) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	w.mu.Lock()
+	if len(pairs) == 0 {
+		return nil
+	}
+	if err := w.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer w.mu.Unlock()
-	if w.pendingIndex == nil {
-		w.pendingIndex = newPendingNodeIndex()
-		// Pending indexes share entity visibility until locked retirement. The
-		// rebuild is the buffer's own copy: it has no caller to cancel it, so
-		// context.Background is its lifetime.
-		nodes, _, _ := w.allNodesOverlayLocked(context.Background())
-		for _, node := range nodes {
-			w.pendingIndex.add(node)
+	missing := w.pendingIndex == nil
+	for _, pair := range pairs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !slices.Contains(w.trackedPairs, pair) {
+			missing = true
 		}
 	}
-	for _, pair := range pairs {
-		w.pendingIndex.track(context.Background(), pair.label, pair.property, func(id NodeID) *Node {
+	if !missing {
+		return nil
+	}
+	if len(pairs) == 1 && w.pendingIndex != nil {
+		// track already builds and publishes a single pair atomically. There
+		// must be no further fallible poll after that publication.
+		pair := pairs[0]
+		if err := w.pendingIndex.track(ctx, pair.label, pair.property, func(id NodeID) *Node {
 			node, _ := w.nodeLocked(id)
 			return node
-		})
-		if !slices.Contains(w.trackedPairs, pair) {
-			w.trackedPairs = append(w.trackedPairs, pair)
+		}); err != nil {
+			return err
+		}
+		w.trackedPairs = append(w.trackedPairs, pair)
+		return nil
+	}
+	// Keep the entire multi-pair publication private. track publishes each
+	// completed pair into this candidate, never the live buffer on failure.
+	candidate := newPendingNodeIndex()
+	if w.pendingIndex == nil {
+		nodes, _, err := w.allNodesOverlayLocked(ctx)
+		if err != nil {
+			return err
+		}
+		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate.add(node)
+		}
+	} else {
+		candidate.byLabel = w.pendingIndex.byLabel // read-only under w.mu
+		candidate.byValue = w.pendingIndex.byValue // track builds a replacement
+		for label, properties := range w.pendingIndex.tracked {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate.tracked[label] = properties // track replaces the inner map
+		}
+		for pair, ids := range w.pendingIndex.byProperty {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate.byProperty[pair] = ids // track replaces each new population
 		}
 	}
+	tracked := make([]pendingPropertyKey, 0, len(w.trackedPairs)+len(pairs))
+	for _, pair := range w.trackedPairs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		tracked = append(tracked, pair)
+	}
+	for _, pair := range pairs {
+		if err := candidate.track(ctx, pair.label, pair.property, func(id NodeID) *Node {
+			node, _ := w.nodeLocked(id)
+			return node
+		}); err != nil {
+			return err
+		}
+		if !slices.Contains(tracked, pair) {
+			tracked = append(tracked, pair)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.pendingIndex, w.trackedPairs = candidate, tracked
+	return nil
 }
 
 // KeyCandidates returns the newest buffered version of every unflushed node
@@ -998,18 +1062,24 @@ func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
 // pending value index (the pair is tracked from its first use) instead of by
 // copying every buffered node of the label: constraint validation calls it on
 // every write of a bulk load.
-func (w *WriteBehindBuffer) ensurePendingValueTracked(label, property string) {
+func (w *WriteBehindBuffer) ensurePendingValueTracked(ctx context.Context, label, property string) error {
 	pair := pendingPropertyKey{label: label, property: property}
-	w.mu.RLock()
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return err
+	}
 	tracked := slices.Contains(w.trackedPairs, pair)
 	w.mu.RUnlock()
 	if !tracked {
-		w.trackPendingValues([]pendingPropertyKey{pair})
+		return w.trackPendingValues(ctx, []pendingPropertyKey{pair})
 	}
+	return ctx.Err()
 }
 
 func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey interface{}) []*Node {
-	w.ensurePendingValueTracked(label, property)
+	// This exported context-free accessor owns its buffer maintenance lifetime.
+	if err := w.ensurePendingValueTracked(context.Background(), label, property); err != nil {
+		panic(err) // Background cannot cancel; do not silently lose candidates.
+	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	// A context-free buffer accessor: the copy runs on the buffer's own

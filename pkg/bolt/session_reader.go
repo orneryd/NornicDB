@@ -102,6 +102,12 @@ func socketConn(conn net.Conn) syscall.Conn {
 			conn = c.NetConn()
 		case *peekedConn:
 			conn = c.Conn
+		case *lifetimeConn:
+			// The service's own accepted-connection adapter stays
+			// transparent: wrapping the raw socket would hide syscall.Conn
+			// and disable the hangup probe, so a full message queue could no
+			// longer observe the peer's disconnect.
+			conn = c.Conn
 		case *wsConn:
 			if c.ws == nil {
 				return nil

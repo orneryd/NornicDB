@@ -499,13 +499,8 @@ func TestCompositeIndexQueryOptimization(t *testing.T) {
 	}
 }
 
-// TestParseIndexProperties tests the parseIndexProperties helper function
+// TestParseIndexProperties tests the canonical ON-clause property reader
 func TestParseIndexProperties(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
 	testCases := []struct {
 		name     string
 		input    string
@@ -520,7 +515,7 @@ func TestParseIndexProperties(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := exec.parseIndexProperties(tc.input)
+			result := indexPropertiesFromOnClause(tc.input, true)
 
 			if len(result) != len(tc.expected) {
 				t.Errorf("Expected %d properties, got %d", len(tc.expected), len(result))

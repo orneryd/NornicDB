@@ -28,7 +28,12 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 	constraint.mu.RLock()
 	defer constraint.mu.RUnlock()
 
-	valueKey, ok := indexValueKey(value)
+	// A constraint check belongs to the write it admits, so the key has that
+	// write's lifetime: it cannot cancel.
+	valueKey, ok, err := indexValueKey(context.Background(), value)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
@@ -56,7 +61,10 @@ func (sm *SchemaManager) LookupUniqueConstraintValue(ctx context.Context, label,
 	if !exists || value == nil {
 		return "", false, exists, false, ctx.Err()
 	}
-	valueKey, ok := indexValueKey(value)
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil {
+		return "", false, false, false, err
+	}
 	if !ok {
 		return "", false, true, false, ctx.Err()
 	}
@@ -233,7 +241,10 @@ func (sm *SchemaManager) appendConstraintValueKeys(ctx context.Context, keys []u
 			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
 				continue
 			}
-			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
+			values, ok, err := relationshipConstraintValueKeys(ctx, c.Properties, edge.Properties, true)
+			if err != nil {
+				return nil, err
+			}
 			if !ok || len(values) == 0 {
 				continue
 			}
@@ -281,7 +292,10 @@ func nodeConstraintLockKey(ctx context.Context, c Constraint, node *Node) (uniqu
 		}
 	}
 	if len(properties) == 1 {
-		value, ok := constraintLockValue(node, properties[0])
+		value, ok, err := constraintLockValue(ctx, node, properties[0])
+		if err != nil {
+			return uniqueConstraintLockKey{}, false, err
+		}
 		return uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value}, ok, nil
 	}
 	values := make([]interface{}, len(properties))
@@ -289,7 +303,10 @@ func nodeConstraintLockKey(ctx context.Context, c Constraint, node *Node) (uniqu
 		if err := ctx.Err(); err != nil {
 			return uniqueConstraintLockKey{}, false, err
 		}
-		value, ok := constraintLockValue(node, property)
+		value, ok, err := constraintLockValue(ctx, node, property)
+		if err != nil {
+			return uniqueConstraintLockKey{}, false, err
+		}
 		if !ok {
 			return uniqueConstraintLockKey{}, false, nil
 		}
@@ -304,13 +321,14 @@ func nodeConstraintLockKey(ctx context.Context, c Constraint, node *Node) (uniqu
 
 // constraintLockValue is node's canonical value of prop for a constraint key
 // lock; ok is false when the property is missing, null or not comparable (no
-// key to lock).
-func constraintLockValue(node *Node, prop string) (interface{}, bool) {
+// key to lock). ctx is the lifetime of the caller the key is prepared for, so
+// preparing a list or map value observes that lifetime's cancellation.
+func constraintLockValue(ctx context.Context, node *Node, prop string) (interface{}, bool, error) {
 	rawValue, has := node.Properties[prop]
 	if !has || rawValue == nil {
-		return nil, false
+		return nil, false, nil
 	}
-	return indexValueKey(rawValue)
+	return indexValueKey(ctx, rawValue)
 }
 
 // acquireUniqueConstraintCommitLocks acquires exact UNIQUE value locks for
@@ -776,8 +794,10 @@ func (sm *SchemaManager) ApplyUniqueValue(label, property string, value any, nod
 	if !exists {
 		return
 	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
+	// The claim belongs to the accepted write that publishes or retires it, so
+	// the key has that write's lifetime: it cannot cancel.
+	valueKey, ok, err := indexValueKey(context.Background(), value)
+	if err != nil || !ok {
 		return
 	}
 

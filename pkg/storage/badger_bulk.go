@@ -54,7 +54,8 @@ func (b *BadgerEngine) inBulkTransaction(namespace string, apply func(tx *Badger
 }
 
 func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
-	seen := make(map[string]struct{})
+	type batchConstraint struct{ namespace, name string }
+	seen := make(map[batchConstraint]constraintCreationValues)
 
 	for _, node := range nodes {
 		dbName, _, ok := ParseDatabasePrefix(string(node.ID))
@@ -66,36 +67,20 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 			continue
 		}
 
-		constraints := schema.GetConstraintsForLabels(node.Labels)
-		for _, c := range constraints {
+		for _, c := range schema.GetConstraintsForLabels(node.Labels) {
+			var values []interface{}
 			switch c.Type {
 			case ConstraintUnique:
 				if len(c.Properties) != 1 {
 					continue
 				}
-				prop := c.Properties[0]
-				value := node.Properties[prop]
+				value := node.Properties[c.Properties[0]]
 				if value == nil {
 					continue
 				}
-				// BulkCreateNodes is a context-free native API; this preflight
-				// runs before inBulkTransaction, not under accepted write ownership.
-				composite, err := NewCompositeKey(context.Background(), value)
-				if err != nil {
-					return err
-				}
-				key := fmt.Sprintf("%s:%s:%s", dbName, c.Name, composite.Hash)
-				if _, exists := seen[key]; exists {
-					return &ConstraintViolationError{
-						Type:       ConstraintUnique,
-						Label:      c.Label,
-						Properties: []string{prop},
-						Message:    fmt.Sprintf("Node with %s=%v already exists in batch", prop, value),
-					}
-				}
-				seen[key] = struct{}{}
+				values = []interface{}{value}
 			case ConstraintNodeKey:
-				values := make([]interface{}, len(c.Properties))
+				values = make([]interface{}, len(c.Properties))
 				for i, prop := range c.Properties {
 					values[i] = node.Properties[prop]
 					if values[i] == nil {
@@ -107,21 +92,6 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 						}
 					}
 				}
-				// Native bulk preflight has no caller context to inherit.
-				composite, err := NewCompositeKey(context.Background(), values...)
-				if err != nil {
-					return err
-				}
-				key := fmt.Sprintf("%s:%s:%s", dbName, c.Name, composite.Hash)
-				if _, exists := seen[key]; exists {
-					return &ConstraintViolationError{
-						Type:       ConstraintNodeKey,
-						Label:      c.Label,
-						Properties: c.Properties,
-						Message:    fmt.Sprintf("Node with key %v=%v already exists in batch", c.Properties, values),
-					}
-				}
-				seen[key] = struct{}{}
 			case ConstraintExists:
 				if len(c.Properties) != 1 {
 					continue
@@ -144,9 +114,34 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 					}
 				}
 			}
+			if values == nil {
+				continue
+			}
+			key := batchConstraint{namespace: dbName, name: c.Name}
+			bucket := seen[key]
+			if bucket == nil {
+				bucket = make(constraintCreationValues)
+				seen[key] = bucket
+			}
+			// Native BulkCreateNodes has no caller context; this preflight runs
+			// before inBulkTransaction. Reuse constraint creation's candidate
+			// buckets and actual equality: text/hash identity alone would make
+			// NaN or differently shaped lists into false duplicates.
+			_, duplicate, err := bucket.add(context.Background(), string(node.ID), values)
+			if err != nil {
+				return err
+			}
+			if duplicate {
+				message := fmt.Sprintf("Node with key %v=%v already exists in batch", c.Properties, values)
+				properties := c.Properties
+				if c.Type == ConstraintUnique {
+					message = fmt.Sprintf("Node with %s=%v already exists in batch", c.Properties[0], values[0])
+					properties = []string{c.Properties[0]}
+				}
+				return &ConstraintViolationError{Type: c.Type, Label: c.Label, Properties: properties, Message: message}
+			}
 		}
 	}
-
 	return nil
 }
 

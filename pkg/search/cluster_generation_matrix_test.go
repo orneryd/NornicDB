@@ -6,7 +6,9 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -229,19 +231,23 @@ func assertPersistedGenerationMatches(t *testing.T, svc *Service, dir string) {
 }
 
 // cgPausingContext pauses a clustering run right after k-means copied the
-// population (third Err call of TriggerClustering).
+// population (third Err call of the owned triggerClustering component).
+// The public wrapper derives a context, so it cannot expose this phase probe.
 type cgPausingContext struct {
 	context.Context
 	calls          atomic.Int32
 	paused, resume chan struct{}
+	phase          string
 }
 
-func newCGPausingContext() *cgPausingContext {
-	return &cgPausingContext{Context: context.Background(), paused: make(chan struct{}), resume: make(chan struct{})}
+func newCGPausingContext(ctx context.Context) *cgPausingContext {
+	return &cgPausingContext{Context: ctx, paused: make(chan struct{}), resume: make(chan struct{})}
 }
 
 func (c *cgPausingContext) Err() error {
 	if c.calls.Add(1) == 3 {
+		buf := make([]byte, 16384)
+		c.phase = string(buf[:runtime.Stack(buf, false)])
 		close(c.paused)
 		<-c.resume
 	}
@@ -252,24 +258,56 @@ func (c *cgPausingContext) Err() error {
 // snapshot, then lets the run finish.
 func (f *cgFixture) duringCompute(mutate func()) {
 	f.t.Helper()
-	ctx := newCGPausingContext()
+	caller, cancel := context.WithCancel(f.t.Context())
+	defer cancel()
+	owned, release, err := f.svc.beginRead(caller)
+	require.NoError(f.t, err)
+	ctx := newCGPausingContext(owned)
 	done := make(chan error, 1)
-	go func() { done <- f.svc.TriggerClustering(ctx) }()
+	var resume sync.Once
+	realDone := make(chan struct{})
+	// Install release/join before launch so assertion failures in mutate also
+	// unblock the component and return its actual service-owned reader.
+	defer func() {
+		cancel()
+		resume.Do(func() { close(ctx.resume) })
+		select {
+		case <-realDone:
+		case <-time.After(10 * time.Second):
+			f.t.Error("owned clustering component did not release and join")
+		}
+	}()
+	go func() {
+		defer close(realDone)
+		defer release()
+		f.svc.buildMu.RLock()
+		defer f.svc.buildMu.RUnlock()
+		done <- f.svc.triggerClustering(ctx, nil)
+	}()
 	select {
 	case <-ctx.paused:
+		require.True(f.t, strings.Contains(ctx.phase, "initCentroidsKMeansPlusPlusSeededFromVectorsWithContext"), "pause must be in centroid computation after its population snapshot")
 	case err := <-done:
 		f.t.Fatalf("clustering finished without pausing: %v", err)
 	case <-time.After(time.Minute):
 		f.t.Fatal("clustering did not reach its snapshot")
 	}
 	mutate()
-	close(ctx.resume)
+	resume.Do(func() { close(ctx.resume) })
 	select {
 	case err := <-done:
 		require.NoError(f.t, err)
 	case <-time.After(2 * time.Minute):
 		f.t.Fatal("clustering did not finish")
 	}
+	select {
+	case <-realDone: // release completes before public continuation.
+	case <-time.After(10 * time.Second):
+		f.t.Fatal("owned clustering component did not release")
+	}
+	assertClusterGenerationCoherent(f.t, f.svc, cgAllChecks)
+	// Verify the public lifecycle-derived path continues on the coherent result.
+	f.recluster()
 }
 
 // duringBuild runs mutate when the replacement graphs start building. Trees

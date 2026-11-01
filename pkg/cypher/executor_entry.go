@@ -1000,17 +1000,20 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		return result, err
 	}
 
-	// System commands (CREATE/DROP DATABASE, SHOW DATABASES, etc.) must not use
+	// Catalog commands (CREATE/DROP DATABASE, SHOW DATABASES, etc.) must not use
 	// implicit transactions: they operate on dbManager/metadata, not graph
 	// storage. Routing them through executeWithoutTransaction directly ensures
-	// correct handling and avoids the write path.
-	if isMetadataCommand(cypher, metadataCatalogExecution) || isOrdinarySchemaDDL(cypher) {
+	// correct handling and avoids the write path. Ordinary schema DDL is not a
+	// catalog command: it is a write whose one implicit transaction stages the
+	// declaration together with its fill and publishes both at commit
+	// (schema_transaction.go), so no reader sees a declared but unfilled index.
+	if isMetadataCommand(cypher, metadataCatalogExecution) {
 		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
 		if err != nil {
 			return nil, err
 		}
-		// This owner executes metadata/schema effects directly, with no
-		// implicit transaction to publish their completed outcome.
+		// This owner executes metadata effects directly, with no implicit
+		// transaction to publish their completed outcome.
 		if !info.IsReadOnly && !e.inTransaction(ctx) {
 			publishStatementCommit(ctx)
 		}

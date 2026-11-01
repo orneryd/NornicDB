@@ -1594,7 +1594,7 @@ repo-settings-diff:
 	@bash scripts/repo-settings.sh --diff
 
 cypher-conformance: cypher-tck-ratchet cypher-tck-vetted
-	ZONEINFO="$(CYPHER_TCK_ZONEINFO)" go test -tags "$(CYPHER_TCK_TAGS)" ./testing/cypher/tck/... ./pkg/cypher -count=1
+	ZONEINFO="$(CYPHER_TCK_ZONEINFO)" go test -timeout 30m -tags "$(CYPHER_TCK_TAGS)" ./testing/cypher/tck/... ./pkg/cypher -count=1
 
 cypher-differential:
 	./scripts/cypher-tck/run-differential.sh

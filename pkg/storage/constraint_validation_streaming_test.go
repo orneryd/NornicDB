@@ -507,7 +507,9 @@ func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManage
 				if !ok {
 					continue
 				}
-				if valueKey, ok := indexValueKey(value); ok {
+				valueKey, keyed, keyErr := indexValueKey(t.Context(), value)
+				require.NoError(t, keyErr)
+				if keyed {
 					values[valueKey] = EnsureNodeIDDatabasePrefixForEngine(engine, node.ID)
 				}
 			}

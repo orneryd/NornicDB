@@ -1074,18 +1074,26 @@ func (s *Server) serveListener(ctx context.Context, listener net.Listener) error
 	s.lifecycleMu.Lock()
 	s.listener = listener
 	s.lifecycleMu.Unlock()
-	closeListener := func() {
-		if err := s.closeListener(); !util.ErrorIsOnly(err, net.ErrClosed) {
+	recordClose := func(err error) {
+		if !util.ErrorIsOnly(err, net.ErrClosed) {
 			s.lifetime().RecordError("close Bolt listener", err)
 		}
 	}
-	// Stopping closes the listener so Accept returns; the serve loop's exit
-	// settles that callback and closes the listener itself if it never ran.
-	stopClose := lifecycle.AfterFuncJoined(s.lifetime().Context(), closeListener)
-	defer func() {
-		stopClose()
-		closeListener()
-	}()
+	// Stopping closes the listener so Accept returns. The stop signal is
+	// accepted work, so quiescence waits for the native close to return while
+	// this worker never joins a close its own caller is executing.
+	if !s.lifetime().OnStop(func() error {
+		recordClose(s.closeListener())
+		return nil
+	}) {
+		// A refused enrollment means the stop already began: this attempt
+		// closes its own listener and reports the cancelled start.
+		recordClose(s.closeListener())
+		return errServerClosed
+	}
+	// Startup failure and serve-loop exit transfer the published listener
+	// before closing, so exactly one path closes it.
+	defer func() { recordClose(s.closeListener()) }()
 
 	announceHost := strings.TrimSpace(s.config.Host)
 	if announceHost == "0.0.0.0" || announceHost == "::" || announceHost == "" {

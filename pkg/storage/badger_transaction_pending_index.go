@@ -46,7 +46,11 @@ func (tx *BadgerTransaction) pendingValueMatchesLocked(ctx context.Context, labe
 			if !hasLabel(node.Labels, label) {
 				continue
 			}
-			if key, ok := indexValueKey(node.Properties[property]); ok && key == valueKey {
+			key, ok, err := indexValueKey(ctx, node.Properties[property])
+			if err != nil {
+				return nil, err
+			}
+			if ok && key == valueKey {
 				matches = append(matches, id)
 			}
 		}
@@ -115,7 +119,10 @@ func (tx *BadgerTransaction) MergePendingPropertyMatches(ctx context.Context, id
 		}
 		kept = append(kept, id)
 	}
-	valueKey, ok := indexValueKey(value)
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil {
+		return nil, err
+	}
 	if !ok || len(tx.pendingNodes) == 0 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -172,7 +179,11 @@ func (tx *BadgerTransaction) MergePendingCompositeMatches(ctx context.Context, i
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if compositeNodeMatches(node, label, properties, values) {
+		matched, err := compositeNodeMatches(ctx, node, label, properties, values)
+		if err != nil {
+			return nil, err
+		}
+		if matched {
 			kept = append(kept, id)
 		}
 	}
@@ -184,24 +195,31 @@ func (tx *BadgerTransaction) MergePendingCompositeMatches(ctx context.Context, i
 
 // compositeNodeMatches reports whether a pending node carries label and its
 // properties equal the given leading index values under composite-index key
-// semantics (the same canonicalization as IndexNode).
-func compositeNodeMatches(node *Node, label string, properties []string, values []interface{}) bool {
+// semantics (the same canonicalization as IndexNode). ctx is the read's
+// lifetime, which both values' preparation observes.
+func compositeNodeMatches(ctx context.Context, node *Node, label string, properties []string, values []interface{}) (bool, error) {
 	if node == nil || !hasLabel(node.Labels, label) || len(values) == 0 || len(values) > len(properties) {
-		return false
+		return false, nil
 	}
 	for i, value := range values {
 		propValue, exists := node.Properties[properties[i]]
 		if !exists {
-			return false
+			return false, nil
 		}
-		want, ok := indexValueKey(value)
+		want, ok, err := indexValueKey(ctx, value)
+		if err != nil {
+			return false, err
+		}
 		if !ok {
-			return false
+			return false, nil
 		}
-		got, ok := indexValueKey(propValue)
+		got, ok, err := indexValueKey(ctx, propValue)
+		if err != nil {
+			return false, err
+		}
 		if !ok || got != want {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }

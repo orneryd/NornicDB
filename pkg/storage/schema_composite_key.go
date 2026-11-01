@@ -132,9 +132,13 @@ func (ck CompositeKey) String() string {
 // (nil, byte arrays, ...). This is exactly what IndexNode stores: the longest
 // leading prefix whose every value can be keyed, so full and prefix lookups
 // key the same way as inserts and removes.
-func compositeIndexValues(idx *CompositeIndex, properties map[string]interface{}) []interface{} {
+//
+// ctx is the lifetime of the caller the values are prepared for, so preparing
+// a list or map value observes that lifetime's cancellation and yields no
+// values at all rather than a partially prepared prefix.
+func compositeIndexValues(ctx context.Context, idx *CompositeIndex, properties map[string]interface{}) ([]interface{}, error) {
 	if idx == nil {
-		return nil
+		return nil, nil
 	}
 	values := make([]interface{}, 0, len(idx.Properties))
 	for _, propName := range idx.Properties {
@@ -142,26 +146,33 @@ func compositeIndexValues(idx *CompositeIndex, properties map[string]interface{}
 		if !exists {
 			break
 		}
-		key, ok := indexValueKey(val)
+		key, ok, err := indexValueKey(ctx, val)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			break
 		}
 		values = append(values, key)
 	}
-	return values
+	return values, nil
 }
 
 // compositeLookupKeyValues canonicalizes lookup values the way inserts do.
 // It reports false when a value has no index key (so no stored entry can
-// equal it).
-func compositeLookupKeyValues(values []interface{}) ([]interface{}, bool) {
+// equal it), and ctx's error when the caller's lifetime cancels while a value
+// is being prepared (so the lookup returns no partial candidate set).
+func compositeLookupKeyValues(ctx context.Context, values []interface{}) ([]interface{}, bool, error) {
 	canonical := make([]interface{}, len(values))
 	for i, value := range values {
-		key, ok := indexValueKey(value)
+		key, ok, err := indexValueKey(ctx, value)
+		if err != nil {
+			return nil, false, err
+		}
 		if !ok {
-			return nil, false
+			return nil, false, nil
 		}
 		canonical[i] = key
 	}
-	return canonical, true
+	return canonical, true, nil
 }

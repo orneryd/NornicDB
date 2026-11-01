@@ -564,31 +564,13 @@ func TestServerStop_DeadlineExceededForcesClose(t *testing.T) {
 	s, err := New(db, nil, cfg)
 	require.NoError(t, err)
 
-	// Override the router with a handler that blocks past shutdown deadline.
-	started := make(chan struct{})
-	mux := http.NewServeMux()
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-started:
-		default:
-			close(started)
-		}
-		time.Sleep(200 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-	})
-	s.httpServer = &http.Server{Handler: mux}
+	// Keep a real leased handler alive until explicitly released; a caller's
+	// deadline must force the transport closed without retiring that work.
+	gate := newStopR2Gate(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	s.listener = ln
-	go func() { _ = s.httpServer.Serve(ln) }()
-
-	// Issue a request that will be in-flight during shutdown.
-	go func() {
-		req, _ := http.NewRequest("GET", "http://"+ln.Addr().String()+"/status", nil)
-		// no auth wrapper; direct handler
-		_, _ = http.DefaultClient.Do(req)
-	}()
-	<-started
+	httpWork := startOwnedStopHTTP(t, s, ln, ln.Close, gate, "/status")
+	stopR2Await(t, gate.entered)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
@@ -596,9 +578,26 @@ func TestServerStop_DeadlineExceededForcesClose(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 
-	// Ensure Stop returns promptly and listener is closed.
-	_, dialErr := net.DialTimeout("tcp", ln.Addr().String(), 50*time.Millisecond)
+	// The forced transport closure completes the client and Serve, while the
+	// actual handler still owns its service resources until the gate opens.
+	stopR2Await(t, httpWork.requestDone)
+	stopR2Await(t, httpWork.serveDone)
+	select {
+	case <-httpWork.handlerDone:
+		t.Fatal("shutdown retired the held handler before actual completion")
+	default:
+	}
+	conn, dialErr := net.DialTimeout("tcp", ln.Addr().String(), 50*time.Millisecond)
+	if conn != nil {
+		_ = conn.Close()
+	}
 	require.Error(t, dialErr)
+	gate.open()
+	stopR2Await(t, httpWork.handlerDone)
+	final, cancelFinal := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelFinal()
+	require.ErrorIs(t, s.WaitStopped(final), context.DeadlineExceeded, "eventual completion retains the forced shutdown outcome")
+
 }
 
 // TestMetaField_NodeMetadata verifies that the meta field is properly populated

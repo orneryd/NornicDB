@@ -54,13 +54,15 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 		}
 		require.True(t, found)
 		require.Equal(t, want, got)
-		key, ok := indexValueKey(value)
+		key, ok, keyErr := indexValueKey(t.Context(), value)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
 		require.Equal(t, []NodeID{want}, checkedIndexRead[[]NodeID](t)(view.valueMatches(t.Context(), nil, "N", "v", key)))
 	}
 	// A user string matching the printed exceptional-key tag is still an
 	// ordinary string key, not the private comparable integer-key type.
-	numericKey, ok := indexValueKey(values[1])
+	numericKey, ok, keyErr := indexValueKey(t.Context(), values[1])
+	require.NoError(t, keyErr)
 	require.True(t, ok)
 	lookalike := fmt.Sprint(numericKey)
 	schema.ApplyUniqueValue("N", "v", lookalike, "string-lookalike", ValidatedUniqueClaim)
@@ -78,8 +80,10 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 	require.Equal(t, NodeID("odd"), numericHolder)
 	// One key for every index: a float64 holds 2^53 exactly, so its key is
 	// unchanged; 2^53+1 keeps its exact integer instead of colliding with it.
-	a, _ := indexValueKey(values[0])
-	b, _ := indexValueKey(values[1])
+	a, _, keyErr := indexValueKey(t.Context(), values[0])
+	require.NoError(t, keyErr)
+	b, _, keyErr := indexValueKey(t.Context(), values[1])
+	require.NoError(t, keyErr)
 	require.Equal(t, float64(9007199254740992), a)
 	require.Equal(t, uint64(9007199254740993), b)
 	schema.ApplyUniqueValue("N", "v", values[1], "odd", RetiredUniqueClaim)
@@ -226,7 +230,8 @@ func TestUniqueConstraintPendingNamespaceAndOrdinaryKeys(t *testing.T) {
 		{float64(42), "tenant:small"},
 		{"ordinary", "tenant:text"},
 	} {
-		key, ok := indexValueKey(tc.value)
+		key, ok, keyErr := indexValueKey(t.Context(), tc.value)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
 		require.Equal(t, []NodeID{tc.want}, checkedIndexRead[[]NodeID](t)(view.valueMatches(t.Context(), nil, "N", "v", key)))
 		// The same real value on a schema with no write-behind attachment must
@@ -234,9 +239,11 @@ func TestUniqueConstraintPendingNamespaceAndOrdinaryKeys(t *testing.T) {
 		require.Empty(t, checkedIndexRead[[]NodeID](t)((pendingWriteView{}).valueMatches(t.Context(), nil, "N", "v", key)))
 	}
 	// The platform int path must preserve equality with an integral float.
-	integerKey, ok := indexValueKey(int(42))
+	integerKey, ok, keyErr := indexValueKey(t.Context(), int(42))
+	require.NoError(t, keyErr)
 	require.True(t, ok)
-	floatKey, ok := indexValueKey(float64(42))
+	floatKey, ok, keyErr := indexValueKey(t.Context(), float64(42))
+	require.NoError(t, keyErr)
 	require.True(t, ok)
 	require.Equal(t, integerKey, floatKey)
 }

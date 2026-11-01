@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -223,6 +224,13 @@ func TestIndexReadCanceledLockWaiter(t *testing.T) {
 
 func TestPendingIndexCanceledPopulationAndRetry(t *testing.T) {
 	const count = 32768
+	// Sorted copies preserve multiplicity without the reflective quadratic
+	// multiset comparison dominating this large cancellation control.
+	sortedCopy := func(ids []NodeID) []NodeID {
+		copy := slices.Clone(ids)
+		slices.Sort(copy)
+		return copy
+	}
 	nodes := make(map[NodeID]*Node, count)
 	pending := newPendingNodeIndex()
 	want := make([]NodeID, 0, count)
@@ -246,9 +254,10 @@ func TestPendingIndexCanceledPopulationAndRetry(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Less(t, reads, count)
 	require.NoError(t, pending.track(t.Context(), "Item", "value", func(id NodeID) *Node { return nodes[id] }))
-	valueKey, ok := indexValueKey(int64(1))
+	valueKey, ok, err := indexValueKey(t.Context(), int64(1))
+	require.NoError(t, err)
 	require.True(t, ok)
-	require.ElementsMatch(t, want, pending.byValue[pendingValueKey{label: "Item", property: "value", value: valueKey}])
+	require.Equal(t, sortedCopy(want), sortedCopy(pending.byValue[pendingValueKey{label: "Item", property: "value", value: valueKey}]))
 	tx := &BadgerTransaction{pendingNodes: nodes}
 	preCanceled, stop := context.WithCancel(t.Context())
 	stop()
@@ -261,8 +270,8 @@ func TestPendingIndexCanceledPopulationAndRetry(t *testing.T) {
 	require.Nil(t, ids)
 	ids, err = tx.MergePendingPropertyMatches(t.Context(), []NodeID{"committed:kept"}, "Item", "value", int64(1))
 	require.NoError(t, err)
-	require.ElementsMatch(t, append(want, "committed:kept"), ids)
+	require.Equal(t, sortedCopy(append(slices.Clone(want), "committed:kept")), sortedCopy(ids))
 	privateIDs, privateErr = tx.pendingValueMatchesLocked(t.Context(), "Item", "value", valueKey)
 	require.NoError(t, privateErr)
-	require.ElementsMatch(t, want, privateIDs)
+	require.Equal(t, sortedCopy(want), sortedCopy(privateIDs))
 }

@@ -372,7 +372,7 @@ func (e *StorageExecutor) parseConstraintContractPrimitive(entryText, variable s
 			if idx := keywordIndexFrom(rest, "IS RELATIONSHIP KEY", 0, defaultKeywordScanOpts()); idx == 0 {
 				end, spanOK := keywordSpanAt(rest, 0, "IS RELATIONSHIP KEY")
 				if spanOK && strings.TrimSpace(rest[end:]) == "" {
-					properties := e.parseConstraintProperties(inside)
+					properties := indexPropertiesFromOnClause(inside, false)
 					if len(properties) == 0 {
 						return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaConstraintPropertiesRequired("RELATIONSHIP KEY"), nil)
 					}

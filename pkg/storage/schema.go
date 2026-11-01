@@ -929,19 +929,28 @@ func (sm *SchemaManager) SeekableCompositeIndexesForLabel(label string) []*Compo
 // they are flushed, and lookups see them through the pending view until then
 // (#719). On success the index is marked filled so seeks can use it.
 func (sm *SchemaManager) BackfillCompositeIndex(name string, entries map[NodeID]map[string]interface{}) error {
-	// Backfill is a context-free Go maintenance boundary.
-	view, source, err := sm.beginPendingRead(context.Background())
-	if err != nil {
-		return err
-	}
-	defer endPendingRead(source)
-
 	sm.mu.RLock()
 	idx := sm.compositeIndexes[name]
 	sm.mu.RUnlock()
 	if idx == nil {
 		return localizedError(localization.StorageSchemaIndexNotFound(name), nil)
 	}
+	// The fill's one test hook runs at its entry: the index this call fills is
+	// known (it names the hook), and no value is written yet. It runs without
+	// sm.mu and before the pending-read lock, so a parked observer blocks
+	// neither schema mutation nor the pending writes the fill is about to read.
+	if hook := schemaIndexFillHook.Load(); hook != nil {
+		if err := (*hook)(name, idx.Label); err != nil {
+			return err
+		}
+	}
+
+	// Backfill is a context-free Go maintenance boundary.
+	view, source, err := sm.beginPendingRead(context.Background())
+	if err != nil {
+		return err
+	}
+	defer endPendingRead(source)
 	for nodeID, props := range entries {
 		if !view.keep(nodeID) {
 			continue
@@ -968,7 +977,12 @@ func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interf
 		if !exists {
 			return nil
 		}
-		valueKey, ok := indexValueKey(value)
+		// IndexNode files the key of a write the engine already accepted, so the
+		// key has that write's lifetime: it cannot cancel.
+		valueKey, ok, err := indexValueKey(context.Background(), value)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return nil // null / byte array / non-comparable: no key to file
 		}
@@ -982,12 +996,14 @@ func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interf
 		return nil
 	}
 
-	values := compositeIndexValues(idx, properties)
-
 	// IndexNode files the keys of a write the engine already accepted, so the
 	// keys have that write's lifetime: maintenance must not be abandoned
 	// half-applied, and an accepted write carries no request to cancel it.
-	//
+	values, err := compositeIndexValues(context.Background(), idx, properties)
+	if err != nil {
+		return err
+	}
+
 	// Index full key if all properties present and keyable.
 	if len(values) == len(idx.Properties) {
 		full, err := NewCompositeKey(context.Background(), values...)
@@ -1020,8 +1036,10 @@ func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]inter
 		if !exists {
 			return
 		}
-		valueKey, ok := indexValueKey(value)
-		if !ok {
+		// RemoveNode follows the write that removed the node's index entry, so
+		// the key has that write's lifetime: it cannot cancel.
+		valueKey, ok, err := indexValueKey(context.Background(), value)
+		if err != nil || !ok {
 			return
 		}
 		ids := removeNodeID(idx.values[valueKey], nodeID)
@@ -1034,12 +1052,14 @@ func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]inter
 		return
 	}
 
-	values := compositeIndexValues(idx, properties)
-
 	// RemoveNode follows the write that removed the node's index entry: its
 	// keys digest on that write's lifetime, which cannot cancel, so a full or
 	// prefix key is either complete or the entry is left in place.
-	//
+	values, err := compositeIndexValues(context.Background(), idx, properties)
+	if err != nil {
+		return
+	}
+
 	// Remove from full index.
 	if len(values) == len(idx.Properties) {
 		key, err := NewCompositeKey(context.Background(), values...)
@@ -1075,7 +1095,10 @@ func (idx *CompositeIndex) LookupFull(ctx context.Context, values ...interface{}
 		return nil, nil
 	}
 	if len(idx.Properties) == 1 {
-		valueKey, ok := indexValueKey(values[0])
+		valueKey, ok, err := indexValueKey(ctx, values[0])
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			return nil, nil
 		}
@@ -1085,7 +1108,10 @@ func (idx *CompositeIndex) LookupFull(ctx context.Context, values ...interface{}
 		defer idx.mu.RUnlock()
 		return copyIndexNodeIDs(ctx, idx.values[valueKey])
 	}
-	canonical, ok := compositeLookupKeyValues(values)
+	canonical, ok, err := compositeLookupKeyValues(ctx, values)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, ctx.Err()
 	}
@@ -1145,7 +1171,10 @@ func (idx *CompositeIndex) LookupPrefix(ctx context.Context, values ...interface
 	if len(idx.Properties) == 1 {
 		return idx.LookupFull(ctx, values...)
 	}
-	canonical, ok := compositeLookupKeyValues(values)
+	canonical, ok, err := compositeLookupKeyValues(ctx, values)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, ctx.Err()
 	}
@@ -1918,7 +1947,12 @@ func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID Node
 		idx.values = make(map[interface{}][]NodeID)
 	}
 
-	valueKey, ok := indexValueKey(value)
+	// An insert files the value of a write the engine already accepted, so the
+	// key has that write's lifetime: it cannot cancel.
+	valueKey, ok, err := indexValueKey(context.Background(), value)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		// Ignore non-comparable values (maps/slices). These cannot be stored in
 		// Go map keys and must not crash index maintenance paths.
@@ -1985,7 +2019,12 @@ func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID Node
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	valueKey, ok := indexValueKey(value)
+	// A delete follows the write that removed the node, so the key has that
+	// write's lifetime: it cannot cancel.
+	valueKey, ok, err := indexValueKey(context.Background(), value)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
@@ -2025,7 +2064,10 @@ func (sm *SchemaManager) PropertyIndexLookupAnyLabel(ctx context.Context, proper
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	valueKey, ok := indexValueKey(value)
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, ctx.Err()
 	}
@@ -2129,7 +2171,10 @@ func (sm *SchemaManager) PropertyIndexLookup(ctx context.Context, label, propert
 	if !exists {
 		return nil, nil
 	}
-	valueKey, ok := indexValueKey(value)
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, ctx.Err()
 	}

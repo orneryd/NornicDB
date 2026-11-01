@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -23,17 +24,27 @@ func (s *Server) lifetime() *lifecycle.WorkLifetime {
 	return s.work.Load()
 }
 
+// errServerClosed reports that a start attempt observed the server's one stop
+// instead of serving. The attempt was cancelled, not failed: the caller that
+// began the stop owns its outcome and its join.
+var errServerClosed = errors.New("bolt server is closed")
+
 func (s *Server) beginServe() (context.Context, func(), error) {
 	w := s.lifetime()
 	ctx, release, accepted := w.Acquire(w.Context())
 	if !accepted {
-		return nil, nil, fmt.Errorf("bolt server is closed")
+		return nil, nil, errServerClosed
 	}
 	s.lifecycleMu.Lock()
-	if s.lifetime().Closing() || s.serving {
+	if w.Closing() {
 		s.lifecycleMu.Unlock()
 		release()
-		return nil, nil, fmt.Errorf("bolt server is closed or already serving")
+		return nil, nil, errServerClosed
+	}
+	if s.serving {
+		s.lifecycleMu.Unlock()
+		release()
+		return nil, nil, fmt.Errorf("bolt server is already serving")
 	}
 	s.serving = true
 	s.lifecycleMu.Unlock()
@@ -46,7 +57,9 @@ func (s *Server) beginServe() (context.Context, func(), error) {
 }
 
 // Every start path enrolls before its worker or listener factory can run.
-// The worker signals failed startup but never joins its own retained frame.
+// The worker signals failed startup but never joins its own retained frame,
+// and a start that observes another caller's stop returns that cancelled
+// attempt without joining a close this frame does not own.
 func (s *Server) runServing(ctx context.Context, listen func(context.Context) (net.Listener, error)) (error, bool) {
 	if err := ctx.Err(); err != nil {
 		return err, false
@@ -66,7 +79,10 @@ func (s *Server) runServing(ctx context.Context, listen func(context.Context) (n
 		if native.Err() != nil && util.ErrorIsOnly(err, native.Err()) {
 			err = nil
 		}
-		if err != nil {
+		// A start attempt that observes the server's own stop is a cancelled
+		// attempt, not a service failure: the stop already belongs to the
+		// caller that began it, and those outcomes are that caller's to join.
+		if err != nil && !errors.Is(err, errServerClosed) {
 			w.RecordError("Bolt serve", err)
 			s.BeginShutdown()
 		}
@@ -74,10 +90,15 @@ func (s *Server) runServing(ctx context.Context, listen func(context.Context) (n
 	}()
 	select {
 	case err := <-result:
-		if err != nil {
-			return compose.Outcomes(err, s.WaitStopped(ctx)), true
+		if err == nil {
+			return nil, true
 		}
-		return nil, true
+		if errors.Is(err, errServerClosed) {
+			// Join no close this frame does not own: the stop it observed is
+			// already in progress, and its initiator waits for this frame.
+			return err, true
+		}
+		return compose.Outcomes(err, s.WaitStopped(ctx)), true
 	case <-ctx.Done():
 		s.BeginShutdown()
 		return ctx.Err(), true

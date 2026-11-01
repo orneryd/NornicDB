@@ -6,6 +6,14 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// isOrdinarySchemaDDL reports whether query declares or removes a schema index
+// or constraint: the ordinary schema DDL whose effects belong to the schema
+// view of the statement's transaction (prepareSchemaTransaction). It is the one
+// classifier both the statement contract (readStatementExecutionContract) and
+// the executor's autocommit routing read, so a statement can never be a schema
+// write for one and not for the other. Catalog commands (CREATE / DROP
+// DATABASE, ALIAS, ...) and schema introspection keep their own owners and are
+// not ordinary schema DDL.
 func isOrdinarySchemaDDL(query string) bool {
 	for _, command := range []string{"INDEX", "RANGE INDEX", "TEXT INDEX", "POINT INDEX", "VECTOR INDEX", "FULLTEXT INDEX", "LOOKUP INDEX", "CONSTRAINT"} {
 		if startsWithKeywords(query, "CREATE", command) {
@@ -15,6 +23,13 @@ func isOrdinarySchemaDDL(query string) bool {
 	return startsWithKeywords(query, "DROP", "INDEX") || startsWithKeywords(query, "DROP", "CONSTRAINT")
 }
 
+// prepareSchemaTransaction gives the statement its transaction's isolated
+// schema view. Ordinary DDL applies and fills its change on that view; the
+// statement's commit publishes the definition and the runtime values together
+// (BadgerTransaction.StageSchemaChanges), so readers see the complete old or
+// new schema and never a declared but unfilled index. Without a transaction
+// (a storage engine that cannot stage schema changes) the live schema manager
+// keeps its existing direct behavior.
 func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
 	wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper)
 	if !ok {

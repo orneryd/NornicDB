@@ -221,9 +221,11 @@ func TestConstraintListCanonicalKeysPreserveEquality(t *testing.T) {
 		{[]float32{.5}, []float64{.5}, true},
 		{[]float64{math.Copysign(0, -1)}, []float64{0}, true},
 	} {
-		a, ok := indexValueKey(pair.a)
+		a, ok, keyErr := indexValueKey(t.Context(), pair.a)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
-		b, ok := indexValueKey(pair.b)
+		b, ok, keyErr := indexValueKey(t.Context(), pair.b)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
 		require.Equal(t, pair.same, a == b)
 	}

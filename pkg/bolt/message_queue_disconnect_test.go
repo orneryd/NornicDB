@@ -134,6 +134,33 @@ func TestMessageReaderCancellationAndEmptyMessages(t *testing.T) {
 	(&Session{}).startMessageReader()
 }
 
+// The server's accepted-connection adapter must stay transparent to the
+// kernel hangup probe. Hiding syscall.Conn leaves a full message queue unable
+// to observe the peer's disconnect, so the queued work and the active RUN keep
+// their admission budget and execution after the client is gone.
+func TestPeerProbeSeesServiceConnectionAdapter(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+	client, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+	defer client.Close()
+	raw, err := listener.Accept()
+	require.NoError(t, err)
+	defer raw.Close()
+	server := New(DefaultConfig(), &mockExecutor{})
+	defer server.Close()
+	owned := server.ownConnection(raw)
+	require.NotNil(t, socketConn(owned), "the service connection adapter must expose its socket")
+	closed, release := newPeerCloseProbe(owned)
+	require.NotNil(t, closed, "the hangup probe must reach the adapter's socket")
+	defer release()
+	require.False(t, closed())
+	require.NoError(t, client.Close())
+	require.Eventually(t, closed, time.Second, 5*time.Millisecond,
+		"the hangup probe must observe the peer's disconnect through the adapter")
+}
+
 func TestPeerCloseProbeResumesWithoutCancelling(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)

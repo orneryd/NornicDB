@@ -54,9 +54,11 @@ func TestPublicationConstraintViewOwnsCompositeRelationshipProperties(t *testing
 	old := &Edge{ID: "alpha:e", Type: "KNOWS", Properties: map[string]any{"since": int64(1), "weight": int64(2)}}
 	written := &Edge{ID: old.ID, Type: old.Type, Properties: map[string]any{"since": int64(3), "weight": int64(2)}}
 	property := relationshipPropertyKey([]string{"since", "weight"})
-	oldValues, ok := relationshipConstraintValueKeys([]string{"since", "weight"}, old.Properties, true)
+	oldValues, ok, keyErr := relationshipConstraintValueKeys(t.Context(), []string{"since", "weight"}, old.Properties, true)
+	require.NoError(t, keyErr)
 	require.True(t, ok)
-	newValues, ok := relationshipConstraintValueKeys([]string{"since", "weight"}, written.Properties, true)
+	newValues, ok, keyErr := relationshipConstraintValueKeys(t.Context(), []string{"since", "weight"}, written.Properties, true)
+	require.NoError(t, keyErr)
 	require.True(t, ok)
 	oldKey, keyErr := NewCompositeKey(t.Context(), oldValues...)
 	require.NoError(t, keyErr)

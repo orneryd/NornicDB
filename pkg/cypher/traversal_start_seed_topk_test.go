@@ -26,17 +26,24 @@ func TestSelectTopKNodesByOrder_MultiKey(t *testing.T) {
 	require.Equal(t, "n3", string(topK[2].ID))
 }
 
+// TestDrawerFeedTraversal_UsesStartSeedTopK: the drawer feed runs inside one
+// database namespace, so its fixture does too. Index discovery, the schema
+// transaction's definition key and the fill's node IDs are all scoped to the
+// store's namespace ("test"); IDs written into an engine with no namespace
+// name belong to a different database than the one the fixture addresses, and
+// an index declared there cannot serve the feed.
 func TestDrawerFeedTraversal_UsesStartSeedTopK(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	eng := &allNodesForbiddenEngine{MemoryEngine: base}
+	scans := &allNodesForbiddenEngine{MemoryEngine: base}
+	eng := storage.NewNamespacedEngine(scans, "test")
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "test:wing-1", Labels: []string{"Wing"}, Properties: map[string]interface{}{"name": "Main Wing"}})
+	_, err := eng.CreateNode(&storage.Node{ID: "wing-1", Labels: []string{"Wing"}, Properties: map[string]interface{}{"name": "Main Wing"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "test:room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "Root Room"}})
+	_, err = eng.CreateNode(&storage.Node{ID: "room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "Root Room"}})
 	require.NoError(t, err)
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "test:edge-room-wing", Type: "IN_WING", StartNode: "test:room-1", EndNode: "test:wing-1"}))
+	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "edge-room-wing", Type: "IN_WING", StartNode: "room-1", EndNode: "wing-1"}))
 
 	drawers := []struct {
 		id       string
@@ -52,7 +59,7 @@ func TestDrawerFeedTraversal_UsesStartSeedTopK(t *testing.T) {
 	}
 
 	for _, drawer := range drawers {
-		drawerNodeID := storage.NodeID("test:" + drawer.id)
+		drawerNodeID := storage.NodeID(drawer.id)
 		_, err := eng.CreateNode(&storage.Node{
 			ID:     drawerNodeID,
 			Labels: []string{"Drawer"},
@@ -64,12 +71,12 @@ func TestDrawerFeedTraversal_UsesStartSeedTopK(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.NoError(t, eng.CreateEdge(&storage.Edge{ID: storage.EdgeID("test:" + drawer.id + "-room"), Type: "IN_ROOM", StartNode: drawerNodeID, EndNode: "test:room-1"}))
+		require.NoError(t, eng.CreateEdge(&storage.Edge{ID: storage.EdgeID(drawer.id + "-room"), Type: "IN_ROOM", StartNode: drawerNodeID, EndNode: "room-1"}))
 	}
 
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_drawer_filed_at FOR (d:Drawer) ON (d.filed_at)", nil)
 	require.NoError(t, err)
-	eng.forbidScan = true
+	scans.forbidScan = true
 
 	result, err := exec.Execute(ctx, `
 MATCH (d:Drawer)-[:IN_ROOM]->(r:Room)-[:IN_WING]->(w:Wing)

@@ -85,3 +85,71 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [x] Private filled composite-index discovery retains caller context through actual schema-lock admission and metadata/property enumeration; integrated admission/validation/discovery race controls pass3.356s.
 - [x] Pure metadata relocation preserves91 function declarations/bodies/docs,19 global declarations/order and complete comments/import union; schema.go2424lines.
 - [ ] Maintainer decision pending for two remaining request-bearing exported discovery contracts: SeekableCompositeIndexesForLabel and GetConstraintsForLabels. Public PrepareMergeNode masking RED is retained, not claimed fixed by private controls.
+
+## Updated verification gate (maintainer direction)
+
+- [x] Fetch actual release base de70c0e83 and record clean local verification checkpoint3a611d2c2.
+- [x] Attempt existing installed advisory duplicate checker on exact staged integration; database transaction endpoint timed out. Preserve incomplete result; continue current-source owner review, no checker/hook edits.
+- [ ] Complete `make verify BASE=origin/release/v1.4.4` on3a611d2c2; started with all mapped checks selected. This supersedes the earlier simple make-test-only/deferred-verify direction for this run. No final result or qualification is asserted.
+
+
+## Full-verification fallout (pinned3a611d2c2; fixes not yet integrated)
+
+- [x] Preserve full verification failures; do not alter the pinned primary runtime mid-run.
+- [x] Independently review Bolt disconnect/native listener retirement fix. Real TCP and close-owner controls pass race count3 in isolated source (2.603s); keep net.ErrClosed filtering at the existing close-outcome owner.
+- [x] Verify exact injected closed-WAL rollback shutdown outcomes in the existing terminal matrix (isolated race2.994s); all other matrix cells still require clean retirement.
+- [x] Review retirement of the zero-production-caller DELETE-with-LIMIT subgraph. Preserve already-correct public both-parser mixed-type behavior; no live performance or data-loss claim.
+- [ ] Integrate reviewed Fabric, Search, Bolt and retired-DELETE corrections after the pinned full run completes, then reverify the integrated source.
+- [ ] Complete immutable transaction-image effect guard repair without exempting metadata effect accounting.
+- [ ] Fix quota replacement shutdown access-metadata failures (DeepSeek2a5bcfe32e464f4fa2af2974f62da834).
+- [ ] Correct HTTP stop test fixtures to enroll the actual production stop owner and observe native listener errors; retain forced-close/outcome assertions and join test work.
+- [ ] Complete normalization proposal review and repair the flat-map serialization cancellation gap found during independent review.
+- [ ] Complete public DB.CreateIndex readiness investigation before making any product-defect claim.
+
+- [x] Independently verify integrated candidate Bolt/Fabric/Cypher fallout controls under race (4.197s/1.955s/6.643s); convert package built with no matching test, not claimed a test pass.
+- [x] Independently verify integrated Search lifecycle/nil-entry controls under race (12.864s).
+- [x] Consolidate HTTP fixture registration/cleanup into one owner and independently verify the two exact failures under race (7.011s); preserve actual-completion/error assertions.
+- [x] Independently verify normalized value-key/map/relationship controls in candidate under race (4.427s), then the four actual private/public normalization cancellation cases under race (2.369s).
+- [ ] Reject broad effect-image proof proposal after read-only review exposed alias/literal-publication holes; preserve counterexamples and implement a narrow sound adaptation rather than marking the holder non-effect.
+- [ ] Fix confirmed public DB.CreateIndex populated-store missing-row defect through existing transactional DDL owner (DeepSeek3cfb53d729444270a88d3b373bd873df); no second population implementation or ready-empty publication.
+
+
+## Completed initial full gate and recovery
+
+- [x] Complete full `make verify` at `3a611d2c2` against `de70c0e83`: **FAIL**, 109m26s. Localization, UI, build and allocations passed. Linux llama qualification is n/a on Darwin. Seven coverage groups failed; the complete conformance package exceeded its global 600s budget; Docker preflight failed; docs reported two broken source links. Result: PR comment 6556032917.
+- [x] Integrate nine reviewed fallout patches after that run; retain the dirty-source manifest. Primary default-build effect-image controls pass (16.162s).
+- [x] Repair the two docs source links and verify both release targets exist. Strict docs recovery passes (14s).
+- [x] Start local Docker and recover differential verification against pinned Neo4j (234s; Bolt 113.245s, HTTP 101.885s). This selected only differential/docs; seven other steps were skipped.
+- [x] Align the complete conformance package budget with the existing 30-minute full-suite standard. Three complete coverage traversals of the pinned head took 613.036/645.943/609.897s and failed only the known numeric-owner guard. Preserve the 12,960-case constructor population and every per-case assertion/deadline. A fresh full conformance pass remains required.
+- [ ] Complete the full Search run after its original panic masked later cases. Evidence: `primary-search-full-after-fallout.log`. Investigate any remaining failure or hang.
+- [x] Reject the clear-buffer-only access-retirement proposal. Real-store node/edge tests fail after a batch has drained: orphan metadata reappears and shutdown retains a not-found error (1.150s). Stop superseded job `2a5bcfe32e464f4fa2af2974f62da834`; preserve its proposal and the RED evidence.
+- [ ] Complete canonical access lookup/publication correction, job `e75e51b467b84650bd69db6f8528ae6c`: prevent metadata resurrection, retain genuine failures, and preserve storage formats.
+- [ ] Complete schema DDL population/quoted-identifier correction, job `ed67549586224a0aa21131fa438282c1`.
+- [x] Retain bounded 52/94-member correspondence reviews, including their cost, dependency and provenance gaps. Neither review establishes complete population qualification.
+- [ ] Run final full `make verify` on the complete, frozen, rebased source. The original failed run and selected recovery passes do not establish readiness.
+
+
+## Current recovery checkpoint
+
+- [x] Integrate the exact-vector reader fixture correction after parent review. The original read-holds-metadata/queued-admin-writer schedule is staged using production admission and vector leaf locks, with two chunk reads. A real recursive-lock overlay reproduces the deadlock; independent primary race count=3 passes (1.844s). Whole Search rerun is in progress; no full pass claimed yet.
+- [ ] Complete DDL proposal regression repairs: concurrent index-name admission, transactional persistence-failure fixture, and scoped traversal fixture. DeepSeek job `365956528c1447ed95d507b5d8dc20ff`.
+- [ ] Review exact schema string persistence through the existing lossless JSON owner, including old ordinary JSON compatibility and durable reopen. DeepSeek job `c3511b2986d146379f5e48b67a61b078`; no storage-layout migration is approved.
+- [ ] Review whether deterministic mid-fill publication tests require a new global test seam; prefer existing owners and require suite-safe cleanup. DeepSeek job `1891fe79e9b24ba79c3b9544981a895c`.
+- [ ] Obtain the pending typed access writer, remaining discovery APIs, and custom-engine atomicity contract decisions before dependent implementation.
+- [ ] Follow the latest user gate: full `make verify`; duplicate checker best effort, with any timeout/incomplete inventory reported explicitly. Do not change checker rules or claim a clean result from missing output.
+
+- [x] Complete fresh whole Search after reader/IVF/retirement fixture repairs: PASS244.040s. Original900s timeout and later237s failure remain preserved. Test-only forwarding fixture then retired; focused race repeated for canonical callers.
+- [x] Verify current numeric ownership guard independently: PASS1.106s after retired DELETE route removal, not attributed to unrelated normalizer controls.
+
+- [x] Review and integrate canonical JSON owner reuse in native transaction schema read/write/roundtrip. Parent default race passes2.822s for escaped surrogate durable reopen, exact ordinary payload bytes, old JSON read/rewrite. No key/layout/version migration. Worker fullstorage and final integrated gate remain pending.
+- [ ] Finish newly reproduced public bulk UNIQUE false positives (NaN/list identity collision) through canonical constraint equality; qualify ordinary and nonreflexive scale costs.
+
+- [x] Integrate canonical native bulk constraint equality correction: false NaN/list duplicates reproduced first; original error slice ownership preserved. Parent default race passes2.946s. Matched preflight4096-node median4.030→1.791ms and73775→24524allocations; this is not full bulk/transport throughput proof.
+- [x] Integrate private pending tracking ctx/error correction and atomic publication, preserving accepted maintenance lifetimes. Parent default race passes2.839s, including actual canceled public publication while buffer writer remains held and full32768-ID control. Allocationparity retained; latency qualification under contention remains open.
+- [ ] Resolve concurrent ordinary DDL admission through canonical live gate before snapshot and native after-publication release before reentrant listeners. Context-aware gate/managed commit Go contracts are pending operator choice; no wrapper/fallback proposal accepted.
+- [ ] Correct schema document export/import exact UTF16 identity through existing canonical codec while preserving ordinary document layout; DeepSeek1e858 scoped to adminimport.
+
+- [x] Integrate schema document lossless import/export owner reuse; preserve ordinary indentation/newline/0600 and old input. Independent whole adminimport race passes2.933s. Destination restart durability finding remains separately open, not hidden by source-reopen controls.
+- [x] Repeat unchanged installed advisory checker on frozen alternate-index tree628503fc6f043db44580808c4929835148a18a53: INCOMPLETE database tx/commit timeout. Advisoryexit0 is not a pass; realindexSHA unchanged; no checker/config modifications. Continue priorinventory/sourceownerreview per maintainer instruction.
+- [ ] Complete all original DDL publication tests with minimum safe one-shot test seam and actualjoins; preserve original9tests and addforeignfillcontrol. DeepSeekddf303.
+- [ ] Reproduce/fix public schema import destination persistence before readiness; no dismissal as baseline/unrelated. DeepSeekfab8 publicRED andwritecontractproposal first.

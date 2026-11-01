@@ -131,82 +131,6 @@ func TestExecuteDeleteStreaming_NodeAndRelationshipPaths(t *testing.T) {
 	require.EqualValues(t, 0, remainingRels.Rows[0][0])
 }
 
-func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "cov_collect")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	for _, n := range []struct {
-		id   string
-		name string
-		tag  string
-	}{
-		{"a", "alice", "x"},
-		{"b", "bob", "y"},
-		{"c", "carol", "x"},
-	} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(n.id), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": n.name, "tag": n.tag}})
-		require.NoError(t, err)
-	}
-
-	nodes, ok, err := exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (n:Person) WHERE n.name = $name",
-		"n",
-		10,
-		map[string]interface{}{"name": "alice"},
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Len(t, nodes, 1)
-	require.Equal(t, storage.NodeID("a"), nodes[0].ID)
-
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (n:Person) WHERE n.tag IN $tags",
-		"n",
-		10,
-		map[string]interface{}{"tags": []interface{}{"x"}},
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Len(t, nodes, 2)
-
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (n:Person) WHERE n.tag IN $tags",
-		"n",
-		10,
-		map[string]interface{}{},
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Empty(t, nodes)
-
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (n:Person) WHERE n.name <> 'alice'",
-		"n",
-		10,
-		nil,
-	)
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.Nil(t, nodes)
-
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (:Person) WHERE n.name = 'alice'",
-		"n",
-		10,
-		nil,
-	)
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.Nil(t, nodes)
-}
-
 func TestExecuteCorrelatedCallWithSeedRows_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "cov_subq")
@@ -334,11 +258,6 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 	require.EqualValues(t, int64(1), edge.Properties["a"])
 	require.Equal(t, []string{"x", "y"}, edge.Properties["tags"])
 	require.Equal(t, "Alice", edge.Properties["owner"])
-
-	withVar := wherePartNodePattern(nodePatternInfo{variable: ""}, "n")
-	require.Equal(t, "n", withVar.variable)
-	withExisting := wherePartNodePattern(nodePatternInfo{variable: "x"}, "n")
-	require.Equal(t, "x", withExisting.variable)
 
 	_, err = store.CreateNode(&storage.Node{ID: "na", Labels: []string{"N"}})
 	require.NoError(t, err)

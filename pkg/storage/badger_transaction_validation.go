@@ -210,7 +210,11 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID Node
 		if !has {
 			continue
 		}
-		if sameNodeUniqueClaim(before, pending, c.Label, prop) {
+		same, err := sameNodeUniqueClaim(context.Background(), before, pending, c.Label, prop)
+		if err != nil {
+			return err
+		}
+		if same {
 			continue
 		}
 		// Commit conflict classification is owned by accepted publication (and
@@ -516,7 +520,11 @@ func runCommitTailHook() {
 // what the full pass found.
 // Caller holds tx.mu; visit must not write to the transaction.
 func (tx *BadgerTransaction) forEachPendingCandidateLocked(ctx context.Context, self NodeID, label, property string, value interface{}, visit func(*Node) error) error {
-	if valueKey, ok := indexValueKey(value); ok {
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil {
+		return err
+	}
+	if ok {
 		ids, err := tx.pendingValueMatchesLocked(ctx, label, property, valueKey)
 		if err != nil {
 			return err

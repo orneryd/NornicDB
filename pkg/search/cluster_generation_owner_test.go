@@ -98,9 +98,9 @@ var clusterOwnerCallers = map[string][]string{
 	"Service.publishClusterGeneration": {"Service.ConfigureHNSWQuantization", "Service.triggerClustering",
 		"Service.tryRestoreClusteredWarmupFromDisk"},
 	// Retirement, followed by publication of the serving pipeline.
-	"Service.retireClusterGeneration": {"Service.Close", "Service.clearIndexes", "Service.maybeAutoSetVectorDimensions",
+	"Service.retireClusterGeneration": {"Service.closeResources", "Service.clearIndexes", "Service.maybeAutoSetVectorDimensions",
 		"Service.replaceClusterIndex", "Service.resetANNForBuild"},
-	"Service.publishClusterServing": {"Service.Close", "Service.EnableClustering", "Service.maybeAutoSetVectorDimensions",
+	"Service.publishClusterServing": {"Service.closeResources", "Service.EnableClustering", "Service.maybeAutoSetVectorDimensions",
 		"Service.publishClusterGeneration"},
 	// Readers: persistence capture, the generation a query holds, strategy.
 	"Service.snapshotClusterGenerationLocked":  {"Service.persistIVFHNSWBackground"},

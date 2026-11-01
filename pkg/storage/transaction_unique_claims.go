@@ -54,19 +54,27 @@ func (operation *Operation) nodeClaimPreimage() *Node {
 // and null's absence of a claim, using the canonical constraint key projection.
 // Non-reflexive values cannot reserve a key; decoded temporal values must use
 // their index identity rather than Go's internal location pointer identity.
-func sameNodeUniqueClaim(before, after *Node, label, property string) bool {
+func sameNodeUniqueClaim(ctx context.Context, before, after *Node, label, property string) (bool, error) {
 	var old, next interface{}
 	if before != nil && hasLabel(before.Labels, label) {
-		if key, present := constraintLockValue(before, property); present && lockableUniqueConstraintKey(uniqueConstraintLockKey{value: key}) {
+		key, present, err := constraintLockValue(ctx, before, property)
+		if err != nil {
+			return false, err
+		}
+		if present && lockableUniqueConstraintKey(uniqueConstraintLockKey{value: key}) {
 			old = key
 		}
 	}
 	if after != nil && hasLabel(after.Labels, label) {
-		if key, present := constraintLockValue(after, property); present && lockableUniqueConstraintKey(uniqueConstraintLockKey{value: key}) {
+		key, present, err := constraintLockValue(ctx, after, property)
+		if err != nil {
+			return false, err
+		}
+		if present && lockableUniqueConstraintKey(uniqueConstraintLockKey{value: key}) {
 			next = key
 		}
 	}
-	return old == next
+	return old == next, nil
 }
 
 // validateNodeClaimPreimagesLocked rejects a stale full image before it can
@@ -160,7 +168,11 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked(ctx context.Contex
 			changed := current == nil
 			for index := range constraints {
 				constraint := &constraints[index]
-				if !sameNodeUniqueClaim(before, current, constraint.Label, constraint.Property) {
+				same, err := sameNodeUniqueClaim(ctx, before, current, constraint.Label, constraint.Property)
+				if err != nil {
+					return err
+				}
+				if !same {
 					changed = true
 					break
 				}

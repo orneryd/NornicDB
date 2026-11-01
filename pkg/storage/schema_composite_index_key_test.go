@@ -12,7 +12,8 @@ import (
 func TestIndexValueKeyListsAndMaps(t *testing.T) {
 	key := func(value interface{}) interface{} {
 		t.Helper()
-		k, ok := indexValueKey(value)
+		k, ok, keyErr := indexValueKey(t.Context(), value)
+		require.NoError(t, keyErr)
 		require.True(t, ok, "%#v", value)
 		return k
 	}
@@ -34,7 +35,8 @@ func TestIndexValueKeyListsAndMaps(t *testing.T) {
 	require.NotEqual(t, listKey, key(string(listKey.(compositeIndexKey))))
 
 	for _, value := range []interface{}{nil, []byte("ab"), []interface{}{struct{ s []int }{}}, map[string]interface{}{"a": []byte("x")}} {
-		_, ok := indexValueKey(value)
+		_, ok, keyErr := indexValueKey(t.Context(), value)
+		require.NoError(t, keyErr)
 		require.False(t, ok, "%#v", value)
 	}
 }

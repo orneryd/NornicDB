@@ -28,15 +28,17 @@ type relationshipUniqueIndexSet struct {
 	entries map[relationshipUniqueIndexKey]*relationshipUniqueIndex
 }
 
-func relationshipConstraintValues(properties []string, values map[string]interface{}) ([]interface{}, bool) {
-	return relationshipConstraintValueKeys(properties, values, false)
-}
-
 // Composite/list keys serialize equal-value commits, but remain scan validated.
-func relationshipConstraintValueKeys(properties []string, values map[string]interface{}, includeComposite bool) ([]interface{}, bool) {
+// ctx is the lifetime the keys are prepared for: preparing a list or map value
+// observes that lifetime's cancellation and yields no keys at all rather than a
+// partially prepared set.
+func relationshipConstraintValueKeys(ctx context.Context, properties []string, values map[string]interface{}, includeComposite bool) ([]interface{}, bool, error) {
 	out := make([]interface{}, len(properties))
 	for i, p := range properties {
-		key, ok := indexValueKey(values[p])
+		key, ok, err := indexValueKey(ctx, values[p])
+		if err != nil {
+			return nil, false, err
+		}
 		switch v := key.(type) {
 		case float64:
 			if v != v {
@@ -50,11 +52,11 @@ func relationshipConstraintValueKeys(properties []string, values map[string]inte
 			ok = false
 		}
 		if !ok {
-			return nil, false
+			return nil, false, nil
 		}
 		out[i] = key
 	}
-	return out, true
+	return out, true, nil
 }
 func (idx *relationshipUniqueIndex) remove(id EdgeID) {
 	previous, ok := idx.keys[id]
@@ -73,8 +75,10 @@ func (idx *relationshipUniqueIndex) put(edge *Edge) {
 	if edge.Type != idx.key.relType || !strings.HasPrefix(string(edge.ID), idx.key.namespace+":") {
 		return
 	}
-	values, ok := relationshipConstraintValues(idx.properties, edge.Properties)
-	if !ok {
+	// put maintains the index of an accepted write, so the keys have that
+	// write's lifetime: they cannot cancel.
+	values, ok, err := relationshipConstraintValueKeys(context.Background(), idx.properties, edge.Properties, false)
+	if err != nil || !ok {
 		return
 	}
 	props := make(map[string]interface{}, len(values))
@@ -94,7 +98,9 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 	if b.writeBehind != nil || b.decayEnabled || namespace == "" || len(c.Properties) == 0 {
 		return nil, false, nil
 	}
-	if _, ok := relationshipConstraintValues(c.Properties, edge.Properties); !ok {
+	if _, ok, err := relationshipConstraintValueKeys(context.Background(), c.Properties, edge.Properties, false); err != nil {
+		return nil, false, err
+	} else if !ok {
 		return nil, false, nil
 	}
 	key := relationshipUniqueIndexKey{namespace, edge.Type, relationshipPropertyKey(c.Properties)}
@@ -129,7 +135,10 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 		}
 		set.entries[key] = idx
 	}
-	values, _ := relationshipConstraintValues(c.Properties, edge.Properties)
+	values, _, err := relationshipConstraintValueKeys(context.Background(), c.Properties, edge.Properties, false)
+	if err != nil {
+		return nil, false, err
+	}
 	// Integrity checks belong to the accepted write, independently of statement cancellation.
 	ids, err := idx.index.LookupFull(context.Background(), values...)
 	return ids, true, err
