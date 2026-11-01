@@ -38,6 +38,9 @@ func readProjectionItemSource(ctx context.Context, item string, stage projection
 			}
 		}
 	} else {
+		if projection, found := cypherantlr.RetainedProjectionItem(ctx, item, cypherVersionFromContext(ctx) == "25"); found {
+			return projectionItemFromSyntax(item, projection)
+		}
 		const prefix = "RETURN "
 		var ok bool
 		clause, ok = canonicalQueryClause(ctx, prefix+item)
@@ -77,6 +80,33 @@ func readProjectionItemSource(ctx context.Context, item string, stage projection
 		out.expression, out.alias = "*", "*"
 	} else if plan.valid && !plan.star && len(plan.projections) == 1 {
 		out.expression, out.alias = plan.projections[0].expr, plan.projections[0].alias
+	}
+	return out
+}
+
+// projectionItemFromSyntax preserves the existing admitted expression/alias
+// decision while consuming the real projection item in the shared arena.
+func projectionItemFromSyntax(item string, projection cypherantlr.SyntaxNode) projectionItemSource {
+	out := projectionItemSource{as: -1}
+	if projection.IsToken(cypherantlr.CypherLexerMULT) {
+		out.expression, out.alias, out.rawExpression, out.rawAlias = "*", "*", "*", "*"
+		return out
+	}
+	expression := projection.ChildRule(cypherantlr.CypherParserRULE_expression)
+	definition := projection.ChildRule(cypherantlr.CypherParserRULE_symbol)
+	if token, found := projection.DirectToken(cypherantlr.CypherLexerAS); found {
+		out.as, _ = token.Span()
+	}
+	out.rawExpression = strings.TrimSpace(item)
+	out.rawAlias = out.rawExpression
+	if out.as >= 0 {
+		out.rawExpression = strings.TrimSpace(item[:out.as])
+		out.rawAlias = strings.TrimSpace(item[out.as+len("AS"):])
+	}
+	out.expression = expression.Code()
+	out.alias = syntaxSymbolName(definition)
+	if !definition.Valid() {
+		out.alias = projectionNameFromSyntax(expression)
 	}
 	return out
 }

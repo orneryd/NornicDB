@@ -22,6 +22,11 @@ type callSubqueryScopeClause struct {
 // text and bodyOffset let validation use the same parsed clause. Legacy
 // importing-WITH and implicit imports are resolved by their existing owners.
 func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScopeClause {
+	if call, leading, retained := cypherantlr.RetainedCallScope(ctx, source, cypherVersionFromContext(ctx) == "25"); retained {
+		scope := scopeClauseFromSyntax(call)
+		scope.bodyOffset += leading
+		return scope
+	}
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	invalidScope := err != nil
 	if invalidScope && ctx.Err() == nil {

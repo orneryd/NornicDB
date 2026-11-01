@@ -44,9 +44,10 @@ func (syntax StatementSyntax) LeadingCall() (SyntaxNode, bool) {
 		return SyntaxNode{}, false
 	}
 	first := -1
-	for _, token := range syntax.data.tokens {
-		if token.channel == 0 && token.kind != -1 {
-			first = token.start
+	for index := 0; index < syntax.TokenCount(); index++ {
+		token := syntax.Token(index)
+		if token.Channel() == 0 && token.Kind() != -1 {
+			first, _ = token.Span()
 			break
 		}
 	}
@@ -99,14 +100,18 @@ func (view syntaxView[nodeKind]) Span() (int, int) {
 		item := view.data.tokens[view.id]
 		accepted = cyphertext.Span{Start: item.start, End: item.end}
 	}
+	if window := view.data.window; window != nil {
+		accepted.Start = max(accepted.Start, window.start)
+		accepted.End = min(accepted.End, window.end)
+	}
 	span, _ := view.data.view.OriginalSpan(accepted, cyphertext.SourceExtent)
-	return span.Start, span.End
+	return span.Start - view.data.windowStart(), span.End - view.data.windowStart()
 }
 
 // Text returns the selected node or token's exact original source bytes.
 func (view syntaxView[nodeKind]) Text() string {
 	start, end := view.Span()
-	return view.data.view.Original[start:end]
+	return view.data.originalWindow()[start:end]
 }
 
 // SyntaxVisitor enters a node and optionally restores its state on exit.
@@ -114,6 +119,7 @@ func (view syntaxView[nodeKind]) Text() string {
 type SyntaxVisitor func(SyntaxNode) func()
 
 type statementSyntaxData struct {
+	window      *syntaxWindow // A real subtree; arenas and source remain shared.
 	source      string
 	view        *cyphertext.Source
 	effects     statementEffectsData
@@ -147,8 +153,10 @@ type statementSyntaxKey struct {
 
 var statementSyntaxCache = struct {
 	sync.RWMutex
-	entries map[statementSyntaxKey]*statementSyntaxData
-}{entries: make(map[statementSyntaxKey]*statementSyntaxData)}
+	entries     map[statementSyntaxKey]*statementSyntaxData
+	views       map[statementSyntaxKey]*syntaxWindowRef
+	callHeaders map[statementSyntaxKey]*syntaxWindowRef
+}{entries: make(map[statementSyntaxKey]*statementSyntaxData), views: make(map[statementSyntaxKey]*syntaxWindowRef), callHeaders: make(map[statementSyntaxKey]*syntaxWindowRef)}
 
 const statementSyntaxCacheLimit = 4096
 
@@ -175,7 +183,14 @@ func ParseSyntax(ctx context.Context, source string, entry SyntaxEntry, cypher25
 			data = prior
 		}
 	}
+	var window *syntaxWindowRef
+	if data == nil {
+		window = statementSyntaxCache.views[key]
+	}
 	statementSyntaxCache.RUnlock()
+	if data == nil && window != nil {
+		data = window.materialize()
+	}
 	if data != nil {
 		syntax := StatementSyntax{data}
 		syntax.recordCredentials(ctx)
@@ -197,8 +212,11 @@ func ParseSyntax(ctx context.Context, source string, entry SyntaxEntry, cypher25
 	} else {
 		if len(statementSyntaxCache.entries) >= statementSyntaxCacheLimit {
 			clear(statementSyntaxCache.entries)
+			clear(statementSyntaxCache.views)
+			clear(statementSyntaxCache.callHeaders)
 		}
 		statementSyntaxCache.entries[key] = data
+		indexSyntaxWindows(data, cypher25, stage)
 		if data.nodes[0].rule == CypherParserRULE_script && (entry == StatementEntry || entry == FragmentEntry) {
 			statementSyntaxCache.entries[statementSyntaxKey{source: source, entry: StatementEntry, cypher25: cypher25, stage: stage}] = data
 			statementSyntaxCache.entries[statementSyntaxKey{source: source, entry: FragmentEntry, cypher25: cypher25, stage: stage}] = data
@@ -388,18 +406,30 @@ func walkSyntax[T any](node T, children func(T) []T, enter func(T) func()) {
 }
 
 // Source returns the original source, including comments and quoted spellings.
-func (syntax StatementSyntax) Source() string { return syntax.data.view.Original }
+func (syntax StatementSyntax) Source() string { return syntax.data.originalWindow() }
 
 // Root is the root of this grammar entry. Node IDs are stable within the source.
 func (syntax StatementSyntax) Root() SyntaxNode {
-	return SyntaxNode{syntaxView[syntaxNode]{syntax.data, 0}}
+	id := 0
+	if syntax.data.window != nil {
+		id = syntax.data.window.root
+	}
+	return SyntaxNode{syntaxView[syntaxNode]{syntax.data, id}}
 }
 
 // TokenCount includes hidden whitespace, comment channels and EOF.
-func (syntax StatementSyntax) TokenCount() int { return len(syntax.data.tokens) }
+func (syntax StatementSyntax) TokenCount() int {
+	if window := syntax.data.window; window != nil {
+		return window.after - window.first
+	}
+	return len(syntax.data.tokens)
+}
 
 // Token returns an immutable token view, not a lexer token pointer.
 func (syntax StatementSyntax) Token(index int) SyntaxToken {
+	if window := syntax.data.window; window != nil {
+		index += window.first
+	}
 	return SyntaxToken{syntaxView[syntaxToken]{syntax.data, index}}
 }
 
@@ -407,6 +437,8 @@ func (syntax StatementSyntax) Token(index int) SyntaxToken {
 // comments around a braced body do not change its identity or original spans.
 // A query view may omit only its grammar-owned preamble/prefix children.
 func (syntax StatementSyntax) Window(start, end int, rules ...int) (SyntaxNode, bool) {
+	start += syntax.data.windowStart()
+	end += syntax.data.windowStart()
 	first, after := -1, -1
 	for index, token := range syntax.data.tokens {
 		if token.channel != 0 || token.kind == -1 || token.start < start || token.end > end {
@@ -419,7 +451,7 @@ func (syntax StatementSyntax) Window(start, end int, rules ...int) (SyntaxNode, 
 	}
 	for _, rule := range rules {
 		for id, item := range syntax.data.nodes {
-			if item.rule != rule {
+			if item.rule != rule || !syntax.data.includesNode(id) {
 				continue
 			}
 			if first < 0 {
@@ -428,13 +460,17 @@ func (syntax StatementSyntax) Window(start, end int, rules ...int) (SyntaxNode, 
 				}
 				continue
 			}
-			if item.firstToken == first && item.afterToken == after {
+			nodeFirst, nodeAfter := (SyntaxNode{syntaxView[syntaxNode]{syntax.data, id}}).TokenRange()
+			if nodeFirst == first && nodeAfter == after {
 				return SyntaxNode{syntaxView[syntaxNode]{syntax.data, id}}, true
 			}
-			if rule == CypherParserRULE_query && item.afterToken == after {
+			if rule == CypherParserRULE_query && nodeAfter == after {
 				for _, childID := range item.children {
 					child := syntax.data.nodes[childID]
 					if child.rule == CypherParserRULE_queryPrefix || child.rule == CypherParserRULE_cypherPreamble {
+						continue
+					}
+					if !syntax.data.includesNode(childID) {
 						continue
 					}
 					if child.firstToken == first {
@@ -466,7 +502,9 @@ func (root SyntaxNode) Walk(visitors ...SyntaxVisitor) {
 		leaves[i] = visitor(root)
 	}
 	for _, child := range root.data.nodes[root.id].children {
-		SyntaxNode{syntaxView[syntaxNode]{root.data, child}}.Walk(visitors...)
+		if root.data.includesNode(child) {
+			SyntaxNode{syntaxView[syntaxNode]{root.data, child}}.Walk(visitors...)
+		}
 	}
 	for i := len(visitors) - 1; i >= 0; i-- {
 		if leaves[i] != nil {
@@ -479,7 +517,7 @@ func (root SyntaxNode) Walk(visitors ...SyntaxVisitor) {
 func (node SyntaxNode) ID() int { return node.id }
 
 // Source is the unmodified statement shared by every node in this product.
-func (node SyntaxNode) Source() string { return node.data.view.Original }
+func (node SyntaxNode) Source() string { return node.data.originalWindow() }
 
 // Valid reports whether a structural lookup found a node.
 func (node SyntaxNode) Valid() bool { return node.data != nil && node.id >= 0 }
@@ -490,6 +528,9 @@ func (node SyntaxNode) Rule() int { return node.data.nodes[node.id].rule }
 // TokenRange returns the half-open interval in the one retained token stream.
 func (node SyntaxNode) TokenRange() (int, int) {
 	item := node.data.nodes[node.id]
+	if window := node.data.window; window != nil {
+		return max(item.firstToken, window.first), min(item.afterToken, window.after)
+	}
 	return item.firstToken, item.afterToken
 }
 
@@ -498,6 +539,10 @@ func (node SyntaxNode) TokenRange() (int, int) {
 func (node SyntaxNode) Code() string {
 	item := node.data.nodes[node.id]
 	start, end := item.start, item.end
+	if window := node.data.window; window != nil {
+		start = max(start, window.start)
+		end = min(end, window.end)
+	}
 	first, after := node.TokenRange()
 	var builder strings.Builder
 	last := start
@@ -526,15 +571,40 @@ func (node SyntaxNode) Name() (string, bool) {
 // Parent returns the enclosing CST node, if this is not the root.
 func (node SyntaxNode) Parent() (SyntaxNode, bool) {
 	parent := node.data.nodes[node.id].parent
+	if node.data.window != nil && node.id == node.data.window.root {
+		parent = -1
+	}
 	return SyntaxNode{syntaxView[syntaxNode]{node.data, parent}}, parent >= 0
 }
 
 // ChildCount is the number of direct CST children, including terminals.
-func (node SyntaxNode) ChildCount() int { return len(node.data.nodes[node.id].children) }
+func (node SyntaxNode) ChildCount() int {
+	if node.data.window == nil {
+		return len(node.data.nodes[node.id].children)
+	}
+	count := 0
+	for _, id := range node.data.nodes[node.id].children {
+		if node.data.includesNode(id) {
+			count++
+		}
+	}
+	return count
+}
 
 // Child returns a direct immutable child view.
 func (node SyntaxNode) Child(index int) SyntaxNode {
-	return SyntaxNode{syntaxView[syntaxNode]{node.data, node.data.nodes[node.id].children[index]}}
+	if node.data.window == nil {
+		return SyntaxNode{syntaxView[syntaxNode]{node.data, node.data.nodes[node.id].children[index]}}
+	}
+	for _, id := range node.data.nodes[node.id].children {
+		if node.data.includesNode(id) {
+			if index == 0 {
+				return SyntaxNode{syntaxView[syntaxNode]{node.data, id}}
+			}
+			index--
+		}
+	}
+	panic("syntax child index out of range")
 }
 
 // ChildRule returns a direct rule child, or an absent view. It never searches
@@ -544,7 +614,7 @@ func (node SyntaxNode) ChildRule(rule int) SyntaxNode {
 		return SyntaxNode{}
 	}
 	for _, id := range node.data.nodes[node.id].children {
-		if node.data.nodes[id].rule == rule {
+		if node.data.includesNode(id) && node.data.nodes[id].rule == rule {
 			return SyntaxNode{syntaxView[syntaxNode]{node.data, id}}
 		}
 	}
@@ -575,7 +645,7 @@ func (node SyntaxNode) QueryBody() SyntaxNode {
 func (node SyntaxNode) DirectToken(kind int) (SyntaxToken, bool) {
 	for _, id := range node.data.nodes[node.id].children {
 		child := node.data.nodes[id]
-		if child.rule < 0 && child.firstToken >= 0 && node.data.tokens[child.firstToken].kind == kind {
+		if node.data.includesNode(id) && child.rule < 0 && child.firstToken >= 0 && node.data.tokens[child.firstToken].kind == kind {
 			return SyntaxToken{syntaxView[syntaxToken]{node.data, child.firstToken}}, true
 		}
 	}

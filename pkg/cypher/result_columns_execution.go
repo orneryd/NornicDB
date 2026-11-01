@@ -23,7 +23,7 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 		return ctx, unresolvedStatementError()
 	}
 	source := clauses[0].syntax.Source()
-	if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == source {
+	if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == source && program.syntax.Contains(clauses[0].syntax) {
 		return ctx, nil
 	}
 	var retained []string
@@ -48,7 +48,7 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 
 func executionClauseEffects(ctx context.Context, clause pipelineClause) (pipelineClauseEffects, error) {
 	if clause.syntax.Valid() {
-		if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == clause.syntax.Source() {
+		if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == clause.syntax.Source() && program.syntax.Contains(clause.syntax) {
 			effects, found := program.effects[clause.syntax.ID()]
 			if !found {
 				return pipelineClauseEffects{}, unresolvedStatementError()

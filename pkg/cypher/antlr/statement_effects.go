@@ -103,6 +103,12 @@ func (syntax StatementSyntax) collectEffects() statementEffectsData {
 	result := statementEffectsData{updatingBodies: make(map[int]bool)}
 	var containers []int
 	query, incomplete, remoteEffect, nonReadEffect, explained := false, false, false, false, 0
+	if syntax.data.window != nil {
+		query = true
+		if syntax.Root().Rule() != CypherParserRULE_query {
+			result.executableQueries = append(result.executableQueries, syntax.Root().id)
+		}
+	}
 	syntax.Walk(func(node SyntaxNode) func() {
 		var leave func()
 		if QueryBodyContainer(node.Rule()) != "" {

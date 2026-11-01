@@ -519,12 +519,6 @@ func useKeywordIndexFrom(query string, from int, opts keywordScanOpts) int {
 // USE owns graph-name boundaries, including the optional GRAPH keyword.
 // Reuse that owner when a graph is spelled like a clause keyword.
 func useGraphNameAt(s string, pos int) bool {
-	// A graph name directly follows USE or USE GRAPH. Unless a comment can
-	// sit between them, the raw preceding word decides without a full scan.
-	if word := rawWordBefore(s, pos); !strings.EqualFold(word, "USE") && !strings.EqualFold(word, "GRAPH") &&
-		!strings.Contains(s[:pos], "//") && !strings.Contains(s[:pos], "*/") {
-		return false
-	}
 	end := lastLiveByte(s, pos) + 1
 	start := end
 	for start > 0 && cyphertext.NamePartAt(s, start-1) {

@@ -269,6 +269,7 @@ var pipelineClauseSplits = struct {
 // topLevelCall records whether the text has a CALL of its own, which makes
 // the split without procedure calls unsupported.
 type pipelineClauseSplit struct {
+	origin       cypherantlr.SyntaxOrigin
 	clauses      []pipelineClause
 	ok           bool
 	topLevelCall bool
@@ -307,8 +308,16 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 	pipelineClauseSplits.RLock()
 	split, cached := pipelineClauseSplits.splits[key]
 	pipelineClauseSplits.RUnlock()
+	// The text cache may contain nodes from a standalone parse or another
+	// parent arena. Only reuse those identities with the current retained view.
+	syntax, syntaxErr := cypherantlr.ParseSyntax(ctx, cypher, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	origin := syntax.Origin()
+	if cached && (syntaxErr != nil || split.origin != origin) {
+		cached = false
+	}
 	if !cached {
 		split = parsePipelineClauses(ctx, cypher)
+		split.origin = origin
 		if err := ctx.Err(); err != nil {
 			recordExpressionFailure(ctx, err)
 			return pipelineClauseSplit{}

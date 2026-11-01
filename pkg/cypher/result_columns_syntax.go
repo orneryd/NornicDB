@@ -14,6 +14,21 @@ func canonicalQueryClause(ctx context.Context, source string) (cypherantlr.Synta
 	if err != nil {
 		return cypherantlr.SyntaxNode{}, false
 	}
+	// A retained clause view already is the real clause, without a synthetic
+	// Script/Query/SingleQuery container.
+	rootClause := syntax.Root()
+	for (rootClause.Rule() == cypherantlr.CypherParserRULE_readingStatement || rootClause.Rule() == cypherantlr.CypherParserRULE_updatingStatement) && rootClause.ChildCount() == 1 {
+		rootClause = rootClause.Child(0)
+	}
+	switch rootClause.Rule() {
+	case cypherantlr.CypherParserRULE_withSt, cypherantlr.CypherParserRULE_returnSt,
+		cypherantlr.CypherParserRULE_matchSt, cypherantlr.CypherParserRULE_unwindSt,
+		cypherantlr.CypherParserRULE_callSubquery, cypherantlr.CypherParserRULE_queryCallSt,
+		cypherantlr.CypherParserRULE_standaloneCall, cypherantlr.CypherParserRULE_createSt,
+		cypherantlr.CypherParserRULE_mergeSt, cypherantlr.CypherParserRULE_deleteSt,
+		cypherantlr.CypherParserRULE_setSt, cypherantlr.CypherParserRULE_removeSt:
+		return rootClause, true
+	}
 	root := statementSyntaxQuery(syntax)
 	if !root.Valid() {
 		root, _ = syntax.Window(0, len(source), cypherantlr.CypherParserRULE_subqueryBody)
