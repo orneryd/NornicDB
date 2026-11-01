@@ -122,7 +122,7 @@ func (e *StorageExecutor) pipelineApplyWithPlan(ctx context.Context, rows []pipe
 		for index, projection := range projections {
 			aggregates[index] = returnProjection{expr: projection.expr, alias: projection.alias, isAggr: projection.aggregate}
 		}
-		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates, rowsValidated)
+		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates, rowsValidated, correlatedGroupingKeys(ctx, clause))
 		if !ok {
 			return nil, false
 		}

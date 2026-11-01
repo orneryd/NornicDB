@@ -15,11 +15,12 @@ import (
 // position: WITH … SKIP / LIMIT n WHERE p keeps n rows, then filters, as Neo4j
 // does; YIELD's WHERE filters before ordering and paging.
 type projectionModifiers struct {
-	where            string // WHERE predicate, "" when absent
-	orderBy          string // ORDER BY items, "" when absent
-	skip             string // SKIP expression, "" when absent
-	limit            string // LIMIT expression, "" when absent
-	whereAfterWindow bool
+	where                   string // WHERE predicate, "" when absent
+	orderBy                 string // ORDER BY items, "" when absent
+	skip                    string // SKIP expression, "" when absent
+	limit                   string
+	skipScalar, limitScalar *scalarExpressionSyntax // LIMIT expression, "" when absent
+	whereAfterWindow        bool
 }
 
 // projectionModifiersFromSyntax reads the orderSt, skipSt and limitSt children
@@ -45,8 +46,10 @@ func projectionModifiersFromSyntax(container, where cypherantlr.SyntaxNode, wher
 			modifiers.orderBy = strings.Join(terms, ", ")
 		case cypherantlr.CypherParserRULE_skipSt:
 			modifiers.skip = part.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+			modifiers.skipScalar = observeScalarSyntax(part.ChildRule(cypherantlr.CypherParserRULE_expression))
 		case cypherantlr.CypherParserRULE_limitSt:
 			modifiers.limit = part.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+			modifiers.limitScalar = observeScalarSyntax(part.ChildRule(cypherantlr.CypherParserRULE_expression))
 		}
 	}
 	return modifiers

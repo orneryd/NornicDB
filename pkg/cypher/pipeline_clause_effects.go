@@ -275,7 +275,7 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 			if node.Rule() == cypherantlr.CypherParserRULE_limitSt {
 				keyword = "LIMIT"
 			}
-			effects.pagination = append(effects.pagination, paginationExpression{keyword: keyword, value: value})
+			effects.pagination = append(effects.pagination, paginationExpression{keyword: keyword, value: value, scalar: observeScalarSyntax(node.ChildRule(cypherantlr.CypherParserRULE_expression))})
 			if depth == 0 {
 				if keyword == "SKIP" {
 					effects.skip = value

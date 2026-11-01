@@ -218,6 +218,13 @@ func (source *Source) OriginalSpan(span Span, policy SourceMappingPolicy) (Span,
 
 type sourceKey struct{}
 
+// CurrentSource is the caller's retained source window, even when a consumer
+// asks for one of its children. It is not a normalization or admission entry.
+func CurrentSource(ctx context.Context) *Source {
+	source, _ := ctx.Value(sourceKey{}).(*Source)
+	return source
+}
+
 // RetainedSource returns only an existing source association. Accepted callers
 // never reinterpret their text as raw input when no association exists.
 func RetainedSource(ctx context.Context, text string, stage SourceStage) (*Source, bool) {
@@ -376,4 +383,22 @@ func (source *Source) HasRewrite(match RewriteMatch) bool {
 		}
 	}
 	return false
+}
+
+// submittedDiagnostic records that the syntax owner already projected its
+// structured positions to the ingress source. Presentation adapters preserve
+// that frame rather than applying their local edits a second time.
+type submittedDiagnostic struct{ cause error }
+
+func (diagnostic *submittedDiagnostic) Error() string { return diagnostic.cause.Error() }
+func (diagnostic *submittedDiagnostic) Unwrap() error { return diagnostic.cause }
+func MarkSubmittedDiagnostic(err error) error {
+	if err == nil || IsSubmittedDiagnostic(err) {
+		return err
+	}
+	return &submittedDiagnostic{cause: err}
+}
+func IsSubmittedDiagnostic(err error) bool {
+	var diagnostic *submittedDiagnostic
+	return errors.As(err, &diagnostic)
 }

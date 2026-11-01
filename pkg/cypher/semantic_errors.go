@@ -107,17 +107,25 @@ func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage,
 	if invalidRelationshipPattern(source) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidRelationshipPattern", "invalid variable-length relationship pattern")
 	}
-	var localized *localization.LocalizedError
-	if errors.As(cause, &localized) {
-		const code = "Neo.ClientError.Statement.SyntaxError"
-		// The grammar owns diagnostic identity and structured coordinates. The
-		// admission adapter adds transport classification without flattening it.
-		classified := localization.NewLocalizedError(code, localized.Message, cause)
-		return &classifiedCypherError{cause: fmt.Errorf("%s: %w", code, classified), code: code, detail: "UnexpectedSyntax"}
+	if classified := classifySyntaxDiagnostic(cause); classified != nil {
+		return classified
 	}
+
 	message := strings.ReplaceAll(cause.Error(), "mismatched input ", "Invalid input ")
 	message = strings.ReplaceAll(message, "extraneous input ", "Invalid input ")
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message)
+}
+
+// classifySyntaxDiagnostic adds the common transport classification while
+// preserving the syntax owner's structured positions, identity and cause.
+func classifySyntaxDiagnostic(cause error) error {
+	var localized *localization.LocalizedError
+	if !errors.As(cause, &localized) {
+		return nil
+	}
+	const code = "Neo.ClientError.Statement.SyntaxError"
+	classified := localization.NewLocalizedError(code, localized.Message, cause)
+	return &classifiedCypherError{cause: fmt.Errorf("%s: %w", code, classified), code: code, detail: "UnexpectedSyntax"}
 }
 
 // invalidForeachError classifies malformed updates and invalid runtime list

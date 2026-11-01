@@ -170,3 +170,45 @@ func TestStatementSyntaxAcceptedViewRetainsSubmittedOccurrence(t *testing.T) {
 	require.Same(t, &syntax.data.nodes[0], &plain.data.nodes[0])
 	require.Equal(t, accepted, plain.Root().SubmittedText())
 }
+
+func TestStatementSyntaxQuerySequenceUsesOnlySelectedChildren(t *testing.T) {
+	text := "CALL () { USE alpha WITH 1 AS x RETURN x } CALL () { USE beta WITH 1 AS x RETURN x } RETURN x"
+	source := cyphertext.NewSource(t.Context(), text, cyphertext.AcceptedSource)
+	ctx := WithNewStatementSyntax(cyphertext.WithSourceView(t.Context(), source), text, text)
+	whole, err := ParseSyntax(ctx, ReadStatement(text), StatementEntry, false, AcceptedSource)
+	require.NoError(t, err)
+	window := "WITH 1 AS x RETURN x"
+	from := 0
+	var prior SyntaxOrigin
+	for occurrence := 0; occurrence < 2; occurrence++ {
+		at := from + strings.Index(text[from:], window)
+		from = at + len(window)
+		branchCtx := cyphertext.WithSourceView(ctx, source.Window(at, at+len(window)))
+		branch, err := ParseSyntax(branchCtx, ReadStatement(window), StatementEntry, false, AcceptedSource)
+		require.NoError(t, err)
+		require.Equal(t, window, branch.Source())
+		require.Same(t, &whole.data.nodes[0], &branch.data.nodes[0])
+		start, end := branch.Root().Span()
+		require.Zero(t, start)
+		require.Equal(t, len(window), end)
+		require.Equal(t, window, branch.Root().CodeSource(nil).Text)
+		uses, calls := 0, 0
+		branch.Walk(func(node SyntaxNode) func() {
+			if node.Rule() == CypherParserRULE_useClause {
+				uses++
+			}
+			if node.Rule() == CypherParserRULE_callSubquery {
+				calls++
+			}
+			return nil
+		})
+		require.Zero(t, uses, "omitted USE is not part of this execution window")
+		require.Zero(t, calls, "the containing CALL is not a child of its body")
+		if occurrence > 0 {
+			require.NotEqual(t, prior, branch.Origin())
+		}
+		prior = branch.Origin()
+	}
+	_, err = ParseSyntax(ctx, ReadStatement("1 AS x RETURN x"), StatementEntry, false, AcceptedSource)
+	require.Error(t, err, "a partial projection cannot become a query sequence")
+}

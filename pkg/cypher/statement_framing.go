@@ -399,3 +399,39 @@ func completeFinishedResult(result *ExecuteResult) {
 		result.Rows = nil
 	}
 }
+
+// validateTerminalQueryClauses is the whole-statement terminal-clause rule.
+// The retained grammar owns clause roles, including keyword-named operands and
+// ordered WITH projections. Metadata and extension commands keep their command
+// owners; their internal words cannot supply a dangling graph clause.
+func validateTerminalQueryClauses(ctx context.Context, source string) error {
+	if !isGraphQueryStatement(source) {
+		return nil
+	}
+	body, _ := readRecoveredQueryBody(ctx, source)
+	for _, branch := range body.branches {
+		if branch.finished || len(branch.clauses) == 0 {
+			continue
+		}
+		last := branch.clauses[len(branch.clauses)-1]
+		keyword := ""
+		switch last.kind {
+		case pipelineClauseUnwind:
+			keyword = "UNWIND"
+		case pipelineClauseMatch:
+			keyword = "MATCH"
+		case pipelineClauseOptionalMatch:
+			keyword = "OPTIONAL"
+		case pipelineClauseWith:
+			keyword = "WITH"
+		case pipelineClauseLet:
+			keyword = "LET"
+		case pipelineClauseFilter:
+			keyword = "FILTER"
+		}
+		if keyword != "" {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", fmt.Sprintf("Invalid input: %s must be followed by a clause", keyword))
+		}
+	}
+	return ctx.Err()
+}

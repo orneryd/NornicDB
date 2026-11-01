@@ -1458,7 +1458,8 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 		shape := branch.branches[0]
 		source := cypher[shape.start:shape.end]
 		if runBranch == nil {
-			return e.executeInternal(ctx, source, nil)
+			branchCtx := cyphertext.WithSourceView(ctx, branch.source)
+			return e.executeInternal(branchCtx, branch.source.Text, nil)
 		}
 		return runBranch(source)
 	})

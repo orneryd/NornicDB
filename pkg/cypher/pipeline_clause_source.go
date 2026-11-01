@@ -16,11 +16,12 @@ type pipelineClause struct {
 // owner's node. Source spelling, coordinates, kind and optionality belong to
 // that occurrence and cannot be supplied independently by a caller.
 type pipelineClauseSource struct {
-	start, end int
-	kind       pipelineClauseKind
-	syntax     cypherantlr.SyntaxNode
-	text       string
-	optional   bool
+	start, end  int
+	kind        pipelineClauseKind
+	syntax      cypherantlr.SyntaxNode
+	programRoot cypherantlr.SyntaxNode // physical query body; nodes keep their canonical coordinate frame
+	text        string
+	optional    bool
 }
 
 func pipelineClauseFromSyntax(node cypherantlr.SyntaxNode) (pipelineClause, bool) {

@@ -34,13 +34,23 @@ func describeScalarSyntax(ctx context.Context, node cypherantlr.SyntaxNode) (sca
 	if shape, found := scalarExpressionSyntaxCache.get(expression); found {
 		return shape, ctx.Err()
 	}
-	var shape scalarExpressionSyntax
-	node.Walk(scalarAdmissionVisitor(&shape))
+	shape := *observeScalarSyntax(node)
 	if err := ctx.Err(); err != nil {
 		return shape, err
 	}
 	scalarExpressionSyntaxCache.put(expression, shape)
 	return shape, nil
+}
+
+// observeScalarSyntax reads an existing expression occurrence. Its immutable
+// value can travel with cached effect facts without retaining another arena.
+func observeScalarSyntax(node cypherantlr.SyntaxNode) *scalarExpressionSyntax {
+	if !node.Valid() {
+		return nil
+	}
+	shape := &scalarExpressionSyntax{}
+	node.Walk(scalarAdmissionVisitor(shape))
+	return shape
 }
 
 // scalarAdmissionVisitor observes the same product as binding and graph effects.

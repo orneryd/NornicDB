@@ -546,6 +546,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			}
 			return e.executeProfile(ctx, modeQuery)
 		}
+		if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
+			return nil, err
+		}
 		info := e.analyzer.Analyze(ctx, cypher)
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -773,29 +776,11 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// fragment, and a FINISH terminator is itself the clause that follows, so
 	// both are exempt.
 	if !finishTerminated {
-		last := lastTopLevelClauseWord(cypher)
-		// `WITH EMBEDDING` is a NornicDB execution option, not a WITH
-		// projection: a statement that ends with it is complete. Only exempt
-		// it when the text before the trailer is itself a complete statement.
-		if last == "WITH" {
-			if scope, ok := stripWithEmbeddingSuffix(cypher); ok {
-				switch lastTopLevelClauseWord(scope) {
-				case "", "UNWIND", "MATCH", "OPTIONAL", "WITH", "CALL", "LET", "FILTER", "FOR":
-				default:
-					last = ""
-				}
-			}
+		if err := validateTerminalQueryClauses(ctx, cypher); err != nil {
+			return nil, err
 		}
-		switch last {
-		case "UNWIND", "MATCH", "OPTIONAL", "WITH", "LET", "FILTER", "FOR":
-			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				fmt.Sprintf("Invalid input: %s must be followed by a clause", last))
-		}
-		// A bare CALL has no procedure or subquery after it; the statement is
-		// incomplete, not a lookup of a procedure named 'CALL' (#514).
 		if strings.EqualFold(cypher, "CALL") {
-			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				"Invalid input: CALL must be followed by a procedure name or subquery")
+			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "Invalid input: CALL must be followed by a procedure name or subquery")
 		}
 	}
 	// WITH EMBEDDING is an execution option, not a WITH projection: the

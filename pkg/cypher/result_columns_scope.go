@@ -32,6 +32,8 @@ type projectedScopeFacts struct {
 type projectionFactsKey struct {
 	query, incoming, retained              string
 	incomingKnown, retainedKnown, cypher25 bool
+	bodyRule, bodyStart, bodyEnd           int
+	selectedBody                           bool
 }
 
 var projectionFactsCache = newBoundedCache[projectionFactsKey, *projectedScopeFacts](4096, func(key projectionFactsKey) int {
@@ -96,11 +98,16 @@ func (e *StorageExecutor) projectionFactsForSyntax(ctx context.Context, syntax c
 	return e.projectionFactsWithSyntax(ctx, syntax.Source(), incoming, retained, cypher25, syntax)
 }
 
-func (e *StorageExecutor) projectionFactsWithSyntax(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool, syntax cypherantlr.StatementSyntax) *projectedScopeFacts {
+func (e *StorageExecutor) projectionFactsWithSyntax(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool, syntax cypherantlr.StatementSyntax, queryRoots ...cypherantlr.SyntaxNode) *projectedScopeFacts {
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
 	key := projectionKey(query, incoming, retained, cypher25)
+	if len(queryRoots) > 0 && queryRoots[0].Valid() {
+		key.selectedBody = true
+		key.bodyRule = queryRoots[0].Rule()
+		key.bodyStart, key.bodyEnd = queryRoots[0].Span()
+	}
 	generation := globalProcedureRegistry.generation.Load()
 	// Column-only readers use the established source/scope cache key without
 	// parsing a cold statement. Node-bearing plans additionally belong to the
@@ -127,7 +134,7 @@ func (e *StorageExecutor) projectionFactsWithSyntax(ctx context.Context, query s
 	// On a miss, compilation classifies typed commands before acquiring graph
 	// syntax. Eager syntax here would reject a command before its owner can
 	// provide its schema. A cached node-bearing graph still verifies its origin.
-	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25, syntax)
+	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25, syntax, queryRoots...)
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}

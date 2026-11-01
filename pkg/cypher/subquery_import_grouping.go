@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -40,80 +41,69 @@ func cypherVersionFromContext(ctx context.Context) string {
 	return "5"
 }
 
-// cypher5ImportGrouping applies Cypher 5's scoping of an EXISTS / COUNT /
-// COLLECT { … } body's imported variables (the outer row's names) to the
-// body's aggregating projections. In Cypher 5 the imports stay in scope
-// through every clause, so:
-//
-//   - an aggregating WITH groups by the imports read after it: over no rows
-//     it has no row, where Cypher 25 has one (WITH count(*) AS c RETURN c + g
-//     is [] in Cypher 5, [1] in Cypher 25);
-//   - a projected item that aggregates and reads an import outside its
-//     aggregates is Neo4j 5's implicit-grouping error (RETURN count(*) + g).
-//
-// Cypher 25 aggregates over the body's rows alone, as the body runs.
-func cypher5ImportGrouping(body string, imports map[string]interface{}) (string, error) {
-	if len(imports) == 0 || !containsAggregateFunc(body) {
-		return body, nil
+// correlatedGrouping carries physical Cypher 5 grouping keys for actual WITH
+// occurrences. It never inserts projected items into the retained source.
+type correlatedGroupingKey struct{}
+type correlatedGrouping struct {
+	origin  cypherantlr.SyntaxOrigin
+	clauses map[int][]string
+}
+
+func correlatedGroupingKeys(ctx context.Context, clause pipelineClause) []string {
+	policy, _ := ctx.Value(correlatedGroupingKey{}).(*correlatedGrouping)
+	if policy == nil || policy.origin != clause.syntax.Origin() {
+		return nil
 	}
-	words := projectionWords(body)
-	type insertion struct {
-		at   int
-		text string
+	return policy.clauses[clause.syntax.ID()]
+}
+
+// cypher5ImportGrouping applies the existing imported-aggregation policy to
+// retained projection occurrences. Grouping keys are physical inputs, not
+// invented WITH syntax. Cypher 25 keeps its own aggregate-row contract.
+func cypher5ImportGrouping(ctx context.Context, body queryBody, imports map[string]interface{}) (context.Context, error) {
+	policy := &correlatedGrouping{origin: body.syntax.Origin(), clauses: map[int][]string{}}
+	if cypherVersionFromContext(ctx) == "25" || len(imports) == 0 {
+		return context.WithValue(ctx, correlatedGroupingKey{}, policy), nil
 	}
-	var insertions []insertion
-	for index, word := range words {
-		if word.depth != 0 || word.upper != "WITH" && word.upper != "RETURN" || precededByWord(body, word.start, "STARTS", "ENDS") {
-			continue
-		}
-		itemsStart := skipASCIISpaces(body, word.end, len(body))
-		if matchKeywordAt(body, itemsStart, "DISTINCT") {
-			itemsStart = skipASCIISpaces(body, itemsStart+len("DISTINCT"), len(body))
-		}
-		itemsEnd := len(body)
-		for _, next := range words[index+1:] {
-			if next.depth == 0 && groupByKeysEnd(next.upper, "WITH") {
-				itemsEnd = next.start
-				break
-			}
-		}
-		items := splitTopLevelComma(body[itemsStart:itemsEnd])
-		aggregating := false
-		projected := map[string]bool{}
-		for _, item := range items {
-			expression, alias := rewriteStageProjectionItem(item)
-			projected[alias] = true
-			spans := findAggregateSpans(expression)
-			if len(spans) == 0 {
+	for _, branch := range body.branches {
+		for index, clause := range branch.clauses {
+			if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
 				continue
 			}
-			aggregating = true
-			outside := expression
-			for i := len(spans) - 1; i >= 0; i-- {
-				outside = outside[:spans[i].start] + " " + outside[spans[i].end:]
+			plan := projectionPlanOfNode(clause.syntax)
+			if !plan.hasAggregate {
+				continue
 			}
-			for _, name := range expressionVariables(outside) {
-				if _, imported := imports[name]; imported {
-					return "", localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
-						localization.CypherCoreGroupByImplicitGroupingKey(name))
+			projected := make(map[string]bool, len(plan.projections))
+			for _, item := range plan.projections {
+				projected[item.alias] = true
+				if !item.isAggr {
+					continue
+				}
+				for _, name := range expressionVariables(removeAggregateCalls(item.expr)) {
+					if _, imported := imports[name]; imported {
+						return ctx, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreGroupByImplicitGroupingKey(name))
+					}
 				}
 			}
-		}
-		if !aggregating || word.upper != "WITH" {
-			continue
-		}
-		var keys []string
-		for _, name := range expressionVariables(body[itemsEnd:]) {
-			if _, imported := imports[name]; imported && !projected[name] {
-				keys = append(keys, name)
+			if clause.kind != pipelineClauseWith {
+				continue
+			}
+			var after strings.Builder
+			for _, next := range branch.clauses[index+1:] {
+				after.WriteString(next.syntax.Code())
+				after.WriteByte(' ')
+			}
+			var keys []string
+			for _, name := range expressionVariables(after.String()) {
+				if _, imported := imports[name]; imported && !projected[name] {
+					keys = append(keys, name)
+				}
+			}
+			if len(keys) > 0 {
+				policy.clauses[clause.syntax.ID()] = keys
 			}
 		}
-		if len(keys) > 0 {
-			insertions = append(insertions, insertion{at: itemsStart, text: strings.Join(keys, ", ") + ", "})
-		}
 	}
-	for i := len(insertions) - 1; i >= 0; i-- {
-		body = body[:insertions[i].at] + insertions[i].text + body[insertions[i].at:]
-	}
-	return body, nil
+	return context.WithValue(ctx, correlatedGroupingKey{}, policy), nil
 }

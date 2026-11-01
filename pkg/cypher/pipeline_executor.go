@@ -247,6 +247,7 @@ type pipelineClauseKey struct {
 	cypher25          bool
 	node, first, last int
 	use, finished     bool
+	semanticGraphs    bool
 }
 
 // pipelineClauseSplit is a text's split with procedure calls as clauses;
@@ -292,7 +293,7 @@ func cachedPipelineClauses(ctx context.Context, body queryBody, procedureCalls b
 		return pipelineClauseSplit{}
 	}
 	branch := body.branches[0]
-	key := pipelineClauseKey{source: body.syntax.Source(), origin: body.syntax.Origin(), cypher25: cypherVersionFromContext(ctx) == "25", node: body.syntax.ID(), first: -1, last: -1, use: branch.useStart >= 0, finished: branch.finished}
+	key := pipelineClauseKey{source: body.syntax.Source(), origin: body.syntax.Origin(), cypher25: cypherVersionFromContext(ctx) == "25", node: body.syntax.ID(), first: -1, last: -1, use: branch.useStart >= 0, finished: branch.finished, semanticGraphs: semanticGraphScope(ctx)}
 	if len(branch.clauses) > 0 {
 		key.first = branch.clauses[0].syntax.ID()
 		key.last = branch.clauses[len(branch.clauses)-1].syntax.ID()
@@ -375,7 +376,7 @@ func parsePipelineClauses(ctx context.Context, body queryBody) pipelineClauseSpl
 			split.firstReturn = last.pipelineClause
 		}
 	}
-	if branch.useStart >= 0 || branch.finished || len(branch.clauses) == 0 {
+	if branch.useStart >= 0 && !semanticGraphScope(ctx) || branch.finished || len(branch.clauses) == 0 {
 		return split
 	}
 	for _, clause := range branch.clauses {
@@ -638,7 +639,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
 				writes = true
 			case pipelineClauseCall:
-				if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); found && procedure.Spec.writes() {
+				if procedure, found := globalProcedureRegistry.Get(clause.syntax.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()); found && procedure.Spec.writes() {
 					writes = true
 				}
 			}
@@ -1047,7 +1048,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			for _, name := range yielded {
 				scope[name] = struct{}{}
 			}
-			if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); found && procedure.Spec.writes() {
+			if procedure, found := globalProcedureRegistry.Get(clause.syntax.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()); found && procedure.Spec.writes() {
 				wrote = true
 			}
 		case pipelineClauseCallSubquery:

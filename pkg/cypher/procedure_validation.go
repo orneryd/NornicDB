@@ -65,10 +65,15 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 	return validateAndCoerceProcedureArguments(spec, args, nil)
 }
 
-func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
+func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string, calls ...cypherantlr.SyntaxNode) ([]interface{}, error) {
 	ctx = withExpressionFailureSlot(ctx)
 	bindings := valueBindingsFromContext(ctx)
-	texts := explicitProcedureArgumentTexts(ctx, callCypher)
+	var texts []string
+	if len(calls) > 0 && calls[0].Valid() {
+		texts = procedureArgumentTextsFromSyntax(calls[0])
+	} else {
+		texts = explicitProcedureArgumentTexts(ctx, callCypher)
+	}
 	if texts == nil {
 		return extractProcedureInvocationArguments(ctx, spec, callCypher)
 	}
@@ -129,12 +134,12 @@ func (e *StorageExecutor) validateYieldModifiers(ctx context.Context, yield *yie
 			localization.CypherCoreYieldWhereMisplaced())
 	}
 	if yield.skip != "" {
-		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{"SKIP", yield.skip}); err != nil {
+		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{keyword: "SKIP", value: yield.skip, scalar: yield.skipScalar}); err != nil {
 			return err
 		}
 	}
 	if yield.limit != "" {
-		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{"LIMIT", yield.limit}); err != nil {
+		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{keyword: "LIMIT", value: yield.limit, scalar: yield.limitScalar}); err != nil {
 			return err
 		}
 	}

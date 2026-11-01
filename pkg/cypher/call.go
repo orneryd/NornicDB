@@ -149,14 +149,16 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
 	}
-	if _, all, _, union := parseTopLevelUnionTextBranches(ctx, tail); union {
+	tailBody := readQueryBodyText(ctx, tail, 0, len(tail))
+	if _, all, _, union := parseTopLevelUnionBranches(ctx, tailBody); union {
 		first := true
-		return e.executeUnion(ctx, tail, all, func(branch string) (*ExecuteResult, error) {
+		return e.executeRetainedUnion(ctx, tailBody, all, func(branch queryBody) (*ExecuteResult, error) {
+			branchCtx := cyphertext.WithSourceView(ctx, branch.source)
 			if first {
 				first = false
-				return e.executeCallTail(ctx, seed, branch)
+				return e.executeCallTail(branchCtx, seed, branch.source.Text)
 			}
-			return e.executeInternal(ctx, branch, nil)
+			return e.executeInternal(branchCtx, branch.source.Text, nil)
 		})
 	}
 	if projected, ok, err := e.projectCallTailReturnAll(ctx, seed, tail); ok || err != nil {
@@ -1236,26 +1238,35 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 // true when the call is part of a larger query whose other clauses the caller
 // runs (MATCH … CALL, a CALL in a tail): its YIELD may then filter, order and
 // page, which a standalone call can't (validateYieldModifiers).
-func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher string, inQuery bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher string, inQuery bool, pipelineNodes ...cypherantlr.SyntaxNode) (*ExecuteResult, error) {
 	// A RETURN right after YIELD is the start of the tail, like any other
 	// clause, so it runs over all yielded rows (executeCallTail): an aggregate
 	// in it groups the rows, and ORDER BY / SKIP / LIMIT apply to all of them.
 	// Without a CALL occurrence the statement itself is the call; the
 	// procedure readers below report its parse failure.
 	callCypher, tailCypher := cypher, ""
-	if parts, split := splitChainedProcedureCall(ctx, cypher); split {
-		callCypher, tailCypher = parts.callOnly, parts.tail
+	if len(pipelineNodes) == 0 {
+		if parts, split := splitChainedProcedureCall(ctx, cypher); split {
+			callCypher, tailCypher = parts.callOnly, parts.tail
+		}
 	}
 
 	// Parse YIELD clause for post-processing
-	yield := parseYieldClause(ctx, callCypher)
+	callNode, _ := leadingCallClause(ctx, callCypher)
+	if len(pipelineNodes) > 0 {
+		callNode = pipelineNodes[0]
+	}
+	if !callNode.Valid() {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "procedure call is outside its retained statement")
+	}
+	yield := yieldFromSyntax(callNode)
 	if err := e.validateYieldModifiers(ctx, yield, inQuery || strings.TrimSpace(tailCypher) != "" || endsInFinish(ctx, cypher)); err != nil {
 		return nil, err
 	}
 
 	// Registry-first path: canonical procedure contract for built-ins and UDFs.
 	ensureBuiltInProceduresRegistered()
-	procName := extractProcedureName(ctx, callCypher)
+	procName := callNode.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
 	if proc, found := globalProcedureRegistry.Get(procName); found {
 		hasTail := strings.TrimSpace(tailCypher) != ""
 		if err := validateProcedureArgumentPassingMode(ctx, proc.Spec, callCypher, hasTail); err != nil {
@@ -1264,7 +1275,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		if err := validateProcedureYieldBindings(yield, hasTail); err != nil {
 			return nil, err
 		}
-		args, err := e.extractBoundProcedureInvocationArguments(ctx, proc.Spec, callCypher)
+		args, err := e.extractBoundProcedureInvocationArguments(ctx, proc.Spec, callCypher, callNode)
 		if err != nil {
 			return nil, err
 		}
@@ -1293,7 +1304,15 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 			result = runtimeProcedureResult(result)
 		}
 		if yield != nil {
-			result, err = e.applyYieldFilter(ctx, result, yield)
+			post := yield
+			if len(pipelineNodes) > 0 {
+				// The pipeline applies WHERE after extending the incoming row.
+				// Keep this physical staging in the typed YIELD, not a source copy.
+				copy := *yield
+				copy.where = ""
+				post = &copy
+			}
+			result, err = e.applyYieldFilter(ctx, result, post)
 			if err != nil {
 				return nil, err
 			}

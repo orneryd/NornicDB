@@ -300,13 +300,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 			return rowCountValue(kind, count), true, nil
 		}
 	}
-	if cypherVersionFromContext(ctx) != "25" {
-		grouped, err := cypher5ImportGrouping(body, values)
-		if err != nil {
-			return nil, false, err
-		}
-		body = grouped
-	}
+
 	query := strings.TrimSpace(body)
 	// The retained expression body already owns an implicit MATCH and its
 	// terminal row contract. COUNT/EXISTS consume those rows; manufacturing
@@ -380,15 +374,23 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	}
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnion) joins them, as for a top-level UNION.
-	if _, unionAll, _, union := parseTopLevelUnionTextBranches(ctx, query); union {
-		return e.executeUnion(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
-			return e.runCorrelatedSubquery(ctx, branch, values)
+	body := readQueryBodyText(ctx, query, 0, len(query))
+	if _, unionAll, _, union := parseTopLevelUnionBranches(ctx, body); union {
+		return e.executeRetainedUnion(ctx, body, unionAll, func(branch queryBody) (*ExecuteResult, error) {
+			branchCtx := cyphertext.WithSourceView(ctx, branch.source)
+			return e.runCorrelatedSubquery(branchCtx, branch.source.Text, values)
 		})
 	}
-	// The body runs as the seeded pipeline over the row's values, the one
-	// contract of a correlated body (as a CALL subquery branch runs); no
+	// The retained branch keeps its source association and imported row; no
 	// binding clauses are composed in front of it.
-	body := readQueryBodyText(ctx, query, 0, len(query))
+
+	if body.syntax.Valid() {
+		var err error
+		ctx, err = cypher5ImportGrouping(ctx, body, values)
+		if err != nil {
+			return nil, err
+		}
+	}
 	clauses, admitted := splitPipelineClausesAllowingProcedureCalls(ctx, body)
 	if admitted {
 		correlated := e.correlatedSubqueryExecutor(ctx, values)

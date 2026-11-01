@@ -136,7 +136,9 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 				return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(input))
 			}
 		}
-		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(inputToken(trimmed, skipSpacesAndComments(trimmed, len("USE")))))
+		// A retained statement/window failure is not evidence that the
+		// graph name is invalid. Preserve its actual diagnostic and cause.
+		return UseClauseReference{}, "", true, readErr
 	}
 	clause = UseClauseReference{UseClause: UseClause{Name: reference.Name, Function: reference.Function, Args: reference.Args, Arguments: reference.Arguments}, End: reference.End}
 	end := reference.AcceptedEnd

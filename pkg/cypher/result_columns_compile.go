@@ -82,7 +82,10 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		return programFailure(resultmetadata.ReasonParserDecline, 0, syntaxAdmissionError(ctx, compiler.source, AcceptedSource, err))
 	}
 	compiler.syntax = syntax
-	query := statementSyntaxQuery(syntax)
+	query := compiler.queryRoot
+	if !query.Valid() {
+		query = statementSyntaxQuery(syntax)
+	}
 	if !query.Valid() {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, nil)
 	}
@@ -106,7 +109,13 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
 	}
 	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, columns: map[int]resultmetadata.Columns{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
-	body := compilation.prepareBody(ctx, readQueryBody(query), query, start, end)
+	shape := readQueryBody(query)
+	if !shape.syntax.Valid() || shape.status != queryBodyRead {
+		if implicit, _, found := queryExpressionBody(query); found {
+			shape = implicit
+		}
+	}
+	body := compilation.prepareBody(ctx, shape, query, start, end)
 	body.incoming, body.retained = incoming, retained
 	body.incomingIDs = map[string]statementBindingID{}
 	input := projectedNameMap(incoming)
@@ -119,7 +128,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		body.incomingIDs[name] = compilation.define(name, -1, -1)
 	}
 	var effects pipelineClauseEffects
-	syntax.Walk(compilation.visitor(), compilation.metadataVisitor(&effects))
+	query.Walk(compilation.visitor(), compilation.metadataVisitor(&effects))
 	if compilation.failure != nil {
 		return compilation.failure
 	}
@@ -129,7 +138,9 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 	if ctx.Err() != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, start, ctx.Err())
 	}
-	pipelineClauseEffectCache.put("\x00"+compiler.source, effects)
+	if !compiler.queryRoot.Valid() {
+		pipelineClauseEffectCache.put("\x00"+compiler.source, effects)
+	}
 	body.program.bound = compilation.product
 	return body.program
 }

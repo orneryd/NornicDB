@@ -99,17 +99,21 @@ func programFailure(reason resultmetadata.UnresolvedReason, position int, err er
 // compileStatementProgram compiles the execution clause operators and their
 // scope transfers. WITH and RETURN use the same cached projection plans that
 // execute rows; CALL stores its nested program rather than re-inferring exports.
-func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool, syntax cypherantlr.StatementSyntax) *projectedScopeFacts {
+func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool, syntax cypherantlr.StatementSyntax, queryRoots ...cypherantlr.SyntaxNode) *projectedScopeFacts {
 	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25, syntax: syntax}
+	if len(queryRoots) > 0 {
+		compiler.queryRoot = queryRoots[0]
+	}
 	return compiler.root(ctx, incoming, retained)
 }
 
 type projectionCompilation struct {
-	executor *StorageExecutor
-	source   string
-	cypher25 bool
-	schema   resultmetadata.ParticipantSchema
-	syntax   cypherantlr.StatementSyntax
+	executor  *StorageExecutor
+	source    string
+	cypher25  bool
+	schema    resultmetadata.ParticipantSchema
+	syntax    cypherantlr.StatementSyntax
+	queryRoot cypherantlr.SyntaxNode
 }
 
 type projectionGraph struct {

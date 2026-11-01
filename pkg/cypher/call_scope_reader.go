@@ -90,8 +90,31 @@ func malformedCallScopeError(ctx context.Context, source string) error {
 		}
 		_, start := live[at+1].Span()
 		end, _ := live[close].Span()
-		if _, err := callScopeClauseVariables(ctx, syntax.Source()[start:end]); err != nil {
-			return err
+		// The enclosing parse can fail later. Read this recovered scope
+		// occurrence, rather than asking the failed owner to admit its text.
+		if close == at+2 {
+			continue
+		} // explicit empty scope
+		if close == at+3 && live[at+2].Kind() == cypherantlr.CypherLexerMULT {
+			continue
+		}
+		list, found := syntax.Window(start, end, cypherantlr.CypherParserRULE_scopeList)
+		valid, expectName := found, true
+		if found {
+			for index := 0; index < list.ChildCount(); index++ {
+				child := list.Child(index)
+				if expectName && child.Rule() == cypherantlr.CypherParserRULE_symbol && child.Code() != "" {
+					expectName = false
+				} else if !expectName && child.IsToken(cypherantlr.CypherLexerCOMMA) {
+					expectName = true
+				} else {
+					valid = false
+					break
+				}
+			}
+		}
+		if !valid || expectName {
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", localization.CypherResultMetadataImportVariablesRequired())
 		}
 	}
 	return nil

@@ -71,12 +71,16 @@ type pipelineAggregateRun struct {
 // validated as they stream in, unless rowsValidated says the caller already
 // validated exactly these rows; validating them again doubled the cost of
 // aggregating projections (#823).
-func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool) ([]*pipelineAggregateGroup, bool) {
+func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool, importedGrouping ...[]string) ([]*pipelineAggregateGroup, bool) {
 	templates := make([]pipelineAggregateProjection, len(projections))
 	memory := memoryScopeFromContext(ctx)
 	validationClauses := make([]string, 0)
-	allAggregates := pipelineProjectionHasOnlyAggregates(projections)
-	groupingCount := 0
+	var imported []string
+	if len(importedGrouping) > 0 {
+		imported = importedGrouping[0]
+	}
+	allAggregates := pipelineProjectionHasOnlyAggregates(projections) && len(imported) == 0
+	groupingCount := len(imported)
 	for index, projection := range projections {
 		if !projection.isAggr {
 			groupingCount++
@@ -145,6 +149,13 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				}
 				values = append(values, value)
 			}
+		}
+		for _, name := range imported {
+			value, found := row[name]
+			if !found {
+				value = pipelineImports(ctx)[name]
+			}
+			values = append(values, value)
 		}
 		position, exists := grouping.addTupleByContract(values, cypherEquivalenceContract)
 		if !exists {

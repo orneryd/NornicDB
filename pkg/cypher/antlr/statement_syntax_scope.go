@@ -76,6 +76,8 @@ type syntaxInspection struct {
 	data                                 *statementSyntaxData
 	node, start, end, codeStart, codeEnd int
 	ambiguous                            bool
+	sequence                             bool
+	firstChild, afterChild               int
 }
 type retainedSyntaxRoot struct {
 	key  statementSyntaxKey
@@ -236,7 +238,7 @@ func (scope *statementSyntaxScope) read(ctx context.Context, key statementSyntax
 		scope.Lock()
 		var data *statementSyntaxData
 		if len(scope.roots) > 0 {
-			data = scope.roots[0].data
+			data = stageRoot(scope.roots[0], key.stage).data
 		}
 		scope.Unlock()
 		return StatementSyntax{data}, err
@@ -246,9 +248,12 @@ func (scope *statementSyntaxScope) read(ctx context.Context, key statementSyntax
 	}
 	source, known := cyphertext.RetainedSource(ctx, key.source, key.stage)
 	if !known {
-		scope.Lock()
-		source = scope.source
-		scope.Unlock()
+		source = cyphertext.CurrentSource(ctx)
+		if source == nil {
+			scope.Lock()
+			source = scope.source
+			scope.Unlock()
+		}
 	}
 	if !call {
 		if data := scope.product(key, source); data != nil {
@@ -295,6 +300,9 @@ func inspectionEntry(rule int) (SyntaxEntry, bool) {
 func (view syntaxInspection) rebase() *statementSyntaxData {
 	data := *view.data
 	data.offset, data.sourceEnd, data.root = view.start, view.end, view.node
+	data.selectedChildren = view.sequence
+	data.selectedFirst, data.selectedAfter = view.firstChild, view.afterChild
+	data.selectedStart, data.selectedEnd = view.codeStart, view.codeEnd
 	data.inputOffset = view.codeStart
 	data.firstToken = sort.Search(len(data.tokens), func(i int) bool { return data.tokens[i].start >= view.codeStart })
 	data.afterToken = data.firstToken + sort.Search(len(data.tokens)-data.firstToken, func(i int) bool { return data.tokens[data.firstToken+i].end > view.codeEnd })

@@ -118,10 +118,13 @@ func (root *retainedSyntaxRoot) inspectionAt(id, start, end int, entry SyntaxEnt
 			}
 		}
 	}
-	for _, child := range node.children {
+	for _, child := range (SyntaxNode{syntaxView[syntaxNode]{data, id}}).childIDs() {
 		if view, found := root.inspectionAt(child, start, end, entry, call); found {
 			return view, true
 		}
+	}
+	if !call && (entry == fragmentEntry || entry == StatementEntry || entry == ClauseEntry) {
+		return root.querySequence(id, start, end)
 	}
 	return syntaxInspection{}, false
 }
@@ -160,4 +163,47 @@ func (root *retainedSyntaxRoot) leadingWindowEnd(id, originalEnd int, view *synt
 		}
 	}
 	return false
+}
+
+// querySequence admits only a contiguous sequence of whole children in an
+// existing query production. USE removal and physical clause stretches can
+// select several siblings even when no single grammar node has that extent.
+// This descriptor shares the arena, excludes omitted siblings from traversal,
+// and cannot admit a partial expression or manufacture a clause.
+func (root *retainedSyntaxRoot) querySequence(id, start, end int) (syntaxInspection, bool) {
+	data := root.data
+	node := data.nodes[id]
+	switch node.rule {
+	case CypherParserRULE_query, CypherParserRULE_regularQuery,
+		CypherParserRULE_subqueryBody, CypherParserRULE_singleQuery,
+		CypherParserRULE_singlePartQ, CypherParserRULE_multiPartQ:
+	default:
+		return syntaxInspection{}, false
+	}
+	first, after := -1, -1
+	codeStart, codeEnd := 0, 0
+	children := node.children
+	for index, childID := range children {
+		child := data.nodes[childID]
+		span, exact := data.view.OriginalSpan(cyphertext.Span{Start: child.start, End: child.end}, cyphertext.SourceExactBoundaries)
+		if !exact || span.End <= start || span.Start >= end {
+			continue
+		}
+		if span.Start < start || span.End > end {
+			return syntaxInspection{}, false
+		}
+		if first < 0 {
+			if span.Start != start {
+				return syntaxInspection{}, false
+			}
+			first, codeStart = index, child.start
+		}
+		after, codeEnd = index+1, child.end
+		if span.End == end {
+			return syntaxInspection{data: data, node: id, start: start, end: end,
+				codeStart: codeStart, codeEnd: codeEnd, sequence: true,
+				firstChild: first, afterChild: after}, true
+		}
+	}
+	return syntaxInspection{}, false
 }

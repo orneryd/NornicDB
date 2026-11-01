@@ -293,6 +293,9 @@ func readQueryBody(node cypherantlr.SyntaxNode) (body queryBody) {
 	var all *bool
 	for i := range body.branches {
 		branch := &body.branches[i]
+		for index := range branch.clauses {
+			branch.clauses[index].programRoot = branch.syntax
+		}
 		branch.retainSourceWindow()
 		if branch.declined {
 			body.status = queryBodyDeclined
@@ -336,6 +339,7 @@ func queryExpressionBody(container cypherantlr.SyntaxNode) (queryBody, cypherant
 	text := container.Source()[start:end]
 	branch := queryBodyBranch{syntax: container, source: source, executionText: text, start: start, end: end, useStart: -1, useEnd: -1, finishStart: -1, finishEnd: -1}
 	branch.clauses = []queryBodyClause{queryBodyClauseFromSyntax(container)}
+	branch.clauses[0].programRoot = container
 	return queryBody{syntax: container, source: source, executionText: text, status: queryBodyRead, branches: []queryBodyBranch{branch}}, container, true
 }
 

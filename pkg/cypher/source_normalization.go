@@ -32,7 +32,7 @@ func newSourceOffsetError(code, detail, prefix string, offset int) error {
 // restoreSourceError preserves typed diagnostic products and cause identity.
 // Offset facts come from producers, never from guessing at arbitrary prose.
 func (r *queryRewrite) restoreSourceError(err error) (error, bool) {
-	if err == nil {
+	if err == nil || cyphertext.IsSubmittedDiagnostic(err) {
 		return nil, false
 	}
 	restoredText, changed := (resultRestoration{source: r}).value(err.Error(), sourceDiagnosticText)

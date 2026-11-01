@@ -8,6 +8,16 @@ import (
 	"strings"
 )
 
+// semanticGraphScopeKey selects semantic inspection of graph-routed bodies.
+// USE remains in the retained syntax; semantic clause readers inspect its
+// siblings while execution readers still route the graph before running them.
+type semanticGraphScopeKey struct{}
+
+func semanticGraphScope(ctx context.Context) bool {
+	enabled, _ := ctx.Value(semanticGraphScopeKey{}).(bool)
+	return enabled
+}
+
 // validateSemanticScopes is the shared compile-time semantic chokepoint used
 // by top-level statements and internally executed query branches.
 //

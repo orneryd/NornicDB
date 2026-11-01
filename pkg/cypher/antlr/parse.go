@@ -71,7 +71,7 @@ func ValidateContext(ctx context.Context, statement Statement, stage cyphertext.
 	syntax, err := ParseSyntax(ctx, statement, StatementEntry, false, stage)
 	if err != nil && syntax.Valid() && len(syntax.data.diagnostics) != 0 {
 		message := localization.CypherANTLRValidateSyntaxError(strings.Join(diagnosticFallbacks(syntax.data.diagnostics), "; "), syntax.data.diagnostics...)
-		return localization.NewLocalizedError(string(message.ID), message, nil)
+		return localization.NewLocalizedError(string(message.ID), message, err)
 	}
 	return err
 }

@@ -5,6 +5,7 @@ package cypher
 
 import (
 	"context"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 )
 
@@ -48,33 +49,22 @@ func pipelineProcedureCallsAreClauses(ctx context.Context, cypher string) bool {
 // Explicit arguments are evaluated as typed values in the canonical invocation.
 func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, source pipelineClause, totals *QueryStats) ([]pipelineRow, []string, bool, error) {
 	clause := source.text
-	yieldIndex := findKeywordIndexInContext(clause, "YIELD")
-	invocation := strings.TrimSpace(clause)
-	if yieldIndex >= 0 {
-		invocation = strings.TrimSpace(clause[:yieldIndex])
-	}
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, invocation))
+	yield := yieldFromSyntax(source.syntax)
+	yieldedClause := yield != nil
+	name := source.syntax.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
+	procedure, found := globalProcedureRegistry.Get(name)
 	if !found {
-		return nil, nil, true, newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", "There is no procedure with the name "+extractProcedureName(ctx, invocation)+" registered")
+		return nil, nil, true, newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", "There is no procedure with the name "+name+" registered")
 	}
-	if yieldIndex < 0 && len(procedure.Spec.Returns) > 0 {
+	if !yieldedClause && len(procedure.Spec.Returns) > 0 {
 		return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", "procedure calls inside a query must name results explicitly using YIELD")
 	}
-	if err := validateProcedureCallArguments(invocation); err != nil {
+	if err := validateProcedureCallArguments(clause); err != nil {
 		return nil, nil, true, err
 	}
-	yieldBody := ""
-	if yieldIndex >= 0 {
-		yieldBody = strings.TrimSpace(clause[yieldIndex+len("YIELD"):])
-	}
 	where := ""
-	if whereIndex := topLevelKeywordIndex(yieldBody, "WHERE"); whereIndex >= 0 {
-		where = strings.TrimSpace(yieldBody[whereIndex+len("WHERE"):])
-		yieldBody = strings.TrimSpace(yieldBody[:whereIndex])
-	}
-	yieldText := ""
-	if yieldIndex >= 0 {
-		yieldText = "YIELD " + yieldBody
+	if yieldedClause {
+		where = yield.where
 	}
 
 	arguments := procedureArgumentTextsFromSyntax(source.syntax)
@@ -92,8 +82,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 	}
 
 	var yielded []string
-	if yieldIndex >= 0 {
-		yield := yieldFromSyntax(source.syntax)
+	if yieldedClause {
 		if err := validateProcedureYieldBindings(yield, true); err != nil {
 			return nil, nil, true, err
 		}
@@ -118,7 +107,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		result := shared
 		if result == nil {
 			var err error
-			result, err = e.executeProcedureCall(withValueBindings(ctx, row), invocation+" "+yieldText, true)
+			result, err = e.executeProcedureCall(withValueBindings(ctx, row), clause, true, source.syntax)
 			if err != nil {
 				return nil, nil, true, err
 			}
@@ -130,7 +119,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 				shared = result
 			}
 		}
-		if yieldIndex < 0 {
+		if !yieldedClause {
 			out = append(out, row)
 			continue
 		}

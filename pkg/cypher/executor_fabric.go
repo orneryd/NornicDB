@@ -465,43 +465,13 @@ var fabricUnionContract = fabric.UnionContract{
 	},
 }
 
-// validateFabricSemanticScopes checks the variable scopes of a Fabric
-// statement as one graph does: translate quoted variables, then desugar
-// label expressions before checking scopes. Only this validation copy is
-// rewritten; the planner and remote participants keep the names as written.
-// Diagnostics are mapped back to those names.
+// validateFabricSemanticScopes inspects the same retained statement before
+// dispatch. Graph selections stay in its CST; the semantic reader observes the
+// graph body's clause sequence without executing its routing. Quoted identities
+// and label expressions are their actual grammar occurrences, not a rewritten
+// single-graph validation statement beside the owner.
 func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cypher string, params map[string]interface{}) error {
-	statement := fabricSingleGraphStatement(ctx, cypher)
-	canonical, names := canonicalizeQuotedVariablesWithBindings(ctx, statement, nil)
-	if names != nil {
-		ctx = withQuotedVariableNames(ctx, names)
-		params = names.parameterValues(params)
-	}
-	desugared, _, err := desugarLabelExpressions(canonical, params, cypherVersionFromContext(ctx) == "25")
-	if err == nil {
-		err = e.validateSemanticScopes(ctx, desugared)
-	}
-	parseItems := func(statement string, at int) []returnItem { return e.parseReturnItems(ctx, statement, at) }
-	_, err = (resultRestoration{names: names}).restore(nil, err, parseItems)
-	return err
-}
-
-// fabricSingleGraphStatement is cypher without the USE clauses the Fabric
-// planner reads (FabricPlanner.SingleGraphStatement): the one statement whose
-// variable scopes are checked, as Neo4j checks a composite statement's, before
-// any part of it plans or runs. A statement the planner can't read is checked
-// as it is, and planning reports the error.
-func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
-	planner := fabric.NewFabricPlanner(nil)
-	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
-	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
-		return callSubqueryImportedVariables(ctx, scope, scoped, body)
-	})
-	statement, err := planner.SingleGraphStatement(ctx, cypher, cyphertext.AcceptedSource)
-	if err != nil {
-		return cypher
-	}
-	return statement
+	return e.validateSemanticScopes(context.WithValue(ctx, semanticGraphScopeKey{}, true), cypher)
 }
 
 func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
@@ -1102,6 +1072,12 @@ func fabricGraphReferenceError(err error) error {
 	var syntax *fabric.UseSyntaxError
 	if errors.As(err, &syntax) {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntax.Message)
+	}
+	var diagnostic *localization.LocalizedError
+	if errors.As(err, &diagnostic) && strings.HasPrefix(string(diagnostic.Message.ID), "cypherantlr.") {
+		if classified := classifySyntaxDiagnostic(err); classified != nil {
+			return classified
+		}
 	}
 	return err
 }

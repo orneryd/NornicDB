@@ -23,7 +23,16 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 	}
 	source := clauses[0].syntax.Source()
 	if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == source && program.syntax.Origin() == clauses[0].syntax.Origin() {
-		return ctx, nil
+		complete := true
+		for _, clause := range clauses {
+			if _, found := program.effects[clause.syntax.ID()]; !found {
+				complete = false
+				break
+			}
+		}
+		if complete {
+			return ctx, nil
+		}
 	}
 	var retained []string
 	for name := range pipelineImports(ctx) {
@@ -35,7 +44,7 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 			names = append(names, name)
 		}
 	}
-	program := e.projectionFactsForSyntax(ctx, clauses[0].syntax.Statement(), resultmetadata.Known(names), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25")
+	program := e.projectionFactsWithSyntax(ctx, source, resultmetadata.Known(names), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25", clauses[0].syntax.Statement(), clauses[0].programRoot)
 	if !program.complete {
 		if program.err != nil {
 			return ctx, program.err

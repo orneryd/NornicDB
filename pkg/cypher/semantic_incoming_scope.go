@@ -25,6 +25,9 @@ func semanticIncomingScope(ctx context.Context) []string {
 // semanticIncomingCacheKey prefixes a validation cache key with the incoming
 // variables, which change the verdict for the same text.
 func semanticIncomingCacheKey(ctx context.Context, key string) string {
+	if semanticGraphScope(ctx) {
+		key = "\x00graph-scope:" + key
+	}
 	names := semanticIncomingScope(ctx)
 	if len(names) == 0 {
 		return key

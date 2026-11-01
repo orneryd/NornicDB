@@ -102,6 +102,9 @@ func (view syntaxView[nodeKind]) inputSpan() (int, int) {
 	var accepted cyphertext.Span
 	switch any(member).(type) {
 	case syntaxNode:
+		if view.data.selectedChildren && view.id == view.data.root {
+			return view.data.selectedStart, view.data.selectedEnd
+		}
 		item := view.data.nodes[view.id]
 		accepted = cyphertext.Span{Start: item.start, End: item.end}
 	case syntaxToken:
@@ -156,22 +159,25 @@ func (node SyntaxNode) Origin() SyntaxOrigin { return node.data.origin() }
 type SyntaxVisitor func(SyntaxNode) func()
 
 type statementSyntaxData struct {
-	source      string
-	view        *cyphertext.Source
-	submitted   *cyphertext.Source // parser input mapped to this execution ingress spelling
-	effects     statementEffectsData
-	offset      int // original-source origin of this retained window
-	sourceEnd   int // original-source end of this retained window
-	inputOffset int // accepted-input start of this retained window
-	root        int // retained node selected by a view; zero for a complete parse
-	firstToken  int
-	afterToken  int
-	bytes       []int // rune boundary to original UTF-8 byte boundary
-	nodes       []syntaxNodeData
-	tokens      []syntaxTokenData
-	credentials []cyphertext.CredentialSpan
-	useError    *UseReferenceError
-	diagnostics []localization.Message // Structural grammar diagnostics; failed products are never cached.
+	source                       string
+	view                         *cyphertext.Source
+	submitted                    *cyphertext.Source // parser input mapped to this execution ingress spelling
+	effects                      statementEffectsData
+	offset                       int // original-source origin of this retained window
+	sourceEnd                    int // original-source end of this retained window
+	inputOffset                  int // accepted-input start of this retained window
+	root                         int // retained node selected by a view; zero for a complete parse
+	selectedChildren             bool
+	selectedFirst, selectedAfter int
+	selectedStart, selectedEnd   int
+	firstToken                   int
+	afterToken                   int
+	bytes                        []int // rune boundary to original UTF-8 byte boundary
+	nodes                        []syntaxNodeData
+	tokens                       []syntaxTokenData
+	credentials                  []cyphertext.CredentialSpan
+	useError                     *UseReferenceError
+	diagnostics                  []localization.Message // Structural grammar diagnostics; failed products are never cached.
 }
 
 type syntaxNodeData struct {
@@ -330,6 +336,9 @@ func parseCachedSource(ctx context.Context, source *cyphertext.Source, entry Syn
 					err = syntaxDiagnosticsError(data.diagnostics)
 				}
 				data = syntaxSourceView(data, source)
+				if len(data.diagnostics) > 0 && source.Original != source.Text {
+					err = cyphertext.MarkSubmittedDiagnostic(err)
+				}
 			}
 			return StatementSyntax{data}, err
 		}
@@ -616,7 +625,7 @@ func (root SyntaxNode) Walk(visitors ...SyntaxVisitor) {
 	for i, visitor := range visitors {
 		leaves[i] = visitor(root)
 	}
-	for _, child := range root.data.nodes[root.id].children {
+	for _, child := range root.childIDs() {
 		SyntaxNode{syntaxView[syntaxNode]{root.data, child}}.Walk(visitors...)
 	}
 	for i := len(visitors) - 1; i >= 0; i-- {
@@ -656,9 +665,12 @@ func (node SyntaxNode) Statement() StatementSyntax { return StatementSyntax{node
 // that need the enclosing statement's node namespace keep the original node;
 // source-local compatibility descriptions use this bounded view instead.
 func (node SyntaxNode) Window() StatementSyntax {
-	item := node.data.nodes[node.id]
-	span, _ := node.data.view.OriginalSpan(cyphertext.Span{Start: item.start, End: item.end}, cyphertext.SourceExtent)
-	view := syntaxInspection{data: node.data, node: node.id, start: span.Start, end: span.End, codeStart: item.start, codeEnd: item.end}
+	if node.id == node.data.root {
+		return node.Statement()
+	}
+	start, end := node.inputSpan()
+	span, _ := node.data.view.OriginalSpan(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExtent)
+	view := syntaxInspection{data: node.data, node: node.id, start: span.Start, end: span.End, codeStart: start, codeEnd: end}
 	return StatementSyntax{view.rebase()}
 }
 
@@ -670,6 +682,9 @@ func (node SyntaxNode) Rule() int { return node.data.nodes[node.id].rule }
 
 // TokenRange returns the half-open interval in the one retained token stream.
 func (node SyntaxNode) TokenRange() (int, int) {
+	if node.data.selectedChildren && node.id == node.data.root {
+		return 0, node.data.afterToken - node.data.firstToken
+	}
 	item := node.data.nodes[node.id]
 	return item.firstToken - node.data.firstToken, item.afterToken - node.data.firstToken
 }
@@ -730,11 +745,12 @@ func (node SyntaxNode) InputBefore(child SyntaxNode) *cyphertext.Source {
 	if &node.data.nodes[0] != &child.data.nodes[0] {
 		panic("antlr: source window requires one retained syntax owner")
 	}
-	container, item := node.data.nodes[node.id], child.data.nodes[child.id]
-	if item.start < container.start || item.end > container.end {
+	start, end := node.inputSpan()
+	item := child.data.nodes[child.id]
+	if item.start < start || item.end > end {
 		panic("antlr: source window requires a descendant extent")
 	}
-	return node.data.view.Window(container.start, item.start)
+	return node.data.view.Window(start, item.start)
 }
 
 func (node SyntaxNode) code(record func(cyphertext.Span, cyphertext.Span)) string {
@@ -784,12 +800,22 @@ func (node SyntaxNode) Parent() (SyntaxNode, bool) {
 	return SyntaxNode{syntaxView[syntaxNode]{node.data, parent}}, parent >= 0
 }
 
+// childIDs selects immutable children owned by this query-window descriptor.
+// Only its root is bounded; every descendant remains the original CST node.
+func (node SyntaxNode) childIDs() []int {
+	children := node.data.nodes[node.id].children
+	if node.data.selectedChildren && node.id == node.data.root {
+		return children[node.data.selectedFirst:node.data.selectedAfter]
+	}
+	return children
+}
+
 // ChildCount is the number of direct CST children, including terminals.
-func (node SyntaxNode) ChildCount() int { return len(node.data.nodes[node.id].children) }
+func (node SyntaxNode) ChildCount() int { return len(node.childIDs()) }
 
 // Child returns a direct immutable child view.
 func (node SyntaxNode) Child(index int) SyntaxNode {
-	return SyntaxNode{syntaxView[syntaxNode]{node.data, node.data.nodes[node.id].children[index]}}
+	return SyntaxNode{syntaxView[syntaxNode]{node.data, node.childIDs()[index]}}
 }
 
 // ChildRule returns a direct rule child, or an absent view. It never searches
@@ -798,7 +824,7 @@ func (node SyntaxNode) ChildRule(rule int) SyntaxNode {
 	if !node.Valid() {
 		return SyntaxNode{}
 	}
-	for _, id := range node.data.nodes[node.id].children {
+	for _, id := range node.childIDs() {
 		if node.data.nodes[id].rule == rule {
 			return SyntaxNode{syntaxView[syntaxNode]{node.data, id}}
 		}
@@ -808,7 +834,7 @@ func (node SyntaxNode) ChildRule(rule int) SyntaxNode {
 
 // DirectToken selects a terminal owned by this rule, excluding nested rules.
 func (node SyntaxNode) DirectToken(kind int) (SyntaxToken, bool) {
-	for _, id := range node.data.nodes[node.id].children {
+	for _, id := range node.childIDs() {
 		child := node.data.nodes[id]
 		if child.rule < 0 && child.firstToken >= 0 && node.data.tokens[child.firstToken].kind == kind {
 			return SyntaxToken{syntaxView[syntaxToken]{node.data, child.firstToken}}, true
@@ -830,7 +856,7 @@ func (node SyntaxNode) IsToken(kind int) bool {
 // name. Comments and token gaps never become part of an identity.
 func (node SyntaxNode) QualifiedName() string {
 	var parts []string
-	for _, id := range node.data.nodes[node.id].children {
+	for _, id := range node.childIDs() {
 		item := node.data.nodes[id]
 		if item.rule == CypherParserRULE_symbol {
 			parts = append(parts, item.name)

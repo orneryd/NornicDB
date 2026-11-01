@@ -69,8 +69,8 @@ func TestPaginationExpressionsWithoutRowVariables(t *testing.T) {
 // check.
 func TestPaginationValidationEdgeBranches(t *testing.T) {
 	exec, _ := newTestExecutor(t)
-	require.Error(t, exec.validateStaticPaginationExpressions(context.Background(), paginationExpression{"LIMIT", "1 / 0"}))
-	require.Error(t, exec.validateStaticPaginationExpressions(context.Background(), paginationExpression{"LIMIT", "nosuchfunction(1)"}))
+	require.Error(t, exec.validateStaticPaginationExpressions(context.Background(), paginationExpression{keyword: "LIMIT", value: "1 / 0"}))
+	require.Error(t, exec.validateStaticPaginationExpressions(context.Background(), paginationExpression{keyword: "LIMIT", value: "nosuchfunction(1)"}))
 
 	query := "MATCH (n) RETURN n LIMIT $n"
 	require.NoError(t, exec.validateRuntimePaginationExpressions(context.Background(), extractPaginationExpressions(context.Background(), query)...))

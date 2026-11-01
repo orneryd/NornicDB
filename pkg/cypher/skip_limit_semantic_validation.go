@@ -9,6 +9,7 @@ import (
 type paginationExpression struct {
 	keyword string
 	value   string
+	scalar  *scalarExpressionSyntax
 }
 
 // extractPaginationExpressions consumes the same semantic effect owner as
@@ -36,7 +37,15 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Contex
 		}
 		// The shared structural classifier rejects graph-dependent scalar
 		// arguments before the pagination validator can evaluate any expression.
-		shape, err := describeScalarExpression(ctx, expression)
+		var shape scalarExpressionSyntax
+		var err error
+		if pagination.scalar != nil {
+			shape = *pagination.scalar
+		} else {
+			// A standalone adapter is its own expression ingress. Retained
+			// pagination producers supply the observation above.
+			shape, err = describeScalarExpression(ctx, expression)
+		}
 		if failure := ctx.Err(); failure != nil {
 			return failure
 		}
