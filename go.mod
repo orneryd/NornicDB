@@ -9,7 +9,7 @@ require (
 	github.com/LadybugDB/go-ladybug v0.17.0
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/cucumber/gherkin/go/v26 v26.2.0
-	github.com/cucumber/godog v0.15.1
+	github.com/cucumber/godog v0.16.0
 	github.com/cucumber/messages/go/v21 v21.0.1
 	github.com/dgraph-io/badger/v4 v4.9.6
 	github.com/ebitengine/purego v0.11.1
@@ -20,6 +20,7 @@ require (
 	github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11
 	github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.16
 	github.com/hybridgroup/yzma v1.28.0
+	github.com/klauspost/compress v1.19.1
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/prometheus/client_golang v1.24.1
@@ -77,9 +78,10 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chewxy/math32 v1.11.1 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
-	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
+	github.com/cucumber/gherkin/go/v42 v42.0.0 // indirect
+	github.com/cucumber/messages/go/v34 v34.2.0 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -100,7 +102,7 @@ require (
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
-	github.com/hashicorp/go-memdb v1.3.4 // indirect
+	github.com/hashicorp/go-memdb v1.3.5 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-secure-stdlib/awsutil v0.1.6 // indirect
 	github.com/hashicorp/go-secure-stdlib/parseutil v0.1.9 // indirect
@@ -112,7 +114,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jupiterrider/ffi v0.7.0 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
@@ -134,7 +135,7 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sosodev/duration v1.4.0 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/viterin/partial v1.1.0 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
