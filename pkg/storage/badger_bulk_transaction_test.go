@@ -59,10 +59,10 @@ func TestBulkOperations_BeyondOneBatchSurviveReopen(t *testing.T) {
 	engine = openLargeCommitTestEngine(t, dir)
 	defer engine.Close()
 	requireBulkCounts(t, engine, n, n)
-	byLabel, err := engine.GetNodesByLabel("Bulk")
+	byLabel, err := engine.GetNodesByLabel(context.Background(), "Bulk")
 	require.NoError(t, err)
 	require.Len(t, byLabel, n)
-	out, err := engine.GetOutgoingEdges(nodes[n/2].ID)
+	out, err := engine.GetOutgoingEdges(context.Background(), nodes[n/2].ID)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 

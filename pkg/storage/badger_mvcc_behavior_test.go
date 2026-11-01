@@ -115,7 +115,7 @@ func TestBadgerEngine_MVCCNodeLatestSnapshotAndRecreate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "v4", nodeAtV4.Properties["name"])
 
-	nodes, err := engine.AllNodes()
+	nodes, err := engine.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, nodeID, nodes[0].ID)
@@ -773,7 +773,7 @@ func TestNamespacedEngine_MVCCDelegation(t *testing.T) {
 	require.Equal(t, NodeID("mvcc-ns-node"), node.ID)
 	require.Equal(t, "v1", node.Properties["title"])
 
-	nodes, err := namespaced.GetNodesByLabelVisibleAt("Doc", head.Version)
+	nodes, err := namespaced.GetNodesByLabelVisibleAt(context.Background(), "Doc", head.Version)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, NodeID("mvcc-ns-node"), nodes[0].ID)
@@ -788,26 +788,26 @@ func TestNamespacedEngine_MVCCDelegation(t *testing.T) {
 	edgeHead, err := namespaced.GetEdgeCurrentHead(EdgeID("mvcc-ns-edge"))
 	require.NoError(t, err)
 
-	edges, err := namespaced.GetEdgesByTypeVisibleAt("LINKS", edgeHead.Version)
+	edges, err := namespaced.GetEdgesByTypeVisibleAt(context.Background(), "LINKS", edgeHead.Version)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, EdgeID("mvcc-ns-edge"), edges[0].ID)
 
-	outgoing, err := namespaced.GetOutgoingEdgesVisibleAt(startID, edgeHead.Version)
+	outgoing, err := namespaced.GetOutgoingEdgesVisibleAt(context.Background(), startID, edgeHead.Version)
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, EdgeID("mvcc-ns-edge"), outgoing[0].ID)
 	require.Equal(t, startID, outgoing[0].StartNode)
 	require.Equal(t, endID, outgoing[0].EndNode)
 
-	incoming, err := namespaced.GetIncomingEdgesVisibleAt(endID, edgeHead.Version)
+	incoming, err := namespaced.GetIncomingEdgesVisibleAt(context.Background(), endID, edgeHead.Version)
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 	require.Equal(t, EdgeID("mvcc-ns-edge"), incoming[0].ID)
 	require.Equal(t, startID, incoming[0].StartNode)
 	require.Equal(t, endID, incoming[0].EndNode)
 
-	between, err := namespaced.GetEdgesBetweenVisibleAt(startID, endID, edgeHead.Version)
+	between, err := namespaced.GetEdgesBetweenVisibleAt(context.Background(), startID, endID, edgeHead.Version)
 	require.NoError(t, err)
 	require.Len(t, between, 1)
 	require.Equal(t, EdgeID("mvcc-ns-edge"), between[0].ID)
@@ -815,9 +815,9 @@ func TestNamespacedEngine_MVCCDelegation(t *testing.T) {
 	fallbackInner := &nonMVCCEngine{Engine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { _ = fallbackInner.Close() })
 	fallback := NewNamespacedEngine(fallbackInner, "test")
-	_, err = fallback.GetOutgoingEdgesVisibleAt("mvcc-ns-start", edgeHead.Version)
+	_, err = fallback.GetOutgoingEdgesVisibleAt(context.Background(), "mvcc-ns-start", edgeHead.Version)
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = fallback.GetIncomingEdgesVisibleAt("mvcc-ns-end", edgeHead.Version)
+	_, err = fallback.GetIncomingEdgesVisibleAt(context.Background(), "mvcc-ns-end", edgeHead.Version)
 	require.ErrorIs(t, err, ErrNotImplemented)
 }
 
@@ -834,16 +834,16 @@ func TestBadgerEngine_MVCCIndexedVisibilityAtSnapshot(t *testing.T) {
 	v2, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 
-	draftAtV1, err := engine.GetNodesByLabelVisibleAt("Draft", v1.Version)
+	draftAtV1, err := engine.GetNodesByLabelVisibleAt(context.Background(), "Draft", v1.Version)
 	require.NoError(t, err)
 	require.Len(t, draftAtV1, 1)
 	require.Equal(t, nodeID, draftAtV1[0].ID)
 
-	draftAtV2, err := engine.GetNodesByLabelVisibleAt("Draft", v2.Version)
+	draftAtV2, err := engine.GetNodesByLabelVisibleAt(context.Background(), "Draft", v2.Version)
 	require.NoError(t, err)
 	require.Empty(t, draftAtV2)
 
-	publishedAtV2, err := engine.GetNodesByLabelVisibleAt("Published", v2.Version)
+	publishedAtV2, err := engine.GetNodesByLabelVisibleAt(context.Background(), "Published", v2.Version)
 	require.NoError(t, err)
 	require.Len(t, publishedAtV2, 1)
 	require.Equal(t, nodeID, publishedAtV2[0].ID)
@@ -864,25 +864,25 @@ func TestBadgerEngine_MVCCIndexedVisibilityAtSnapshot(t *testing.T) {
 	e2, err := engine.GetEdgeCurrentHead(edgeID)
 	require.NoError(t, err)
 
-	draftEdgesAtV1, err := engine.GetEdgesByTypeVisibleAt("DRAFT_LINK", e1.Version)
+	draftEdgesAtV1, err := engine.GetEdgesByTypeVisibleAt(context.Background(), "DRAFT_LINK", e1.Version)
 	require.NoError(t, err)
 	require.Len(t, draftEdgesAtV1, 1)
 	require.Equal(t, edgeID, draftEdgesAtV1[0].ID)
 
-	publishedEdgesAtV1, err := engine.GetEdgesByTypeVisibleAt("PUBLISHED_LINK", e1.Version)
+	publishedEdgesAtV1, err := engine.GetEdgesByTypeVisibleAt(context.Background(), "PUBLISHED_LINK", e1.Version)
 	require.NoError(t, err)
 	require.Empty(t, publishedEdgesAtV1)
 
-	publishedEdgesAtV2, err := engine.GetEdgesByTypeVisibleAt("PUBLISHED_LINK", e2.Version)
+	publishedEdgesAtV2, err := engine.GetEdgesByTypeVisibleAt(context.Background(), "PUBLISHED_LINK", e2.Version)
 	require.NoError(t, err)
 	require.Len(t, publishedEdgesAtV2, 1)
 
-	betweenAtV1, err := engine.GetEdgesBetweenVisibleAt(start, end, e1.Version)
+	betweenAtV1, err := engine.GetEdgesBetweenVisibleAt(context.Background(), start, end, e1.Version)
 	require.NoError(t, err)
 	require.Len(t, betweenAtV1, 1)
 	require.Equal(t, "DRAFT_LINK", betweenAtV1[0].Type)
 
-	betweenAtV2, err := engine.GetEdgesBetweenVisibleAt(start, end, e2.Version)
+	betweenAtV2, err := engine.GetEdgesBetweenVisibleAt(context.Background(), start, end, e2.Version)
 	require.NoError(t, err)
 	require.Len(t, betweenAtV2, 1)
 	require.Equal(t, "PUBLISHED_LINK", betweenAtV2[0].Type)
@@ -910,7 +910,7 @@ func TestBadgerEngine_MVCCBetweenVisibleAtIgnoresLatestEdgeBetweenIndex(t *testi
 	require.NotNil(t, engine.GetEdgeBetween(start, end, "NEW_LINK"))
 	requireEdgeBetweenIndexEntry(t, engine, start, end, "NEW_LINK", second.ID, true)
 
-	betweenAtFirst, err := engine.GetEdgesBetweenVisibleAt(start, end, firstHead.Version)
+	betweenAtFirst, err := engine.GetEdgesBetweenVisibleAt(context.Background(), start, end, firstHead.Version)
 	require.NoError(t, err)
 	require.Len(t, betweenAtFirst, 1)
 	require.Equal(t, first.ID, betweenAtFirst[0].ID)
@@ -929,26 +929,26 @@ func TestBadgerEngine_MVCCDirectionalAdjacencyVisibleAtTracksEndpointMoves(t *te
 	}.seed(t)
 
 	// At v1 the edge points start → firstTarget.
-	outAtV1 := moved.outgoingAt(t, moved.version1, moved.start)
+	outAtV1 := moved.edgesAt(t, mvccOutgoing, moved.version1, moved.start)
 	require.Len(t, outAtV1, 1)
 	require.Equal(t, moved.firstTarget, outAtV1[0].EndNode)
 
-	inFirstTargetAtV1 := moved.incomingAt(t, moved.version1, moved.firstTarget)
+	inFirstTargetAtV1 := moved.edgesAt(t, mvccIncoming, moved.version1, moved.firstTarget)
 	require.Len(t, inFirstTargetAtV1, 1)
 	require.Equal(t, moved.edgeID, inFirstTargetAtV1[0].ID)
 
-	inEndAtV1 := moved.incomingAt(t, moved.version1, moved.end)
+	inEndAtV1 := moved.edgesAt(t, mvccIncoming, moved.version1, moved.end)
 	require.Empty(t, inEndAtV1)
 
 	// At v2 the moved edge points start → end.
-	outAtV2 := moved.outgoingAt(t, moved.version2, moved.start)
+	outAtV2 := moved.edgesAt(t, mvccOutgoing, moved.version2, moved.start)
 	require.Len(t, outAtV2, 1)
 	require.Equal(t, moved.end, outAtV2[0].EndNode)
 
-	inFirstTargetAtV2 := moved.incomingAt(t, moved.version2, moved.firstTarget)
+	inFirstTargetAtV2 := moved.edgesAt(t, mvccIncoming, moved.version2, moved.firstTarget)
 	require.Empty(t, inFirstTargetAtV2)
 
-	inEndAtV2 := moved.incomingAt(t, moved.version2, moved.end)
+	inEndAtV2 := moved.edgesAt(t, mvccIncoming, moved.version2, moved.end)
 	require.Len(t, inEndAtV2, 1)
 	require.Equal(t, moved.edgeID, inEndAtV2[0].ID)
 }
@@ -968,19 +968,19 @@ func TestBadgerEngine_MVCCDirectionalAdjacencyVisibleAtTracksDeletes(t *testing.
 	}.seed(t)
 
 	// At v1 the edge is visible from both directions.
-	outAtV1 := deleted.outgoingAt(t, deleted.version1, deleted.start)
+	outAtV1 := deleted.edgesAt(t, mvccOutgoing, deleted.version1, deleted.start)
 	require.Len(t, outAtV1, 1)
 	require.Equal(t, deleted.edgeID, outAtV1[0].ID)
 
-	inAtV1 := deleted.incomingAt(t, deleted.version1, deleted.end)
+	inAtV1 := deleted.edgesAt(t, mvccIncoming, deleted.version1, deleted.end)
 	require.Len(t, inAtV1, 1)
 	require.Equal(t, deleted.edgeID, inAtV1[0].ID)
 
 	// At the tombstone version (v2) both directions are empty.
-	outAtV2 := deleted.outgoingAt(t, deleted.version2, deleted.start)
+	outAtV2 := deleted.edgesAt(t, mvccOutgoing, deleted.version2, deleted.start)
 	require.Empty(t, outAtV2)
 
-	inAtV2 := deleted.incomingAt(t, deleted.version2, deleted.end)
+	inAtV2 := deleted.edgesAt(t, mvccIncoming, deleted.version2, deleted.end)
 	require.Empty(t, inAtV2)
 }
 
@@ -1020,12 +1020,12 @@ func TestBadgerEngine_MVCCDirectionalAdjacencySurvivesRestart(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 
-	outAtCreate, err := reopened.GetOutgoingEdgesVisibleAt(start, head.Version)
+	outAtCreate, err := reopened.GetOutgoingEdgesVisibleAt(context.Background(), start, head.Version)
 	require.NoError(t, err)
 	require.Len(t, outAtCreate, 1)
 	require.Equal(t, edgeID, outAtCreate[0].ID)
 
-	inAtCreate, err := reopened.GetIncomingEdgesVisibleAt(end, head.Version)
+	inAtCreate, err := reopened.GetIncomingEdgesVisibleAt(context.Background(), end, head.Version)
 	require.NoError(t, err)
 	require.Len(t, inAtCreate, 1)
 	require.Equal(t, edgeID, inAtCreate[0].ID)
@@ -1058,10 +1058,10 @@ func TestBadgerEngine_PruneMVCCVersions_PrunesDirectionalAdjacencyHistory(t *tes
 	require.Equal(t, 1, countAdjacencyMVCCVersions(t, engine, outPrefix))
 	require.Equal(t, 1, countAdjacencyMVCCVersions(t, engine, inPrefix))
 
-	outNow, err := engine.GetOutgoingEdgesVisibleAt(start, maxMVCCVersion())
+	outNow, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), start, maxMVCCVersion())
 	require.NoError(t, err)
 	require.Empty(t, outNow)
-	inNow, err := engine.GetIncomingEdgesVisibleAt(end, maxMVCCVersion())
+	inNow, err := engine.GetIncomingEdgesVisibleAt(context.Background(), end, maxMVCCVersion())
 	require.NoError(t, err)
 	require.Empty(t, inNow)
 }
@@ -1240,9 +1240,9 @@ func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = namespaced.GetNodeVisibleAt(NodeID("mvcc-fallback-node-ns"), version)
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = wal.GetNodesByLabelVisibleAt("Doc", version)
+	_, err = wal.GetNodesByLabelVisibleAt(context.Background(), "Doc", version)
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = namespaced.GetNodesByLabelVisibleAt("Doc", version)
+	_, err = namespaced.GetNodesByLabelVisibleAt(context.Background(), "Doc", version)
 	require.ErrorIs(t, err, ErrNotImplemented)
 
 	edgeID := EdgeID("nornic:mvcc-fallback-edge")
@@ -1261,13 +1261,13 @@ func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = namespaced.GetEdgeVisibleAt(EdgeID("mvcc-fallback-edge-ns"), version)
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = wal.GetEdgesByTypeVisibleAt("SELF", version)
+	_, err = wal.GetEdgesByTypeVisibleAt(context.Background(), "SELF", version)
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = namespaced.GetEdgesByTypeVisibleAt("SELF", version)
+	_, err = namespaced.GetEdgesByTypeVisibleAt(context.Background(), "SELF", version)
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = wal.GetEdgesBetweenVisibleAt(nodeID, nodeID, version)
+	_, err = wal.GetEdgesBetweenVisibleAt(context.Background(), nodeID, nodeID, version)
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = namespaced.GetEdgesBetweenVisibleAt(NodeID("mvcc-fallback-node-ns"), NodeID("mvcc-fallback-node-ns"), version)
+	_, err = namespaced.GetEdgesBetweenVisibleAt(context.Background(), NodeID("mvcc-fallback-node-ns"), NodeID("mvcc-fallback-node-ns"), version)
 	require.ErrorIs(t, err, ErrNotImplemented)
 }
 
@@ -1328,18 +1328,24 @@ func (h mvccAdjacencyHistory) seed(t *testing.T) mvccAdjacencyHistory {
 	return h
 }
 
-// outgoingAt reads the outgoing edges of node visible at version.
-func (h mvccAdjacencyHistory) outgoingAt(t *testing.T, version MVCCVersion, node NodeID) []*Edge {
-	t.Helper()
-	edges, err := h.engine.GetOutgoingEdgesVisibleAt(node, version)
-	require.NoError(t, err)
-	return edges
-}
+// mvccAdjacencyDirection selects the adjacency read of one asserted access.
+type mvccAdjacencyDirection int
 
-// incomingAt reads the incoming edges of node visible at version.
-func (h mvccAdjacencyHistory) incomingAt(t *testing.T, version MVCCVersion, node NodeID) []*Edge {
+const (
+	mvccOutgoing mvccAdjacencyDirection = iota
+	mvccIncoming
+)
+
+// edgesAt reads the edges of node visible at version in direction, failing the
+// test on error: it is the one asserted MVCC adjacency accessor the directional
+// history cases share.
+func (h mvccAdjacencyHistory) edgesAt(t *testing.T, direction mvccAdjacencyDirection, version MVCCVersion, node NodeID) []*Edge {
 	t.Helper()
-	edges, err := h.engine.GetIncomingEdgesVisibleAt(node, version)
+	read := h.engine.GetOutgoingEdgesVisibleAt
+	if direction == mvccIncoming {
+		read = h.engine.GetIncomingEdgesVisibleAt
+	}
+	edges, err := read(context.Background(), node, version)
 	require.NoError(t, err)
 	return edges
 }

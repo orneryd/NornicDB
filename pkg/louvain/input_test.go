@@ -1,6 +1,7 @@
 package louvain
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
@@ -11,7 +12,10 @@ func TestRunUndirectedSelfLoopsParallelAndExcludedEndpoints(t *testing.T) {
 		edge := edges[i]
 		return edge[0], edge[1], float64(edge[2]), edge[1] < 4
 	}
-	result := RunUndirected(4, len(edges), input, DefaultOptions())
+	result, err := RunUndirected(context.Background(), 4, len(edges), input, DefaultOptions())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
 	if want, got := []int{0, 1, 1, 0}, Final(result); !reflect.DeepEqual(want, got) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -33,7 +37,10 @@ func TestColourClassesSentinelBoundary(t *testing.T) {
 				}
 			}
 		}
-		classes := NewGraph(size).colourClasses(neighbours)
+		classes, err := NewGraph(size).colourClasses(context.Background(), neighbours)
+		if err != nil {
+			t.Fatalf("%d nodes: %v", size, err)
+		}
 		if len(classes) != size {
 			t.Fatalf("%d nodes: %d classes", size, len(classes))
 		}

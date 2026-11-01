@@ -72,7 +72,7 @@ func TestKalmanSearchAdapterPreservesCanonicalRerankOrder(t *testing.T) {
 	options.MinSimilarity = service.resolveMinSimilarity(options)
 	service.resultCache = newSearchResultCache(4, time.Minute)
 	cacheKey := service.cacheNamespace + "\x00" + strconv.FormatUint(service.IndexRevision(), 10) + "\x00" + searchCacheKey(query, nil, options)
-	service.resultCache.Put(cacheKey, response)
+	service.resultCache.Put(context.Background(), cacheKey, response)
 
 	config := DefaultKalmanSearchConfig()
 	config.EnableScoreSmoothing = false
@@ -124,7 +124,7 @@ func TestKalmanSearchAdapterPreservesCanonicalFallbackOrderAfterStabilityHistory
 		resolved := *options
 		resolved.MinSimilarity = service.resolveMinSimilarity(&resolved)
 		key := service.cacheNamespace + "\x00" + strconv.FormatUint(service.IndexRevision(), 10) + "\x00" + searchCacheKey(query, nil, &resolved)
-		service.resultCache.Put(key, response)
+		service.resultCache.Put(context.Background(), key, response)
 	}
 	config := DefaultKalmanSearchConfig()
 	config.EnableScoreSmoothing = false

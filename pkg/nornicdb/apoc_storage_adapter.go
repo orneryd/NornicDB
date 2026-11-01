@@ -6,6 +6,7 @@
 package nornicdb
 
 import (
+	"context"
 	"maps"
 	"slices"
 	"strconv"
@@ -164,9 +165,12 @@ func (a *APOCStorageAdapter) DeleteRelationship(id int64) error {
 func (a *APOCStorageAdapter) GetNodeRelationships(nodeID int64, relType string, direction apocstorage.Direction) ([]*apocstorage.Relationship, error) {
 	nID := storage.NodeID(strconv.FormatInt(nodeID, 10))
 	var result []*apocstorage.Relationship
+	// The APOC storage contract carries no caller context, so these reads keep
+	// the lifetime they had before bulk reads became context-first.
+	readCtx := context.Background()
 
 	if direction == apocstorage.DirectionOutgoing || direction == apocstorage.DirectionBoth {
-		outgoing, err := a.engine.GetOutgoingEdges(nID)
+		outgoing, err := a.engine.GetOutgoingEdges(readCtx, nID)
 		if err == nil {
 			for _, edge := range outgoing {
 				if relType == "" || edge.Type == relType {
@@ -177,7 +181,7 @@ func (a *APOCStorageAdapter) GetNodeRelationships(nodeID int64, relType string, 
 	}
 
 	if direction == apocstorage.DirectionIncoming || direction == apocstorage.DirectionBoth {
-		incoming, err := a.engine.GetIncomingEdges(nID)
+		incoming, err := a.engine.GetIncomingEdges(readCtx, nID)
 		if err == nil {
 			for _, edge := range incoming {
 				if relType == "" || edge.Type == relType {

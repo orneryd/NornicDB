@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -168,26 +169,18 @@ func (f *foreignNumericReplayFixture) requireIntendedEndpoints(t *testing.T, id 
 func (f *foreignNumericReplayFixture) requireEdgeIndexed(t *testing.T, id EdgeID) {
 	t.Helper()
 	edge := f.requireIntendedEndpoints(t, id)
-	outgoing, err := f.dest.GetOutgoingEdges(edge.StartNode)
+	outgoing, err := f.dest.GetOutgoingEdges(context.Background(), edge.StartNode)
 	require.NoError(t, err)
-	require.Contains(t, foreignEdgeIDs(outgoing), id, "outgoing index of %s", edge.StartNode)
-	incoming, err := f.dest.GetIncomingEdges(edge.EndNode)
+	require.Contains(t, testEdgeIDs(outgoing), id, "outgoing index of %s", edge.StartNode)
+	incoming, err := f.dest.GetIncomingEdges(context.Background(), edge.EndNode)
 	require.NoError(t, err)
-	require.Contains(t, foreignEdgeIDs(incoming), id, "incoming index of %s", edge.EndNode)
-	between, err := f.dest.GetEdgesBetween(edge.StartNode, edge.EndNode)
+	require.Contains(t, testEdgeIDs(incoming), id, "incoming index of %s", edge.EndNode)
+	between, err := f.dest.GetEdgesBetween(context.Background(), edge.StartNode, edge.EndNode)
 	require.NoError(t, err)
-	require.Contains(t, foreignEdgeIDs(between), id, "between index of %s->%s", edge.StartNode, edge.EndNode)
-	typed, err := f.dest.GetEdgesByType(edge.Type)
+	require.Contains(t, testEdgeIDs(between), id, "between index of %s->%s", edge.StartNode, edge.EndNode)
+	typed, err := f.dest.GetEdgesByType(context.Background(), edge.Type)
 	require.NoError(t, err)
-	require.Contains(t, foreignEdgeIDs(typed), id, "type index of %s", edge.Type)
-}
-
-func foreignEdgeIDs(edges []*Edge) []EdgeID {
-	ids := make([]EdgeID, 0, len(edges))
-	for _, edge := range edges {
-		ids = append(ids, edge.ID)
-	}
-	return ids
+	require.Contains(t, testEdgeIDs(typed), id, "type index of %s", edge.Type)
 }
 
 func TestForeignBufferedWALNumericIDsCreateKeepsDestinationEndpoints(t *testing.T) {
@@ -223,15 +216,15 @@ func TestForeignBufferedWALNumericIDsCreateKeepsDestinationEndpoints(t *testing.
 
 	// Direction is not symmetric: the replayed edge must not surface in the
 	// reversed traversal.
-	reverseOut, err := f.dest.GetOutgoingEdges(foreignEndNode)
+	reverseOut, err := f.dest.GetOutgoingEdges(context.Background(), foreignEndNode)
 	require.NoError(t, err)
-	require.NotContains(t, foreignEdgeIDs(reverseOut), linkID)
-	reverseIn, err := f.dest.GetIncomingEdges(foreignStartNode)
+	require.NotContains(t, testEdgeIDs(reverseOut), linkID)
+	reverseIn, err := f.dest.GetIncomingEdges(context.Background(), foreignStartNode)
 	require.NoError(t, err)
-	require.NotContains(t, foreignEdgeIDs(reverseIn), linkID)
-	reverseBetween, err := f.dest.GetEdgesBetween(foreignEndNode, foreignStartNode)
+	require.NotContains(t, testEdgeIDs(reverseIn), linkID)
+	reverseBetween, err := f.dest.GetEdgesBetween(context.Background(), foreignEndNode, foreignStartNode)
 	require.NoError(t, err)
-	require.NotContains(t, foreignEdgeIDs(reverseBetween), linkID)
+	require.NotContains(t, testEdgeIDs(reverseBetween), linkID)
 
 	// The destination-owned edge whose endpoints hold the source numbers is
 	// untouched in body and in every index.
@@ -241,18 +234,18 @@ func TestForeignBufferedWALNumericIDsCreateKeepsDestinationEndpoints(t *testing.
 	require.Equal(t, f.holderEnd, prior.EndNode)
 	require.Equal(t, priorType, prior.Type)
 	require.Equal(t, "prior-create", prior.Properties["keep"])
-	priorOut, err := f.dest.GetOutgoingEdges(f.holderNode)
+	priorOut, err := f.dest.GetOutgoingEdges(context.Background(), f.holderNode)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorOut), "the holder keeps only its own outgoing edge")
-	priorIn, err := f.dest.GetIncomingEdges(f.holderEnd)
+	require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorOut), "the holder keeps only its own outgoing edge")
+	priorIn, err := f.dest.GetIncomingEdges(context.Background(), f.holderEnd)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorIn), "the holder keeps only its own incoming edge")
-	priorBetween, err := f.dest.GetEdgesBetween(f.holderNode, f.holderEnd)
+	require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorIn), "the holder keeps only its own incoming edge")
+	priorBetween, err := f.dest.GetEdgesBetween(context.Background(), f.holderNode, f.holderEnd)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorBetween))
-	priorTyped, err := f.dest.GetEdgesByType(priorType)
+	require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorBetween))
+	priorTyped, err := f.dest.GetEdgesByType(context.Background(), priorType)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorTyped))
+	require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorTyped))
 
 	// The mapping and every traversal survive a close and reopen.
 	f.reopenDestination(t)
@@ -302,24 +295,24 @@ func TestForeignBufferedWALNumericIDsUpdateKeepsDestinationIndexes(t *testing.T)
 	require.Equal(t, newType, got.Type)
 	require.Equal(t, "new", got.Properties["v"], "the replayed update must win the changed property")
 
-	outgoing, err := f.dest.GetOutgoingEdges(foreignStartNode)
+	outgoing, err := f.dest.GetOutgoingEdges(context.Background(), foreignStartNode)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{movingID}, foreignEdgeIDs(outgoing))
-	incoming, err := f.dest.GetIncomingEdges(foreignEndNode)
+	require.Equal(t, []EdgeID{movingID}, testEdgeIDs(outgoing))
+	incoming, err := f.dest.GetIncomingEdges(context.Background(), foreignEndNode)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{movingID}, foreignEdgeIDs(incoming))
+	require.Equal(t, []EdgeID{movingID}, testEdgeIDs(incoming))
 
 	// The previous type index entry is retired; the new one is exact.
-	stale, err := f.dest.GetEdgesByType(oldType)
+	stale, err := f.dest.GetEdgesByType(context.Background(), oldType)
 	require.NoError(t, err)
-	require.Empty(t, foreignEdgeIDs(stale), "the previous type index entry must be retired")
-	typed, err := f.dest.GetEdgesByType(newType)
+	require.Empty(t, testEdgeIDs(stale), "the previous type index entry must be retired")
+	typed, err := f.dest.GetEdgesByType(context.Background(), newType)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{movingID}, foreignEdgeIDs(typed))
+	require.Equal(t, []EdgeID{movingID}, testEdgeIDs(typed))
 
-	between, err := f.dest.GetEdgesBetween(foreignStartNode, foreignEndNode)
+	between, err := f.dest.GetEdgesBetween(context.Background(), foreignStartNode, foreignEndNode)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{movingID}, foreignEdgeIDs(between))
+	require.Equal(t, []EdgeID{movingID}, testEdgeIDs(between))
 
 	// Unrelated destination data keeps its body and its indexes.
 	prior, err := f.dest.GetEdge(priorID)
@@ -328,23 +321,23 @@ func TestForeignBufferedWALNumericIDsUpdateKeepsDestinationIndexes(t *testing.T)
 	require.Equal(t, f.holderEnd, prior.EndNode)
 	require.Equal(t, priorType, prior.Type)
 	require.Equal(t, "prior-update", prior.Properties["keep"])
-	priorOut, err := f.dest.GetOutgoingEdges(f.holderNode)
+	priorOut, err := f.dest.GetOutgoingEdges(context.Background(), f.holderNode)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorOut))
-	priorIn, err := f.dest.GetIncomingEdges(f.holderEnd)
+	require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorOut))
+	priorIn, err := f.dest.GetIncomingEdges(context.Background(), f.holderEnd)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorIn))
-	priorTyped, err := f.dest.GetEdgesByType(priorType)
+	require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorIn))
+	priorTyped, err := f.dest.GetEdgesByType(context.Background(), priorType)
 	require.NoError(t, err)
-	require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorTyped))
+	require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorTyped))
 
 	f.reopenDestination(t)
 	persisted := f.requireIntendedEndpoints(t, movingID)
 	require.Equal(t, newType, persisted.Type)
 	require.Equal(t, "new", persisted.Properties["v"])
-	stale, err = f.dest.GetEdgesByType(oldType)
+	stale, err = f.dest.GetEdgesByType(context.Background(), oldType)
 	require.NoError(t, err)
-	require.Empty(t, foreignEdgeIDs(stale))
+	require.Empty(t, testEdgeIDs(stale))
 	_, err = f.dest.GetEdge(priorID)
 	require.NoError(t, err)
 }
@@ -387,15 +380,15 @@ func TestForeignBufferedWALNumericIDsDeleteKeepsDestinationEdges(t *testing.T) {
 
 		_, err := f.dest.GetEdge(goneID)
 		require.ErrorIs(t, err, ErrNotFound, "the replayed delete must remove its own relationship")
-		goneOut, err := f.dest.GetOutgoingEdges(foreignStartNode)
+		goneOut, err := f.dest.GetOutgoingEdges(context.Background(), foreignStartNode)
 		require.NoError(t, err)
-		require.NotContains(t, foreignEdgeIDs(goneOut), goneID)
-		goneIn, err := f.dest.GetIncomingEdges(foreignEndNode)
+		require.NotContains(t, testEdgeIDs(goneOut), goneID)
+		goneIn, err := f.dest.GetIncomingEdges(context.Background(), foreignEndNode)
 		require.NoError(t, err)
-		require.NotContains(t, foreignEdgeIDs(goneIn), goneID)
-		goneTyped, err := f.dest.GetEdgesByType(goneType)
+		require.NotContains(t, testEdgeIDs(goneIn), goneID)
+		goneTyped, err := f.dest.GetEdgesByType(context.Background(), goneType)
 		require.NoError(t, err)
-		require.Empty(t, foreignEdgeIDs(goneTyped), "no index may retain the deleted relationship")
+		require.Empty(t, testEdgeIDs(goneTyped), "no index may retain the deleted relationship")
 
 		// The destination edge whose numbers equal the source endpoints
 		// survives in its body and in every index.
@@ -405,18 +398,18 @@ func TestForeignBufferedWALNumericIDsDeleteKeepsDestinationEdges(t *testing.T) {
 		require.Equal(t, f.holderEnd, prior.EndNode)
 		require.Equal(t, priorType, prior.Type)
 		require.Equal(t, "prior-delete", prior.Properties["keep"])
-		priorOut, err := f.dest.GetOutgoingEdges(f.holderNode)
+		priorOut, err := f.dest.GetOutgoingEdges(context.Background(), f.holderNode)
 		require.NoError(t, err)
-		require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorOut))
-		priorIn, err := f.dest.GetIncomingEdges(f.holderEnd)
+		require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorOut))
+		priorIn, err := f.dest.GetIncomingEdges(context.Background(), f.holderEnd)
 		require.NoError(t, err)
-		require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorIn))
-		priorBetween, err := f.dest.GetEdgesBetween(f.holderNode, f.holderEnd)
+		require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorIn))
+		priorBetween, err := f.dest.GetEdgesBetween(context.Background(), f.holderNode, f.holderEnd)
 		require.NoError(t, err)
-		require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorBetween))
-		priorTyped, err := f.dest.GetEdgesByType(priorType)
+		require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorBetween))
+		priorTyped, err := f.dest.GetEdgesByType(context.Background(), priorType)
 		require.NoError(t, err)
-		require.Equal(t, []EdgeID{priorID}, foreignEdgeIDs(priorTyped))
+		require.Equal(t, []EdgeID{priorID}, testEdgeIDs(priorTyped))
 	}
 	check(t)
 

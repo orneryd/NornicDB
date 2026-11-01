@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
@@ -70,7 +69,7 @@ func continuationDeliveryMiddleware(next http.Handler) http.Handler {
 			<-failed
 			return
 		}
-		if bulk.ObserveContext(r.Context()) == nil {
+		if r.Context().Err() == nil {
 			delivery.DeliveredWritten()
 		}
 	})

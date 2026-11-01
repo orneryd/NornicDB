@@ -403,7 +403,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 				return count
 			}
 			seen := make(map[storage.EdgeID]struct{})
-			for _, edge := range reader.getNodeEdges(node) {
+			for _, edge := range reader.getNodeEdges(ctx, node) {
 				if config.RelationshipTypes == nil || containsString(config.RelationshipTypes, edge.Type) {
 					seen[edge.ID] = struct{}{}
 				}

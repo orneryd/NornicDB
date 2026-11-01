@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -441,13 +442,13 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 		sort.Strings(out)
 		return out
 	}
-	nodes, err := engine.GetNodesByLabel("Person")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"case:both", "case:upper"}, ids(nodes))
-	nodes, err = engine.GetNodesByLabel("person")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"case:lower"}, ids(nodes))
-	nodes, err = engine.GetNodesByLabel("PERSON")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "PERSON")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 
@@ -468,7 +469,7 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 	require.NotNil(t, edge)
 	require.Equal(t, EdgeID("case:KNOWS"), edge.ID)
 	require.Nil(t, engine.GetEdgeBetween(upper, lower, "Knows"))
-	edges, err := engine.GetEdgesByType("knows")
+	edges, err := engine.GetEdgesByType(context.Background(), "knows")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.True(t, strings.HasSuffix(string(edges[0].ID), "knows"))

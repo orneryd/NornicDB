@@ -19,19 +19,25 @@ func TestProcedureArgumentErrorsAndCalls(t *testing.T) {
 	require.NoError(t, err)
 
 	for name, call := range map[string]func() error{
-		"load.csv url":            func() error { _, err := exec.callApocLoadCsv(ctx, nil); return err },
-		"load.csv config":         func() error { _, err := exec.callApocLoadCsv(ctx, []interface{}{"x.csv", int64(1)}); return err },
-		"import.json url":         func() error { _, err := exec.callApocImportJson(ctx, nil); return err },
-		"export.json.all file":    func() error { _, err := exec.callApocExportJsonAll(ctx, []interface{}{int64(1)}); return err },
-		"export.json.query query": func() error { _, err := exec.callApocExportJsonQuery(ctx, nil); return err },
-		"export.json.query file": func() error {
-			_, err := exec.callApocExportJsonQuery(ctx, []interface{}{"RETURN 1", int64(1)})
+		"load.csv url":    func() error { _, err := exec.callApocLoadCsv(ctx, nil); return err },
+		"load.csv config": func() error { _, err := exec.callApocLoadCsv(ctx, []interface{}{"x.csv", int64(1)}); return err },
+		"import.json url": func() error { _, err := exec.callApocImportJson(ctx, nil); return err },
+		"export.json.all file": func() error {
+			_, err := exportProcedure(exportJSONGraphDeclaration)(ctx, exec, "", []interface{}{int64(1)})
 			return err
 		},
-		"export.csv.all file":    func() error { _, err := exec.callApocExportCsvAll(ctx, []interface{}{int64(1)}); return err },
-		"export.csv.query query": func() error { _, err := exec.callApocExportCsvQuery(ctx, nil); return err },
+		"export.json.query query": func() error { _, err := exportProcedure(exportJSONQueryDeclaration)(ctx, exec, "", nil); return err },
+		"export.json.query file": func() error {
+			_, err := exportProcedure(exportJSONQueryDeclaration)(ctx, exec, "", []interface{}{"RETURN 1", int64(1)})
+			return err
+		},
+		"export.csv.all file": func() error {
+			_, err := exportProcedure(exportCSVGraphDeclaration)(ctx, exec, "", []interface{}{int64(1)})
+			return err
+		},
+		"export.csv.query query": func() error { _, err := exportProcedure(exportCSVQueryDeclaration)(ctx, exec, "", nil); return err },
 		"export.csv.query file": func() error {
-			_, err := exec.callApocExportCsvQuery(ctx, []interface{}{"RETURN 1", int64(1)})
+			_, err := exportProcedure(exportCSVQueryDeclaration)(ctx, exec, "", []interface{}{"RETURN 1", int64(1)})
 			return err
 		},
 		"graph.project rels":   func() error { _, err := exec.callGdsGraphProject([]interface{}{"g", "*", int64(1)}); return err },

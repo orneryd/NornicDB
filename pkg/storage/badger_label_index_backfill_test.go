@@ -76,7 +76,7 @@ func TestLabelIndexBackfill_HandlesMultiLabelNodesCorrectly(t *testing.T) {
 	require.True(t, waitForLabelIndexReady(t, engine2, 5*time.Second))
 
 	for _, label := range []string{"Aprodan", "Academic", "Concept"} {
-		got, err := engine2.GetNodesByLabel(label)
+		got, err := engine2.GetNodesByLabel(context.Background(), label)
 		require.NoError(t, err)
 		assert.Len(t, got, 50,
 			"after rebuild, label %q must surface all 50 multi-labelled nodes; got %d", label, len(got))
@@ -149,7 +149,7 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 		"backfill must not relaunch on subsequent opens once the marker is set")
 
 	// And queries still return the right rows.
-	got, err := engine3.GetNodesByLabel("L")
+	got, err := engine3.GetNodesByLabel(context.Background(), "L")
 	require.NoError(t, err)
 	assert.Len(t, got, 10)
 }
@@ -227,12 +227,12 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 	require.True(t, waitForLabelIndexReady(t, engine2, 5*time.Second))
 
 	// "ghost" label must return 0 — the rebuild dropped the prefix.
-	ghosts, err := engine2.GetNodesByLabel("ghost")
+	ghosts, err := engine2.GetNodesByLabel(context.Background(), "ghost")
 	require.NoError(t, err)
 	assert.Empty(t, ghosts, "stale label-index entry must NOT survive the rebuild")
 
 	// Real label still resolves.
-	real, err := engine2.GetNodesByLabel("Real")
+	real, err := engine2.GetNodesByLabel(context.Background(), "Real")
 	require.NoError(t, err)
 	assert.Len(t, real, 1)
 }
@@ -331,7 +331,7 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 	for _, namespace := range []string{"alpha", "beta"} {
 		store := NewNamespacedEngine(reopened, namespace)
 		for _, label := range []string{"Label", "Second"} {
-			nodes, err := store.GetNodesByLabel(label)
+			nodes, err := store.GetNodesByLabel(context.Background(), label)
 			require.NoError(t, err)
 			require.Len(t, nodes, 1)
 			require.Equal(t, NodeID("existing"), nodes[0].ID)

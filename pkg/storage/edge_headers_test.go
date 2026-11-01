@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"sort"
@@ -229,7 +230,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 				require.NoError(t, err)
 				defer func() { _ = tx.Rollback() }()
 				require.NoError(t, tx.SetNamespace("test"))
-				_, fullErr := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
+				_, fullErr := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
 				require.Error(t, fullErr)
 				reader = tx
 			} else {

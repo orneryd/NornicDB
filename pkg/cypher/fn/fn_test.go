@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 				t.Fatalf("expected panic for empty name")
 			}
 		}()
-		Register(" ", func(Context, []string) (interface{}, error) { return nil, nil })
+		Register(" ", func(_ context.Context, _ Context, _ []string) (interface{}, error) { return nil, nil })
 	})
 
 	t.Run("register panics for nil function", func(t *testing.T) {
@@ -31,7 +32,7 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 		Register("custom_nil", nil)
 	})
 
-	Register("custom_add", func(ctx Context, args []string) (interface{}, error) {
+	Register("custom_add", func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, errors.New("need two args")
 		}
@@ -51,25 +52,25 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 		}
 	}}
 
-	v, found, err := EvaluateFunction("CUSTOM_ADD", []string{"a", "b"}, ctx)
+	v, found, err := EvaluateFunction(context.Background(), "CUSTOM_ADD", []string{"a", "b"}, ctx)
 	if err != nil || !found || v != 5 {
 		t.Fatalf("expected custom add=5 found=true err=nil, got v=%v found=%v err=%v", v, found, err)
 	}
 
-	if _, found, err := EvaluateFunction("does_not_exist", nil, ctx); found || err != nil {
+	if _, found, err := EvaluateFunction(context.Background(), "does_not_exist", nil, ctx); found || err != nil {
 		t.Fatalf("unknown function should return found=false err=nil")
 	}
 
-	if _, found, err := EvaluateFunction("custom_add", []string{"a", "b"}, Context{}); !found || err == nil {
+	if _, found, err := EvaluateFunction(context.Background(), "custom_add", []string{"a", "b"}, Context{}); !found || err == nil {
 		t.Fatalf("expected missing Eval to return found=true with error")
 	}
 
 	calledNow := false
-	Register("custom_now", func(ctx Context, _ []string) (interface{}, error) {
+	Register("custom_now", func(workCtx context.Context, ctx Context, _ []string) (interface{}, error) {
 		calledNow = true
 		return ctx.Now().Unix(), nil
 	})
-	if _, found, err := EvaluateFunction("custom_now", nil, ctx); !found || err != nil || !calledNow {
+	if _, found, err := EvaluateFunction(context.Background(), "custom_now", nil, ctx); !found || err != nil || !calledNow {
 		t.Fatalf("expected default Now to be injected")
 	}
 }
@@ -127,7 +128,7 @@ func TestBuiltinsCore(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, found, err := EvaluateFunction(tc.fn, tc.args, ctx)
+			got, found, err := EvaluateFunction(context.Background(), tc.fn, tc.args, ctx)
 			if err != nil || !found {
 				t.Fatalf("expected found builtin without error, got found=%v err=%v", found, err)
 			}
@@ -137,35 +138,35 @@ func TestBuiltinsCore(t *testing.T) {
 		})
 	}
 
-	labels, _, _ := EvaluateFunction("labels", []string{"n"}, ctx)
+	labels, _, _ := EvaluateFunction(context.Background(), "labels", []string{"n"}, ctx)
 	if got := labels.([]interface{}); len(got) != 2 || got[0] != "Person" {
 		t.Fatalf("unexpected labels result: %#v", got)
 	}
 
-	keysNode, _, _ := EvaluateFunction("keys", []string{"n"}, ctx)
+	keysNode, _, _ := EvaluateFunction(context.Background(), "keys", []string{"n"}, ctx)
 	if len(keysNode.([]interface{})) != 2 {
 		t.Fatalf("expected 2 node keys")
 	}
-	keysRel, _, _ := EvaluateFunction("keys", []string{"r"}, ctx)
+	keysRel, _, _ := EvaluateFunction(context.Background(), "keys", []string{"r"}, ctx)
 	if len(keysRel.([]interface{})) != 1 {
 		t.Fatalf("expected 1 rel key")
 	}
 
-	propsNode, _, _ := EvaluateFunction("properties", []string{"n"}, ctx)
+	propsNode, _, _ := EvaluateFunction(context.Background(), "properties", []string{"n"}, ctx)
 	if propsNode.(map[string]any)["name"] != "Alice" {
 		t.Fatalf("unexpected node properties result")
 	}
 
-	if got, _, _ := EvaluateFunction("id", []string{"missing"}, ctx); got != nil {
+	if got, _, _ := EvaluateFunction(context.Background(), "id", []string{"missing"}, ctx); got != nil {
 		t.Fatalf("expected nil for missing id arg, got %v", got)
 	}
-	if got, _, _ := EvaluateFunction("coalesce", []string{"nil_expr"}, ctx); got != nil {
+	if got, _, _ := EvaluateFunction(context.Background(), "coalesce", []string{"nil_expr"}, ctx); got != nil {
 		t.Fatalf("expected nil coalesce when only nil values")
 	}
-	if got, _, _ := EvaluateFunction("size", nil, ctx); got != int64(0) {
+	if got, _, _ := EvaluateFunction(context.Background(), "size", nil, ctx); got != int64(0) {
 		t.Fatalf("size with invalid args should be zero")
 	}
-	if got, _, _ := EvaluateFunction("tolower", []string{"nil_expr"}, ctx); got != nil {
+	if got, _, _ := EvaluateFunction(context.Background(), "tolower", []string{"nil_expr"}, ctx); got != nil {
 		t.Fatalf("tolower(nil) should be nil")
 	}
 }

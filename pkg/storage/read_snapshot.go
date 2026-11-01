@@ -53,16 +53,29 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 	}
 	prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
 	snap := &badgerReadSnapshot{b: b, prefix: prefix}
+	var captureErr error
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 		// Nodes are read whatever their visibility, relationships as visible
 		// reads see them, as their stored rows below.
-		pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
+		pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
+		if err != nil {
+			captureErr = err
+			return
+		}
 		snap.overlayNodes, snap.nodesTouched = pendingNodes.nodes, pendingNodes.nodesTouched
-		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
+		pendingEdges, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
+		if err != nil {
+			captureErr = err
+			return
+		}
 		snap.overlayEdges, snap.edgesTouched = pendingEdges.edges, pendingEdges.edgesTouched
 	}, readViewOptions{longLived: true, scope: prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return nil, err
+	}
+	if captureErr != nil {
+		view.Close()
+		return nil, captureErr
 	}
 	snap.view = view
 	return snap, nil

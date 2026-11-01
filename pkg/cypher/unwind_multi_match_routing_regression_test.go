@@ -18,12 +18,12 @@ type limitedLabelScanEngine struct {
 	calls    int
 }
 
-func (e *limitedLabelScanEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *limitedLabelScanEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	e.calls++
 	if e.maxCalls > 0 && e.calls > e.maxCalls {
 		return nil, fmt.Errorf("GetNodesByLabel called too many times: %d > %d", e.calls, e.maxCalls)
 	}
-	return e.MemoryEngine.GetNodesByLabel(label)
+	return e.MemoryEngine.GetNodesByLabel(ctx, label)
 }
 
 // BUG REGRESSION:
@@ -278,7 +278,7 @@ RETURN elementId(t) AS id,
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1, "query should create exactly one translation row")
 
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	translatesTo := 0
 	for _, e := range edges {
@@ -412,7 +412,7 @@ RETURN count(*) AS c
 	require.Len(t, res.Rows[0], 1)
 	require.Equal(t, int64(5), res.Rows[0][0])
 
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	translatesTo := 0
 	for _, edge := range edges {

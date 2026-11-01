@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,7 +21,7 @@ func TestTransactionLabelReadsAreIsolated(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	for round := 0; round < 2; round++ { // a fresh scan, then the cached one
 		var nodes []*Node
-		require.NoError(t, tx.StreamNodesByLabelProjected("Doc", nil, func(node *Node) error {
+		require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Doc", nil, func(node *Node) error {
 			nodes = append(nodes, node)
 			return nil
 		}))

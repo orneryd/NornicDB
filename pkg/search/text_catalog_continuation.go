@@ -580,7 +580,7 @@ func hydrateContinuationResultsContext(ctx context.Context, engine storage.Engin
 			ids = append(ids, compact[index].Passages[passageIndex].NodeID)
 		}
 	}
-	nodes, err := batchContinuationNodesWithoutEmbeddings(engine, ids)
+	nodes, err := batchContinuationNodesWithoutEmbeddings(ctx, engine, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -640,9 +640,9 @@ func hydrateContinuationResultsContext(ctx context.Context, engine storage.Engin
 	return results, nil
 }
 
-func batchContinuationNodesWithoutEmbeddings(engine storage.Engine, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func batchContinuationNodesWithoutEmbeddings(ctx context.Context, engine storage.Engine, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	if reader, ok := engine.(storage.BatchNodeWithoutEmbeddingsReader); ok {
-		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ids)
+		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ctx, ids)
 		if err == nil {
 			return nodes, nil
 		}
@@ -650,7 +650,7 @@ func batchContinuationNodesWithoutEmbeddings(engine storage.Engine, ids []storag
 			return nil, err
 		}
 	}
-	return engine.BatchGetNodes(ids)
+	return engine.BatchGetNodes(ctx, ids)
 }
 
 func (s *catalogContinuationStream) Close() error {

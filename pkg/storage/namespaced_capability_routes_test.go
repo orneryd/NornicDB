@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -25,11 +26,11 @@ func (f *prefixCountRouteFixture) EdgeCountByPrefix(prefix string) (int64, error
 	f.prefixes = append(f.prefixes, prefix)
 	return 11, f.err
 }
-func (f *prefixCountRouteFixture) AllNodes() ([]*Node, error) {
+func (f *prefixCountRouteFixture) AllNodes(ctx context.Context) ([]*Node, error) {
 	f.calls = append(f.calls, "all-nodes")
 	return f.nodes, f.err
 }
-func (f *prefixCountRouteFixture) AllEdges() ([]*Edge, error) {
+func (f *prefixCountRouteFixture) AllEdges(ctx context.Context) ([]*Edge, error) {
 	f.calls = append(f.calls, "all-edges")
 	return f.edges, f.err
 }

@@ -103,7 +103,7 @@ func (e *namespaceListEngine) ListNamespaces() []string {
 func (e *blockingIterEngine) IterateNodes(fn func(*storage.Node) bool) error {
 	e.once.Do(func() { close(e.entered) })
 	<-e.release
-	nodes, err := e.AllNodes()
+	nodes, err := e.AllNodes(context.Background())
 	if err != nil {
 		return err
 	}

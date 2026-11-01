@@ -16,11 +16,11 @@ type getNodesByLabelErrEngine struct {
 	err   error
 }
 
-func (e *getNodesByLabelErrEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *getNodesByLabelErrEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if label == e.label {
 		return nil, e.err
 	}
-	return e.Engine.GetNodesByLabel(label)
+	return e.Engine.GetNodesByLabel(ctx, label)
 }
 
 type createEdgeErrEngine struct {

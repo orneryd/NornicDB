@@ -14,12 +14,12 @@ type projectedTraversalCountingEngine struct {
 	startNodeVisits int
 }
 
-func (engine *projectedTraversalCountingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+func (engine *projectedTraversalCountingEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
 	reader, ok := engine.Engine.(storage.ProjectedLabelNodeReader)
 	if !ok {
 		return storage.ErrNotImplemented
 	}
-	return reader.StreamNodesByLabelProjected(label, properties, func(node *storage.Node) error {
+	return reader.StreamNodesByLabelProjected(ctx, label, properties, func(node *storage.Node) error {
 		engine.startNodeVisits++
 		return visit(node)
 	})

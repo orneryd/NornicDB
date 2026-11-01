@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestTransactionRevealLabelCacheKeyDoesNotAliasStoredLabels(t *testing.T) {
 		cleanup := engine.BeginQueryRevealScope(reveal)
 		defer cleanup()
 		var ids []NodeID
-		require.NoError(t, tx.StreamNodesByLabelProjected(label, nil, func(node *Node) error { ids = append(ids, node.ID); return nil }))
+		require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), label, nil, func(node *Node) error { ids = append(ids, node.ID); return nil }))
 		return ids
 	}
 	require.Equal(t, []NodeID{"test:other"}, collect(unusualLabel, false))

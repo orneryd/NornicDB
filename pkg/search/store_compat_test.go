@@ -28,9 +28,9 @@ func (e *countingStoreEngine) IterateNodes(fn func(*storage.Node) bool) error {
 	return e.BadgerEngine.IterateNodes(fn)
 }
 
-func (e *countingStoreEngine) AllNodes() ([]*storage.Node, error) {
+func (e *countingStoreEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	e.iterations.Add(1)
-	return e.BadgerEngine.AllNodes()
+	return e.BadgerEngine.AllNodes(ctx)
 }
 
 // OpenReadSnapshot counts a node read through the build's snapshot too.

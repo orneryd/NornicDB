@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -39,7 +40,7 @@ func TestBackwardsCompatibility_ExistingCode(t *testing.T) {
 	require.NoError(t, err)
 
 	// Old code: query nodes
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodes, 1)
 	assert.Equal(t, "legacy-node-1", string(nodes[0].ID))
@@ -123,7 +124,7 @@ func TestBackwardsCompatibility_NoBreakingChanges(t *testing.T) {
 	assert.NotNil(t, retrieved)
 
 	// AllNodes - should work
-	nodes, err := namespaced.AllNodes()
+	nodes, err := namespaced.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodes, 1)
 

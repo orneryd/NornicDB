@@ -293,7 +293,10 @@ func ValidateConstraintContractOnCreationForEngine(engine Engine, contract Const
 	entityType := ConstraintEntityType(contract.TargetEntityType)
 	switch entityType {
 	case ConstraintEntityNode:
-		nodes, err := GetStoredNodesByLabel(engine, contract.TargetLabelOrType)
+		// Constraint validation is a write-owned integrity read: its lifetime is
+		// the accepted write's own (context.Background), never a statement
+		// read's context.
+		nodes, err := GetStoredNodesByLabel(context.Background(), engine, contract.TargetLabelOrType)
 		if err != nil {
 			return localizedError(localization.StorageSchemaScanNodesFailed(err), err)
 		}
@@ -373,11 +376,14 @@ type constraintGraphView interface {
 
 type engineConstraintView struct{ engine Engine }
 
+// The constraint view reads an accepted write's integrity state: every call
+// runs on that write's own lifetime (context.Background), so a canceled
+// statement read can never cancel the checks that protect the commit.
 func (v engineConstraintView) OutgoingEdges(id NodeID) ([]*Edge, error) {
-	return GetStoredOutgoingEdges(v.engine, id)
+	return GetStoredOutgoingEdges(context.Background(), v.engine, id)
 }
 func (v engineConstraintView) IncomingEdges(id NodeID) ([]*Edge, error) {
-	return GetStoredIncomingEdges(v.engine, id)
+	return GetStoredIncomingEdges(context.Background(), v.engine, id)
 }
 func (v engineConstraintView) Node(id NodeID) (*Node, error) {
 	return GetStoredNode(v.engine, id)
@@ -386,10 +392,10 @@ func (v engineConstraintView) Node(id NodeID) (*Node, error) {
 type txConstraintView struct{ tx *BadgerTransaction }
 
 func (v txConstraintView) OutgoingEdges(id NodeID) ([]*Edge, error) {
-	return v.tx.currentOutgoingEdgesLocked(id)
+	return v.tx.currentDirectedEdgesLocked(id, adjacencyOutgoing)
 }
 func (v txConstraintView) IncomingEdges(id NodeID) ([]*Edge, error) {
-	return v.tx.currentIncomingEdgesLocked(id)
+	return v.tx.currentDirectedEdgesLocked(id, adjacencyIncoming)
 }
 func (v txConstraintView) Node(id NodeID) (*Node, error) {
 	return v.tx.currentNodeLocked(id)
@@ -1427,36 +1433,25 @@ func (tx *BadgerTransaction) currentEdgeLocked(edgeID EdgeID) (*Edge, error) {
 	return edge, err
 }
 
-func (tx *BadgerTransaction) currentOutgoingEdgesLocked(nodeID NodeID) ([]*Edge, error) {
-	committed, err := tx.engine.GetStoredOutgoingEdges(nodeID)
+// currentDirectedEdgesLocked reads the write-integrity view through the same
+// pending-adjacency owner used by transaction reads. Its lifetime remains the
+// write's, so a canceled statement read cannot cancel accepted write bookkeeping.
+// The caller holds tx.mu and selects outgoing or incoming adjacency.
+func (tx *BadgerTransaction) currentDirectedEdgesLocked(nodeID NodeID, direction adjacencyRead) ([]*Edge, error) {
+	out, in, err := readAdjacency(context.Background(), tx.engine, direction, nodeID, "", nil, storedRead)
 	if err != nil {
 		return nil, err
 	}
-	edges := make(map[EdgeID]*Edge)
-	for _, edge := range committed {
-		if _, deleted := tx.deletedEdges[edge.ID]; deleted {
-			continue
-		}
-		if pending, exists := tx.pendingEdges[edge.ID]; exists {
-			if pending.StartNode == nodeID {
-				edges[edge.ID] = copyEdge(pending)
-			}
-			continue
-		}
-		if edge.StartNode == nodeID {
-			edges[edge.ID] = edge
-		}
+	committed := out
+	if direction == adjacencyIncoming {
+		committed = in
 	}
-	for edgeID, edge := range tx.pendingEdges {
-		if edge.StartNode == nodeID {
-			edges[edgeID] = copyEdge(edge)
+	return tx.mergePendingAdjacentEdgesLocked(committed, nodeID, func(edge *Edge) bool {
+		if direction == adjacencyOutgoing {
+			return edge.StartNode == nodeID
 		}
-	}
-	result := make([]*Edge, 0, len(edges))
-	for _, edge := range edges {
-		result = append(result, edge)
-	}
-	return result, nil
+		return edge.EndNode == nodeID
+	}), nil
 }
 
 func constraintContractNamespaceForNode(node *Node) (string, bool) {
@@ -1483,44 +1478,12 @@ func constraintContractNamespaceForEdge(edge *Edge) (string, bool) {
 	return "", false
 }
 
-func (tx *BadgerTransaction) currentIncomingEdgesLocked(nodeID NodeID) ([]*Edge, error) {
-	committed, err := tx.engine.GetStoredIncomingEdges(nodeID)
-	if err != nil {
-		return nil, err
-	}
-	edges := make(map[EdgeID]*Edge)
-	for _, edge := range committed {
-		if _, deleted := tx.deletedEdges[edge.ID]; deleted {
-			continue
-		}
-		if pending, exists := tx.pendingEdges[edge.ID]; exists {
-			if pending.EndNode == nodeID {
-				edges[edge.ID] = copyEdge(pending)
-			}
-			continue
-		}
-		if edge.EndNode == nodeID {
-			edges[edge.ID] = edge
-		}
-	}
-	for edgeID, edge := range tx.pendingEdges {
-		if edge.EndNode == nodeID {
-			edges[edgeID] = copyEdge(edge)
-		}
-	}
-	result := make([]*Edge, 0, len(edges))
-	for _, edge := range edges {
-		result = append(result, edge)
-	}
-	return result, nil
-}
-
 func (tx *BadgerTransaction) currentAdjacentEdgesLocked(nodeID NodeID) ([]*Edge, error) {
-	outgoing, err := tx.currentOutgoingEdgesLocked(nodeID)
+	outgoing, err := tx.currentDirectedEdgesLocked(nodeID, adjacencyOutgoing)
 	if err != nil {
 		return nil, err
 	}
-	incoming, err := tx.currentIncomingEdgesLocked(nodeID)
+	incoming, err := tx.currentDirectedEdgesLocked(nodeID, adjacencyIncoming)
 	if err != nil {
 		return nil, err
 	}

@@ -26,9 +26,9 @@ func (e *relationshipLookupErrorEngine) MatchEdgesBetween(startID, endID storage
 	return storage.MatchEdgesBetween(e.Engine, startID, endID, relType, properties, match)
 }
 
-func (e *relationshipLookupErrorEngine) GetEdgesBetween(
-	storage.NodeID,
-	storage.NodeID,
+func (e *relationshipLookupErrorEngine) GetEdgesBetween(ctx context.Context,
+	_ storage.NodeID,
+	_ storage.NodeID,
 ) ([]*storage.Edge, error) {
 	return nil, e.err
 }

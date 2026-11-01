@@ -224,7 +224,7 @@ func TestRemoteDynamicModeSummaryAdmission(t *testing.T) {
 					}
 				}
 				for i, store := range stores {
-					nodes, err := store.GetNodesByLabel("U5RemoteMode")
+					nodes, err := store.GetNodesByLabel(ctx, "U5RemoteMode")
 					require.NoError(t, err)
 					require.Len(t, nodes, tc.want[i])
 				}

@@ -21,9 +21,12 @@ type countingScanEngine struct {
 	failAfter atomic.Int64
 }
 
-func (c *countingScanEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*storage.Node) error) error {
+// Pin the optional capability: a signature drift must fail compilation.
+var _ storage.ScopedLabelNodeReader = (*countingScanEngine)(nil)
+
+func (c *countingScanEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*storage.Node) error) error {
 	seen := int64(0)
-	return c.MemoryEngine.StreamNodesByLabelProjectedInScope(scope, label, properties, func(node *storage.Node) error {
+	return c.MemoryEngine.StreamNodesByLabelProjectedInScope(ctx, scope, label, properties, func(node *storage.Node) error {
 		c.visited.Add(1)
 		seen++
 		if limit := c.failAfter.Load(); limit > 0 && seen > limit {

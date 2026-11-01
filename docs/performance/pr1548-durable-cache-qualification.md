@@ -134,3 +134,56 @@ its named cleanup archive if needed. Active worktrees/shared Go cache are
 preserved after the app rejected baseline archival as still in use. Docker was
 unavailable; no image/container was created for this PR. No remote branch or
 merge policy was changed, and the PR is not merged.
+
+## PR #1615 follow-up: explicit read-only COMMIT cost
+
+The historical checks above missed a read-only COMMIT workload. The supplied
+regression recipe measures BEGIN → an empty-label count → COMMIT, not a read
+inside one retained transaction. It also measures a fresh query literal per
+transaction. A local reconstruction reproduced the regression between
+`343ca141f4e2516883e5f83cac12efe022a4a3b1` and
+`67ac9fe1c753708f786a317f6e34ec5e03bcf3e7`; the unavailable original harness
+and its reported absolute timings are not claimed reproduced exactly.
+
+Allocation profiling identified global cache-map recreation at read-only
+publication, rather than copying stored graph data on each read. The correction
+keeps warm caches when the transaction's declared cache scope proves it made no
+changes. Real writes, unknown/raw writes, publication ordering and intervening
+invalidations retain their existing behavior. Tests cover those distinctions
+and the public explicit-transaction path. No storage-format change is needed.
+
+The retained `BenchmarkNOR180TerminalCost` uses a real WAL, identical fresh
+fixture and statement sequence on all three revisions. Apple M2 Max, Go 1.26.9,
+three alternating-order rounds; fixed 5,000 iterations for cached-query reads,
+500 for new-query reads and 2,000 for each write/rollback control. These are
+matched local measurements with concurrent ordinary/worker activity, not a
+statistical or isolated whole-system qualification.
+
+| Operation | Before #1548 µs/op | After #1548 µs/op | Corrected µs/op | Before B / allocations | After B / allocations | Corrected B / allocations |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `read_in_tx` | 44.80 | 164.38 | 45.79 | 14,269 / 184 | 2,548,111 / 335 | 14,458 / 191 |
+| `new_read_in_tx` | 569.98 | 720.60 | 551.23 | 603,823 / 7344 | 3,137,517 / 7495 | 613,421 / 7492 |
+| `COMMIT` | 75.56 | 76.75 | 74.69 | 31,160 / 484 | 32,774 / 502 | 32,633 / 502 |
+| `ROLLBACK` | 44.01 | 43.33 | 44.74 | 21,284 / 283 | 21,340 / 283 | 21,279 / 283 |
+| `implicit` | 70.33 | 73.05 | 73.45 | 27,575 / 437 | 29,170 / 455 | 29,104 / 455 |
+
+The corrected cached-query sequence uses about 14 KiB instead of 2.4 MiB; its
+median is 2.2% above the pre-#1548 baseline in this series. Fresh-query latency
+is 3.3% below baseline, with 1.6% more bytes and 2.0% more allocations. Write
+controls retain #1548's ownership/publication costs (18 additional allocations
+against the older, incompletely owned write baseline); they are not described
+as allocation neutral. The earlier per-entity Grow experiment increased memory
+and was rejected.
+
+Reproduce the workload with:
+
+```sh
+go test ./pkg/cypher -run '^$' -bench '^BenchmarkNOR180TerminalCost$/^read_in_tx$' -benchmem -benchtime=5000x -count=3
+go test ./pkg/cypher -run '^$' -bench '^BenchmarkNOR180TerminalCost$/^new_read_in_tx$' -benchmem -benchtime=500x -count=3
+```
+
+Raw samples, profiles, source recipes and the three binary receipts are retained
+under `~/.local/share/nornicdb-pr-readiness/pr1615/tx-perf-1548/`.
+The corrected measured binary SHA256 is `d73241b183df7d026bfb100b7c033f0467ad81ca150920eb3185c6cc467aedec`.
+This component result is not the final PR-head make-test gate; later integrated
+source changes must retain applicable evidence and pass that gate.

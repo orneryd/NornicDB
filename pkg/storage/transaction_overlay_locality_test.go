@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
@@ -16,17 +17,17 @@ func TestTransactionIncidentOverlayTracksMovesAndCascade(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:old", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]interface{}{"v": int64(1)}}))
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:loop", StartNode: "test:a", EndNode: "test:a", Type: "R"}))
 	snapshot := beginMergeKeyTx(t, engine)
-	_, err := snapshot.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
+	_, err := snapshot.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
 	require.NoError(t, err)
 	defer snapshot.Rollback()
 	tx := beginMergeKeyTx(t, engine)
 	defer tx.Rollback()
 	// An initial read with no pending edges need not allocate an index.
-	_, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:c"})
+	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:c"})
 	require.NoError(t, err)
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:c", Type: "R"}))
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:unrelated", StartNode: "test:b", EndNode: "test:c", Type: "R"}))
-	out, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
+	out, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, out, 3)
 	for _, edge := range out {
@@ -43,14 +44,14 @@ func TestTransactionIncidentOverlayTracksMovesAndCascade(t *testing.T) {
 	require.NoError(t, err)
 	edge.StartNode, edge.EndNode = "test:c", "test:a"
 	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
-	out, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
+	out, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	require.Equal(t, EdgeID("test:loop"), out[0].ID)
-	in, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:a"})
+	in, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, in, 2)
-	between, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:c", Other: "test:a"})
+	between, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:c", Other: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, between, 1)
 	require.NoError(t, tx.DeleteEdge("test:new"))
@@ -71,7 +72,7 @@ func TestTransactionIncidentOverlayTracksMovesAndCascade(t *testing.T) {
 	require.NoError(t, err)
 	_, err = snapshot.GetEdge("test:new")
 	require.Error(t, err)
-	edges, err := engine.AllEdges()
+	edges, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, edges, 2)
 }
@@ -139,7 +140,7 @@ func TestTransactionEqualityOverlayDeclinesUnstableAndOversizeViews(t *testing.T
 	_, complete, err = reader.LookupNodesByEquality("P", map[string]interface{}{"k": int64(1)})
 	require.NoError(t, err)
 	require.False(t, complete, "later probes use the normal scan without retaining oversized bodies")
-	nodes, err = reader.GetNodesByLabel("P")
+	nodes, err = reader.GetNodesByLabel(context.Background(), "P")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 }

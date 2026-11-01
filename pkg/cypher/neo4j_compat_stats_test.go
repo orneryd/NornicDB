@@ -142,7 +142,7 @@ func TestNeo4jCompatStatsWithEmbeddings(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get the node and set its embedding directly
-	nodes, err := store.GetNodesByLabel("File")
+	nodes, err := store.GetNodesByLabel(ctx, "File")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 

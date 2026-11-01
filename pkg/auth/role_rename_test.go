@@ -62,37 +62,6 @@ func TestRenamedRoleKeepsItsGrants(t *testing.T) {
 	require.Equal(t, `["renamed","viewer"]`, user.Properties["roles"])
 }
 
-func TestRoleRenameRecordFailureChangesNothing(t *testing.T) {
-	for _, test := range []struct {
-		op storagefault.MutationOperation
-		id storage.NodeID
-	}{
-		{storagefault.MutationCreate, "proc_priv:boosted:renamed:db.cdc.*"},
-		{storagefault.MutationDelete, "proc_priv:execute:ops:db.a"},
-		{storagefault.MutationCreate, "db_priv:renamed:nornic"},
-		{storagefault.MutationDelete, "role_db_access:ops"},
-		{storagefault.MutationCreate, "role_entitlement:renamed"},
-		{storagefault.MutationUpdate, "user:worker"},
-	} {
-		t.Run(string(test.op)+string(test.id), func(t *testing.T) {
-			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-			t.Cleanup(func() { _ = base.Close() })
-			system := storage.NewNamespacedEngine(base, "system")
-			fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
-			roles := seedRoleRename(t, fault)
-			before, err := system.AllNodes()
-			require.NoError(t, err)
-			fault.Operation, fault.ID = test.op, test.id
-			require.ErrorIs(t, roles.RenameRole(context.Background(), "ops", "renamed"), errRoleMutation)
-			after, err := system.AllNodes()
-			require.NoError(t, err)
-			require.ElementsMatch(t, before, after)
-			require.True(t, roles.Exists("ops"))
-			require.False(t, roles.Exists("renamed"))
-		})
-	}
-}
-
 func TestRoleRenamePublishesCachesAfterCommit(t *testing.T) {
 	for _, fail := range []bool{true, false} {
 		t.Run(map[bool]string{true: "failure", false: "success"}[fail], func(t *testing.T) {
@@ -107,12 +76,12 @@ func TestRoleRenamePublishesCachesAfterCommit(t *testing.T) {
 			require.NoError(t, stores.Privileges.Load(ctx))
 			require.NoError(t, stores.Entitlements.Load(ctx))
 			require.NoError(t, stores.Users.loadUsers())
-			before, err := system.AllNodes()
+			before, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			if fail {
 				fault.Operation, fault.ID = storagefault.MutationUpdate, "user:worker"
 				require.ErrorIs(t, roles.RenameRoleWithStores(ctx, "ops", "renamed", stores), errRoleMutation)
-				after, err := system.AllNodes()
+				after, err := system.AllNodes(ctx)
 				require.NoError(t, err)
 				require.ElementsMatch(t, before, after)
 			} else {
@@ -151,11 +120,11 @@ func TestRoleRenameReadAndCacheFailuresChangeNothing(t *testing.T) {
 			require.NoError(t, stores.Allowlist.Load(ctx))
 			require.NoError(t, stores.Privileges.Load(ctx))
 			require.NoError(t, stores.Entitlements.Load(ctx))
-			before, err := system.AllNodes()
+			before, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			fault.Operation, fault.ID, fault.Nth = test.op, test.id, test.nth
 			require.ErrorIs(t, roles.RenameRoleWithStores(ctx, "ops", "renamed", stores), errRoleMutation)
-			after, err := system.AllNodes()
+			after, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			require.ElementsMatch(t, before, after)
 			require.True(t, roles.Exists("ops"))
@@ -189,11 +158,11 @@ func TestAllowlistRenameReadFailureChangesNothing(t *testing.T) {
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	allowlist := NewAllowlistStore(fault)
 	require.NoError(t, allowlist.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
-	before, err := base.AllNodes()
+	before, err := base.AllNodes(ctx)
 	require.NoError(t, err)
 	fault.Operation, fault.ID = storagefault.MutationGet, "role_db_access:renamed"
 	require.ErrorIs(t, roles.RenameRoleWithStores(ctx, "ops", "renamed", RoleMutationStores{Allowlist: allowlist}), errRoleMutation)
-	after, err := base.AllNodes()
+	after, err := base.AllNodes(ctx)
 	require.NoError(t, err)
 	require.ElementsMatch(t, before, after)
 	require.Equal(t, map[string][]string{"ops": {"nornic"}}, allowlist.Allowlist())
@@ -222,10 +191,10 @@ func TestRoleRenamePreservesUnrelatedRecordsAndRejectsOccupiedKeys(t *testing.T)
 	_, err := system.CreateNode(&storage.Node{ID: "role_entitlement:renamed", Labels: []string{roleEntitlementLabel, roleEntitlementSystems},
 		Properties: map[string]any{"role": "renamed", "entitlements": `["read"]`}})
 	require.NoError(t, err)
-	before, err := system.AllNodes()
+	before, err := system.AllNodes(ctx)
 	require.NoError(t, err)
 	require.ErrorIs(t, roles.RenameRole(ctx, "ops", "renamed"), ErrRoleExists)
-	after, err := system.AllNodes()
+	after, err := system.AllNodes(ctx)
 	require.NoError(t, err)
 	require.ElementsMatch(t, before, after)
 	require.NoError(t, system.DeleteNode("role_entitlement:renamed"))

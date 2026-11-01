@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"sync/atomic"
 	"testing"
 
@@ -456,12 +457,12 @@ func TestNodeRuntimeNamespaceProjectionPreservesMetadataAndIdentity(t *testing.T
 	require.Equal(t, map[string]any{"text": "namespace body"}, projected.Properties)
 	requireRuntimeMetadata(t, "GetNodeProjected", projected, wantMetadata)
 	requireRuntimeIdentity(t, "GetNodeProjected", projected, wantIdentity)
-	batch, err := store.BatchGetNodes([]NodeID{userID})
+	batch, err := store.BatchGetNodes(context.Background(), []NodeID{userID})
 	require.NoError(t, err)
 	require.Len(t, batch, 1)
 	requireRuntimeMetadata(t, "BatchGetNodes", batch[userID], wantMetadata)
 	requireRuntimeIdentity(t, "BatchGetNodes", batch[userID], wantIdentity)
-	light, err := store.BatchGetNodesWithoutEmbeddings([]NodeID{userID})
+	light, err := store.BatchGetNodesWithoutEmbeddings(context.Background(), []NodeID{userID})
 	require.NoError(t, err)
 	requireRuntimeMetadata(t, "BatchGetNodesWithoutEmbeddings", light[userID], wantMetadata)
 	requireRuntimeIdentity(t, "BatchGetNodesWithoutEmbeddings", light[userID], wantIdentity)

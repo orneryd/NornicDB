@@ -47,9 +47,14 @@ func TestStatementFactsProgram(t *testing.T) {
 			}, func() { t.Fatal("owner declined to a nonexistent continuation") }, func(reason resultmetadata.Unresolved) { t.Fatal(reason.Reason, reason.Position, reason.Err) })
 		})
 	}
-	for _, query := range []string{"CALL (missing) { RETURN 1 AS value } RETURN value", "CALL (x,) { RETURN 1 AS value } RETURN value", "LOAD CSV FROM 'unused' AS row RETURN *", "CALL missing.procedure()"} {
+	for _, query := range []string{"CALL (missing) { RETURN 1 AS value } RETURN value", "CALL (x,) { RETURN 1 AS value } RETURN value", "LOAD CSV FROM 'unused' AS row CALL custom.unknown() YIELD value RETURN *", "CALL missing.procedure()"} {
 		exec.StatementFacts(query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(resultmetadata.Statement) { t.Fatal("incomplete statement became known", query) }, func() { t.Fatal("owner declined", query) }, func(reason resultmetadata.Unresolved) { require.Error(t, reason.Err) })
 	}
+	// LOAD CSV's record variable is a declared binding of the statement scope,
+	// so the grammar's program is complete for the clauses after it.
+	exec.StatementFacts("LOAD CSV FROM 'unused' AS row RETURN *", resultmetadata.KnownScope(nil), false, RawSource).Visit(func(statement resultmetadata.Statement) {
+		statement.Columns.Visit(func(names []string) { require.Equal(t, []string{"row"}, names) }, func() { t.Fatal("known LOAD CSV program has unknown columns") })
+	}, func() { t.Fatal("owner declined the LOAD CSV statement") }, func(reason resultmetadata.Unresolved) { t.Fatal(reason.Reason, reason.Position, reason.Err) })
 }
 
 func TestStatementFactsParticipantPreflight(t *testing.T) {

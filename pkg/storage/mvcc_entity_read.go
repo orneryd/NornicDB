@@ -1,6 +1,10 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+import (
+	"context"
+
+	"github.com/dgraph-io/badger/v4"
+)
 
 // mvccEntityRead selects hydration and graph visibility at one logical version.
 // Edge bodies have no embedding hydration; vectors is used only by node loads.
@@ -34,7 +38,10 @@ func readEntityAtWithView[I ~string, T Node | Edge, P any](b *BadgerEngine, id I
 // readAdjacentEdgesAtWithView owns the two directional MVCC traversals. Pinned
 // transactions already use their registered cached reader before reaching this
 // fallback, while public/fallback requests register for this complete view.
-func (b *BadgerEngine) readAdjacentEdgesAtWithView(nodeID NodeID, version MVCCVersion, direction EdgeDirection, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
+func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, nodeID NodeID, version MVCCVersion, direction EdgeDirection, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(nodeID)); err != nil {
 		return nil, err
 	}
@@ -57,11 +64,15 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(nodeID NodeID, version MVCCVe
 	defer deregister()
 	var edges []*Edge
 	err = view(func(txn *badger.Txn) error {
-		ids, err := b.collectVisibleAdjacencyEdgeIDsInTxn(txn, prefix, version)
+		ids, err := b.collectVisibleAdjacencyEdgeIDsInTxn(ctx, txn, prefix, version)
 		if err != nil {
 			return err
 		}
+		var cancel bulkReadCancellation
 		for _, id := range ids {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			edge, e := b.getEdgeAtInTxn(txn, id, version, mvccEntityRead{visibility: visibleRead})
 			if e == ErrNotFound || e == ErrNotVisibleAtSnapshot {
 				continue

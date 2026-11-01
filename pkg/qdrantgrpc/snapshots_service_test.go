@@ -35,18 +35,16 @@ type snapshotErrEngine struct {
 	edgesErr error
 }
 
-func (e *snapshotErrEngine) AllNodes() ([]*storage.Node, error) {
-	if e.nodesErr != nil {
-		return nil, e.nodesErr
-	}
-	return e.Engine.AllNodes()
+func (e *snapshotErrEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.nodesErr, func(ctx context.Context) ([]*storage.Node, error) {
+		return e.Engine.AllNodes(ctx)
+	})
 }
 
-func (e *snapshotErrEngine) AllEdges() ([]*storage.Edge, error) {
-	if e.edgesErr != nil {
-		return nil, e.edgesErr
-	}
-	return e.Engine.AllEdges()
+func (e *snapshotErrEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.edgesErr, func(ctx context.Context) ([]*storage.Edge, error) {
+		return e.Engine.AllEdges(ctx)
+	})
 }
 
 // The full-snapshot fallback streams stored nodes; the fake fails that stream

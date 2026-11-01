@@ -88,29 +88,29 @@ func TestTracedEngine_DelegatesAllMethods(t *testing.T) {
 	require.Equal(t, "v2", gotEdge.Properties["k"])
 
 	// Label / type / direction / All* lookups must return the staged data.
-	byLabel, err := traced.GetNodesByLabel("L")
+	byLabel, err := traced.GetNodesByLabel(context.Background(), "L")
 	require.NoError(t, err)
 	require.Len(t, byLabel, 2)
 
-	out, err := traced.GetOutgoingEdges("test:n1")
+	out, err := traced.GetOutgoingEdges(context.Background(), "test:n1")
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	require.Equal(t, EdgeID("test:e1"), out[0].ID)
 
-	in, err := traced.GetIncomingEdges("test:n2")
+	in, err := traced.GetIncomingEdges(context.Background(), "test:n2")
 	require.NoError(t, err)
 	require.Len(t, in, 1)
 	require.Equal(t, EdgeID("test:e1"), in[0].ID)
 
-	byType, err := traced.GetEdgesByType("REL")
+	byType, err := traced.GetEdgesByType(context.Background(), "REL")
 	require.NoError(t, err)
 	require.Len(t, byType, 1)
 
-	allNodes, err := traced.AllNodes()
+	allNodes, err := traced.AllNodes(context.Background())
 	require.NoError(t, err)
 	require.Len(t, allNodes, 2)
 
-	allEdges, err := traced.AllEdges()
+	allEdges, err := traced.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, allEdges, 1)
 
@@ -123,7 +123,7 @@ func TestTracedEngine_DelegatesAllMethods(t *testing.T) {
 		{ID: "test:bulk-e1", StartNode: "test:bulk-1", EndNode: "test:bulk-2",
 			Type: "BULK", Properties: map[string]any{}},
 	}))
-	batch, err := traced.BatchGetNodes([]NodeID{"test:bulk-1", "test:bulk-2", "test:nope"})
+	batch, err := traced.BatchGetNodes(context.Background(), []NodeID{"test:bulk-1", "test:bulk-2", "test:nope"})
 	require.NoError(t, err)
 	require.Len(t, batch, 2, "BatchGetNodes must drop missing IDs")
 	require.Contains(t, batch, NodeID("test:bulk-1"))

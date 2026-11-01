@@ -53,7 +53,7 @@ func TestWithEmbedding_CreateMutations(t *testing.T) {
 			if tc.detailed {
 				require.Len(t, res.Rows, 1)
 			}
-			nodes, err := store.GetNodesByLabel("Doc")
+			nodes, err := store.GetNodesByLabel(context.Background(), "Doc")
 			require.NoError(t, err)
 			require.Len(t, nodes, tc.count)
 			for _, node := range nodes {
@@ -76,44 +76,67 @@ func TestWithEmbedding_CreateMutations(t *testing.T) {
 	}
 }
 
-func TestWithEmbedding_MergeSetMutation(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	exec.SetEmbedder(&inlineEmbeddingTestEmbedder{model: "test-inline", dims: 4})
+// TestWithEmbedding_SetMutations covers the MERGE/SET and MATCH/SET mutations that
+// attach embeddings. Both cases share this fixture and the embedding-presence
+// assertions; statements, read path and metadata checks stay per case.
+func TestWithEmbedding_SetMutations(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		statements []string
+		read       func(t *testing.T, store *storage.NamespacedEngine) *storage.Node
+		verify     func(t *testing.T, node *storage.Node)
+	}{
+		{
+			name: "TestWithEmbedding_MergeSetMutation",
+			statements: []string{
+				"MERGE (n:Doc {id:'m1'}) SET n.content='seed content' WITH EMBEDDING RETURN count(n) AS c",
+			},
+			read: func(t *testing.T, store *storage.NamespacedEngine) *storage.Node {
+				node, err := store.GetFirstNodeByLabel("Doc")
+				require.NoError(t, err)
+				require.NotNil(t, node)
+				return node
+			},
+			verify: func(t *testing.T, node *storage.Node) {
+				require.Equal(t, "test-inline", node.EmbedMeta["embedding_model"])
+				require.EqualValues(t, 4, node.EmbedMeta["embedding_dimensions"])
+			},
+		},
+		{
+			name: "TestWithEmbedding_MatchSetMutation",
+			statements: []string{
+				"CREATE (n:Doc {id:'d1', content:'old'}) RETURN n",
+				"MATCH (n:Doc {id:'d1'}) SET n.content='updated text', n.version=2 WITH EMBEDDING RETURN n.id",
+			},
+			read: func(t *testing.T, store *storage.NamespacedEngine) *storage.Node {
+				nodes, err := store.GetNodesByLabel(context.Background(), "Doc")
+				require.NoError(t, err)
+				require.Len(t, nodes, 1)
+				return nodes[0]
+			},
+			verify: func(t *testing.T, node *storage.Node) {
+				require.EqualValues(t, 2, node.Properties["version"])
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(base, "test")
+			exec := NewStorageExecutor(store)
+			exec.SetEmbedder(&inlineEmbeddingTestEmbedder{model: "test-inline", dims: 4})
 
-	ctx := context.Background()
-	_, err := exec.Execute(ctx, "MERGE (n:Doc {id:'m1'}) SET n.content='seed content' WITH EMBEDDING RETURN count(n) AS c", nil)
-	require.NoError(t, err)
+			ctx := context.Background()
+			for _, statement := range tc.statements {
+				_, err := exec.Execute(ctx, statement, nil)
+				require.NoError(t, err)
+			}
 
-	node, err := store.GetFirstNodeByLabel("Doc")
-	require.NoError(t, err)
-	require.NotNil(t, node)
-	require.NotEmpty(t, node.ChunkEmbeddings)
-	require.NotNil(t, node.EmbedMeta)
-	require.Equal(t, "test-inline", node.EmbedMeta["embedding_model"])
-	require.EqualValues(t, 4, node.EmbedMeta["embedding_dimensions"])
-}
-
-func TestWithEmbedding_MatchSetMutation(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	exec.SetEmbedder(&inlineEmbeddingTestEmbedder{model: "test-inline", dims: 4})
-
-	ctx := context.Background()
-	_, err := exec.Execute(ctx, "CREATE (n:Doc {id:'d1', content:'old'}) RETURN n", nil)
-	require.NoError(t, err)
-
-	_, err = exec.Execute(ctx, "MATCH (n:Doc {id:'d1'}) SET n.content='updated text', n.version=2 WITH EMBEDDING RETURN n.id", nil)
-	require.NoError(t, err)
-
-	nodes, err := store.GetNodesByLabel("Doc")
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.NotEmpty(t, nodes[0].ChunkEmbeddings)
-	require.NotNil(t, nodes[0].EmbedMeta)
-	require.EqualValues(t, 2, nodes[0].Properties["version"])
+			node := tc.read(t, store)
+			require.NotEmpty(t, node.ChunkEmbeddings)
+			require.NotNil(t, node.EmbedMeta)
+			tc.verify(t, node)
+		})
+	}
 }
 
 func TestWithEmbedding_UnwindMergePipeline(t *testing.T) {
@@ -132,7 +155,7 @@ func TestWithEmbedding_UnwindMergePipeline(t *testing.T) {
 	_, err := exec.Execute(ctx, "UNWIND $hops AS hop MERGE (h:BenchmarkHop {hopId: hop.hopId}) SET h.benchmarkRun = hop.runID WITH EMBEDDING RETURN count(h) AS prepared", params)
 	require.NoError(t, err)
 
-	nodes, err := store.GetNodesByLabel("BenchmarkHop")
+	nodes, err := store.GetNodesByLabel(ctx, "BenchmarkHop")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	for _, n := range nodes {
@@ -156,7 +179,7 @@ func TestWithEmbedding_ExplicitTransaction(t *testing.T) {
 	_, err = exec.Execute(ctx, "COMMIT", nil)
 	require.NoError(t, err)
 
-	nodes, err := store.GetNodesByLabel("TxDoc")
+	nodes, err := store.GetNodesByLabel(ctx, "TxDoc")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.NotEmpty(t, nodes[0].ChunkEmbeddings)
@@ -177,7 +200,7 @@ func TestWithEmbedding_ANTLRMode(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:Doc {id:'antlr-create', content:'hello world'}) WITH EMBEDDING RETURN count(n) AS c", nil)
 		require.NoError(t, err)
 
-		nodes, err := store.GetNodesByLabel("Doc")
+		nodes, err := store.GetNodesByLabel(ctx, "Doc")
 		require.NoError(t, err)
 		require.Len(t, nodes, 1)
 		require.NotEmpty(t, nodes[0].ChunkEmbeddings)
@@ -194,7 +217,7 @@ func TestWithEmbedding_ANTLRMode(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:Doc {id:'antlr-no-return', content:'standalone'}) WITH EMBEDDING", nil)
 		require.NoError(t, err)
 
-		nodes, err := store.GetNodesByLabel("Doc")
+		nodes, err := store.GetNodesByLabel(ctx, "Doc")
 		require.NoError(t, err)
 		require.Len(t, nodes, 1)
 		require.NotEmpty(t, nodes[0].ChunkEmbeddings)

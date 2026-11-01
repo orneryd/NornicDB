@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -16,32 +17,29 @@ type createMatchErrEngine struct {
 	edgesBetweenErr error
 }
 
-func (e *createMatchErrEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *createMatchErrEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if err, ok := e.labelErrs[label]; ok && err != nil {
 		return nil, err
 	}
-	return e.Engine.GetNodesByLabel(label)
+	return e.Engine.GetNodesByLabel(ctx, label)
 }
 
-func (e *createMatchErrEngine) AllNodes() ([]*storage.Node, error) {
-	if e.allErr != nil {
-		return nil, e.allErr
-	}
-	return e.Engine.AllNodes()
+func (e *createMatchErrEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.allErr, func(ctx context.Context) ([]*storage.Node, error) {
+		return e.Engine.AllNodes(ctx)
+	})
 }
 
-func (e *createMatchErrEngine) GetOutgoingEdges(startID storage.NodeID) ([]*storage.Edge, error) {
-	if e.edgesBetweenErr != nil {
-		return nil, e.edgesBetweenErr
-	}
-	return e.Engine.GetOutgoingEdges(startID)
+func (e *createMatchErrEngine) GetOutgoingEdges(ctx context.Context, startID storage.NodeID) ([]*storage.Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.edgesBetweenErr, func(ctx context.Context) ([]*storage.Edge, error) {
+		return e.Engine.GetOutgoingEdges(ctx, startID)
+	})
 }
 
-func (e *createMatchErrEngine) GetIncomingEdges(endID storage.NodeID) ([]*storage.Edge, error) {
-	if e.edgesBetweenErr != nil {
-		return nil, e.edgesBetweenErr
-	}
-	return e.Engine.GetIncomingEdges(endID)
+func (e *createMatchErrEngine) GetIncomingEdges(ctx context.Context, endID storage.NodeID) ([]*storage.Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.edgesBetweenErr, func(ctx context.Context) ([]*storage.Edge, error) {
+		return e.Engine.GetIncomingEdges(ctx, endID)
+	})
 }
 
 func TestExecuteCompoundMatchCreate_SurfacesMatchLabelLookupError(t *testing.T) {
@@ -99,7 +97,7 @@ func TestExecuteCompoundMatchCreate_SurfacesRelationshipCheckError(t *testing.T)
 	_, err = errExec.Execute(context.Background(), query, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, outErr)
-	edges, err := store.GetOutgoingEdges("a1")
+	edges, err := store.GetOutgoingEdges(context.Background(), "a1")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }
@@ -118,7 +116,7 @@ func TestGh908MatchCreatePredicateReadFailureStopsWrites(t *testing.T) {
 			_, err := exec.Execute(context.Background(),
 				"MATCH (a:Endpoint {id:'a'}), (b:Endpoint {id:'b'}) WHERE NOT "+direction+" CREATE (:Unexpected)", nil)
 			require.ErrorIs(t, err, lookupErr)
-			created, err := store.GetNodesByLabel("Unexpected")
+			created, err := store.GetNodesByLabel(context.Background(), "Unexpected")
 			require.NoError(t, err)
 			require.Empty(t, created)
 		})

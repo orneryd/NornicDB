@@ -32,7 +32,7 @@ func TestRunParallelInfluenceAndDegreeVolume(t *testing.T) {
 			}
 			options := DefaultOptions()
 			options.Seed = []int{0, 1, 1, 1}
-			if got := Final(Run(graph, options)); !reflect.DeepEqual(want, got) {
+			if got := Final(mustRun(t, graph, options)); !reflect.DeepEqual(want, got) {
 				t.Fatalf("undirected=%v reserved=%v: got %v, GDS %v", undirected, reserved, got, want)
 			}
 		}

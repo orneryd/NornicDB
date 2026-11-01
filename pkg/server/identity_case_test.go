@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -71,10 +72,10 @@ func TestIdentityRemoteAliasPermissionIsolation(t *testing.T) {
 			}
 			store, err := remote.dbManager.GetDefaultStorage()
 			require.NoError(t, err)
-			allowedNodes, err := store.GetNodesByLabel("UnitAliasAllowed")
+			allowedNodes, err := store.GetNodesByLabel(context.Background(), "UnitAliasAllowed")
 			require.NoError(t, err)
 			require.Len(t, allowedNodes, 1)
-			deniedNodes, err := store.GetNodesByLabel("UnitAliasDenied")
+			deniedNodes, err := store.GetNodesByLabel(context.Background(), "UnitAliasDenied")
 			require.NoError(t, err)
 			require.Empty(t, deniedNodes, "the actual authenticated remote must reject all read-only alias writes")
 		})

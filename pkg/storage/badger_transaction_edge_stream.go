@@ -1,6 +1,8 @@
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 // StreamEdgesByType visits the relationships of edgeType visible to the
 // transaction one at a time (EdgeTypeStreamer): the committed edges of its

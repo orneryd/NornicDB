@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -311,7 +310,7 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	collection, err := s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, version, filterSet)
+	collection, err := s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, version, filterSet)
 	if err != nil {
 		if err == storage.ErrNotImplemented {
 			s.writeTemporalGraphReconstructionUnsupported(w, r, err)
@@ -379,7 +378,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 			s.writeBoundaryError(w, r, http.StatusBadRequest, versionErr, ErrBadRequest)
 			return
 		}
-		baseline, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, baselineVersion, filterSet)
+		baseline, err = s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, baselineVersion, filterSet)
 		if err != nil {
 			if err == storage.ErrNotImplemented {
 				s.writeTemporalGraphDiffUnsupported(w, r, err)
@@ -390,7 +389,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 		}
 		compareLabel = baselineVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
-		target, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, targetVersion, filterSet)
+		target, err = s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, targetVersion, filterSet)
 		if err != nil {
 			if err == storage.ErrNotImplemented {
 				s.writeTemporalGraphDiffUnsupported(w, r, err)
@@ -400,13 +399,13 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		baseline, err = s.collectLatestInducedSubgraph(engine, req.NodeIDs, filterSet)
+		baseline, err = s.collectLatestInducedSubgraph(r.Context(), engine, req.NodeIDs, filterSet)
 		if err != nil {
 			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 			return
 		}
 
-		target, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, targetVersion, filterSet)
+		target, err = s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, targetVersion, filterSet)
 		if err != nil {
 			if err == storage.ErrNotImplemented {
 				s.writeTemporalGraphDiffUnsupported(w, r, err)
@@ -985,8 +984,8 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 
 	for len(queue) > 0 {
 		select {
-		case <-bulk.Done(ctx):
-			return collection, bulk.ObserveContext(ctx)
+		case <-ctx.Done():
+			return collection, ctx.Err()
 		default:
 		}
 		current := queue[0]
@@ -1002,8 +1001,8 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 		for _, edge := range edges {
 			edge = projection.Edge(edge)
 			select {
-			case <-bulk.Done(ctx):
-				return collection, bulk.ObserveContext(ctx)
+			case <-ctx.Done():
+				return collection, ctx.Err()
 			default:
 			}
 			if !filters.allowEdge(edge) {
@@ -1075,8 +1074,8 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	limitExceeded := false
 	for len(queue) > 0 {
 		select {
-		case <-bulk.Done(ctx):
-			return graphCollection{}, bulk.ObserveContext(ctx)
+		case <-ctx.Done():
+			return graphCollection{}, ctx.Err()
 		default:
 		}
 		current := queue[0]
@@ -1089,8 +1088,8 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 		for _, edge := range edges {
 			edge = projection.Edge(edge)
 			select {
-			case <-bulk.Done(ctx):
-				return graphCollection{}, bulk.ObserveContext(ctx)
+			case <-ctx.Done():
+				return graphCollection{}, ctx.Err()
 			default:
 			}
 			if !filters.allowEdge(edge) {
@@ -1154,7 +1153,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	return collection, nil
 }
 
-func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []string, filters graphFilterSet) (graphCollection, error) {
+func (s *Server) collectLatestInducedSubgraph(ctx context.Context, engine storage.Engine, nodeIDs []string, filters graphFilterSet) (graphCollection, error) {
 	collection := newGraphCollection()
 	visible := normalizeNodeIDs(nodeIDs)
 	for _, nodeID := range visible {
@@ -1171,7 +1170,7 @@ func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []s
 		resolvedSet[storage.NodeID(id)] = struct{}{}
 	}
 	for _, startID := range resolvedIDs {
-		edges, err := engine.GetOutgoingEdges(storage.NodeID(startID))
+		edges, err := engine.GetOutgoingEdges(ctx, storage.NodeID(startID))
 		if err != nil {
 			return collection, err
 		}
@@ -1194,7 +1193,7 @@ func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []s
 	return collection, nil
 }
 
-func (s *Server) collectSnapshotInducedSubgraph(engine storage.Engine, nodeIDs []string, version storage.MVCCVersion, filters graphFilterSet) (graphCollection, error) {
+func (s *Server) collectSnapshotInducedSubgraph(ctx context.Context, engine storage.Engine, nodeIDs []string, version storage.MVCCVersion, filters graphFilterSet) (graphCollection, error) {
 	provider, ok := engine.(storage.MVCCVisibilityEngine)
 	if !ok {
 		return graphCollection{}, storage.ErrNotImplemented
@@ -1221,7 +1220,7 @@ func (s *Server) collectSnapshotInducedSubgraph(engine storage.Engine, nodeIDs [
 	for _, id := range resolvedIDs {
 		resolvedSet[storage.NodeID(id)] = struct{}{}
 	}
-	edges, err := indexed.GetEdgesByTypeVisibleAt("", version)
+	edges, err := indexed.GetEdgesByTypeVisibleAt(ctx, "", version)
 	if err != nil {
 		return collection, err
 	}
@@ -1371,42 +1370,42 @@ func cloneInterfaceMap(input map[string]interface{}) map[string]interface{} {
 
 func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
 	select {
-	case <-bulk.Done(ctx):
-		return nil, bulk.ObserveContext(ctx)
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	default:
 	}
 	var outgoing []*storage.Edge
 	var incoming []*storage.Edge
 	if direction != "in" {
 		var err error
-		outgoing, err = engine.GetOutgoingEdges(nodeID)
+		outgoing, err = engine.GetOutgoingEdges(ctx, nodeID)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if direction != "out" {
 		select {
-		case <-bulk.Done(ctx):
-			return nil, bulk.ObserveContext(ctx)
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		default:
 		}
 		var err error
-		incoming, err = engine.GetIncomingEdges(nodeID)
+		incoming, err = engine.GetIncomingEdges(ctx, nodeID)
 		if err != nil {
 			return nil, err
 		}
 	}
 	select {
-	case <-bulk.Done(ctx):
-		return nil, bulk.ObserveContext(ctx)
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	default:
 	}
 	edges := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
 	seen := make(map[string]struct{}, len(outgoing)+len(incoming))
 	for _, edge := range outgoing {
 		select {
-		case <-bulk.Done(ctx):
-			return nil, bulk.ObserveContext(ctx)
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		default:
 		}
 		if edge == nil {
@@ -1421,8 +1420,8 @@ func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storag
 	}
 	for _, edge := range incoming {
 		select {
-		case <-bulk.Done(ctx):
-			return nil, bulk.ObserveContext(ctx)
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		default:
 		}
 		if edge == nil {

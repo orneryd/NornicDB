@@ -869,26 +869,22 @@ type errEngine struct {
 	allNodesErr        error
 }
 
-func (e *errEngine) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
-	_ = ids
-	if e.batchGetErr != nil {
-		return nil, e.batchGetErr
-	}
-	return e.Engine.BatchGetNodes(ids)
+func (e *errEngine) BatchGetNodes(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.batchGetErr, func(ctx context.Context) (map[storage.NodeID]*storage.Node, error) {
+		return e.Engine.BatchGetNodes(ctx, ids)
+	})
 }
 
-func (e *errEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	if e.getNodesByLabelErr != nil {
-		return nil, e.getNodesByLabelErr
-	}
-	return e.Engine.GetNodesByLabel(label)
+func (e *errEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.getNodesByLabelErr, func(ctx context.Context) ([]*storage.Node, error) {
+		return e.Engine.GetNodesByLabel(ctx, label)
+	})
 }
 
-func (e *errEngine) AllNodes() ([]*storage.Node, error) {
-	if e.allNodesErr != nil {
-		return nil, e.allNodesErr
-	}
-	return e.Engine.AllNodes()
+func (e *errEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.allNodesErr, func(ctx context.Context) ([]*storage.Node, error) {
+		return e.Engine.AllNodes(ctx)
+	})
 }
 
 func TestPointsService_ErrorBranches(t *testing.T) {

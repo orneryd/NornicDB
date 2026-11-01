@@ -1,6 +1,9 @@
 package storage
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 var (
 	_ NodeWithoutEmbeddingsReader          = (*WALEngine)(nil)
@@ -34,7 +37,9 @@ func namespaceLabelCount(engine Engine, namespace, label string) (int64, error) 
 	if provider, ok := engine.(NamespaceLabelStatsProvider); ok {
 		return provider.NodeCountByLabelInNamespace(namespace, label)
 	}
-	nodes, err := engine.GetNodesByLabel(label)
+	// Namespace label counts are a maintenance read without a caller context:
+	// context.Background is the true lifetime at that context-free boundary.
+	nodes, err := engine.GetNodesByLabel(context.Background(), label)
 	if err != nil {
 		return 0, err
 	}

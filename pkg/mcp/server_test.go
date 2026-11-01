@@ -1062,44 +1062,15 @@ func TestHandleDiscover_ChunksLongQueryForEmbedding(t *testing.T) {
 }
 
 func TestHandleDiscover_WithDBKeywordResults(t *testing.T) {
-	db, err := nornicdb.Open("", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-
-	exec := db.GetCypherExecutor()
-	require.NotNil(t, exec)
-	ctx := context.Background()
-
-	rootResult, err := exec.Execute(ctx,
-		"CREATE (n:Memory {title: $title, content: $content}) RETURN elementId(n) AS id",
-		map[string]interface{}{"title": "Alpha Root", "content": "alpha unique keyword content"},
-	)
-	require.NoError(t, err)
-	rootID, _ := rootResult.Rows[0][0].(string)
-
-	neighborResult, err := exec.Execute(ctx,
-		"CREATE (n:Task {title: $title, content: $content}) RETURN elementId(n) AS id",
-		map[string]interface{}{"title": "Neighbor Task", "content": "supporting context"},
-	)
-	require.NoError(t, err)
-	neighborID, _ := neighborResult.Rows[0][0].(string)
-
-	_, err = exec.Execute(ctx,
-		"MATCH (a), (b) WHERE elementId(a) = $from AND elementId(b) = $to CREATE (a)-[:RELATES_TO]->(b)",
-		map[string]interface{}{"from": rootID, "to": neighborID},
-	)
-	require.NoError(t, err)
-	require.NoError(t, db.BuildSearchIndexes(context.Background()))
-
-	server := NewServer(db, nil)
-	result, err := server.handleDiscover(ctx, map[string]interface{}{
-		"query": "alpha unique keyword",
-		"depth": 2,
-		"limit": 5,
+	db, ids := seedMCPDiscoverGraph(t, []mcpDiscoverNodeSeed{
+		{label: "Memory", props: map[string]interface{}{"title": "Alpha Root", "content": "alpha unique keyword content"}},
+		{label: "Task", props: map[string]interface{}{"title": "Neighbor Task", "content": "supporting context"}},
+	}, []mcpDiscoverEdgeSeed{
+		{from: 0, to: 1, relType: "RELATES_TO"},
 	})
-	require.NoError(t, err)
+	require.Len(t, ids, 2, "this case keeps its own two-node population")
 
-	discover := result.(DiscoverResult)
+	discover := runMCPDiscoverDepth(t, db, "alpha unique keyword", 2)
 	require.Equal(t, "keyword", discover.Method)
 	require.NotZero(t, discover.Total)
 	require.NotEmpty(t, discover.Results)

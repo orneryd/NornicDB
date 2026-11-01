@@ -108,7 +108,7 @@ type unreadableGrantsEngine struct {
 
 var errGrantsUnreadable = errors.New("grants unreadable")
 
-func (unreadableGrantsEngine) GetNodesByLabel(string) ([]*storage.Node, error) {
+func (unreadableGrantsEngine) GetNodesByLabel(ctx context.Context, _ string) ([]*storage.Node, error) {
 	return nil, errGrantsUnreadable
 }
 

@@ -1,6 +1,8 @@
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 type snapshotStoredEdgeWriter struct {
 	write func(byte, any) error

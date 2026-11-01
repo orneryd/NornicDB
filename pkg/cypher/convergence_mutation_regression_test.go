@@ -1282,7 +1282,7 @@ func TestGh908CreateCompositionUsesPipeline(t *testing.T) {
 			require.NoError(t, err)
 			require.EqualValues(t, test.created, result.Stats.NodesCreated)
 			require.EqualValues(t, test.deleted, result.Stats.NodesDeleted)
-			nodes, err := exec.storage.GetNodesByLabel("X")
+			nodes, err := exec.storage.GetNodesByLabel(ctx, "X")
 			require.NoError(t, err)
 			require.Len(t, nodes, test.remainingX)
 			if test.columns != nil {
@@ -1314,7 +1314,7 @@ func TestGh908CreateCompositionDeleteSafety(t *testing.T) {
 				require.Error(t, err)
 				require.Contains(t, statusText(err), "Neo.ClientError.Schema.ConstraintValidationFailed")
 			}
-			nodes, err := exec.storage.AllNodes()
+			nodes, err := exec.storage.AllNodes(ctx)
 			require.NoError(t, err)
 			if detach {
 				require.Len(t, nodes, 1)
@@ -1322,11 +1322,21 @@ func TestGh908CreateCompositionDeleteSafety(t *testing.T) {
 			} else {
 				require.Empty(t, nodes)
 			}
-			edges, err := exec.storage.AllEdges()
+			edges, err := exec.storage.AllEdges(ctx)
 			require.NoError(t, err)
 			require.Empty(t, edges)
 		})
 	}
+}
+
+// requireNoStoredNodes asserts a failed pipeline left no node behind. It reads
+// through the caller's original, live parent context so the statement context
+// that failed or was cancelled cannot hide the stored state.
+func requireNoStoredNodes(t *testing.T, exec *StorageExecutor, ctx context.Context) {
+	t.Helper()
+	nodes, err := exec.storage.AllNodes(ctx)
+	require.NoError(t, err)
+	require.Empty(t, nodes)
 }
 
 func TestGh908RequiredPipelineDeclineHasNoEffects(t *testing.T) {
@@ -1335,23 +1345,19 @@ func TestGh908RequiredPipelineDeclineHasNoEffects(t *testing.T) {
 	require.Nil(t, result)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	nodes, err := exec.storage.AllNodes()
-	require.NoError(t, err)
-	require.Empty(t, nodes)
+	requireNoStoredNodes(t, exec, ctx)
 }
 
 func TestGh908PipelineCreateCancellationHasNoEffects(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
-	ctx, cancel := context.WithCancel(ctx)
+	statementCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	rows, created, handled, err := exec.pipelineApplyCreateClauses(ctx, []pipelineRow{{}}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (a:Cancelled)"}})
+	rows, created, handled, err := exec.pipelineApplyCreateClauses(statementCtx, []pipelineRow{{}}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (a:Cancelled)"}})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, rows)
 	require.Nil(t, created)
 	require.False(t, handled)
-	nodes, err := exec.storage.AllNodes()
-	require.NoError(t, err)
-	require.Empty(t, nodes)
+	requireNoStoredNodes(t, exec, ctx)
 }
 
 func TestGh908FlatCreatePlanScopeAndReturnFailure(t *testing.T) {
@@ -1363,7 +1369,7 @@ func TestGh908FlatCreatePlanScopeAndReturnFailure(t *testing.T) {
 		require.NoError(t, outcome.err)
 		require.Equal(t, []string{"value"}, outcome.result.Columns)
 		require.Equal(t, [][]interface{}{{int64(7)}}, outcome.result.Rows)
-		nodes, err := exec.storage.GetNodesByLabel("Bound")
+		nodes, err := exec.storage.GetNodesByLabel(ctx, "Bound")
 		require.NoError(t, err)
 		require.Len(t, nodes, 1)
 		require.Equal(t, int64(7), nodes[0].Properties["value"])
@@ -1373,9 +1379,7 @@ func TestGh908FlatCreatePlanScopeAndReturnFailure(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:Failed) SET n.value = 1 RETURN n.value / 0", nil)
 		require.Error(t, err)
 		require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
-		nodes, err := exec.storage.AllNodes()
-		require.NoError(t, err)
-		require.Empty(t, nodes)
+		requireNoStoredNodes(t, exec, ctx)
 	})
 }
 
@@ -1401,10 +1405,10 @@ func TestGh908CreateDeleteRelationshipUsesMatchedRows(t *testing.T) {
 				require.Equal(t, []string{"count(r)"}, result.Columns)
 				require.Equal(t, [][]interface{}{{int64(test.writes)}}, result.Rows)
 			}
-			nodes, err := exec.storage.AllNodes()
+			nodes, err := exec.storage.AllNodes(ctx)
 			require.NoError(t, err)
 			require.Len(t, nodes, 4)
-			edges, err := exec.storage.AllEdges()
+			edges, err := exec.storage.AllEdges(ctx)
 			require.NoError(t, err)
 			require.Empty(t, edges)
 		})
@@ -1419,10 +1423,10 @@ func TestGh908CreateDeleteRelationshipPropagatesWriteFailure(t *testing.T) {
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r:TEMP]->(m) DELETE r", nil)
 	require.ErrorIs(t, err, errEdgeRejected)
-	nodes, err := base.AllNodes()
+	nodes, err := base.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
-	edges, err := base.AllEdges()
+	edges, err := base.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Empty(t, edges)
 }

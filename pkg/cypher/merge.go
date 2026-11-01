@@ -195,14 +195,14 @@ func compositeLookupValues(idx *storage.CompositeIndex, props map[string]interfa
 	return values
 }
 
-func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
+func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
 	if len(props) == 0 {
 		var candidates []*storage.Node
 		var err error
 		if len(labels) > 0 {
-			candidates, err = store.GetNodesByLabel(labels[0])
+			candidates, err = store.GetNodesByLabel(ctx, labels[0])
 		} else {
-			candidates, err = store.AllNodes()
+			candidates, err = store.AllNodes(ctx)
 		}
 		if err != nil {
 			return nil, err
@@ -215,7 +215,7 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 		return nil, nil
 	}
 	if len(labels) == 0 {
-		candidates, err := store.AllNodes()
+		candidates, err := store.AllNodes(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +309,7 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 	}
 	e.markMergeScanFallbackUsed()
 
-	nodes, err := store.GetNodesByLabel(labels[0])
+	nodes, err := store.GetNodesByLabel(ctx, labels[0])
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +335,7 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 // index) could return carries the label, so a scan that found none means
 // there is none. An index answer is not; findMergeNode tries further
 // sources after it.
-func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []string, props map[string]interface{}) (matches []*storage.Node, scanned bool, err error) {
+func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}) (matches []*storage.Node, scanned bool, err error) {
 	if ids, indexed := e.mergeNodeIndexedCandidateIDs(store, labels, props); indexed {
 		matches = make([]*storage.Node, 0, len(ids))
 		for _, n := range e.loadMergeCandidateNodes(store, ids) {
@@ -364,7 +364,10 @@ func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []s
 		}
 		if complete {
 			if transactional && wrapper.namespace != "" {
-				candidates = wrapper.toUserNamespacedNodes(candidates)
+				candidates, lookupErr = projectTransactionRead(ctx, wrapper, candidates, nil, readScanned)
+				if lookupErr != nil {
+					return nil, false, lookupErr
+				}
 			}
 			e.markMergeScanFallbackUsed()
 			for _, candidate := range candidates {
@@ -380,9 +383,9 @@ func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []s
 		e.markMergeScanFallbackUsed()
 	}
 	if len(labels) > 0 {
-		candidates, err = store.GetNodesByLabel(labels[0])
+		candidates, err = store.GetNodesByLabel(ctx, labels[0])
 	} else {
-		candidates, err = store.AllNodes()
+		candidates, err = store.AllNodes(ctx)
 	}
 	if err != nil {
 		return nil, false, err

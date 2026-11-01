@@ -8,7 +8,6 @@ import (
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/convert"
-	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -504,7 +503,7 @@ func (e *FabricExecutor) runApplyLookupKeyBatches(
 			defer wg.Done()
 			select {
 			case sem <- struct{}{}:
-			case <-bulk.Done(ctxBatch):
+			case <-ctxBatch.Done():
 				return
 			}
 			defer func() { <-sem }()

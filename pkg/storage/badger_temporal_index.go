@@ -430,7 +430,9 @@ func qualifyTemporalNodeID(namespace string, nodeID NodeID) NodeID {
 }
 
 func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(namespace string, constraint Constraint, keyValue interface{}, asOf time.Time) (*Node, error) {
-	nodes, err := b.GetNodesByLabel(constraint.Label)
+	// The temporal-index scan is a maintenance read: it runs on its own
+	// lifetime (context.Background) rather than a statement's.
+	nodes, err := b.GetNodesByLabel(context.Background(), constraint.Label)
 	if err != nil {
 		return nil, err
 	}

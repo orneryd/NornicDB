@@ -44,7 +44,7 @@ type heldPointPopulation struct {
 }
 
 func (e *heldPointPopulation) IterateNodes(fn func(*storage.Node) bool) error {
-	nodes, err := e.Engine.AllNodes()
+	nodes, err := e.Engine.AllNodes(context.Background())
 	if err != nil {
 		return err
 	}

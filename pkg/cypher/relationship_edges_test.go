@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"sort"
 	"testing"
 
@@ -17,16 +18,16 @@ type adjacentEdgeEngine struct {
 	fail  bool
 }
 
-func (e *adjacentEdgeEngine) GetAdjacentEdges(id storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
+func (e *adjacentEdgeEngine) GetAdjacentEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
 	e.calls++
 	if e.fail {
 		return nil, nil, errEdgeRead
 	}
-	outgoing, err := e.Engine.GetOutgoingEdges(id)
+	outgoing, err := e.Engine.GetOutgoingEdges(ctx, id)
 	if err != nil {
 		return nil, nil, err
 	}
-	incoming, err := e.Engine.GetIncomingEdges(id)
+	incoming, err := e.Engine.GetIncomingEdges(ctx, id)
 	return outgoing, incoming, err
 }
 
@@ -59,14 +60,14 @@ func TestUndirectedIncidentEdges(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"aa", "ab", "ba"}, ids(edges))
 	require.Equal(t, 1, adjacent.calls)
-	edges, err = undirectedIncidentEdges(&failingEdgeEngine{Engine: store}, "a")
+	edges, err = undirectedIncidentEdges(&directionalReadFaultEngine{Engine: store}, "a")
 	require.NoError(t, err)
 	require.Equal(t, []string{"aa", "ab", "ba"}, ids(edges))
 
 	adjacent.fail = true
 	_, err = undirectedIncidentEdges(adjacent, "a")
 	require.ErrorIs(t, err, errEdgeRead)
-	for _, failing := range []*failingEdgeEngine{{Engine: store, failOutgoing: true}, {Engine: store, failIncoming: true}} {
+	for _, failing := range []*directionalReadFaultEngine{{Engine: store, outgoingErr: errEdgeRead}, {Engine: store, incomingErr: errEdgeRead}} {
 		_, err = undirectedIncidentEdges(failing, "a")
 		require.ErrorIs(t, err, errEdgeRead)
 	}

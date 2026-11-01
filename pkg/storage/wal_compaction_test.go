@@ -42,18 +42,16 @@ type snapshotErrorEngine struct {
 	allEdgesErr error
 }
 
-func (e *snapshotErrorEngine) AllNodes() ([]*Node, error) {
-	if e.allNodesErr != nil {
-		return nil, e.allNodesErr
-	}
-	return e.MemoryEngine.AllNodes()
+func (e *snapshotErrorEngine) AllNodes(ctx context.Context) ([]*Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.allNodesErr, func(ctx context.Context) ([]*Node, error) {
+		return e.MemoryEngine.AllNodes(ctx)
+	})
 }
 
-func (e *snapshotErrorEngine) AllEdges() ([]*Edge, error) {
-	if e.allEdgesErr != nil {
-		return nil, e.allEdgesErr
-	}
-	return e.MemoryEngine.AllEdges()
+func (e *snapshotErrorEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.allEdgesErr, func(ctx context.Context) ([]*Edge, error) {
+		return e.MemoryEngine.AllEdges(ctx)
+	})
 }
 
 // A snapshot collects stored nodes and relationships (CollectStoredNodes,

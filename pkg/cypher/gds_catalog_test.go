@@ -204,9 +204,9 @@ func TestGDSCatalogArgumentBranches(t *testing.T) {
 	require.ErrorContains(t, err, "username")
 	// A failing argument fails the function.
 	failing := cypherfn.Context{Eval: func(string) (interface{}, error) { return nil, errors.New("boom") }}
-	_, err = fnGDSGraphExists(failing, []string{"x"})
+	_, err = fnGDSGraphExists(context.Background(), failing, []string{"x"})
 	require.ErrorContains(t, err, "boom")
-	_, err = fnGDSNodeProperty(failing, []string{"g", "n", "age"})
+	_, err = fnGDSNodeProperty(context.Background(), failing, []string{"g", "n", "age"})
 	require.ErrorContains(t, err, "boom")
 	_, err = run("CREATE (:P {name: 'f', score: 1.5}), (:P {name: 'i', score: 2})")
 	require.NoError(t, err)

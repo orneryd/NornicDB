@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -336,7 +337,7 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 		}))
 
 		err = engine.withView(func(txn *badger.Txn) error {
-			return engine.iterateNodesVisibleAtInScopeInTxn(txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
+			return engine.iterateNodesVisibleAtInScopeInTxn(context.Background(), txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
 				return nil
 			})
 		})
@@ -350,13 +351,13 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 		require.NoError(t, err)
 
 		old := MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
-		nodes, err := engine.GetNodesByLabelVisibleAt("Doc", old)
+		nodes, err := engine.GetNodesByLabelVisibleAt(context.Background(), "Doc", old)
 		require.NoError(t, err)
 		require.Empty(t, nodes)
 
 		wantErr := errors.New("stop-yield")
 		err = engine.withView(func(txn *badger.Txn) error {
-			return engine.iterateNodesVisibleAtInScopeInTxn(txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
+			return engine.iterateNodesVisibleAtInScopeInTxn(context.Background(), txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
 				return wantErr
 			})
 		})
@@ -402,7 +403,7 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 		_, err = engine.GetEdgeVisibleAt("test:se", head.Version)
 		require.ErrorIs(t, err, ErrNotFound)
 
-		edges, err := engine.GetEdgesByTypeVisibleAt("REL", head.Version)
+		edges, err := engine.GetEdgesByTypeVisibleAt(context.Background(), "REL", head.Version)
 		require.NoError(t, err)
 		require.Empty(t, edges)
 	})
@@ -587,9 +588,9 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 			return nil
 		}))
 
-		_, err := engine.GetOutgoingEdgesVisibleAt("", MVCCVersion{})
+		_, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "", MVCCVersion{})
 		require.ErrorIs(t, err, ErrInvalidID)
-		_, err = engine.GetIncomingEdgesVisibleAt("", MVCCVersion{})
+		_, err = engine.GetIncomingEdgesVisibleAt(context.Background(), "", MVCCVersion{})
 		require.ErrorIs(t, err, ErrInvalidID)
 	})
 
@@ -612,9 +613,9 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 			return txn.Set(append(append([]byte{}, inPrefix...), []byte("bad")...), []byte{0})
 		}))
 
-		_, err = engine.GetOutgoingEdgesVisibleAt("test:bad-out", maxMVCCVersion())
+		_, err = engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:bad-out", maxMVCCVersion())
 		require.ErrorContains(t, err, "invalid mvcc adjacency key length")
-		_, err = engine.GetIncomingEdgesVisibleAt("test:bad-in", maxMVCCVersion())
+		_, err = engine.GetIncomingEdgesVisibleAt(context.Background(), "test:bad-in", maxMVCCVersion())
 		require.ErrorContains(t, err, "invalid mvcc adjacency key length")
 	})
 
@@ -654,10 +655,10 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 			return engine.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyIncoming, txn, "test:ghost", "test:e2", head2.Version, false)
 		}))
 
-		outgoing, err := engine.GetOutgoingEdgesVisibleAt("test:ghost", maxMVCCVersion())
+		outgoing, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:ghost", maxMVCCVersion())
 		require.NoError(t, err)
 		require.Empty(t, outgoing)
-		incoming, err := engine.GetIncomingEdgesVisibleAt("test:ghost", maxMVCCVersion())
+		incoming, err := engine.GetIncomingEdgesVisibleAt(context.Background(), "test:ghost", maxMVCCVersion())
 		require.NoError(t, err)
 		require.Empty(t, incoming)
 
@@ -682,7 +683,7 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 		}))
 
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			_, err := engine.collectVisibleAdjacencyEdgeIDsInTxn(txn, prefix, maxMVCCVersion())
+			_, err := engine.collectVisibleAdjacencyEdgeIDsInTxn(context.Background(), txn, prefix, maxMVCCVersion())
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "invalid mvcc adjacency key length")
 			return nil

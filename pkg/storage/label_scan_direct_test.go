@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -13,7 +14,7 @@ import (
 func streamLabelNodes(t *testing.T, eng *BadgerEngine, scope, label string, properties []string) []*Node {
 	t.Helper()
 	var nodes []*Node
-	require.NoError(t, eng.StreamNodesByLabelProjectedInScope(scope, label, properties, func(node *Node) error {
+	require.NoError(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), scope, label, properties, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	}))
@@ -87,14 +88,14 @@ func TestStreamNodesByLabelProjectedReadsRemainingNodesInOnePass(t *testing.T) {
 
 	stop := fmt.Errorf("stop")
 	visited := 0
-	require.ErrorIs(t, eng.StreamNodesByLabelProjectedInScope("test:", "Common", nil, func(*Node) error {
+	require.ErrorIs(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", nil, func(*Node) error {
 		visited++
 		if visited == labelScanPointLookups+10 {
 			return stop
 		}
 		return nil
 	}), stop)
-	require.ErrorIs(t, eng.StreamNodesByLabelProjectedInScope("test:", "Common", nil, func(*Node) error { return stop }), stop)
+	require.ErrorIs(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", nil, func(*Node) error { return stop }), stop)
 }
 
 func TestStreamNodesByLabelProjectedHidesDeindexedNodes(t *testing.T) {
@@ -141,7 +142,7 @@ func TestStreamNodesByLabelProjectedSkipsMissingRecords(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		var txNodes []*Node
-		require.NoError(t, tx.StreamNodesByLabelProjected("Common", properties, func(node *Node) error {
+		require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, func(node *Node) error {
 			txNodes = append(txNodes, node)
 			return nil
 		}))
@@ -151,7 +152,7 @@ func TestStreamNodesByLabelProjectedSkipsMissingRecords(t *testing.T) {
 		}
 		stop := fmt.Errorf("stop")
 		visited := 0
-		require.ErrorIs(t, tx.StreamNodesByLabelProjected("Common", properties, func(*Node) error {
+		require.ErrorIs(t, tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, func(*Node) error {
 			visited++
 			if visited == labelScanPointLookups+5 {
 				return stop
@@ -180,14 +181,14 @@ func TestStreamNodesByLabelProjectedRejectsCorruptRecords(t *testing.T) {
 					name = "projected"
 				}
 				t.Run(name, func(t *testing.T) {
-					require.Error(t, eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, func(*Node) error {
+					require.Error(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, func(*Node) error {
 						return nil
 					}))
 					tx, err := eng.BeginTransaction()
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace("test"))
 					defer func() { _ = tx.Rollback() }()
-					require.Error(t, tx.StreamNodesByLabelProjected("Common", properties, func(*Node) error {
+					require.Error(t, tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, func(*Node) error {
 						return nil
 					}))
 				})
@@ -205,7 +206,7 @@ func TestTransactionLabelScanReadsRemainingNodesInOnePass(t *testing.T) {
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NotNil(t, tx.snapshotTx)
 		var nodes []*Node
-		require.NoError(t, tx.StreamNodesByLabelProjected("Common", properties, func(node *Node) error {
+		require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, func(node *Node) error {
 			nodes = append(nodes, node)
 			return nil
 		}))
@@ -244,7 +245,7 @@ func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
 				}
 				t.Run(name, func(t *testing.T) {
 					scan := func(visit func(*Node) error) error {
-						return eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, visit)
+						return eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, visit)
 					}
 					if transaction {
 						tx, err := eng.BeginTransaction()
@@ -252,7 +253,7 @@ func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
 						require.NoError(t, tx.SetNamespace("test"))
 						defer func() { _ = tx.Rollback() }()
 						scan = func(visit func(*Node) error) error {
-							return tx.StreamNodesByLabelProjected("Common", properties, visit)
+							return tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, visit)
 						}
 					}
 

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestImplicitContinuationPreservesWritesAndTokens(t *testing.T) {
 			_, err = tx.CreateNode(&Node{ID: "continue:before", Labels: []string{"Outer"}, Properties: map[string]interface{}{"before_token": "before"}})
 			require.NoError(t, err)
 			// Populate the old completed-label cache before the separate commit.
-			_, err = tx.GetNodesByLabel("Batch")
+			_, err = tx.GetNodesByLabel(context.Background(), "Batch")
 			require.NoError(t, err)
 			batch, err := engine.BeginTransaction()
 			require.NoError(t, err)
@@ -28,7 +29,7 @@ func TestImplicitContinuationPreservesWritesAndTokens(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, batch.Commit())
 			require.NoError(t, tx.ResumeAfterIndependentCommit())
-			rows, err := tx.GetNodesByLabel("Batch")
+			rows, err := tx.GetNodesByLabel(context.Background(), "Batch")
 			require.NoError(t, err)
 			require.Len(t, rows, 1)
 			_, err = tx.GetNode("continue:before")

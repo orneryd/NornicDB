@@ -137,7 +137,8 @@ func TestNonFileNodeChunking(t *testing.T) {
 		assert.Equal(t, chunkCount, embedCount, "Should embed once per chunk")
 
 		// Verify only ONE node exists (no separate chunk nodes created)
-		allNodes := engine.GetAllNodes()
+		allNodes, readErr := engine.AllNodes(t.Context())
+		require.NoError(t, readErr)
 		assert.Equal(t, 1, len(allNodes), "Should only have one node (no separate chunk nodes)")
 	})
 

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -159,7 +160,7 @@ func TestValidatePolicyOnCreationForEngine(t *testing.T) {
 	require.NoError(t, e.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:user", EndNode: "test:secret", Type: "READS"}))
 	require.NoError(t, e.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:user", EndNode: "test:report", Type: "READS"}))
 
-	edges, err := e.AllEdges()
+	edges, err := e.AllEdges(context.Background())
 	require.NoError(t, err)
 	err = validatePolicyOnCreationForEngine(e, edges, Constraint{
 		Type: ConstraintPolicy, Label: "READS", PolicyMode: "DISALLOWED", SourceLabel: "User", TargetLabel: "Secret",

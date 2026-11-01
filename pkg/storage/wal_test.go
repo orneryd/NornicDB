@@ -1834,14 +1834,13 @@ func TestWALEngine(t *testing.T) {
 		// All read operations - should not increase sequence
 		walEngine.GetNode("n1")
 		walEngine.GetEdge("e1")
-		walEngine.GetNodesByLabel("Test")
-		walEngine.GetOutgoingEdges("n1")
-		walEngine.GetIncomingEdges("n2")
-		walEngine.GetEdgesBetween("n1", "n2")
+		walEngine.GetNodesByLabel(context.Background(), "Test")
+		walEngine.GetOutgoingEdges(context.Background(), "n1")
+		walEngine.GetIncomingEdges(context.Background(), "n2")
+		walEngine.GetEdgesBetween(context.Background(), "n1", "n2")
 		walEngine.GetEdgeBetween("n1", "n2", "TEST")
-		walEngine.AllNodes()
-		walEngine.AllEdges()
-		walEngine.GetAllNodes()
+		walEngine.AllNodes(context.Background())
+		walEngine.AllEdges(context.Background())
 		walEngine.GetInDegree("n2")
 		walEngine.GetOutDegree("n1")
 		walEngine.GetSchema()
@@ -2904,7 +2903,7 @@ func TestWALEngine_ForEachNodeIDByLabel(t *testing.T) {
 	require.True(t, ok, "wal wrapper must expose LabelNodeIDLookupEngine")
 
 	var count int
-	err = lookup.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+	err = lookup.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool {
 		count++
 		return count < 3
 	})
@@ -3334,11 +3333,11 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, first)
 
-		batch, err := walEngine.BatchGetNodes([]NodeID{"test:n1", "test:n2"})
+		batch, err := walEngine.BatchGetNodes(context.Background(), []NodeID{"test:n1", "test:n2"})
 		require.NoError(t, err)
 		require.Len(t, batch, 2)
 
-		byType, err := walEngine.GetEdgesByType("REL")
+		byType, err := walEngine.GetEdgesByType(context.Background(), "REL")
 		require.NoError(t, err)
 		require.Len(t, byType, 2)
 

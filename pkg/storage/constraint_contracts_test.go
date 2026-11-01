@@ -911,17 +911,17 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 		t.Fatalf("expected deleted edge to be hidden, edge=%v err=%v", edge, err)
 	}
 
-	outgoing, err := tx.currentOutgoingEdgesLocked("tenant::n1")
+	outgoing, err := tx.currentDirectedEdgesLocked("tenant::n1", adjacencyOutgoing)
 	if err != nil {
-		t.Fatalf("currentOutgoingEdgesLocked: %v", err)
+		t.Fatalf("currentDirectedEdgesLocked outgoing: %v", err)
 	}
 	if !edgeListContains(outgoing, "tenant::pending-out") || edgeListContains(outgoing, "tenant::out") {
 		t.Fatalf("unexpected outgoing edges: %+v", outgoing)
 	}
 
-	incoming, err := tx.currentIncomingEdgesLocked("tenant::n1")
+	incoming, err := tx.currentDirectedEdgesLocked("tenant::n1", adjacencyIncoming)
 	if err != nil {
-		t.Fatalf("currentIncomingEdgesLocked: %v", err)
+		t.Fatalf("currentDirectedEdgesLocked incoming: %v", err)
 	}
 	if !edgeListContains(incoming, "tenant::pending-in") || !edgeListContains(incoming, "tenant::out") || edgeListContains(incoming, "tenant::in") {
 		t.Fatalf("unexpected incoming edges: %+v", incoming)

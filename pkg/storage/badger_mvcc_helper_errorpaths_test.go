@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -45,7 +46,7 @@ func TestBadgerMVCC_AppendTombstoneAndIterateEarlyExitBranches(t *testing.T) {
 	require.NoError(t, engine.AppendEdgeTombstone("test:e1", v))
 
 	yieldErr := errors.New("stop")
-	err = engine.IterateLatestVisibleNodes(func(*Node) error { return yieldErr })
+	err = engine.IterateLatestVisibleNodes(context.Background(), func(*Node) error { return yieldErr })
 	require.ErrorIs(t, err, yieldErr)
 
 	err = engine.IterateLatestVisibleEdges(func(*Edge) error { return yieldErr })

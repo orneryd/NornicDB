@@ -793,7 +793,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			}
 			return fn(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamNodesByLabelProjectedInScope(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -807,8 +807,13 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if opts.ApplyDecayFilter {
 		v = visibleRead
 	}
+	var captureErr error
 	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		pendingNodes, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		if err != nil {
+			captureErr = err
+			return
+		}
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
 	inScope := func(id NodeID) bool {
@@ -831,6 +836,9 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		return err
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr // the canceled capture retires the scan
+		}
 		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
 	}, readViewOptions{scope: opts.Prefix, scopeKind: readPrefixScope})
 	if err != nil {
@@ -988,8 +996,13 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	// committed rows for their IDs and are visited after the scan.
 	var overlay []*Edge
 	var touched map[EdgeID]bool
+	var captureErr error
 	capture := func(w *WriteBehindBuffer) {
-		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
+		pendingEdges, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
+		if err != nil {
+			captureErr = err
+			return
+		}
 		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
 	nowNanos := DecayScoringTime()
@@ -1011,6 +1024,9 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		return err
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr // the canceled capture retires the scan
+		}
 		prefix := []byte{prefixEdge}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()

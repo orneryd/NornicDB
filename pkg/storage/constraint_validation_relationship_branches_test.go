@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ type allEdgesOverrideEngine struct {
 	err   error
 }
 
-func (e *allEdgesOverrideEngine) AllEdges() ([]*Edge, error) {
+func (e *allEdgesOverrideEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -22,7 +23,7 @@ func (e *allEdgesOverrideEngine) AllEdges() ([]*Edge, error) {
 // GetEdgesByType serves the injected edges to the typed read that
 // relationship-constraint validation uses (StreamEdgesByType falls back to it
 // for engines without EdgeTypeStreamer).
-func (e *allEdgesOverrideEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+func (e *allEdgesOverrideEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
 	if e.err != nil {
 		return nil, e.err
 	}

@@ -5,6 +5,7 @@
 package schema
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
@@ -13,8 +14,19 @@ import (
 // Node represents a graph node.
 type Node = storage.Node
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// Functions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for.
+type Functions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
+}
 
 // IndexInfo represents index information.
 type IndexInfo struct {
@@ -53,8 +65,11 @@ func Assert(indexes, constraints map[string]interface{}) map[string]interface{} 
 // Example:
 //
 //	apoc.schema.nodes() => [{label: 'Person', properties: [...]}]
-func Nodes() []map[string]interface{} {
-	nodes, err := Storage.AllNodes()
+func (f *Functions) Nodes() []map[string]interface{} {
+	// apoc.schema.nodes is procedure-classified and the bundled plugin
+	// implements no such procedure: no statement context reaches this helper,
+	// whose whole-graph read runs on the background lifetime.
+	nodes, err := f.backend.AllNodes(context.Background())
 	if err != nil {
 		return []map[string]interface{}{}
 	}
@@ -91,8 +106,11 @@ func Nodes() []map[string]interface{} {
 // Example:
 //
 //	apoc.schema.relationships() => [{type: 'KNOWS', properties: [...]}]
-func Relationships() []map[string]interface{} {
-	rels, err := Storage.AllRelationships()
+func (f *Functions) Relationships() []map[string]interface{} {
+	// apoc.schema.relationships is procedure-classified and the bundled plugin
+	// implements no such procedure: no statement context reaches this helper,
+	// whose whole-graph read runs on the background lifetime.
+	rels, err := f.backend.AllRelationships(context.Background())
 	if err != nil {
 		return []map[string]interface{}{}
 	}
@@ -182,48 +200,15 @@ func NodeIndexExists(label string, properties []string) bool {
 	return false
 }
 
-// Properties returns all property keys in the database.
-//
-// Example:
-//
-//	apoc.schema.properties.distinct() => ['name', 'age', 'email']
-func Properties() []string {
-	propSet := make(map[string]bool)
-
-	nodes, err := Storage.AllNodes()
-	if err == nil {
-		for _, node := range nodes {
-			for prop := range node.Properties {
-				propSet[prop] = true
-			}
-		}
-	}
-
-	rels, err := Storage.AllRelationships()
-	if err == nil {
-		for _, rel := range rels {
-			for prop := range rel.Properties {
-				propSet[prop] = true
-			}
-		}
-	}
-
-	result := make([]string, 0, len(propSet))
-	for prop := range propSet {
-		result = append(result, prop)
-	}
-	return result
-}
-
 // PropertiesDistinct returns distinct property keys.
 //
 // Example:
 //
 //	apoc.schema.properties.distinct('Person') => ['name', 'age']
-func PropertiesDistinct(label string) []string {
+func (f *Functions) PropertiesDistinct(ctx context.Context, label string) []string {
 	propSet := make(map[string]bool)
 
-	nodes, err := Storage.AllNodes()
+	nodes, err := f.backend.AllNodes(ctx)
 	if err == nil {
 		for _, node := range nodes {
 			for _, l := range node.Labels {
@@ -249,10 +234,10 @@ func PropertiesDistinct(label string) []string {
 // Example:
 //
 //	apoc.schema.labels() => ['Person', 'Company', 'Product']
-func Labels() []string {
+func (f *Functions) Labels(ctx context.Context) []string {
 	labelSet := make(map[string]bool)
 
-	nodes, err := Storage.AllNodes()
+	nodes, err := f.backend.AllNodes(ctx)
 	if err == nil {
 		for _, node := range nodes {
 			for _, label := range node.Labels {
@@ -273,10 +258,10 @@ func Labels() []string {
 // Example:
 //
 //	apoc.schema.types() => ['KNOWS', 'WORKS_AT', 'BOUGHT']
-func Types() []string {
+func (f *Functions) Types(ctx context.Context) []string {
 	typeSet := make(map[string]bool)
 
-	rels, err := Storage.AllRelationships()
+	rels, err := f.backend.AllRelationships(ctx)
 	if err == nil {
 		for _, rel := range rels {
 			typeSet[rel.Type] = true
@@ -295,10 +280,10 @@ func Types() []string {
 // Example:
 //
 //	apoc.schema.info() => {labels: [...], types: [...], constraints: [...], indexes: [...]}
-func Info() map[string]interface{} {
+func (f *Functions) Info(ctx context.Context) map[string]interface{} {
 	return map[string]interface{}{
-		"labels":      Labels(),
-		"types":       Types(),
+		"labels":      f.Labels(ctx),
+		"types":       f.Types(ctx),
 		"constraints": append(NodeConstraints(), RelationshipConstraints()...),
 		"indexes":     append(NodeIndexes(), RelationshipIndexes()...),
 	}
@@ -403,15 +388,6 @@ func Compare(schema1, schema2 map[string]interface{}) map[string]interface{} {
 	}
 }
 
-// Export exports schema definition.
-//
-// Example:
-//
-//	apoc.schema.export() => schema definition
-func Export() map[string]interface{} {
-	return Info()
-}
-
 // Import imports schema definition.
 //
 // Example:
@@ -422,33 +398,15 @@ func Import(schemaDef map[string]interface{}) error {
 	return nil
 }
 
-// Snapshot creates a schema snapshot.
-//
-// Example:
-//
-//	apoc.schema.snapshot() => snapshot
-func Snapshot() map[string]interface{} {
-	return Export()
-}
-
-// Restore restores from a schema snapshot.
-//
-// Example:
-//
-//	apoc.schema.restore(snapshot) => restored
-func Restore(snapshot map[string]interface{}) error {
-	return Import(snapshot)
-}
-
 // Stats returns schema statistics.
 //
 // Example:
 //
 //	apoc.schema.stats() => {labelCount: 5, typeCount: 10, ...}
-func Stats() map[string]interface{} {
+func (f *Functions) Stats(ctx context.Context) map[string]interface{} {
 	return map[string]interface{}{
-		"labelCount":      len(Labels()),
-		"typeCount":       len(Types()),
+		"labelCount":      len(f.Labels(ctx)),
+		"typeCount":       len(f.Types(ctx)),
 		"constraintCount": len(NodeConstraints()) + len(RelationshipConstraints()),
 		"indexCount":      len(NodeIndexes()) + len(RelationshipIndexes()),
 	}

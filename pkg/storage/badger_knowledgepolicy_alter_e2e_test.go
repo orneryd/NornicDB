@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -85,10 +86,10 @@ func TestE2E_AlterDecayProfileUnsuppressesExistingNodeEdgeAndProperties(t *testi
 	require.False(t, eng.FilterPropertyByDecay("test:source", []string{"Doc"}, "body", old.UnixNano(), old.UnixNano(), DecayScoringTime()))
 	require.False(t, eng.FilterEdgePropertyByDecay("test:edge-1", "LINKS", "summary", old.UnixNano(), old.UnixNano(), DecayScoringTime()))
 
-	nodes, err := eng.GetNodesByLabel("Doc")
+	nodes, err := eng.GetNodesByLabel(context.Background(), "Doc")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
-	edges, err := eng.GetEdgesByType("LINKS")
+	edges, err := eng.GetEdgesByType(context.Background(), "LINKS")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }

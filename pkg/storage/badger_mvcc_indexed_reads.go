@@ -1,8 +1,13 @@
 package storage
 
 import (
+	"context"
+
 	"github.com/dgraph-io/badger/v4"
 )
+
+// Keep the optional bulk enumeration contract bound to its native implementation.
+var _ MVCCEnumerationEngine = (*BadgerEngine)(nil)
 
 func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
 	return readEntityAtWithView(b, id, version, mvccEntityRead{vectors: true, visibility: visibleRead}, b.withView, (*BadgerEngine).getNodeAtInTxn)
@@ -147,17 +152,20 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 	return node, nil
 }
 
-func (b *BadgerEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
-	return b.getNodesByLabelVisibleAtWithView("", label, version, b.withView)
+func (b *BadgerEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
+	return b.getNodesByLabelVisibleAtWithView(ctx, "", label, version, b.withView)
 }
 
 // GetNodesByLabelVisibleAtInScope is GetNodesByLabelVisibleAt within one
 // database (ScopedLabelNodeReader).
-func (b *BadgerEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
-	return b.getNodesByLabelVisibleAtWithView(scope, label, version, b.withView)
+func (b *BadgerEngine) GetNodesByLabelVisibleAtInScope(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error) {
+	return b.getNodesByLabelVisibleAtWithView(ctx, scope, label, version, b.withView)
 }
 
-func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
+func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(ctx context.Context, scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := b.pendingPrefixConflict(scope); err != nil {
 		return nil, err
 	}
@@ -169,7 +177,7 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, ver
 	defer deregister()
 	var nodes []*Node
 	err = view(func(txn *badger.Txn) error {
-		return b.iterateNodesVisibleAtInScopeInTxn(txn, scope, version, func(node *Node) error {
+		return b.iterateNodesVisibleAtInScopeInTxn(ctx, txn, scope, version, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
@@ -199,9 +207,9 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, ver
 // same physical Badger snapshot used by an explicit transaction. The label
 // index in that snapshot already represents membership at BEGIN, so work is
 // proportional to the matching label rather than every stored node.
-func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
+func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(ctx context.Context, scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
 	nodes := make([]*Node, 0)
-	err := b.streamNodesByLabelVisibleAtSnapshotWithView(scope, label, version, view, nil, func(node *Node) error {
+	err := b.streamNodesByLabelAtSnapshotWithView(ctx, scope, label, version, view, nil, visibleRead, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	})
@@ -211,22 +219,8 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(scope, label str
 	return nodes, nil
 }
 
-// streamNodesByLabelVisibleAtSnapshotWithView visits snapshot-visible label
-// matches directly from the label index. Unlike the slice-returning adapter,
-// it preserves early termination and never materialises nodes the caller does
-// not consume.
-func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
-	scope string,
-	label string,
-	version MVCCVersion,
-	view func(func(*badger.Txn) error) error,
-	properties []string,
-	visit func(*Node) error,
-) error {
-	return b.streamNodesByLabelAtSnapshotWithView(scope, label, version, view, properties, visibleRead, visit)
-}
-
 func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
+	ctx context.Context,
 	scope, label string,
 	version MVCCVersion,
 	view func(func(*badger.Txn) error) error,
@@ -252,7 +246,11 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	return view(func(txn *badger.Txn) error {
 		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
+		var cancel bulkReadCancellation
 		for it.Next() {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			nodeID := it.NodeID()
 			node, getErr := b.getNodeAtInTxn(txn, nodeID, version, mvccEntityRead{vectors: !queryNodes, visibility: v})
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
@@ -278,24 +276,14 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	})
 }
 
-// streamNodesByLabelFromPhysicalSnapshotAfter visits the node bodies of a
+// streamNodesByLabelFromPhysicalSnapshotAfterRead visits the node bodies of a
 // label represented by a pinned Badger read transaction, in label-index
 // order after afterNodeID ("" from the start), within scope ("" every
 // database). Because both the label index and node key are read from the same
 // immutable physical snapshot, no per-candidate logical MVCC-head lookup is
 // required.
-func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
-	scope string,
-	label string,
-	view func(func(*badger.Txn) error) error,
-	properties []string,
-	afterNodeID NodeID,
-	visit func(*Node) error,
-) error {
-	return b.streamNodesByLabelFromPhysicalSnapshotAfterRead(scope, label, view, properties, afterNodeID, visibleRead, visit)
-}
-
 func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
+	ctx context.Context,
 	scope, label string,
 	view func(func(*badger.Txn) error) error,
 	properties []string,
@@ -356,7 +344,14 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 		defer it.Close()
 		var pending []NodeID
 		lookups := 0
+		// The pinned snapshot walk visits its candidates under the caller's own
+		// context: a canceled read retires with that error instead of finishing
+		// the population nobody asked for any more.
+		var cancel bulkReadCancellation
 		for it.Next() {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			indexKey := it.Item().Key()
 			nodeID := it.NodeID()
 			if b.checksIndexTombstones(v) && hasIndexTombstone(txn, indexKey) {
@@ -406,6 +401,9 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			return err
 		}
 		for _, nodeID := range pending {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			// Record order differs from visitation order; a later corrupt
 			// record must not override an earlier callback's stop error.
 			if err := readErrors[nodeID]; err != nil {
@@ -419,7 +417,10 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 	})
 }
 
-func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
+func (b *BadgerEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := b.pendingNamespaceConflict(""); err != nil {
 		return nil, err
 	}
@@ -431,7 +432,7 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVers
 	defer deregister()
 	var edges []*Edge
 	err = b.withView(func(txn *badger.Txn) error {
-		return b.iterateEdgesAtInTxn(txn, version, visibleRead, func(edge *Edge) error {
+		return b.iterateEdgesAtInTxn(ctx, txn, version, visibleRead, func(edge *Edge) error {
 			if edge == nil {
 				return nil
 			}
@@ -448,7 +449,10 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVers
 	return edges, nil
 }
 
-func (b *BadgerEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (b *BadgerEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(endID)); err != nil {
 		return nil, err
 	}
@@ -467,7 +471,7 @@ func (b *BadgerEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version M
 	defer deregister()
 	var edges []*Edge
 	err = b.withView(func(txn *badger.Txn) error {
-		return b.iterateEdgesAtInTxn(txn, version, visibleRead, func(edge *Edge) error {
+		return b.iterateEdgesAtInTxn(ctx, txn, version, visibleRead, func(edge *Edge) error {
 			if edge == nil {
 				return nil
 			}
@@ -483,21 +487,41 @@ func (b *BadgerEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version M
 	return edges, nil
 }
 
-func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error {
+// yieldLatestVisible is the one owner of the latest-visible enumeration
+// algorithm the MVCCEnumerationEngine node and edge callers present: load the
+// population under the caller's own lifetime, then hand every record to yield.
+// The caller's cancellation is checked on the first record, once every
+// bulkReadCancellationInterval records (the same stride the scans inside the
+// load use) and once more after the last yield, so a request already canceled
+// on admission or canceled by the visitor itself retires with the context's
+// own error instead of reporting a successful enumeration. A load or visitor
+// error surfaces unchanged and outranks that final context check.
+func yieldLatestVisible[T any](ctx context.Context, load func(context.Context) ([]T, error), yield func(T) error) error {
+	records, err := load(ctx)
+	if err != nil {
+		return err
+	}
+	var cancel bulkReadCancellation
+	for _, record := range records {
+		if err := cancel.check(ctx); err != nil {
+			return err
+		}
+		if err := yield(record); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+func (b *BadgerEngine) IterateLatestVisibleNodes(ctx context.Context, yield func(*Node) error) error {
 	if err := b.pendingNamespaceConflict(""); err != nil {
 		return err
 	}
 
-	nodes, err := b.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		if err := yield(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	// The caller's own context is the read's lifetime: a canceled statement
+	// must not keep walking every visible node, and a visitor that cancels it
+	// must not be answered with a successful enumeration.
+	return yieldLatestVisible(ctx, b.AllNodes, yield)
 }
 
 func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error {
@@ -505,14 +529,7 @@ func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error 
 		return err
 	}
 
-	edges, err := b.AllEdges()
-	if err != nil {
-		return err
-	}
-	for _, edge := range edges {
-		if err := yield(edge); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Edge iteration has no caller context of its own: context.Background is
+	// the true lifetime at this context-free boundary.
+	return yieldLatestVisible(context.Background(), b.AllEdges, yield)
 }

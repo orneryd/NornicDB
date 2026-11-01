@@ -60,6 +60,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/httpresponse"
+	"github.com/orneryd/nornicdb/internal/relatedwalk"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -2124,8 +2125,42 @@ func getMap(m map[string]interface{}, key string) map[string]interface{} {
 	return nil
 }
 
-// getRelatedNodes fetches related nodes up to the specified depth using graph traversal.
-// Returns a slice of RelatedNode with relationship information.
+// mcpRelatedAcceptor is the MCP consumer boundary of the canonical walk: it
+// loads each discovered node, projects its visible properties and always
+// publishes a record. MCP keeps its own policy for missing nodes (a placeholder
+// record that is still expanded) and its own title -> name fallback.
+type mcpRelatedAcceptor struct {
+	server  *Server
+	engine  storage.Engine
+	visible storage.QueryResultProjection
+}
+
+func (a mcpRelatedAcceptor) Discover(ctx context.Context, n *relatedwalk.Neighbor) (RelatedNode, bool, bool) {
+	nodeType, title := "Node", ""
+	if node, err := a.engine.GetNode(storage.NodeID(n.ID)); err == nil && node != nil {
+		props := a.visible.NodeProperties(node)
+		nodeType = getLabelType(node.Labels)
+		title = getStringProp(props, "title")
+		if title == "" {
+			title = getStringProp(props, "name")
+		}
+	}
+	return RelatedNode{
+		ID:           a.server.nodeElementID(ctx, n.ID),
+		Type:         nodeType,
+		Title:        title,
+		Distance:     n.Distance,
+		Relationship: n.Relationship,
+		Direction:    n.Direction.String(),
+		Path:         n.Path,
+	}, true, true
+}
+
+// getRelatedNodes fetches related nodes up to the specified depth through the
+// canonical bounded traversal. MCP keeps its own contract: depth 1 means "no
+// related nodes", so the walk runs depth-1 hops, publishes at most 50 records,
+// keeps the title -> name fallback, publishes missing nodes as placeholder
+// records and is the only consumer that carries the discovery path.
 func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) []RelatedNode {
 	if depth <= 1 {
 		return nil
@@ -2144,106 +2179,22 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
 	defer release()
 
-	maxDepth := depth - 1
 	const maxRelated = 50
 
-	type state struct {
-		idLocal string
-		dist    int
-		path    []string // elementIds
+	related, err := relatedwalk.Walk[RelatedNode](ctx,
+		relatedwalk.StorageSource{Engine: engine},
+		mcpRelatedAcceptor{server: s, engine: engine, visible: visible},
+		startLocal,
+		relatedwalk.Options{
+			MaxHops: depth - 1,
+			Limit:   maxRelated,
+			Paths:   true,
+			PathID:  func(id string) string { return s.nodeElementID(ctx, id) },
+		},
+	)
+	if err != nil {
+		return nil
 	}
-
-	visited := map[string]bool{startLocal: true}
-	queue := []state{{
-		idLocal: startLocal,
-		dist:    0,
-		path:    []string{s.nodeElementID(ctx, startLocal)},
-	}}
-
-	related := make([]RelatedNode, 0)
-	for len(queue) > 0 && len(related) < maxRelated {
-		cur := queue[0]
-		queue = queue[1:]
-
-		if cur.dist >= maxDepth {
-			continue
-		}
-
-		// Outgoing edges
-		out, _ := engine.GetOutgoingEdges(storage.NodeID(cur.idLocal))
-		for _, e := range out {
-			neighbor := string(e.EndNode)
-			if neighbor == "" || visited[neighbor] {
-				continue
-			}
-			visited[neighbor] = true
-			nextPath := append(append([]string{}, cur.path...), s.nodeElementID(ctx, neighbor))
-
-			ntype, ntitle := "Node", ""
-			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
-				props := visible.NodeProperties(n)
-				ntype = getLabelType(n.Labels)
-				ntitle = getStringProp(props, "title")
-				if ntitle == "" {
-					ntitle = getStringProp(props, "name")
-				}
-			}
-
-			related = append(related, RelatedNode{
-				ID:           s.nodeElementID(ctx, neighbor),
-				Type:         ntype,
-				Title:        ntitle,
-				Distance:     cur.dist + 1,
-				Relationship: e.Type,
-				Direction:    "outgoing",
-				Path:         nextPath,
-			})
-			queue = append(queue, state{idLocal: neighbor, dist: cur.dist + 1, path: nextPath})
-			if len(related) >= maxRelated {
-				break
-			}
-		}
-
-		if len(related) >= maxRelated {
-			break
-		}
-
-		// Incoming edges
-		in, _ := engine.GetIncomingEdges(storage.NodeID(cur.idLocal))
-		for _, e := range in {
-			neighbor := string(e.StartNode)
-			if neighbor == "" || visited[neighbor] {
-				continue
-			}
-			visited[neighbor] = true
-			nextPath := append(append([]string{}, cur.path...), s.nodeElementID(ctx, neighbor))
-
-			ntype, ntitle := "Node", ""
-			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
-				props := visible.NodeProperties(n)
-				ntype = getLabelType(n.Labels)
-				ntitle = getStringProp(props, "title")
-				if ntitle == "" {
-					ntitle = getStringProp(props, "name")
-				}
-			}
-
-			related = append(related, RelatedNode{
-				ID:           s.nodeElementID(ctx, neighbor),
-				Type:         ntype,
-				Title:        ntitle,
-				Distance:     cur.dist + 1,
-				Relationship: e.Type,
-				Direction:    "incoming",
-				Path:         nextPath,
-			})
-			queue = append(queue, state{idLocal: neighbor, dist: cur.dist + 1, path: nextPath})
-			if len(related) >= maxRelated {
-				break
-			}
-		}
-	}
-
 	return related
 }
 

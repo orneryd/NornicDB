@@ -60,38 +60,38 @@ func (g *scanGuardEngine) recordNodes(nodes ...*Node) {
 	}
 }
 
-func (g *scanGuardEngine) AllEdges() ([]*Edge, error) {
+func (g *scanGuardEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 	g.mu.Lock()
 	g.allEdgesCalls++
 	g.mu.Unlock()
-	edges, err := g.inner.AllEdges()
+	edges, err := g.inner.AllEdges(ctx)
 	g.recordEdges(edges...)
 	return edges, err
 }
 
-func (g *scanGuardEngine) AllNodes() ([]*Node, error) {
+func (g *scanGuardEngine) AllNodes(ctx context.Context) ([]*Node, error) {
 	g.mu.Lock()
 	g.allNodesCalls++
 	g.mu.Unlock()
-	nodes, err := g.inner.AllNodes()
+	nodes, err := g.inner.AllNodes(ctx)
 	g.recordNodes(nodes...)
 	return nodes, err
 }
 
-func (g *scanGuardEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+func (g *scanGuardEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
 	g.mu.Lock()
 	g.edgesByType++
 	g.mu.Unlock()
-	edges, err := g.inner.GetEdgesByType(edgeType)
+	edges, err := g.inner.GetEdgesByType(ctx, edgeType)
 	g.recordEdges(edges...)
 	return edges, err
 }
 
-func (g *scanGuardEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (g *scanGuardEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	g.mu.Lock()
 	g.loadedNodeLists++
 	g.mu.Unlock()
-	nodes, err := g.inner.GetNodesByLabel(label)
+	nodes, err := g.inner.GetNodesByLabel(ctx, label)
 	g.recordNodes(nodes...)
 	return nodes, err
 }
@@ -102,8 +102,8 @@ func (g *scanGuardEngine) GetSchemaForNamespace(namespace string) *SchemaManager
 
 // ScopedLabelNodeReader forwarding, recording what the scoped reads return.
 
-func (g *scanGuardEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	nodes, err := g.inner.GetNodesByLabelInScope(scope, label)
+func (g *scanGuardEngine) GetNodesByLabelInScope(ctx context.Context, scope, label string) ([]*Node, error) {
+	nodes, err := g.inner.GetNodesByLabelInScope(ctx, scope, label)
 	g.recordNodes(nodes...)
 	return nodes, err
 }
@@ -114,19 +114,19 @@ func (g *scanGuardEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node
 	return node, err
 }
 
-func (g *scanGuardEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return g.inner.StreamNodesByLabelProjectedInScope(scope, label, properties, func(node *Node) error {
+func (g *scanGuardEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
+	return g.inner.StreamNodesByLabelProjectedInScope(ctx, scope, label, properties, func(node *Node) error {
 		g.recordNodes(node)
 		return visit(node)
 	})
 }
 
-func (g *scanGuardEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	return g.StreamNodesByLabelProjectedInScope("", label, properties, visit)
+func (g *scanGuardEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
+	return g.StreamNodesByLabelProjectedInScope(ctx, "", label, properties, visit)
 }
 
-func (g *scanGuardEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
-	return g.inner.GetNodesByLabelVisibleAtInScope(scope, label, version)
+func (g *scanGuardEngine) GetNodesByLabelVisibleAtInScope(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error) {
+	return g.inner.GetNodesByLabelVisibleAtInScope(ctx, scope, label, version)
 }
 
 // Edge-type streaming forwarding (EdgeTypeStreamer / ScopedEdgeTypeStreamer).
@@ -440,7 +440,7 @@ func TestStreamEdgesByType_TransactionMergesPendingWrites(t *testing.T) {
 	require.Contains(t, seen, EdgeID("a:new"))
 	require.Equal(t, "new", seen["a:keep"].Properties["k"])
 
-	sliced, err := tx.GetEdgesByType("REL")
+	sliced, err := tx.GetEdgesByType(context.Background(), "REL")
 	require.NoError(t, err)
 	require.Len(t, sliced, len(seen), "stream and GetEdgesByType must agree")
 }
@@ -451,15 +451,21 @@ type edgeTypeOnlyEngine struct {
 	allEdges, allNodes, byType, byLabel int
 }
 
-func (e *edgeTypeOnlyEngine) AllEdges() ([]*Edge, error) { e.allEdges++; return e.Engine.AllEdges() }
-func (e *edgeTypeOnlyEngine) AllNodes() ([]*Node, error) { e.allNodes++; return e.Engine.AllNodes() }
-func (e *edgeTypeOnlyEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
-	e.byType++
-	return e.Engine.GetEdgesByType(edgeType)
+func (e *edgeTypeOnlyEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
+	e.allEdges++
+	return e.Engine.AllEdges(ctx)
 }
-func (e *edgeTypeOnlyEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (e *edgeTypeOnlyEngine) AllNodes(ctx context.Context) ([]*Node, error) {
+	e.allNodes++
+	return e.Engine.AllNodes(ctx)
+}
+func (e *edgeTypeOnlyEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
+	e.byType++
+	return e.Engine.GetEdgesByType(ctx, edgeType)
+}
+func (e *edgeTypeOnlyEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	e.byLabel++
-	return e.Engine.GetNodesByLabel(label)
+	return e.Engine.GetNodesByLabel(ctx, label)
 }
 
 func TestConstraintCreation_FallbackForEnginesWithoutStreaming(t *testing.T) {
@@ -486,7 +492,7 @@ func TestConstraintCreation_FallbackForEnginesWithoutStreaming(t *testing.T) {
 // as the reference the streamed rebuild must match.
 func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManager) map[string]map[interface{}]NodeID {
 	t.Helper()
-	nodes, err := engine.AllNodes()
+	nodes, err := engine.AllNodes(context.Background())
 	require.NoError(t, err)
 	out := map[string]map[interface{}]NodeID{}
 	schema.mu.RLock()
@@ -581,7 +587,7 @@ func TestStreamEdgesByType_CompositeStreamsEachConstituent(t *testing.T) {
 		map[string]string{"a": "read", "b": "read"},
 	)
 	require.Equal(t, []string{"ea", "eb"}, collectEdgeIDs(t, composite, "REL"))
-	sliced, err := composite.GetEdgesByType("REL")
+	sliced, err := composite.GetEdgesByType(context.Background(), "REL")
 	require.NoError(t, err)
 	require.Len(t, sliced, 2)
 }

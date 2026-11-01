@@ -15,14 +15,17 @@ type recordingLabelScanEngine struct {
 	projections [][]string
 }
 
-func (e *recordingLabelScanEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+// Pin the optional capability: a signature drift must fail compilation.
+var _ storage.ScopedLabelNodeReader = (*recordingLabelScanEngine)(nil)
+
+func (e *recordingLabelScanEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
 	e.projections = append(e.projections, properties)
-	return e.MemoryEngine.StreamNodesByLabelProjected(label, properties, visit)
+	return e.MemoryEngine.StreamNodesByLabelProjected(ctx, label, properties, visit)
 }
 
-func (e *recordingLabelScanEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*storage.Node) error) error {
+func (e *recordingLabelScanEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*storage.Node) error) error {
 	e.projections = append(e.projections, properties)
-	return e.MemoryEngine.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
+	return e.MemoryEngine.StreamNodesByLabelProjectedInScope(ctx, scope, label, properties, visit)
 }
 
 func TestPipelineReadOnlyTail(t *testing.T) {

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -95,7 +94,7 @@ func ParseUseClause(ctx context.Context, query string, inSubquery bool, stage So
 // decoded. AcceptedSource retains compiler spellings without another projection.
 // The original context governs admission and grammar work, including no-USE input.
 func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage SourceStage) (clause UseClauseReference, remaining string, hasUse bool, err error) {
-	if err := bulk.ObserveContext(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return UseClauseReference{}, "", false, err
 	}
 	// Accepted input needs no projection. Retain source coordinates only
@@ -122,8 +121,8 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 	view := source.Window(leading, trailing)
 	reference, readErr := cypherantlr.ReadUseReference(ctx, view)
 	if readErr != nil {
-		if bulk.ObserveContext(ctx) != nil {
-			return UseClauseReference{}, "", true, bulk.ObserveContext(ctx)
+		if ctx.Err() != nil {
+			return UseClauseReference{}, "", true, ctx.Err()
 		}
 		var position *cypherantlr.UseReferenceError
 		if errors.As(readErr, &position) {

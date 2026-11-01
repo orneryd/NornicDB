@@ -75,7 +75,7 @@ func TestTransactionStorageWrapper_NamespaceIsolation(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, w.CreateEdge(&storage.Edge{ID: "pending-edge", StartNode: "own", EndNode: "pending", Type: "REL"}))
 
-	for _, read := range []func() ([]*storage.Node, error){w.AllNodes, func() ([]*storage.Node, error) { return w.GetAllNodes(), nil }, func() ([]*storage.Node, error) { return w.GetNodesByLabel("Shared") }} {
+	for _, read := range []func() ([]*storage.Node, error){func() ([]*storage.Node, error) { return w.AllNodes(context.Background()) }, func() ([]*storage.Node, error) { return w.GetNodesByLabel(context.Background(), "Shared") }} {
 		nodes, err := read()
 		require.NoError(t, err)
 		ids := make([]storage.NodeID, 0, len(nodes))
@@ -84,13 +84,13 @@ func TestTransactionStorageWrapper_NamespaceIsolation(t *testing.T) {
 		}
 		require.ElementsMatch(t, []storage.NodeID{"own", "pending"}, ids)
 	}
-	users, err := w.GetNodesByLabel("_User")
+	users, err := w.GetNodesByLabel(context.Background(), "_User")
 	require.NoError(t, err)
 	require.Empty(t, users)
 	count, err := w.NodeCountByLabel("Shared")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)
-	edges, err := w.AllEdges()
+	edges, err := w.AllEdges(context.Background())
 	require.NoError(t, err)
 	ids := make([]storage.EdgeID, 0, len(edges))
 	for _, edge := range edges {
@@ -129,15 +129,15 @@ func TestTransactionStorageWrapper_BulkOps_AndCounts(t *testing.T) {
 	require.NoError(t, w.BulkCreateEdges(edges))
 
 	// BatchGetNodes and delegate methods
-	gotMap, err := w.BatchGetNodes([]storage.NodeID{"test:r1", "test:r2"})
+	gotMap, err := w.BatchGetNodes(context.Background(), []storage.NodeID{"test:r1", "test:r2"})
 	require.NoError(t, err)
 	assert.Len(t, gotMap, 2)
 
-	allNodes, err := w.AllNodes()
+	allNodes, err := w.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(allNodes), 2)
 
-	allEdges, err := w.AllEdges()
+	allEdges, err := w.AllEdges(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(allEdges), 1)
 
@@ -145,15 +145,17 @@ func TestTransactionStorageWrapper_BulkOps_AndCounts(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, firstByLabel)
 
-	edgesBetween, err := w.GetEdgesBetween("test:r1", "test:r2")
+	edgesBetween, err := w.GetEdgesBetween(context.Background(), "test:r1", "test:r2")
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(edgesBetween), 1)
 
-	edgesByType, err := w.GetEdgesByType("REL")
+	edgesByType, err := w.GetEdgesByType(context.Background(), "REL")
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(edgesByType), 1)
 
-	assert.GreaterOrEqual(t, len(w.GetAllNodes()), 2)
+	allNodes, err = w.AllNodes(context.Background())
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(allNodes), 2)
 	assert.GreaterOrEqual(t, w.GetOutDegree("test:r1"), 0)
 	assert.GreaterOrEqual(t, w.GetInDegree("test:r2"), 0)
 	assert.NotNil(t, w.GetSchema())
@@ -224,13 +226,13 @@ func TestTransactionStorageWrapper_BulkDeleteEdges_WithNamespaceInvalidatesPrelo
 	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "r1", StartNode: "a", EndNode: "b", Type: "RELATES_TO", Properties: map[string]interface{}{"uuid": "r1"}}))
 	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "m1", StartNode: "ep", EndNode: "a", Type: "MENTIONS", Properties: map[string]interface{}{"uuid": "m1"}}))
 
-	byType, err := ns.GetEdgesByType("RELATES_TO")
+	byType, err := ns.GetEdgesByType(context.Background(), "RELATES_TO")
 	require.NoError(t, err)
 	require.Len(t, byType, 1)
-	outgoingA, err := ns.GetOutgoingEdges("a")
+	outgoingA, err := ns.GetOutgoingEdges(context.Background(), "a")
 	require.NoError(t, err)
 	require.Len(t, outgoingA, 1)
-	outgoingEP, err := ns.GetOutgoingEdges("ep")
+	outgoingEP, err := ns.GetOutgoingEdges(context.Background(), "ep")
 	require.NoError(t, err)
 	require.Len(t, outgoingEP, 1)
 
@@ -240,13 +242,13 @@ func TestTransactionStorageWrapper_BulkDeleteEdges_WithNamespaceInvalidatesPrelo
 	require.NoError(t, w.BulkDeleteEdges([]storage.EdgeID{"r1", "m1"}))
 	require.NoError(t, tx.Commit())
 
-	byType, err = ns.GetEdgesByType("RELATES_TO")
+	byType, err = ns.GetEdgesByType(context.Background(), "RELATES_TO")
 	require.NoError(t, err)
 	require.Empty(t, byType)
-	outgoingA, err = ns.GetOutgoingEdges("a")
+	outgoingA, err = ns.GetOutgoingEdges(context.Background(), "a")
 	require.NoError(t, err)
 	require.Empty(t, outgoingA)
-	outgoingEP, err = ns.GetOutgoingEdges("ep")
+	outgoingEP, err = ns.GetOutgoingEdges(context.Background(), "ep")
 	require.NoError(t, err)
 	require.Empty(t, outgoingEP)
 }

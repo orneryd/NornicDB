@@ -45,7 +45,7 @@ func TestRemoteHTTPGraphFunctionTransportControls(t *testing.T) {
 		{"keys", relationship, []any{"id", "weight"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, found, err := EvaluateFunction(tt.name, []string{"v"}, Context{Eval: func(string) (any, error) { return tt.value, nil }})
+			got, found, err := EvaluateFunction(context.Background(), tt.name, []string{"v"}, Context{Eval: func(string) (any, error) { return tt.value, nil }})
 			require.True(t, found)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)

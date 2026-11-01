@@ -104,7 +104,7 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 			if depth == 0 {
 				effects.barrier = true
 			}
-		case cypherantlr.CypherParserRULE_matchSt:
+		case cypherantlr.CypherParserRULE_matchSt, cypherantlr.CypherParserRULE_loadCSVSt:
 			reading, writing, creating = true, false, false
 			if depth == 0 {
 				effects.expands = true

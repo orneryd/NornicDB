@@ -170,21 +170,20 @@ func TestSystemProceduresSeeNoSystemRecords(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	_, err = view.GetFirstNodeByLabel("_User")
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	nodes, err := view.GetNodesByLabel("_User")
+	nodes, err := view.GetNodesByLabel(ctx, "_User")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
-	nodes, err = view.AllNodes()
+	nodes, err = view.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Empty(t, nodes)
-	require.Empty(t, view.GetAllNodes())
-	edges, err := view.AllEdges()
+	edges, err := view.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Empty(t, edges)
 	for _, read := range []func() ([]*storage.Edge, error){
-		func() ([]*storage.Edge, error) { return view.GetOutgoingEdges("user:probe") },
-		func() ([]*storage.Edge, error) { return view.GetIncomingEdges("user:probe") },
-		func() ([]*storage.Edge, error) { return view.GetEdgesBetween("a", "b") },
-		func() ([]*storage.Edge, error) { return view.GetEdgesByType("R") },
+		func() ([]*storage.Edge, error) { return view.GetOutgoingEdges(context.Background(), "user:probe") },
+		func() ([]*storage.Edge, error) { return view.GetIncomingEdges(context.Background(), "user:probe") },
+		func() ([]*storage.Edge, error) { return view.GetEdgesBetween(context.Background(), "a", "b") },
+		func() ([]*storage.Edge, error) { return view.GetEdgesByType(context.Background(), "R") },
 	} {
 		edges, err := read()
 		require.NoError(t, err)
@@ -197,7 +196,7 @@ func TestSystemProceduresSeeNoSystemRecords(t *testing.T) {
 	require.Zero(t, view.GetInDegree("user:probe"))
 	require.Zero(t, view.GetOutDegree("user:probe"))
 	require.NotNil(t, view.GetSchema())
-	batch, err := view.BatchGetNodes([]storage.NodeID{"user:probe"})
+	batch, err := view.BatchGetNodes(context.Background(), []storage.NodeID{"user:probe"})
 	require.NoError(t, err)
 	require.Empty(t, batch)
 	for _, count := range []func() (int64, error){

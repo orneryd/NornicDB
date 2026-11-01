@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 )
@@ -108,7 +107,7 @@ func (l *transactionLifecycle) begin(
 		beginPanic, beginErr = invokeTransactionBegin(fabric.WithTransactionLifetime(txCtx, parent), executor, metadata)
 	}
 	if beginErr == nil && beginPanic == nil {
-		beginErr = bulk.ObserveContext(txCtx)
+		beginErr = txCtx.Err()
 	}
 	if beginErr != nil || beginPanic != nil {
 		cancel()

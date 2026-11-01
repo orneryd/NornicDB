@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"testing"
@@ -107,11 +108,11 @@ func requireHubDeleted(t *testing.T, engine *BadgerEngine) {
 	_, err := engine.GetStoredNode("test:hub")
 	require.ErrorIs(t, err, ErrNotFound)
 
-	require.Equal(t, []string{"test:e4"}, storedEdgeIDs(engine.GetStoredIncomingEdges("test:peer1")))
-	require.Empty(t, storedEdgeIDs(engine.GetStoredOutgoingEdges("test:peer2")))
-	require.Empty(t, storedEdgeIDs(engine.GetStoredIncomingEdges("test:hiddenPeer")))
-	require.Empty(t, storedEdgeIDs(engine.GetStoredEdgesByType("DECAYED")))
-	require.Equal(t, []string{"test:e4"}, storedEdgeIDs(engine.GetStoredEdgesByType("SUPPRESSED")))
+	require.Equal(t, []string{"test:e4"}, storedEdgeIDs(engine.GetStoredIncomingEdges(context.Background(), "test:peer1")))
+	require.Empty(t, storedEdgeIDs(engine.GetStoredOutgoingEdges(context.Background(), "test:peer2")))
+	require.Empty(t, storedEdgeIDs(engine.GetStoredIncomingEdges(context.Background(), "test:hiddenPeer")))
+	require.Empty(t, storedEdgeIDs(engine.GetStoredEdgesByType(context.Background(), "DECAYED")))
+	require.Equal(t, []string{"test:e4"}, storedEdgeIDs(engine.GetStoredEdgesByType(context.Background(), "SUPPRESSED")))
 
 	count := func(n int64, err error) int64 {
 		t.Helper()

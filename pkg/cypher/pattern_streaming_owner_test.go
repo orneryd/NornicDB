@@ -20,13 +20,16 @@ type patternPhaseScanEngine struct {
 	visited atomic.Int64
 }
 
+// Pin the optional capability: a signature drift must fail compilation.
+var _ storage.ScopedLabelNodeReader = (*patternPhaseScanEngine)(nil)
+
 // Whole-node scans use StreamNodesWithOptions since #1608; projected scans
 // and whole-node WITH bindings must draw from the same synthetic population.
 func (s *patternPhaseScanEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
 	if opts.Label != "" && opts.Label != "Item" {
 		return s.MemoryEngine.StreamNodesWithOptions(ctx, opts, visit)
 	}
-	return s.StreamNodesByLabelProjectedInScope(opts.Prefix, "Item", opts.Projection, func(node *storage.Node) error {
+	return s.StreamNodesByLabelProjectedInScope(ctx, opts.Prefix, "Item", opts.Projection, func(node *storage.Node) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -34,9 +37,9 @@ func (s *patternPhaseScanEngine) StreamNodesWithOptions(ctx context.Context, opt
 	})
 }
 
-func (s *patternPhaseScanEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*storage.Node) error) error {
+func (s *patternPhaseScanEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*storage.Node) error) error {
 	if label != "Item" {
-		return s.MemoryEngine.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
+		return s.MemoryEngine.StreamNodesByLabelProjectedInScope(ctx, scope, label, properties, visit)
 	}
 	for i := 0; i < s.size; i++ {
 		s.visited.Add(1)

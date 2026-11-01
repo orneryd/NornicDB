@@ -455,12 +455,12 @@ func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand 
 // apocSteps lists the relationships the filter steps follow from node: no
 // steps follow every relationship. The path algorithms (dijkstra, aStar,
 // allSimplePaths) read their relTypesAndDirections through it too (#1185).
-func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
+func (e *StorageExecutor) apocSteps(ctx context.Context, node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
 	if len(steps) == 0 {
 		steps = []apocRelationshipStep{{direction: "both"}}
 	}
-	out, _ := e.storage.GetOutgoingEdges(node)
-	in, _ := e.storage.GetIncomingEdges(node)
+	out, _ := e.storage.GetOutgoingEdges(ctx, node)
+	in, _ := e.storage.GetIncomingEdges(ctx, node)
 	var edges []*storage.Edge
 	seen := make(map[storage.EdgeID]bool)
 	take := func(edge *storage.Edge, step apocRelationshipStep) {
@@ -571,7 +571,7 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 			if err != nil {
 				return nil, err
 			}
-			edges := e.apocSteps(step.node.ID, filter)
+			edges := e.apocSteps(ctx, step.node.ID, filter)
 			next := make([]*apocStep, 0, len(edges))
 			for _, edge := range edges {
 				// A path never turns straight back along the relationship
@@ -787,7 +787,7 @@ func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []in
 	}
 	relationships := make([]interface{}, 0)
 	for _, value := range nodes {
-		edges, _ := e.storage.GetOutgoingEdges(value.(*storage.Node).ID)
+		edges, _ := e.storage.GetOutgoingEdges(ctx, value.(*storage.Node).ID)
 		for _, edge := range edges {
 			if members[edge.EndNode] {
 				relationships = append(relationships, edge)

@@ -196,7 +196,7 @@ func TestExplicitTransactionRejectsMixedSchemaAndData(t *testing.T) {
 			require.ErrorContains(t, mixErr, "ForbiddenDueToTransactionType")
 			_, exists := store.GetSchema().GetPropertyIndex("Account", "accountID")
 			require.False(t, exists)
-			nodes, err := store.GetNodesByLabel("Account")
+			nodes, err := store.GetNodesByLabel(ctx, "Account")
 			require.NoError(t, err)
 			require.Empty(t, nodes)
 		})

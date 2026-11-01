@@ -29,7 +29,7 @@ func TestSystemDatabaseChecksScriptBodiesAndProcedureResults(t *testing.T) {
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SemanticError")
 		require.ErrorContains(t, err, refused.message, refused.statement)
 	}
-	nodes, err := inner.AllNodes()
+	nodes, err := inner.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Empty(t, nodes, "a refused script writes nothing")
 

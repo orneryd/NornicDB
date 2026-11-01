@@ -70,9 +70,9 @@ func TestTracedEngine_SpanContract(t *testing.T) {
 				}})
 			}},
 		{"GetNodesByLabel", want{"nornicdb.storage.GetNodesByLabel", "node"},
-			func(te *TracedEngine) { _, _ = te.GetNodesByLabel("L") }},
+			func(te *TracedEngine) { _, _ = te.GetNodesByLabel(context.Background(), "L") }},
 		{"AllNodes", want{"nornicdb.storage.AllNodes", "node"},
-			func(te *TracedEngine) { _, _ = te.AllNodes() }},
+			func(te *TracedEngine) { _, _ = te.AllNodes(context.Background()) }},
 		{"BulkCreateNodes", want{"nornicdb.storage.BulkCreateNodes", "node"},
 			func(te *TracedEngine) {
 				_ = te.BulkCreateNodes([]*Node{
@@ -81,7 +81,9 @@ func TestTracedEngine_SpanContract(t *testing.T) {
 				})
 			}},
 		{"BatchGetNodes", want{"nornicdb.storage.BatchGetNodes", "node"},
-			func(te *TracedEngine) { _, _ = te.BatchGetNodes([]NodeID{"trace:n2", "trace:n3"}) }},
+			func(te *TracedEngine) {
+				_, _ = te.BatchGetNodes(context.Background(), []NodeID{"trace:n2", "trace:n3"})
+			}},
 		{"CreateEdge", want{"nornicdb.storage.CreateEdge", "edge"},
 			func(te *TracedEngine) {
 				_ = te.CreateEdge(&Edge{ID: "trace:e1", StartNode: "trace:n1", EndNode: "trace:n2", Type: "REL"})
@@ -96,13 +98,13 @@ func TestTracedEngine_SpanContract(t *testing.T) {
 				}})
 			}},
 		{"GetOutgoingEdges", want{"nornicdb.storage.GetOutgoingEdges", "edge"},
-			func(te *TracedEngine) { _, _ = te.GetOutgoingEdges("trace:n1") }},
+			func(te *TracedEngine) { _, _ = te.GetOutgoingEdges(context.Background(), "trace:n1") }},
 		{"GetIncomingEdges", want{"nornicdb.storage.GetIncomingEdges", "edge"},
-			func(te *TracedEngine) { _, _ = te.GetIncomingEdges("trace:n2") }},
+			func(te *TracedEngine) { _, _ = te.GetIncomingEdges(context.Background(), "trace:n2") }},
 		{"GetEdgesByType", want{"nornicdb.storage.GetEdgesByType", "edge"},
-			func(te *TracedEngine) { _, _ = te.GetEdgesByType("REL") }},
+			func(te *TracedEngine) { _, _ = te.GetEdgesByType(context.Background(), "REL") }},
 		{"AllEdges", want{"nornicdb.storage.AllEdges", "edge"},
-			func(te *TracedEngine) { _, _ = te.AllEdges() }},
+			func(te *TracedEngine) { _, _ = te.AllEdges(context.Background()) }},
 		{"BulkCreateEdges", want{"nornicdb.storage.BulkCreateEdges", "edge"},
 			func(te *TracedEngine) {
 				_ = te.BulkCreateEdges([]*Edge{

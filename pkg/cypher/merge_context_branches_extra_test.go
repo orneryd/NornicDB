@@ -64,7 +64,7 @@ func TestExecuteMergeWithContext_StandaloneSetAndRelationshipMerge(t *testing.T)
 
 func findNodeByProp(t *testing.T, store storage.Engine, label, prop string, value interface{}) *storage.Node {
 	t.Helper()
-	nodes, err := store.GetNodesByLabel(label)
+	nodes, err := store.GetNodesByLabel(context.Background(), label)
 	require.NoError(t, err)
 	for _, n := range nodes {
 		if n != nil && n.Properties[prop] == value {
@@ -108,7 +108,7 @@ func TestCompoundMatchMergeWithWindowPreservesBindings(t *testing.T) {
 					require.Equal(t, []interface{}{id, "WINDOW_EDGE", id}, result.Rows[index])
 				}
 			}
-			targets, err := store.GetNodesByLabel("WindowTarget")
+			targets, err := store.GetNodesByLabel(ctx, "WindowTarget")
 			require.NoError(t, err)
 			require.Len(t, targets, len(testCase.ids))
 			for _, id := range testCase.ids {

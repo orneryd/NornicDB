@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -45,11 +46,11 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 	_, err = engine.CreateNode(&Node{ID: "gen:t"})
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "gen:st", StartNode: "gen:s", EndNode: "gen:t", Type: "T"}))
-	_, err = engine.GetOutgoingEdges("gen:s")
+	_, err = engine.GetOutgoingEdges(context.Background(), "gen:s")
 	require.NoError(t, err)
 	require.Contains(t, engine.outgoingAdjCache, NodeID("gen:s"))
 	engine.cacheInvalidateEdges()
-	edges, err := engine.GetOutgoingEdges("gen:s")
+	edges, err := engine.GetOutgoingEdges(context.Background(), "gen:s")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Contains(t, engine.edgeCache, EdgeID("gen:st"))
@@ -77,7 +78,7 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 	require.Equal(t, stale, engine.labelCacheDropStaleFirst(stale, "L", "gen:other"), "another write since: stays stale")
 	require.Equal(t, NodeID("gen:n"), engine.labelFirstNodeCache["L"], "only the stale id is dropped")
 
-	_, err = engine.GetEdgesByType("T")
+	_, err = engine.GetEdgesByType(context.Background(), "T")
 	require.NoError(t, err)
 	require.Contains(t, engine.edgeTypeCache, "T")
 	engine.edgeTypeCacheFill(engine.edgeTypeCacheGen.current(), "retained", nil, engine.db.oracle.published.Load())
@@ -156,7 +157,7 @@ func TestLabelScanReplacesFirstNodeThatLostTheLabel(t *testing.T) {
 	engine.labelCacheSetFirst(engine.labelFirstCacheGen.current(), "Person", "gen:other", engine.db.oracle.published.Load())
 
 	var visited []NodeID
-	require.NoError(t, engine.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+	require.NoError(t, engine.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool {
 		visited = append(visited, id)
 		return true
 	}))

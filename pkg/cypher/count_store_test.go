@@ -180,13 +180,13 @@ func (f failingCountEngine) EdgeCountByEndLabel(string, string) (int64, error) {
 
 func (f failingCountEngine) NodeCountByLabel(string) (int64, error) { return 0, errCountStore }
 
-func (f failingCountEngine) AllEdges() ([]*storage.Edge, error) {
+func (f failingCountEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	if f.nilEdges {
 		return []*storage.Edge{nil}, nil
 	}
 	return nil, errCountStore
 }
-func (f failingCountEngine) GetEdgesByType(string) ([]*storage.Edge, error) {
+func (f failingCountEngine) GetEdgesByType(ctx context.Context, _ string) ([]*storage.Edge, error) {
 	if f.nilEdges {
 		return []*storage.Edge{nil}, nil
 	}

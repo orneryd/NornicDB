@@ -400,16 +400,15 @@ type Engine interface {
 	DeleteEdge(id EdgeID) error
 
 	// Query operations
-	GetNodesByLabel(label string) ([]*Node, error)
+	GetNodesByLabel(ctx context.Context, label string) ([]*Node, error)
 	GetFirstNodeByLabel(label string) (*Node, error) // Optimized for LIMIT 1
-	GetOutgoingEdges(nodeID NodeID) ([]*Edge, error)
-	GetIncomingEdges(nodeID NodeID) ([]*Edge, error)
-	GetEdgesBetween(startID, endID NodeID) ([]*Edge, error)
+	GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
+	GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
+	GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error)
 	GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge
-	GetEdgesByType(edgeType string) ([]*Edge, error) // Fast lookup by edge type
-	AllNodes() ([]*Node, error)
-	AllEdges() ([]*Edge, error)
-	GetAllNodes() []*Node
+	GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) // Fast lookup by edge type
+	AllNodes(ctx context.Context) ([]*Node, error)
+	AllEdges(ctx context.Context) ([]*Edge, error)
 
 	// Streaming operations
 	// StreamNodesWithOptions iterates nodes one at a time without materializing
@@ -436,7 +435,7 @@ type Engine interface {
 	// Batch read operations (for traversal performance)
 	// BatchGetNodes fetches multiple nodes in a single operation
 	// Returns a map for O(1) lookup by ID
-	BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error)
+	BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error)
 
 	// Lifecycle
 	Close() error
@@ -514,7 +513,7 @@ type NamespaceLabelStatsProvider interface {
 // directions into a single view should implement this; callers fall back to
 // the pair of single-direction calls when an engine doesn't.
 type AdjacentEdgesEngine interface {
-	GetAdjacentEdges(nodeID NodeID) (outgoing, incoming []*Edge, err error)
+	GetAdjacentEdges(ctx context.Context, nodeID NodeID) (outgoing, incoming []*Edge, err error)
 }
 
 // ProjectedNodeReader is an optional extension interface for reading a node
@@ -577,7 +576,7 @@ type QueryNodeReader interface {
 // operation. Missing IDs are omitted from the returned map, matching
 // BatchGetNodes semantics.
 type BatchNodeWithoutEmbeddingsReader interface {
-	BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]*Node, error)
+	BatchGetNodesWithoutEmbeddings(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error)
 }
 
 // NodeEmbeddingMetaReader is an optional extension interface for reading a
@@ -603,7 +602,7 @@ type BatchNodeWithoutEmbeddingsCapability interface {
 // A nil properties slice requests the full node; an empty non-nil slice
 // requests no user properties.
 type ProjectedLabelNodeReader interface {
-	StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error
+	StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error
 }
 
 // ProjectedPrefixNodeReader is an optional extension interface for iterating
@@ -828,11 +827,11 @@ type MVCCVisibilityEngine interface {
 // snapshot-visible graph queries that resolve label, type, and topology against
 // MVCC history instead of only the current materialized indexes.
 type MVCCIndexedVisibilityEngine interface {
-	GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error)
-	GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error)
-	GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error)
-	GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error)
-	GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error)
+	GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error)
+	GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error)
+	GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error)
+	GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error)
+	GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error)
 }
 
 // MVCCHeadEngine is an optional extension interface for persisted head lookups.
@@ -873,8 +872,8 @@ type MVCCLatestEffectiveEngine interface {
 
 // MVCCEnumerationEngine is an optional extension interface for latest-visible iteration.
 type MVCCEnumerationEngine interface {
-	BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Node, error)
-	IterateLatestVisibleNodes(yield func(*Node) error) error
+	BatchGetNodesLatestVisible(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error)
+	IterateLatestVisibleNodes(ctx context.Context, yield func(*Node) error) error
 	IterateLatestVisibleEdges(yield func(*Edge) error) error
 }
 
@@ -1423,7 +1422,7 @@ func StreamNodesWithFallback(ctx context.Context, engine Engine, chunkSize int, 
 	}
 
 	// Fallback: load all but process in chunks to allow GC between
-	nodes, err := engine.AllNodes()
+	nodes, err := engine.AllNodes(ctx)
 	if err != nil {
 		return err
 	}
@@ -1457,7 +1456,7 @@ func StreamEdgesWithFallback(ctx context.Context, engine Engine, chunkSize int, 
 	}
 
 	// Fallback: load all but process in chunks
-	edges, err := engine.AllEdges()
+	edges, err := engine.AllEdges(ctx)
 	if err != nil {
 		return err
 	}

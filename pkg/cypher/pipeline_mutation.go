@@ -208,7 +208,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				before := cloneStringAnyMap(node.Properties)
 				written := simplePropertyWrites(node.Properties, simpleProperty, value)
 				setNodeProperty(node, simpleProperty, value)
-				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, wrapSetError); err != nil {
+				if err := e.persistSetEntities(ctx, store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -221,7 +221,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				before := cloneStringAnyMap(relationship.Properties)
 				written := simplePropertyWrites(relationship.Properties, simpleProperty, value)
 				setRelationshipProperty(relationship, simpleProperty, value)
-				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, wrapSetError); err != nil {
+				if err := e.persistSetEntities(ctx, store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -234,7 +234,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 		if !handled || err != nil {
 			return nil, handled, err
 		}
-		if err := e.persistSetEntities(store, states, stats, wrapSetError); err != nil {
+		if err := e.persistSetEntities(ctx, store, states, stats, wrapSetError); err != nil {
 			return nil, true, err
 		}
 	}
@@ -702,7 +702,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties, mergeNodeWritesFromContext(ctx).writes(variable)); err != nil {
 						return nil, nil, err
 					}
-					matches, scanned, findErr := e.findMergeNodesScanned(e.getStorage(ctx), labels, properties)
+					matches, scanned, findErr := e.findMergeNodesScanned(ctx, e.getStorage(ctx), labels, properties)
 					if findErr != nil {
 						return nil, nil, findErr
 					}

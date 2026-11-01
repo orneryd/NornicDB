@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"testing"
 
+	nerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 )
@@ -52,23 +53,26 @@ func TestSpecializedCallErrorsHaveTypedIdentity(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	t.Run("parameter machine data", func(t *testing.T) {
-		ctx := context.WithValue(context.Background(), paramsKey, map[string]interface{}{})
-		_, err := exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 10, $embedding)")
-		require.EqualError(t, err, "parameter $embedding not provided")
+		// A parameter the statement never supplied is ParameterMissing before
+		// the vector procedure runs, as in Neo4j (#657).
+		_, err := exec.Execute(context.Background(), "CALL db.index.vector.queryNodes('idx', 10, $embedding)", map[string]interface{}{})
+		require.EqualError(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): embedding")
 
-		var localizedErr *localization.LocalizedError
-		require.ErrorAs(t, err, &localizedErr)
-		require.Equal(t, localization.MessageCypherSpecializedCallsParameterNotProvided, localizedErr.Message.ID)
-		require.Equal(t, "embedding", localizedErr.Message.Data["Parameter"])
+		code, message := nerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.ParameterMissing", code)
+		require.Equal(t, "Expected parameter(s): embedding", message)
 	})
 
-	t.Run("private parser descriptor", func(t *testing.T) {
-		_, _, _, err := exec.parseVectorQueryParams("CALL db.index.vector.queryNodes")
-		require.EqualError(t, err, "missing parameters")
+	t.Run("public descriptor", func(t *testing.T) {
+		// Search text without an embedder keeps the node vector procedure's
+		// localized message identity on the public path.
+		_, err := exec.Execute(context.Background(), "CALL db.index.vector.queryNodes('idx', 10, 'hello')", nil)
+		require.EqualError(t, err, "Failed to invoke procedure `db.index.vector.queryNodes`: Caused by: string query provided but no embedder configured; use vector array or configure embedding service")
 
 		var localizedErr *localization.LocalizedError
 		require.ErrorAs(t, err, &localizedErr)
-		require.Equal(t, localization.MessageCypherSpecializedCallsVectorParametersMissing, localizedErr.Message.ID)
+		require.Equal(t, localization.MessageCypherSpecializedCallsStringQueryEmbedderRequired, localizedErr.Message.ID)
+		require.Equal(t, string(localization.MessageCypherSpecializedCallsStringQueryEmbedderRequired), localizedErr.Code)
 	})
 
 	t.Run("errors as", func(t *testing.T) {

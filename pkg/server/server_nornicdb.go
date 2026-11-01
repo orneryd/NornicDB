@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
-	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -809,7 +808,7 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusOK)
 	err := json.NewEncoder(w).Encode(body)
 	if err == nil {
-		err = bulk.ObserveContext(r.Context())
+		err = r.Context().Err()
 	}
 	if err != nil && page.QID != "" {
 		_ = s.db.DiscardSearchContinuation(owner, page.QID, database)
@@ -839,7 +838,7 @@ func runEmbedWithTimeout(parent context.Context, timeout time.Duration, fn func(
 	embedCtx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	emb, err := fn(embedCtx)
-	if errors.Is(err, context.DeadlineExceeded) || bulk.ObserveContext(embedCtx) == context.DeadlineExceeded {
+	if errors.Is(err, context.DeadlineExceeded) || embedCtx.Err() == context.DeadlineExceeded {
 		return nil, context.DeadlineExceeded
 	}
 	return emb, err

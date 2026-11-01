@@ -84,7 +84,7 @@ func TestBetweenSelfHealWritesOnlyWhatIsStored(t *testing.T) {
 		})
 	})
 	defer restore()
-	_, err = b.GetEdgesBetween("test:a", "test:b")
+	_, err = b.GetEdgesBetween(context.Background(), "test:a", "test:b")
 	require.NoError(t, err)
 	restore()
 	require.NoError(t, b.FlushWriteBehind(nil))

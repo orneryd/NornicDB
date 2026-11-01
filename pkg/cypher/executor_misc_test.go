@@ -2179,69 +2179,65 @@ func TestEmbedQueryChunkedAndVectorQueryNodeBranches(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 2, [0.1,0.2])")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 2, [0.1,0.2])", nil)
 	require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureCallFailed")
+	require.ErrorContains(t, err, "There is no such vector schema index: idx")
 
-	_, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 2, 'hello')")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 2, 'hello')", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no embedder configured")
 
-	res, err := exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 2, $q)")
-	require.NoError(t, err)
-	assert.Empty(t, res.Rows)
+	// A parameter the statement never supplied is ParameterMissing: the call
+	// does not run and returns no rows.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 2, $q)", nil)
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): q")
 
-	ctxMissing := context.WithValue(ctx, paramsKey, map[string]interface{}{"x": []float32{0.1, 0.2}})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxMissing, "CALL db.index.vector.queryNodes('idx', 2, $q)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parameter $q not provided")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 2, $q)", map[string]interface{}{"x": []float32{0.1, 0.2}})
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): q")
 
-	ctxBadType := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": true})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxBadType, "CALL db.index.vector.queryNodes('idx', 2, $q)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported type")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 2, $q)", map[string]interface{}{"q": true})
+	require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Boolean")
+	require.NotContains(t, err.Error(), "parameter $")
 
-	_, err = exec.callDbIndexVectorQueryNodes(ctxBadType, "CALL db.index.vector.queryNodes('idx', 2)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported type")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 2)", map[string]interface{}{"q": true})
+	require.ErrorContains(t, err, "procedure db.index.vector.queryNodes requires at least 3 arguments, got 2")
 }
 
 func TestVectorParsingProcedureBranches(t *testing.T) {
+	// The public procedure call is the only vector query syntax: a malformed
+	// statement is rejected before the procedure runs, and a well formed one
+	// searches the index it names.
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
+	ctx := context.Background()
 
-	_, _, _, err := exec.parseVectorQueryParams("CALL db.labels()")
+	_, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes", nil)
+	require.EqualError(t, err, "Neo.ClientError.Statement.ParameterMissing: missing implicit procedure parameter indexName")
+
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes 'idx', 2, [1,2]", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "procedure not found")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
-	_, _, _, err = exec.parseVectorQueryParams("CALL db.index.vector.queryNodes 'idx', 2, [1,2]")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing parameters")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 2, [1,2]", nil)
+	require.ErrorContains(t, err, "unbalanced parentheses")
 
-	_, _, _, err = exec.parseVectorQueryParams("CALL db.index.vector.queryNodes('idx', 2, [1,2]")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unmatched parenthesis")
+	// A well formed call binds its index name, neighbour count and query
+	// argument, then fails on the index that does not exist.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 3, [0.1, 0.2])", nil)
+	require.ErrorContains(t, err, "There is no such vector schema index: idx")
 
-	indexName, k, input, err := exec.parseVectorQueryParams("CALL db.index.vector.queryNodes('idx', 3, [0.1, 0.2])")
-	require.NoError(t, err)
-	assert.Equal(t, "idx", indexName)
-	assert.Equal(t, 3, k)
-	assert.Equal(t, []float32{0.1, 0.2}, input.vector)
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx2', 5, 'hello')", nil)
+	require.ErrorContains(t, err, "string query provided but no embedder configured")
 
-	_, _, input, err = exec.parseVectorQueryParams("CALL db.index.vector.queryRelationships('idx2', 5, 'hello')")
-	require.NoError(t, err)
-	assert.Equal(t, "hello", input.stringQuery)
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx3', 7, $q)", map[string]interface{}{"q": []float32{0.1, 0.2}})
+	require.ErrorContains(t, err, "There is no such vector schema index: idx3")
 
-	_, _, input, err = exec.parseVectorQueryParams("CALL db.index.vector.queryNodes('idx3', 7, $q)")
-	require.NoError(t, err)
-	assert.Equal(t, "q", input.paramName)
-
+	// The shared argument splitter still respects quotes and nesting.
 	parts := splitTopLevelComma("'a,b',[1,2],{\"k\":\"v\"},\"x,y\"")
 	require.Len(t, parts, 4)
 	assert.Equal(t, "'a,b'", strings.TrimSpace(parts[0]))
 	assert.Equal(t, "[1,2]", strings.TrimSpace(parts[1]))
-
-	assert.Equal(t, []float32{1.5, -2}, parseInlineVector("[1.5, -2, nope]"))
 }
 
 func TestExecuteMatchCreateBlock_AdditionalBranches(t *testing.T) {

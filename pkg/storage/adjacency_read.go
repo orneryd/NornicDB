@@ -1,6 +1,9 @@
 package storage
 
-import "sync/atomic"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // Tests can park a captured physical read without holding a cache mutex that
 // durability itself must acquire. The cache-only path does not consult it.
@@ -18,7 +21,10 @@ const (
 // readAdjacency owns request routing, direction order and result projection.
 // Only an actual namespace view qualifies IDs. Optional providers are bound on
 // its immediate decorator; native physical readers are never found by unwrap.
-func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility) (out, in []*Edge, err error) {
+func readAdjacency(ctx context.Context, engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility) (out, in []*Edge, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	var namespace *NamespacedEngine
 	if n, ok := engine.(*NamespacedEngine); ok {
 		namespace = n
@@ -62,17 +68,17 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 		}
 		err = consume(func(outgoing bool) ([]*Edge, error) {
 			if kind == adjacencyBetween {
-				return provider.GetEdgesBetweenVisibleAt(start, end, *version)
+				return provider.GetEdgesBetweenVisibleAt(ctx, start, end, *version)
 			}
 			if outgoing {
-				return provider.GetOutgoingEdgesVisibleAt(start, *version)
+				return provider.GetOutgoingEdgesVisibleAt(ctx, start, *version)
 			}
-			return provider.GetIncomingEdgesVisibleAt(start, *version)
+			return provider.GetIncomingEdgesVisibleAt(ctx, start, *version)
 		})
 	} else {
 		native, isNative := engine.(*BadgerEngine)
 		if isNative && kind != adjacencyBetween {
-			reader, captureErr := native.captureAdjacencyReader(start, wantOut, wantIn, visibility)
+			reader, captureErr := native.captureAdjacencyReader(ctx, start, wantOut, wantIn, visibility)
 			if captureErr != nil {
 				err = captureErr
 			} else {
@@ -82,7 +88,7 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 						(*observe)(native)
 					}
 				}
-				err = consume(reader.read)
+				err = consume(func(outgoing bool) ([]*Edge, error) { return reader.read(ctx, outgoing) })
 				// End physical ownership before any namespace copying/projection.
 				if reader.view != nil {
 					reader.view.Close()
@@ -94,16 +100,16 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 				combined, _ = engine.(AdjacentEdgesEngine)
 			}
 			if combined != nil {
-				out, in, err = combined.GetAdjacentEdges(start)
+				out, in, err = combined.GetAdjacentEdges(ctx, start)
 			} else {
 				err = consume(func(outgoing bool) ([]*Edge, error) {
 					if kind == adjacencyBetween {
-						return engine.GetEdgesBetween(start, end)
+						return engine.GetEdgesBetween(ctx, start, end)
 					}
 					if outgoing {
-						return engine.GetOutgoingEdges(start)
+						return engine.GetOutgoingEdges(ctx, start)
 					}
-					return engine.GetIncomingEdges(start)
+					return engine.GetIncomingEdges(ctx, start)
 				})
 			}
 		}
@@ -115,8 +121,12 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 		}
 		pinned := version != nil
 		// Physical reader leases have ended before copying namespace projections.
-		out = namespace.toUserEdgesInNamespace(out, false, pinned)
-		in = namespace.toUserEdgesInNamespace(in, false, pinned)
+		if out, err = namespace.toUserEdgesInNamespace(ctx, out, false, pinned); err != nil {
+			return nil, nil, err
+		}
+		if in, err = namespace.toUserEdgesInNamespace(ctx, in, false, pinned); err != nil {
+			return nil, nil, err
+		}
 	}
 	return out, in, err
 }
