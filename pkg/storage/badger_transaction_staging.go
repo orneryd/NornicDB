@@ -185,7 +185,8 @@ func (tx *BadgerTransaction) acquireCommitPublicationLocked() error {
 		return nil
 	}
 	if len(tx.pendingEdgeTypeLabelCountDeltas) > 0 {
-		if err := tx.engine.edgeTypeCountWriteMu.LockContext(tx.commitCtx); err != nil {
+		// The count-lock admission runs on the selected non-nil phase scope.
+		if err := tx.engine.edgeTypeCountWriteMu.LockContext(commitPreparationLifetime(tx.commitCtx)); err != nil {
 			return err
 		}
 		tx.commitEdgeTypeCounts = true

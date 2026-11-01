@@ -70,6 +70,8 @@ func newNilFlow(p *Program) *nilFlow {
 }
 
 type nilFlow struct {
+	errorPreservation map[*ssa.UnOp]bool // source-verified exact deferred error loads, never caller-conditioned values
+
 	p        *Program
 	values   map[ssa.Value][]string
 	fields   map[*types.Var][]string
@@ -100,6 +102,43 @@ func (f *nilFlow) use(v ssa.Value, at ssa.Instruction) []string {
 	if x, ok := v.(*ssa.Extract); ok && at != nil {
 		if call, ok := x.Tuple.(*ssa.Call); ok && errorChecked(call, at.Block()) {
 			return f.resultOf(call, x.Index, true)
+		}
+	}
+	if phi, ok := v.(*ssa.Phi); ok && at != nil && at.Block() != nil {
+		pruned := false
+		for _, pred := range phi.Block().Preds {
+			pruned = pruned || edgeContradictsStableUse(pred, phi.Block(), at.Block())
+		}
+		if pruned {
+			key := struct {
+				value *ssa.Phi
+				use   ssa.Instruction
+			}{phi, at}
+			if f.active[key] {
+				f.discharge("proof: use-local phi cycle adds no new source")
+				return nil
+			}
+			f.active[key] = true
+			defer delete(f.active, key)
+			feasible := 0
+			for i, arm := range phi.Edges {
+				pred := phi.Block().Preds[i]
+				if edgeContradictsStableUse(pred, phi.Block(), at.Block()) {
+					continue
+				}
+				feasible++
+				if nonNilEdge(arm, pred, phi.Block()) {
+					continue
+				}
+				if w := f.use(arm, pred.Instrs[len(pred.Instrs)-1]); w != nil {
+					return w
+				}
+			}
+			if feasible == 0 {
+				return f.value(phi)
+			}
+			f.discharge("proof: phi edges contradicting the same stable predicate excluded at use")
+			return nil
 		}
 	}
 	return f.value(v)
@@ -187,9 +226,103 @@ func sameLocation(a, b ssa.Value) bool {
 	fa, okA := a.(*ssa.FieldAddr)
 	fb, okB := b.(*ssa.FieldAddr)
 	if okA || okB {
-		return okA && okB && cellObject(fa.X) == cellObject(fb.X) && fa.Field == fb.Field
+		return okA && okB && sameStableObject(fa.X, fb.X, 0) && fa.Field == fb.Field
 	}
 	return a == b
+}
+
+// sameStableObject compares SSA object identities, including a source-proven
+// stable re-read. Struct projections are immutable SSA values. Pointer loads
+// additionally require an acyclic, mutation/call-free interval on every path;
+// sharing a field name or a type never supplies object identity.
+func sameStableObject(a, b ssa.Value, depth int) bool {
+	if depth > 12 {
+		return false
+	}
+	a, b = cellObject(a), cellObject(b)
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil || a.Parent() != b.Parent() {
+		return false
+	}
+	if x, ok := a.(*ssa.Field); ok {
+		y, ok := b.(*ssa.Field)
+		return ok && x.Field == y.Field && sameStableObject(x.X, y.X, depth+1)
+	}
+	x, ok := a.(*ssa.UnOp)
+	y, other := b.(*ssa.UnOp)
+	if !ok || !other || x.Op != token.MUL || y.Op != token.MUL {
+		return false
+	}
+	if !sameStableAddress(x.X, y.X, depth+1) {
+		return false
+	}
+	return stableLoadInterval(x, y) || stableLoadInterval(y, x)
+}
+
+func sameStableAddress(a, b ssa.Value, depth int) bool {
+	if a == b {
+		return true
+	}
+	x, ok := a.(*ssa.FieldAddr)
+	y, other := b.(*ssa.FieldAddr)
+	return ok && other && x.Field == y.Field && sameStableObject(x.X, y.X, depth+1)
+}
+
+// stableLoadInterval rejects unknown calls, stores (including aliases/whole
+// objects), escapes, deferred execution and cycles. This deliberately does not
+// guess which writes are harmless; a future relaxation needs its own proof.
+func stableLoadInterval(first, last *ssa.UnOp) bool {
+	if first.Parent() != last.Parent() || first.Block() == nil || last.Block() == nil || !first.Block().Dominates(last.Block()) {
+		return false
+	}
+	active := map[*ssa.BasicBlock]bool{}
+	done := map[*ssa.BasicBlock]bool{}
+	var walk func(*ssa.BasicBlock, int) bool
+	walk = func(block *ssa.BasicBlock, end int) bool {
+		if active[block] {
+			return false
+		}
+		if done[block] {
+			return true
+		}
+		active[block] = true
+		defer delete(active, block)
+		for i := end - 1; i >= 0; i-- {
+			ins := block.Instrs[i]
+			if ins == first {
+				return true
+			}
+			switch ins := ins.(type) {
+			case *ssa.Store, *ssa.Go, *ssa.RunDefers, *ssa.Defer, *ssa.MakeClosure, *ssa.Send, *ssa.Select, *ssa.MapUpdate:
+				return false
+			case *ssa.UnOp:
+				if ins.Op == token.ARROW {
+					return false
+				}
+			case *ssa.Call:
+				// Builtins such as copy/clear/append can overwrite aliased storage.
+				return false
+			}
+		}
+		if len(block.Preds) == 0 {
+			return false
+		}
+		for _, pred := range block.Preds {
+			if !walk(pred, len(pred.Instrs)) {
+				return false
+			}
+		}
+		done[block] = true
+		return true
+	}
+	for i, ins := range last.Block().Instrs {
+		if ins == last {
+			return walk(last.Block(), i)
+		}
+	}
+	return false
 }
 
 // cellObject names the object a value refers to. A load of an immutable cell
@@ -527,28 +660,47 @@ func (f *nilFlow) value(v ssa.Value) (witness []string) {
 	return nil
 }
 
-func (f *nilFlow) parameter(param *ssa.Parameter) []string {
-	fn := param.Parent()
-	index := -1
-	for i, candidate := range fn.Params {
+// sourceParameterIndex resolves a parameter once before walking its attributed
+// source sites. The cached ordinal is checked by sourceArgumentAt on each use.
+func sourceParameterIndex(param *ssa.Parameter) int {
+	for i, candidate := range param.Parent().Params {
 		if candidate == param {
-			index = i
+			return i
 		}
 	}
+	return -1
+}
+
+// sourceArgumentAt aligns a parameter with an already-attributed source site.
+// Interface/bound-method source calls may omit a receiver; compiler wrappers
+// may expose an incompatible argument. This judges binding only, not target
+// membership, nil semantics, or whether the call executes.
+func sourceArgumentAt(param *ssa.Parameter, index int, site ssa.CallInstruction) (ssa.Value, bool) {
+	params := param.Parent().Params
+	if index < 0 || index >= len(params) || params[index] != param {
+		return nil, false
+	}
+	args := site.Common().Args
+	i := index - (len(params) - len(args))
+	if i < 0 || i >= len(args) || !types.AssignableTo(args[i].Type(), param.Type()) {
+		return nil, false
+	}
+	return args[i], true
+}
+
+func (f *nilFlow) parameter(param *ssa.Parameter) []string {
+	fn := param.Parent()
+	index := sourceParameterIndex(param)
 	sites := f.p.SourceCallSites(fn)
 	if len(sites) == 0 {
 		f.discharge("convention: parameter without visible call sites: " + fn.String())
 	}
 	for _, site := range sites {
-		// An interface or bound-method call passes no receiver argument: align
-		// by the difference, and skip a site whose argument is not this
-		// parameter's type (a call attributed through a compiler wrapper).
-		common := site.Common()
-		i := index - (len(fn.Params) - len(common.Args))
-		if i < 0 || i >= len(common.Args) || !types.AssignableTo(common.Args[i].Type(), param.Type()) {
+		arg, compatible := sourceArgumentAt(param, index, site)
+		if !compatible {
 			continue
 		}
-		if w := f.use(common.Args[i], site); w != nil {
+		if w := f.use(arg, site); w != nil {
 			return append(w, fmt.Sprintf("-> parameter %s of %s (call at %s)", param.Name(), fn.String(), f.position(site.Parent(), site.Pos())))
 		}
 	}
@@ -677,23 +829,16 @@ func (f *nilFlow) projectField(x ssa.Value, field *types.Var) []string {
 		}
 		f.active[key] = true
 		defer delete(f.active, key)
-		index := -1
-		for i, candidate := range param.Parent().Params {
-			if candidate == param {
-				index = i
-				break
-			}
-		}
+		index := sourceParameterIndex(param)
 		sites := f.p.SourceCallSites(param.Parent())
 		matched := false
 		for _, site := range sites {
-			args := site.Common().Args
-			i := index - (len(param.Parent().Params) - len(args))
-			if i < 0 || i >= len(args) || !types.AssignableTo(args[i].Type(), param.Type()) {
+			arg, compatible := sourceArgumentAt(param, index, site)
+			if !compatible {
 				continue
 			}
 			matched = true
-			if w := f.projectField(args[i], field); w != nil {
+			if w := f.projectField(arg, field); w != nil {
 				return w
 			}
 		}
@@ -741,6 +886,10 @@ func isPointer(t types.Type) bool {
 }
 
 func (f *nilFlow) load(load *ssa.UnOp) []string {
+	if f.deferredErrorNonNil(load) {
+		f.discharge("proof: source-verified conditional error preservation through exact deferred cell")
+		return nil
+	}
 	switch addr := load.X.(type) {
 	case *ssa.FieldAddr:
 		return f.definedRead(load, addr, "field "+structField(addr.X.Type(), addr.Field).Name())
@@ -994,7 +1143,13 @@ func (f *nilFlow) definedRead(load *ssa.UnOp, addr ssa.Value, name string) []str
 				w = append(w[:len(w):len(w)], "-> stored in "+name)
 			}
 		case d.whole != nil:
-			w = f.projectField(d.whole.Val, field)
+			if len(d.wholePath) > 1 {
+				projected := f.projectFieldAt(d.whole.Val, d.wholePath, load)
+				w = projected.Witness
+				f.trail = append(f.trail, projected.Why...)
+			} else {
+				w = f.projectField(d.whole.Val, field)
+			}
 			if w == nil {
 				f.discharge("proof: field projected from exact whole-base store")
 			}
@@ -1032,6 +1187,7 @@ func (f *nilFlow) storedValue(store *ssa.Store, load *ssa.UnOp) []string {
 type definition struct {
 	store                   *ssa.Store // a store to this very location
 	whole                   *ssa.Store // whole value stored to this field's exact base
+	wholePath               []int      // exact inline path when the store targets an ancestor
 	unknown                 bool       // a write that may change it to any of its possible values
 	nilBranch, nonNilBranch bool       // the known result of a nil test of it
 	tested                  *ssa.UnOp  // the tested load, for a nil-test result
@@ -1065,6 +1221,9 @@ func writesLocation(ins ssa.Instruction, addr ssa.Value, field *types.Var) (defi
 	case *ssa.Store:
 		if sameLocation(ins.Addr, addr) {
 			return definition{store: ins}, true
+		}
+		if path, ok := inlineAddressPath(addr, ins.Addr); ok && len(path) > 0 {
+			return definition{whole: ins, wholePath: path}, true
 		}
 		if field == nil {
 			return definition{}, false
@@ -1146,9 +1305,86 @@ func testedEdge(pred, succ *ssa.BasicBlock, addr ssa.Value, field *types.Var) (d
 	return definition{nonNilBranch: true, tested: load}, true
 }
 
+// edgeContradictsStableUse excludes only an edge testing the exact SSA value
+// whose opposite nil fact holds at origin. A value defined in a cyclic block
+// can denote a different dynamic definition on a prior iteration; parameters
+// remain stable throughout this frame. Distinct field reloads never match.
+func edgeContradictsStableUse(pred, succ, origin *ssa.BasicBlock) bool {
+	if pred == nil || succ == nil || origin == nil || len(pred.Instrs) == 0 {
+		return false
+	}
+	iff, ok := pred.Instrs[len(pred.Instrs)-1].(*ssa.If)
+	if !ok || len(pred.Succs) != 2 || pred.Succs[0] == pred.Succs[1] {
+		return false
+	}
+	value, nilIndex, ok := NilComparison(iff.Cond)
+	if !ok || !stableGuardValue(value) {
+		return false
+	}
+	nilKnown, nonNilKnown := NilAt(value, origin), NonNilAt(value, origin)
+	// Contradictory facts name an unsupported/unreachable origin, not a
+	// license to discard every incoming definition.
+	if nilKnown == nonNilKnown {
+		return false
+	}
+	if succ == pred.Succs[nilIndex] {
+		return nonNilKnown
+	}
+	return succ == pred.Succs[1-nilIndex] && nilKnown
+}
+
+func stableGuardValue(value ssa.Value) bool {
+	if _, ok := value.(*ssa.Parameter); ok {
+		return true
+	}
+	definition, ok := value.(ssa.Instruction)
+	if !ok || definition.Block() == nil {
+		return false
+	}
+	block := definition.Block()
+	seen := map[*ssa.BasicBlock]bool{}
+	pending := append([]*ssa.BasicBlock(nil), block.Succs...)
+	for len(pending) > 0 {
+		next := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if next == block {
+			return false
+		}
+		if !seen[next] {
+			seen[next] = true
+			pending = append(pending, next.Succs...)
+		}
+	}
+	return true
+}
+
 // reachingDefinitions walks backwards from load and returns, for every path,
 // the nearest definition of its location.
 func reachingDefinitions(load *ssa.UnOp, addr ssa.Value, field *types.Var) []definition {
+	// A nested base may itself be a freshly reloaded pointer. Its SSA
+	// definition is not the allocation boundary of the guarded object. Establish
+	// the stable source load before the ordinary backwards location walk stops
+	// at that reload; require both the nil guard and the complete interval.
+	for _, block := range load.Parent().Blocks {
+		if len(block.Instrs) == 0 || !block.Dominates(load.Block()) {
+			continue
+		}
+		branch, ok := block.Instrs[len(block.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		value, _, ok := NilComparison(branch.Cond)
+		if !ok {
+			continue
+		}
+		tested, ok := value.(*ssa.UnOp)
+		if !ok || tested == load || tested.Op != token.MUL || !NonNilAt(tested, load.Block()) {
+			continue
+		}
+		if sameLocation(tested.X, addr) && stableLoadInterval(tested, load) {
+			return []definition{{nonNilBranch: true, tested: tested}}
+		}
+	}
 	return definitionsBefore(load.Block(), instructionIndex(load), addr, field)
 }
 
@@ -1156,6 +1392,8 @@ func reachingDefinitions(load *ssa.UnOp, addr ssa.Value, field *types.Var) []def
 // path, the nearest definition of the location, with one shared walk for every
 // reader of a location (a load, a closure's capture).
 func definitionsBefore(block *ssa.BasicBlock, index int, addr ssa.Value, field *types.Var) []definition {
+	origin := block
+	pruned := false
 	var out []definition
 	if block == nil || index < 0 {
 		return nil
@@ -1174,6 +1412,10 @@ func definitionsBefore(block *ssa.BasicBlock, index int, addr ssa.Value, field *
 			return
 		}
 		for _, pred := range block.Preds {
+			if edgeContradictsStableUse(pred, block, origin) {
+				pruned = true
+				continue
+			}
 			if d, ok := testedEdge(pred, block, addr, field); ok {
 				out = append(out, d)
 				continue
@@ -1185,6 +1427,9 @@ func definitionsBefore(block *ssa.BasicBlock, index int, addr ssa.Value, field *
 		}
 	}
 	scan(block, index)
+	if pruned && len(out) == 0 {
+		return []definition{{unknown: true}}
+	}
 	return out
 }
 

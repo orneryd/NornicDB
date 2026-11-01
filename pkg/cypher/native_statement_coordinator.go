@@ -96,6 +96,13 @@ func (c *cypherFabricExecutor) admitNativeWrite(ctx context.Context, name, datab
 // cleanup retain their actual joined outcome rather than retrying execution.
 func (c *cypherFabricExecutor) runStatementOwner(ctx context.Context, auto bool, run func(context.Context) error) (completion context.Context, resultErr error) {
 	completion = ctx
+	// Native statement construction already owns this detached cleanup scope.
+	// Other coordinator callbacks retain their own bound cleanup lifetimes;
+	// their dispatch input is the original caller, never a failed admission result.
+	cleanupCtx := ctx
+	if c.nativeOrigin != nil {
+		cleanupCtx = c.statement.begin
+	}
 	tx := c.fabricTransaction()
 	if auto {
 		defer func() {
@@ -107,7 +114,7 @@ func (c *cypherFabricExecutor) runStatementOwner(ctx context.Context, auto bool,
 							cause = cleanup
 						}
 					}()
-					resultErr = nornicerrors.CombineTerminalOutcomes(resultErr, tx.Rollback(nil))
+					resultErr = nornicerrors.CombineTerminalOutcomes(resultErr, tx.Rollback(cleanupCtx, nil))
 				}()
 			}
 			if cause != nil {
@@ -133,10 +140,7 @@ func (c *cypherFabricExecutor) runStatementOwner(ctx context.Context, auto bool,
 	if resultErr != nil {
 		return completion, resultErr
 	}
-	if c.nativeOrigin != nil {
-		c.nativeCompletionContext = completion
-	}
-	if resultErr = tx.Commit(nil, nil); resultErr != nil {
+	if resultErr = tx.Commit(fabric.TerminalContexts{Commit: completion, Cleanup: cleanupCtx}, nil, nil); resultErr != nil {
 		if commitFailureWroteNothing(false, resultErr) {
 			resultErr = nornicerrors.MarkCommitRolledBack(resultErr)
 		}

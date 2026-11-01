@@ -47,7 +47,10 @@ import (
 //	   the call).
 //	E9 at creation, a future call result with no path back to creation is
 //	   excluded only when every return is built by E1-E6 from excluded actual
-//	   arguments. Unknown producers and latent stored requests remain held.
+//	   arguments. A static call inside such a return is excluded the same way
+//	   at its own actual arguments, so an argument-only chain carries the value
+//	   it was given (and no other). Unknown producers and latent stored requests
+//	   remain held.
 //
 // An address of a context that is only written through or only loaded holds
 // nothing beyond its loads, which are judged themselves; any other address is
@@ -74,7 +77,7 @@ func heldRequest(fn *ssa.Function, at func(*ssa.Function) bool, own func(ssa.Val
 // every context value, or held address, in the outermost function and its
 // literals. own names the roots of E3 and E7.
 func heldValues(fn *ssa.Function, at func(*ssa.Function) bool, own func(ssa.Value) bool) []string {
-	excluded := func(v ssa.Value) bool { return excludedValue(v, own, map[ssa.Value]bool{}, 0) }
+	excluded := func(v ssa.Value) bool { return excludedWithin(v, own, false, map[ssa.Value]bool{}, 0) }
 	var out []string
 	params := func(f *ssa.Function) {
 		for _, p := range f.Params {
@@ -120,8 +123,9 @@ func enclosingChain(fn, f *ssa.Function) bool {
 	return false
 }
 
-// excludedValue applies E1-E8 (see above) to v.
-func excludedValue(v ssa.Value, own func(ssa.Value) bool, visited map[ssa.Value]bool, depth int) bool {
+// excludedWithin applies E1-E9 to v, judging any static call in it at its own
+// actual arguments when through is set.
+func excludedWithin(v ssa.Value, own func(ssa.Value) bool, through bool, visited map[ssa.Value]bool, depth int) bool {
 	if own != nil && own(v) {
 		return true
 	}
@@ -140,31 +144,38 @@ func excludedValue(v ssa.Value, own func(ssa.Value) bool, visited map[ssa.Value]
 		return v.IsNil()
 	case *ssa.Phi:
 		for _, edge := range v.Edges {
-			if !excludedValue(edge, own, visited, depth+1) {
+			if !excludedWithin(edge, own, through, visited, depth+1) {
 				return false
 			}
 		}
 		return len(v.Edges) > 0
 	case *ssa.MakeInterface:
-		return excludedValue(v.X, own, visited, depth+1)
+		return excludedWithin(v.X, own, through, visited, depth+1)
 	case *ssa.ChangeInterface:
-		return excludedValue(v.X, own, visited, depth+1)
+		return excludedWithin(v.X, own, through, visited, depth+1)
 	case *ssa.Extract:
-		if call, ok := v.Tuple.(*ssa.Call); ok && v.Index == 0 {
+		call, ok := v.Tuple.(*ssa.Call)
+		if !ok {
+			return false
+		}
+		if v.Index == 0 {
 			if own != nil && own(call) {
 				return true
 			}
 			if parent, ok := contextDerivationParent(call); ok {
-				return excludedValue(parent, own, visited, depth+1)
+				return excludedWithin(parent, own, through, visited, depth+1)
 			}
 		}
-		if call, ok := v.Tuple.(*ssa.Call); ok {
-			return returnsOnlyFresh(call, v.Index, visited, depth+1)
+		if through && argumentResult(call, v.Index, own, depth+1) {
+			return true
 		}
-		return false
+		return returnsOnlyFresh(call, v.Index, visited, depth+1)
 	case *ssa.Call:
 		if parent, ok := contextDerivationParent(v); ok {
-			return excludedValue(parent, own, visited, depth+1)
+			return excludedWithin(parent, own, through, visited, depth+1)
+		}
+		if through && argumentResult(v, 0, own, depth+1) {
+			return true
 		}
 		return returnsOnlyFresh(v, 0, visited, depth+1)
 	case *ssa.UnOp:
@@ -182,13 +193,45 @@ func excludedValue(v ssa.Value, own func(ssa.Value) bool, visited map[ssa.Value]
 			}
 		}
 		for _, store := range stores {
-			if !excludedValue(store.Val, own, visited, depth+1) {
+			if !excludedWithin(store.Val, own, through, visited, depth+1) {
 				return false
 			}
 		}
 		return true
 	}
 	return false
+}
+
+// argumentResult reports result index of a static call whose callee returns, at
+// that result, only values E1-E6 remove from the callee's own actual arguments,
+// each judged where the call stands (own). It is E9's argument rule without
+// E9's creation-availability condition, which its callers establish themselves:
+// a chain of such callees carries its argument and nothing the callee holds
+// besides, so a stored request or an unknown producer anywhere in it is held.
+func argumentResult(call *ssa.Call, index int, own func(ssa.Value) bool, depth int) bool {
+	callee := call.Call.StaticCallee()
+	if callee == nil || len(callee.Blocks) == 0 || len(callee.Params) != len(call.Common().Args) {
+		return false
+	}
+	parameters := map[ssa.Value]bool{}
+	for i, param := range callee.Params {
+		parameters[param] = excludedWithin(call.Common().Args[i], own, true, map[ssa.Value]bool{}, depth+1)
+	}
+	fromArguments := func(v ssa.Value) bool { return parameters[v] }
+	returns := 0
+	for _, block := range callee.Blocks {
+		for _, instr := range block.Instrs {
+			ret, ok := instr.(*ssa.Return)
+			if !ok {
+				continue
+			}
+			if index >= len(ret.Results) || !excludedWithin(ret.Results[index], fromArguments, true, map[ssa.Value]bool{}, depth+1) {
+				return false
+			}
+			returns++
+		}
+	}
+	return returns > 0
 }
 
 // returnsOnlyFresh applies E7 to result index of call: its static callee has a
@@ -213,7 +256,7 @@ func returnsOnlyFresh(call *ssa.Call, index int, callerVisited map[ssa.Value]boo
 			if !ok {
 				continue
 			}
-			if index >= len(ret.Results) || !excludedValue(ret.Results[index], nil, visited, depth) {
+			if index >= len(ret.Results) || !excludedWithin(ret.Results[index], nil, false, visited, depth) {
 				return false
 			}
 			returns++
@@ -553,29 +596,10 @@ func futurePureCallResultAt(value ssa.Value, creation ssa.Instruction, roots map
 			pending = append(pending, block.Succs...)
 		}
 	}
-	// Availability alone does not remove unknown latent request sources.
-	callee := call.Common().StaticCallee()
-	if callee == nil || len(callee.Blocks) == 0 || len(callee.Params) != len(call.Common().Args) {
-		return false
-	}
-	parameters := map[ssa.Value]bool{}
-	for i, param := range callee.Params {
-		parameters[param] = excludedValue(call.Common().Args[i], func(v ssa.Value) bool { return roots[v] || workcensus.NilAt(v, creation.Block()) }, map[ssa.Value]bool{}, 0)
-	}
-	returns := 0
-	for _, block := range callee.Blocks {
-		for _, ins := range block.Instrs {
-			ret, ok := ins.(*ssa.Return)
-			if !ok {
-				continue
-			}
-			if index >= len(ret.Results) || !excludedValue(ret.Results[index], func(v ssa.Value) bool { return parameters[v] }, map[ssa.Value]bool{}, 0) {
-				return false
-			}
-			returns++
-		}
-	}
-	return returns > 0
+	// Availability alone does not remove unknown latent request sources: every
+	// return must be built from this call's actual arguments, and a static call
+	// inside such a return is judged the same way at its own.
+	return argumentResult(call, index, func(v ssa.Value) bool { return roots[v] || workcensus.NilAt(v, creation.Block()) }, 0)
 }
 
 // ReviewedHeldValue is a reviewed record for one function whose held contexts,

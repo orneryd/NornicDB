@@ -1242,7 +1242,7 @@ func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier
 			stalls = 0
 		}
 		observeWriteAdmissionWait(w, ctx)
-		if ctx == nil {
+		if ctx == nil || ctx.Done() == nil {
 			time.Sleep(time.Millisecond)
 		} else {
 			timer := time.NewTimer(time.Millisecond)

@@ -5,6 +5,8 @@ import (
 	"runtime/pprof"
 	"testing"
 	"time"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 // This measures the actual native buffered conflict preparation owner, excluding
@@ -47,8 +49,8 @@ func BenchmarkBufferedConflictPreparationScan(b *testing.B) {
 	}
 }
 
-// This public fixture includes receipt observation and immutable preparation
-// with one real acknowledged peer commit landing after each transaction began.
+// Same public/native timed owner as the preserved buffered preparation fixture.
+// Added physical/ACK/order validation is untimed and identical on both sides.
 func BenchmarkPublicBufferedEntityCommitPreparation(b *testing.B) {
 	for _, size := range []int{1, 64} {
 		b.Run(fmt.Sprintf("nodes=%d", size), func(b *testing.B) {
@@ -104,15 +106,49 @@ func BenchmarkPublicBufferedEntityCommitPreparation(b *testing.B) {
 			}
 			engine.writeBehind.mu.RLock()
 			acknowledgments := len(engine.writeBehind.active.commits)
+			ackOperations := 0
+			rawOrder := len(engine.writeBehind.active.order)
+			for _, commit := range engine.writeBehind.active.commits {
+				ackOperations += len(commit.ops)
+			}
 			for _, generation := range engine.writeBehind.draining {
 				acknowledgments += len(generation.commits)
+				rawOrder += len(generation.order)
+				for _, commit := range generation.commits {
+					ackOperations += len(commit.ops)
+				}
 			}
 			epoch := engine.writeBehind.readEpoch.Load()
 			engine.writeBehind.mu.RUnlock()
 			if acknowledgments != b.N {
 				b.Fatalf("fixture acknowledged records=%d want=%d", acknowledgments, b.N)
 			}
-			b.Logf("fixture native_nodes=%d iterations=%d graph_nodes=%d acknowledgments=%d read_epoch=%d caller=testing.B.Context", size, b.N, count, acknowledgments, epoch)
+			if ackOperations != b.N {
+				b.Fatalf("ack domain operations=%d want=%d", ackOperations, b.N)
+			}
+			// Actual captured commits keep ops in commits, not raw generation.order.
+			// Preserve that representation; never synthesize or clear buffer work.
+			if rawOrder != 0 {
+				b.Fatalf("captured-commit fixture raw order=%d want=0", rawOrder)
+			}
+			physicalNodes := 0
+			if err := engine.db.View(func(txn *badger.Txn) error {
+				opts := badger.DefaultIteratorOptions
+				opts.PrefetchValues = false
+				iterator := txn.NewIterator(opts)
+				defer iterator.Close()
+				prefix := []byte{prefixNode}
+				for iterator.Seek(prefix); iterator.ValidForPrefix(prefix); iterator.Next() {
+					physicalNodes++
+				}
+				return nil
+			}); err != nil {
+				b.Fatal(err)
+			}
+			if physicalNodes != size {
+				b.Fatalf("physical native nodes=%d want=%d", physicalNodes, size)
+			}
+			b.Logf("fixture physical_nodes=%d iterations=%d graph_nodes=%d acknowledgments=%d ack_ops=%d raw_generation_order=%d read_epoch=%d caller=testing.B.Context", physicalNodes, b.N, count, acknowledgments, ackOperations, rawOrder, epoch)
 
 		})
 	}

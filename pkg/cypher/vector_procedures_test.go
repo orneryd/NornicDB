@@ -1762,10 +1762,7 @@ func TestCallDbIndexFulltextCreateRelationshipIndex(t *testing.T) {
 }
 
 func TestCallDbIndexFulltextDrop(t *testing.T) {
-	baseEngine := newTestMemoryEngine(t)
-
-	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	exec := NewStorageExecutor(engine)
+	exec, _ := newCypherTestExecutor(t, "test")
 	ctx := context.Background()
 
 	t.Run("drop_existing_index", func(t *testing.T) {

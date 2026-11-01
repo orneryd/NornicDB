@@ -476,7 +476,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("gds.graph.project", procedureReturnSignature("gds.graph.project(graphName :: STRING, nodeProjection :: ANY, relationshipProjection :: ANY, configuration = {} :: MAP)", gdsGraphProjectColumns), localization.CypherProcedureMetadata("gds.graph.project"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsGraphProject(args)
+				return e.callGdsGraphProject(ctx, args)
 			})
 		registerBuiltInProcedure("gds.fastRP.stream", procedureReturnSignature("gds.fastRP.stream(graphName :: STRING, configuration = {} :: MAP)", gdsFastRPStreamColumns), localization.CypherProcedureMetadata("gds.fastRP.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

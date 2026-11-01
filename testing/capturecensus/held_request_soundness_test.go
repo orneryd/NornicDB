@@ -419,7 +419,11 @@ var _ = []any{(*Engine).holdsMixed, (*Engine).holdsPasses}
 	tracked.TrackedHolders = []RouteEdge{{Caller: "(*capture.fixture.Engine).drops", Callee: "(*capture.fixture.Engine).fallback", Reason: "finding F"}}
 	tracked.RouteSources = map[string]string{"(*capture.fixture.Engine).drops": digest(dropsSource)}
 	trackedRun := run(endedBody, map[string]ReviewedHeldValue{"(*capture.fixture.Engine).fallback": tracked}, nil)
-	require.Empty(t, trackedRun.Violations)
+	// Tracking the dropped-request route does not accept the independent
+	// nil input in its inline request value.
+	require.Len(t, trackedRun.Violations, 1)
+	require.Contains(t, trackedRun.Violations[0], ".drops -> (*capture.fixture.Engine).fallback: a nil context can reach it")
+	require.Contains(t, trackedRun.Violations[0], "field-[0](ctx)")
 	require.Equal(t, 1, AcceptanceCounts(trackedRun.Acceptances)[KindTrackedDefect])
 	// A caller named as supplying a context, which passes none, is walked.
 	notSupplying := endRecord

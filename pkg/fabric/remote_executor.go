@@ -408,8 +408,10 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 	// cancellation. The existing remote terminal owner bounds both.
 	terminalCtx := fabricTx.BindContext(ctx)
 	rollbackCtx := context.WithoutCancel(ctx)
-	commitFn := func(participant *SubTransaction) error { return handle.endWithin(terminalCtx, participant.IsWrite) }
-	rollbackFn := func(_ *SubTransaction) error { return handle.endWithin(rollbackCtx, false) }
+	commitFn := func(_ context.Context, participant *SubTransaction) error {
+		return handle.endWithin(terminalCtx, participant.IsWrite)
+	}
+	rollbackFn := func(_ context.Context, _ *SubTransaction) error { return handle.endWithin(rollbackCtx, false) }
 	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, ParticipantCallbacks{Commit: commitFn, Rollback: rollbackFn, Outcome: handle.commitOutcome}); err != nil {
 		return nil, err
 	}

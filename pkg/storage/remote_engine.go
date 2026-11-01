@@ -862,8 +862,10 @@ func remoteToInt64(v interface{}) int64 {
 // Engine methods that don't accept one.
 const RemoteRequestTimeout = 30 * time.Second
 
-// defaultCtx creates a context with a RemoteRequestTimeout timeout as a
-// fallback for Engine methods that don't accept a caller-provided context.
+// defaultCtx creates a context with a RemoteRequestTimeout timeout for the
+// context-free Engine entry that owns it: the entry derives it once and passes
+// it to the shared contextual helper, which derives no timeout of its own.
+// remoteReadContext delegates here for a read that carries no caller context.
 func defaultCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), RemoteRequestTimeout)
 }
@@ -886,7 +888,10 @@ func remoteReadContext(ctx context.Context) (context.Context, context.CancelFunc
 
 // queryRemoteEntities owns the query boundary for entity reads. The required
 // admission function retains the caller's exact cardinality and result type;
-// single reads never allocate a list or inspect later rows.
+// single reads never allocate a list or inspect later rows. The caller owns the
+// bounded context: every context-free read entry derives it once with defaultCtx
+// and passes it here, so this boundary and its transport receive one non-nil
+// context carrying one owned deadline.
 func queryRemoteEntities[T, R any](r *RemoteEngine, ctx context.Context, statement string, params map[string]interface{}, decode func(interface{}) (*T, error), admit func([][]interface{}, func(interface{}) (*T, error)) (R, error)) (R, error) {
 	_, rows, err := r.QueryCypher(ctx, statement, params, RemoteAccessRead)
 	if err != nil {
@@ -919,6 +924,8 @@ func allRemoteEntities[T any](rows [][]interface{}, decode func(interface{}) (*T
 }
 
 // remoteCount admits the shared scalar result for counts, degrees and updates.
+// Like the entity boundary it consumes the caller's bounded non-nil context and
+// derives no timeout: each context-free count or mutation entry owns that one.
 func (r *RemoteEngine) remoteCount(ctx context.Context, statement string, params map[string]interface{}, mode RemoteAccessMode) (int64, error) {
 	_, rows, err := r.QueryCypher(ctx, statement, params, mode)
 	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
@@ -927,12 +934,23 @@ func (r *RemoteEngine) remoteCount(ctx context.Context, statement string, params
 	return remoteToInt64(rows[0][0]), nil
 }
 
+// nativeRemoteCount owns the bounded lifetime of context-free scalar reads.
+// Contextual mutations use remoteCount with their existing entry context.
+func (r *RemoteEngine) nativeRemoteCount(statement string, params map[string]interface{}) (int64, error) {
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return r.remoteCount(ctx, statement, params, RemoteAccessRead)
+}
+
 // mutateRemoteEntity owns parameter binding and match admission for mutations.
-func (r *RemoteEngine) mutateRemoteEntity(statement, id string, props map[string]interface{}, requireMatch bool) error {
+// Its caller supplies the bounded context: each context-free mutation entry
+// derives it once with defaultCtx and passes it here, so both canonical helpers
+// below receive that same non-nil context and derive no timeout of their own.
+func (r *RemoteEngine) mutateRemoteEntity(ctx context.Context, statement, id string, props map[string]interface{}, requireMatch bool) error {
 	params := map[string]interface{}{"id": id}
 	if requireMatch {
 		params["props"] = props
-		matched, err := r.remoteCount(nil, statement, params, RemoteAccessWrite)
+		matched, err := r.remoteCount(ctx, statement, params, RemoteAccessWrite)
 		if err != nil {
 			return err
 		}
@@ -941,7 +959,7 @@ func (r *RemoteEngine) mutateRemoteEntity(statement, id string, props map[string
 		}
 		return nil
 	}
-	_, _, err := r.QueryCypher(nil, statement, params, RemoteAccessWrite)
+	_, _, err := r.QueryCypher(ctx, statement, params, RemoteAccessWrite)
 	return err
 }
 
@@ -973,7 +991,9 @@ func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
 }
 
 func (r *RemoteEngine) GetNode(id NodeID) (*Node, error) {
-	return queryRemoteEntities(r, nil, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1", map[string]interface{}{"id": string(id)}, valueToNode, firstRemoteEntity[Node])
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return queryRemoteEntities(r, ctx, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1", map[string]interface{}{"id": string(id)}, valueToNode, firstRemoteEntity[Node])
 }
 
 func (r *RemoteEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
@@ -981,7 +1001,9 @@ func (r *RemoteEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	if node == nil {
 		return ErrInvalidData
 	}
-	err := r.mutateRemoteEntity("MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", string(node.ID), node.Properties, true)
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	err := r.mutateRemoteEntity(ctx, "MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", string(node.ID), node.Properties, true)
 	if err == ErrNotFound && updateRequest.Before != nil {
 		return ErrConflict
 	}
@@ -989,7 +1011,9 @@ func (r *RemoteEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 }
 
 func (r *RemoteEngine) DeleteNode(id NodeID) error {
-	return r.mutateRemoteEntity("MATCH (n) WHERE n.id = $id DETACH DELETE n", string(id), nil, false)
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return r.mutateRemoteEntity(ctx, "MATCH (n) WHERE n.id = $id DETACH DELETE n", string(id), nil, false)
 }
 
 func (r *RemoteEngine) CreateEdge(edge *Edge) error {
@@ -1030,7 +1054,9 @@ func (r *RemoteEngine) CreateEdge(edge *Edge) error {
 }
 
 func (r *RemoteEngine) GetEdge(id EdgeID) (*Edge, error) {
-	return queryRemoteEntities(r, nil, "MATCH ()-[r]->() WHERE r.id = $id RETURN r LIMIT 1", map[string]interface{}{"id": string(id)}, valueToEdge, firstRemoteEntity[Edge])
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return queryRemoteEntities(r, ctx, "MATCH ()-[r]->() WHERE r.id = $id RETURN r LIMIT 1", map[string]interface{}{"id": string(id)}, valueToEdge, firstRemoteEntity[Edge])
 }
 
 func (r *RemoteEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
@@ -1038,7 +1064,9 @@ func (r *RemoteEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	if edge == nil {
 		return ErrInvalidData
 	}
-	err := r.mutateRemoteEntity("MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", string(edge.ID), edge.Properties, true)
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	err := r.mutateRemoteEntity(ctx, "MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", string(edge.ID), edge.Properties, true)
 	if err == ErrNotFound && updateRequest.Before != nil {
 		return ErrConflict
 	}
@@ -1046,7 +1074,9 @@ func (r *RemoteEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 }
 
 func (r *RemoteEngine) DeleteEdge(id EdgeID) error {
-	return r.mutateRemoteEntity("MATCH ()-[r]->() WHERE r.id = $id DELETE r", string(id), nil, false)
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return r.mutateRemoteEntity(ctx, "MATCH ()-[r]->() WHERE r.id = $id DELETE r", string(id), nil, false)
 }
 
 func (r *RemoteEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
@@ -1075,11 +1105,13 @@ func (r *RemoteEngine) getNodesByLabelWithReveal(ctx context.Context, label stri
 }
 
 func (r *RemoteEngine) GetFirstNodeByLabel(label string) (*Node, error) {
+	ctx, cancel := defaultCtx()
+	defer cancel()
 	stmt := "MATCH (n) RETURN n LIMIT 1"
 	if strings.TrimSpace(label) != "" {
 		stmt = fmt.Sprintf("MATCH (n:%s) RETURN n LIMIT 1", cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource))
 	}
-	return queryRemoteEntities(r, nil, stmt, nil, valueToNode, firstRemoteEntity[Node])
+	return queryRemoteEntities(r, ctx, stmt, nil, valueToNode, firstRemoteEntity[Node])
 }
 
 func (r *RemoteEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
@@ -1096,9 +1128,11 @@ func (r *RemoteEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*
 
 // readEdgesBetween owns endpoint binding and the two Engine lookup contracts.
 // A type selects the typed first-edge query; nil selects every connecting edge.
+// The caller supplies the bounded context — GetEdgesBetween from its caller's
+// context via remoteReadContext, GetEdgeBetween from defaultCtx — so this shared
+// read derives no second timeout and each entry point issues one statement on
+// one owned deadline.
 func (r *RemoteEngine) readEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType *string) ([]*Edge, error) {
-	ctx, cancel := remoteReadContext(ctx)
-	defer cancel()
 	relationship, limit := "r", ""
 	if edgeType != nil {
 		relationship += ":" + cyphertext.PrintIdentifier(*edgeType, nil, cyphertext.RawSource)
@@ -1109,11 +1143,15 @@ func (r *RemoteEngine) readEdgesBetween(ctx context.Context, startID, endID Node
 }
 
 func (r *RemoteEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
+	ctx, cancel := remoteReadContext(ctx)
+	defer cancel()
 	return r.readEdgesBetween(ctx, startID, endID, nil)
 }
 
 func (r *RemoteEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	edges, _ := r.readEdgesBetween(nil, startID, endID, &edgeType)
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	edges, _ := r.readEdgesBetween(ctx, startID, endID, &edgeType)
 	if len(edges) == 0 {
 		return nil
 	}
@@ -1178,12 +1216,12 @@ func (r *RemoteEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 }
 
 func (r *RemoteEngine) GetInDegree(nodeID NodeID) int {
-	count, _ := r.remoteCount(nil, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)}, RemoteAccessRead)
+	count, _ := r.nativeRemoteCount("MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
 	return int(count)
 }
 
 func (r *RemoteEngine) GetOutDegree(nodeID NodeID) int {
-	count, _ := r.remoteCount(nil, "MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)}, RemoteAccessRead)
+	count, _ := r.nativeRemoteCount("MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
 	return int(count)
 }
 
@@ -1323,11 +1361,11 @@ func (r *RemoteEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[Nod
 func (r *RemoteEngine) Close() error { return r.transport.close() }
 
 func (r *RemoteEngine) NodeCount() (int64, error) {
-	return r.remoteCount(nil, "MATCH (n) RETURN count(n)", nil, RemoteAccessRead)
+	return r.nativeRemoteCount("MATCH (n) RETURN count(n)", nil)
 }
 
 func (r *RemoteEngine) EdgeCount() (int64, error) {
-	return r.remoteCount(nil, "MATCH ()-[r]->() RETURN count(r)", nil, RemoteAccessRead)
+	return r.nativeRemoteCount("MATCH ()-[r]->() RETURN count(r)", nil)
 }
 
 // EdgeCountByType answers the typed count from the remote instance's own
@@ -1335,24 +1373,30 @@ func (r *RemoteEngine) EdgeCount() (int64, error) {
 // shape O(1) from its counters, so no client-side edge materialization exists
 // on this path.
 func (r *RemoteEngine) EdgeCountByType(edgeType string) (int64, error) {
-	return r.remotePositionalCount("", edgeType, false)
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return r.remotePositionalCount(ctx, "", edgeType, false)
 }
 
 // EdgeCountByStartLabel answers the positional (label, type) count from the
 // remote instance's own counters: the remote server serves
 // MATCH (s:L)-[r:T]->() O(1).
 func (r *RemoteEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
-	return r.remotePositionalCount(label, edgeType, false)
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return r.remotePositionalCount(ctx, label, edgeType, false)
 }
 
 // EdgeCountByEndLabel answers the positional (label, type) count from the
 // remote instance's own counters: the remote server serves
 // MATCH ()-[r:T]->(e:L) O(1).
 func (r *RemoteEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
-	return r.remotePositionalCount(label, edgeType, true)
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return r.remotePositionalCount(ctx, label, edgeType, true)
 }
 
-func (r *RemoteEngine) remotePositionalCount(label, edgeType string, end bool) (int64, error) {
+func (r *RemoteEngine) remotePositionalCount(ctx context.Context, label, edgeType string, end bool) (int64, error) {
 	quotedType := cyphertext.PrintIdentifier(edgeType, nil, cyphertext.RawSource)
 	statement := "MATCH ()-[r:" + quotedType + "]->() RETURN count(r)"
 	if label != "" {
@@ -1363,7 +1407,7 @@ func (r *RemoteEngine) remotePositionalCount(label, edgeType string, end bool) (
 			statement = "MATCH (s:" + quotedLabel + ")-[r:" + quotedType + "]->() RETURN count(r)"
 		}
 	}
-	return r.remoteCount(nil, statement, nil, RemoteAccessRead)
+	return r.remoteCount(ctx, statement, nil, RemoteAccessRead)
 }
 
 func (r *RemoteEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {

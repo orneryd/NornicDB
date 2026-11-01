@@ -4,7 +4,6 @@ package capturecensus
 
 import (
 	"fmt"
-	"go/token"
 	"go/types"
 	"regexp"
 	"slices"
@@ -158,7 +157,7 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog, sour
 	freshOrigins := graph.reach(naiveSources(p, freshContext), true)
 	classified := map[ssa.Value]bool{}
 	reached := map[ssa.Value]string{}
-	sourceUses := map[token.Pos]bool{}
+	sourceUses := map[string]bool{}
 
 	// classify admits or fails one context.Background or context.TODO creation
 	// that can reach the boundary.
@@ -307,96 +306,123 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog, sour
 					}
 				}
 				for argument, arg := range call.Common().Args {
-					if !isContext(arg.Type()) {
-						continue
-					}
-					pos := p.FileSet.PositionFor(call.Pos(), false)
-					caller := symbolOf(workcensus.OutermostFunction(fn))
-					// Every fresh context the naive taint brings to a call in the
-					// family is classified, whatever the nil verdict on the same
-					// argument: a nil finding, its disposition or its cross-unit
-					// record never stands in for a substitution.
-					if inFamily {
-						for _, origin := range freshOrigins[arg] {
-							if _, seen := reached[origin]; !seen {
-								reached[origin] = fmt.Sprintf("%s -> %s at %s:%d", caller, target, pos.Filename, pos.Line)
-							}
-							classify(origin)
-						}
-					}
-					witness, why := p.MayBeNilWhy(arg, call)
-					if witness != nil {
-						finding := fmt.Sprintf("%s:%d %s -> %s: a nil context can reach it: %s", pos.Filename, pos.Line, caller, target, strings.Join(witness, " "))
-						if !inFamily {
-							log.accept(KindOutsideBoundary, finding, "reaches no context reader", "census", nil)
-							continue
-						}
-						root := nilWitnessRoot(witness)
-						site := nilContextSite(p, call, argument, syntheticOwners)
-						use := nilWitnessUse(site, caller, target, witness)
-						if useSeen[use] {
-							violations = append(violations, "nil-context use key is not unique to one call site: "+use)
-						}
-						useSeen[use] = true
-						// A nil whose lifetime another unit's owner takes over is an
-						// owned source of that unit: listed and counted, never disposed.
-						if cross, ok := policy.CrossUnitOwners[root]; ok {
-							crossSeen[root] = true
-							log.accept(KindOwnedSource, finding, "nil lifetime owned by merge unit "+cross.Unit, cross.Approver, nil)
-							log.accept(KindCrossUnitOwner, finding, fmt.Sprintf("lifetime to become %s's owner context when merge unit %s lands: %s", cross.FixingPR, cross.Unit, cross.Reason), cross.Approver, nil)
-							continue
-						}
-						if detached, ok := policy.NilDetached[root]; ok && slices.Contains(detached.Uses, use) {
-							usedUses[[2]string{root, use}] = true
-							log.accept(KindNilDetached, finding+" [root: "+root+"]", detached.Reason, detached.Reviewer, nil)
-							continue
-						}
-						d, ok := policy.NilContextDispositions[root]
-						switch {
-						case !ok:
-							violations = append(violations, finding+" [witness root: "+root+"; use: "+use+"]")
-						case !slices.Contains(d.Uses, use):
-							usedDispositions[root] = true
-							violations = append(violations, finding+" [witness root: "+root+"; use not approved by its disposition; use: "+use+"]")
-						default:
-							usedDispositions[root] = true
-							usedUses[[2]string{root, use}] = true
-							log.accept(KindNilDisposition, finding+" [disposition: "+d.Reason+"; reviewer "+d.Reviewer+"]", d.Reason, d.Reviewer, nil)
-						}
-						continue
-					}
-					if !inFamily {
-						continue
-					}
-					// Reconciliation: the naive taint can bring nil here; the
-					// analysis's non-nil verdict must say why.
-					if _, naive := naiveNil[arg]; naive {
-						if len(why) == 0 {
-							violations = append(violations, fmt.Sprintf("%s:%d %s -> %s: the naive taint can bring nil here and the nil analysis judged it non-nil without a recorded reason", pos.Filename, pos.Line, caller, target))
-						}
-						for _, rule := range why {
-							log.discharge(rule)
-						}
-					}
-					if named, isSource := sourceOf(arg, sources); isSource && !sourceUses[call.Pos()] {
-						sourceUses[call.Pos()] = true
-						where := fmt.Sprintf("%s:%d %s -> %s", pos.Filename, pos.Line, caller, target)
-						fromSource := func(v ssa.Value) bool { _, ok := sourceOf(v, sources); return ok }
-						if !paths[named.Source][fn] {
-							violations = append(violations, where+": "+named.Source+" used outside the path of its owner "+named.Root.Name)
-						} else if held := heldRequest(fn, nil, fromSource); held != "" {
-							// The owner's context stands in only where no request is
-							// held: one in scope is the context to pass.
-							violations = append(violations, where+": "+named.Source+" used where a request context is in scope; pass it (held: "+held+")")
+					for _, fieldPath := range workcensus.InlineFieldPaths(arg.Type(), isContext) {
+						inputValues := []ssa.Value{arg}
+						var unknownField *types.Var
+						var witness, why []string
+						suffix := ""
+						if len(fieldPath) == 0 {
+							witness, why = p.MayBeNilWhy(arg, call)
 						} else {
-							site := ContextSite{File: pos.Filename, Line: pos.Line, Function: caller, Callee: target}
-							log.accept(KindOwnedSource, where, named.Disposition+": "+named.Reason, "census", &site)
-							sites = append(sites, site)
-							// A source whose lifetime moves to another unit's owner is
-							// also listed and counted as cross-unit.
-							if cross, ok := policy.CrossUnitOwners[named.Source]; ok {
-								crossSeen[named.Source] = true
-								log.accept(KindCrossUnitOwner, where, fmt.Sprintf("lifetime to become %s's owner context when merge unit %s lands: %s", cross.FixingPR, cross.Unit, cross.Reason), cross.Approver, nil)
+							projected := p.ProjectFieldAt(arg, fieldPath, call)
+							inputValues = projected.Values
+							if projected.Unknown {
+								unknownField = projected.Field
+							}
+							witness, why = projected.Witness, projected.Why
+							suffix = fmt.Sprintf("/argument-%d/field-%v(%s)", argument, fieldPath, workcensus.InlineFieldName(arg.Type(), fieldPath))
+						}
+						pos := p.FileSet.PositionFor(call.Pos(), false)
+						caller := symbolOf(workcensus.OutermostFunction(fn))
+						// Every fresh context the naive taint brings to a call in the
+						// family is classified, whatever the nil verdict on the same
+						// argument: a nil finding, its disposition or its cross-unit
+						// record never stands in for a substitution.
+						if inFamily {
+							if unknownField != nil {
+								for _, origin := range freshOrigins[unknownField] {
+									if _, seen := reached[origin]; !seen {
+										reached[origin] = fmt.Sprintf("%s -> %s at %s:%d%s (unknown field provenance)", caller, target, pos.Filename, pos.Line, suffix)
+									}
+									classify(origin)
+								}
+							}
+							for _, input := range inputValues {
+								for _, origin := range freshOrigins[input] {
+									if _, seen := reached[origin]; !seen {
+										reached[origin] = fmt.Sprintf("%s -> %s at %s:%d", caller, target, pos.Filename, pos.Line)
+									}
+									classify(origin)
+								}
+							}
+						}
+						if witness != nil {
+							finding := fmt.Sprintf("%s:%d %s -> %s: a nil context can reach it: %s", pos.Filename, pos.Line, caller, target, strings.Join(witness, " ")) + suffix
+							if !inFamily {
+								log.accept(KindOutsideBoundary, finding, "reaches no context reader", "census", nil)
+								continue
+							}
+							root := nilWitnessRoot(witness)
+							site := nilContextSite(p, call, argument, syntheticOwners) + suffix
+							use := nilWitnessUse(site, caller, target, witness)
+							if useSeen[use] {
+								violations = append(violations, "nil-context use key is not unique to one call site: "+use)
+							}
+							useSeen[use] = true
+							// A nil whose lifetime another unit's owner takes over is an
+							// owned source of that unit: listed and counted, never disposed.
+							if cross, ok := policy.CrossUnitOwners[root]; ok {
+								crossSeen[root] = true
+								log.accept(KindOwnedSource, finding, "nil lifetime owned by merge unit "+cross.Unit, cross.Approver, nil)
+								log.accept(KindCrossUnitOwner, finding, fmt.Sprintf("lifetime to become %s's owner context when merge unit %s lands: %s", cross.FixingPR, cross.Unit, cross.Reason), cross.Approver, nil)
+								continue
+							}
+							if detached, ok := policy.NilDetached[root]; ok && slices.Contains(detached.Uses, use) {
+								usedUses[[2]string{root, use}] = true
+								log.accept(KindNilDetached, finding+" [root: "+root+"]", detached.Reason, detached.Reviewer, nil)
+								continue
+							}
+							d, ok := policy.NilContextDispositions[root]
+							switch {
+							case !ok:
+								violations = append(violations, finding+" [witness root: "+root+"; use: "+use+"]")
+							case !slices.Contains(d.Uses, use):
+								usedDispositions[root] = true
+								violations = append(violations, finding+" [witness root: "+root+"; use not approved by its disposition; use: "+use+"]")
+							default:
+								usedDispositions[root] = true
+								usedUses[[2]string{root, use}] = true
+								log.accept(KindNilDisposition, finding+" [disposition: "+d.Reason+"; reviewer "+d.Reviewer+"]", d.Reason, d.Reviewer, nil)
+							}
+							continue
+						}
+						if !inFamily {
+							continue
+						}
+						// Reconciliation: the naive taint can bring nil here; the
+						// analysis's non-nil verdict must say why.
+						if _, naive := naiveNil[arg]; naive {
+							if len(why) == 0 {
+								violations = append(violations, fmt.Sprintf("%s:%d %s -> %s: the naive taint can bring nil here and the nil analysis judged it non-nil without a recorded reason", pos.Filename, pos.Line, caller, target))
+							}
+							for _, rule := range why {
+								log.discharge(rule)
+							}
+						}
+						for _, input := range inputValues {
+							named, isSource := sourceOf(input, sources)
+							sourceKey := fmt.Sprintf("%d%s/%s", call.Pos(), suffix, named.Source)
+							if isSource && !sourceUses[sourceKey] {
+								sourceUses[sourceKey] = true
+								where := fmt.Sprintf("%s:%d %s -> %s", pos.Filename, pos.Line, caller, target) + suffix
+								fromSource := func(v ssa.Value) bool { _, ok := sourceOf(v, sources); return ok }
+								if !paths[named.Source][fn] {
+									violations = append(violations, where+": "+named.Source+" used outside the path of its owner "+named.Root.Name)
+								} else if held := heldRequest(fn, nil, fromSource); held != "" {
+									// The owner's context stands in only where no request is
+									// held: one in scope is the context to pass.
+									violations = append(violations, where+": "+named.Source+" used where a request context is in scope; pass it (held: "+held+")")
+								} else {
+									site := ContextSite{File: pos.Filename, Line: pos.Line, Function: caller, Callee: target}
+									log.accept(KindOwnedSource, where, named.Disposition+": "+named.Reason, "census", &site)
+									sites = append(sites, site)
+									// A source whose lifetime moves to another unit's owner is
+									// also listed and counted as cross-unit.
+									if cross, ok := policy.CrossUnitOwners[named.Source]; ok {
+										crossSeen[named.Source] = true
+										log.accept(KindCrossUnitOwner, where, fmt.Sprintf("lifetime to become %s's owner context when merge unit %s lands: %s", cross.FixingPR, cross.Unit, cross.Reason), cross.Approver, nil)
+									}
+								}
 							}
 						}
 					}

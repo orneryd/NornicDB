@@ -40,6 +40,14 @@ func (e *StorageExecutor) shouldUseFabricPlanner(ctx context.Context, cypher str
 	// Word presence alone is insufficient (e.g., "USE" inside string payloads).
 	// This lexical admission keeps ordinary statements on their single parse;
 	// Fabric reads the statement's structure only once it is engaged.
+	// A USE that begins the statement is a top-level USE clause, and its
+	// grammar admits the top-level followers (SHOW, administration commands) a
+	// subquery's does not. Only a USE with preceding statement text starts a
+	// CALL { } subquery, so it keeps the subquery grammar the executor reads
+	// there. Leading whitespace and comments are trivia, not statement text, and
+	// normalization may be disabled, so the first significant offset comes from
+	// the shared lexical owner rather than a whitespace trim.
+	first := firstExecutableCypherOffset(cypher)
 	opts := defaultKeywordScanOpts()
 	searchFrom := 0
 	for {
@@ -47,7 +55,7 @@ func (e *StorageExecutor) shouldUseFabricPlanner(ctx context.Context, cypher str
 		if useIdx < 0 {
 			break
 		}
-		use, _, hasUse, err := fabric.ParseUseClause(ctx, cypher[useIdx:], true, cyphertext.AcceptedSource)
+		use, _, hasUse, err := fabric.ParseUseClause(ctx, cypher[useIdx:], useIdx != first, cyphertext.AcceptedSource)
 		if hasUse && err == nil && (e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())) {
 			return true
 		}
@@ -728,9 +736,8 @@ type cypherFabricExecutor struct {
 	statement             *compositeStatement
 	wholeStatementMutable bool
 	// nativeOrigin is set only for a native autocommit root, never an explicit/composite route.
-	nativeOrigin            context.Context
-	nativeCompletion        *ExecuteResult
-	nativeCompletionContext context.Context
+	nativeOrigin     context.Context
+	nativeCompletion *ExecuteResult
 
 	mu sync.Mutex
 	// localTxExecBySub holds the sub-transaction executors of a statement
@@ -986,7 +993,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 		if engines.txEngine == nil {
 			beginErr = localizedError(localization.CypherTransactionsEngineUnsupported(), nil)
 		} else {
-			beginErr = txExec.beginNativeTransaction(ctx, engines.txEngine, transactionStart{implicit: true, namespace: engines.namespace})
+			beginErr = txExec.beginNativeTransaction(ctx, engines.txEngine, transactionStart{implicit: true, namespace: engines.namespace}, nil)
 		}
 		if beginErr == nil {
 			txExec.txContext.coordinatorOwned = true
@@ -1025,10 +1032,11 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 			terminalCtx = WithTransactionControl(WithAuthToken(tx.BindContext(beginCtx), c.authToken))
 		}
 	}
-	commitFn := func(_ *fabric.SubTransaction) error {
-		commitCtx := terminalCtx
-		if c.nativeOrigin != nil {
-			commitCtx = c.nativeCompletionContext
+	commitFn := func(commitCtx context.Context, _ *fabric.SubTransaction) error {
+		if c.nativeOrigin == nil {
+			// Explicit/composite participants retain their already-bound owner;
+			// native autocommit consumes the admitted terminal input directly.
+			commitCtx = terminalCtx
 		}
 		if c.nativeOrigin != nil && !txExec.txContext.storageWrapper.hasPendingCommitEffects() {
 			owner := txExec.txContext
@@ -1041,7 +1049,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 		}
 		return err
 	}
-	rollbackFn := func(_ *fabric.SubTransaction) error {
+	rollbackFn := func(_ context.Context, _ *fabric.SubTransaction) error {
 		// Native terminal owners detach once even when a WAL finish fails.
 		// Coordinator compensation must not issue a second user ROLLBACK.
 		if c.nativeOrigin != nil && txExec.txContext == nil {

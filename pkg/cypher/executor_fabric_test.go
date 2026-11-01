@@ -187,6 +187,38 @@ func TestShouldUseFabricPlanner_OnlyForCompositeUseTargets(t *testing.T) {
 			query: "CALL { USE cmp.a MATCH (n) RETURN n } RETURN 1 AS ok",
 			want:  true,
 		},
+		{
+			// A leading comment is trivia: the statement still begins with its
+			// top-level USE clause, whose grammar admits SHOW INDEXES.
+			name:  "leading line comment keeps the use top-level",
+			query: "// staged drop\nUSE cmp.a SHOW INDEXES",
+			want:  true,
+		},
+		{
+			name:  "leading BOM and comment keeps the use top-level",
+			query: "\xef\xbb\xbf/* staged drop */ USE cmp.a SHOW INDEXES",
+			want:  true,
+		},
+		{
+			name:  "leading block comment keeps the use top-level",
+			query: "/* staged drop */ USE cmp.a SHOW INDEXES",
+			want:  true,
+		},
+		{
+			// Leading trivia decides only the first USE: a comment before a
+			// non-composite target still stays native.
+			name:  "leading comment does not promote a non-composite use",
+			query: "/* staged drop */ USE leaf_a SHOW INDEXES",
+			want:  false,
+		},
+		{
+			// The subquery grammar has no administration command, so a nested
+			// USE followed by SHOW is not Fabric admission for a composite
+			// constituent: the statement keeps its own syntax error.
+			name:  "nested use keeps the subquery grammar",
+			query: "CALL { /* staged drop */ USE cmp.a SHOW INDEXES } RETURN 1 AS ok",
+			want:  false,
+		},
 	}
 
 	for _, tc := range tests {

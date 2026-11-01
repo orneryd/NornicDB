@@ -75,7 +75,7 @@ func TestFabricSuppressionOwnsCompletionAndWriter(t *testing.T) {
 				case "second_writer_after":
 					query = fragment + " " + writer + " RETURN w,z"
 				}
-				e := f.compositeSession(t)
+				e := newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 				explicit := completion == "commit" || completion == "rollback"
 				if explicit {
 					_, err = e.Execute(ctx, "BEGIN", nil)

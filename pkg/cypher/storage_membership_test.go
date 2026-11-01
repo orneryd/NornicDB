@@ -192,7 +192,7 @@ func TestStorageMembershipConstructions(t *testing.T) {
 							e := NewStorageExecutor(store)
 							e.SetDatabaseManager(f.exec.dbManager)
 							if composite {
-								e = f.compositeSession(t)
+								e = newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 							}
 							if explicit {
 								_, err = e.Execute(ctx, "BEGIN", nil)
@@ -295,7 +295,7 @@ func TestStorageMembershipIssuedViews(t *testing.T) {
 						original = NewStorageExecutor(store)
 						original.SetDatabaseManager(f.exec.dbManager)
 						if source == "composite_root" {
-							original = f.compositeSession(t)
+							original = newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 						}
 						_, err = original.Execute(ctx, "BEGIN", nil)
 						require.NoError(t, err)
@@ -360,9 +360,9 @@ func TestStorageMembershipIssuedViews(t *testing.T) {
 						}
 						_, err = original.Execute(ctx, command, nil)
 					} else if keep {
-						err = coordinator.Commit(nil, nil)
+						err = coordinator.Commit(fabric.TerminalContexts{Commit: ctx, Cleanup: ctx}, nil, nil)
 					} else {
-						err = coordinator.Rollback(nil)
+						err = coordinator.Rollback(ctx, nil)
 					}
 					require.NoError(t, err)
 					want := int64(0)

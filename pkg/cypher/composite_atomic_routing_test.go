@@ -16,7 +16,7 @@ func TestCompositeSchemaTargetPrecedesAtomicCapability(t *testing.T) {
 			t.Cleanup(func() { config.SetParserType(previous) })
 			require.Equal(t, parser, config.GetParserType())
 			exec, mgr := compositeTestFixture(t)
-			root := compositeRootExecutor(t, mgr)
+			root := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 			constituent, err := mgr.GetStorage("shard_a")
 			require.NoError(t, err)
 			before := constituent.GetSchema().GetIndexes()

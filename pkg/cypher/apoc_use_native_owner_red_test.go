@@ -391,13 +391,22 @@ func TestNativeDynamicCoordinatorCommitCancellation(t *testing.T) {
 					ctx, cancel = txphase.WithExecutionDeadline(context.Background(), time.Minute)
 				}
 				defer cancel()
+				type terminalInputKey struct{}
+				identity := new(int)
+				ctx = context.WithValue(ctx, terminalInputKey{}, identity)
 				commits := 0
 				engine.commit = func(commitCtx context.Context, tx *storage.BadgerTransaction) error {
 					commits++
 					require.NoError(t, commitCtx.Err())
+					require.Same(t, identity, commitCtx.Value(terminalInputKey{}), "terminal input preserves originating values")
 					err := tx.CommitContext(commitCtx)
 					if !before {
 						cancel()
+						if phased {
+							require.NoError(t, commitCtx.Err(), "admitted phase retains its detached lifetime")
+						} else {
+							require.ErrorIs(t, commitCtx.Err(), context.Canceled, "unphased input must not be detached by Fabric")
+						}
 					}
 					return err
 				}

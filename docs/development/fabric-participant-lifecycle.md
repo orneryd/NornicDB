@@ -40,9 +40,9 @@ Bind lifecycle operations and their outcome observer in one operation:
 
 ```go
 err := tx.BindParticipantCallbacks(shard, fabric.ParticipantCallbacks{
-    Commit: commit,
-    Rollback: rollback,
-    Outcome: outcome,
+    Commit:   commit,   // func(context.Context, *fabric.SubTransaction) error
+    Rollback: rollback, // func(context.Context, *fabric.SubTransaction) error
+    Outcome:  outcome,
 })
 ```
 
@@ -93,6 +93,59 @@ both the original statement error and any cleanup error.
 These changes alter Go integration contracts and in-memory coordination only.
 Badger keys, stored payloads, WAL framing and storage-version migration arms remain
 unchanged by this fix.
+
+## Terminal contexts (v1.4.4 Go API migration)
+
+Terminal operations receive their contexts explicitly. The former bridge state is
+gone: the native terminal owner no longer stores a completion context for the
+participant commit callback to read later.
+
+```go
+type CommitCallback func(context.Context, *SubTransaction) error
+type RollbackCallback func(context.Context, *SubTransaction) error
+
+// Both contexts are required.
+type TerminalContexts struct {
+    Commit  context.Context
+    Cleanup context.Context
+}
+
+func (tx *FabricTransaction) Commit(TerminalContexts, CommitCallback, RollbackCallback) error
+func (tx *FabricTransaction) Rollback(context.Context, RollbackCallback) error
+```
+
+`ParticipantCallbacks.Commit` and `.Rollback` take the new callback types; the
+struct keeps its fields and `BindParticipantCallbacks` keeps its method signature.
+`ParticipantOutcome`, `SubTransaction` state and outcome fields, the constructor and
+`BindContext` are unchanged. Private end and compensation helpers receive the
+context they need instead of reading one from another owner.
+
+The caller supplies contexts it already owns. `Commit` carries the context the
+terminal owner already admitted for this commit. `Cleanup` is the caller-selected
+dispatch context for compensation after a failed or abandoned terminal phase;
+`Rollback` likewise receives its caller-selected dispatch context. These inputs can
+already be canceled. Registered participants retain their existing independent
+terminal and cleanup scopes as described below; direct callback overrides must
+select the appropriate lifetime explicitly.
+
+Fabric neither invents nor rewrites either context. There is no `context.Background()`
+substitution for a missing value, no second admission decision, and no `ctx.Err()`
+rejection after the caller's accepted transition. Existing deadlines, cancellation
+waits, authority values, outlives-connection cleanup and the one-write-database fence
+stay authoritative.
+
+Participant callbacks keep the scopes they already captured. Explicit and composite
+local participants complete in their transaction-bound terminal context; remote
+participants use the transaction lifetime context bound before terminal dispatch
+together with their independent rollback scope. Those captures are intentional
+ownership, so the callback argument does not replace them. A commit callback must not
+call `BindContext`, because Fabric already holds that mutex when it dispatches. Native
+participants consume the supplied admitted context instead of a stored copy.
+
+Every caller, embedder, plugin and function-typed reference must add the context
+argument and rebuild. There is no old-signature wrapper, alias or parallel
+`CommitWithContext` owner. Badger keys, stored payloads, WAL framing, storage-version
+migration arms, Cypher syntax and HTTP/Bolt wire formats are unchanged.
 
 ## View capabilities and completion
 

@@ -12,14 +12,10 @@ import (
 // implicit marks an auto-commit statement's transaction: it applies the
 // statement's metadata, defers constraint validation to commit and skips the
 // per-commit sync; an explicit transaction checks constraints per statement
-// (#700). drain, when set, flushes acknowledged write-behind writes first so
-// an explicit snapshot observes every acknowledged autocommit statement.
+// (#700).
 type transactionStart struct {
 	implicit  bool
 	namespace string
-	drain     interface{ FlushWriteBehind(context.Context) error }
-	// drainContext is the caller's context for drain.
-	drainContext context.Context
 	// schema admits autocommit DDL before its physical snapshot; explicit
 	// transactions retain their existing snapshot/conflict semantics.
 	schema *storage.SchemaManager
@@ -28,12 +24,15 @@ type transactionStart struct {
 // openTransaction is the one way a Cypher transaction is opened, for explicit
 // BEGIN and for implicit (auto-commit) statements alike: namespace priming,
 // the native snapshot, namespace pin, configuration and the WAL begin record.
+// An optional drain is bound to its request by its caller; ctx independently
+// controls snapshot admission and metadata. Drain runs synchronously after
+// namespace priming and before opening that snapshot.
 //
 // Author: Claude, NOR-180. Its failure is a BEGIN failure and is classified
 // here, where it is produced, so every route reports the same status. A
 // snapshot opened before the failure is rolled back; BadgerTransaction.Rollback
 // only reports an already-closed transaction, so no cleanup failure is lost.
-func (e *StorageExecutor) openTransaction(ctx context.Context, txEngine TransactionCapableEngine, start transactionStart) (tx *storage.BadgerTransaction, bookkeeping transactionWAL, retErr error) {
+func (e *StorageExecutor) openTransaction(ctx context.Context, txEngine TransactionCapableEngine, start transactionStart, drain func() error) (tx *storage.BadgerTransaction, bookkeeping transactionWAL, retErr error) {
 	defer func() {
 		if retErr != nil && tx != nil {
 			_ = tx.Rollback()
@@ -54,8 +53,8 @@ func (e *StorageExecutor) openTransaction(ctx context.Context, txEngine Transact
 			}
 		}
 	}
-	if start.drain != nil {
-		if err := start.drain.FlushWriteBehind(start.drainContext); err != nil {
+	if drain != nil {
+		if err := drain(); err != nil {
 			return nil, bookkeeping, localizedError(begin(err), err)
 		}
 	}

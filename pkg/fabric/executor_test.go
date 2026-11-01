@@ -1725,12 +1725,12 @@ func TestFabricTransaction_Rollback_WithBoundCallbacks(t *testing.T) {
 	_, _ = tx.GetOrOpen("shard_a", false)
 
 	rolledBack := false
-	_ = tx.BindParticipantCallbacks("shard_a", ParticipantCallbacks{Commit: func(_ *SubTransaction) error { return nil }, Rollback: func(_ *SubTransaction) error {
+	_ = tx.BindParticipantCallbacks("shard_a", ParticipantCallbacks{Commit: func(_ context.Context, _ *SubTransaction) error { return nil }, Rollback: func(_ context.Context, _ *SubTransaction) error {
 		rolledBack = true
 		return nil
 	}})
 
-	err := tx.Rollback(nil) // nil global rollback, uses bound callbacks.
+	err := tx.Rollback(context.WithoutCancel(t.Context()), nil) // nil global rollback, uses bound callbacks.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1743,7 +1743,7 @@ func TestFabricTransaction_Rollback_Error(t *testing.T) {
 	tx := NewFabricTransaction("tx-rb-err")
 	_, _ = tx.GetOrOpen("shard_a", false)
 
-	err := tx.Rollback(func(_ *SubTransaction) error {
+	err := tx.Rollback(context.WithoutCancel(t.Context()), func(_ context.Context, _ *SubTransaction) error {
 		return fmt.Errorf("rollback failed")
 	})
 	if err == nil || !strings.Contains(err.Error(), "rollback failed") {
@@ -1758,7 +1758,7 @@ func TestFabricTransaction_Commit_NilCallbacksSkipsToCommitted(t *testing.T) {
 	tx := NewFabricTransaction("tx-nil-cb")
 	_, _ = tx.GetOrOpen("shard_a", false)
 
-	err := tx.Commit(nil, nil) // nil commit callback → auto-committed.
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil) // nil commit callback → auto-committed.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1777,15 +1777,15 @@ func TestFabricTransaction_Commit_CompensationError(t *testing.T) {
 	_, _ = tx.GetOrOpen("shard_b", false)
 
 	commitCount := 0
-	err := tx.Commit(
-		func(sub *SubTransaction) error {
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())},
+		func(_ context.Context, sub *SubTransaction) error {
 			commitCount++
 			if commitCount == 2 {
 				return fmt.Errorf("commit failed")
 			}
 			return nil
 		},
-		func(_ *SubTransaction) error {
+		func(_ context.Context, _ *SubTransaction) error {
 			return fmt.Errorf("compensation also failed")
 		},
 	)
@@ -2043,7 +2043,7 @@ func TestExecuteExec_RemoteWithTransaction(t *testing.T) {
 	if result.RowCount() != 1 {
 		t.Fatalf("expected 1 row, got %d", result.RowCount())
 	}
-	if err := tx.Commit(nil, nil); err != nil {
+	if err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil); err != nil {
 		t.Fatalf("commit failed: %v", err)
 	}
 }

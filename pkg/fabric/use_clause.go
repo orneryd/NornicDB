@@ -109,7 +109,12 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 		}
 		text = source.Text
 	}
-	leading := len(text) - len(strings.TrimLeftFunc(text, cyphertext.IsWhitespace))
+	// Leading whitespace and comments are trivia, not statement text: the
+	// statement begins at its first live byte, so a comment-only prefix never
+	// reads as the text ahead of a mid-statement USE for the planner to run as
+	// the statement's prefix fragment. skipSpacesAndComments is the shared
+	// trivia owner (cyphertext.GapEnd): line and block comments, CR/LF ends.
+	leading := skipSpacesAndComments(text, 0)
 	trailing := max(leading, len(strings.TrimRightFunc(text, cyphertext.IsWhitespace)))
 	trimmed := text[leading:trailing]
 	if !startsWithWordFold(trimmed, "USE") {

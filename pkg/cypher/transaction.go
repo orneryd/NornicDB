@@ -242,17 +242,18 @@ func (e *StorageExecutor) handleBegin(ctx context.Context) (_ *ExecuteResult, re
 		return nil, localizedError(localization.CypherTransactionsEngineUnsupported(), nil)
 	}
 	start := transactionStart{namespace: namespaceHint}
+	var drain func() error
 	// With write-behind buffering, drain acknowledged autocommit writes so
 	// the explicit snapshot observes every acknowledged statement.
 	if drainer, ok := engine.(interface{ FlushWriteBehind(context.Context) error }); ok {
-		start.drain, start.drainContext = drainer, ctx
+		drain = func() error { return drainer.FlushWriteBehind(ctx) }
 	}
 	// An explicit transaction checks each write against the constraints
 	// when its statement runs, as Neo4j does: the statement that breaks a
 	// constraint fails with ConstraintValidationFailed (and fails the
 	// transaction), not the COMMIT (#700). COMMIT checks again under the
 	// constraint keys' locks, against what other writers committed since.
-	if err := e.beginNativeTransaction(context.Background(), txEngine, start); err != nil {
+	if err := e.beginNativeTransaction(context.Background(), txEngine, start, drain); err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{Columns: []string{"status"}, Rows: [][]interface{}{{"Transaction started"}}}, nil
@@ -261,8 +262,8 @@ func (e *StorageExecutor) handleBegin(ctx context.Context) (_ *ExecuteResult, re
 // beginNativeTransaction installs the native controller after the common
 // transaction admission succeeds. Its caller selects explicit versus implicit
 // lifetime; neither route duplicates namespace, metadata or WAL ownership.
-func (e *StorageExecutor) beginNativeTransaction(ctx context.Context, engine TransactionCapableEngine, start transactionStart) error {
-	tx, bookkeeping, err := e.openTransaction(ctx, engine, start)
+func (e *StorageExecutor) beginNativeTransaction(ctx context.Context, engine TransactionCapableEngine, start transactionStart, drain func() error) error {
+	tx, bookkeeping, err := e.openTransaction(ctx, engine, start, drain)
 	if err != nil {
 		return err
 	}
@@ -317,7 +318,7 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		err = e.commitStorageTransaction(ctx, tx)
 		acknowledgedBuffered = tx.AcknowledgedBuffered()
 	case *fabric.FabricTransaction:
-		err = tx.Commit(nil, nil)
+		err = tx.Commit(fabric.TerminalContexts{Commit: ctx, Cleanup: ctx}, nil, nil)
 		if err == nil {
 			publishStatementCommit(ctx)
 		}
@@ -416,7 +417,7 @@ func (e *StorageExecutor) handleRollback(ctx context.Context, primary error) (*E
 		if tx.State() != "open" {
 			err = nil
 		} else {
-			err = tx.Rollback(nil)
+			err = tx.Rollback(ctx, nil)
 		}
 	default:
 		return nil, localizedError(localization.CypherTransactionsUnknownType(), nil)

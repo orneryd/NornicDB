@@ -1576,7 +1576,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 			start.schema = provider.GetSchemaForNamespace(engines.namespace)
 		}
 	}
-	tx, bookkeeping, err := e.openTransaction(ctx, txEngine, start)
+	tx, bookkeeping, err := e.openTransaction(ctx, txEngine, start, nil)
 	if err != nil {
 		return nil, err
 	}

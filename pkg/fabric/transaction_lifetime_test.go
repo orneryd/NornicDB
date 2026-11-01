@@ -29,11 +29,11 @@ func TestTransactionLifetimeEndsAfterParticipants(t *testing.T) {
 		lifetime := tx.BindContext(context.Background())
 		_, err := tx.GetOrOpen("one", false)
 		require.NoError(t, err)
-		end := func(*SubTransaction) error { require.NoError(t, lifetime.Err()); return nil }
+		end := func(context.Context, *SubTransaction) error { require.NoError(t, lifetime.Err()); return nil }
 		if commit {
-			err = tx.Commit(end, end)
+			err = tx.Commit(TerminalContexts{Commit: lifetime, Cleanup: context.WithoutCancel(lifetime)}, end, end)
 		} else {
-			err = tx.Rollback(end)
+			err = tx.Rollback(context.WithoutCancel(lifetime), end)
 		}
 		require.NoError(t, err)
 		require.ErrorIs(t, lifetime.Err(), context.Canceled)

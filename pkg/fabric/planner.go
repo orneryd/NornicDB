@@ -293,7 +293,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 			if err != nil {
 				return nil, err
 			}
-			prefix = strings.TrimSpace(prefix)
+			prefix = fragmentStatementText(prefix)
 			if prefix == "" {
 				return inner, nil
 			}
@@ -410,6 +410,23 @@ func (p *FabricPlanner) validatePlanTarget(scope string, target planTarget) erro
 		return nil
 	}
 	return p.validateUseTarget(scope, target.name)
+}
+
+// fragmentStatementText is the executable statement text of a planner
+// fragment: the text a graph runs, without the leading whitespace and comments
+// that belong to no clause. A fragment that is only trivia is empty, so it is
+// no statement to run there at all. cyphertext.GapEnd is the shared trivia
+// owner, so a comment ahead of a fragment's first clause is never read as that
+// clause, whether or not the query text was normalized. A comment GapEnd
+// reports unfinished keeps the fragment as written, so the fragment's own
+// syntax error stays visible.
+func fragmentStatementText(fragment string) string {
+	fragment = strings.TrimSpace(fragment)
+	start, unfinished := cyphertext.GapEnd(fragment, 0)
+	if unfinished >= 0 {
+		return fragment
+	}
+	return fragment[start:]
 }
 
 func ensureRowProducingPrefix(query string, isName ClauseKeywordNameReader) string {
@@ -567,7 +584,7 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 
 	for _, block := range blocks {
 		// Preserve outer query segments before each CALL block.
-		prefix := strings.TrimSpace(fullQuery[lastPos:block.startPos])
+		prefix := fragmentStatementText(fullQuery[lastPos:block.startPos])
 		if prefix != "" {
 			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix, p.keywordIsName), top, scope), Projection: true, Columns: nil}
 		}

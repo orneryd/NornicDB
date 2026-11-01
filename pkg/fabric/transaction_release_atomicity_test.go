@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -13,8 +14,8 @@ func TestFabricFailedCleanupRemainsUnconfirmed(t *testing.T) {
 	require.NoError(t, err)
 	commitErr := errors.New("write rejected")
 	cleanupErr := errors.New("rollback failed")
-	require.NoError(t, tx.BindParticipantCallbacks("writer", ParticipantCallbacks{Commit: func(*SubTransaction) error { return commitErr }, Rollback: func(*SubTransaction) error { return cleanupErr }}))
-	err = tx.Commit(nil, nil)
+	require.NoError(t, tx.BindParticipantCallbacks("writer", ParticipantCallbacks{Commit: func(context.Context, *SubTransaction) error { return commitErr }, Rollback: func(context.Context, *SubTransaction) error { return cleanupErr }}))
+	err = tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil)
 	require.ErrorIs(t, err, commitErr)
 	require.ErrorIs(t, err, cleanupErr)
 	require.Equal(t, "cleanup_failed", tx.SubTransactions()["writer"].State, "a failed rollback must not be reported as confirmed")
@@ -30,9 +31,9 @@ func TestFabricReaderCommitFailurePrecedesWriter(t *testing.T) {
 		_, err = tx.GetOrOpen("reader", false)
 		require.NoError(t, err)
 		writerCommits, writerRollbacks := 0, 0
-		require.NoError(t, tx.BindParticipantCallbacks("writer", ParticipantCallbacks{Commit: func(*SubTransaction) error { writerCommits++; return nil }, Rollback: func(*SubTransaction) error { writerRollbacks++; return nil }}))
-		require.NoError(t, tx.BindParticipantCallbacks("reader", ParticipantCallbacks{Commit: func(*SubTransaction) error { return errors.New("reader close rejected") }, Rollback: func(*SubTransaction) error { return nil }}))
-		require.Error(t, tx.Commit(nil, nil))
+		require.NoError(t, tx.BindParticipantCallbacks("writer", ParticipantCallbacks{Commit: func(context.Context, *SubTransaction) error { writerCommits++; return nil }, Rollback: func(context.Context, *SubTransaction) error { writerRollbacks++; return nil }}))
+		require.NoError(t, tx.BindParticipantCallbacks("reader", ParticipantCallbacks{Commit: func(context.Context, *SubTransaction) error { return errors.New("reader close rejected") }, Rollback: func(context.Context, *SubTransaction) error { return nil }}))
+		require.Error(t, tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil))
 		require.Zero(t, writerCommits, "a reader failure must prevent any write commit")
 		require.Equal(t, 1, writerRollbacks)
 	}
@@ -45,11 +46,11 @@ func TestFabricParticipantBindingRejectsEndedOwner(t *testing.T) {
 			sub, err := tx.GetOrOpen("late", false)
 			require.NoError(t, err)
 			if end == "commit" {
-				require.NoError(t, tx.Commit(nil, nil))
+				require.NoError(t, tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil))
 			} else {
-				require.NoError(t, tx.Rollback(nil))
+				require.NoError(t, tx.Rollback(context.WithoutCancel(t.Context()), nil))
 			}
-			err = tx.BindParticipantCallbacks("late", ParticipantCallbacks{Commit: func(*SubTransaction) error { return nil }})
+			err = tx.BindParticipantCallbacks("late", ParticipantCallbacks{Commit: func(context.Context, *SubTransaction) error { return nil }})
 			require.Error(t, err, "closed coordinator cannot acquire a newly opened native resource")
 			require.Nil(t, sub.commitFn, "failed binding must not replace terminal callbacks")
 		})

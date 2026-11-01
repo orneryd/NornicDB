@@ -24,6 +24,8 @@ func nilReversed(v *int) { if nil != v { return }; sink(v) }
 func bypassNonNil(v *int, choice bool) { if choice { if v == nil { return } }; sink(v) }
 func bypassNil(v *int, choice bool) { if choice { if v != nil { return } }; sink(v) }
 func nestedNonNil(v *int, choice bool) { if choice { if v == nil { return }; sink(v) } }
+func joinNil(v *int) { if v != nil { sink(v) }; sink(v) }
+func joinNonNil(v *int) { if v == nil { sink(v) }; sink(v) }
 func nestedNil(v *int, choice bool) { if choice { if v != nil { return }; sink(v) } }
 `,
 	} {
@@ -43,6 +45,7 @@ func nestedNil(v *int, choice bool) { if choice { if v != nil { return }; sink(v
 		{"nonNilReversed", false, true}, {"nilReversed", true, false},
 		{"bypassNonNil", false, false}, {"bypassNil", false, false},
 		{"nestedNonNil", false, true}, {"nestedNil", true, false},
+		{"joinNil", false, false}, {"joinNonNil", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			found := false
@@ -54,6 +57,9 @@ func nestedNil(v *int, choice bool) { if choice { if v != nil { return }; sink(v
 					for _, ins := range block.Instrs {
 						call, ok := ins.(*ssa.Call)
 						if !ok || call.Common().StaticCallee() == nil || call.Common().StaticCallee().Name() != "sink" {
+							continue
+						}
+						if (tc.name == "joinNil" || tc.name == "joinNonNil") && len(block.Preds) < 2 {
 							continue
 						}
 						found = true

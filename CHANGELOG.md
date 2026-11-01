@@ -72,7 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Go native transaction schemas use `Schema(SchemaPurpose)` for ordinary DDL or
   knowledge-policy edits. Composite participant callbacks bind their complete
-  terminal contract together; see the [participant lifecycle guide](docs/development/fabric-participant-lifecycle.md).
+  terminal contract together. Fabric terminal callbacks are context-first;
+  commits require explicit `TerminalContexts` and rollbacks an explicit cleanup
+  dispatch context. Rebuild Go consumers using the
+  [participant lifecycle guide](docs/development/fabric-participant-lifecycle.md).
 
 - Go entity commits use typed preparation, publication and encoding requests.
   Replication encodes accepted snapshots directly; public diagnostic operation
@@ -134,6 +137,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- `gds.graph.project` retains request cancellation through node and relationship
+  streams and checks it before publishing the graph projection.
+- Transaction streams cancel lock reacquisition after a visitor returns, preserve
+  intentional prefix completion, and never release another operation's lock.
+- Explicit composite transactions see their own staged index drops in
+  `USE ... SHOW INDEXES`; leading comments no longer route that statement through
+  a different transaction when query normalization is disabled. Comment-only
+  prefixes before Fabric subqueries are not executed as empty statements, and
+  comment-led `WITH ... USE` prefixes retain their real row bindings.
 
 - Snapshot/read-view admission observes caller cancellation while waiting for
   the write-behind retirement lock, including completed-cache admission.

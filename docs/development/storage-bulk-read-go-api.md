@@ -49,9 +49,19 @@ for that lock returns its cancellation/deadline error instead of waiting for the
 current holder. The
 holder is never preempted, the canceled waiter leaves no hold behind, and the
 transaction's own state errors keep their precedence (a released client reports
-`ErrTransactionClosed` even for a canceled request). An individual allocation,
-opaque library call or acquisition of a lock that is not that admission boundary
-is not made preemptible by this API; workload measurements remain necessary.
+`ErrTransactionClosed` even for a canceled request). The label, whole-graph and
+type streams deliver each record with that lock released, and the retake after
+each callback carries the same caller's context: a request canceled while its
+visitor ran ends when the visitor returns instead of waiting for another holder,
+and a transaction the client closed or detached while its visitor ran reports
+`ErrTransactionClosed` the same way, before that retake waits. A visitor that
+panics keeps its own panic and leaves no hold behind: the read releases the lock
+only while it owns it. A visitor that intentionally returns `ErrIterationStopped`
+keeps the existing early-stop result even if it cancels its own context;
+transaction closure still reports an error.
+An individual allocation, opaque library call or acquisition of a lock that is
+not the transaction's own read lock is not made preemptible by this API;
+workload measurements remain necessary.
 
 Point and first-row APIs retain their signatures. A genuinely context-free staging
 or maintenance entry explicitly supplies its own lifetime at the read site. This
@@ -63,3 +73,13 @@ This is a Go embedding/interface migration and requires rebuilding plugins and
 custom storage implementations. It changes no Badger keys, persisted payloads,
 WAL format or storage version, and requires no database migration. Cypher syntax,
 HTTP and Bolt value contracts are unchanged by the storage API migration.
+
+### Remote native entry lifetime
+
+Context-free remote point reads, scalar counts and entity mutations create the
+existing 30-second `RemoteRequestTimeout` context at their entry and release it
+on return. Private query/count helpers consume that context directly; they do
+not create another timeout. Reads with a caller context preserve cancellation
+and an earlier deadline. The public `QueryCypher(nil, ...)` and
+`BeginCypherTx(nil, ...)` contracts remain supported. This ownership migration
+does not change wire queries, result cardinality, access mode or stored data.

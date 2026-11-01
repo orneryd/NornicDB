@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"context"
 	"errors"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -23,8 +24,8 @@ func TestFabricConfirmedCommitRetainsStructuredTerminalFailure(t *testing.T) {
 				}
 			}
 			commits, rollbacks := 0, 0
-			require.NoError(t, tx.BindParticipantCallbacks("writer", ParticipantCallbacks{Commit: func(*SubTransaction) error { commits++; return finish }, Rollback: func(*SubTransaction) error { rollbacks++; return nil }, Outcome: func() string { return "committed" }}))
-			err = tx.Commit(nil, nil)
+			require.NoError(t, tx.BindParticipantCallbacks("writer", ParticipantCallbacks{Commit: func(context.Context, *SubTransaction) error { commits++; return finish }, Rollback: func(context.Context, *SubTransaction) error { rollbacks++; return nil }, Outcome: func() string { return "committed" }}))
+			err = tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil)
 			require.Equal(t, "committed", tx.State())
 			require.Equal(t, 1, commits)
 			require.Zero(t, rollbacks)

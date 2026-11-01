@@ -42,8 +42,9 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	}
 	afterPublication, prepare := request.AfterPublication, request.prepare
 	// A nil publication context is the explicit detached native boundary.
-	// Private preparation receives its unbounded completion lifetime, preserving
-	// commitCtx's nil contract independently of the engine stop signal.
+	// Private preparation and publication receive this unbounded completion
+	// lifetime, preserving commitCtx's nil contract independently of the engine
+	// stop signal.
 	preparationContext := commitPreparationLifetime(ctx)
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
@@ -147,7 +148,9 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	if authorityErr != nil {
 		return tx.abortCommitLocked(authorityErr)
 	}
-	releaseEntityAuthority, authorityErr := tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.commitCtx, tx.ID, entityKeys)
+	// The entity lock admission runs on the selected phase scope rather than
+	// on the mutable (possibly nil) marker.
+	releaseEntityAuthority, authorityErr := tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(preparationContext, tx.ID, entityKeys)
 	if authorityErr != nil {
 		return tx.abortCommitLocked(authorityErr)
 	}
@@ -230,6 +233,8 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 
 	// Accepted prepared commits clear commitCtx at the handoff. Their completion
 	// is detached even from engine stop; plain commits retain the caller lifetime.
+	// Every later private publication helper receives this selected non-nil scope
+	// instead of reading the mutable marker again.
 	preparationContext = commitPreparationLifetime(tx.commitCtx)
 	if err := preparationContext.Err(); err != nil {
 		return tx.abortCommitLocked(err)
@@ -264,7 +269,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		if err != nil {
 			return tx.abortCommitLocked(err)
 		}
-		drained, err := tx.engine.orderAfterBufferedCommits(tx.commitCtx, &order, entities)
+		drained, err := tx.engine.orderAfterBufferedCommits(preparationContext, &order, entities)
 		if err != nil {
 			return tx.abortCommitLocked(err)
 		}
@@ -327,9 +332,10 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		}
 	}()
 	acceptedRelease := tx.commitReleaseAcceptedAuthority
-	// A prepared command's accepted continuation deliberately cleared this
-	// context. Its acceptance owner already made the semantic decision.
-	cw := tx.engine.newCommitWriter(tx.commitCtx, tx.badgerDB, tx.badgerTx)
+	// A prepared command's accepted continuation deliberately cleared commitCtx;
+	// its acceptance owner already made the semantic decision. The writer runs
+	// on the selected unbounded phase scope either way.
+	cw := tx.engine.newCommitWriter(preparationContext, tx.badgerDB, tx.badgerTx)
 	logicalID := tx.ID
 	if tx.commitLogicalID != "" {
 		logicalID = tx.commitLogicalID
@@ -392,7 +398,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// commit's context, and every exit releases the gate before the deferred
 	// callbacks and notifications run.
 	if tx.knowledgeSchemaDirty {
-		lease, err := tx.engine.GetSchemaForNamespace(tx.namespace).beginSchemaPublication(tx.commitCtx)
+		lease, err := tx.engine.GetSchemaForNamespace(tx.namespace).beginSchemaPublication(preparationContext)
 		if err != nil {
 			return tx.abortCommitLocked(err)
 		}

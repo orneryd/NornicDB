@@ -155,7 +155,7 @@ func NilSuccessEdge(e ssa.Value) (*ssa.If, *ssa.BasicBlock) {
 
 // NilAt reports that block runs only after a nil test of the SSA value v took
 // its nil branch: some If dominating block compares v with nil, and its nil
-// successor dominates block. Code there has no value in v (for a context: no
+// successor is entered only from that test and dominates block. Code there has no value in v (for a context: no
 // request on this path).
 // Author: storage-format-owners lane (Claude), #1693, 30 October 2026.
 func NilAt(v ssa.Value, block *ssa.BasicBlock) bool {
@@ -176,7 +176,7 @@ func NilAt(v ssa.Value, block *ssa.BasicBlock) bool {
 			if !ok || len(iff.Block().Succs) != 2 || iff.Block().Succs[0] == iff.Block().Succs[1] {
 				continue
 			}
-			if iff.Block().Dominates(block) && iff.Block().Succs[nilIndex].Dominates(block) {
+			if nilSucc := iff.Block().Succs[nilIndex]; len(nilSucc.Preds) == 1 && nilSucc.Preds[0] == iff.Block() && iff.Block().Dominates(block) && nilSucc.Dominates(block) {
 				return true
 			}
 		}
@@ -186,7 +186,8 @@ func NilAt(v ssa.Value, block *ssa.BasicBlock) bool {
 
 // NonNilAt reports that block runs only after a nil test of the SSA value v
 // took its non-nil branch: some If dominating block compares v with nil, and
-// its non-nil successor dominates block. An SSA value cannot change after its
+// its non-nil successor is entered only from that test and dominates block.
+// An SSA value cannot change after its
 // test, so the fact holds for v throughout block.
 // Author: storage-format-owners lane (Claude), #1693, 30 October 2026.
 func NonNilAt(v ssa.Value, block *ssa.BasicBlock) bool {
@@ -207,7 +208,7 @@ func NonNilAt(v ssa.Value, block *ssa.BasicBlock) bool {
 			if !ok || len(iff.Block().Succs) != 2 || iff.Block().Succs[0] == iff.Block().Succs[1] {
 				continue
 			}
-			if nonNil := iff.Block().Succs[1-nilIndex]; iff.Block().Dominates(block) && nonNil.Dominates(block) {
+			if nonNil := iff.Block().Succs[1-nilIndex]; len(nonNil.Preds) == 1 && nonNil.Preds[0] == iff.Block() && iff.Block().Dominates(block) && nonNil.Dominates(block) {
 				return true
 			}
 		}

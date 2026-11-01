@@ -90,7 +90,7 @@ func TestFabricValueFragmentRunsInTheStatement(t *testing.T) {
 			{"exists", "CALL { USE comp.one RETURN CASE WHEN EXISTS { (n:AcAtom {run:$run}) } THEN 1 ELSE 0 END AS c }"},
 		} {
 			t.Run(fmt.Sprintf("%s/explicit_%t", shape.name, explicit), func(t *testing.T) {
-				e := f.compositeSession(t)
+				e := newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 				t.Cleanup(func() {
 					if e.txContext != nil && e.txContext.active {
 						_, err := e.Execute(ctx, "ROLLBACK", nil)
@@ -113,7 +113,7 @@ func TestFabricValueFragmentRunsInTheStatement(t *testing.T) {
 			})
 		}
 		t.Run(fmt.Sprintf("nested_write/explicit_%t", explicit), func(t *testing.T) {
-			e := f.compositeSession(t)
+			e := newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 			t.Cleanup(func() {
 				if e.txContext != nil && e.txContext.active {
 					_, err := e.Execute(ctx, "ROLLBACK", nil)
@@ -197,14 +197,17 @@ func TestFabricParticipantBeginPreservesMetadataAndBindingCleanup(t *testing.T) 
 					runningTransactions.end(entry)
 				}
 			})
-			participant, err := c.ensureLocalShardTxExecutor(WithTransactionMetadata(context.Background(), map[string]any{"client": "ownership-proof"}), sub, "one", engine)
+			// The coordinator rollback below receives this test-owned scope as its
+			// explicit cleanup owner, independent of the statement completion.
+			ctx := context.Background()
+			participant, err := c.ensureLocalShardTxExecutor(WithTransactionMetadata(ctx, map[string]any{"client": "ownership-proof"}), sub, "one", engine)
 			require.NotNil(t, engine.started)
 			require.Equal(t, "ownership-proof", engine.started.GetMetadata()["client"], "canonical BEGIN applies caller metadata")
 			if registered {
 				require.NoError(t, err)
 				require.True(t, participant.txContext.coordinatorOwned)
 				require.NotNil(t, participant.txContext.running)
-				require.NoError(t, tx.Rollback(nil))
+				require.NoError(t, tx.Rollback(ctx, nil))
 				require.False(t, engine.started.IsActive())
 			} else {
 				require.ErrorContains(t, err, "not found")
@@ -226,7 +229,7 @@ func TestExplicitStatementPanicCannotCommitEarlierWrites(t *testing.T) {
 	t.Cleanup(ClearUserProcedures)
 	for _, composite := range []bool{false, true} {
 		t.Run(fmt.Sprintf("composite_%t", composite), func(t *testing.T) {
-			e := f.compositeSession(t)
+			e := newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 			if !composite {
 				store, err := f.mgr.GetStorage("one")
 				require.NoError(t, err)

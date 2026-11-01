@@ -5,7 +5,7 @@ The approved dependency order is current #1684 terminal-outcome prerequisite,
 label-index readiness and remaining preparation. Preserve each author's work;
 port into current owners rather than restoring obsolete implementations.
 
-Current gate (2026-11-01): full `make verify BASE=origin/release/v1.4.4` after integrating current diagnostic corrections, with unchanged duplicate checker best effort. The 5bf14fceb run failed and was superseded; no full verification is currently running. Earlier deferred/test-only directions and running-job notes below are historical; the current-prerequisite integration section and external current-resume.json record the active state. All four remaining API decisions are explicitly approved. No final verification pass or published correction head is claimed.
+Current gate (2026-11-01): resolve current-source findings from the unchanged duplicate checker before full `make verify BASE=origin/release/v1.4.4` on the integrated candidate. The 5bf14fceb run failed and was superseded; no full verification is currently running. Earlier deferred/test-only directions and running-job notes below are historical; the current-prerequisite integration section and external current-resume.json record the active state. All four remaining API decisions are explicitly approved. No final verification pass or published correction head is claimed.
 
 - [x] Preserve original #1636, #1693 and #1667 heads and the separate #1667 prototype.
 - [x] Rebase #1636 S1–S4 onto current #1684 (61d13cded), preserving release APOC I/O policy.
@@ -23,10 +23,28 @@ Current gate (2026-11-01): full `make verify BASE=origin/release/v1.4.4` after i
 - [ ] Publish the qualified head with remote-head protection; fold superseded PRs only after inclusion is proved.
 - [ ] Clean task-owned obsolete worktrees/artifacts/cache with the cleanup skill, preserving active work and required evidence.
 
-The user deferred the full make verify sweep and requested no new duplicate-checker
-run this round. This does not assert a clean duplicate inventory. Remote code graph
-refresh at de70c0e83 failed during relationship import and is incomplete; current
-source is authoritative. No release tag, remote merge or storage migration is claimed.
+The database is healthy again. The unchanged installed advisory checker completed
+on staged tree `94c62f99764c492947e01194a42275e5bc9d22a0`: 140 functions,
+seven reuse candidates and zero refactor targets. These candidates remain under
+current-source review; this is not a clean result or final-candidate qualification.
+The indexed baseline is older (`35e3bddbf`), and current source is authoritative.
+The approved terminal-context API and caller migrations, optional bound drain
+operation, and inline context-field census coverage are integrated locally. Focused
+race checks are running; no final full verification, push or merge is claimed.
+
+## Latest integration checks (2026-11-01; uncommitted candidate)
+
+- [x] Integrate approved Fabric context-first terminal APIs and migrate callbacks, tests and docs; retire the mutable native completion bridge.
+- [x] Verify selected integrated terminal/lifecycle/HTTP cleanup tests under race: Fabric2.491s, Cypher174.372s, Server127.235s. These nonverbose runs do not enumerate optional reference-server skips.
+- [x] Verify exact terminal dispatch and optional-drain contracts under race: Fabric1.752s and Cypher3.224s.
+- [x] Preserve explicit BEGIN's distinct request-drain and independent snapshot lifetimes using a bound optional operation; reject the aggregate closure prototype that added48B/one allocation.
+- [x] Integrate selected publication contexts and eliminate noncancellable flush-wait timer allocations. Parent selected cancellation/preparation/large-commit race controls pass102.897s.
+- [x] Qualify inline struct-field context inputs and shared source-argument binding: parent focused internal/capture race2.069s/4.024s; exact new fixture also checked independently.
+- [x] Reproduce and correct a named-source census collision that hid a second distinct source at the same call. Parent focused integrated capture race passes1.898s; no duplicate-checker rule changed.
+- [x] Complete seven reuse-candidate source review and safe fixture consolidations; unchanged corrected-tree checker completes264functions/11reuse/0refactor targets.
+- [x] Qualify follow-up common stream instrumentation, SHOW-command matrix and shared atomicity outcome oracle under integrated race8.037s; remote session-mode matrix race1.836s and planner UNION/import/allocation controls race2.388s pass. Retain the source-backed phase/lifetime/visibility distinctions in the PR.
+- [ ] Run the unchanged normal commit hook on the final staged source before full verification.
+- [ ] Commit the reviewed frozen candidate through the existing advisory hook, then run full make verify including allocation checks of that commit.
 
 ## Current focused results (not final readiness)
 
@@ -229,3 +247,34 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [ ] Refresh source-bound census evidence and freeze candidate for full make verify; no full verification or readiness claimed.
 
 - [x] Independently review exactly two stale reconciliation function proofs; holdsEntities now receives originating phase context, and trackPendingValues has only the canonical typed key rename. Apply JSON-only source pins; strict revalidation in progress, no new exceptions.
+
+
+## 2026-11-01 resumed integration checkpoint
+
+- [x] Preserve normal local checkpoint `9e6b63e8ad03bf6165eabe9d5d57a8313c052d7a`; advisory duplicate check timed out, not a clean result. No qualified push or readiness claimed.
+- [x] Integrate the reviewed stream visitor lock-release/retake correction from DeepSeek jobs bd1b5457ca53493eaf3837231fa53648 and daa45366962746eaa6b10886c898f807. All three streams preserve callback/cancellation errors, do not release a foreign lock after panic, and recheck transaction ownership before waiting and after acquisition. Parent focused storage race PASS 3.024s; log `parent-visitor-cancellation-final-race.log` in task evidence.
+- [ ] Complete fresh whole Cypher/storage package diagnostics on the integrated source; preserve exact logs and fix every failure.
+- [ ] Finish lexical population reconciliation against current source, with reviewed member dispositions and no extractor/rule weakening.
+- [ ] Complete GDS public cancellation qualification (DeepSeek 694c0a95eafe45cda3b67de692e8b6f0) and explicit/Fabric index-drop qualification (DeepSeek 40d528875f1443a08d74845c683c7606). No runtime changes justified by a source candidate alone.
+- [ ] Complete remaining current-source context census proof obligations, including deferred error composition and native completion field ordering; prior census failures remain preserved and unqualified.
+- [ ] Qualify shared-claim and buffered-preparation performance in an isolated matched window, including the visitor correction's measured +24 B / one allocation per label/edge stream invocation (whole-graph unchanged). No timing claim from concurrent runs.
+- [ ] Freeze corrected source, run full `make verify BASE=origin/release/v1.4.4`, resolve failures, publish with protected lease, update PR/Linear evidence, then perform task-owned cleanup. Never merge automatically.
+
+- [x] Fresh whole Cypher diagnostic PASS649.683s (`current-integrated-cypher-suite-round2.log`). It predates the GDS correction; final frozen full verification remains required.
+- [x] Fresh whole storage diagnostic FAIL530.927s with exactly one failed test, `TestQueryNodeScanNestedVisitorsKeepTheirOptions`. Preserve the original intentional early-stop contract; do not change its assertion. Parent actual contract RED and three blocked-retake controls preserved, then corrected canonical visitor helper. Focused combined race PASS3.473s (`visitor-intentional-stop-contract-final-race.log`). Full storage rerun remains part of final verification.
+- [x] Parent lexical manifest guards PASS3.450s,3985 entries (`parent-current-lexical-manifest-guards.log`).
+- [ ] Complete reviewed GDS cancellation integration and test qualification. Initial worker finished before cancellation request took effect (no run was canceled). Its older-tree full run is not current qualification. Parent accepted originating-context forwarding and post-build publication gate; test timestamp/join/public-vs-component corrections delegated as8a6535b46e7b4fa2b10e32d1454f8837.
+- [ ] Reproduce/correct newly reported composite explicit transaction schema visibility through public paths (DeepSeek ed061a62f18544e28fc1f18f8ab015d4). No API/storage-format change authorized by that report alone.
+
+### Current qualification continuation
+
+- [x] GDS originating-context and pre-publication correction independently qualified: public both-parser node/edge-heavy controls plus deterministic stream-prefix, final-stream cancellation and healthy retry race PASS69.885s. Context-loss and missing-gate mutants independently fail. No timing-based skip retained.
+- [x] Shared-claim two-file change qualifies against matched common prerequisites: 128-node/four-UNIQUE median161337→139874ns (-13.3%),185610→185193B,1998→1997alloc; empty target latency within noise,4802→4401B and75→72alloc. Invalid model-overlap attempt retained separately. This does not qualify whole ingestion/preparation.
+- [x] Buffered preparation pair compiled with common identity prerequisites, six production file deltas and identical public fixture. Both 1/64-node fixtures pass one-iteration physical/visible/ACK assertions. Timing/profile qualification remains open.
+- [x] Deferred-error composition proof independently passes full internal/workcensus race58.169s and actual native statement owner source proof. Full current-source capture census remains open.
+- [ ] Integrate canonical shared-join edge-fact and stable native-origin field proofs after independent review; preserve soundness negatives and do not weaken census policy.
+- [ ] Finish explicit composite schema visibility correction and comment-prefix routing coverage. Worker transport failure is incomplete; recovery job0b5e1470e47d44f1879d12a25f5ebdfb continues in the same isolated checkout.
+
+- [x] Parent reviewed/integrated canonical stable-field/TLS shared-join corrections; combined full internal/workcensus race PASS94.023s. Guard-return, loop-Phi, alias/mutation/escape and deferred recovery negatives remain. No census policy/duplicate checker change.
+- [x] Lexical discovery identifies exactly8 additional SSA metadata functions and no removed/changed member; review records data-grammar dispositions, retains3985 prior entries and names actual controls. Guard pass1.984s before final evidence-name metadata amendment.
+- [x] Parent took over remote native lifetime migration from DeepSeek0bb after implementation; no public nil contract removed or timeout duplicated. Rejected new AST mirror tests, retained actual fake/HTTP/Bolt lifetime/result/error controls; integrated focused race PASS2.682s. Worker extra diagnostic/canceled response is not a parent full-suite qualification.

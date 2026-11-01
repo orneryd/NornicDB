@@ -383,13 +383,78 @@ func (tx *BadgerTransaction) GetNodesByLabel(ctx context.Context, label string) 
 	})
 }
 
+// streamVisitFrame is the per-stream state a streamed read shares with the one
+// owner of its release/retake: whether that owner holds the transaction's lock.
+// A stream creates one frame and passes it to every record's visit, so neither
+// the per-record path nor the transaction carries a visitor's lifetime.
+//
+// held is the ownership flag the stream's deferred release reads, and it is
+// accurate at every point: false from before the lock is released until the
+// retake owns it again. A visitor that panics therefore leaves the deferred
+// release with nothing to release, so the visitor's panic propagates unchanged
+// and a lock this stream no longer holds is never unlocked.
+type streamVisitFrame struct {
+	held bool
+}
+
+// streamVisitUnlocked is the one owner of the release/retake every streamed
+// read performs around a record's visitor. It runs the visitor with the
+// transaction's lock released and retakes that lock on the read's own context:
+// the lock cannot span the visitor (the caller's callback may write), and the
+// retake cannot outlive the read, so a request canceled, closed or detached
+// while the visitor ran ends here instead of queueing behind an unrelated
+// holder, and no further record is delivered.
+//
+// The lock is released only after the frame reports it unheld, which keeps the
+// caller's deferred release accurate across a visitor panic.
+//
+// Errors keep their identity. A visitor error is returned unchanged when the
+// stream owns the lock again, so ErrIterationStopped still ends a stream as the
+// sentinel it is. The client's closure and detachment are checked on their own
+// atomic state before the retake waits, and everything else the transaction
+// admits is validated on the retaken hold; such an error is reported alone when
+// the visitor succeeded and joined with the visitor's error when it did not, so
+// a stream whose transaction was closed or canceled while its visitor ran
+// reports that instead of losing either failure. Intentional early stop keeps
+// its existing sentinel when only the retake's context ended: the visitor has
+// already completed its requested prefix. Closing the transaction is still an
+// error, even when the visitor requested an early stop.
+func streamVisitUnlocked[T any](tx *BadgerTransaction, ctx context.Context, frame *streamVisitFrame, record T, visit func(T) error) error {
+	frame.held = false
+	tx.mu.Unlock()
+	visitErr := visit(record)
+	err := tx.clientOwnershipError(transactionRead)
+	if err == nil {
+		if err = tx.mu.LockContext(ctx); err == nil {
+			frame.held = true
+			err = tx.ensureOperationAllowedLocked(transactionRead)
+		}
+	}
+	switch {
+	case err == nil:
+		return visitErr
+	case visitErr == ErrIterationStopped && (err == context.Canceled || err == context.DeadlineExceeded):
+		// The visitor deliberately completed its prefix. It may cancel its
+		// context to retire work, but that does not change the stream's
+		// established early-stop result. No hold remains to release here.
+		return visitErr
+	case visitErr == nil:
+		return err
+	default:
+		return errors.Join(visitErr, err)
+	}
+}
+
 // StreamNodesByLabelProjected visits label matches from the transaction's
 // pinned snapshot and overlays pending writes as one stream. The callback can
 // stop iteration without forcing the transaction to resolve or copy the rest
 // of the label population.
 // Admission follows IncidentEdges: the caller's context ends a wait for the
 // transaction's lock, and a closed transaction reports ErrTransactionClosed
-// first.
+// first. It also ends the retake after each visitor callback, so a canceled
+// stream stops when its visitor returns rather than waiting for that lock, and
+// a transaction the client closed or detached while the visitor ran is reported
+// the same way, before that retake waits.
 func (tx *BadgerTransaction) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
 	return tx.streamNodesByLabelProjected(ctx, label, properties, visibleRead, visit)
 }
@@ -406,7 +471,12 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 	if err := tx.mu.LockContext(ctx); err != nil {
 		return err
 	}
-	defer tx.mu.Unlock()
+	frame := streamVisitFrame{held: true}
+	defer func() {
+		if frame.held {
+			tx.mu.Unlock()
+		}
+	}()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
@@ -419,11 +489,10 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		cacheScope = scope
 	}
 
+	// The visitor runs with the transaction's lock released; the retake
+	// carries the caller's context like the admission above.
 	invokeVisit := func(node *Node) error {
-		tx.mu.Unlock()
-		err := visit(node)
-		tx.mu.Lock()
-		return err
+		return streamVisitUnlocked(tx, ctx, &frame, node, visit)
 	}
 
 	hasPending := len(tx.pendingNodes) > 0 || len(tx.deletedNodes) > 0
@@ -564,7 +633,9 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		)
 	}
 	if err != nil {
-		if err == ErrIterationStopped && !engineOverlaid && tx.snapshotTx != nil {
+		// A retake the caller's context ended leaves no hold, and a stopped
+		// prefix is locked transaction state: store it only while still held.
+		if frame.held && err == ErrIterationStopped && !engineOverlaid && tx.snapshotTx != nil {
 			cacheEndpointNodes := properties == nil && !tx.engine.visibilityFiltered()
 			tx.storeSnapshotLabelPrefixLocked(tx.snapshotTx, cacheKey, completed, cacheEndpointNodes)
 		}
@@ -609,7 +680,10 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 // every node they receive); ErrIterationStopped from visit ends the stream.
 // Admission follows IncidentEdges: the caller's context ends a wait for the
 // transaction's lock, and a closed transaction reports ErrTransactionClosed
-// first.
+// first. It also ends the retake after each visitor callback, so a canceled
+// stream stops when its visitor returns rather than waiting for that lock, and
+// a transaction the client closed or detached while the visitor ran is reported
+// the same way, before that retake waits.
 func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
@@ -629,7 +703,12 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 	if err := tx.mu.LockContext(ctx); err != nil {
 		return err
 	}
-	defer tx.mu.Unlock()
+	frame := streamVisitFrame{held: true}
+	defer func() {
+		if frame.held {
+			tx.mu.Unlock()
+		}
+	}()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
@@ -639,9 +718,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 
 	stopped := false
 	invokeVisit := func(node *Node) error {
-		tx.mu.Unlock()
-		err := visit(node)
-		tx.mu.Lock()
+		err := streamVisitUnlocked(tx, ctx, &frame, node, visit)
 		if err == ErrIterationStopped {
 			stopped = true
 		}

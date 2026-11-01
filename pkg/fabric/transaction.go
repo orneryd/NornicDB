@@ -209,13 +209,29 @@ func (t *FabricTransaction) BindParticipantCallbacks(shardName string, callbacks
 }
 
 // CommitCallback is called for each sub-transaction during commit.
-// The callback should perform the actual commit on the shard.
+// The callback receives the coordinator's terminal input and performs the actual
+// commit under its participant policy. It may retain an independently bound lifetime.
 // If any callback returns an error, commit halts and the remaining
 // sub-transactions are rolled back via RollbackCallback.
-type CommitCallback func(sub *SubTransaction) error
+type CommitCallback func(ctx context.Context, sub *SubTransaction) error
 
-// RollbackCallback is called for each sub-transaction during rollback.
-type RollbackCallback func(sub *SubTransaction) error
+// RollbackCallback receives the cleanup dispatch input for each sub-transaction.
+// A participant with an independently bound cleanup scope retains that policy.
+type RollbackCallback func(ctx context.Context, sub *SubTransaction) error
+
+// TerminalContexts supplies the coordinator's commit and cleanup dispatch inputs.
+// Both interfaces must be non-nil; either may already be canceled. Fabric does
+// not admit a commit, replace cancellation, or override a participant's bound
+// transaction/transport lifetime. Direct callbacks and overrides own selecting
+// their cleanup scope independently of a canceled execution request.
+//
+// For example, an admitted native owner supplies its accepted Commit context and
+// already-owned Cleanup scope. Explicit/composite or remote callbacks may retain
+// their separately bound lifetime instead of using the coordinator's input.
+type TerminalContexts struct {
+	Commit  context.Context
+	Cleanup context.Context
+}
 
 const (
 	// StateUnknown: the commit was sent but its outcome is not known: the
@@ -250,7 +266,7 @@ type participantPanic struct{ value any }
 
 // endOne runs a participant's end (fn) as a finalizer: it always returns. A
 // panic is recorded in *panicked (the first one) and returned as an error.
-func endOne(fn func(*SubTransaction) error, sub *SubTransaction, panicked **participantPanic) (didPanic bool, err error) {
+func endOne(ctx context.Context, fn func(context.Context, *SubTransaction) error, sub *SubTransaction, panicked **participantPanic) (didPanic bool, err error) {
 	if fn == nil {
 		return false, nil
 	}
@@ -262,10 +278,12 @@ func endOne(fn func(*SubTransaction) error, sub *SubTransaction, panicked **part
 			didPanic, err = true, fmt.Errorf("participant '%s' panicked: %v", sub.ShardName, recovered)
 		}
 	}()
-	return false, fn(sub)
+	return false, fn(ctx, sub)
 }
 
-// Commit ends every open sub-transaction. At most one of them holds writes
+// Commit validates both non-nil dispatch contexts before changing any state.
+// Cancellation is owned by the caller and participant, not a second admission
+// check here. It ends every open sub-transaction. At most one of them holds writes
 // (GetOrOpen refuses a second writer), so the read-only ones end first and the
 // write participant commits last: the transaction's outcome is the writer's.
 //   - A failure before the writer's commit rolls every participant back, the
@@ -278,7 +296,13 @@ func endOne(fn func(*SubTransaction) error, sub *SubTransaction, panicked **part
 // Every participant ends however another's end ends, a panic included: each
 // end runs as a finalizer (endOne), and once all have ended the first panic
 // goes on.
-func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackCallback) error {
+func (t *FabricTransaction) Commit(contexts TerminalContexts, commitFn CommitCallback, rollbackFn RollbackCallback) error {
+	if contexts.Commit == nil {
+		return fmt.Errorf("fabric: Commit requires a non-nil commit context")
+	}
+	if contexts.Cleanup == nil {
+		return fmt.Errorf("fabric: Commit requires a non-nil cleanup context")
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	defer t.cancelLifetime()
@@ -297,7 +321,7 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 		if callback == nil {
 			callback = sub.commitFn
 		}
-		return endOne(callback, sub, &panicked)
+		return endOne(contexts.Commit, callback, sub, &panicked)
 	}
 
 	var participantNames [8]string
@@ -312,7 +336,7 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 		if _, err := commit(sub); err != nil {
 			// A reader's failed end may leave what it holds: it is rolled
 			// back with the others.
-			return t.abortCommitLocked(rollbackFn, &panicked, fmt.Errorf("commit failed on shard '%s': %w", sub.ShardName, err))
+			return t.abortCommitLocked(contexts.Cleanup, rollbackFn, &panicked, fmt.Errorf("commit failed on shard '%s': %w", sub.ShardName, err))
 		}
 		sub.State = "committed"
 		sub.CommitOutcome = "committed"
@@ -332,7 +356,7 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 			// its rollback, a participant's idempotent finalizer, releases
 			// it and keeps a committed transaction committed. Its outcome
 			// stays the commit's.
-			cleanupErr = t.rollbackOneLocked(writer, rollbackFn, &panicked)
+			cleanupErr = t.rollbackOneLocked(contexts.Cleanup, writer, rollbackFn, &panicked)
 		}
 		writer.CommitOutcome = outcome
 		if outcome != "rolledback" || writer.CleanupState != StateCleanupFailed {
@@ -393,12 +417,12 @@ func writerOutcome(writer *SubTransaction, err error, didPanic bool) string {
 
 // rollbackOneLocked rolls sub back as a finalizer and records how it ended:
 // "rolledback", or StateCleanupFailed with the error.
-func (t *FabricTransaction) rollbackOneLocked(sub *SubTransaction, rollbackFn RollbackCallback, panicked **participantPanic) error {
+func (t *FabricTransaction) rollbackOneLocked(ctx context.Context, sub *SubTransaction, rollbackFn RollbackCallback, panicked **participantPanic) error {
 	rollback := rollbackFn
 	if rollback == nil {
 		rollback = sub.rollbackFn
 	}
-	if _, err := endOne(rollback, sub, panicked); err != nil {
+	if _, err := endOne(ctx, rollback, sub, panicked); err != nil {
 		sub.State = StateCleanupFailed
 		sub.CleanupState = StateCleanupFailed
 		return err
@@ -412,13 +436,13 @@ func (t *FabricTransaction) rollbackOneLocked(sub *SubTransaction, rollbackFn Ro
 // participant among them, after a read-only participant failed to end:
 // nothing is committed. A rollback that fails is reported with the cause;
 // its participant's cleanup is not confirmed (StateCleanupFailed).
-func (t *FabricTransaction) abortCommitLocked(rollbackFn RollbackCallback, panicked **participantPanic, commitErr error) error {
+func (t *FabricTransaction) abortCommitLocked(ctx context.Context, rollbackFn RollbackCallback, panicked **participantPanic, commitErr error) error {
 	var rollbackErrs []error
 	var participantNames [8]string
 	for _, name := range t.sortedOpenLocked(participantNames[:0]) {
 		sub := t.subTxns[name]
 		sub.CommitOutcome = "rolledback"
-		if err := t.rollbackOneLocked(sub, rollbackFn, panicked); err != nil {
+		if err := t.rollbackOneLocked(ctx, sub, rollbackFn, panicked); err != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("%s: %w", sub.ShardName, err))
 		}
 	}
@@ -445,13 +469,17 @@ func (t *FabricTransaction) sortedOpenLocked(names []string) []string {
 	return names
 }
 
-// Rollback rolls back all open sub-transactions using the provided callback.
+// Rollback validates its non-nil cleanup dispatch input before changing state,
+// then rolls back all open sub-transactions using the provided callback.
 // Every participant is rolled back however another's rollback ends, a panic
 // included: each runs as a finalizer, and once all have ended the first
 // panic goes on. A participant whose rollback failed ends StateCleanupFailed
 // (nothing of it is committed; its cleanup is not confirmed), and every
 // failure is reported.
-func (t *FabricTransaction) Rollback(rollbackFn RollbackCallback) error {
+func (t *FabricTransaction) Rollback(ctx context.Context, rollbackFn RollbackCallback) error {
+	if ctx == nil {
+		return fmt.Errorf("fabric: Rollback requires a non-nil cleanup context")
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	defer t.cancelLifetime()
@@ -469,7 +497,7 @@ func (t *FabricTransaction) Rollback(rollbackFn RollbackCallback) error {
 	var participantNames [8]string
 	for _, name := range t.sortedOpenLocked(participantNames[:0]) {
 		t.subTxns[name].CommitOutcome = "rolledback"
-		if err := t.rollbackOneLocked(t.subTxns[name], rollbackFn, &panicked); err != nil {
+		if err := t.rollbackOneLocked(ctx, t.subTxns[name], rollbackFn, &panicked); err != nil {
 			failures = append(failures, fmt.Errorf("shard '%s': %w", name, err))
 		}
 	}

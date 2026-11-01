@@ -58,14 +58,14 @@ type participantRecorder struct {
 
 func (rec *participantRecorder) callback() ParticipantCallbacks {
 	return ParticipantCallbacks{
-		Commit: func(*SubTransaction) error {
+		Commit: func(context.Context, *SubTransaction) error {
 			rec.commits++
 			if rec.order != nil {
 				*rec.order = append(*rec.order, "commit")
 			}
 			return rec.commitErr
 		},
-		Rollback: func(*SubTransaction) error {
+		Rollback: func(context.Context, *SubTransaction) error {
 			rec.rollbacks++
 			if rec.order != nil {
 				*rec.order = append(*rec.order, "rollback")

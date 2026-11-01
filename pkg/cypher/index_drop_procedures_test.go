@@ -20,28 +20,19 @@ func TestIndexDropProceduresDropTheIndex(t *testing.T) {
 		}
 		return res.Rows, nil
 	}
-	names := func() []string {
-		rows, err := run("SHOW INDEXES YIELD name WHERE name IN ['vidx', 'ftidx'] RETURN name ORDER BY name")
-		require.NoError(t, err)
-		out := []string{}
-		for _, row := range rows {
-			out = append(out, row[0].(string))
-		}
-		return out
-	}
 
 	_, err := run("CREATE VECTOR INDEX vidx FOR (n:V) ON (n.e) OPTIONS { indexConfig: { `vector.dimensions`: 3, `vector.similarity_function`: 'cosine' } }")
 	require.NoError(t, err)
 	_, err = run("CREATE FULLTEXT INDEX ftidx FOR (n:F) ON EACH [n.t]")
 	require.NoError(t, err)
-	require.Equal(t, []string{"ftidx", "vidx"}, names())
+	require.Equal(t, []string{"ftidx", "vidx"}, readIndexNames(t, ctx, exec, "SHOW INDEXES YIELD name WHERE name IN ['vidx', 'ftidx'] RETURN name ORDER BY name"))
 
 	// Wrong kind: neither procedure drops the other kind's index.
 	_, err = run("CALL db.index.vector.drop('ftidx')")
 	require.Error(t, err)
 	_, err = run("CALL db.index.fulltext.drop('vidx')")
 	require.Error(t, err)
-	require.Equal(t, []string{"ftidx", "vidx"}, names())
+	require.Equal(t, []string{"ftidx", "vidx"}, readIndexNames(t, ctx, exec, "SHOW INDEXES YIELD name WHERE name IN ['vidx', 'ftidx'] RETURN name ORDER BY name"))
 
 	rows, err := run("CALL db.index.vector.drop('vidx')")
 	require.NoError(t, err)
@@ -49,7 +40,7 @@ func TestIndexDropProceduresDropTheIndex(t *testing.T) {
 	rows, err = run("CALL db.index.fulltext.drop('ftidx')")
 	require.NoError(t, err)
 	assert.Equal(t, [][]interface{}{{"ftidx", true}}, rows)
-	assert.Equal(t, []string{}, names())
+	assert.Equal(t, []string{}, readIndexNames(t, ctx, exec, "SHOW INDEXES YIELD name WHERE name IN ['vidx', 'ftidx'] RETURN name ORDER BY name"))
 
 	for _, q := range []string{
 		"CALL db.index.vector.drop('does_not_exist')",
@@ -64,5 +55,5 @@ func TestIndexDropProceduresDropTheIndex(t *testing.T) {
 	// The name is free again: re-creating with other settings works.
 	_, err = run("CREATE VECTOR INDEX vidx FOR (n:V) ON (n.e) OPTIONS { indexConfig: { `vector.dimensions`: 8, `vector.similarity_function`: 'cosine' } }")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"vidx"}, names())
+	assert.Equal(t, []string{"vidx"}, readIndexNames(t, ctx, exec, "SHOW INDEXES YIELD name WHERE name IN ['vidx', 'ftidx'] RETURN name ORDER BY name"))
 }
