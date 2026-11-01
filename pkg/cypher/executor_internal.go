@@ -59,6 +59,10 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	participantValidation, _ := ctx.Value(participantSyntaxValidationKey{}).(bool)
+	if participantValidation {
+		ctx = context.WithValue(ctx, participantSyntaxValidationKey{}, false)
+	}
 	member := e.membership(ctx)
 	if member.storage != nil {
 		ctx = context.WithValue(ctx, ctxKeyTxStorage, member.storage)
@@ -176,6 +180,11 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 
 	ctx = cypherantlr.WithExecutionStatementSyntax(ctx, source.Text, cypher)
+	if participantValidation {
+		if err := e.validateMatchSemanticScopes(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
+			return nil, err
+		}
+	}
 
 	// Basic syntax validation to preserve existing error behavior.
 	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {

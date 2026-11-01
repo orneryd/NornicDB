@@ -24,6 +24,10 @@ import (
 
 type fabricPreparedExecKey struct{}
 
+// participantSyntaxValidationKey carries the physical ingress admission policy
+// to internal execution, which owns the final lowered source.
+type participantSyntaxValidationKey struct{}
+
 // participantSchemaForStatement is the participant schema boundary shared by
 // statement metadata consumers and Fabric planning. The Fabric integration
 // supplies the resolver; without it, participant-owned implicit signatures are
@@ -842,6 +846,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	// A participant receives a whole physical statement, including planner-
 	// generated imports. It is a new ingress, just as on a remote participant;
 	// its frontend must not read the composite coordinator's syntax window.
+	ctx = context.WithValue(ctx, participantSyntaxValidationKey{}, true)
 	ctx = cypherantlr.StatementSyntaxIngress(ctx)
 	ctx = withBoundStatementProgram(ctx, nil)
 	participantSource, retainedSource := cyphertext.RetainedSource(ctx, query, cyphertext.AcceptedSource)
