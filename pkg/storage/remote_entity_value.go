@@ -1,6 +1,6 @@
 package storage
 
-import "github.com/orneryd/nornicdb/internal/jsontext"
+import valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 
 // RemoteEntityValue is a graph entity decoded from a remote database transport.
 // It preserves the remote element ID and nested properties without confusing an
@@ -42,13 +42,13 @@ func (v RemoteEntityValue) LegacyIDs() (id, start, end int64) {
 // MarshalJSON preserves the public remote map shape without exposing private
 // numeric transport identity. Entity properties are never modified.
 func (v RemoteEntityValue) MarshalJSON() ([]byte, error) {
-	return jsontext.Marshal(PublicRemoteMap(map[string]interface{}(v)))
+	return valueconvert.PropertyJSON.Marshal(PublicRemoteMap(map[string]interface{}(v)))
 }
 
 // PublicRemoteMap removes sealed internal transport metadata from a map
 // converted from RemoteEntityValue. Ordinary maps, including a user string
 // under the same key, are returned unchanged without copying or graph identity.
-// Use jsontext.Marshal(PublicRemoteMap(map[string]interface{}(entity))) when a Go
+// Use valueconvert.PropertyJSON.Marshal(PublicRemoteMap(map[string]interface{}(entity))) when a Go
 // integration explicitly needs an ordinary public map rather than the marker.
 func PublicRemoteMap(value map[string]interface{}) map[string]interface{} {
 	if _, private := value[remoteIdentityKey].(remoteNumericIdentity); !private {

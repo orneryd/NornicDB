@@ -53,6 +53,17 @@ const (
 )
 
 func Unmarshal(raw []byte, out any, stages ...DecodeStage) error {
+	return unmarshal(raw, out, false, stages...)
+}
+
+// UnmarshalNumbers retains dynamic number lexemes while using the same string
+// projection, typed binding and error mapping as Unmarshal. Numeric domain
+// owners decide how those lexemes become property or input values.
+func UnmarshalNumbers(raw []byte, out any) error {
+	return unmarshal(raw, out, true)
+}
+
+func unmarshal(raw []byte, out any, numbers bool, stages ...DecodeStage) error {
 	stage := RawInput
 	if len(stages) > 1 {
 		return errors.New("jsontext: multiple input stages")
@@ -74,7 +85,14 @@ func Unmarshal(raw []byte, out any, stages ...DecodeStage) error {
 	projected, edits := projection.bytes, projection.edits
 	// Only validated/projected input reaches this opt-in; ordinary upstream
 	// decoders retain standard UTF8 normalization.
-	err := alt.UnmarshalWithOption(projected, out, alt.DecodePreserveInvalidUTF8())
+	var err error
+	if numbers {
+		decoder := alt.NewDecoder(bytes.NewReader(projected))
+		decoder.UseNumber()
+		err = decoder.DecodeWithOption(out, alt.DecodePreserveInvalidUTF8())
+	} else {
+		err = alt.UnmarshalWithOption(projected, out, alt.DecodePreserveInvalidUTF8())
+	}
 	var source *cyphertext.Source
 	if len(edits) > 0 {
 		source = cyphertext.NewSource(context.Background(), string(raw), cyphertext.AcceptedSource).Rewrite(string(projected), edits)
@@ -113,12 +131,23 @@ func Unmarshal(raw []byte, out any, stages ...DecodeStage) error {
 type Decoder struct{ frame *std.Decoder }
 
 func NewDecoder(reader io.Reader) *Decoder { return &Decoder{frame: std.NewDecoder(reader)} }
-func (d *Decoder) Decode(out any) error {
+func (d *Decoder) Decode(out any) error    { return d.decode(out, false) }
+
+// NumberDecoder is a lossless typed stream whose dynamic numbers stay lexemes.
+// It shares Decoder's framing and lifetime; it exposes no mutable number mode.
+// Domain normalization belongs to the caller, not this JSON mechanism.
+type NumberDecoder struct{ Decoder }
+
+func NewNumberDecoder(reader io.Reader) *NumberDecoder {
+	return &NumberDecoder{Decoder: *NewDecoder(reader)}
+}
+func (d *NumberDecoder) Decode(out any) error { return d.Decoder.decode(out, true) }
+func (d *Decoder) decode(out any, numbers bool) error {
 	var raw std.RawMessage
 	if err := d.frame.Decode(&raw); err != nil {
 		return err
 	}
-	return Unmarshal(raw, out)
+	return unmarshal(raw, out, numbers)
 }
 func (d *Decoder) Buffered() io.Reader { return d.frame.Buffered() }
 func (d *Decoder) InputOffset() int64  { return d.frame.InputOffset() }

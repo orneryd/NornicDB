@@ -64,7 +64,9 @@ type SchemaRangeIndexDef struct {
 	OwningConstraint string               `json:"owning_constraint,omitempty"`
 }
 
-const schemaDefinitionVersion = 1
+// Version 1 used encoding/json's untagged numbers and float64 decoding.
+// Version 2 preserves exact INTEGERs and FLOAT tokens through PropertyJSON.
+const schemaDefinitionVersion = 2
 
 // ExportDefinition returns a stable, persisted representation of the schema.
 // The returned object is safe to serialize and does not include runtime caches.

@@ -18,12 +18,12 @@ package load
 import (
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/orneryd/nornicdb/pkg/apocio"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // openSource opens an APOC source through the caller's bound I/O capability.
@@ -43,7 +43,7 @@ func openSource(ctx context.Context, source string, request apocio.Request) (io.
 //	apoc.load.json('https://example.com/data.json') => parsed data
 //	apoc.load.json('/path/to/file.json') => parsed data
 func Json(ctx context.Context, urlOrFile string) (interface{}, error) {
-	data, err := decodeJSON(ctx, urlOrFile, apocio.Request{})
+	data, err := decodeJSON(ctx, urlOrFile, apocio.Request{}, decodeInputDocument)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load JSON: %w", err)
 	}
@@ -61,6 +61,24 @@ const (
 	// document.
 	RequireArray
 )
+
+// documentDecoder decodes a document under one number domain. The domains are
+// distinct types, so each route names its own here.
+type documentDecoder func(io.Reader, *interface{}) error
+
+func decodeInputDocument(reader io.Reader, data *interface{}) error {
+	return valueconvert.CypherInputJSON.NewDecoder(reader).Decode(data)
+}
+
+func decodePropertyDocument(reader io.Reader, data *interface{}) error {
+	return valueconvert.PropertyJSON.NewDecoder(reader).Decode(data)
+}
+
+// PropertyDocument loads a JSON document as stored properties, keeping their
+// exact numbers. Graph imports read a document this way.
+func PropertyDocument(ctx context.Context, urlOrFile string) (interface{}, error) {
+	return decodeJSON(ctx, urlOrFile, apocio.Request{}, decodePropertyDocument)
+}
 
 // JSONItems binds one item shape once and returns the context-first loader the
 // bundled plugin and the native procedures share.
@@ -113,11 +131,11 @@ func JSONItems(shape JSONItemShape) func(context.Context, string) ([]interface{}
 //
 //	apoc.load.jsonParams('https://api.com/data', {headers: {...}}, 'POST') => data
 func JsonParams(ctx context.Context, url string, headers map[string]string, method string) (interface{}, error) {
-	return decodeJSON(ctx, url, apocio.Request{Method: method, Headers: headers})
+	return decodeJSON(ctx, url, apocio.Request{Method: method, Headers: headers}, decodeInputDocument)
 }
 
 // decodeJSON decodes the JSON document at source through the shared I/O owner.
-func decodeJSON(ctx context.Context, source string, request apocio.Request) (interface{}, error) {
+func decodeJSON(ctx context.Context, source string, request apocio.Request, decode documentDecoder) (interface{}, error) {
 	body, err := openSource(ctx, source, request)
 	if err != nil {
 		return nil, err
@@ -125,7 +143,7 @@ func decodeJSON(ctx context.Context, source string, request apocio.Request) (int
 	defer body.Close()
 
 	var data interface{}
-	if err := json.NewDecoder(body).Decode(&data); err != nil {
+	if err := decode(body, &data); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -427,7 +445,7 @@ func GraphQL(ctx context.Context, url string, query string, variables map[string
 		"variables": variables,
 	}
 
-	jsonData, err := json.Marshal(payload)
+	jsonData, err := valueconvert.CypherInputJSON.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +461,7 @@ func GraphQL(ctx context.Context, url string, query string, variables map[string
 	defer body.Close()
 
 	var result map[string]interface{}
-	if err := json.NewDecoder(body).Decode(&result); err != nil {
+	if err := valueconvert.PropertyJSON.NewDecoder(body).Decode(&result); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -468,7 +486,7 @@ func Rest(ctx context.Context, url string, config map[string]interface{}) (inter
 		request.Headers = headers
 	}
 
-	return decodeJSON(ctx, url, request)
+	return decodeJSON(ctx, url, request, decodePropertyDocument)
 }
 
 // Binary loads a URL or import file to completion and returns its bytes. It is

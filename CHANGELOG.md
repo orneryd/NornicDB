@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors across thirteen existing Cypher APIs. Fabric keyword-name and import
   readers are context-first stateless callbacks; canceled preparation is not
   cached. See [the migration guide](docs/development/cypher-preparation-context-api.md#use-and-clause-scanner-migration).
+
+### Fixed
+
+- Preserve exact JSON INTEGER values and whole-FLOAT kind through import, public results, remote parameters, export and supported backup/recovery boundaries. Numeric text and typed wire output retain accepted value and kind.
+
 - Go query metadata and permission readers now require an explicit raw or accepted source stage; see [the source-stage migration guide](docs/development/cypher-source-stage-api.md).
 - Require Go 1.27.3 (go.mod, CI, release and Docker builders). Go embedders and
   `.so` plugins must rebuild with Go 1.27.3. Roll up dependency updates: gqlgen

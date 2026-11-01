@@ -63,6 +63,9 @@ func TestLegacyRecoveryIntegerRangeAndMalformedValues(t *testing.T) {
 		want    interface{}
 		invalid bool
 	}{
+		// The release's legacy recovery reader already interpreted integer
+		// lexemes exactly; this PR must not reinterpret them through float64.
+		{"1152921504606847000", int64(1152921504606847000), false},
 		{"9223372036854775807", int64(9223372036854775807), false},
 		{"-9223372036854775808", int64(-9223372036854775808), false},
 		{"18446744073709551615", uint64(18446744073709551615), false},

@@ -2,9 +2,9 @@ package storage
 
 import (
 	"bytes"
-
-	"github.com/orneryd/nornicdb/internal/jsontext"
 	"sync"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 var walJSONBufPool = sync.Pool{
@@ -18,7 +18,7 @@ var walJSONBufPool = sync.Pool{
 // allocations versus json.Marshal) and trims the newline that Encoder adds.
 func marshalJSONCompact(buf *bytes.Buffer, v any) ([]byte, error) {
 	buf.Reset()
-	enc := jsontext.NewEncoder(buf)
+	enc := valueconvert.PropertyJSON.NewEncoder(buf)
 	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
