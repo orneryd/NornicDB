@@ -18,7 +18,9 @@ JAVA := java
 GENERATED_FILES := cypher_lexer.go cypher_parser.go \
                    cypherparser_listener.go cypherparser_base_listener.go \
                    CypherLexer.interp CypherLexer.tokens \
-                   CypherParser.interp CypherParser.tokens
+                   CypherParser.interp CypherParser.tokens \
+                   query_body_vocabulary_generated.go \
+                   rule_first_vocabulary_generated.go statement_entry_vocabulary_generated.go
 
 .PHONY: all generate clean test download check-java help
 
@@ -58,7 +60,8 @@ generate: check-java $(ANTLR_JAR)
 	@echo "=== Generating Cypher Parser ==="
 	$(JAVA) -jar $(ANTLR_JAR) -Dlanguage=Go -no-visitor -package antlr CypherParser.g4
 	perl -0pi -e 's/\nerrorExit:/\n\tgoto errorExit\n\nerrorExit:/g; s/\n\tgoto errorExit \/\/ Trick[^\n]*//g' cypher_parser.go
-	gofmt -w cypher_lexer.go cypher_parser.go cypherparser_listener.go cypherparser_base_listener.go
+	python3 generate_vocabulary.py
+	gofmt -w $(filter %.go,$(GENERATED_FILES))
 	@echo ""
 	@echo "=== Generation Complete ==="
 	@echo "Generated files:"

@@ -47,7 +47,7 @@ func TestStatementCacheFamilySurvivingUseOwner(t *testing.T) {
 			if _, err := executor.Execute(context.Background(), query, nil); err != nil {
 				t.Fatal(err)
 			}
-			if !executor.hasCachedValidSyntax(body, activeSyntaxValidator()) {
+			if !executor.hasCachedValidSyntax(body, syntaxStatementAccepted) {
 				t.Fatal("USE did not warm its shared verdict")
 			}
 			switch removal {
@@ -66,7 +66,7 @@ func TestStatementCacheFamilySurvivingUseOwner(t *testing.T) {
 			if _, err := executor.Execute(context.Background(), query, nil); err != nil {
 				t.Fatal(err)
 			}
-			if owner.Disposed() || !executor.hasCachedValidSyntax(body, activeSyntaxValidator()) {
+			if owner.Disposed() || !executor.hasCachedValidSyntax(body, syntaxStatementAccepted) {
 				t.Fatal("unrelated removal permanently retired the surviving USE owner's caches")
 			}
 		})
@@ -118,7 +118,7 @@ func TestStatementCacheFamilyPublicColdAndRetiredOwner(t *testing.T) {
 	for err := range failures {
 		t.Error(err)
 	}
-	if !root.hasCachedValidSyntax("RETURN $v AS v", activeSyntaxValidator()) {
+	if !root.hasCachedValidSyntax("RETURN $v AS v", syntaxStatementAccepted) {
 		t.Fatal("public USE/Fabric clones lost the cold root owner")
 	}
 	removedOwner, err := DatabaseStatementCaches(manager, "sol_leaf")
@@ -197,11 +197,11 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 			if _, err := root.Execute(context.Background(), query, nil); err != nil {
 				t.Fatal(err)
 			}
-			if !root.hasCachedValidSyntax(removedBody, activeSyntaxValidator()) {
+			if !root.hasCachedValidSyntax(removedBody, syntaxStatementAccepted) {
 				t.Fatal("routed body was not cached")
 			}
 			// Full text/explain and uppercase routing entries reference the same selection.
-			if err := root.validateSyntax(context.Background(), query, false, syntaxStatement); err != nil {
+			if err := root.validateStatementSyntax(context.Background(), query, false); err != nil {
 				t.Fatal(err)
 			}
 			root.cachedUpperQuery(query)
@@ -222,10 +222,10 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 				t.Fatal("removed reference retired the live nornic owner")
 			}
 			// Check before executing again: an unrelated warm entry must survive.
-			if !root.hasCachedValidSyntax(liveBody, activeSyntaxValidator()) {
+			if !root.hasCachedValidSyntax(liveBody, syntaxStatementAccepted) {
 				t.Fatal("unrelated warm verdict was cleared")
 			}
-			if root.hasCachedValidSyntax(removedBody, activeSyntaxValidator()) || root.hasCachedValidSyntax(query, activeSyntaxValidator()) {
+			if root.hasCachedValidSyntax(removedBody, syntaxStatementAccepted) || root.hasCachedValidSyntax(query, syntaxStatementAccepted) {
 				t.Fatal("removed reference retained exact/canonical verdicts")
 			}
 			owner.upper.mu.RLock()
@@ -237,7 +237,7 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 			if _, err := retained.Execute(context.Background(), removedBody, nil); err != nil {
 				t.Fatal(err)
 			}
-			if root.hasCachedValidSyntax(removedBody, activeSyntaxValidator()) {
+			if root.hasCachedValidSyntax(removedBody, syntaxStatementAccepted) {
 				t.Fatal("retained removed selection repopulated live owner's cache")
 			}
 			switch removal {
@@ -256,13 +256,13 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 			if _, err := root.Execute(context.Background(), query, nil); err != nil {
 				t.Fatal(err)
 			}
-			if !root.hasCachedValidSyntax(removedBody, activeSyntaxValidator()) {
+			if !root.hasCachedValidSyntax(removedBody, syntaxStatementAccepted) {
 				t.Fatal("recreated selection could not cache again")
 			}
 			if _, err := retained.Execute(context.Background(), removedBody, nil); err != nil {
 				t.Fatal(err)
 			}
-			if !root.hasCachedValidSyntax(removedBody, activeSyntaxValidator()) {
+			if !root.hasCachedValidSyntax(removedBody, syntaxStatementAccepted) {
 				t.Fatal("old selection damaged recreated selection's verdict")
 			}
 		})
@@ -299,7 +299,7 @@ func TestStatementCacheFamilyDynamicFabricReference(t *testing.T) {
 	if _, err := root.Execute(context.Background(), query, map[string]interface{}{"graph": "cache_dynamic.leaf"}); err != nil {
 		t.Fatal(err)
 	}
-	if !root.hasCachedValidSyntax(body, activeSyntaxValidator()) {
+	if !root.hasCachedValidSyntax(body, syntaxStatementAccepted) {
 		t.Fatal("dynamic fragment did not share verdict")
 	}
 	// Dynamic dispatch records the outer text even before its grammar/log verdict.
@@ -314,7 +314,7 @@ func TestStatementCacheFamilyDynamicFabricReference(t *testing.T) {
 	if err := manager.RemoveConstituent(t.Context(), "cache_dynamic", "leaf"); err != nil {
 		t.Fatal(err)
 	}
-	if owner.Disposed() || root.hasCachedValidSyntax(body, activeSyntaxValidator()) {
+	if owner.Disposed() || root.hasCachedValidSyntax(body, syntaxStatementAccepted) {
 		t.Fatal("dynamic selection invalidation retired owner or retained body")
 	}
 	shard.mu.RLock()
@@ -332,7 +332,7 @@ func TestStatementCacheFamilyDynamicFabricReference(t *testing.T) {
 	if _, err := root.Execute(context.Background(), query, map[string]interface{}{"graph": "cache_dynamic.leaf"}); err != nil {
 		t.Fatal(err)
 	}
-	if !root.hasCachedValidSyntax(body, activeSyntaxValidator()) {
+	if !root.hasCachedValidSyntax(body, syntaxStatementAccepted) {
 		t.Fatal("surviving composite could not cache again")
 	}
 }
@@ -388,10 +388,10 @@ func TestStatementCacheFamilyConcurrentReferenceRemoval(t *testing.T) {
 	for err := range errors {
 		t.Error(err)
 	}
-	if root.StatementCaches().Disposed() || !root.hasCachedValidSyntax(live, activeSyntaxValidator()) {
+	if root.StatementCaches().Disposed() || !root.hasCachedValidSyntax(live, syntaxStatementAccepted) {
 		t.Fatal("concurrent removal disabled live caching")
 	}
-	if root.hasCachedValidSyntax(removed, activeSyntaxValidator()) {
+	if root.hasCachedValidSyntax(removed, syntaxStatementAccepted) {
 		t.Fatal("retired selection repopulated a dependent entry")
 	}
 }

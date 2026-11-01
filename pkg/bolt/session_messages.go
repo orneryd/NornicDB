@@ -126,7 +126,7 @@ func (s *Session) handleRun(data []byte) error {
 	// Cypher classification. Procedure arguments can hide a mutation from the
 	// outer query text, so keyword matching alone is not an authorization boundary.
 	requirements := cypher.QueryPermissionRequirements(parentCtx, query, cypher.RawSource)
-	isWrite := requirements.Write
+	isWrite := requirements.ChangesState
 
 	// Log query if enabled
 	if s.server != nil && s.server.config.LogQueries {
@@ -568,9 +568,7 @@ func truncateQuery(q string, maxLen int) string {
 // isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).
 // Used to filter SHOW DATABASES results by CanSeeDatabase when per-database RBAC is enabled.
 func isShowDatabasesQuery(query string) bool {
-	norm := strings.TrimSpace(query)
-	norm = strings.Join(strings.Fields(norm), " ")
-	return strings.EqualFold(norm, "SHOW DATABASES")
+	return cypher.IsShowDatabasesQuery(query)
 }
 
 // parseRunMessage parses a RUN message to extract query, parameters, and metadata.

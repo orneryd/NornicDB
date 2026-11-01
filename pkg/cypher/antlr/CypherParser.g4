@@ -53,7 +53,7 @@ cypherGroup
     ;
 
 cypherOption
-    : ID (ASSIGN (ID | INTEGER | FLOAT | STRING_LITERAL | CHAR_LITERAL))?
+    : (ID | routingKeywordName) (ASSIGN (ID | routingKeywordName | INTEGER | FLOAT | STRING_LITERAL | CHAR_LITERAL))?
     ;
 
 shellCommand
@@ -539,7 +539,7 @@ expressionType
     ;
 
 expressionTypePart
-    : (ID | ANY | NODE | RELATIONSHIP | POINT | NULL_W | VECTOR | PROPERTY) (ID | WITH)* (LT expressionType GT)? (LPAREN numLit RPAREN)? (NOT NULL_W)?
+    : (ID | routingKeywordName | ANY | NODE | RELATIONSHIP | POINT | NULL_W | VECTOR | PROPERTY) (ID | routingKeywordName | WITH)* (LT expressionType GT)? (LPAREN numLit RPAREN)? (NOT NULL_W)?
     ;
 
 propertyOrLabelExpression
@@ -773,6 +773,7 @@ name
 symbol
     : ESC_LITERAL
     | ID
+    | routingKeywordName
     | UNION
     | COUNT
     | SUM
@@ -1001,4 +1002,52 @@ useGraphPrefix
     ;
 useReferencePrefix
     : useClause .* EOF
+    ;
+
+// These entry views declare routing and scanner vocabulary in the grammar,
+// beside the productions they project. They do not admit routing-only words
+// as executable queries. Consumers read their generated ATN lookahead rather
+// than maintaining a second list of clause spellings.
+standaloneUpdatingStatement
+    : createSt | mergeSt | deleteSt | foreachSt
+    ;
+useQueryFollower
+    : readingStatement | updatingStatement | withSt | returnSt | FINISH
+    | unionSt | orderSt | skipSt | limitSt
+    | INSERT | NODETACH | OFFSET
+    ;
+useAdministrationFollower
+    : administrationCommand | schemaCommand | privilegeCommand | showCommand | terminateCommand
+    | START | STOP | DEALLOCATE | DRYRUN | REALLOCATE | RENAME | ENABLE
+    ;
+clauseWord
+    : useQueryFollower | where | yieldItemsStart
+    ;
+yieldItemsStart
+    : YIELD
+    ;
+statementBodyOpening
+    : readingStatement | standaloneUpdatingStatement | returnSt | withSt
+    | schemaCommand | administrationCommand | showCommand | terminateCommand
+    | transactionStatement | queryPrefix
+    ;
+// The additional routing words were ID before their grammar declaration.
+// Keep that identifier behavior in every ID-valued name/type/option entry.
+routingKeywordName
+    : INSERT | NODETACH | OFFSET | START | STOP | DEALLOCATE | DRYRUN | REALLOCATE | RENAME | ENABLE
+    ;
+
+// Modifier projections retain their grammar roles, not copied word lists.
+projectionModifierStart
+    : where | orderSt | skipSt | limitSt
+    ;
+showTailStart
+    : showTail | returnSt | orderSt | skipSt | limitSt
+    ;
+callTailProjectionStart
+    : returnSt | projectionModifierStart | YIELD | OFFSET
+    ;
+// Label/pattern scanning also recognizes MERGE's ON subclause boundary.
+labelClauseStart
+    : clauseWord | ON
     ;

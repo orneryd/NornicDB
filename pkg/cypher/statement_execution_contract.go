@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
-	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 // Statement execution modes come only from grammar-owned clauses and the live
@@ -12,22 +11,37 @@ import (
 type statementExecutionContract struct {
 	writes, transaction, calls, dynamic bool
 	unknownProcedure                    bool
+	// stateChange: a command's own change (schema or administration), from
+	// its row in statementCommandFacts.
+	stateChange bool
 }
 
+// changesState is the one answer to "does this statement change state": a
+// data write (grammar mutations or a registered WRITE procedure) or a
+// command's schema or administration change.
+func (c statementExecutionContract) changesState() bool { return c.writes || c.stateChange }
+
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
-	mode, body := parseExecutionMode(query)
-	if mode == ModeExplain {
+	if classifyStatement(query).prefixMode == prefixExplain {
+		// EXPLAIN plans the statement and runs nothing.
 		return statementExecutionContract{}, nil
 	}
-	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(body) || isSchemaCommandStatement(body) || bareTransactionCommand(body) != "" {
-		return statementExecutionContract{}, nil
+	_, body := parseExecutionMode(query)
+	// The statement's own CYPHER preamble sets its language version, as at
+	// the execution entry; a nested statement keeps its parent's.
+	ctx = withCypherVersion(ctx, body)
+	class := classifyStatement(body)
+	// A command's effect is its row's change. Administration CREATE commands
+	// keep the implicit write wrapper used before procedure admission. A SHOW
+	// command changes nothing itself but may continue with updating clauses,
+	// whose effects are the grammar's, as are a graph query's.
+	command := statementExecutionContract{
+		writes:      class.change == changeAdministrationCreate,
+		transaction: class.change == changeAdministrationCreate,
+		stateChange: class.change != changeNone,
 	}
-	if fabric.IsAdministrationCommand(body) {
-		// Administration keeps its existing routing and error owner. CREATE
-		// commands not handled by the system router retain the implicit
-		// wrapper used before procedure admission was introduced.
-		writes := startsWithKeywordFold(body, "CREATE")
-		return statementExecutionContract{writes: writes, transaction: writes}, nil
+	if class.change != changeNone {
+		return command, nil
 	}
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypher25, cypherantlr.AcceptedSource)
@@ -35,8 +49,14 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 		return statementExecutionContract{}, err
 	}
 	if err != nil {
+		if class.command != commandNone && class.command != commandBeginScript {
+			// A command's owner reads and diagnoses its own syntax.
+			return command, nil
+		}
 		return statementExecutionContract{}, syntaxAdmissionError(ctx, body, AcceptedSource, err)
 	}
+	// Graph queries and SHOW commands, which may continue with updating
+	// clauses, take the grammar's effects.
 	ensureBuiltInProceduresRegistered()
 	effects := structure.Effects()
 	contract := statementExecutionContract{writes: effects.Writes(), transaction: effects.Writes(), calls: effects.CallCount() > 0}
@@ -47,9 +67,11 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 	}
 	visitStatementProcedureSyntax(structure, func(spec ProcedureSpec, _ string) bool {
 		// SCHEMA procedures keep their existing schema-transaction owner;
-		// this contract admits registered data WRITE procedures.
+		// this contract admits registered data WRITE procedures. Both change
+		// state (ProcedureSpec.writes).
 		fixedWrite := spec.Mode == ProcedureModeWrite
 		contract.writes = contract.writes || fixedWrite
+		contract.stateChange = contract.stateChange || spec.writes()
 		contract.dynamic = contract.dynamic || spec.ExecutesStatements
 		contract.transaction = contract.transaction || !spec.OwnsTransactions &&
 			(fixedWrite || spec.ExecutesStatements || spec.Name == "tx.setMetaData")

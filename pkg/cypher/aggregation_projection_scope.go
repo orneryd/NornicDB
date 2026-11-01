@@ -150,7 +150,7 @@ func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string
 // WHERE and ORDER BY terms, in whichever order the clause has them (WITH x
 // ORDER BY x LIMIT 1 WHERE x > 0); SKIP and LIMIT read no variables.
 func aggregatingProjectionTailExpressions(tail string) []string {
-	keywords := []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"}
+	keywords := projectionModifierKeywords
 	starts := make([]int, len(keywords))
 	for i, keyword := range keywords {
 		starts[i] = topLevelKeywordIndex(tail, keyword)

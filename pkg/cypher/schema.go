@@ -11,7 +11,6 @@ package cypher
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
@@ -45,33 +44,6 @@ func isCompositeRoot(engine storage.Engine) bool {
 	return false
 }
 
-// isCompositeAllowedCommand returns true for system/admin commands that are
-// valid at composite root level without requiring a constituent target.
-func isCompositeAllowedCommand(cypher string) bool {
-	upper := upperASCII(strings.TrimSpace(cypher))
-	prefixes := []string{
-		"SHOW DATABASE", "SHOW COMPOSITE", "SHOW CONSTITUENTS",
-		"SHOW ALIASES", "SHOW LIMITS", "SHOW PROCEDURES", "SHOW FUNCTIONS", "SHOW SETTING",
-		// Schema introspection/DDL commands pass through to their own handlers
-		// which return more specific composite-root error messages.
-		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX", "SHOW LOOKUP INDEX",
-		"SHOW CONSTRAINT",
-		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX", "CREATE LOOKUP INDEX", "CREATE TEXT INDEX", "CREATE POINT INDEX",
-		"CREATE CONSTRAINT",
-		"DROP INDEX", "DROP CONSTRAINT",
-		"CREATE DATABASE", "DROP DATABASE",
-		"CREATE COMPOSITE", "DROP COMPOSITE", "ALTER COMPOSITE",
-		"CREATE ALIAS", "DROP ALIAS",
-		"BEGIN", "COMMIT", "ROLLBACK",
-	}
-	for _, p := range prefixes {
-		if strings.HasPrefix(upper, p) {
-			return true
-		}
-	}
-	return false
-}
-
 // executeSchemaCommand handles CREATE CONSTRAINT and CREATE INDEX commands.
 func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
@@ -90,38 +62,20 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		return nil, err
 	}
 
-	upper := upperASCII(cypher)
-
-	// Order matters: check more specific patterns first
-	var run func(context.Context, string) (*ExecuteResult, error)
-	if strings.Contains(upper, "CREATE CONSTRAINT") {
-		run = e.executeCreateConstraint
-	} else if strings.Contains(upper, "DROP CONSTRAINT") {
-		run = e.executeDropConstraint
-	} else if startsWithKeywords(cypher, "DROP", "INDEX") {
-		run = e.executeDropIndex
-	} else if strings.Contains(upper, "CREATE FULLTEXT INDEX") {
-		run = e.executeCreateFulltextIndex
-	} else if strings.Contains(upper, "CREATE VECTOR INDEX") {
-		run = e.executeCreateIndex
-	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
-		run = e.executeCreateIndex
-	} else if startsWithKeywords(cypher, "CREATE", "TEXT INDEX") || startsWithKeywords(cypher, "CREATE", "POINT INDEX") {
-		run = e.executeCreateTypedPropertyIndex
-	} else if startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX") {
-		run = e.executeCreateLookupIndex
-	} else if strings.Contains(upper, "CREATE INDEX") {
-		run = e.executeCreateIndex
-	} else {
-		return nil, localizedError(localization.CypherSchemaUnknownCommand(cypher), nil)
+	form := classifyStatement(cypher).schemaCommand
+	command, err := e.prepareSchemaCommand(ctx, cypher)
+	if err != nil {
+		return nil, err
 	}
+	run := func(ctx context.Context, _ string) (*ExecuteResult, error) { return command.run(ctx) }
+
 	result, err := e.countSchemaChanges(ctx, cypher, run)
 	if err == nil {
 		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
 			err = wrapper.tx.StageSchemaChanges()
 		}
 	}
-	if err != nil && startsWithKeywords(cypher, "CREATE", "CONSTRAINT") {
+	if err != nil && form == schemaCreateConstraint {
 		var violation *storage.ConstraintViolationError
 		if errors.As(err, &violation) {
 			return nil, &classifiedCypherError{cause: err, code: "Neo.DatabaseError.Schema.ConstraintCreationFailed", detail: "ConstraintCreationFailed"}
@@ -186,349 +140,11 @@ func pauseAsyncWritesForSchemaDDL(_ storage.Engine) (func(), error) {
 //
 //	CREATE CONSTRAINT FOR (n:Label) REQUIRE (n.first, n.last) IS UNIQUE
 func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	onPosition := keywordIndexFrom(cypher, "ON", 0, defaultKeywordScanOpts())
-	forPosition := keywordIndexFrom(cypher, "FOR", 0, defaultKeywordScanOpts())
-	if onPosition >= 0 && (forPosition < 0 || onPosition < forPosition) {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
-	}
-	// Every spelling of a uniqueness or key requirement becomes the one the
-	// shapes below read (canonicalConstraintRequirement).
-	cypher, err := e.canonicalConstraintRequirement(cypher)
+	command, err := e.prepareCreateConstraint(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
-	if parsed, err := e.parseCreateConstraintForRequireDDL(cypher); err == nil {
-		if kind, properties, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(parsed.requireExpr); ok && kind == "unique" {
-			seen := make(map[string]struct{}, len(properties))
-			for _, property := range properties {
-				if _, duplicate := seen[property]; duplicate {
-					return nil, newSemanticError("Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema", "RepeatedPropertyInCompositeSchema",
-						"A composite schema cannot contain the same property more than once: "+property)
-				}
-				seen[property] = struct{}{}
-			}
-		}
-	}
-	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
-	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
-	if result, handled, err := e.executeCreateConstraintContract(ctx, cypher, ifNotExists); handled {
-		return result, err
-	}
-
-	if parsed, err := e.parseCreateConstraintNodeKeyDDL(cypher); err == nil {
-		if len(parsed.properties) == 0 {
-			return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("NODE KEY"), nil)
-		}
-		constraintName := parsed.name
-		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_node_key", parsed.label, strings.Join(parsed.properties, "_"))
-		}
-
-		constraint := storage.Constraint{
-			Name:       constraintName,
-			Type:       storage.ConstraintNodeKey,
-			Label:      parsed.label,
-			Properties: parsed.properties,
-		}
-
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	if parsed, err := e.parseCreateConstraintTemporalDDL(cypher); err == nil {
-		if parsed.isRelationship {
-			if len(parsed.properties) < 3 {
-				return nil, localizedError(localization.CypherSchemaTemporalRelationshipArityRequired(), nil)
-			}
-			constraintName := parsed.name
-			if constraintName == "" {
-				constraintName = fmt.Sprintf("constraint_%s_%s_temporal", parsed.label, strings.Join(parsed.properties, "_"))
-			}
-			constraint := storage.Constraint{
-				Name:       constraintName,
-				Type:       storage.ConstraintTemporal,
-				EntityType: storage.ConstraintEntityRelationship,
-				Label:      parsed.label,
-				Properties: parsed.properties,
-			}
-			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-				return nil, err
-			}
-			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-				return nil, err
-			}
-			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-		}
-
-		// Like relationships: (key..., valid_from, valid_to) with a 1..n property grouping key.
-		if len(parsed.properties) < 3 {
-			return nil, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
-		}
-		constraintName := parsed.name
-		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_temporal", parsed.label, strings.Join(parsed.properties, "_"))
-		}
-		constraint := storage.Constraint{
-			Name:       constraintName,
-			Type:       storage.ConstraintTemporal,
-			Label:      parsed.label,
-			Properties: parsed.properties,
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	if parsed, err := e.parseCreateConstraintDomainDDL(cypher); err == nil {
-		allowedValues, err := parseDomainValueList(parsed.allowedRaw)
-		if err != nil {
-			return nil, localizedError(localization.CypherSchemaDomainValueListInvalid(err), err)
-		}
-		if len(allowedValues) == 0 {
-			return nil, localizedError(localization.CypherSchemaDomainAllowedValueRequired(), nil)
-		}
-		constraintName := parsed.name
-		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_domain", parsed.label, parsed.property)
-		}
-		constraint := storage.Constraint{
-			Name:          constraintName,
-			Type:          storage.ConstraintDomain,
-			Label:         parsed.label,
-			Properties:    []string{parsed.property},
-			AllowedValues: allowedValues,
-		}
-		if parsed.isRelationship {
-			constraint.EntityType = storage.ConstraintEntityRelationship
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	if parsed, err := e.parseCreateConstraintSimplePropertyDDL(cypher); err == nil {
-		if parsed.kind == "unique" {
-			if parsed.isRelationship {
-				constraintName := parsed.name
-				if constraintName == "" {
-					constraintName = fmt.Sprintf("constraint_%s_%s_unique", parsed.label, parsed.property)
-				}
-				constraint := storage.Constraint{
-					Name:       constraintName,
-					Type:       storage.ConstraintUnique,
-					EntityType: storage.ConstraintEntityRelationship,
-					Label:      parsed.label,
-					Properties: []string{parsed.property},
-				}
-				if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-					return nil, err
-				}
-				if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-					return nil, err
-				}
-				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-			}
-
-			constraintName := parsed.name
-			if constraintName == "" {
-				constraintName = fmt.Sprintf("constraint_%s_%s", parsed.label, parsed.property)
-			}
-			constraint := storage.Constraint{
-				Name:       constraintName,
-				Type:       storage.ConstraintUnique,
-				Label:      parsed.label,
-				Properties: []string{parsed.property},
-			}
-			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-				return nil, err
-			}
-			schema := e.storage.GetSchema()
-			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-				return nil, err
-			}
-			if err := storage.RefreshUniqueConstraintValuesForEngine(e.storage, schema); err != nil {
-				return nil, err
-			}
-			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-		}
-
-		if parsed.kind == "exists" {
-			constraintName := parsed.name
-			if constraintName == "" {
-				suffix := "exists"
-				if parsed.isRelationship {
-					constraintName = fmt.Sprintf("constraint_%s_%s_%s", parsed.label, parsed.property, suffix)
-				} else {
-					constraintName = fmt.Sprintf("constraint_%s_%s_%s", parsed.label, parsed.property, suffix)
-				}
-			}
-			constraint := storage.Constraint{
-				Name:       constraintName,
-				Type:       storage.ConstraintExists,
-				Label:      parsed.label,
-				Properties: []string{parsed.property},
-			}
-			if parsed.isRelationship {
-				constraint.EntityType = storage.ConstraintEntityRelationship
-			}
-			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-				return nil, err
-			}
-			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-				return nil, err
-			}
-			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-		}
-	}
-
-	if parsed, err := e.parseCreateConstraintTypeDDL(cypher); err == nil {
-		constraintName := parsed.name
-		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_type", parsed.label, parsed.property)
-		}
-		ptc := storage.PropertyTypeConstraint{
-			Name:         constraintName,
-			Label:        parsed.label,
-			Property:     parsed.property,
-			ExpectedType: parsed.expectedType,
-		}
-		opts := storage.PropertyTypeConstraintOptions{IfNotExists: ifNotExists}
-		if parsed.isRelationship {
-			ptc.EntityType = storage.ConstraintEntityRelationship
-			opts.EntityType = storage.ConstraintEntityRelationship
-		}
-		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(e.storage, ptc); err != nil {
-			return nil, err
-		}
-		if err := e.storage.GetSchema().AddPropertyTypeConstraint(constraintName, parsed.label, parsed.property, parsed.expectedType, opts); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		(strings.Contains(upperASCII(cypher), " IS ::") || strings.Contains(upperASCII(cypher), " IS TYPED")) &&
-		strings.Contains(upperASCII(err.Error()), "UNSUPPORTED PROPERTY TYPE") {
-		return nil, err
-	}
-
-	// Single-property UNIQUE/EXISTS branches are handled by parseCreateConstraintSimplePropertyDDL.
-
-	// =========================================================================
-	// Relationship constraint patterns
-	// =========================================================================
-
-	if parsed, err := e.parseCreateConstraintCardinalityDDL(cypher); err == nil {
-		constraintName := parsed.name
-		if constraintName == "" {
-			directionSuffix := "outgoing"
-			if parsed.direction == "INCOMING" {
-				directionSuffix = "incoming"
-			}
-			constraintName = fmt.Sprintf("constraint_%s_max_%s_%d", parsed.relType, directionSuffix, parsed.maxCount)
-		}
-		constraint := storage.Constraint{
-			Name:       constraintName,
-			Type:       storage.ConstraintCardinality,
-			EntityType: storage.ConstraintEntityRelationship,
-			Label:      parsed.relType,
-			MaxCount:   parsed.maxCount,
-			Direction:  parsed.direction,
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		strings.Contains(upperASCII(cypher), "REQUIRE MAX COUNT") {
-		return nil, err
-	}
-
-	if parsed, err := e.parseCreateConstraintPolicyDDL(cypher); err == nil {
-		constraintName := parsed.name
-		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_%s_%s", parsed.sourceLabel, parsed.relType, parsed.targetLabel, lowerASCII(parsed.policyMode))
-		}
-		constraint := storage.Constraint{
-			Name:        constraintName,
-			Type:        storage.ConstraintPolicy,
-			EntityType:  storage.ConstraintEntityRelationship,
-			Label:       parsed.relType,
-			SourceLabel: parsed.sourceLabel,
-			TargetLabel: parsed.targetLabel,
-			PolicyMode:  parsed.policyMode,
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		(strings.Contains(upperASCII(cypher), "REQUIRE ALLOWED") || strings.Contains(upperASCII(cypher), "REQUIRE DISALLOWED")) {
-		return nil, err
-	}
-
-	// Relationship temporal/domain branches are handled by parseCreateConstraintTemporalDDL and parseCreateConstraintDomainDDL.
-
-	if parsed, err := e.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(cypher); err == nil {
-		if len(parsed.properties) == 0 {
-			if parsed.kind == "rel_key" {
-				return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("RELATIONSHIP KEY"), nil)
-			}
-			return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("UNIQUE"), nil)
-		}
-
-		constraint := storage.Constraint{
-			Label:      parsed.label,
-			Properties: parsed.properties,
-		}
-		if parsed.isRelationship {
-			constraint.EntityType = storage.ConstraintEntityRelationship
-		}
-		if parsed.kind == "rel_key" {
-			constraint.Type = storage.ConstraintRelationshipKey
-			constraint.Name = parsed.name
-			if constraint.Name == "" {
-				constraint.Name = fmt.Sprintf("constraint_%s_%s_rel_key", parsed.label, strings.Join(parsed.properties, "_"))
-			}
-		} else {
-			constraint.Type = storage.ConstraintUnique
-			constraint.Name = parsed.name
-			if constraint.Name == "" {
-				constraint.Name = fmt.Sprintf("constraint_%s_%s_unique", parsed.label, strings.Join(parsed.properties, "_"))
-			}
-		}
-
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	// Relationship single-property UNIQUE/EXISTS branches are handled by parseCreateConstraintSimplePropertyDDL.
-
-	// Relationship property type branches are handled by parseCreateConstraintTypeDDL.
-
-	return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
+	return command.run(ctx)
 }
 
 // executeDropIndex handles DROP INDEX commands.
@@ -538,23 +154,11 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 //	DROP INDEX index_name
 //	DROP INDEX index_name IF EXISTS
 func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if isCompositeRoot(e.storage) {
-		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
-	}
-
-	rest := strings.TrimSpace(strings.TrimSpace(cypher)[len("DROP INDEX"):])
-	if rest == "" {
-		return nil, localizedError(localization.CypherSchemaNameRequired("DROP INDEX", "index"), nil)
-	}
-	name, ifExists, ok := parseDropSchemaName(rest)
-	if !ok {
-		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherSchemaInvalidSyntax("DROP INDEX"))
-	}
-
-	if err := e.dropIndexByName(name, ifExists); err != nil {
+	command, err := e.prepareDropIndex(ctx, cypher)
+	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	return command.run(ctx)
 }
 
 // parseDropSchemaName reads the rest of DROP INDEX / DROP CONSTRAINT: one
@@ -638,38 +242,11 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 
 // executeDropConstraint handles DROP CONSTRAINT commands.
 func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	trimmed := strings.TrimSpace(cypher)
-	upper := upperASCII(trimmed)
-	if !strings.HasPrefix(upper, "DROP CONSTRAINT") {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
-	}
-
-	rest := strings.TrimSpace(trimmed[len("DROP CONSTRAINT"):])
-	if rest == "" {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
-	}
-
-	name, ifExists, ok := parseDropSchemaName(rest)
-	if !ok {
-		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"))
-	}
-
-	if err := e.storage.GetSchema().DropConstraint(name); err != nil {
-		var missing *localization.LocalizedError
-		if errors.As(err, &missing) && missing.Message.ID == localization.MessageStorageSchemaConstraintNotFound {
-			if ifExists {
-				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-			}
-			return nil, newSemanticError("Neo.DatabaseError.Schema.ConstraintDropFailed", "MissingConstraint", err.Error())
-		}
+	command, err := e.prepareDropConstraint(ctx, cypher)
+	if err != nil {
 		return nil, err
 	}
-
-	if e.cache != nil {
-		e.cache.Invalidate()
-	}
-
-	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	return command.run(ctx)
 }
 
 type parsedCreateIndexDDL struct {
@@ -2211,42 +1788,11 @@ func (e *StorageExecutor) parseConstraintProperties(propertiesStr string) []stri
 // db.index.fulltext.queryRelationships to those types instead of
 // scanning every edge.
 func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	schema := e.storage.GetSchema()
-	if schema == nil {
-		return nil, localizedError(localization.CypherSchemaManagerUnavailable(), nil)
-	}
-
-	parsed, err := e.parseCreateFulltextIndexDDL(cypher)
+	command, err := e.prepareCreateFulltextIndex(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
-
-	entityType := storage.ConstraintEntityNode
-	targets := parsed.labels
-	if parsed.isRelationship {
-		entityType = storage.ConstraintEntityRelationship
-		targets = parsed.relationshipTypes
-	}
-	create, err := e.admitIndexCreationForTargets(cypher, parsed.indexName, "FULLTEXT", targets, parsed.properties, entityType)
-	if err != nil {
-		return nil, err
-	}
-	if !create {
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	if parsed.isRelationship {
-		if err := schema.AddFulltextIndex(parsed.indexName, parsed.relationshipTypes, parsed.properties, storage.ConstraintEntityRelationship); err != nil {
-			return nil, localizedError(localization.CypherSchemaAddFulltextRelationshipIndexFailed(err), err)
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	if err := schema.AddFulltextIndex(parsed.indexName, parsed.labels, parsed.properties, storage.ConstraintEntityNode); err != nil {
-		return nil, localizedError(localization.CypherSchemaAddFulltextIndexFailed(err), err)
-	}
-
-	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	return command.run(ctx)
 }
 
 // parseDomainValueList parses a comma-separated list of literal values from a domain constraint.

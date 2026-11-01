@@ -47,7 +47,7 @@ func TestSelectedPathCountedCompilation(t *testing.T) {
 			require.NoError(t, warmErr)
 			require.Equal(t, [][]interface{}{{int64(0)}}, warmResult.Rows)
 			query := "MATCH p = ANY SHORTEST " + pattern + " RETURN count(p)"
-			require.False(t, e.hasCachedValidSyntax(query, syntaxValidNornic|syntaxValidANTLR))
+			require.False(t, e.hasCachedValidSyntax(query, syntaxStatementAccepted))
 			_, cached := selectedPathPlans.get(pattern + "\x00p\x00\x00")
 			require.False(t, cached)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)

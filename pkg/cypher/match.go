@@ -103,20 +103,7 @@ func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {
 	end := len(segment)
 	// Clause keywords inside a subquery expression's braces (COUNT { CALL (i)
 	// { … } RETURN o }) belong to it, not to the WHERE (#652).
-	for _, kw := range []string{
-		"OPTIONAL MATCH",
-		"UNWIND",
-		"CALL",
-		"CREATE",
-		"MERGE",
-		"DELETE",
-		"DETACH DELETE",
-		"SET",
-		"REMOVE",
-		"ORDER BY",
-		"SKIP",
-		"LIMIT",
-	} {
+	for _, kw := range clauseBoundaryKeywords {
 		if idx := topLevelKeywordIndex(segment, kw); idx >= 0 && idx < end {
 			end = idx
 		}
@@ -160,7 +147,7 @@ func extractMatchOrderByClause(cypher string, returnIdx int) string {
 		return ""
 	}
 	end := len(orderExpr)
-	for _, kw := range []string{"SKIP", "LIMIT"} {
+	for _, kw := range paginationKeywords {
 		if idx := findKeywordIndexInContext(orderExpr, kw); idx != -1 && idx < end {
 			end = idx
 		}

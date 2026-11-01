@@ -22,44 +22,6 @@ type procedurePrivilegeCommand struct {
 	roles      []string
 }
 
-// isProcedurePrivilegeCommand reports whether cypher is a GRANT or REVOKE of
-// procedure execution, the privilege statements NornicDB runs; every other
-// GRANT, REVOKE or DENY is unsupported.
-func isProcedurePrivilegeCommand(cypher string) bool {
-	_, ok, _ := parseProcedurePrivilegeCommand(cypher)
-	return ok
-}
-
-// isPrivilegeAdministrationCommand reports whether cypher is a GRANT, REVOKE
-// or DENY, or a SHOW of privileges, which administrators alone may run.
-func isPrivilegeAdministrationCommand(cypher string) bool {
-	trimmed := strings.TrimSpace(cypher)
-	return startsWithKeywordFold(trimmed, "GRANT") || startsWithKeywordFold(trimmed, "REVOKE") ||
-		startsWithKeywordFold(trimmed, "DENY") || isShowPrivilegesCommand(trimmed)
-}
-
-// isPrivilegeCommandShaped reports a GRANT, REVOKE or DENY shaped as a
-// privilege statement: GRANT / REVOKE ROLE[S] …, or one with an ON clause.
-// Another statement starting with these words is a syntax error.
-func isPrivilegeCommandShaped(cypher string) bool {
-	rest := strings.TrimSpace(cypher)
-	var keyword string
-	for _, candidate := range []string{"GRANT", "REVOKE", "DENY"} {
-		if startsWithKeywordFold(rest, candidate) {
-			keyword = candidate
-			break
-		}
-	}
-	if keyword == "" {
-		return false
-	}
-	rest = strings.TrimSpace(rest[len(keyword):])
-	if keyword != "DENY" && (startsWithKeywordFold(rest, "ROLE") || startsWithKeywordFold(rest, "ROLES")) {
-		return true
-	}
-	return findKeywordIndex(rest, "ON") > 0
-}
-
 // parseProcedurePrivilegeCommand parses
 //
 //	GRANT [IMMUTABLE] EXECUTE [BOOSTED] PROCEDURE[S] name[, …] ON DBMS TO role[, …]
@@ -286,18 +248,6 @@ func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, 
 		return nil, err
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-}
-
-// isShowPrivilegesCommand reports SHOW PRIVILEGES and SHOW ROLE[S] r[, …]
-// PRIVILEGES.
-func isShowPrivilegesCommand(cypher string) bool {
-	if startsWithKeywords(cypher, "SHOW", "PRIVILEGES") || startsWithKeywords(cypher, "SHOW", "PRIVILEGE") {
-		return true
-	}
-	if startsWithKeywords(cypher, "SHOW", "ROLES") || startsWithKeywords(cypher, "SHOW", "ROLE") {
-		return findKeywordIndex(showCommandHead(cypher), "PRIVILEGES") > 0 || findKeywordIndex(showCommandHead(cypher), "PRIVILEGE") > 0
-	}
-	return false
 }
 
 // showPrivilegeRoles are the roles SHOW ROLE r[, …] PRIVILEGES names; nil for

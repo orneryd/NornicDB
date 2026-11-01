@@ -53,7 +53,7 @@ func compilePipelineRowWith(ctx context.Context, clause string) (pipelineRowWith
 	if startsWithDistinct(pipelineClauseBody(body, "WITH")) {
 		return pipelineRowWith{}, false
 	}
-	for _, modifier := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+	for _, modifier := range projectionTailKeywords {
 		if topLevelKeywordIndex(body, modifier) >= 0 {
 			return pipelineRowWith{}, false
 		}
@@ -592,7 +592,7 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 
 func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pipelineRowSource, rows []pipelineRow, clause string) (pipelineRowSource, bool) {
 	end := len(clause)
-	for _, keyword := range []string{"SKIP", "LIMIT"} {
+	for _, keyword := range paginationKeywords {
 		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
 			end = index
 		}

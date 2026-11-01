@@ -551,6 +551,26 @@ func (node SyntaxNode) ChildRule(rule int) SyntaxNode {
 	return SyntaxNode{}
 }
 
+// QueryBody returns the required body selected by this query's grammar
+// envelope, with a non-empty source extent. The grammar's nullable regularQuery
+// can produce a node without a statement; that node is not a body. A prefix,
+// USE reference, nested query or terminal is never a body.
+func (node SyntaxNode) QueryBody() SyntaxNode {
+	if !node.Valid() || node.Rule() != CypherParserRULE_query {
+		return SyntaxNode{}
+	}
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if statementBodyRules[child.Rule()] {
+			if start, end := child.Span(); end > start {
+				return child
+			}
+			return SyntaxNode{}
+		}
+	}
+	return SyntaxNode{}
+}
+
 // DirectToken selects a terminal owned by this rule, excluding nested rules.
 func (node SyntaxNode) DirectToken(kind int) (SyntaxToken, bool) {
 	for _, id := range node.data.nodes[node.id].children {

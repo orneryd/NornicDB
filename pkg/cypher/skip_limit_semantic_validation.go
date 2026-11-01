@@ -80,7 +80,7 @@ func (e *StorageExecutor) validateRuntimePaginationClause(ctx context.Context, c
 	if !strings.Contains(clause, "$") {
 		return nil
 	}
-	for _, keyword := range []string{"SKIP", "LIMIT"} {
+	for _, keyword := range paginationKeywords {
 		if topLevelKeywordIndex(clause, keyword) >= 0 {
 			if err := e.validateRuntimePaginationExpressions(ctx, paginationExpression{keyword: keyword, value: pipelinePaginationExpression(clause, keyword)}); err != nil {
 				return err

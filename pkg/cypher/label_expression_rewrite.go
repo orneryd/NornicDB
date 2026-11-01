@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"sort"
 	"strconv"
 	"strings"
@@ -412,14 +413,6 @@ type labelClause struct {
 	bodyStart, end int
 }
 
-// labelClauseKeywords are the words that start a clause.
-var labelClauseKeywords = map[string]bool{
-	"MATCH": true, "OPTIONAL": true, "CREATE": true, "MERGE": true, "WHERE": true, "WITH": true,
-	"RETURN": true, "UNWIND": true, "SET": true, "REMOVE": true, "DELETE": true, "DETACH": true,
-	"CALL": true, "FOREACH": true, "ORDER": true, "SKIP": true, "LIMIT": true, "UNION": true,
-	"YIELD": true, "LOAD": true, "FINISH": true, "USE": true, "ON": true, "OFFSET": true,
-}
-
 // clauses splits query[start:end] into its top-level clauses.
 func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 	q := r.query
@@ -446,7 +439,7 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 			j++
 		}
 		word := strings.ToUpper(q[i:j])
-		if !labelClauseKeywords[word] || clauseKeywordUsedAsName(q[start:end], i-start, j-start, word) {
+		if !cypherantlr.IsLabelClauseWord(word) || clauseKeywordUsedAsName(q[start:end], i-start, j-start, word) {
 			i = j - 1
 			continue
 		}
@@ -477,6 +470,12 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 
 // statement rewrites the clauses of query[start:end].
 func (r *labelExpressionRewriter) statement(start, end int) error {
+	// Native declarations own their predicate and stored-source syntax.
+	// Grammar clause words inside that payload (notably a FOR specifier)
+	// cannot turn a declaration into graph-expression rewrite regions.
+	if !classifyStatement(r.query[start:end]).graphClauseBody() {
+		return nil
+	}
 	clauses := r.clauses(start, end)
 	for i := 0; i < len(clauses); i++ {
 		clause := clauses[i]
@@ -1414,16 +1413,11 @@ func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
 		i--
 	}
 	if i >= start && q[i] == ')' {
-		depth := 0
-		for ; i >= start; i-- {
-			if q[i] == ')' {
-				depth++
-			} else if q[i] == '(' {
-				depth--
-				if depth == 0 {
-					break
-				}
-			}
+		// Structural lookbehind uses the same quote-aware delimiter owner
+		// as forward readers. A malformed closer is not a subquery product.
+		i = cyphertext.FindMatchingDelimiter(q, i, '(', ')', cyphertext.ClosingDelimiter)
+		if i < start {
+			return false
 		}
 		i--
 		for i >= start && cyphertext.IsWhitespaceAt(q, i) {

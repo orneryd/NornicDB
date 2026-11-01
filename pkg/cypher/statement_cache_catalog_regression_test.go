@@ -98,7 +98,7 @@ func TestRule73SelectionForms(t *testing.T) {
 			// Warm only text accepted through the real public query first. Register a
 			// body-independent full text too, to attack exact/canonical/upper metadata.
 			if form != "colon_use" {
-				if err := root.validateSyntax(context.Background(), query, false, syntaxStatement); err != nil {
+				if err := root.validateStatementSyntax(context.Background(), query, false); err != nil {
 					t.Fatal(err)
 				}
 				root.cachedUpperQuery(query)
@@ -109,16 +109,16 @@ func TestRule73SelectionForms(t *testing.T) {
 			if err := remove(); err != nil {
 				t.Fatal(err)
 			}
-			if root.StatementCaches().Disposed() || !root.hasCachedValidSyntax("RETURN 17 AS live", activeSyntaxValidator()) {
+			if root.StatementCaches().Disposed() || !root.hasCachedValidSyntax("RETURN 17 AS live", syntaxStatementAccepted) {
 				t.Fatal("live owner/verdict retired")
 			}
-			if form != "colon_use" && root.hasCachedValidSyntax(query, activeSyntaxValidator()) {
+			if form != "colon_use" && root.hasCachedValidSyntax(query, syntaxStatementAccepted) {
 				t.Fatal("full verdict survived its removed selection")
 			}
 			if _, err := retained.Execute(context.Background(), "RETURN 59 AS retained", nil); err != nil {
 				t.Fatal(err)
 			}
-			if root.hasCachedValidSyntax("RETURN 59 AS retained", activeSyntaxValidator()) {
+			if root.hasCachedValidSyntax("RETURN 59 AS retained", syntaxStatementAccepted) {
 				t.Fatal("removed view repopulated shared cache")
 			}
 			if err := recreate(); err != nil {
@@ -194,7 +194,7 @@ func TestRule73ReferenceCycles64(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if root.hasCachedValidSyntax(query, activeSyntaxValidator()) {
+				if root.hasCachedValidSyntax(query, syntaxStatementAccepted) {
 					t.Fatal("removed full verdict retained")
 				}
 				if root.StatementCaches().Disposed() {
@@ -302,7 +302,7 @@ func TestRule73CatalogAddPreservesWarmOwner(t *testing.T) {
 		if err := event(); err != nil {
 			t.Fatal(err)
 		}
-		if root.StatementCaches().Disposed() || !root.hasCachedValidSyntax(query, activeSyntaxValidator()) {
+		if root.StatementCaches().Disposed() || !root.hasCachedValidSyntax(query, syntaxStatementAccepted) {
 			t.Fatal("add event discarded existing warm owner/verdict")
 		}
 	}

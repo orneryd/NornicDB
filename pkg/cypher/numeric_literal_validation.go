@@ -14,10 +14,6 @@ import (
 // the shared compile boundary prevents individual executors from interpreting
 // malformed or overflowing tokens differently.
 func validateNumericLiterals(cypher string) error {
-	upper := upperASCII(strings.TrimSpace(cypher))
-	if strings.HasPrefix(upper, "ALTER DATABASE ") && strings.Contains(upper, " SET LIMIT ") {
-		return nil
-	}
 	for index := 0; index < len(cypher); {
 		if end, opaque := cyphertext.SkipToken(cypher, index); opaque {
 			index = end

@@ -41,36 +41,25 @@ func (e *StorageExecutor) shouldUseFabricPlanner(ctx context.Context, cypher str
 	// Word presence alone is insufficient (e.g., "USE" inside string payloads).
 	// This lexical admission keeps ordinary statements on their single parse;
 	// Fabric reads the statement's structure only once it is engaged.
-	opts := defaultKeywordScanOpts()
-	searchFrom := 0
-	for {
-		useIdx := useKeywordIndexFrom(cypher, searchFrom, opts)
-		if useIdx < 0 {
-			break
-		}
-		use, _, hasUse, err := fabric.ParseUseClause(ctx, cypher[useIdx:], true, cyphertext.AcceptedSource)
-		if hasUse && err == nil && (e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())) {
-			return true
-		}
-		searchFrom = useIdx + len("USE")
-	}
-	return false
+	return !visitUseClauses(ctx, cypher, defaultKeywordScanOpts(), func(use fabric.UseClause) bool {
+		return !e.useTargetRequiresFabric(ctx, use.Name) && !(use.IsDynamic() && e.sessionIsComposite())
+	})
 }
 
-func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
+// useTargetRequiresFabric routes a selection by the composite it names.
+func (e *StorageExecutor) useTargetRequiresFabric(ctx context.Context, target string) bool {
 	if target == "" || e.dbManager == nil {
 		return false
 	}
-	if e.dbManager.IsCompositeDatabase(target) {
-		return true
-	}
-	if dot := strings.IndexByte(target, '.'); dot > 0 {
-		base := target[:dot]
-		if base != "" && e.dbManager.IsCompositeDatabase(base) {
-			return true
+	composite := target
+	if !e.dbManager.IsCompositeDatabase(composite) {
+		dot := strings.IndexByte(target, '.')
+		if dot <= 0 || !e.dbManager.IsCompositeDatabase(target[:dot]) {
+			return false
 		}
+		composite = target[:dot]
 	}
-	return false
+	return true
 }
 
 func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool, preparation ...*fabricPreparedExec) (result *ExecuteResult, resultErr error) {
@@ -153,7 +142,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 		authToken:   authToken,
 		autoCommit:  autoCommit,
 		transaction: tx,
-		catalog:     catalog, wholeStatementMutable: contract.writes || contract.calls || contract.dynamic,
+		catalog:     catalog, wholeStatementMutable: contract.changesState() || contract.calls || contract.dynamic,
 	}
 	localExec := fabric.NewLocalFragmentExecutor(dispatch, func(dbName string) (storage.Engine, error) {
 		if e.dbManager != nil {
@@ -204,13 +193,11 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
 	fabricExecutor.SetUnionContract(fabricUnionContract)
 	fabricExecutor.SetRemoteValueCodec(fabricRemoteValueCodec)
-	fabricExecutor.SetConcurrentExecution(autoCommit && !contract.dynamic && !contract.writes && !contract.calls)
+	fabricExecutor.SetConcurrentExecution(autoCommit && !contract.dynamic && !contract.changesState() && !contract.calls)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetRemoteStatementPolicy(readRemoteStatementPolicy)
-	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
-		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
-			return err
-		}
+	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
+	fabricExecutor.SetGraphSelected(func(ctx context.Context, database string) error {
 		if ownershipRejected {
 			return ownedTransactionControlError()
 		}
@@ -250,7 +237,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	if useErr != nil {
 		return nil, useErr
 	}
-	if len(stream.Columns) == 0 && !isSchemaCommandStatement(command) {
+	if len(stream.Columns) == 0 && !classifyStatement(command).schema {
 		columns, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherVersionFromContext(ctx) == "25", AcceptedSource)
 		if err != nil {
 			return nil, err
@@ -326,7 +313,7 @@ func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fa
 
 type fabricLocalSelection struct{ name, database string }
 
-// Authorization and current catalog resolution precede every result lookup.
+// prepareFabricExecution has admitted every static selection before this runs.
 // Dynamic and remote targets keep executing through dispatch without caching.
 func (e *StorageExecutor) fabricLocalSelections(ctx context.Context, prepared *fabricPreparedExec) (selections []fabricLocalSelection, local bool) {
 	if prepared == nil || prepared.catalog == nil || prepared.fragment == nil {
@@ -337,7 +324,7 @@ func (e *StorageExecutor) fabricLocalSelections(ctx context.Context, prepared *f
 	collect = func(fragment fabric.Fragment) bool {
 		switch current := fragment.(type) {
 		case *fabric.FragmentExec:
-			if current.Graph != nil && current.Graph.IsDynamic() || e.authorizeSelectedDatabase(ctx, current.GraphName, current.Query) != nil {
+			if current.Graph != nil && current.Graph.IsDynamic() {
 				return false
 			}
 			location, err := prepared.catalog.Resolve(current.GraphName)
@@ -390,7 +377,7 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 	if dbFromCtx := GetUseDatabaseFromContext(ctx); dbFromCtx != "" {
 		sessionDB = dbFromCtx
 	}
-	fragment, err := e.planFabricQuery(ctx, catalog, cypher, sessionDB)
+	fragment, err := e.planFabricQuery(ctx, cypher, sessionDB)
 	if err != nil {
 		return nil, fabricGraphReferenceError(err)
 	}
@@ -466,15 +453,19 @@ var fabricUnionContract = fabric.UnionContract{
 // rewritten; the planner and remote participants keep the names as written.
 // Diagnostics are mapped back to those names.
 func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cypher string, params map[string]interface{}) error {
-	statement := fabricSingleGraphStatement(ctx, cypher)
-	canonical, names := canonicalizeQuotedVariablesWithBindings(ctx, statement, nil)
+	canonical, names := canonicalizeQuotedVariablesWithBindings(ctx, cypher, nil)
 	if names != nil {
 		ctx = withQuotedVariableNames(ctx, names)
 		params = names.parameterValues(params)
 	}
-	desugared, _, err := desugarLabelExpressions(canonical, params, cypherVersionFromContext(ctx) == "25")
+	desugared, rewrite, err := desugarLabelExpressions(canonical, params, cypherVersionFromContext(ctx) == "25")
 	if err == nil {
-		err = e.validateSemanticScopes(ctx, desugared)
+		ctx = withSourceRewrite(ctx, rewrite)
+		err = e.validateStatementSyntax(ctx, desugared, cypherVersionFromContext(ctx) == "25")
+	}
+	if err == nil {
+		statement := fabricSingleGraphStatement(ctx, desugared)
+		err = e.validateSemanticScopes(ctx, statement)
 	}
 	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
 	_, err = (resultRestoration{names: names}).restore(nil, err, parseItems)
@@ -499,14 +490,16 @@ func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
 	return statement
 }
 
-func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
+func (e *StorageExecutor) planFabricQuery(ctx context.Context, cypher, sessionDB string) (fabric.Fragment, error) {
 	if e.fabricPlanCache != nil {
 		if cached, found := e.fabricPlanCache.Get(cypher, sessionDB); found && cached != nil {
 			return cached, nil
 		}
 	}
 
-	planner := fabric.NewFabricPlanner(catalog)
+	// A plan is cached across principals, so it reads no catalog: each selection
+	// is validated per request, against the principal's view.
+	planner := fabric.NewFabricPlanner(nil)
 	// A name spelled UNION, OPTIONAL or RETURN is read as ordinary statements read it.
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
 	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
@@ -540,7 +533,7 @@ func (e *StorageExecutor) fabricProcedureWritePlan(ctx context.Context, fragment
 		if err != nil {
 			return nil, err
 		}
-		write := contract.writes
+		write := contract.changesState()
 		if e.dbManager != nil && e.dbManager.IsCompositeDatabase(current.GraphName) {
 			write = false
 		}
@@ -600,7 +593,7 @@ func (e *StorageExecutor) normalizeFabricRowWrapper(ctx context.Context, cypher 
 	if stream == nil || !stream.RowWrapper || len(stream.Columns) != 1 || len(stream.Rows) == 0 {
 		return nil
 	}
-	inferred, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherGrammarVersion(cypher) == "25", AcceptedSource)
+	inferred, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), classifyStatement(cypher).version == "25", AcceptedSource)
 	if err != nil {
 		return err
 	}
@@ -813,7 +806,7 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 		c.mu.Lock()
 		existing := c.localShardTxExecutors()[fabric.ParticipantKeyFromLocation(&fabric.LocationLocal{DBName: dbName})]
 		c.mu.Unlock()
-		if compositeEngineOf(engine) != nil || !c.autoCommit || c.wholeStatementMutable || contract.writes || contract.calls || contract.dynamic || existing != nil {
+		if compositeEngineOf(engine) != nil || !c.autoCommit || c.wholeStatementMutable || contract.changesState() || contract.calls || contract.dynamic || existing != nil {
 			var err error
 			exec, ctx, err = statement.on(ctx, dbName, c.base, engine)
 			if err != nil {
@@ -950,10 +943,7 @@ func findLeadingWithEndLocal(query string) int {
 	}
 	body := query[len(prefix):]
 	end := -1
-	for _, keyword := range [...]string{
-		"MATCH", "OPTIONAL MATCH", "RETURN", "WHERE", "USE", "WITH", "CALL",
-		"CREATE", "MERGE", "UNWIND", "SET", "DELETE", "DETACH DELETE",
-	} {
+	for _, keyword := range withImportClauseKeywords {
 		if index := topLevelKeywordIndex(body, keyword); index >= 0 && (end < 0 || index < end) {
 			end = index
 		}

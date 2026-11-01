@@ -97,10 +97,10 @@ func runFabricEmbeddingExecutionFrames(t *testing.T, forms []embeddingFrameForm)
 										}
 										return
 									}
-									if (f.name == "let" || f.name == "for") && !native {
-										require.ErrorContains(t, err, strings.ToUpper(f.name), "Fabric routing rejects these Cypher 25 clauses independently of the projection name")
-										return
-									}
+									// USE … LET / FOR is admitted: the clauses after a USE graph name
+									// come from the shared grammar (NOR-300), so Fabric routing runs
+									// these Cypher 25 frames like every other frame. Release rejected
+									// them only because its follower list omitted LET and FOR.
 									require.NoError(t, err, query)
 									require.NotEmpty(t, result.Rows, query)
 									for _, row := range result.Rows {

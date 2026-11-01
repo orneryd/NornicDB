@@ -2427,34 +2427,6 @@ func TestSessionMergeCommitConflictRetryRejectsCallWithMerge(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Tests for isShowDatabasesQuery – case/whitespace normalization
-// =============================================================================
-
-func TestIsShowDatabasesQuery(t *testing.T) {
-	tests := []struct {
-		query string
-		want  bool
-	}{
-		{"SHOW DATABASES", true},
-		{"show databases", true},
-		{"  SHOW   DATABASES  ", true},
-		{"Show Databases", true},
-		{"SHOW DATABASE", false},
-		{"SHOW DATABASES YIELD name", false},
-		{"MATCH (n) RETURN n", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.query, func(t *testing.T) {
-			if got := isShowDatabasesQuery(tt.query); got != tt.want {
-				t.Errorf("isShowDatabasesQuery(%q) = %v, want %v", tt.query, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestDecodePackStreamList_MixedTypes(t *testing.T) {
 	// Test list with mixed types and value verification
 	tests := []struct {

@@ -109,10 +109,9 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 			if pendingUpdate && clause.kind == pipelineClauseCall {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidClauseComposition", "WITH is required between an updating clause and CALL")
 			}
-			switch clause.kind {
-			case pipelineClauseWith:
+			if clause.kind == pipelineClauseWith {
 				pendingUpdate = false
-			case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
+			} else if clause.syntax.IsUpdatingClause() {
 				pendingUpdate = true
 			}
 			// Subquery bodies are checked as their own statements.
@@ -132,7 +131,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				// keyword-named first item from a clause (RETURN union[0], #894).
 				clauseText := strings.TrimSpace(clause.text)
 				end := len(clauseText)
-				for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT", "UNION"} {
+				for _, keyword := range returnItemBoundaryKeywords {
 					if index := topLevelKeywordIndex(clauseText, keyword); index >= len("RETURN") && index < end {
 						end = index
 					}

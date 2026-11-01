@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -51,11 +50,9 @@ func TestReduceFormRoutes(t *testing.T) {
 	}
 	_, err = exec.Execute(ctx, "CYPHER 25 MATCH (n:RR {id: 1}) RETURN allReduce(a = 0, x IN [1] | a, n.s) AS v", nil)
 	require.ErrorContains(t, err, `Don't know how to treat that as a predicate: String("a")`)
-	if !config.IsANTLRParser() {
-		// The ANTLR parser rejects the call first, as an expression it can't read.
-		_, err = exec.Execute(ctx, "CYPHER 25 RETURN reduce(a, x IN [1] | x) AS v", nil)
-		require.ErrorContains(t, err, "Invalid syntax for the `reduce` function.")
-	}
+	// The shared grammar rejects the call first on either parser.
+	_, err = exec.Execute(ctx, "CYPHER 25 RETURN reduce(a, x IN [1] | x) AS v", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	// Guards for forms the statement checks reject first.
 	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "reduce(a, x IN [1] | x)", nil, nil, nil, nil, nil, 0))

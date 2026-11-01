@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -219,9 +218,11 @@ func TestSlowQueryLog_ReusesGrammarVerdict(t *testing.T) {
 			if _, err := exec.Execute(t.Context(), query, nil); err != nil {
 				t.Fatalf("execute: %v", err)
 			}
-			wantParses := 1
-			if config.IsANTLRParser() && !tracing {
-				wantParses = 0
+			// Statement admission owns the grammar verdict on either parser, so
+			// only a span redacted before admission parses for the redactor.
+			wantParses := 0
+			if tracing {
+				wantParses = 1
 			}
 			if *calls != wantParses {
 				t.Fatalf("first execution ran %d redactor grammar parses, want %d", *calls, wantParses)
@@ -250,8 +251,8 @@ func TestSlowQueryLog_ReusesGrammarVerdict(t *testing.T) {
 }
 
 // TestSlowQueryLog_ExtensionStatementKeepsStructureOnly checks that a
-// NornicDB extension statement, which the ANTLR parser's validation marks
-// valid without the grammar accepting it, is still redacted structurally on
+// NornicDB extension statement, which statement admission marks valid
+// without the grammar accepting it, is still redacted structurally on
 // both parsers.
 func TestSlowQueryLog_ExtensionStatementKeepsStructureOnly(t *testing.T) {
 	query := "CREATE PROCEDURE zzproc.one() MODE READ AS RETURN 1 AS zzout"
@@ -259,7 +260,7 @@ func TestSlowQueryLog_ExtensionStatementKeepsStructureOnly(t *testing.T) {
 		t.Fatalf("%q is not an extension statement", query)
 	}
 	exec, logged := captureSlowQueryLog(t)
-	exec.markCachedValidSyntax(query, syntaxValidANTLR)
+	exec.markCachedValidSyntax(query, syntaxStatementAccepted)
 	exec.emitSlowQueryLog(t.Context(), query, nil, time.Second)
 	got := logged()
 	if len(got) != 1 {

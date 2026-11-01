@@ -442,7 +442,7 @@ func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bo
 
 func isMutationQuery(query string) bool {
 	requirements := cypher.QueryPermissionRequirements(context.Background(), query, cypher.RawSource)
-	return requirements.Write || requirements.Schema
+	return requirements.ChangesState
 }
 
 // canAccessGraph reports whether the principal may use graph, a request's
@@ -469,13 +469,8 @@ func (s *Server) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDa
 	return dataDatabase, allowed
 }
 
-// isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).
-// Used to filter SHOW DATABASES results by CanSeeDatabase when per-database RBAC is enabled.
 func isShowDatabasesQuery(query string) bool {
-	// Normalize: collapse whitespace, trim, uppercase (match cypher executor behavior)
-	norm := strings.TrimSpace(query)
-	norm = strings.Join(strings.Fields(norm), " ")
-	return strings.EqualFold(norm, "SHOW DATABASES")
+	return cypher.IsShowDatabasesQuery(query)
 }
 
 func parseIntQuery(r *http.Request, key string, defaultVal int) int {

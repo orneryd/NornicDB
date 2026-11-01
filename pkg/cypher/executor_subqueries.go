@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
 	"sort"
@@ -109,7 +110,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 		if optIdx := findMultiWordKeywordIndex(outerPart, "OPTIONAL", "MATCH"); optIdx >= 0 {
 			optionalPart := strings.TrimSpace(outerPart[optIdx:])
 			end := len(optionalPart)
-			for _, kw := range []string{"WITH", "RETURN", "ORDER BY", "SKIP", "LIMIT"} {
+			for _, kw := range projectionReturnTailKeywords {
 				if idx := findKeywordIndex(optionalPart, kw); idx >= 0 && idx < end {
 					end = idx
 				}
@@ -232,7 +233,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			// (WITH/RETURN/ORDER/SKIP/LIMIT) belong to the outer pipeline and must not
 			// be interpreted as part of the predicate expression.
 			whereEnd := len(whereClause)
-			for _, kw := range []string{"WITH", "RETURN", "ORDER BY", "SKIP", "LIMIT"} {
+			for _, kw := range projectionReturnTailKeywords {
 				if idx := findKeywordIndex(whereClause, kw); idx >= 0 && idx < whereEnd {
 					whereEnd = idx
 				}
@@ -628,9 +629,9 @@ func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subquery
 	return referenced
 }
 
-// withImportClauseKeywords are the clauses that can follow a subquery's
-// importing WITH list (parseLeadingWithImports).
-var withImportClauseKeywords = []string{"WHERE", "OPTIONAL MATCH", "MATCH", "UNWIND", "MERGE", "CREATE", "SET", "DETACH DELETE", "DELETE", "REMOVE", "CALL", "RETURN", "WITH"}
+// Import projection boundaries come from the grammar, including future
+// reading clauses; name/quote handling remains the scanner's responsibility.
+var withImportClauseKeywords = cypherantlr.ClauseWords()
 
 // leadingWithClause returns the leading WITH clause of text, which starts
 // with WITH (its WHERE, ORDER BY, SKIP and LIMIT included), and whether a
@@ -796,7 +797,7 @@ func branchDeclaresVariable(ctx context.Context, branch, variable string) bool {
 // at its WHERE, or MERGE's ON CREATE / ON MATCH, else the clause's end.
 func patternPartEnd(clause pipelineClause) int {
 	end := len(clause.text)
-	for _, keyword := range [...]string{"WHERE", "ON"} {
+	for _, keyword := range patternPartTailKeywords {
 		if index := topLevelKeywordIndex(clause.text, keyword); index > 0 && index < end {
 			end = index
 		}
@@ -1649,7 +1650,7 @@ func parseOrderByClause(clause string) []orderByTerm {
 		}
 		return index
 	}
-	for _, keyword := range []string{"LIMIT", "SKIP"} {
+	for _, keyword := range paginationKeywords {
 		if index := keywordAfterFirstItem(keyword); index >= 0 && index < end {
 			end = index
 		}
@@ -1831,7 +1832,7 @@ func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keywo
 	}
 	kwPart := strings.TrimSpace(modifiers[idx+len(keyword):])
 	nextKw := len(kwPart)
-	for _, otherKeyword := range []string{"LIMIT", "SKIP", "ORDER BY"} {
+	for _, otherKeyword := range projectionTailKeywords {
 		if otherKeyword == keyword {
 			continue
 		}

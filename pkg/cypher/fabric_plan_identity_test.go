@@ -60,18 +60,16 @@ func TestExecute_FabricPlanCache_ExactStatementIdentity(t *testing.T) {
 }
 
 // Author: #1640 lane (Codex). Measure the actual planning hit caller, including
-// its context/catalog boundary, separately from the cache-key microbenchmark.
+// its context boundary, separately from the cache-key microbenchmark.
 func BenchmarkFabricPlanIdentityHotHit(b *testing.B) {
 	exec := newFabricIdentityExecutor(b)
-	catalog, err := exec.buildFabricCatalog()
-	require.NoError(b, err)
 	query := "USE identity CALL { USE identity.part RETURN 'a  b' AS out } RETURN out"
-	_, err = exec.planFabricQuery(context.Background(), catalog, query, "identity")
+	_, err := exec.planFabricQuery(context.Background(), query, "identity")
 	require.NoError(b, err)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := exec.planFabricQuery(context.Background(), catalog, query, "identity"); err != nil {
+		if _, err := exec.planFabricQuery(context.Background(), query, "identity"); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -132,7 +132,7 @@ func mapPatternClause(query string) bool {
 
 func mapClauseBefore(query string) string {
 	last, clause := -1, ""
-	for _, keyword := range []string{"MATCH", "CREATE", "MERGE", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "CALL", "FILTER", "LET", "YIELD"} {
+	for _, keyword := range withImportClauseKeywords {
 		positions := findAllTopLevelPipelineKeywordPositions(query, keyword)
 		if len(positions) > 0 && positions[len(positions)-1] > last {
 			last = positions[len(positions)-1]
@@ -256,7 +256,7 @@ func (context *mapPatternContext) scope(query string, start int) *mapPatternClau
 		}
 	}
 	text := query[start:end]
-	for _, keyword := range []string{"MATCH", "CREATE", "MERGE", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "CALL", "FILTER", "LET", "YIELD"} {
+	for _, keyword := range withImportClauseKeywords {
 		for _, position := range findAllTopLevelPipelineKeywordPositions(text, keyword) {
 			scope.clauses = append(scope.clauses, mapPatternClausePosition{start + position, isPatternClauseKeyword(keyword)})
 		}

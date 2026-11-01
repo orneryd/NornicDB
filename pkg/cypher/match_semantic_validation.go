@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -74,7 +75,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(ctx context.Contex
 		return nil
 	}
 
-	if isSchemaCommandStatement(cypher) {
+	if classifyStatement(cypher).schema {
 		return nil
 	}
 	clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, cypher)
@@ -150,28 +151,64 @@ func callBodyReturnStarError(ctx context.Context, scope matchSemanticScope, clau
 // EXPLAIN reads it as well. A statement ending with a CALL that returns
 // columns stays NornicDB's extension.
 func validateQueryBodyComposition(ctx context.Context, cypher string) error {
-	return forEachQueryBody(ctx, cypher, queryBodyContainerKeywords[:], func(container string, start, end int) error {
+	if isNornicExtensionStatement(cypher) {
+		return ctx.Err()
+	}
+	syntax, err := cypherantlr.ParseSyntax(ctx, cypher, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		return syntaxAdmissionError(ctx, cypher, AcceptedSource, err)
+	}
+	return validateSyntaxBodyComposition(ctx, syntax)
+}
+
+// validateSyntaxBodyComposition is the common structural admission owner for
+// execution and metadata. It consumes the retained tree and its effect view,
+// never reparsing nested source windows or resolving live procedure modes.
+func validateSyntaxBodyComposition(ctx context.Context, syntax cypherantlr.StatementSyntax) error {
+	var failure error
+	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+		if failure != nil {
+			return nil
+		}
+		if failure = ctx.Err(); failure != nil {
+			return nil
+		}
+		if node.Rule() == cypherantlr.CypherParserRULE_query && !node.QueryBody().Valid() {
+			failure = emptyStatementError()
+			return nil
+		}
+		container := cypherantlr.QueryBodyContainer(node.Rule())
+		if container == "" {
+			return nil
+		}
 		if container != "CALL" {
-			if queryBodyUpdates(ctx, cypher, start, end) {
-				return &classifiedCypherError{
-					cause:  localizedError(expressionBodyUpdatesMessages[container](), nil),
-					code:   "Neo.ClientError.Statement.SyntaxError",
-					detail: "InvalidClauseComposition",
+			if node.ContainsUpdatingClause() {
+				failure = &classifiedCypherError{
+					cause: localizedError(expressionBodyUpdatesMessages[container](), nil),
+					code:  "Neo.ClientError.Statement.SyntaxError", detail: "InvalidClauseComposition",
 				}
 			}
 			return nil
 		}
-		for _, branch := range readQueryBody(ctx, cypher, start, end).branches {
-			if keyword := unconcludedClause(ctx, cypher, branch); keyword != "" {
-				return &classifiedCypherError{
-					cause:  localizedError(localization.CypherMatchingQueryCannotConclude(keyword), nil),
-					code:   "Neo.ClientError.Statement.SyntaxError",
-					detail: "InvalidClauseComposition",
+		body := node.ChildRule(cypherantlr.CypherParserRULE_subqueryBody)
+		for _, branch := range queryBodyFromSyntax(body).branches {
+			if keyword := unconcludedClause(ctx, branch); keyword != "" {
+				failure = &classifiedCypherError{
+					cause: localizedError(localization.CypherMatchingQueryCannotConclude(keyword), nil),
+					code:  "Neo.ClientError.Statement.SyntaxError", detail: "InvalidClauseComposition",
 				}
+				break
 			}
 		}
 		return nil
 	})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return failure
 }
 
 // expressionBodyUpdatesMessages is the error for an update in each
@@ -180,29 +217,6 @@ var expressionBodyUpdatesMessages = map[string]func() localization.Message{
 	"EXISTS":  localization.CypherMatchingExistsExpressionUpdates,
 	"COUNT":   localization.CypherMatchingCountExpressionUpdates,
 	"COLLECT": localization.CypherMatchingCollectExpressionUpdates,
-}
-
-// updatingClauses are the clause kinds that update the graph.
-var updatingClauses = map[pipelineClauseKind]bool{
-	pipelineClauseCreate: true, pipelineClauseMerge: true, pipelineClauseDelete: true,
-	pipelineClauseSet: true, pipelineClauseRemove: true, pipelineClauseForeach: true,
-}
-
-// queryBodyUpdates reports whether the query body source[start:end] holds
-// an update clause, in any branch (readQueryBody) or in a CALL body at any
-// depth in it. A declined branch holds no clause it can read.
-func queryBodyUpdates(ctx context.Context, source string, start, end int) bool {
-	for _, branch := range readQueryBody(ctx, source, start, end).branches {
-		for _, clause := range branch.clauses {
-			if updatingClauses[clause.kind] {
-				return true
-			}
-			if from, to, ok := callClauseBody(ctx, clause); ok && queryBodyUpdates(ctx, source, from, to) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // queryBodyEndings is how each clause kind ends a query body: the keyword
@@ -223,14 +237,14 @@ var queryBodyEndings = map[pipelineClauseKind]string{
 // it can't conclude the body (queryBodyEndings), or "" when it can (FINISH
 // too) or the reader declined it. source is the text the branch was read
 // from.
-func unconcludedClause(ctx context.Context, source string, branch queryBodyBranch) string {
+func unconcludedClause(ctx context.Context, branch queryBodyBranch) string {
 	if branch.finished || len(branch.clauses) == 0 {
 		return ""
 	}
 	last := branch.clauses[len(branch.clauses)-1]
 	if last.kind == pipelineClauseCallSubquery {
-		start, end, ok := callClauseBody(ctx, last)
-		if !ok || !queryBodyProducesColumns(ctx, source, readQueryBody(ctx, source, start, end), true) {
+		body := last.syntax.ChildRule(cypherantlr.CypherParserRULE_subqueryBody)
+		if !body.Valid() || !queryBodyProducesColumns(ctx, body.Source(), queryBodyFromSyntax(body), true) {
 			return ""
 		}
 	}
@@ -645,7 +659,7 @@ func validateWithOrderBySemanticScope(ctx context.Context, input matchSemanticSc
 // Neo4j does ("Variable `y` not defined"). orderBody is the text after ORDER
 // BY; its SKIP / LIMIT are ignored.
 func validateOrderByReferences(input, output matchSemanticScope, orderBody string) error {
-	for _, keyword := range []string{"SKIP", "LIMIT"} {
+	for _, keyword := range paginationKeywords {
 		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
 			orderBody = strings.TrimSpace(orderBody[:index])
 		}
@@ -686,7 +700,7 @@ func validateReturnSemanticScopeIn(ctx context.Context, scope matchSemanticScope
 	// first item from a clause (RETURN skip[0], #894).
 	clauseText := strings.TrimSpace(clause)
 	projectionEnd := len(clauseText)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+	for _, keyword := range projectionTailKeywords {
 		index := topLevelKeywordIndex(clauseText, keyword)
 		if index < len("RETURN") || index >= projectionEnd {
 			continue
@@ -1255,29 +1269,6 @@ func bindMatchSemanticKind(scope matchSemanticScope, variable string, kind match
 	return nil
 }
 
-// schemaCommandKeywords follow CREATE or DROP in a schema command.
-var schemaCommandKeywords = []string{"CONSTRAINT", "INDEX", "FULLTEXT", "VECTOR", "RANGE", "TEXT", "POINT", "LOOKUP", "BTREE", "OR REPLACE"}
-
-// isSchemaCommandStatement reports whether cypher is a schema command
-// (CREATE / DROP CONSTRAINT, INDEX, …): its patterns and expressions declare a
-// schema rule over a pattern (FOR ()-[r:T]-() REQUIRE …) and bind no clause
-// variables.
-func isSchemaCommandStatement(cypher string) bool {
-	trimmed := strings.TrimSpace(cypher)
-	for _, command := range []string{"CREATE", "DROP"} {
-		if !startsWithKeywordFold(trimmed, command) {
-			continue
-		}
-		rest := strings.TrimSpace(trimmed[len(command):])
-		for _, keyword := range schemaCommandKeywords {
-			if startsWithKeywordFold(rest, keyword) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // validateStaticClauseTypes applies the compile-time type checks of one
 // clause: function arguments (validateStaticFunctionVariables) and operators
 // (validateStaticOperatorTypes).
@@ -1471,7 +1462,7 @@ func isExpressionContinuationWord(word string) bool {
 // ORDER BY / SKIP / LIMIT that follow it.
 func splitWithProjection(clause string) (projection, rest string) {
 	end := len(clause)
-	for _, keyword := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
+	for _, keyword := range projectionModifierKeywords {
 		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
 			end = index
 		}

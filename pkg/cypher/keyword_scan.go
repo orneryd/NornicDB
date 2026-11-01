@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 // cutDistinct reports whether text (a projection body, or an aggregate's
@@ -354,10 +355,8 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 	if strings.EqualFold(keyword, "SKIP") || strings.EqualFold(keyword, "LIMIT") {
 		wordEnd := j
 		wordEnd = cyphertext.NamePartEnd(s, wordEnd)
-		for _, next := range [...]string{"ORDER", "SKIP", "LIMIT", "WHERE", "UNION", "RETURN", "WITH"} {
-			if strings.EqualFold(s[j:wordEnd], next) {
-				return true
-			}
+		if cypherantlr.IsClauseWord(s[j:wordEnd]) {
+			return true
 		}
 	}
 	if i < 0 {
@@ -476,42 +475,8 @@ func isNameableClauseKeyword(keyword string) bool {
 	if space := strings.IndexFunc(word, cyphertext.IsWhitespace); space >= 0 {
 		word = word[:space]
 	}
-	var candidates []string
-	switch len(word) {
-	case 3:
-		candidates = nameableClauseKeywords3[:]
-	case 4:
-		candidates = nameableClauseKeywords4[:]
-	case 5:
-		candidates = nameableClauseKeywords5[:]
-	case 6:
-		candidates = nameableClauseKeywords6[:]
-	case 7:
-		candidates = nameableClauseKeywords7[:]
-	case 8:
-		candidates = nameableClauseKeywords8[:]
-	default:
-		return false
-	}
-	first := asciiUpper(word[0])
-	for _, clause := range candidates {
-		if clause[0] == first && equalFoldASCII(word, clause) {
-			return true
-		}
-	}
-	return false
+	return cypherantlr.IsClauseWord(word)
 }
-
-// The clause keywords a name can be spelled as (isNameableClauseKeyword),
-// by length.
-var (
-	nameableClauseKeywords3 = [...]string{"SET", "LET", "FOR", "USE"}
-	nameableClauseKeywords4 = [...]string{"WITH", "SKIP", "CALL"}
-	nameableClauseKeywords5 = [...]string{"MATCH", "MERGE", "UNION", "LIMIT", "ORDER", "WHERE"}
-	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND", "FINISH", "FILTER"}
-	nameableClauseKeywords7 = [...]string{"FOREACH"}
-	nameableClauseKeywords8 = [...]string{"OPTIONAL"}
-)
 
 // prevWordStart returns the start of the word that precedes pos (after
 // skipping whitespace), for a pos where prevWordEqualsIgnoreCase matched.
@@ -702,23 +667,33 @@ func keywordIndexFromDefault(s, keyword string, from int) int {
 	return firstKeywordIndexFromDefault(s, from, keyword)
 }
 
-// maxKeywordSet is the most keywords firstKeywordIndexFromDefault takes.
-const maxKeywordSet = 16
+// inlineKeywordSet is a storage optimization, not a vocabulary limit. Grammar
+// projections may grow independently of this scanner's common small inputs.
+const inlineKeywordSet = 16
 
 // firstKeywordIndexFromDefault is the position of the earliest of keywords
 // in s at or after from, with the default scan options (keywordIndex: the
 // same strings, comments, nesting and name rules), or -1. A set of clause
-// keywords is found in one scan rather than one scan per keyword. It takes
-// at most maxKeywordSet keywords.
+// keywords is found in one scan rather than one scan per keyword. Every
+// supplied keyword is searched; set size does not change admission.
 func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
-	if len(keywords) > maxKeywordSet {
-		panic("firstKeywordIndexFromDefault: more than maxKeywordSet keywords")
-	}
+	index, _, _ := firstKeywordMatchFrom(s, from, false, keywords...)
+	return index
+}
+
+// firstKeywordMatchFrom is the common set scanner. It retains the
+// matched spelling and source extent so role-based consumers need neither a
+// second matcher nor a fixed string length for phrases containing trivia.
+func firstKeywordMatchFrom(s string, from int, skipBraces bool, keywords ...string) (index, end, member int) {
 	type keywordBounds struct {
 		ks, ke int
 		first  byte
 	}
-	var bounds [maxKeywordSet]keywordBounds
+	var inline [inlineKeywordSet]keywordBounds
+	bounds := inline[:]
+	if len(keywords) > len(bounds) {
+		bounds = make([]keywordBounds, len(keywords))
+	}
 	for k, keyword := range keywords {
 		ks, ke := trimKeywordWSBounds(keyword)
 		if ks < ke {
@@ -729,7 +704,7 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 		from = 0
 	}
 	if from >= len(s) {
-		return -1
+		return -1, -1, -1
 	}
 
 	var (
@@ -766,7 +741,7 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 			}
 		}
 
-		if parenDepth > 0 || bracketDepth > 0 {
+		if parenDepth > 0 || bracketDepth > 0 || skipBraces && braceDepth > 0 {
 			continue
 		}
 
@@ -796,11 +771,11 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 			if clauseKeywordUsedAsName(s, i, endPos, keyword) {
 				continue
 			}
-			return i
+			return i, endPos, k
 		}
 	}
 
-	return -1
+	return -1, -1, -1
 }
 
 func isDefaultKeywordScanOpts(opts keywordScanOpts) bool {
@@ -1025,46 +1000,6 @@ func queryGapEnd(query string, index int) int {
 	return end
 }
 
-// hasOwnStatementSyntax reports whether query is one of NornicDB's
-// statements with a syntax of its own, which canonicalizeQueryText leaves as
-// written but for its comments: the knowledge-policy DDL (CREATE / ALTER /
-// DROP / SHOW DECAY, PROMOTION or RETENTION …), whose bodies separate
-// settings and statements by lines; constraint contracts (CREATE CONSTRAINT
-// … REQUIRE { … }, one predicate per line); and CREATE [OR REPLACE]
-// PROCEDURE, which stores its body's text.
-func hasOwnStatementSyntax(query string) bool {
-	var words [3]string
-	count := 0
-	for index := queryGapEnd(query, 0); index < len(query) && count < len(words); index = queryGapEnd(query, index) {
-		end := index
-		end = cyphertext.NamePartEnd(query, end)
-		if end == index {
-			break
-		}
-		words[count] = query[index:end]
-		count++
-		index = end
-	}
-	switch {
-	case strings.EqualFold(words[0], "CREATE") && (strings.EqualFold(words[1], "PROCEDURE") ||
-		strings.EqualFold(words[1], "OR") && strings.EqualFold(words[2], "REPLACE")):
-		return true
-	case strings.EqualFold(words[0], "CREATE") && strings.EqualFold(words[1], "CONSTRAINT"):
-		// A constraint contract: REQUIRE { one predicate per line }.
-		if require := keywordIndex(query, "REQUIRE"); require >= 0 {
-			if open := queryGapEnd(query, require+len("REQUIRE")); open < len(query) && query[open] == '{' {
-				return true
-			}
-		}
-		return false
-	case strings.EqualFold(words[0], "CREATE"), strings.EqualFold(words[0], "ALTER"),
-		strings.EqualFold(words[0], "DROP"), strings.EqualFold(words[0], "SHOW"):
-		return strings.EqualFold(words[1], "DECAY") || strings.EqualFold(words[1], "PROMOTION") ||
-			strings.EqualFold(words[1], "RETENTION")
-	}
-	return false
-}
-
 // leadingShellCommandsEnd returns the end of the shell command lines
 // (:USE db, :param x => 1, …) that start query: the start of the line after
 // the last one, 0 when query starts with none.
@@ -1227,7 +1162,7 @@ func readCanonicalQueryText(query string, admit bool) (string, *queryRewrite, er
 	// a statement with its own syntax, or the leading shell command lines
 	// (:USE db, :param …), which end at their line breaks.
 	verbatimEnd := leadingShellCommandsEnd(query)
-	if hasOwnStatementSyntax(query[verbatimEnd:]) {
+	if classifyStatementBody(query[verbatimEnd:]).ownSyntax {
 		verbatimEnd = len(query)
 	}
 	for index := 0; index < len(query); {
@@ -1380,9 +1315,10 @@ func inPatternClause(query string, index int) bool {
 					word = "ON"
 				}
 				frames[len(frames)-1].keyword = word
-			case "ON", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "FOREACH", "CALL", "YIELD",
-				"ORDER", "SKIP", "LIMIT", "UNION", "FINISH", "LET", "FILTER", "USE", "LOAD", "OFFSET":
-				frames[len(frames)-1].keyword = word
+			default:
+				if cypherantlr.IsLabelClauseWord(word) {
+					frames[len(frames)-1].keyword = word
+				}
 			}
 			previous = word
 			i = end
@@ -1478,13 +1414,6 @@ func parseLineColumn(message string, start int) (line, column, end int, ok bool)
 	}
 	column, end, ok = number(next + 1)
 	return line, column, end, ok
-}
-
-// isExplainOrProfileText reports whether a canonical statement starts with
-// EXPLAIN or PROFILE.
-func isExplainOrProfileText(query string) bool {
-	query = strings.TrimLeft(query, " ")
-	return startsWithKeywordFold(query, "EXPLAIN") || startsWithKeywordFold(query, "PROFILE")
 }
 
 type sourceRestorationPurpose uint8

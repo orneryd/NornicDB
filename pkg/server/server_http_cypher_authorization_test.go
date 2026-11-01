@@ -24,6 +24,9 @@ func TestHTTPShowDatabasesFiltersSingleStatement(t *testing.T) {
 
 	for _, statements := range [][]map[string]any{
 		{{"statement": "SHOW DATABASES"}},
+		{{"statement": "/* client */ SHOW DATABASES"}},
+		{{"statement": "SHOW /* client */ DATABASES"}},
+		{{"statement": "CYPHER 5 SHOW DATABASES"}},
 		{{"statement": "SHOW DATABASES"}, {"statement": "SHOW DATABASES"}},
 	} {
 		recorder := makeRequest(t, server, http.MethodPost, "/db/"+dbName+"/tx/commit", map[string]any{
@@ -36,7 +39,8 @@ func TestHTTPShowDatabasesFiltersSingleStatement(t *testing.T) {
 		require.NotEmpty(t, response.Results)
 		require.NotEmpty(t, response.Results[0].Data)
 		for _, row := range response.Results[0].Data {
-			require.Equal(t, dbName, row.Row[0])
+			// Neo4j: the system database "is always visible".
+			require.Contains(t, []any{dbName, "system"}, row.Row[0])
 		}
 	}
 }

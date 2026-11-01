@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -92,7 +91,6 @@ func TestParserBenchmarkReports(t *testing.T) {
 	if os.Getenv("NORNIC_RUN_PARSER_REPORTS") == "" {
 		t.Skip("benchmark-style parser report; set NORNIC_RUN_PARSER_REPORTS=1 to run")
 	}
-	exec := &StorageExecutor{}
 	astBuilder := NewASTBuilder()
 	for _, mode := range []struct {
 		name, title, action string
@@ -100,7 +98,7 @@ func TestParserBenchmarkReports(t *testing.T) {
 	}{
 		{"validate", "CYPHER VALIDATION BENCHMARK REPORT", "validate", [2]func(string) error{
 			func(query string) error {
-				return exec.validateSyntax(context.Background(), query, false, syntaxNativeCore)
+				return validateNativeSurfaceSyntax(query, classifyStatement(query))
 			},
 			antlrparser.Validate,
 		}},

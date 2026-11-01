@@ -43,7 +43,7 @@ func (f *statementCacheColdFixture) all() []*StorageExecutor {
 func (f *statementCacheColdFixture) assertSharesBacksFirstChild(t *testing.T, query string) {
 	t.Helper()
 	for i, executor := range f.all() {
-		if !executor.hasCachedValidSyntax(query, activeSyntaxValidator()) {
+		if !executor.hasCachedValidSyntax(query, syntaxStatementAccepted) {
 			t.Errorf("member %d lost the first child's syntax verdict (query %q)", i, query)
 		}
 		if executor.ensureUpperQueryCache() != f.members[0].ensureUpperQueryCache() {

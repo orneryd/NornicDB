@@ -100,7 +100,7 @@ func buildCallTailPredicateInjection(tail string, predicates []string) string {
 	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
 	if whereIdx != -1 {
 		endIdx := len(trimmed)
-		for _, kw := range []string{"WITH", "RETURN", "ORDER", "SKIP", "LIMIT", "UNWIND", "SET", "REMOVE", "DELETE", "DETACH", "MERGE", "CREATE"} {
+		for _, kw := range clauseBoundaryKeywords {
 			if idx := findKeywordIndexInContext(trimmed, kw); idx != -1 && idx > whereIdx && idx < endIdx {
 				endIdx = idx
 			}
@@ -114,7 +114,7 @@ func buildCallTailPredicateInjection(tail string, predicates []string) string {
 	}
 
 	insertIdx := len(trimmed)
-	for _, kw := range []string{"WITH", "RETURN", "ORDER", "SKIP", "LIMIT", "UNWIND", "SET", "REMOVE", "DELETE", "DETACH", "MERGE", "CREATE"} {
+	for _, kw := range clauseBoundaryKeywords {
 		if idx := findKeywordIndexInContext(trimmed, kw); idx != -1 && idx < insertIdx {
 			insertIdx = idx
 		}
@@ -844,15 +844,8 @@ func resolveIntLiteralOrParam(ctx context.Context, raw string) (int, bool) {
 	return integer, err == nil
 }
 
-// callTailPlanClauseKeywords start the clauses that can follow a CALL's (or
-// a SHOW command's) YIELD, ending its YIELD items and segments; a compiled
-// CALL-tail projection plan can't hold them between its WITH and RETURN.
-var callTailPlanClauseKeywords = []string{
-	"MATCH", "OPTIONAL", "UNWIND", "CALL", "WITH", "CREATE", "MERGE",
-	"SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD", "UNION",
-	// Cypher 25's clauses (#907).
-	"FILTER", "LET", "FOR", "FINISH", "INSERT",
-}
+// Specialized projection-plan boundaries come from the grammar.
+var callTailPlanClauseKeywords = cypherantlr.CallTailBoundaryWords()
 
 // parseCallTailProjectionPlan returns the tail's projection plan, parsed once
 // per tail text, when its LIMIT / SKIP resolve to integers for this execution.
@@ -979,7 +972,7 @@ func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail strin
 		skipToken:    skipToken,
 	}
 	plan.passThroughWith = true
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+	for _, keyword := range projectionTailKeywords {
 		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
 			plan.passThroughWith = false
 		}
@@ -1015,7 +1008,7 @@ func hasStarReturnItem(items []returnItem) bool {
 func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, orderBy, limitToken, skipToken string) {
 	projection = strings.TrimSpace(returnAndModifiers)
 	modifierStart := len(projection)
-	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+	for _, kw := range projectionTailKeywords {
 		if idx := topLevelKeywordIndex(projection, kw); idx >= 0 && idx < modifierStart {
 			modifierStart = idx
 		}
@@ -1030,7 +1023,7 @@ func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, or
 	}
 	if orderIdx := topLevelKeywordIndex(modifiers, "ORDER BY"); orderIdx >= 0 {
 		end := len(modifiers)
-		for _, kw := range []string{"SKIP", "LIMIT"} {
+		for _, kw := range paginationKeywords {
 			if idx := topLevelKeywordIndex(modifiers[orderIdx:], kw); idx >= 0 {
 				abs := orderIdx + idx
 				if abs > orderIdx && abs < end {
@@ -1056,7 +1049,7 @@ func extractCallTailModifierToken(modifiers, keyword string) string {
 	}
 	rest := modifiers[idx+len(keyword):]
 	end := len(rest)
-	for _, next := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+	for _, next := range projectionTailKeywords {
 		if nextIdx := topLevelKeywordIndex(rest, next); nextIdx >= 0 && nextIdx < end {
 			end = nextIdx
 		}

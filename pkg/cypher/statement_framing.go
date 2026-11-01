@@ -11,6 +11,22 @@ import (
 )
 
 func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher string) error {
+	if err := e.validateStatementEnvelope(ctx, cypher); err != nil {
+		return err
+	}
+	return e.validateStatementBodyFraming(ctx, cypher)
+}
+
+// validateStatementEnvelope owns the source-level admission shared by execution
+// and metadata. It does not compile a body or infer columns, so metadata can
+// enter it without recursively asking its own projection program for facts.
+func (e *StorageExecutor) validateStatementEnvelope(ctx context.Context, cypher string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateCypherPreamble(cypher); err != nil {
+		return err
+	}
 	multiple, unclosed := inspectOutsideStrings(cypher, ";")
 	if unclosed >= 0 {
 		return unclosedCommentError(cypher, unclosed, ModeNormal)
@@ -27,6 +43,10 @@ func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher s
 	if conflict {
 		return executionModeConflictError()
 	}
+	return nil
+}
+
+func (e *StorageExecutor) validateStatementBodyFraming(ctx context.Context, cypher string) error {
 	// Only a statement with the word UNION in it can have UNION branches.
 	if findKeywordIndex(cypher, "UNION") < 0 || findKeywordIndex(cypher, "FINISH") < 0 {
 		return nil
@@ -52,27 +72,15 @@ func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher s
 // Statement framing helpers: Neo4j 5 statement preamble (CYPHER … groups),
 // the FINISH clause terminator, and the EXPLAIN/PROFILE exclusivity rule.
 
-// cypherClauseStarts are the keywords that end a CYPHER preamble group and
-// start the actual statement. Matched case-insensitively at a token boundary.
-var cypherClauseStarts = [...]string{
-	"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH",
-	"UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN",
-	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK", "TERMINATE",
-	"UNION", "CYPHER", "FINISH", "LET", "FILTER", "FOR", "WHEN",
-}
-
-// startsWithClauseKeyword reports whether a clause keyword, or a brace that
-// opens a query part ({ RETURN 1 } UNION …), starts s.
+// startsWithClauseKeyword reports whether a statement starts s, ending a
+// CYPHER preamble group: a statement start (statementStartWord), or a brace
+// that opens a query part ({ RETURN 1 } UNION …).
 func startsWithClauseKeyword(s string) bool {
 	if strings.HasPrefix(s, "{") {
 		return true
 	}
-	for _, keyword := range cypherClauseStarts {
-		if matchKeywordAt(s, 0, keyword) {
-			return true
-		}
-	}
-	return false
+	_, ok := statementStartWord(s)
+	return ok
 }
 
 // stripCypherPreamble removes leading CYPHER groups: the keyword CYPHER, an
@@ -184,14 +192,15 @@ func validateCypherPreamble(query string) error {
 }
 
 func stripCypherPreamble(query string) (string, bool) {
-	text, changed, _ := readCypherPreamble(query)
+	text, changed, _, _ := readCypherPreamble(query)
 	return text, changed
 }
 
-func readCypherPreamble(query string) (string, bool, *queryRewrite) {
+func readCypherPreamble(query string) (string, bool, string, *queryRewrite) {
 	rest := query
 	offset := 0
 	changed := false
+	version := ""
 	var modes []string
 	trim := func() {
 		left := strings.TrimLeftFunc(rest, cyphertext.IsWhitespace)
@@ -213,6 +222,11 @@ func readCypherPreamble(query string) (string, bool, *queryRewrite) {
 		changed = true
 		consume(queryGapEnd(rest, len("CYPHER")))
 		if token, ok := cyphertext.ScanNumber(rest, 0); ok {
+			digits := 0
+			for digits < len(rest) && isDigitByte(rest[digits]) {
+				digits++
+			}
+			version = rest[:digits]
 			consume(queryGapEnd(rest, token.TailEnd))
 		}
 		for rest != "" && !startsWithClauseKeyword(rest) {
@@ -232,7 +246,7 @@ func readCypherPreamble(query string) (string, bool, *queryRewrite) {
 		}
 	}
 	if !changed {
-		return query, false, nil
+		return query, false, "", nil
 	}
 	prefix := ""
 	if len(modes) > 0 {
@@ -244,7 +258,7 @@ func readCypherPreamble(query string) (string, bool, *queryRewrite) {
 	if end := offset + len(rest); end < len(query) {
 		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: end, End: len(query)}, Accepted: cyphertext.Span{Start: len(canonical), End: len(canonical)}})
 	}
-	return canonical, true, rewrite
+	return canonical, true, version, rewrite
 }
 
 // finishProhibitedClauses are the clause keywords a statement may not end

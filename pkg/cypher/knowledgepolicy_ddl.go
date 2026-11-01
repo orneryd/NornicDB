@@ -188,19 +188,6 @@ func kpRequireStatementEnd(statement string, index int, command string) error {
 	return nil
 }
 
-func isKnowledgePolicyDDLStatement(statement string) bool {
-	for _, operation := range []string{"CREATE", "ALTER", "DROP"} {
-		if startsWithKeywords(statement, operation, "DECAY PROFILE") ||
-			startsWithKeywords(statement, operation, "PROMOTION PROFILE") ||
-			startsWithKeywords(statement, operation, "PROMOTION POLICY") {
-			return true
-		}
-	}
-	return startsWithKeywords(statement, "SHOW", "DECAY PROFILES") ||
-		startsWithKeywords(statement, "SHOW", "PROMOTION PROFILES") ||
-		startsWithKeywords(statement, "SHOW", "PROMOTION POLICIES")
-}
-
 type policyDDLSource struct {
 	*cyphertext.Source
 	original bool
@@ -244,6 +231,11 @@ func ParseKnowledgePolicyDDL(ctx context.Context, stmt string, stage SourceStage
 	}
 	if retained.Err != nil {
 		return nil, false, retained.Err
+	}
+	// The statement-kind owner names knowledge-policy DDL; this parser reads
+	// only the commands it names.
+	if !classifyStatement(retained.Text).knowledgePolicy {
+		return nil, false, nil
 	}
 	source := policyDDLSource{Source: retained, original: original}
 	left := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))

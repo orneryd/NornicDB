@@ -48,11 +48,8 @@ func (e *StorageExecutor) emitRejectionReport(ctx context.Context, query string,
 	redacted := e.redactForLog(ctx, query)
 	hash := StatementShapeHash(redacted)
 	statementClass := "OTHER"
-	for _, start := range validSyntaxStarts {
-		if startsWithKeywordFold(query, start) {
-			statementClass = start
-			break
-		}
+	if class := classifyStatement(query); class.opening != openingNone {
+		statementClass = class.startWord
 	}
 	if len(redacted) > 500 {
 		redacted = truncateRuneSafe(redacted, 500)

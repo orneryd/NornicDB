@@ -266,27 +266,6 @@ func skipQuotedText(query string, start int) int {
 	return skipCypherQuotedText(query, start, query[start])
 }
 
-// validateStatementParameters is Neo4j's ParameterMissing check: every
-// parameter the statement references ($name, $0, $`quoted name`) outside
-// string literals and comments must be supplied, and the error lists the
-// missing names in order of first appearance ("Expected parameter(s): p, q").
-// EXPLAIN doesn't run the statement and needs none, and the $names of a
-// CREATE PROCEDURE (a NornicDB extension) declare the procedure's arguments.
-// A statement without "$" costs one byte scan.
-func validateStatementParameters(cypher string, params map[string]interface{}) error {
-	if strings.IndexByte(cypher, '$') < 0 || startsWithKeywordFold(strings.TrimSpace(cypher), "EXPLAIN") || isCreateProcedureCommand(cypher) {
-		return nil
-	}
-	missing := statementMissingParameters(cypher, func(name string) bool {
-		_, supplied := params[name]
-		return supplied
-	})
-	if len(missing) == 0 {
-		return nil
-	}
-	return parameterMissingError(missing)
-}
-
 // statementMissingParameters lists, in order of first appearance, the
 // parameters the statement references ($name, $0, $`quoted name`) outside
 // string literals and comments that bound doesn't have. It is the one

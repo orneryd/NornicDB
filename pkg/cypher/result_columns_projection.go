@@ -311,7 +311,7 @@ func returnShapeItems(query string) []string {
 
 	// Strip ORDER BY / SKIP / LIMIT.
 	end := len(returnPart)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+	for _, keyword := range projectionTailKeywords {
 		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
 			end = idx
 		}

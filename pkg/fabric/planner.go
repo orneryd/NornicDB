@@ -249,7 +249,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 	if hasTopUse {
 		top = useTarget(use)
 		remaining = rest
-		if err := p.validatePlanTarget(scope, top); err != nil {
+		if err := p.validatePlanTarget(scope, &top); err != nil {
 			return nil, err
 		}
 		// Subqueries are in the scope of the graph a static USE selects.
@@ -286,7 +286,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 				return nil, fmt.Errorf("invalid USE clause")
 			}
 			sub := useTarget(subUse)
-			if err := p.validatePlanTarget(scope, sub); err != nil {
+			if err := p.validatePlanTarget(scope, &sub); err != nil {
 				return nil, err
 			}
 			inner, err := p.planQuery(ctx, subRest, sub, scope, true)
@@ -405,10 +405,11 @@ func (p *FabricPlanner) singleGraphStatement(ctx context.Context, query string, 
 
 // validatePlanTarget checks a static USE target at plan time; a dynamic
 // reference is checked when it resolves (FabricExecutor.resolveExecGraph).
-func (p *FabricPlanner) validatePlanTarget(scope string, target planTarget) error {
+func (p *FabricPlanner) validatePlanTarget(scope string, target *planTarget) error {
 	if target.dynamic != nil {
 		return nil
 	}
+	target.selected, target.selectedIn = true, scope
 	return p.validateUseTarget(scope, target.name)
 }
 
@@ -626,7 +627,7 @@ func (p *FabricPlanner) planCallBranch(ctx context.Context, body string, top pla
 	}
 	if hasUse {
 		sub := useTarget(subUse)
-		if err := p.validatePlanTarget(scope, sub); err != nil {
+		if err := p.validatePlanTarget(scope, &sub); err != nil {
 			return nil, err
 		}
 		fragment, err := p.planSingleQuery(ctx, subBody, sub, scope, true)
@@ -699,38 +700,44 @@ type callSubqueryBlock struct {
 	scope  string
 }
 
-func (p *FabricPlanner) validateUseTarget(sessionDB string, targetDB string) error {
-	target := targetDB
-	if target == "" {
-		return fmt.Errorf("USE clause requires a database name")
+// ValidateUseTarget refuses a static USE target this catalog doesn't hold, or one
+// outside the composite whose scope selected it. Read from a principal's view,
+// neither refusal can differ for a name the principal may not access.
+func (c *Catalog) ValidateUseTarget(scope, target string) error {
+	if _, err := c.Resolve(target); err != nil {
+		return fmt.Errorf("invalid USE target '%s': %w", target, err)
 	}
-	if p.catalog != nil {
-		if _, err := p.catalog.Resolve(target); err != nil {
-			return fmt.Errorf("invalid USE target '%s': %w", target, err)
-		}
-	}
+	return c.validateUseScope(scope, target)
+}
 
-	scopeRoot := compositeScopeRoot(sessionDB)
-	targetRoot := compositeScopeRoot(target)
-	if strings.Contains(target, ".") && p.inCompositeScope(sessionDB) && scopeRoot != "" && !cyphertext.NameEqualFold(scopeRoot, targetRoot) {
+func (c *Catalog) validateUseScope(scope, target string) error {
+	scopeRoot := compositeScopeRoot(scope)
+	if strings.Contains(target, ".") && c.inCompositeScope(scope) && scopeRoot != "" && !cyphertext.NameEqualFold(scopeRoot, compositeScopeRoot(target)) {
 		return fmt.Errorf("invalid USE target '%s': target is out of scope for composite '%s'", target, scopeRoot)
 	}
 	return nil
 }
 
-func (p *FabricPlanner) inCompositeScope(sessionDB string) bool {
-	db := sessionDB
-	if db == "" {
+func (p *FabricPlanner) inCompositeScope(scope string) bool { return p.catalog.inCompositeScope(scope) }
+
+func (c *Catalog) inCompositeScope(scope string) bool {
+	if scope == "" {
 		return false
 	}
-	if strings.Contains(db, ".") {
+	if strings.Contains(scope, ".") {
 		return true
 	}
-	if p.catalog == nil {
-		return false
+	return c != nil && c.HasGraphWithPrefix(cyphertext.NameLower(scope)+".")
+}
+
+func (p *FabricPlanner) validateUseTarget(scope string, target string) error {
+	if target == "" {
+		return fmt.Errorf("USE clause requires a database name")
 	}
-	prefix := cyphertext.NameLower(db) + "."
-	return p.catalog.HasGraphWithPrefix(prefix)
+	if p.catalog == nil {
+		return p.catalog.validateUseScope(scope, target)
+	}
+	return p.catalog.ValidateUseTarget(scope, target)
 }
 
 func compositeScopeRoot(graph string) string {
@@ -807,6 +814,9 @@ func parseLeadingUse(ctx context.Context, query string, inSubquery bool) (UseCla
 type planTarget struct {
 	name    string
 	dynamic *UseClause
+	// selected is a static USE's target; selectedIn is the scope it selected from.
+	selected   bool
+	selectedIn string
 }
 
 // useTarget is the plan target a USE clause selects.
@@ -822,6 +832,8 @@ func useTarget(clause UseClause) planTarget {
 // target may name the constituents of the composite scope.
 func newExec(query string, target planTarget, scope string) *FragmentExec {
 	exec := &FragmentExec{
+		Selected:   target.selected,
+		SelectedIn: target.selectedIn,
 		Input:     &FragmentInit{Columns: nil},
 		Query:     query,
 		GraphName: target.name,

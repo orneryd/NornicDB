@@ -996,3 +996,75 @@ func (s *BaseCypherParserListener) EnterUseReferencePrefix(ctx *UseReferencePref
 
 // ExitUseReferencePrefix is called when production useReferencePrefix is exited.
 func (s *BaseCypherParserListener) ExitUseReferencePrefix(ctx *UseReferencePrefixContext) {}
+
+// EnterStandaloneUpdatingStatement is called when production standaloneUpdatingStatement is entered.
+func (s *BaseCypherParserListener) EnterStandaloneUpdatingStatement(ctx *StandaloneUpdatingStatementContext) {
+}
+
+// ExitStandaloneUpdatingStatement is called when production standaloneUpdatingStatement is exited.
+func (s *BaseCypherParserListener) ExitStandaloneUpdatingStatement(ctx *StandaloneUpdatingStatementContext) {
+}
+
+// EnterUseQueryFollower is called when production useQueryFollower is entered.
+func (s *BaseCypherParserListener) EnterUseQueryFollower(ctx *UseQueryFollowerContext) {}
+
+// ExitUseQueryFollower is called when production useQueryFollower is exited.
+func (s *BaseCypherParserListener) ExitUseQueryFollower(ctx *UseQueryFollowerContext) {}
+
+// EnterUseAdministrationFollower is called when production useAdministrationFollower is entered.
+func (s *BaseCypherParserListener) EnterUseAdministrationFollower(ctx *UseAdministrationFollowerContext) {
+}
+
+// ExitUseAdministrationFollower is called when production useAdministrationFollower is exited.
+func (s *BaseCypherParserListener) ExitUseAdministrationFollower(ctx *UseAdministrationFollowerContext) {
+}
+
+// EnterClauseWord is called when production clauseWord is entered.
+func (s *BaseCypherParserListener) EnterClauseWord(ctx *ClauseWordContext) {}
+
+// ExitClauseWord is called when production clauseWord is exited.
+func (s *BaseCypherParserListener) ExitClauseWord(ctx *ClauseWordContext) {}
+
+// EnterYieldItemsStart is called when production yieldItemsStart is entered.
+func (s *BaseCypherParserListener) EnterYieldItemsStart(ctx *YieldItemsStartContext) {}
+
+// ExitYieldItemsStart is called when production yieldItemsStart is exited.
+func (s *BaseCypherParserListener) ExitYieldItemsStart(ctx *YieldItemsStartContext) {}
+
+// EnterStatementBodyOpening is called when production statementBodyOpening is entered.
+func (s *BaseCypherParserListener) EnterStatementBodyOpening(ctx *StatementBodyOpeningContext) {}
+
+// ExitStatementBodyOpening is called when production statementBodyOpening is exited.
+func (s *BaseCypherParserListener) ExitStatementBodyOpening(ctx *StatementBodyOpeningContext) {}
+
+// EnterRoutingKeywordName is called when production routingKeywordName is entered.
+func (s *BaseCypherParserListener) EnterRoutingKeywordName(ctx *RoutingKeywordNameContext) {}
+
+// ExitRoutingKeywordName is called when production routingKeywordName is exited.
+func (s *BaseCypherParserListener) ExitRoutingKeywordName(ctx *RoutingKeywordNameContext) {}
+
+// EnterProjectionModifierStart is called when production projectionModifierStart is entered.
+func (s *BaseCypherParserListener) EnterProjectionModifierStart(ctx *ProjectionModifierStartContext) {
+}
+
+// ExitProjectionModifierStart is called when production projectionModifierStart is exited.
+func (s *BaseCypherParserListener) ExitProjectionModifierStart(ctx *ProjectionModifierStartContext) {}
+
+// EnterShowTailStart is called when production showTailStart is entered.
+func (s *BaseCypherParserListener) EnterShowTailStart(ctx *ShowTailStartContext) {}
+
+// ExitShowTailStart is called when production showTailStart is exited.
+func (s *BaseCypherParserListener) ExitShowTailStart(ctx *ShowTailStartContext) {}
+
+// EnterCallTailProjectionStart is called when production callTailProjectionStart is entered.
+func (s *BaseCypherParserListener) EnterCallTailProjectionStart(ctx *CallTailProjectionStartContext) {
+}
+
+// ExitCallTailProjectionStart is called when production callTailProjectionStart is exited.
+func (s *BaseCypherParserListener) ExitCallTailProjectionStart(ctx *CallTailProjectionStartContext) {}
+
+// EnterLabelClauseStart is called when production labelClauseStart is entered.
+func (s *BaseCypherParserListener) EnterLabelClauseStart(ctx *LabelClauseStartContext) {}
+
+// ExitLabelClauseStart is called when production labelClauseStart is exited.
+func (s *BaseCypherParserListener) ExitLabelClauseStart(ctx *LabelClauseStartContext) {}

@@ -103,6 +103,18 @@ var queryBodyWitnesses = map[string]string{
 // queryBodyManifest names, for every body-bearing grammar rule, the witness
 // that places a body in its position, or the reason none applies.
 var queryBodyManifest = map[string]string{
+	// These generated-ATN vocabulary views are queried for lookahead, never
+	// parsed as executable entries. Their underlying productions keep their
+	// ordinary body witnesses below; vocabulary consumers have separate tests.
+	"standaloneUpdatingStatement": "exempt: grammar vocabulary projection, not an executable entry",
+	"useQueryFollower":            "exempt: grammar vocabulary projection, not an executable entry",
+	"useAdministrationFollower":   "exempt: grammar vocabulary projection, not an executable entry",
+	"clauseWord":                  "exempt: grammar vocabulary projection, not an executable entry",
+	"statementBodyOpening":        "exempt: grammar vocabulary projection, not an executable entry",
+	"projectionModifierStart":     "exempt: grammar vocabulary projection, not an executable entry",
+	"showTailStart":               "exempt: grammar vocabulary projection, not an executable entry",
+	"callTailProjectionStart":     "exempt: grammar vocabulary projection, not an executable entry",
+	"labelClauseStart":            "exempt: grammar vocabulary projection, not an executable entry",
 	// Both new factored rules carry the graph argument's expression, whose
 	// COUNT body must retain normal CALL-ending validation. The prefix rule is
 	// consumed by the same USE source reader, not an exemption from traversal.
@@ -151,8 +163,19 @@ func TestQueryBodyEndingsCoverEveryClauseKind(t *testing.T) {
 		require.True(t, listed, "clause kind %d has no queryBodyEndings entry", kind)
 	}
 	require.Len(t, queryBodyEndings, int(pipelineClauseLoadCSV)+1)
-	// An update clause concludes a body.
-	for kind := range updatingClauses {
-		require.Empty(t, queryBodyEndings[kind], "update clause kind %d", kind)
+	// An update clause concludes a body. Identify it from the retained grammar,
+	// rather than maintaining a second set of updating pipeline kinds.
+	for _, text := range []string{"CREATE ()", "MERGE ()", "MATCH (n) DELETE n", "MATCH (n) SET n.x = 1", "MATCH (n) REMOVE n.x", "FOREACH (x IN [1] | CREATE ())"} {
+		body := readQueryBody(t.Context(), text, 0, len(text))
+		found := false
+		for _, branch := range body.branches {
+			for _, clause := range branch.clauses {
+				if clause.syntax.IsUpdatingClause() {
+					found = true
+					require.Empty(t, queryBodyEndings[clause.kind], text)
+				}
+			}
+		}
+		require.True(t, found, text)
 	}
 }

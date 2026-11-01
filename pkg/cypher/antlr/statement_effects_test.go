@@ -53,3 +53,24 @@ func TestReadOnlyEffectsUseLiveCallbacksAndRetainedScope(t *testing.T) {
 	require.Equal(t, []string{"CALL retained.read()"}, scopes)
 	require.False(t, effects.RemoteReadOnly(), "local callback must never alter remote conservative proof")
 }
+
+func TestStatementEffectsRequireCompleteQueryBodies(t *testing.T) {
+	for _, source := range []string{"", "/* no query */", ";", "EXPLAIN", "PROFILE", "CYPHER 25", "RETURN 1; EXPLAIN", "RETURN 1; PROFILE", "RETURN 1; CYPHER 25"} {
+		t.Run(source, func(t *testing.T) {
+			for _, dialect := range []bool{false, true} {
+				for _, entry := range []SyntaxEntry{StatementEntry, FragmentEntry} {
+					syntax, err := ParseSyntax(t.Context(), source, entry, dialect, RawSource)
+					if err != nil {
+						continue // A syntax rejection is already a refusal, not a proof of read-only effects.
+					}
+					effects := syntax.Effects()
+					require.False(t, effects.ReadOnly(func(StatementCall) bool { return true }), source)
+					require.False(t, effects.RemoteReadOnly(), source)
+					visits := 0
+					require.False(t, effects.AllowsExecutableQueries(func(string) bool { visits++; return true }), source)
+					require.Zero(t, visits, "no partial script may reach live admission policy")
+				}
+			}
+		})
+	}
+}

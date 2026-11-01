@@ -490,6 +490,39 @@ type CypherParserListener interface {
 	// EnterUseReferencePrefix is called when entering the useReferencePrefix production.
 	EnterUseReferencePrefix(c *UseReferencePrefixContext)
 
+	// EnterStandaloneUpdatingStatement is called when entering the standaloneUpdatingStatement production.
+	EnterStandaloneUpdatingStatement(c *StandaloneUpdatingStatementContext)
+
+	// EnterUseQueryFollower is called when entering the useQueryFollower production.
+	EnterUseQueryFollower(c *UseQueryFollowerContext)
+
+	// EnterUseAdministrationFollower is called when entering the useAdministrationFollower production.
+	EnterUseAdministrationFollower(c *UseAdministrationFollowerContext)
+
+	// EnterClauseWord is called when entering the clauseWord production.
+	EnterClauseWord(c *ClauseWordContext)
+
+	// EnterYieldItemsStart is called when entering the yieldItemsStart production.
+	EnterYieldItemsStart(c *YieldItemsStartContext)
+
+	// EnterStatementBodyOpening is called when entering the statementBodyOpening production.
+	EnterStatementBodyOpening(c *StatementBodyOpeningContext)
+
+	// EnterRoutingKeywordName is called when entering the routingKeywordName production.
+	EnterRoutingKeywordName(c *RoutingKeywordNameContext)
+
+	// EnterProjectionModifierStart is called when entering the projectionModifierStart production.
+	EnterProjectionModifierStart(c *ProjectionModifierStartContext)
+
+	// EnterShowTailStart is called when entering the showTailStart production.
+	EnterShowTailStart(c *ShowTailStartContext)
+
+	// EnterCallTailProjectionStart is called when entering the callTailProjectionStart production.
+	EnterCallTailProjectionStart(c *CallTailProjectionStartContext)
+
+	// EnterLabelClauseStart is called when entering the labelClauseStart production.
+	EnterLabelClauseStart(c *LabelClauseStartContext)
+
 	// ExitScript is called when exiting the script production.
 	ExitScript(c *ScriptContext)
 
@@ -972,4 +1005,37 @@ type CypherParserListener interface {
 
 	// ExitUseReferencePrefix is called when exiting the useReferencePrefix production.
 	ExitUseReferencePrefix(c *UseReferencePrefixContext)
+
+	// ExitStandaloneUpdatingStatement is called when exiting the standaloneUpdatingStatement production.
+	ExitStandaloneUpdatingStatement(c *StandaloneUpdatingStatementContext)
+
+	// ExitUseQueryFollower is called when exiting the useQueryFollower production.
+	ExitUseQueryFollower(c *UseQueryFollowerContext)
+
+	// ExitUseAdministrationFollower is called when exiting the useAdministrationFollower production.
+	ExitUseAdministrationFollower(c *UseAdministrationFollowerContext)
+
+	// ExitClauseWord is called when exiting the clauseWord production.
+	ExitClauseWord(c *ClauseWordContext)
+
+	// ExitYieldItemsStart is called when exiting the yieldItemsStart production.
+	ExitYieldItemsStart(c *YieldItemsStartContext)
+
+	// ExitStatementBodyOpening is called when exiting the statementBodyOpening production.
+	ExitStatementBodyOpening(c *StatementBodyOpeningContext)
+
+	// ExitRoutingKeywordName is called when exiting the routingKeywordName production.
+	ExitRoutingKeywordName(c *RoutingKeywordNameContext)
+
+	// ExitProjectionModifierStart is called when exiting the projectionModifierStart production.
+	ExitProjectionModifierStart(c *ProjectionModifierStartContext)
+
+	// ExitShowTailStart is called when exiting the showTailStart production.
+	ExitShowTailStart(c *ShowTailStartContext)
+
+	// ExitCallTailProjectionStart is called when exiting the callTailProjectionStart production.
+	ExitCallTailProjectionStart(c *CallTailProjectionStartContext)
+
+	// ExitLabelClauseStart is called when exiting the labelClauseStart production.
+	ExitLabelClauseStart(c *LabelClauseStartContext)
 }

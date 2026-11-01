@@ -115,34 +115,16 @@ func (p *CypherParser) useGraphKeyword() bool {
 	return IsUseClauseFollower(after.GetText(), false)
 }
 
+// IsUseClauseFollower reads the grammar's routing vocabulary. Scope is the
+// only policy here; no consumer owns another list of clause spellings.
 func IsUseClauseFollower(word string, inSubquery bool) bool {
-	followers := useClauseFollowers[:]
-	if inSubquery {
-		followers = subqueryUseClauseFollowers[:]
-	}
-	for _, follower := range followers {
-		if strings.EqualFold(word, follower) {
-			return true
+	for keyword, scope := range useFollowerWords() {
+		if equalGrammarWord(word, keyword) {
+			return scope&useQueryScope != 0 || !inSubquery && scope&useAdministrationScope != 0
 		}
 	}
 	return false
 }
-
-// useClauseFollowers are the words Neo4j's grammar accepts after the graph
-// reference of a top-level USE clause, in the order of Neo4j's SyntaxError
-// "expected …" list (Neo4j 5.26). START / STOP DATABASE and ENABLE SERVER
-// are listed by their first word.
-var useClauseFollowers = [...]string{"FOREACH", "ALTER", "ORDER", "CALL", "CREATE", "LOAD", "START", "STOP",
-	"DEALLOCATE", "DELETE", "DENY", "DETACH", "DROP", "DRYRUN", "FINISH", "GRANT", "INSERT", "LIMIT", "MATCH",
-	"MERGE", "NODETACH", "OFFSET", "OPTIONAL", "REALLOCATE", "REMOVE", "RENAME", "RETURN", "REVOKE", "ENABLE",
-	"SET", "SHOW", "SKIP", "TERMINATE", "UNION", "UNWIND", "USE", "WITH"}
-
-// subqueryUseClauseFollowers are the words Neo4j's grammar accepts after
-// the graph reference of a USE clause that starts a subquery (CALL { USE …
-// }): the query clauses, no administration commands.
-var subqueryUseClauseFollowers = [...]string{"FOREACH", "ORDER", "CALL", "CREATE", "LOAD", "DELETE", "DETACH",
-	"FINISH", "INSERT", "LIMIT", "MATCH", "MERGE", "NODETACH", "OFFSET", "OPTIONAL", "REMOVE", "RETURN", "SET",
-	"SKIP", "UNION", "UNWIND", "USE", "WITH"}
 
 // UseReferenceError contains only grammar position/role, never source excerpts.
 type UseReferenceError struct {

@@ -258,6 +258,18 @@ LOAD: 'LOAD';
 CSV: 'CSV';
 HEADERS: 'HEADERS';
 FIELDTERMINATOR: 'FIELDTERMINATOR';
+// Routing-only Neo4j vocabulary. These remain usable as ordinary names
+// through routingKeywordName; they do not add executable statement forms.
+INSERT: 'INSERT';
+NODETACH: 'NODETACH';
+OFFSET: 'OFFSET';
+START: 'START';
+STOP: 'STOP';
+DEALLOCATE: 'DEALLOCATE';
+DRYRUN: 'DRYRUN';
+REALLOCATE: 'REALLOCATE';
+RENAME: 'RENAME';
+ENABLE: 'ENABLE';
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
 

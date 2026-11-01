@@ -4,17 +4,27 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
 )
 
+// grammarDiagnostic is the shared grammar's rejection of query as statement
+// admission reports it (syntaxAdmissionError), without NornicDB's own checks.
+func grammarDiagnostic(ctx context.Context, query string) error {
+	if err := cypherantlr.ValidateContext(ctx, query, cyphertext.AcceptedSource); err != nil {
+		return syntaxAdmissionError(ctx, query, AcceptedSource, err)
+	}
+	return nil
+}
+
 func TestANTLRDiagnosticsRetainLocalizedIdentityThroughExecutor(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	query := "MATCH (n) WHERE n.password = 'private-diagnostic-literal' RETURN n @"
-	err = exec.validateSyntax(context.Background(), query, false, syntaxANTLRCore)
+	err = grammarDiagnostic(context.Background(), query)
 	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
 	var typed *localization.LocalizedError
 	require.ErrorAs(t, err, &typed)

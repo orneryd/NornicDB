@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 )
 
@@ -53,6 +54,39 @@ const (
 // scanStandaloneOrderClauses scans the statement or subquery body
 // query[start:end], appending its edits in order.
 func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewriteEdit) {
+	class := classifyStatement(query[start:end])
+	if !class.graphClauseBody() {
+		// Native declarations own their payload, including stored queries and
+		// predicate syntax. A graph clause word is not an executable region.
+		return
+	}
+	if class.show {
+		// SHOW owns the ordering of its YIELD/WHERE/paging tail. Lowering an
+		// out-of-order modifier here would turn invalid native syntax into a
+		// valid WITH continuation before that owner can reject it. Only an
+		// actual query continuation (including RETURN) is a graph region.
+		commandStart := queryGapEnd(query[:end], start)
+		headEnd := queryGapEnd(query[:end], commandStart+len(showCommandHead(query[commandStart:end])))
+		graphStart := end
+		if headEnd < end && matchKeywordAt(query[:end], headEnd, "YIELD") {
+			bodyStart := queryGapEnd(query[:end], headEnd+len("YIELD"))
+			body := query[bodyStart:end]
+			if at := showContinuationStart(body); at >= 0 {
+				graphStart = bodyStart + at
+			}
+			if at := topLevelKeywordIndex(body, "RETURN"); at >= 0 && bodyStart+at < graphStart {
+				graphStart = bodyStart + at
+			}
+		}
+		scanStandaloneOrderRegion(query, headEnd, graphStart, edits, false)
+		start = graphStart
+	}
+	scanStandaloneOrderRegion(query, start, end, edits, true)
+}
+
+// Native projection tails normalize the same paging aliases but do not gain
+// implicit graph composition. Their own ordered-tail reader decides validity.
+func scanStandaloneOrderRegion(query string, start, end int, edits *[]labelRewriteEdit, composition bool) {
 	braces := newSubqueryBraceScanner(query, start)
 	inProjection, stage := false, standaloneStageItems
 	// previousWord is the last word read, "" after any other token; last is
@@ -152,9 +186,10 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				if inProjection {
 					stage = standaloneStageWhere
 				}
-			case "MATCH", "OPTIONAL", "UNWIND", "FOR", "LET", "FILTER", "CREATE", "MERGE", "SET", "REMOVE",
-				"DELETE", "DETACH", "FOREACH", "CALL", "UNION", "LOAD", "USE", "FINISH":
-				inProjection = false
+			default:
+				if cypherantlr.IsClauseWord(upper) {
+					inProjection = false
+				}
 			}
 			previousWord, last = upper, cyphertext.RuneAt(query, name.End-1)
 			index = name.End
@@ -166,7 +201,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			index = name.End
 			continue
 		}
-		if !inProjection || stage >= kind {
+		if composition && (!inProjection || stage >= kind) {
 			*edits = append(*edits, labelRewriteEdit{start: index, end: index, text: "WITH * "})
 			inProjection = true
 		}
@@ -206,10 +241,9 @@ func standaloneKeyword(word string) string {
 // the name it returns is the map's string, not the scan buffer.
 var standaloneKeywords = func() map[string]string {
 	keywords := make(map[string]string)
-	for _, keyword := range []string{"AND", "OR", "XOR", "NOT", "IN", "IS", "AS", "BY", "THEN", "ELSE", "WHEN", "CASE", "DISTINCT",
-		"STARTS", "ENDS", "CONTAINS", "WITH", "RETURN", "WHERE", "UNWIND", "SET", "SKIP", "OFFSET", "LIMIT",
-		"ORDER", "YIELD", "MATCH", "OPTIONAL", "FOR", "LET", "FILTER", "CREATE", "MERGE", "REMOVE",
-		"DELETE", "DETACH", "FOREACH", "CALL", "UNION", "LOAD", "USE", "FINISH"} {
+	for _, keyword := range append(cypherantlr.ClauseWords(),
+		"AND", "OR", "XOR", "NOT", "IN", "IS", "AS", "BY", "THEN", "ELSE", "WHEN", "CASE", "DISTINCT",
+		"STARTS", "ENDS", "CONTAINS") {
 		keywords[keyword] = keyword
 	}
 	return keywords

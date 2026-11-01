@@ -61,7 +61,7 @@ func (e *StorageExecutor) StatementColumns(query string) []string {
 // StatementResultColumns is the strict public header view with this executor's
 // incoming record scope. Rewriters and transaction adapters preserve its error.
 func (e *StorageExecutor) StatementResultColumns(query string, stage SourceStage) ([]string, error) {
-	return e.ResultColumns(context.Background(), query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25", stage)
+	return e.ResultColumns(context.Background(), query, e.resultIncomingScope(), classifyStatement(query).version == "25", stage)
 }
 
 // StatementResultColumnsContext is the public execution view, using the same
@@ -74,7 +74,7 @@ func (e *StorageExecutor) StatementResultColumnsContext(ctx context.Context, que
 	query = source.Text
 	var columns []string
 	var failure error
-	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"
+	cypher25 := cypherVersionFromContext(ctx) == "25" || classifyStatement(query).version == "25"
 	e.statementProjectionProgram(ctx, query, e.resultIncomingScope(), cypher25, e.participantSchemaForStatement(ctx, query)).facts.Visit(func(statement resultmetadata.Statement) {
 		statement.Columns.Visit(func(known []string) { columns = known }, func() { failure = unresolvedStatementError() })
 	}, func() { failure = unresolvedStatementError() }, func(reason resultmetadata.Unresolved) { failure = reason.Err })
@@ -92,7 +92,8 @@ func knownResultColumns(names resultmetadata.Names) []string {
 // CachedResultColumns is a legacy cache-only hint for the Fabric consumers
 // being replaced by planned Facts. It never compiles or guesses a cold header.
 func (e *StorageExecutor) CachedResultColumns(ctx context.Context, query string, incoming []string) resultmetadata.Names {
-	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"
+	statement := classifyStatement(query)
+	cypher25 := cypherVersionFromContext(ctx) == "25" || statement.version == "25"
 	names := make(map[string]struct{}, len(incoming)+len(e.fabricRecordBindings))
 	for _, name := range incoming {
 		names[name] = struct{}{}
@@ -156,7 +157,7 @@ func (e *StorageExecutor) ResultProjection(ctx context.Context, query string, in
 	}
 	query = source.Text
 	var projection resultmetadata.Projection
-	e.statementProjectionProgram(ctx, query, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25", nil).facts.Visit(func(statement resultmetadata.Statement) {
+	e.statementProjectionProgram(ctx, query, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25" || classifyStatement(query).version == "25", nil).facts.Visit(func(statement resultmetadata.Statement) {
 		if len(statement.Branches) != 0 || len(statement.Clauses) == 0 {
 			return
 		}

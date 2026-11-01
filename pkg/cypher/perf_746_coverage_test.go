@@ -36,13 +36,15 @@ func TestStartsWithKeywordsEmptyWord(t *testing.T) {
 	require.Equal(t, -1, findMultiWordKeywordIndex("CREATE DATABASE x", "", "DATABASE"))
 }
 
-// TestFirstKeywordIndexFromDefaultKeywordLimit: the keyword set is bounded.
+// The inline storage size does not cap a grammar-derived vocabulary. A
+// distinct keyword beyond it must still match, without truncation or panic.
 func TestFirstKeywordIndexFromDefaultKeywordLimit(t *testing.T) {
-	keywords := make([]string, maxKeywordSet+1)
+	keywords := make([]string, inlineKeywordSet+1)
 	for i := range keywords {
 		keywords[i] = "MATCH"
 	}
-	require.Panics(t, func() { firstKeywordIndexFromDefault("MATCH (n) RETURN n", 0, keywords...) })
+	keywords[len(keywords)-1] = "RETURN"
+	require.Equal(t, 2, firstKeywordIndexFromDefault("x RETURN x", 0, keywords...))
 }
 
 // recordingAccessRecorder records the entities a walk reports.

@@ -27,7 +27,7 @@ func TestLexicalUnicodeBoundaryScanners(t *testing.T) {
 		t.Run(fmt.Sprintf("U%04X", gap), func(t *testing.T) {
 			space := string(gap)
 			require.Equal(t, "RETURN café", normalizePipelineWhitespace("RETURN"+space+"café"))
-			require.Equal(t, "25", cypherGrammarVersion("CYPHER"+space+"25"+space+"runtime=slotted"+space+"RETURN 1"))
+			require.Equal(t, "25", classifyStatement("CYPHER"+space+"25"+space+"runtime=slotted"+space+"RETURN 1").version)
 			query := "RETURN" + space + "abs" + space + "(-1)" + space + "AS" + space + "café"
 			functions, err := usePropertyFunctions(query)
 			require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 			require.NoError(t, exec.UseDatabaseStatementCaches(manager, "nornic"))
 			const live = "RETURN 91 AS live"
-			require.NoError(t, exec.validateSyntax(t.Context(), live, false, syntaxStatement))
+			require.NoError(t, exec.validateStatementSyntax(t.Context(), live, false))
 			for _, gap := range lexicalWhitespaceCorpus {
 				for _, graph := range []string{"", "GRAPH" + string(gap)} {
 					for _, wrapper := range []string{"%s RETURN 1", "CALL { %s RETURN 1 AS x } RETURN x", "%s RETURN 1 UNION ALL %s RETURN 1"} {
@@ -155,7 +155,7 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 						scopes, valid := exec.cacheDependencyScopes(query)
 						require.True(t, valid)
 						require.True(t, containsStatementScope(scopes, scope), "selection identity absent for U%04X", gap)
-						require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
+						require.NoError(t, exec.validateStatementSyntax(t.Context(), query, false))
 						exec.cachedUpperQuery(query)
 						require.NotZero(t, exec.cachedSyntaxVerdict(query))
 						exec.ensureUpperQueryCache().mu.RLock()
@@ -192,7 +192,7 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 						require.NoError(t, err)
 						require.NotSame(t, scope, fresh)
 						require.Zero(t, exec.cachedSyntaxVerdict(query))
-						require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
+						require.NoError(t, exec.validateStatementSyntax(t.Context(), query, false))
 						scopes, valid = exec.cacheDependencyScopes(query)
 						require.True(t, valid)
 						require.True(t, containsStatementScope(scopes, fresh))

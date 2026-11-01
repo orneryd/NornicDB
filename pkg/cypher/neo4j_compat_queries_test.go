@@ -7,7 +7,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -107,9 +106,6 @@ func TestNeo4jCompatSchemaInitialization(t *testing.T) {
 	})
 
 	t.Run("CREATE VECTOR INDEX node_embedding_index", func(t *testing.T) {
-		if config.IsANTLRParser() {
-			t.Skip("Skipping: ANTLR parser doesn't support NornicDB's extended VECTOR INDEX syntax")
-		}
 		_, err := exec.Execute(ctx, `
 			CREATE VECTOR INDEX node_embedding_index IF NOT EXISTS
 			FOR (n:Node) ON (n.embedding)

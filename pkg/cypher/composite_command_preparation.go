@@ -64,15 +64,17 @@ func (command *preparedCompositeCommand) execute(ctx context.Context, e *Storage
 	}
 }
 
-func (e *StorageExecutor) prepareCompositeCommand(ctx context.Context, query string) (*preparedCompositeCommand, bool, error) {
+// prepareCompositeCommand prepares the composite command classifyStatement
+// named (statementClass.command); it reads the command's arguments only.
+func (e *StorageExecutor) prepareCompositeCommand(ctx context.Context, query string, command statementCommand) (*preparedCompositeCommand, bool, error) {
 	_, body := parseExecutionMode(query)
-	if startsWithKeywords(body, "CREATE", "COMPOSITE DATABASE") {
-		command, err := e.prepareCreateCompositeDatabase(ctx, body)
-		return command, true, err
-	}
-	if startsWithKeywords(body, "ALTER", "COMPOSITE DATABASE") {
-		command, err := e.prepareAlterCompositeDatabase(ctx, body)
-		return command, true, err
+	switch command {
+	case commandCreateCompositeDatabase:
+		prepared, err := e.prepareCreateCompositeDatabase(ctx, body)
+		return prepared, true, err
+	case commandAlterCompositeDatabase:
+		prepared, err := e.prepareAlterCompositeDatabase(ctx, body)
+		return prepared, true, err
 	}
 	return nil, false, nil
 }

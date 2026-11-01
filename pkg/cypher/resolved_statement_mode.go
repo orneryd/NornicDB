@@ -90,12 +90,12 @@ func (e *StorageExecutor) observeResolvedStatementMode(ctx context.Context, stat
 		return ctx, nil, nil
 	}
 	state := e.resolvedStatementModeOf(ctx)
-	if state == nil && !contract.writes {
+	if state == nil && !contract.changesState() {
 		state = &resolvedStatementMode{}
 		ctx = context.WithValue(ctx, resolvedStatementModeKey{}, state)
 	}
 	return ctx, func(result *ExecuteResult) *ExecuteResult {
-		write := contract.writes || state != nil && state.write.Load()
+		write := contract.changesState() || state != nil && state.write.Load()
 		return resolvedStatementModeResult(result, write)
 	}, nil
 }

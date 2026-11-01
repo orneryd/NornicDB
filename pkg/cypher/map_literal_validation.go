@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 )
 
@@ -9,13 +10,6 @@ import (
 // parser frontend or executor can normalize them. Braces without a top-level
 // key/value separator are ignored because they may delimit a subquery.
 func validateStaticMapKeys(query string) error {
-	upper := upperASCII(strings.TrimSpace(query))
-	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(query, "OPTIONS") >= 0 {
-		return nil
-	}
-	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && findKeywordIndex(query, "REQUIRE") >= 0 {
-		return nil
-	}
 	var patternContext *mapPatternContext
 	// Carry the predecessor through this lexical pass. Re-reading from byte
 	// zero for each brace makes a flat list of ordinary maps quadratic.
@@ -236,13 +230,7 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 
 	// Any clause opens a body, an update clause too: EXISTS { CREATE () } is
 	// a body Neo4j rejects for its update, not a map.
-	switch upperASCII(query[start:index]) {
-	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN", "ORDER", "LIMIT", "SKIP", "OFFSET",
-		"CREATE", "MERGE", "DELETE", "DETACH", "NODETACH", "SET", "REMOVE", "FOREACH", "USE", "LET", "FILTER", "FINISH", "LOAD":
-		return true
-	default:
-		return false
-	}
+	return cypherantlr.IsClauseWord(query[start:index])
 }
 
 // inProjectionClause reports whether position lies in a RETURN, WITH, UNWIND

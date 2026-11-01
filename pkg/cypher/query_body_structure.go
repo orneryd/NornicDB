@@ -9,7 +9,7 @@ import (
 
 // Query structure is a read-only view of execution's retained grammar product.
 // It remains available when names or procedure signatures cannot be resolved.
-var queryBodyContainerKeywords = [...]string{"CALL", "EXISTS", "COUNT", "COLLECT"}
+var queryBodyContainerKeywords = cypherantlr.QueryBodyContainerWords()
 
 func queryBodyContainerKeyword(word string) bool {
 	for _, keyword := range queryBodyContainerKeywords {
@@ -21,7 +21,7 @@ func queryBodyContainerKeyword(word string) bool {
 }
 
 func forEachQueryBody(ctx context.Context, source string, containers []string, visit func(string, int, int) error) error {
-	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) {
+	if isNornicExtensionStatement(source) {
 		return nil
 	}
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
@@ -39,17 +39,8 @@ func forEachQueryBody(ctx context.Context, source string, containers []string, v
 		if failure != nil {
 			return nil
 		}
-		var container string
-		switch node.Rule() {
-		case cypherantlr.CypherParserRULE_callSubquery:
-			container = "CALL"
-		case cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist:
-			container = "EXISTS"
-		case cypherantlr.CypherParserRULE_countSubquery:
-			container = "COUNT"
-		case cypherantlr.CypherParserRULE_collectSubquery:
-			container = "COLLECT"
-		default:
+		container := cypherantlr.QueryBodyContainer(node.Rule())
+		if container == "" {
 			return nil
 		}
 		if !containsString(containers, container) {
@@ -369,9 +360,7 @@ func embeddingCandidate(clauses []queryBodyClause, index int) string {
 	if index <= 0 || index+1 >= len(clauses) || clauses[index].kind != pipelineClauseWith || clauses[index+1].kind != pipelineClauseReturn {
 		return ""
 	}
-	switch clauses[index-1].kind {
-	case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
-	default:
+	if !clauses[index-1].syntax.IsUpdatingClause() {
 		return ""
 	}
 	code := clauses[index].text

@@ -20,7 +20,7 @@ func withCypherVersion(ctx context.Context, query string) context.Context {
 	if _, ok := ctx.Value(cypherVersionKey{}).(string); ok {
 		return ctx
 	}
-	switch version := cypherGrammarVersion(query); version {
+	switch version := classifyStatement(query).version; version {
 	case "5":
 		return ctx
 	case "25":

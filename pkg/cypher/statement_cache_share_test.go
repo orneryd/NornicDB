@@ -18,7 +18,7 @@ func TestShareStatementCachesFromReusesSyntaxVerdicts(t *testing.T) {
 
 	tx := NewStorageExecutor(store)
 	tx.ShareStatementCachesFrom(base)
-	validator := activeSyntaxValidator()
+	validator := syntaxStatementAccepted
 	if !tx.hasCachedValidSyntax(first, validator) {
 		t.Fatalf("transaction executor does not see the database executor's verdict")
 	}

@@ -597,11 +597,7 @@ func nextChainedSetClause(setPart string, start int) (clause string, next int, o
 func firstPostSetClauseIndex(setTail string) int {
 	opts := defaultKeywordScanOpts()
 	first := -1
-	for _, kw := range []string{
-		"REMOVE", "UNWIND", "WITH", "RETURN",
-		"CREATE", "MATCH", "MERGE", "DELETE", "CALL",
-		"ORDER BY", "LIMIT", "SKIP",
-	} {
+	for _, kw := range clauseBoundaryKeywords {
 		if idx := keywordIndexFrom(setTail, kw, 0, opts); idx >= 0 {
 			if first == -1 || idx < first {
 				first = idx

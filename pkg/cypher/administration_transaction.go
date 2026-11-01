@@ -4,33 +4,16 @@ import (
 	"context"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // StatementDatabase is the one database decision for administration commands,
-// used by the executor and the HTTP transaction boundary. It shares the command
-// reader with USE validation; statement execution modes keep the same target.
+// used by the executor and the HTTP transaction boundary. It reads the
+// statement kind from classifyStatement, as USE validation does; statement
+// execution modes keep the same target.
 func StatementDatabase(database, query string) string {
-	_, body := parseExecutionMode(query)
-	if body == "" {
-		return database
-	}
-	// These common graph statements cannot be administration commands. The
-	// full decision still belongs to fabric's reader for every candidate.
-	switch body[0] | 0x20 {
-	case 'a', 'c', 'd', 'e', 'g', 'r', 's', '/':
-		if startsWithKeywordFold(body, "RETURN") || startsWithKeywordFold(body, "CALL") || startsWithKeywordFold(body, "SET") {
-			return database
-		}
-		if startsWithKeywordFold(body, "CREATE") && strings.HasPrefix(strings.TrimSpace(body[len("CREATE"):]), "(") {
-			return database
-		}
-	default:
-		return database
-	}
-	if fabric.IsAdministrationCommand(body) {
+	if classifyStatement(query).systemRouted {
 		return "system"
 	}
 	return database
@@ -45,7 +28,7 @@ func (e *StorageExecutor) admitTransactionStatement(ctx context.Context, query s
 		message := localization.CypherTransactionsCommandNotStatement(word)
 		return true, localizedError(message, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message.Fallback))
 	}
-	if word != "" || startsWithKeywordFold(query, "BEGIN") && transactionScriptShape(query) {
+	if word != "" || transactionScriptShape(query) {
 		if word == "" {
 			word = "BEGIN"
 		}
@@ -78,10 +61,10 @@ func (e *StorageExecutor) admitTransactionStatement(ctx context.Context, query s
 func statementTypeError(ctx context.Context, query, kind, previousKind string, transaction any) error {
 	requested := "Read query"
 	permissions := QueryPermissionRequirements(ctx, query, AcceptedSource)
-	if permissions.Write {
+	if permissions.ChangesState {
 		requested = "Write query"
 	}
-	if permissions.Schema {
+	if permissions.ModifiesSchema() {
 		requested = "Schema modification"
 	}
 	if kind == "Administration" {

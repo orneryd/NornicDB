@@ -57,17 +57,12 @@ type boundClause struct {
 }
 
 func (compiler *projectionCompilation) compileBound(ctx context.Context, incoming, retained resultmetadata.Names) *projectedScopeFacts {
+	if err := compiler.executor.validateStatementEnvelope(ctx, compiler.source); err != nil {
+		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
+	}
+	compiler.cypher25 = compiler.cypher25 || classifyStatement(compiler.source).version == "25"
 	if compiler.cypher25 {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
-	}
-	if command, supported, err := compiler.executor.prepareCompositeCommand(ctx, compiler.source); supported {
-		if err != nil {
-			return programFailure(resultmetadata.ReasonUnsupportedSyntax, 0, err)
-		}
-		names := resultmetadata.Known(command.columns())
-		scope := projectionScope(names)
-		statement := resultmetadata.Statement{Start: 0, End: len(compiler.source), Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(command.columns()), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseWrite, Start: 0, End: len(compiler.source), Before: projectionScope(incoming), After: scope}}}
-		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
 	}
 	syntax, err := cypherantlr.ParseSyntax(ctx, compiler.source, cypherantlr.StatementEntry, compiler.cypher25, cypherantlr.AcceptedSource)
 	if ctx.Err() != nil {
@@ -77,28 +72,20 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		return programFailure(resultmetadata.ReasonParserDecline, 0, syntaxAdmissionError(ctx, compiler.source, AcceptedSource, err))
 	}
 	compiler.syntax = syntax
+	if err := validateSyntaxBodyComposition(ctx, syntax); err != nil {
+		return programFailure(resultmetadata.ReasonUnsupportedSyntax, 0, err)
+	}
 	query := statementSyntaxQuery(syntax)
 	if !query.Valid() {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, nil)
 	}
 	start, end := query.Span()
-	if _, command, failure := parseProcedurePrivilegeCommand(compiler.source[start:end]); command {
-		if failure != nil {
-			return programFailure(resultmetadata.ReasonUnsupportedSyntax, start, failure)
-		}
-		scope := projectionScope(incoming)
-		statement := resultmetadata.Statement{Start: start, End: end, Incoming: scope, Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(nil), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseWrite, Start: start, End: end, Before: scope, After: scope}}}
-		return &projectedScopeFacts{after: incoming, outputs: resultmetadata.Known(nil), statement: &statement}
+	bodySyntax := query.QueryBody()
+	if !bodySyntax.Valid() {
+		return programFailure(resultmetadata.ReasonParserDecline, start, nil)
 	}
-	// These commands already declare their fixed schema in the typed SHOW
-	// owner. EXPLAIN reads that declaration without enumerating users.
-	show := query.ChildRule(cypherantlr.CypherParserRULE_showCommand)
-	if show.Valid() && !show.ChildRule(cypherantlr.CypherParserRULE_showTail).Valid() &&
-		(startsWithKeywords(show.Code(), "SHOW", "USERS") || startsWithKeywords(show.Code(), "SHOW", "CURRENT USER")) {
-		names := resultmetadata.Known(showUsersColumns)
-		scope := projectionScope(names)
-		statement := resultmetadata.Statement{Start: start, End: end, Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(showUsersColumns), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseOther, Start: start, End: end, Before: projectionScope(incoming), After: scope}}}
-		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
+	if command, handled := compiler.compileCommandResult(ctx, query, bodySyntax, incoming, retained); handled {
+		return command
 	}
 	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
 	body := compilation.prepareBody(ctx, queryBodyFromSyntax(query), query, start, end)

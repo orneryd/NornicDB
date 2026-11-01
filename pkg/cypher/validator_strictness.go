@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 )
 
@@ -147,13 +148,8 @@ func hasAdjacentStringLiterals(cypher string) bool {
 	return false
 }
 
-// validatorClauseKeywords are the clause keywords lastTopLevelClauseWord scans
-// for when deciding whether a statement dangles.
-var validatorClauseKeywords = []string{
-	"RETURN", "WITH", "YIELD", "MATCH", "OPTIONAL", "CREATE", "MERGE",
-	"SET", "UNWIND", "CALL", "FOREACH", "DELETE", "DETACH", "REMOVE",
-	"LOAD", "UNION", "SHOW", "LET", "FILTER", "FOR",
-}
+// Completion follows the body owner, not its ORDER/SKIP/LIMIT modifiers.
+var validatorClauseKeywords = cypherantlr.CompletionClauseWords()
 
 // validatorKeywordFirst is a first-byte index into validatorClauseKeywords so
 // the scan tries only keywords whose initial letter matches (allocation-free

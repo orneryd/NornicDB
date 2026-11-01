@@ -16,6 +16,9 @@ var txCaseRollbackPattern = regexp.MustCompile(`(?is)^CASE\s+WHEN\s+(.+?)\s+THEN
 // CALL … CASE WHEN … THEN ROLLBACK ELSE RETURN … COMMIT form. A bare BEGIN
 // or BEGIN TRANSACTION is not a script (parseTransactionStatement owns it).
 func transactionScriptShape(cypher string) bool {
+	if classifyStatement(cypher).command != commandBeginScript {
+		return false
+	}
 	trimmed := strings.TrimSpace(cypher)
 	upper := upperASCII(trimmed)
 	if !strings.HasPrefix(upper, "BEGIN") {
@@ -40,6 +43,9 @@ func transactionScriptShape(cypher string) bool {
 // - BEGIN ... COMMIT (shorthand)
 // - BEGIN TRANSACTION ... CASE WHEN ... THEN ROLLBACK ELSE RETURN ... COMMIT
 func (e *StorageExecutor) executeTransactionScript(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if classifyStatement(cypher).command != commandBeginScript {
+		return nil, nil
+	}
 	trimmed := strings.TrimSpace(cypher)
 	upper := upperASCII(trimmed)
 	if !strings.HasPrefix(upper, "BEGIN") {

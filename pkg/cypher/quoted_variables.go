@@ -448,11 +448,6 @@ func (names *quotedVariableNames) restoreSourceText(text string, policy quotedSo
 	return text
 }
 
-func isExplainOrProfile(query string) bool {
-	trimmed := strings.TrimSpace(query)
-	return startsWithKeywordFold(trimmed, "EXPLAIN") || startsWithKeywordFold(trimmed, "PROFILE")
-}
-
 // quotedVariableError is an error of a canonicalized statement with its
 // message restored; codes, details and unwrapping come from the cause.
 type quotedVariableError struct {
@@ -487,6 +482,9 @@ type quotedVariablesKey struct{}
 // executes, so checks that must see the statement as written (column names,
 // the validation cache) can map back to it.
 func withQuotedVariableNames(ctx context.Context, names *quotedVariableNames) context.Context {
+	if names != nil && len(names.Edits) != 0 {
+		ctx = withSourceRewrite(ctx, &queryRewrite{Source: names.Source})
+	}
 	return context.WithValue(ctx, quotedVariablesKey{}, names)
 }
 

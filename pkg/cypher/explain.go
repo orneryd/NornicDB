@@ -93,11 +93,11 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 		return nil, err
 	}
 	if endsInFinish(ctx, query) {
-		query += " FINISH"
+		ctx, query = withSourceAffixes(ctx, query, "", " FINISH")
 	}
 	// Catalog commands are validated by their typed command preparation; graph
 	// body composition has no clauses to validate in their native DDL syntax.
-	if !isMetadataCommand(query, metadataCatalogExecution) {
+	if !classifyStatement(query).catalog {
 		if err := validateQueryBodyComposition(ctx, query); err != nil {
 			return nil, err
 		}
@@ -131,7 +131,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 		return nil, err
 	}
 	if endsInFinish(ctx, query) {
-		query += " FINISH"
+		ctx, query = withSourceAffixes(ctx, query, "", " FINISH")
 	}
 	// Resolve participant signatures through the same owner as EXPLAIN and
 	// planning. Incomplete metadata cannot authorize execution effects.
@@ -464,7 +464,7 @@ func (e *StorageExecutor) analyzeWhereClause(query string) *PlanOperator {
 
 	// Find end of WHERE clause
 	endIdx := len(query)
-	for _, keyword := range []string{"RETURN", "ORDER", "LIMIT", "SKIP", "WITH", "CREATE", "SET", "REMOVE", "DETACH DELETE", "DELETE"} {
+	for _, keyword := range clauseBoundaryKeywords {
 		if idx := findKeywordIndex(query[whereIdx:], keyword); idx > 0 {
 			if whereIdx+idx < endIdx {
 				endIdx = whereIdx + idx
@@ -501,7 +501,7 @@ func (e *StorageExecutor) analyzeDeleteClause(query string, detach bool) *PlanOp
 	}
 
 	endIdx := len(query)
-	for _, keyword := range []string{"RETURN", "WITH", "ORDER BY", "LIMIT", "SKIP"} {
+	for _, keyword := range clauseBoundaryKeywords {
 		if idx := findKeywordIndex(query[deleteIdx:], keyword); idx > 0 {
 			candidate := deleteIdx + idx
 			if candidate < endIdx {
@@ -540,7 +540,7 @@ func (e *StorageExecutor) analyzeReturnClause(query string) *PlanOperator {
 	// Extract RETURN items
 	returnClause := query[returnIdx+6:]
 	// Trim ORDER BY, LIMIT, etc.
-	for _, keyword := range []string{"ORDER BY", "LIMIT", "SKIP"} {
+	for _, keyword := range projectionTailKeywords {
 		if idx := findKeywordIndex(returnClause, keyword); idx > 0 {
 			returnClause = returnClause[:idx]
 		}

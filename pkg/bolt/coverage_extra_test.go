@@ -1247,43 +1247,11 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			assert.Equal(t, "Neo.ClientError.Database.DatabaseNotFound", code)
 		})
 
-		t.Run("denies resolved write and filters show databases", func(t *testing.T) {
-			session, serverConn, clientConn := makeSession(&mockExecutor{
-				executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
-					if query == "SHOW DATABASES" {
-						return &QueryResult{
-							Columns: []string{"name"},
-							Rows:    [][]any{{"allowed"}, {"hidden"}},
-						}, nil
-					}
-					return &QueryResult{Columns: []string{"n"}, Rows: [][]any{{"ok"}}}, nil
-				},
-			})
-			defer serverConn.Close()
-			defer clientConn.Close()
-			session.authenticated = true
-			session.authResult = &BoltAuthResult{Authenticated: true, Username: "editor", Roles: []string{"editor"}, Permissions: []string{"read", "write"}}
-			session.server.databaseAccessModeResolver = func(roles []string) auth.DatabaseAccessMode {
-				return staticDBAccessMode{
-					visible: map[string]bool{"allowed": true},
-					access:  map[string]bool{"nornic": true, "allowed": true},
-				}
-			}
-
-			done := make(chan error, 1)
-			go func() { done <- session.handleRun(buildRunMessageData("SHOW DATABASES", nil, nil)) }()
-			meta, err := AssertSuccess(t, clientConn)
-			require.NoError(t, err)
-			require.NoError(t, <-done)
-			assert.Equal(t, []any{"name"}, meta["fields"])
-			require.NotNil(t, session.lastResult)
-			require.Len(t, session.lastResult.Rows, 1)
-			assert.Equal(t, "allowed", session.lastResult.Rows[0][0])
-
+		t.Run("denies resolved write", func(t *testing.T) {
 			serverConn2, clientConn2 := net.Pipe()
 			defer serverConn2.Close()
 			defer clientConn2.Close()
-			session = newTestSession(serverConn2, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
+			session := newTestSession(serverConn2, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 			session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 			session.authenticated = true
 			session.authResult = &BoltAuthResult{Authenticated: true, Username: "editor", Roles: []string{"editor"}, Permissions: []string{"read", "write"}}
@@ -1291,7 +1259,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 				return auth.ResolvedAccess{Read: true, Write: false}
 			}
 
-			done = make(chan error, 1)
+			done := make(chan error, 1)
 			go func() { done <- session.handleRun(buildRunMessageData("CREATE (n)", nil, nil)) }()
 			code, msg, err := AssertFailure(t, clientConn2)
 			require.NoError(t, err)

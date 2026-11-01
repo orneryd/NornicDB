@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"regexp"
 	"sort"
 	"strconv"
@@ -27,7 +28,7 @@ type subqueryExpression struct {
 	body       string
 }
 
-var subqueryExpressionKeywords = [...]string{"EXISTS", "COUNT", "COLLECT"}
+var subqueryExpressionKeywords = cypherantlr.ExpressionQueryBodyWords()
 
 // mayContainSubqueryExpression is the cheap precheck the evaluators run on
 // every expression: a subquery expression needs a brace and one of the

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -51,7 +52,7 @@ func showConstraintKindOf(cypher string, cypher25 bool) (kind showConstraintKind
 	words := make([]string, 0, end-1)
 	for _, word := range fields[1:end] {
 		word = strings.ToUpper(word)
-		if !showConstraintKindWords[word] {
+		if !cypherantlr.IsShowConstraintKindWord(word) {
 			return kind, false, nil
 		}
 		words = append(words, word)
@@ -106,14 +107,6 @@ func showConstraintKindOf(cypher string, cypher25 bool) (kind showConstraintKind
 		return invalid()
 	}
 	return kind, true, nil
-}
-
-// showConstraintKindWords are the words a constraint kind is made of; a
-// SHOW command with any other word before CONSTRAINT[S] isn't a SHOW …
-// CONSTRAINTS command (SHOW PROCEDURES YIELD constraint).
-var showConstraintKindWords = map[string]bool{
-	"ALL": true, "NODE": true, "RELATIONSHIP": true, "REL": true, "PROPERTY": true, "UNIQUE": true,
-	"UNIQUENESS": true, "EXIST": true, "EXISTENCE": true, "KEY": true, "TYPE": true,
 }
 
 // lists reports whether a SHOW … CONSTRAINTS of the kind lists a constraint

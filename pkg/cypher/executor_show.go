@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -357,7 +358,7 @@ func showStringList(value interface{}) []string {
 }
 
 // showTailKeywords start the part of a SHOW command after the command itself.
-var showTailKeywords = []string{"YIELD", "WHERE", "RETURN", "ORDER BY", "SKIP", "LIMIT"}
+var showTailKeywords = cypherantlr.ShowTailWords()
 
 // showCommandHead returns the SHOW command without its YIELD / WHERE /
 // RETURN / ORDER BY / SKIP / LIMIT tail, which applyShowTail handles.
@@ -521,7 +522,10 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 			return nil, invalid()
 		}
 		where := strings.TrimSpace(tail[len("WHERE"):])
-		for _, keyword := range []string{"RETURN", "ORDER BY", "SKIP", "LIMIT", "WITH", "YIELD"} {
+		for _, keyword := range clauseBoundaryKeywords {
+			if keyword == "WHERE" { // This segment owns the existing WHERE.
+				continue
+			}
 			if topLevelKeywordIndex(where, keyword) >= 0 {
 				return nil, invalid()
 			}
@@ -541,11 +545,13 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	}
 
 	// Segment boundaries, in the only order Neo4j accepts.
-	segments := []string{"ORDER BY", "SKIP", "LIMIT", "WHERE", "RETURN"}
+	segments := showSegmentKeywords
 	positions := make([]int, len(segments))
+	ends := make([]int, len(segments))
+	members := make([]int, len(segments))
 	itemsEnd := len(body)
-	for i, keyword := range segments {
-		positions[i] = topLevelKeywordIndex(body, keyword)
+	for i, keywords := range segments {
+		positions[i], ends[i], members[i] = firstKeywordMatchFrom(body, 0, true, keywords...)
 		if positions[i] >= 0 && positions[i] < itemsEnd {
 			itemsEnd = positions[i]
 		}
@@ -555,15 +561,18 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	if returnIndex >= 0 {
 		head4 = body[:returnIndex]
 	}
-	for _, keyword := range []string{"WITH", "MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"} {
+	for _, keyword := range callTailPlanClauseKeywords {
 		if topLevelKeywordIndex(head4, keyword) >= 0 {
 			return nil, invalid()
 		}
 	}
 	last := -1
 	for i := 0; i < 4; i++ {
-		position := topLevelKeywordIndex(head4, segments[i])
+		position := positions[i]
 		if position < 0 {
+			continue
+		}
+		if position >= len(head4) {
 			continue
 		}
 		if position < last {
@@ -572,17 +581,17 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		last = position
 	}
 	segmentText := func(i int) string {
-		start := topLevelKeywordIndex(head4, segments[i])
-		if start < 0 {
+		start := positions[i]
+		if start < 0 || start >= len(head4) {
 			return ""
 		}
 		end := len(head4)
 		for j := 0; j < 4; j++ {
-			if position := topLevelKeywordIndex(head4, segments[j]); position > start && position < end {
+			if position := positions[j]; position > start && position < end {
 				end = position
 			}
 		}
-		return strings.TrimSpace(head4[start+len(segments[i]) : end])
+		return strings.TrimSpace(head4[ends[i]:end])
 	}
 	for _, i := range []int{1, 2} {
 		if value := segmentText(i); value != "" && !strings.HasPrefix(value, "$") {
@@ -638,8 +647,9 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 
 	var clauses strings.Builder
 	paging := ""
-	for i, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+	for i := 0; i < 3; i++ {
 		if value := segmentText(i); value != "" {
+			keyword := segments[i][members[i]]
 			paging += " " + keyword + " " + value
 		}
 	}
@@ -704,19 +714,16 @@ func showYieldedScopeStatement(columns []string) string {
 // ORDER BY, SKIP, LIMIT, WHERE and RETURN), or -1.
 func showContinuationStart(body string) int {
 	for _, word := range projectionWords(body) {
-		if word.depth != 0 {
+		if word.depth != 0 || !cypherantlr.IsCallTailBoundaryWord(word.upper) {
 			continue
 		}
-		switch word.upper {
-		case "WITH":
-			if precededByWord(body, word.start, "STARTS", "ENDS") {
-				continue
-			}
-			return word.start
-		case "MATCH", "OPTIONAL", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "DETACH", "REMOVE", "FOREACH",
-			"FILTER", "LET", "FINISH", "LOAD", "INSERT", "FOR":
-			return word.start
+		if word.upper == "WITH" && precededByWord(body, word.start, "STARTS", "ENDS") {
+			continue
 		}
+		if clauseKeywordUsedAsName(body, word.start, word.end, word.upper) {
+			continue
+		}
+		return word.start
 	}
 	return -1
 }
@@ -958,7 +965,9 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 	return arguments, returns
 }
 
-// executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
+// executeShowDatabase handles SHOW DATABASE command (singular). As in Neo4j,
+// DATABASE and DATABASES are the same command (SHOW DATABASE[S] [name]). Without
+// a database manager, it shows the one database this executor serves.
 func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()

@@ -169,7 +169,7 @@ func projectionSemanticBody(clause, keyword string) string {
 // keyword-named first item from a clause (WITH where WHERE where = 3, #894).
 func projectionSemanticBodyAndTail(clause, keyword string) (string, string) {
 	end := len(clause)
-	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
+	for _, suffix := range projectionModifierKeywords {
 		if index := topLevelKeywordIndex(clause, suffix); index >= len(keyword) && index < end {
 			end = index
 		}

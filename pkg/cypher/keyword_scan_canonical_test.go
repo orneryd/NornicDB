@@ -323,7 +323,7 @@ func TestOwnStatementSyntax(t *testing.T) {
 		"SHOW RETENTION BINDINGS",
 		"CREATE CONSTRAINT c FOR (n:L) REQUIRE {\n n.a IS UNIQUE\n}",
 	} {
-		require.True(t, hasOwnStatementSyntax(query), query)
+		require.True(t, classifyStatement(query).ownSyntax, query)
 	}
 	for _, query := range []string{
 		"CREATE CONSTRAINT c FOR (n:L) REQUIRE n.a IS UNIQUE",
@@ -331,7 +331,7 @@ func TestOwnStatementSyntax(t *testing.T) {
 		"MATCH (n) RETURN n",
 		"123",
 	} {
-		require.False(t, hasOwnStatementSyntax(query), query)
+		require.False(t, classifyStatement(query).ownSyntax, query)
 	}
 	got, _ := canonicalizeQueryText("CREATE DECAY PROFILE d FOR (n:L) {\n  HALF LIFE 10 /* a\n b */\n  FLOOR 0.1 // note\n}")
 	require.Equal(t, "CREATE DECAY PROFILE d FOR (n:L) {\n  HALF LIFE 10  \n\n  FLOOR 0.1 \n}", got)

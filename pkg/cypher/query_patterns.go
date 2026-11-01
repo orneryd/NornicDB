@@ -147,10 +147,11 @@ func extractMatchClause(query string) string {
 		return ""
 	}
 	end := len(query)
-	for _, keyword := range []string{"WHERE", "RETURN", "WITH", "ORDER", "LIMIT", "SKIP"} {
-		if idx := findKeywordIndex(query[matchIdx:], keyword); idx > 0 {
-			if matchIdx+idx < end {
-				end = matchIdx + idx
+	start := matchIdx + len("MATCH")
+	for _, keyword := range clauseBoundaryKeywords {
+		if idx := findKeywordIndex(query[start:], keyword); idx >= 0 {
+			if start+idx < end {
+				end = start + idx
 			}
 		}
 	}
@@ -472,8 +473,12 @@ func functionCallParenAt(text string, open int) bool {
 	if start == end {
 		return false
 	}
+	if isNameableClauseKeyword(text[start:end]) && !clauseKeywordUsedAsName(text, start, end, text[start:end]) {
+		return false
+	}
+	// Boolean/membership operands are expression roles, not clause starts.
 	switch upperASCII(text[start:end]) {
-	case "MATCH", "CREATE", "MERGE", "WHERE", "AND", "OR", "XOR", "NOT", "WITH", "RETURN", "UNWIND", "IN", "DELETE", "SET", "REMOVE", "FOREACH", "YIELD":
+	case "AND", "OR", "XOR", "NOT", "IN":
 		return false
 	}
 	return true

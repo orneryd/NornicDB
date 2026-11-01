@@ -20,12 +20,32 @@ type PermissionRequirements struct {
 	Write  bool
 	Schema bool
 	Admin  bool
+	// ChangesState is the statement's effect: it writes data (grammar
+	// mutations or a registered WRITE procedure), changes the schema (schema
+	// DDL or a SCHEMA procedure) or administers (a command's administration
+	// change). Routing, write handling and caching read it; the permission
+	// fields say only which entitlement each part needs.
+	ChangesState bool
 	// BoostedProcedures name the procedures the query calls when they alone
 	// make the query need administrator rights: a role holding EXECUTE
 	// BOOSTED PROCEDURE for every one of them may run the query without
 	// them.
 	BoostedProcedures []string
 }
+
+// ReadOnly reports a statement that needs no entitlement beyond read and
+// changes nothing.
+func (r PermissionRequirements) ReadOnly() bool {
+	return !r.Write && !r.Schema && !r.Admin && !r.ChangesState
+}
+
+// ModifiesSchema reports a statement that changes the schema (schema DDL or a
+// SCHEMA procedure), which Neo4j names a "Schema modification".
+func (r PermissionRequirements) ModifiesSchema() bool { return r.Schema }
+
+// ChangesGraph reports a statement that writes graph data or changes the
+// schema: the changes a database's graph receives, beside administration.
+func (r PermissionRequirements) ChangesGraph() bool { return r.Write || r.Schema }
 
 // AdminGrantedBy reports whether a role's procedure grants satisfy the
 // query's administrator requirement: it needs admin only for the procedures
@@ -60,16 +80,24 @@ func QueryPermissionRequirements(ctx context.Context, query string, stage Source
 func permissionRequirementsOfSource(ctx context.Context, source *cyphertext.Source) PermissionRequirements {
 	query := source.Text
 	query = classificationText(query)
+	class := classifyStatement(query)
 	requirements := PermissionRequirements{
 		Read:   true,
-		Schema: isSchemaPermissionQuery(query),
-		Admin:  isAdminPermissionQuery(query),
+		Schema: class.schemaPermission,
+		Admin:  class.adminPermission,
 	}
-	if !requirements.Schema && !requirements.Admin {
-		_, body := parseExecutionMode(query)
-		contract, _ := readStatementExecutionContract(ctx, body)
-		requirements.Write = contract.writes
-	}
+	// The effect is the owner's answer for the whole statement: EXPLAIN runs
+	// nothing and changes nothing. The WRITE privilege is mapped from the
+	// body's data writes, so EXPLAIN of a write still needs it.
+	effect, err := readStatementExecutionContract(ctx, query)
+	requirements.ChangesState = err != nil || effect.changesState()
+	_, body := parseExecutionMode(query)
+	contract, _ := readStatementExecutionContract(ctx, body)
+	// Entitlements accumulate: an administrative head does not replace the
+	// WRITE its updating continuation needs. The write of an administration
+	// CREATE with its own entitlement is only its implicit wrapper.
+	implicitWrapper := class.change == changeAdministrationCreate && (requirements.Schema || requirements.Admin)
+	requirements.Write = contract.writes && !implicitWrapper
 
 	// Every procedure the query calls counts, not just the first: a later
 	// CALL (chained after YIELD, or inside a subquery) needs its own mode's
@@ -223,89 +251,6 @@ func procedureNameAt(query string, offset int) (string, bool) {
 		return normalized.String(), true
 	}
 	return query[startName:endName], true
-}
-
-func isSchemaPermissionQuery(query string) bool {
-	commandOffset := firstExecutableCypherOffset(query)
-	for _, command := range [][2]string{
-		{"CREATE", "INDEX"},
-		{"CREATE", "RANGE INDEX"},
-		{"CREATE", "FULLTEXT INDEX"},
-		{"CREATE", "VECTOR INDEX"},
-		{"DROP", "INDEX"},
-		{"CREATE", "CONSTRAINT"},
-		{"DROP", "CONSTRAINT"},
-	} {
-		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
-			return true
-		}
-	}
-	return false
-}
-
-func isAdminPermissionQuery(query string) bool {
-	commandOffset := firstExecutableCypherOffset(query)
-	// GRANT, REVOKE, DENY and SHOW … PRIVILEGES administer privileges.
-	if commandOffset >= 0 && commandOffset < len(query) && isPrivilegeAdministrationCommand(query[commandOffset:]) {
-		return true
-	}
-	// CREATE OR REPLACE DATABASE: the pair scan below misses the OR REPLACE
-	// between CREATE and DATABASE.
-	if isCreateOrReplaceDatabaseQuery(query) {
-		return true
-	}
-	for _, command := range [][2]string{
-		{"SHOW", "USERS"},
-		{"SHOW", "TRANSACTIONS"},
-		{"SHOW", "TRANSACTION"},
-		{"TERMINATE", "TRANSACTIONS"},
-		{"TERMINATE", "TRANSACTION"},
-	} {
-		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
-			return true
-		}
-	}
-	for _, command := range [][2]string{
-		{"CREATE", "DATABASE"},
-		{"DROP", "DATABASE"},
-		{"ALTER", "DATABASE"},
-		{"CREATE", "COMPOSITE DATABASE"},
-		{"DROP", "COMPOSITE DATABASE"},
-		{"ALTER", "COMPOSITE DATABASE"},
-		{"CREATE", "ALIAS"},
-		{"DROP", "ALIAS"},
-		{"CREATE", "DECAY PROFILE"},
-		{"ALTER", "DECAY PROFILE"},
-		{"DROP", "DECAY PROFILE"},
-		{"CREATE", "PROMOTION PROFILE"},
-		{"ALTER", "PROMOTION PROFILE"},
-		{"DROP", "PROMOTION PROFILE"},
-		{"CREATE", "PROMOTION POLICY"},
-		{"ALTER", "PROMOTION POLICY"},
-		{"DROP", "PROMOTION POLICY"},
-	} {
-		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
-			return true
-		}
-	}
-	return isCreateProcedureCommand(query) || isDropProcedureCommand(query)
-}
-
-// isCreateOrReplaceDatabaseQuery reports whether query is
-// CREATE OR REPLACE DATABASE <name>.
-func isCreateOrReplaceDatabaseQuery(query string) bool {
-	commandOffset := firstExecutableCypherOffset(query)
-	opts := defaultKeywordScanOpts()
-	create := keywordIndexFrom(query, "CREATE", commandOffset, opts)
-	if create != commandOffset {
-		return false
-	}
-	orReplace := keywordIndexFrom(query, "OR REPLACE", create+len("CREATE"), opts)
-	if orReplace < 0 {
-		return false
-	}
-	database := keywordIndexFrom(query, "DATABASE", orReplace+len("OR REPLACE"), opts)
-	return database >= 0
 }
 
 func firstExecutableCypherOffset(query string) int {
@@ -586,8 +531,7 @@ func authorizeReadOnlyConstituent(ctx context.Context, query string, remote bool
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	mode, _ := parseExecutionMode(query)
-	if mode == ModeExplain {
+	if classifyStatement(query).prefixMode == prefixExplain {
 		return nil
 	}
 	contract, err := readStatementExecutionContract(ctx, query)
@@ -598,7 +542,7 @@ func authorizeReadOnlyConstituent(ctx context.Context, query string, remote bool
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if contract.writes || requirements.Write || requirements.Schema || requirements.Admin || remote && (contract.unknownProcedure || contract.dynamic) {
+	if !requirements.ReadOnly() || remote && (contract.unknownProcedure || contract.dynamic) {
 		return &PermissionDeniedError{Permission: permissionReadOnlyConstituent}
 	}
 	return nil

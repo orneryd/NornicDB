@@ -16,7 +16,7 @@ func TestStatementCacheFamilyFreshExecutorCacheFamily(t *testing.T) {
 	}
 	t.Run("USE storage clone", func(t *testing.T) {
 		clone := base.cloneWithStorage(store, selectedDatabaseStorage)
-		if !clone.hasCachedValidSyntax(query, activeSyntaxValidator()) {
+		if !clone.hasCachedValidSyntax(query, syntaxStatementAccepted) {
 			t.Error("USE clone lost warmed syntax verdict")
 		}
 		if clone.ensureUpperQueryCache() != base.ensureUpperQueryCache() {
@@ -30,7 +30,7 @@ func TestStatementCacheFamilyFreshExecutorCacheFamily(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer exec.Execute(context.Background(), "ROLLBACK", nil)
-		if !exec.hasCachedValidSyntax(query, activeSyntaxValidator()) {
+		if !exec.hasCachedValidSyntax(query, syntaxStatementAccepted) {
 			t.Error("Fabric shard transaction lost warmed syntax verdict")
 		}
 		if exec.ensureUpperQueryCache() != base.ensureUpperQueryCache() {

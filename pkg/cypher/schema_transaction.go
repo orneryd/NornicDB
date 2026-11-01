@@ -6,15 +6,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func isOrdinarySchemaDDL(query string) bool {
-	for _, command := range []string{"INDEX", "RANGE INDEX", "TEXT INDEX", "POINT INDEX", "VECTOR INDEX", "FULLTEXT INDEX", "LOOKUP INDEX", "CONSTRAINT"} {
-		if startsWithKeywords(query, "CREATE", command) {
-			return true
-		}
-	}
-	return startsWithKeywords(query, "DROP", "INDEX") || startsWithKeywords(query, "DROP", "CONSTRAINT")
-}
-
 func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
 	wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper)
 	if !ok {

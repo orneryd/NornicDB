@@ -270,7 +270,7 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 			return hint
 		}
 		end := len(clause)
-		for _, keyword := range []string{"SKIP", "LIMIT"} {
+		for _, keyword := range paginationKeywords {
 			if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
 				end = index
 			}
@@ -317,7 +317,7 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 	if orderIndex := topLevelKeywordIndex(body, "ORDER BY"); orderIndex >= 0 {
 		orderExpr := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
 		end := len(orderExpr)
-		for _, keyword := range []string{"SKIP", "LIMIT"} {
+		for _, keyword := range paginationKeywords {
 			if index := topLevelKeywordIndex(orderExpr, keyword); index >= 0 && index < end {
 				end = index
 			}

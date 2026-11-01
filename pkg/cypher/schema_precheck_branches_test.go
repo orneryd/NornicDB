@@ -15,12 +15,14 @@ type compositeEngineWrapper struct {
 
 func (w *compositeEngineWrapper) IsComposite() bool { return w.composite }
 
+func compositeRootCommand(query string) bool { return classifyStatement(query).compositeRootCommand }
+
 func TestSchemaPrechecks_HelperBranches(t *testing.T) {
-	t.Run("isCompositeAllowedCommand prefix matrix", func(t *testing.T) {
-		require.True(t, isCompositeAllowedCommand("SHOW DATABASES"))
-		require.True(t, isCompositeAllowedCommand("  create index idx FOR (n:Person) ON (n.name)"))
-		require.True(t, isCompositeAllowedCommand("DROP CONSTRAINT foo"))
-		require.False(t, isCompositeAllowedCommand("MATCH (n) RETURN n"))
+	t.Run("composite root command matrix", func(t *testing.T) {
+		require.True(t, compositeRootCommand("SHOW DATABASES"))
+		require.True(t, compositeRootCommand("  create index idx FOR (n:Person) ON (n.name)"))
+		require.True(t, compositeRootCommand("DROP CONSTRAINT foo"))
+		require.False(t, compositeRootCommand("MATCH (n) RETURN n"))
 	})
 
 	t.Run("isCompositeRoot via composite checker", func(t *testing.T) {

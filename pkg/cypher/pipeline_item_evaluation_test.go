@@ -2,10 +2,13 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -116,27 +119,19 @@ func TestUnwindAliasIsOneVariable(t *testing.T) {
 	result, err := exec.Execute(ctx, "UNWIND ['a value AS text', 'b'] AS s RETURN s", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a value AS text"}, {"b"}}, result.Rows)
-	for query, token := range map[string]string{
-		"UNWIND [1, 2] AS x WHERE x > 1 RETURN x": "WHERE",
-		"UNWIND [1, 2] AS x y RETURN x":           "y",
+	aliasPosition := localization.CypherANTLRUnexpectedInput(1, 19)
+	for query, want := range map[string]localization.Message{
+		"UNWIND [1, 2] AS x WHERE x > 1 RETURN x": localization.CypherCoreInvalidInput("WHERE"),
+		"UNWIND [1, 2] AS x y RETURN x":           localization.CypherANTLRParseSyntaxError(aliasPosition.Fallback, aliasPosition),
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
 		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError", query)
-		if token == "y" {
-			// The grammar admission owner rejects an extra identifier before
-			// the native UNWIND reader. Keep its precise structured position,
-			// rather than requiring that later reader's English diagnostic.
-			var localized *localization.LocalizedError
-			require.ErrorAs(t, err, &localized)
-			position := localization.CypherANTLRUnexpectedInput(1, 19)
-			want := localization.CypherANTLRParseSyntaxError(position.Fallback, position)
-			require.Equal(t, want.ID, localized.Message.ID)
-			require.Equal(t, want.Data, localized.Message.Data)
-			require.Equal(t, want.Fallback, localized.Message.Fallback)
-		} else {
-			require.Contains(t, err.Error(), "Invalid input '"+token+"'", query)
-		}
+		var localized *localization.LocalizedError
+		require.ErrorAs(t, err, &localized)
+		require.Equal(t, want.ID, localized.Message.ID)
+		require.Equal(t, want.Data, localized.Message.Data)
+		require.Equal(t, want.Fallback, localized.Message.Fallback)
 	}
 }
 
@@ -159,8 +154,41 @@ func TestStatementSyntaxDiagnosticsHaveParserParity(t *testing.T) {
 				var diagnostic *localization.LocalizedError
 				require.ErrorAs(t, err, &diagnostic)
 				require.Equal(t, localization.MessageCypherANTLRParseSyntaxError, diagnostic.Message.ID)
+				require.Equal(t, []statementDiagnosticPosition{{Line: 1, Column: strings.Index(query, " y ") + 1}}, observeStatementDiagnostic(err).Positions)
 			}
 		})
+	}
+}
+
+func TestStatementDiagnosticPositionsReferToSubmittedSource(t *testing.T) {
+	restoreParserTypeAfter(t)
+	for _, parser := range []string{"nornic", "antlr"} {
+		config.SetParserType(parser)
+		for _, query := range []string{
+			"EXPLAIN RETURN 1 @",
+			"  EXPLAIN RETURN 1 @",
+			"EXPLAIN\r\n RETURN 'π' @",
+			"CYPHER 5 runtime=slotted EXPLAIN RETURN 1 @",
+			"CYPHER 25 PROFILE RETURN 1 @",
+			"EXPLAIN UNWIND [1] AS `a b` RETURN `a b` @",
+			"PROFILE MATCH (n) RETURN n,",
+		} {
+			t.Run(parser+"/"+query, func(t *testing.T) {
+				exec, _ := newTestExecutor(t)
+				_, err := exec.Execute(t.Context(), query, nil)
+				got := observeStatementDiagnostic(err)
+				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", got.Status)
+				require.Equal(t, string(localization.MessageCypherANTLRParseSyntaxError), got.Class)
+				offset := strings.IndexByte(query, '@')
+				if offset < 0 {
+					offset = len(query) // A trailing projection comma is rejected at EOF.
+				}
+				line := strings.Count(query[:offset], "\n") + 1
+				start := strings.LastIndexByte(query[:offset], '\n') + 1
+				column := utf8.RuneCountInString(query[start:offset])
+				require.Contains(t, got.Positions, statementDiagnosticPosition{Line: line, Column: column})
+			})
+		}
 	}
 }
 

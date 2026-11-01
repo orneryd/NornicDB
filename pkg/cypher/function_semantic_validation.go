@@ -17,8 +17,7 @@ import (
 // calls. A SHOW command's YIELD / WHERE / RETURN tail is checked, as in
 // Neo4j.
 func validateKnownFunctions(expression string) error {
-	if !startsWithKeywordFold(strings.TrimSpace(expression), "SHOW") &&
-		(isSchemaCommandStatement(expression) || isMetadataCommand(expression, metadataCreateAdmission)) {
+	if classifyStatement(expression).declaresRules() {
 		return nil
 	}
 	return forEachFunctionCall(expression, func(name, normalized string) error {
@@ -117,7 +116,14 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 			index++
 			continue
 		}
-		if !isCypherBacktickByte(expression[index]) && isUseKeyword(name.Value) {
+		nameStart := index
+		quoted := isCypherBacktickByte(expression[index])
+		// FIRST-word membership is not the word's role at this source extent.
+		// A clause spelling in an operand/name position is a real invocation,
+		// not a reason to bypass known-function validation or argument checks.
+		clause := !quoted && cypherantlr.IsClauseWord(name.Value) &&
+			!clauseKeywordUsedAsName(expression, nameStart, name.End, name.Value)
+		if clause && isUseKeyword(name.Value) {
 			syntax, err := cypherantlr.ParseSyntax(context.Background(), expression[index:], cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
 			if err != nil {
 				// USE may also be an identifier in a fragment. Syntax validation
@@ -145,7 +151,7 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 			index += end
 			continue
 		}
-		if !isCypherBacktickByte(expression[index]) && strings.EqualFold(name.Value, "CALL") {
+		if clause && strings.EqualFold(name.Value, "CALL") {
 			index = skipCalledName(expression, name.End)
 			continue
 		}
@@ -161,7 +167,7 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 		// Clause and predicate keywords can legally be followed by a parenthesized
 		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
 		// function invocations.
-		if isNonFunctionSemanticKeyword(normalized) {
+		if clause || !quoted && isNonFunctionSemanticKeyword(normalized) {
 			continue
 		}
 		if err := visit(name.Value, normalized, cursor); err != nil {
@@ -173,7 +179,7 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 
 func isNonFunctionSemanticKeyword(name string) bool {
 	switch name {
-	case "and", "by", "call", "case", "contains", "create", "delete", "detach", "distinct", "do", "each", "elements", "else", "end", "filter", "for", "foreach", "group", "groups", "in", "insert", "is", "limit", "match", "merge", "not", "of", "offset", "on", "optional", "or", "path", "paths", "remove", "require", "return", "set", "shortest", "skip", "starts", "then", "union", "unwind", "when", "where", "with", "xor", "yield":
+	case "and", "by", "case", "contains", "distinct", "do", "each", "elements", "else", "end", "group", "groups", "in", "is", "not", "of", "on", "or", "path", "paths", "require", "shortest", "starts", "then", "when", "xor":
 		return true
 	default:
 		return false

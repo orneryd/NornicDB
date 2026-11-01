@@ -25,15 +25,47 @@ func parseLeadingUseClause(ctx context.Context, cypher string, stage cyphertext.
 // (fabric.ParseUseClause, Neo4j 5.26's) and reports a rejected clause as
 // Neo4j's SyntaxError. inSubquery is true for a CALL { } body.
 func parseUseClause(ctx context.Context, cypher string, inSubquery bool, stage cyphertext.SourceStage) (fabric.UseClause, string, bool, error) {
-	clause, remaining, hasUse, err := fabric.ParseUseClause(ctx, cypher, inSubquery, stage)
+	reference, remaining, hasUse, err := admitUseClause(ctx, cypher, inSubquery, stage)
+	return reference.UseClause, remaining, hasUse, err
+}
+
+// readUseStatement keeps the reference reader's body extent through transparent
+// database routing. The routed text is already accepted source.
+func readUseStatement(ctx context.Context, cypher string, inSubquery bool) (context.Context, fabric.UseClause, string, bool, error) {
+	reference, remaining, hasUse, err := admitUseClause(ctx, cypher, inSubquery, cyphertext.AcceptedSource)
+	if err == nil && hasUse {
+		ctx = statementSourceWindow(ctx, cypher, reference.Remainder)
+	}
+	return ctx, reference.UseClause, remaining, hasUse, err
+}
+
+// admitUseClause is the one USE admission policy: the shared USE reader, then
+// Neo4j's refusal of a top-level USE before an administration command, which
+// the system database runs by itself, and the reader's diagnostics as Neo4j's
+// SyntaxError.
+func admitUseClause(ctx context.Context, cypher string, inSubquery bool, stage cyphertext.SourceStage) (fabric.UseClauseReference, string, bool, error) {
+	reference, remaining, hasUse, err := fabric.ReadUseClause(ctx, cypher, inSubquery, stage)
+	if err == nil && hasUse && !inSubquery && classifyStatementBody(remaining).administration {
+		return fabric.UseClauseReference{}, "", true, useAdministrationCommandError()
+	}
+	return reference, remaining, hasUse, useClauseDiagnostic(err)
+}
+
+// useAdministrationCommandError is Neo4j's refusal of USE before an
+// administration command, which is routed to the system database by itself.
+func useAdministrationCommandError() error {
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherCommandRoutingUseAdministrationCommand())
+}
+
+func useClauseDiagnostic(err error) error {
 	if err == nil {
-		return clause, remaining, hasUse, nil
+		return nil
 	}
 	var syntaxErr *fabric.UseSyntaxError
 	if errors.As(err, &syntaxErr) {
 		err = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntaxErr.Message)
 	}
-	return clause, remaining, hasUse, err
+	return err
 }
 
 // useClauseReferenceEnd is where the graph reference of the USE clause
@@ -197,7 +229,7 @@ func TransactionDatabaseError(ctx context.Context, databases TransactionDatabase
 		return nil
 	}
 	requirements := QueryPermissionRequirements(ctx, query, AcceptedSource)
-	if requirements.Write || requirements.Schema {
+	if requirements.ChangesState {
 		return localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
 			localization.CypherCommandRoutingTransactionSecondDatabaseWrite(target, txDB))
 	}
@@ -314,15 +346,16 @@ func systemDatabaseStatementError(ctx context.Context, query string) error {
 	query = strings.TrimSpace(query)
 	// A SHOW command runs, and its tail is held to Neo4j's rules for it
 	// (systemShowTailError).
-	if startsWithKeywordFold(query, "SHOW") {
+	class := classifyStatement(query)
+	if class.show {
 		return systemShowTailError(query)
 	}
 	// Transaction control (BEGIN, COMMIT, ROLLBACK) is no statement on a
 	// graph; a BEGIN … COMMIT script is its statement.
-	if isMetadataCommand(query, metadataCatalogExecution) || bareTransactionCommand(query) != "" {
+	if class.catalog || class.transactionControl {
 		return nil
 	}
-	if startsWithKeywordFold(query, "BEGIN") && transactionScriptShape(query) {
+	if class.command == commandBeginScript && transactionScriptShape(query) {
 		body, _ := stripBeginTransactionPrefix(query)
 		if statement, _, ok := splitTransactionScriptTailAction(body); ok {
 			body = statement
@@ -338,10 +371,10 @@ func systemDatabaseStatementError(ctx context.Context, query string) error {
 	}
 	requirements := QueryPermissionRequirements(ctx, query, AcceptedSource)
 	graphAccess := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError", localization.CypherAdminSystemGraphAccessUnsupported())
-	if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
+	if requirements.ChangesGraph() || queryKeywords(query)["MATCH"] {
 		return graphAccess
 	}
-	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(query) {
+	if StatementDatabase("", query) == "system" || class.terminate || class.extension {
 		return nil
 	}
 	if startsWithKeywordFold(query, "CALL") {
@@ -460,6 +493,23 @@ func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, a
 
 // USE token recognition stays with the existing USE owner. Consumers locate
 // clauses through these boundary-aware operations, then read the grammar product.
+// visitUseClauses reads each USE clause of query with the one USE grammar, until
+// visit returns false, and reports whether every visit returned true. A word
+// that isn't a USE clause is not visited.
+func visitUseClauses(ctx context.Context, query string, opts keywordScanOpts, visit func(fabric.UseClause) bool) bool {
+	for from := 0; ; {
+		at := useKeywordIndexFrom(query, from, opts)
+		if at < 0 {
+			return true
+		}
+		use, _, hasUse, err := fabric.ParseUseClause(ctx, query[at:], true, cyphertext.AcceptedSource)
+		if hasUse && err == nil && !visit(use) {
+			return false
+		}
+		from = at + len("USE")
+	}
+}
+
 func isUseKeyword(word string) bool         { return strings.EqualFold(word, "USE") }
 func startsWithUseClause(query string) bool { return startsWithKeywordFold(query, "USE") }
 func useKeywordIndexFrom(query string, from int, opts keywordScanOpts) int {

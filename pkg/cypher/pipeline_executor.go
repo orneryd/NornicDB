@@ -605,10 +605,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					break
 				}
 			}
-			switch clause.kind {
-			case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
+			if clause.syntax.IsUpdatingClause() {
 				writes = true
-			case pipelineClauseCall:
+			}
+			if clause.kind == pipelineClauseCall {
 				if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); found && procedure.Spec.writes() {
 					writes = true
 				}

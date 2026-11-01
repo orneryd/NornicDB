@@ -34,10 +34,7 @@ func (e *StorageExecutor) callInfo(ctx context.Context, scope infoScope) (*Execu
 	var columns []string
 	var row []interface{}
 	if scope == infoScopeDBMS {
-		name = "system"
-		if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
-			name = manager.SystemDatabaseName()
-		}
+		name = e.systemDatabaseName()
 		columns = columnNames(dbmsInfoColumns)
 		row = make([]interface{}, 3)
 	} else {
@@ -953,4 +950,12 @@ func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, arguments []int
 	}
 
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+// systemDatabaseName is the name of the system database.
+func (e *StorageExecutor) systemDatabaseName() string {
+	if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
+		return manager.SystemDatabaseName()
+	}
+	return "system"
 }

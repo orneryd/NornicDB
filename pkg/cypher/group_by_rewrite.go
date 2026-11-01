@@ -76,17 +76,12 @@ func groupByEdits(query string) ([]labelRewriteEdit, error) {
 // projection modifier, a WITH's WHERE, a UNION or the next clause.
 func groupByKeysEnd(upper, clause string) bool {
 	switch upper {
-	case "ORDER", "SKIP", "OFFSET", "LIMIT", "UNION", "NEXT":
+	case "NEXT": // Native composition is lowered before grammar admission.
 		return true
 	case "WHERE":
 		return clause == "WITH"
 	}
-	for _, keyword := range queryStructureClauseStarts {
-		if upper == keyword {
-			return true
-		}
-	}
-	return false
+	return startsQueryPartWord(upper) || isNameableClauseKeyword(upper)
 }
 
 // projectionWord is a word outside quotes with its bracket depth.

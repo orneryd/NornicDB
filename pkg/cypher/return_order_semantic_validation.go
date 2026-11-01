@@ -21,7 +21,7 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 	}
 	projectionBody := strings.TrimSpace(body[:orderIndex])
 	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
-	for _, keyword := range []string{"SKIP", "LIMIT"} {
+	for _, keyword := range paginationKeywords {
 		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
 			orderBody = strings.TrimSpace(orderBody[:index])
 		}
@@ -165,7 +165,7 @@ func validateReturnAggregationSemantics(ctx context.Context, body string) error 
 // enclosing query's variables aren't grouping keys.
 func validateReturnAggregationSemanticsIn(ctx context.Context, body string, outer typeScope) error {
 	end := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+	for _, keyword := range projectionTailKeywords {
 		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
 			end = index
 		}

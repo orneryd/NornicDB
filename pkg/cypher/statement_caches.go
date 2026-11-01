@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync/atomic"
 
@@ -196,20 +195,19 @@ func (e *StorageExecutor) cacheDependencyScopes(query string) ([]*multidb.Statem
 	}
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets = false, false
-	for from := 0; ; {
-		at := useKeywordIndexFrom(query, from, opts)
-		if at < 0 {
-			break
+	cacheable := visitUseClauses(context.Background(), query, opts, func(use fabric.UseClause) bool {
+		if use.IsDynamic() {
+			return true
 		}
-		use, _, hasUse, err := fabric.ParseUseClause(context.Background(), query[at:], true, cyphertext.AcceptedSource)
-		if hasUse && err == nil && !use.IsDynamic() {
-			scope, err := resolver.StatementCacheScope(use.Name)
-			if err != nil {
-				return nil, false
-			}
-			scopes = append(scopes, scope)
+		scope, err := resolver.StatementCacheScope(use.Name)
+		if err != nil {
+			return false
 		}
-		from = at + len("USE")
+		scopes = append(scopes, scope)
+		return true
+	})
+	if !cacheable {
+		return nil, false
 	}
 	return scopes, statementScopesValid(scopes)
 }
@@ -275,6 +273,22 @@ func (e *StorageExecutor) addSyntaxCacheEntry(query string, verdict uint8, scope
 	}
 }
 
+// addSyntaxCacheFamily is the one writer of a statement text's cache keys: its
+// exact text and the canonical literal form that literal variants share. Both
+// keys receive the same dependencies, whichever arrives first, so a structural
+// verdict cannot outlive a selection through the canonical key. The exact-text
+// grammar fact is not shared with literal variants.
+func (e *StorageExecutor) addSyntaxCacheFamily(query string, verdict uint8, scopes []*multidb.StatementCacheScope) {
+	e.addSyntaxCacheEntry(query, verdict, scopes)
+	structural := verdict &^ syntaxGrammarAccepted
+	if structural == 0 && (verdict != 0 || len(scopes) == 0) {
+		return
+	}
+	if canonical, normalized := normalizeLiteralText(query); normalized {
+		e.addSyntaxCacheEntry(canonical, structural, scopes)
+	}
+}
+
 // recordStatementReference covers resolved dynamic Fabric selections as well
 // as remote fragments. A bounded zero-verdict entry holds dependencies until
 // validation or redaction supplies a verdict; it never grants acceptance.
@@ -287,7 +301,7 @@ func (e *StorageExecutor) recordStatementReference(query, name string) error {
 	if err != nil {
 		return err
 	}
-	e.addSyntaxCacheEntry(query, 0, []*multidb.StatementCacheScope{scope})
+	e.addSyntaxCacheFamily(query, 0, []*multidb.StatementCacheScope{scope})
 	upper := e.ensureUpperQueryCache()
 	upper.mu.Lock()
 	if _, ok := upper.cache[query]; ok && !upper.disposed.Load() && e.statementCacheScope.Valid() && scope.Valid() {

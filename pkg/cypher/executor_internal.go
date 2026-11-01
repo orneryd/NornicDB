@@ -37,6 +37,9 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 			}
 		}()
 	}
+	// Procedure-supplied Cypher is a new raw statement, even when its bytes
+	// equal an accepted view of the containing statement.
+	ctx = cyphertext.WithSourceView(ctx, cyphertext.NewSource(ctx, statement, cyphertext.RawSource))
 	if err := internalFunctionCallError(statement); err != nil {
 		// Refused like any statement of the caller's transaction: it fails
 		// an explicit transaction (executeInternal fails it for the rest).
@@ -69,13 +72,14 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	ctx, source := cyphertext.WithSource(ctx, cypher)
+	ctx, source := statementSource(ctx, cypher, true)
 	if source.Err != nil {
 		if invalid, ok := source.Err.(*cyphertext.UnicodeSourceError); ok {
 			return nil, invalidUnicodeLiteralError(invalid.Offset)
 		}
 		return nil, source.Err
 	}
+	ctx = executingStatementContext(ctx)
 	if cypher != source.Text {
 		normalized := sourceQueryRewrite(source)
 		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(result, retErr, nil) }()
@@ -130,14 +134,14 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		}()
 	}
 
-	if use, remaining, hasUse, err := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource); hasUse || err != nil {
+	if useCtx, use, remaining, hasUse, err := readUseStatement(ctx, cypher, false); hasUse || err != nil {
 		if err != nil {
 			return nil, err
 		}
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		return e.executeOnDatabase(ctx, use.Name, remaining, params, true)
+		return e.executeOnDatabase(useCtx, use.Name, remaining, params, true)
 	}
 	if _, err := e.admitTransactionStatement(ctx, cypher); err != nil {
 		return nil, err
@@ -165,13 +169,13 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	if labelRewrite != nil {
 		cypher = desugared
+		ctx = withSourceRewrite(ctx, labelRewrite)
 		defer func() {
 			result, retErr = (resultRestoration{source: labelRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
 		}()
 	}
 
-	// Basic syntax validation to preserve existing error behavior.
-	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
+	if err := e.validateStatementSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return nil, err
 	}
 	if err := e.validateTransactionalCalls(ctx, cypher, nil); err != nil {

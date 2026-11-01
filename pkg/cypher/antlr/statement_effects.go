@@ -10,7 +10,9 @@ type statementEffectsData struct {
 	calls             []statementCallData
 	remoteReadOnly    bool
 	readOnly          bool
+	completeQueries   bool
 	executableQueries []int
+	updatingBodies    map[int]bool
 }
 type statementCallData struct {
 	node     int
@@ -70,9 +72,10 @@ func (effects StatementEffects) ReadOnly(allowCall func(StatementCall) bool) boo
 
 // AllowsExecutableQueries applies live policy to every retained executable
 // query scope. Explained scopes are omitted; scripts and nested queries retain
-// their own original source windows. Policy results are never cached.
+// their own original source windows. Missing bodies invalidate the whole script,
+// even if a preceding query was complete. Policy results are never cached.
 func (effects StatementEffects) AllowsExecutableQueries(allow func(string) bool) bool {
-	if effects.data == nil || allow == nil {
+	if effects.data == nil || !effects.data.effects.completeQueries || allow == nil {
 		return false
 	}
 	for _, id := range effects.data.effects.executableQueries {
@@ -90,12 +93,25 @@ func (effects StatementEffects) RemoteReadOnly() bool {
 	return effects.data != nil && effects.data.effects.remoteReadOnly
 }
 
+// ContainsUpdatingClause reports structural updates in this query container,
+// including nested CALL bodies. It is independent of EXPLAIN execution effects.
+func (node SyntaxNode) ContainsUpdatingClause() bool {
+	return node.Valid() && node.data.effects.updatingBodies[node.id]
+}
+
 func (syntax StatementSyntax) collectEffects() statementEffectsData {
-	result := statementEffectsData{}
-	query, remoteEffect, nonReadEffect, explained := false, false, false, 0
+	result := statementEffectsData{updatingBodies: make(map[int]bool)}
+	var containers []int
+	query, incomplete, remoteEffect, nonReadEffect, explained := false, false, false, false, 0
 	syntax.Walk(func(node SyntaxNode) func() {
+		var leave func()
+		if QueryBodyContainer(node.Rule()) != "" {
+			containers = append(containers, node.id)
+			leave = func() { containers = containers[:len(containers)-1] }
+		}
 		if node.Rule() == CypherParserRULE_query {
-			hasBody, explains := false, false
+			body := node.QueryBody()
+			hasBody, explains := body.Valid(), false
 			for i := 0; i < node.ChildCount(); i++ {
 				child := node.Child(i)
 				switch child.Rule() {
@@ -103,13 +119,11 @@ func (syntax StatementSyntax) collectEffects() statementEffectsData {
 					if _, ok := child.DirectToken(CypherParserEXPLAIN); ok {
 						explains = true
 					}
-				case CypherParserRULE_regularQuery, CypherParserRULE_standaloneCall, CypherParserRULE_privilegeCommand, CypherParserRULE_schemaCommand, CypherParserRULE_administrationCommand, CypherParserRULE_showCommand, CypherParserRULE_terminateCommand:
-					start, end := child.Span()
-					hasBody = hasBody || end > start
 				}
 			}
 			query = query || hasBody
 			if !hasBody {
+				incomplete = true
 				nonReadEffect = true
 				remoteEffect = true
 			}
@@ -124,6 +138,9 @@ func (syntax StatementSyntax) collectEffects() statementEffectsData {
 		switch node.Rule() {
 		case CypherParserRULE_updatingStatement, CypherParserRULE_schemaCommand, CypherParserRULE_administrationCommand, CypherParserRULE_privilegeCommand, CypherParserRULE_terminateCommand:
 			result.writes = true
+			for _, id := range containers {
+				result.updatingBodies[id] = true
+			}
 			if explained == 0 {
 				remoteEffect = true
 				nonReadEffect = true
@@ -137,9 +154,10 @@ func (syntax StatementSyntax) collectEffects() statementEffectsData {
 			remoteEffect = true
 			nonReadEffect = true
 		}
-		return nil
+		return leave
 	})
 	result.readOnly = query && !nonReadEffect
 	result.remoteReadOnly = query && !remoteEffect
+	result.completeQueries = query && !incomplete
 	return result
 }

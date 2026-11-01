@@ -38,8 +38,7 @@ func TestSourceRestorationParserUnicodeCRLF(t *testing.T) {
 	query := "RETURN 'π'\r\n  @"
 	canonical, rewrite := canonicalizeQueryText(query)
 	require.NotNil(t, rewrite)
-	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	cause := executor.validateSyntax(t.Context(), canonical, false, syntaxANTLRCore)
+	cause := grammarDiagnostic(t.Context(), canonical)
 	require.Error(t, cause)
 	_, err := (resultRestoration{source: rewrite}).restore(nil, cause, nil)
 	require.ErrorIs(t, err, cause)

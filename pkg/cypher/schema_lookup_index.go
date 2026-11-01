@@ -2,12 +2,10 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -29,35 +27,11 @@ var (
 // name another index has is IndexWithNameAlreadyExists; IF NOT EXISTS makes
 // both a no-op.
 func (e *StorageExecutor) executeCreateLookupIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	name, ifNotExists, entityType, ok := parseCreateLookupIndex(cypher)
-	if !ok {
-		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			localization.CypherSchemaLookupIndexInvalid())
-	}
-	if err := e.storage.GetSchema().AddLookupIndex(name, entityType); err != nil {
-		var localized *localization.LocalizedError
-		if errors.As(err, &localized) {
-			switch localized.Message.ID {
-			case localization.MessageStorageSchemaConstraintAlreadyExists:
-				if ifNotExists {
-					return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-				}
-				return nil, localizedStatusError("Neo.ClientError.Schema.ConstraintWithNameAlreadyExists", "ConstraintWithNameAlreadyExists", localized.Message)
-			case localization.MessageStorageSchemaLookupIndexAlreadyExists:
-				if ifNotExists {
-					return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-				}
-				return nil, localizedStatusError("Neo.ClientError.Schema.IndexAlreadyExists", "IndexAlreadyExists", localized.Message)
-			case localization.MessageStorageSchemaIndexNameAlreadyExists:
-				if ifNotExists {
-					return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-				}
-				return nil, localizedStatusError("Neo.ClientError.Schema.IndexWithNameAlreadyExists", "IndexWithNameAlreadyExists", localized.Message)
-			}
-		}
+	command, err := e.prepareCreateLookupIndex(ctx, cypher)
+	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	return command.run(ctx)
 }
 
 // parseCreateLookupIndex reads a CREATE LOOKUP INDEX statement: its name

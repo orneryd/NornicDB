@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -45,4 +46,15 @@ func TestReadOnlyQueryProjectsRawUnicodeOnce(t *testing.T) {
 	require.NoError(t, AuthorizeReadOnlyQuery(t.Context(), `\u0052ETURN {a:1}`))
 	require.Error(t, AuthorizeReadOnlyQuery(t.Context(), `\u0043REATE (n)`))
 	require.Error(t, AuthorizeReadOnlyQuery(t.Context(), `RETURN \u00zz`))
+}
+
+func TestIncompleteSourceHasNoReadOnlyRemoteProof(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		for _, source := range []string{"", "/* no query */", ";", "EXPLAIN", "PROFILE", "CYPHER 25", "RETURN 1; EXPLAIN", "RETURN 1; PROFILE", "RETURN 1; CYPHER 25"} {
+			require.Error(t, AuthorizeReadOnlyQuery(t.Context(), source), source)
+			policy, err := readRemoteStatementPolicy(t.Context(), source)
+			require.NoError(t, err, source)
+			require.Equal(t, storage.RemoteAccessWrite, policy.AccessMode, "incomplete source must not acquire a remote read proof: %s", source)
+		}
+	})
 }

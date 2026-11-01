@@ -75,7 +75,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	if postWithWhere != "" && (withSkip > 0 || withLimit >= 0) {
 		windowedWhere, postWithWhere = postWithWhere, ""
 	}
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+	for _, keyword := range projectionTailKeywords {
 		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
 			body = strings.TrimSpace(body[:index])
 		}
@@ -304,7 +304,7 @@ func pipelinePaginationExpression(body, keyword string) string {
 	expression := strings.TrimSpace(body[index+len(keyword):])
 	end := len(expression)
 	// WITH … SKIP / LIMIT n WHERE p: the WHERE isn't part of n.
-	for _, nextKeyword := range []string{"SKIP", "LIMIT", "WHERE"} {
+	for _, nextKeyword := range projectionPaginationWhereKeywords {
 		if nextIndex := topLevelKeywordIndex(expression, nextKeyword); nextIndex >= 0 && nextIndex < end {
 			end = nextIndex
 		}

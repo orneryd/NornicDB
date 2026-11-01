@@ -33,7 +33,7 @@ func AuthorizeReadOnlyQuery(ctx context.Context, query string) error {
 	if allowed {
 		allowed = syntax.Effects().AllowsExecutableQueries(func(source string) bool {
 			requirements := QueryPermissionRequirements(ctx, source, RawSource)
-			return !requirements.Write && !requirements.Schema && !requirements.Admin
+			return requirements.ReadOnly()
 		})
 	}
 	if canceled := ctx.Err(); canceled != nil {

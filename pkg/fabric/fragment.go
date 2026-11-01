@@ -79,6 +79,11 @@ type FragmentExec struct {
 	// statement's parameters and the input row; GraphName is then empty.
 	Graph *UseClause
 
+	// Selected is a static USE's target, and SelectedIn the scope it selected
+	// from; a caller planning without a catalog validates it per request.
+	Selected   bool
+	SelectedIn string
+
 	// Scope is the composite database whose constituents a dynamic graph
 	// reference may name.
 	Scope string

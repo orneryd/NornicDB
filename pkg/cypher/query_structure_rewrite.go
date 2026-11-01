@@ -102,13 +102,6 @@ func (r *structureRewriter) rewrittenRegionText(start, end, firstEdit int) strin
 	return text
 }
 
-// queryStructureClauseStarts are the words that start a query part after
-// NEXT (a NEXT followed by anything else is a name).
-var queryStructureClauseStarts = []string{
-	"MATCH", "OPTIONAL", "WITH", "RETURN", "UNWIND", "CALL", "CREATE", "MERGE", "DELETE", "DETACH", "SET", "REMOVE",
-	"FOREACH", "LOAD", "FILTER", "LET", "FOR", "FINISH", "USE", "WHEN", "INSERT", "ORDER", "SKIP", "LIMIT", "OFFSET",
-}
-
 // topLevelWord is a word at a region's top level.
 type topLevelWord struct {
 	start, end int
@@ -191,12 +184,8 @@ func (r *structureRewriter) startsQueryPart(from, end int) bool {
 	if r.query[at] == '{' {
 		return true
 	}
-	for _, keyword := range queryStructureClauseStarts {
-		if matchKeywordAt(r.query[:end], at, keyword) {
-			return true
-		}
-	}
-	return false
+	wordEnd := cyphertext.NamePartEnd(r.query[:end], at)
+	return startsQueryPartWord(r.query[at:wordEnd])
 }
 
 func skipBackSpaces(q string, end int) int {
