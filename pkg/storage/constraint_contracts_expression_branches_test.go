@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -13,18 +14,18 @@ type constraintExprEngine struct {
 	getNodeFn  func(NodeID) (*Node, error)
 }
 
-func (e *constraintExprEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
+func (e *constraintExprEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	if e.outgoingFn != nil {
 		return e.outgoingFn(nodeID)
 	}
-	return e.Engine.GetOutgoingEdges(nodeID)
+	return e.Engine.GetOutgoingEdges(ctx, nodeID)
 }
 
-func (e *constraintExprEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
+func (e *constraintExprEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	if e.incomingFn != nil {
 		return e.incomingFn(nodeID)
 	}
-	return e.Engine.GetIncomingEdges(nodeID)
+	return e.Engine.GetIncomingEdges(ctx, nodeID)
 }
 
 func (e *constraintExprEngine) GetNode(id NodeID) (*Node, error) {

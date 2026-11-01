@@ -17,18 +17,16 @@ type labelCountGuardEngine struct {
 	labelCountCalls int
 }
 
-func (e *labelCountGuardEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	if e.forbidLabelScan {
-		return nil, fmt.Errorf("GetNodesByLabel should not be called for simple labeled count")
-	}
-	return e.Engine.GetNodesByLabel(label)
+func (e *labelCountGuardEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return guardedNodeScan(e.forbidLabelScan, "GetNodesByLabel should not be called for simple labeled count", func() ([]*storage.Node, error) {
+		return e.Engine.GetNodesByLabel(ctx, label)
+	})
 }
 
-func (e *labelCountGuardEngine) AllNodes() ([]*storage.Node, error) {
-	if e.forbidLabelScan {
-		return nil, fmt.Errorf("AllNodes should not be called for simple labeled count")
-	}
-	return e.Engine.AllNodes()
+func (e *labelCountGuardEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return guardedNodeScan(e.forbidLabelScan, "AllNodes should not be called for simple labeled count", func() ([]*storage.Node, error) {
+		return e.Engine.AllNodes(ctx)
+	})
 }
 
 func (e *labelCountGuardEngine) NodeCountByLabel(label string) (int64, error) {

@@ -31,7 +31,7 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 								if calls == 1 {
 									return caller.Execute(ctx, "CREATE (:U5BatchBoundary) RETURN 1 AS v", nil)
 								}
-								nodes, err := committed.GetNodesByLabel("U5BatchBoundary")
+								nodes, err := committed.GetNodesByLabel(context.Background(), "U5BatchBoundary")
 								if err != nil {
 									return nil, err
 								}
@@ -66,7 +66,7 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 									_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
 									require.NoError(t, err)
 								}
-								nodes, err := committed.GetNodesByLabel("U5BatchBoundary")
+								nodes, err := committed.GetNodesByLabel(context.Background(), "U5BatchBoundary")
 								require.NoError(t, err)
 								require.Empty(t, nodes)
 								return
@@ -81,7 +81,7 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 								_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
 								require.NoError(t, err)
 							}
-							nodes, err := committed.GetNodesByLabel("U5BatchBoundary")
+							nodes, err := committed.GetNodesByLabel(context.Background(), "U5BatchBoundary")
 							require.NoError(t, err)
 							wantNodes := 1
 							if explicit {
@@ -110,7 +110,7 @@ func TestPeriodicBatchRollbackIsAtomic(t *testing.T) {
 				require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "u5batch.atomic", Mode: ProcedureModeWrite, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, caller *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 					calls++
 					if calls == 3 {
-						nodes, err := committed.GetNodesByLabel("U5BatchAtomic")
+						nodes, err := committed.GetNodesByLabel(context.Background(), "U5BatchAtomic")
 						if err != nil {
 							return nil, err
 						}
@@ -129,14 +129,14 @@ func TestPeriodicBatchRollbackIsAtomic(t *testing.T) {
 				if composite {
 					require.ErrorContains(t, err, "unsupported query type in transaction")
 					require.Zero(t, calls)
-					nodes, readErr := committed.GetNodesByLabel("U5BatchAtomic")
+					nodes, readErr := committed.GetNodesByLabel(context.Background(), "U5BatchAtomic")
 					require.NoError(t, readErr)
 					require.Empty(t, nodes)
 					return
 				}
 				require.NoError(t, err)
 				require.Equal(t, 2, visible, "first two-row batch committed before next begins")
-				nodes, err := committed.GetNodesByLabel("U5BatchAtomic")
+				nodes, err := committed.GetNodesByLabel(context.Background(), "U5BatchAtomic")
 				require.NoError(t, err)
 				require.Len(t, nodes, 2, "failed batch rolls back its earlier action, retaining completed batch")
 				require.Len(t, result.Rows, 1)

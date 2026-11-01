@@ -78,7 +78,7 @@ RETURN count(o) AS prepared`
 	require.Equal(t, int64(1), toInt64ForTest(t, res.Rows[0][0]))
 	require.True(t, exec.LastHotPathTrace().UnwindSimpleMergeBatch, "expected unwind simple merge batch hot path")
 
-	nodes, err := store.GetNodesByLabel("OriginalText")
+	nodes, err := store.GetNodesByLabel(ctx, "OriginalText")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
@@ -187,7 +187,7 @@ RETURN count(o) AS prepared
 	})
 	require.NoError(t, err)
 
-	originals, err := store.GetNodesByLabel("OriginalText")
+	originals, err := store.GetNodesByLabel(ctx, "OriginalText")
 	require.NoError(t, err)
 	require.Len(t, originals, 2)
 	idByTextKey := map[string]string{}

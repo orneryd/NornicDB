@@ -116,7 +116,6 @@ import (
 	"io"
 	"log/slog"
 	"maps"
-	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -124,6 +123,7 @@ import (
 
 	apoccfg "github.com/orneryd/nornicdb/apoc"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/apocio"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -470,26 +470,12 @@ type StorageExecutor struct {
 	// on a query exceeding the platform clock's resolution.
 	executionElapsed func(time.Time) time.Duration
 
-	// allowLocalAPOCImportFileAccess gates non-HTTP APOC load/import file reads.
-	// Default deny; enable explicitly via env-backed APOC config or setter.
-	allowLocalAPOCImportFileAccess bool
-	// allowLocalAPOCExportFileAccess gates non-HTTP APOC export file writes.
-	// Default deny; enable explicitly via env-backed APOC config or setter.
-	allowLocalAPOCExportFileAccess bool
-	// allowRemoteAPOCURLAccess gates APOC HTTP(S) fetches. Default deny.
-	allowRemoteAPOCURLAccess bool
-	// apocRemoteURLAllowlist restricts APOC HTTP(S) fetches to explicitly
-	// approved hosts or wildcard suffixes.
-	apocRemoteURLAllowlist []string
-	// apocRemoteHTTPClient is executor-scoped so tests and database-scoped
-	// executors cannot race by replacing process-global HTTP transport state.
-	apocRemoteHTTPClient *http.Client
-	// apocRemoteHostResolver is executor-scoped for the same reason and keeps
-	// URL-security tests independent from ambient DNS.
-	apocRemoteHostResolver apocHostResolver
-	// apocLocalFileAccessRoot mirrors Neo4j's import-directory behavior: when
-	// set, local APOC file URLs are normalized and rebased under this root.
-	apocLocalFileAccessRoot string
+	// apocIO is this executor's immutable APOC I/O policy: the denied-by-default
+	// import file, export file and remote URL access flags, the remote URL
+	// allowlist, the local import root and the remote HTTP client and host
+	// resolver seams. pkg/apocio owns every read of it. The setters below replace
+	// the policy with a modified copy; a published policy is never mutated.
+	apocIO apocio.Policy
 
 	// metrics is the Plan 04-03 CypherMetrics typed bag (MET-08). Injected
 	// post-construction via SetCypherMetrics (D-01 non-breaking pattern,
@@ -636,13 +622,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...sto
 		cloned.slowQueryThreshold = e.slowQueryThreshold
 		cloned.executionElapsed = e.executionElapsed
 	}
-	cloned.allowLocalAPOCImportFileAccess = e.allowLocalAPOCImportFileAccess
-	cloned.allowLocalAPOCExportFileAccess = e.allowLocalAPOCExportFileAccess
-	cloned.allowRemoteAPOCURLAccess = e.allowRemoteAPOCURLAccess
-	cloned.apocRemoteURLAllowlist = append([]string(nil), e.apocRemoteURLAllowlist...)
-	cloned.apocRemoteHTTPClient = e.apocRemoteHTTPClient
-	cloned.apocRemoteHostResolver = e.apocRemoteHostResolver
-	cloned.apocLocalFileAccessRoot = e.apocLocalFileAccessRoot
+	cloned.apocIO = e.apocIO
 	if !selected || e.queryEmbedder != nil {
 		cloned.queryEmbedder = e.queryEmbedder
 	}
@@ -789,36 +769,40 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 		queryCache = NewSmartQueryCache(maxEntries)
 	}
 	exec := &StorageExecutor{
-		parser:                         NewParser(),
-		storage:                        store,
-		propertyDecayEngine:            unwrapBadgerEngine(store),
-		propertyDecayEngineKnown:       true,
-		cache:                          queryCache,
-		queryCacheMaxEntries:           maxEntries,
-		queryCacheTTL:                  queryCacheTTL,
-		planCache:                      NewQueryPlanCache(500), // Cache 500 parsed query plans
-		semanticValidationCache:        newSemanticValidationCache(500),
-		matchSemanticValidationCache:   newSemanticValidationCache(500),
-		mergeSemanticValidationCache:   newSemanticValidationCache(500),
-		fabricPlanCache:                fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
-		analyzer:                       NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
-		nodeLookupCache:                make(map[string]*storage.Node, 1000),
-		nodeLookupCacheMu:              &sync.RWMutex{},
-		shellParams:                    make(map[string]interface{}),
-		searchService:                  &atomic.Pointer[search.Service]{}, // Shared by views of this database runtime.
-		vectorRegistry:                 vectorspace.NewIndexRegistry(),
-		vectorIndexSpaces:              make(map[string]vectorspace.VectorSpaceKey),
-		hotPathTraceState:              &hotPathTraceState{},
-		queryEmbedder:                  &QueryEmbedderBinding{},
-		unwindMergeChainPlanCache:      &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
-		inlineEmbeddingTextOptions:     embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
-		inlineEmbeddingChunkSize:       maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
-		inlineEmbeddingChunkOverlap:    maxInt(runtimeCfg.EmbeddingWorker.ChunkOverlap, 0),
-		allowLocalAPOCImportFileAccess: apocCfg.Security.AllowImportFileAccess || apocCfg.Security.AllowFileAccess,
-		allowLocalAPOCExportFileAccess: apocCfg.Security.AllowExportFileAccess || apocCfg.Security.AllowFileAccess,
-		allowRemoteAPOCURLAccess:       apocCfg.Security.AllowRemoteURLAccess,
-		apocRemoteURLAllowlist:         normalizeAPOCRemoteURLAllowlist(apocCfg.Security.RemoteURLAllowlist),
-		apocLocalFileAccessRoot:        strings.TrimSpace(apocCfg.Security.FileAccessRoot),
+		parser:                       NewParser(),
+		storage:                      store,
+		propertyDecayEngine:          unwrapBadgerEngine(store),
+		propertyDecayEngineKnown:     true,
+		cache:                        queryCache,
+		queryCacheMaxEntries:         maxEntries,
+		queryCacheTTL:                queryCacheTTL,
+		planCache:                    NewQueryPlanCache(500), // Cache 500 parsed query plans
+		semanticValidationCache:      newSemanticValidationCache(500),
+		matchSemanticValidationCache: newSemanticValidationCache(500),
+		mergeSemanticValidationCache: newSemanticValidationCache(500),
+		fabricPlanCache:              fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
+		analyzer:                     NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
+		nodeLookupCache:              make(map[string]*storage.Node, 1000),
+		nodeLookupCacheMu:            &sync.RWMutex{},
+		shellParams:                  make(map[string]interface{}),
+		searchService:                &atomic.Pointer[search.Service]{}, // Shared by views of this database runtime.
+		vectorRegistry:               vectorspace.NewIndexRegistry(),
+		vectorIndexSpaces:            make(map[string]vectorspace.VectorSpaceKey),
+		hotPathTraceState:            &hotPathTraceState{},
+		queryEmbedder:                &QueryEmbedderBinding{},
+		unwindMergeChainPlanCache:    &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
+		inlineEmbeddingTextOptions:   embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
+		inlineEmbeddingChunkSize:     maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
+		inlineEmbeddingChunkOverlap:  maxInt(runtimeCfg.EmbeddingWorker.ChunkOverlap, 0),
+		apocIO: apocio.NewPolicy(apocio.Config{
+			// AllowFileAccess is the legacy shorthand enabling both local file
+			// directions.
+			AllowImportFileAccess: apocCfg.Security.AllowImportFileAccess || apocCfg.Security.AllowFileAccess,
+			AllowExportFileAccess: apocCfg.Security.AllowExportFileAccess || apocCfg.Security.AllowFileAccess,
+			AllowRemoteURLAccess:  apocCfg.Security.AllowRemoteURLAccess,
+			RemoteURLAllowlist:    apocCfg.Security.RemoteURLAllowlist,
+			FileAccessRoot:        apocCfg.Security.FileAccessRoot,
+		}),
 	}
 	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.databaseName())
 	ensureBuiltInProceduresRegistered()
@@ -848,33 +832,32 @@ func (e *StorageExecutor) GetLocalizationRenderer() ProcedureMetadataRenderer {
 
 // SetAllowLocalAPOCFileAccess enables or disables local APOC file reads/writes.
 func (e *StorageExecutor) SetAllowLocalAPOCFileAccess(enabled bool) {
-	e.allowLocalAPOCImportFileAccess = enabled
-	e.allowLocalAPOCExportFileAccess = enabled
+	e.apocIO = e.apocIO.WithImportFileAccess(enabled).WithExportFileAccess(enabled)
 }
 
 // SetAllowLocalAPOCImportFileAccess enables or disables local-file APOC loads/imports.
 func (e *StorageExecutor) SetAllowLocalAPOCImportFileAccess(enabled bool) {
-	e.allowLocalAPOCImportFileAccess = enabled
+	e.apocIO = e.apocIO.WithImportFileAccess(enabled)
 }
 
 // SetAllowLocalAPOCExportFileAccess enables or disables local-file APOC exports.
 func (e *StorageExecutor) SetAllowLocalAPOCExportFileAccess(enabled bool) {
-	e.allowLocalAPOCExportFileAccess = enabled
+	e.apocIO = e.apocIO.WithExportFileAccess(enabled)
 }
 
 // SetAllowRemoteAPOCURLAccess enables or disables APOC HTTP(S) fetches.
 func (e *StorageExecutor) SetAllowRemoteAPOCURLAccess(enabled bool) {
-	e.allowRemoteAPOCURLAccess = enabled
+	e.apocIO = e.apocIO.WithRemoteURLAccess(enabled)
 }
 
 // SetAPOCRemoteURLAllowlist restricts APOC HTTP(S) fetches to approved hosts.
 func (e *StorageExecutor) SetAPOCRemoteURLAllowlist(hosts []string) {
-	e.apocRemoteURLAllowlist = normalizeAPOCRemoteURLAllowlist(hosts)
+	e.apocIO = e.apocIO.WithRemoteURLAllowlist(hosts)
 }
 
 // SetAPOCLocalFileAccessRoot sets the local import root used for APOC file URLs.
 func (e *StorageExecutor) SetAPOCLocalFileAccessRoot(root string) {
-	e.apocLocalFileAccessRoot = strings.TrimSpace(root)
+	e.apocIO = e.apocIO.WithLocalFileAccessRoot(root)
 }
 
 // ClearQueryCaches clears executor-local caches that can retain stale read results.

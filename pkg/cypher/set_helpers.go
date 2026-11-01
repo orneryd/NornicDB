@@ -272,7 +272,7 @@ func (e *StorageExecutor) generateUUID() string {
 // clause (setEntityState.before and beforeEdge): the label policy check reads
 // that state's labels, and storage receives that observation instead of
 // reconstructing it from the entity the clause already changed.
-func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
+func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
 	for index := range states {
 		state := &states[index]
 		if stats != nil {
@@ -291,7 +291,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 				node.Labels = state.labels
 			}
 			if labelsAdded > 0 {
-				if err := validatePolicyOnLabelChange(store, node, state.before.Labels); err != nil {
+				if err := validatePolicyOnLabelChange(ctx, store, node, state.before.Labels); err != nil {
 					restore()
 					return err
 				}

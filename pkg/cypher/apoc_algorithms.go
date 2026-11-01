@@ -44,10 +44,10 @@ func (pq *priorityQueue) Pop() interface{} {
 }
 
 // getNodeEdges returns all edges for a node.
-func (e *StorageExecutor) getNodeEdges(nodeID storage.NodeID) []*storage.Edge {
+func (e *StorageExecutor) getNodeEdges(ctx context.Context, nodeID storage.NodeID) []*storage.Edge {
 	var result []*storage.Edge
-	outgoing, _ := e.storage.GetOutgoingEdges(nodeID)
-	incoming, _ := e.storage.GetIncomingEdges(nodeID)
+	outgoing, _ := e.storage.GetOutgoingEdges(ctx, nodeID)
+	incoming, _ := e.storage.GetIncomingEdges(ctx, nodeID)
 	result = append(result, outgoing...)
 	result = append(result, incoming...)
 	return result
@@ -75,14 +75,14 @@ func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, args []inter
 			return nil, procedureArgumentTypeError(procedure, "defaultWeight", "FLOAT", value)
 		}
 	}
-	path, weight := e.dijkstra(startID, endID, steps, weightProp, defaultWeight)
+	path, weight := e.dijkstra(ctx, startID, endID, steps, weightProp, defaultWeight)
 	if path == nil {
 		return &ExecuteResult{Columns: columnNames(pathWeightColumns), Rows: [][]interface{}{}}, nil
 	}
 	return &ExecuteResult{Columns: columnNames(pathWeightColumns), Rows: [][]interface{}{{e.storage.(*graphIdentityStorage).outputPath(path), weight}}}, nil
 }
 
-func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp string, defaultWeight float64) ([]storage.NodeID, float64) {
+func (e *StorageExecutor) dijkstra(ctx context.Context, startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp string, defaultWeight float64) ([]storage.NodeID, float64) {
 	dist := make(map[storage.NodeID]float64)
 	dist[startID] = 0
 	pq := &priorityQueue{}
@@ -99,7 +99,7 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRe
 		if current.nodeID == endID {
 			return current.path, current.cost
 		}
-		for _, edge := range e.apocSteps(current.nodeID, steps) {
+		for _, edge := range e.apocSteps(ctx, current.nodeID, steps) {
 			neighbor := otherEnd(edge, current.nodeID)
 			if visited[neighbor] {
 				continue
@@ -144,14 +144,14 @@ func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, args []interfac
 	if err != nil {
 		return nil, err
 	}
-	path, weight := e.astar(startID, endID, steps, weightProp, latProp, lonProp)
+	path, weight := e.astar(ctx, startID, endID, steps, weightProp, latProp, lonProp)
 	if path == nil {
 		return &ExecuteResult{Columns: columnNames(pathWeightColumns), Rows: [][]interface{}{}}, nil
 	}
 	return &ExecuteResult{Columns: columnNames(pathWeightColumns), Rows: [][]interface{}{{e.storage.(*graphIdentityStorage).outputPath(path), weight}}}, nil
 }
 
-func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp, latProp, lonProp string) ([]storage.NodeID, float64) {
+func (e *StorageExecutor) astar(ctx context.Context, startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp, latProp, lonProp string) ([]storage.NodeID, float64) {
 	endNode, err := e.getQueryNode(e.storage, endID)
 	if err != nil {
 		return nil, 0
@@ -201,7 +201,7 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 			continue
 		}
 		visited[current.nodeID] = true
-		for _, edge := range e.apocSteps(current.nodeID, steps) {
+		for _, edge := range e.apocSteps(ctx, current.nodeID, steps) {
 			neighbor := otherEnd(edge, current.nodeID)
 			if visited[neighbor] {
 				continue
@@ -241,7 +241,7 @@ func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args [
 	}
 	var paths [][]storage.NodeID
 	if maxNodes > 0 {
-		paths = e.findAllSimplePaths(startID, endID, steps, int(maxNodes))
+		paths = e.findAllSimplePaths(ctx, startID, endID, steps, int(maxNodes))
 	}
 	rows := make([][]interface{}, len(paths))
 	for i, path := range paths {
@@ -250,7 +250,7 @@ func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args [
 	return &ExecuteResult{Columns: columnNames(pathColumns), Rows: rows}, nil
 }
 
-func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, steps []apocRelationshipStep, maxDepth int) [][]storage.NodeID {
+func (e *StorageExecutor) findAllSimplePaths(ctx context.Context, startID, endID storage.NodeID, steps []apocRelationshipStep, maxDepth int) [][]storage.NodeID {
 	var result [][]storage.NodeID
 	visited := make(map[storage.NodeID]bool)
 	var dfs func(current storage.NodeID, path []storage.NodeID, depth int)
@@ -266,7 +266,7 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, step
 		}
 		visited[current] = true
 		defer func() { visited[current] = false }()
-		for _, edge := range e.apocSteps(current, steps) {
+		for _, edge := range e.apocSteps(ctx, current, steps) {
 			neighbor := otherEnd(edge, current)
 			if visited[neighbor] {
 				continue
@@ -281,7 +281,7 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, step
 // callApocAlgoPageRank computes PageRank.
 func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.algo.pageRank"
-	graph, nodes, config, err := e.readAlgorithmGraph(procedure, args)
+	graph, nodes, config, err := e.readAlgorithmGraph(ctx, procedure, args)
 	if err != nil {
 		return nil, err
 	}
@@ -293,77 +293,162 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 	if d, ok := toFloat64(config["dampingFactor"]); ok && d > 0 && d < 1 {
 		damping = d
 	}
-	scores := graph.computePageRank(nodes, damping, iterations)
+	scores, err := graph.computePageRank(ctx, nodes, damping, iterations)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	rows := graphAlgorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: columnNames(nodeScoreColumns), Rows: rows}, nil
 }
 
+// algorithmWork observes a whole-graph algorithm's caller after every
+// pipelineMaterializedCancelCheck units of its own loop work: a node visited, an
+// adjacency entry read, a predecessor or a scored entry charged. Each sweep that
+// can run over the population, or over one node's incidence, charges its
+// iterations here, so the work between two observations is bounded by that
+// stride however long the sweep is. The count is a local integer: no allocation
+// per record and no goroutine.
+type algorithmWork struct {
+	ctx  context.Context
+	left int
+}
+
+// algorithmWorkFor starts the work count of one algorithm pass.
+func algorithmWorkFor(ctx context.Context) algorithmWork {
+	return algorithmWork{ctx: ctx, left: pipelineMaterializedCancelCheck}
+}
+
+// charge counts one unit of algorithm work and returns the caller's error once
+// the stride is spent.
+func (w *algorithmWork) charge() error {
+	w.left--
+	if w.left > 0 {
+		return nil
+	}
+	w.left = pipelineMaterializedCancelCheck
+	return w.ctx.Err()
+}
+
 // computePageRank ranks the given nodes over the relationships between
 // them: a relationship to a node outside the set carries no score, and no
-// outside node is ranked (#1164).
-func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64, iterations int) map[storage.NodeID]float64 {
+// outside node is ranked (#1164). The caller's context is observed in the
+// adjacency scan, in every iteration and every pipelineMaterializedCancelCheck
+// units of a sweep (a score initialized, an adjacency entry, a reset score, a
+// dangling share or a target), so a canceled read retires the remaining rank
+// instead of finishing the pass.
+func (e *StorageExecutor) computePageRank(ctx context.Context, nodes []*storage.Node, damping float64, iterations int) (map[storage.NodeID]float64, error) {
 	if len(nodes) == 0 {
-		return map[storage.NodeID]float64{}
+		return map[storage.NodeID]float64{}, nil
 	}
 	n := float64(len(nodes))
+	work := algorithmWorkFor(ctx)
 	scores := make(map[storage.NodeID]float64, len(nodes))
 	newScores := make(map[storage.NodeID]float64, len(nodes))
 	for _, node := range nodes {
+		if err := work.charge(); err != nil {
+			return nil, err
+		}
 		scores[node.ID] = 1.0 / n
 	}
 	targets := make(map[storage.NodeID][]storage.NodeID, len(nodes))
 	for _, node := range nodes {
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
 		for _, edge := range edges {
+			if err := work.charge(); err != nil {
+				return nil, err
+			}
 			if _, inSet := scores[edge.EndNode]; inSet {
 				targets[node.ID] = append(targets[node.ID], edge.EndNode)
 			}
 		}
 	}
 	for i := 0; i < iterations; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for _, node := range nodes {
+			if err := work.charge(); err != nil {
+				return nil, err
+			}
 			newScores[node.ID] = (1.0 - damping) / n
 		}
 		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if len(targets[node.ID]) == 0 {
 				share := damping * scores[node.ID] / n
 				for _, other := range nodes {
+					if err := work.charge(); err != nil {
+						return nil, err
+					}
 					newScores[other.ID] += share
 				}
 				continue
 			}
 			share := damping * scores[node.ID] / float64(len(targets[node.ID]))
 			for _, target := range targets[node.ID] {
+				if err := work.charge(); err != nil {
+					return nil, err
+				}
 				newScores[target] += share
 			}
 		}
 		scores, newScores = newScores, scores
 	}
-	return scores
+	return scores, nil
 }
 
 // callApocAlgoBetweenness computes betweenness centrality.
 func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.betweenness", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.betweenness", args)
 	if err != nil {
 		return nil, err
 	}
-	scores := graph.computeBetweenness(nodes)
+	scores, err := graph.computeBetweenness(ctx, nodes)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	rows := graphAlgorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: columnNames(nodeScoreColumns), Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.NodeID]float64 {
+// computeBetweenness ranks the given nodes by the shortest paths between them
+// that pass through each node. The caller's context is observed per source, per
+// adjacency read and every pipelineMaterializedCancelCheck units of a sweep (an
+// incident entry, a source's initialized maps, a delta, a stacked node, a
+// predecessor or a normalized score), so a canceled read retires the remaining
+// rankings instead of finishing the pass.
+func (e *StorageExecutor) computeBetweenness(ctx context.Context, nodes []*storage.Node) (map[storage.NodeID]float64, error) {
+	work := algorithmWorkFor(ctx)
 	scores := make(map[storage.NodeID]float64)
 	for _, node := range nodes {
+		if err := work.charge(); err != nil {
+			return nil, err
+		}
 		scores[node.ID] = 0
 	}
 	for _, s := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		stack := []storage.NodeID{}
 		pred := make(map[storage.NodeID][]storage.NodeID)
 		sigma := make(map[storage.NodeID]float64)
 		dist := make(map[storage.NodeID]int)
 		for _, node := range nodes {
+			if err := work.charge(); err != nil {
+				return nil, err
+			}
 			pred[node.ID] = []storage.NodeID{}
 			sigma[node.ID] = 0
 			dist[node.ID] = -1
@@ -375,8 +460,14 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 			v := queue[0]
 			queue = queue[1:]
 			stack = append(stack, v)
-			edges, _ := e.storage.GetOutgoingEdges(v)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			edges, _ := e.storage.GetOutgoingEdges(ctx, v)
 			for _, edge := range edges {
+				if err := work.charge(); err != nil {
+					return nil, err
+				}
 				w := edge.EndNode
 				if dist[w] < 0 {
 					queue = append(queue, w)
@@ -390,12 +481,21 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 		}
 		delta := make(map[storage.NodeID]float64)
 		for _, node := range nodes {
+			if err := work.charge(); err != nil {
+				return nil, err
+			}
 			delta[node.ID] = 0
 		}
 		for len(stack) > 0 {
+			if err := work.charge(); err != nil {
+				return nil, err
+			}
 			w := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			for _, v := range pred[w] {
+				if err := work.charge(); err != nil {
+					return nil, err
+				}
 				delta[v] += (sigma[v] / sigma[w]) * (1 + delta[w])
 			}
 			if w != s.ID {
@@ -405,31 +505,55 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 	}
 	n := float64(len(nodes))
 	if n > 2 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		norm := 2.0 / ((n - 1) * (n - 2))
 		for id := range scores {
+			if err := work.charge(); err != nil {
+				return nil, err
+			}
 			scores[id] *= norm
 		}
 	}
-	return scores
+	return scores, nil
 }
 
 // callApocAlgoCloseness computes closeness centrality.
 func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.closeness", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.closeness", args)
 	if err != nil {
 		return nil, err
 	}
-	scores := graph.computeCloseness(nodes)
+	scores, err := graph.computeCloseness(ctx, nodes)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	rows := graphAlgorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: columnNames(nodeScoreColumns), Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.NodeID]float64 {
+// computeCloseness ranks the given nodes by how close they are to the nodes
+// they reach. The caller's context is observed per source, per adjacency read
+// and every pipelineMaterializedCancelCheck units of a sweep (a distance
+// initialized or an incident entry), so a canceled read retires the remaining
+// rankings instead of finishing the pass.
+func (e *StorageExecutor) computeCloseness(ctx context.Context, nodes []*storage.Node) (map[storage.NodeID]float64, error) {
+	work := algorithmWorkFor(ctx)
 	scores := make(map[storage.NodeID]float64)
 	n := len(nodes)
 	for _, source := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		dist := make(map[storage.NodeID]int)
 		for _, node := range nodes {
+			if err := work.charge(); err != nil {
+				return nil, err
+			}
 			dist[node.ID] = -1
 		}
 		dist[source.ID] = 0
@@ -439,8 +563,14 @@ func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.No
 		for len(queue) > 0 {
 			current := queue[0]
 			queue = queue[1:]
-			edges := e.getNodeEdges(current)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			edges := e.getNodeEdges(ctx, current)
 			for _, edge := range edges {
+				if err := work.charge(); err != nil {
+					return nil, err
+				}
 				neighbor := edge.EndNode
 				if edge.StartNode != current {
 					neighbor = edge.StartNode
@@ -459,7 +589,7 @@ func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.No
 			scores[source.ID] = 0
 		}
 	}
-	return scores
+	return scores, nil
 }
 
 // callApocNeighborsTohop gets neighbors up to N hops.
@@ -509,11 +639,11 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			outgoing, err := store.GetOutgoingEdges(nodeID)
+			outgoing, err := store.GetOutgoingEdges(ctx, nodeID)
 			if err != nil {
 				return nil, err
 			}
-			incoming, err := store.GetIncomingEdges(nodeID)
+			incoming, err := store.GetIncomingEdges(ctx, nodeID)
 			if err != nil {
 				return nil, err
 			}
@@ -652,11 +782,17 @@ func algorithmRows[T any](nodes []*storage.Node, values map[storage.NodeID]T) []
 }
 
 // renumberInNodeOrder numbers communities 0, 1, … by their first node in the
-// given nodes' order, so community IDs don't depend on map order (#1183).
-func renumberInNodeOrder(nodes []*storage.Node, communities map[storage.NodeID]int) map[storage.NodeID]int {
+// given nodes' order, so community IDs don't depend on map order (#1183). The
+// numbering is charged against the caller's context at the same stride as the
+// algorithm that asks for it.
+func renumberInNodeOrder(ctx context.Context, nodes []*storage.Node, communities map[storage.NodeID]int) (map[storage.NodeID]int, error) {
+	work := algorithmWorkFor(ctx)
 	numbers := make(map[int]int)
 	result := make(map[storage.NodeID]int, len(communities))
 	for _, node := range nodes {
+		if err := work.charge(); err != nil {
+			return nil, err
+		}
 		community, ok := communities[node.ID]
 		if !ok {
 			continue
@@ -668,21 +804,21 @@ func renumberInNodeOrder(nodes []*storage.Node, communities map[storage.NodeID]i
 		}
 		result[node.ID] = number
 	}
-	return result
+	return result, nil
 }
 
 // algorithmNodes reads the nodes a whole-graph algorithm runs over from its
 // first argument: a LIST<NODE> (APOC's form: MATCH (n:L) WITH collect(n) AS
 // nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
 // one), or none, null, an empty string or an empty list for every node.
-func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) ([]*storage.Node, error) {
+func (e *StorageExecutor) algorithmNodes(ctx context.Context, procedure string, args []interface{}) ([]*storage.Node, error) {
 	value := procedureArgument(args, 0)
 	typeError := func() error {
 		return procedureArgumentTypeError(procedure, "nodes", "LIST<NODE> or STRING", procedureArgument(args, 0))
 	}
 	if items, isList := cypherListValue(value); isList {
 		if len(items) == 0 {
-			return nodesInIDOrder(e.storage.GetAllNodes()), nil
+			return allNodesInIDOrder(ctx, e.storage)
 		}
 		if _, isNode := items[0].(*storage.Node); isNode {
 			nodes := make([]*storage.Node, 0, len(items))
@@ -702,12 +838,15 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 	}
 	switch label := value.(type) {
 	case nil:
-		return nodesInIDOrder(e.storage.GetAllNodes()), nil
+		return allNodesInIDOrder(ctx, e.storage)
 	case string:
 		if label == "" {
-			return nodesInIDOrder(e.storage.GetAllNodes()), nil
+			return allNodesInIDOrder(ctx, e.storage)
 		}
-		nodes, _ := e.storage.GetNodesByLabel(label)
+		nodes, err := e.storage.GetNodesByLabel(ctx, label)
+		if err != nil {
+			return nil, err
+		}
 		return nodesInIDOrder(nodes), nil
 	default:
 		return nil, typeError()
@@ -718,6 +857,14 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 // the same graph gives the same order on every engine (#1183); a node list
 // the caller passes keeps its order. It sorts a copy: storage may share the
 // slice it returns.
+func allNodesInIDOrder(ctx context.Context, engine storage.Engine) ([]*storage.Node, error) {
+	nodes, err := engine.AllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return nodesInIDOrder(nodes), nil
+}
+
 func nodesInIDOrder(nodes []*storage.Node) []*storage.Node {
 	sorted := append([]*storage.Node(nil), nodes...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })

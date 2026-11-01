@@ -60,7 +60,7 @@ func TestStatementRemoteEngineRunsEveryOperationThroughItsRunner(t *testing.T) {
 		"BulkDeleteNodes": {run: func(engine *RemoteEngine) error { return engine.BulkDeleteNodes([]NodeID{"n2"}) }},
 		"BulkDeleteEdges": {run: func(engine *RemoteEngine) error { return engine.BulkDeleteEdges([]EdgeID{"e2"}) }},
 		"GetNodesByLabel": {read: true, run: func(engine *RemoteEngine) error {
-			_, err := engine.GetNodesByLabel("Person")
+			_, err := engine.GetNodesByLabel(context.Background(), "Person")
 			return err
 		}},
 		"NodeCount": {read: true, run: func(engine *RemoteEngine) error {

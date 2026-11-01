@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
@@ -309,7 +310,7 @@ func interpolationEnd(query string, open int) int {
 // fnInterpolate is an interpolated value as text: a string, boolean, number,
 // temporal value or duration as toString writes it; null for null; any other
 // value is Neo4j's TypeError.
-func fnInterpolate(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnInterpolate(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil || len(values) != 1 || values[0] == nil {
 		return nil, err
@@ -328,7 +329,7 @@ func fnInterpolate(ctx cypherfn.Context, args []string) (interface{}, error) {
 // fnMapFromPairs is the map a map comprehension builds from its [key, value]
 // pairs, as Neo4j does: a later key replaces an earlier one, a null value is
 // kept, and a key that isn't a string is a TypeError.
-func fnMapFromPairs(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnMapFromPairs(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil || len(values) != 1 || values[0] == nil {
 		return nil, err

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -49,7 +50,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				}
 				assertGraph := func() {
 					t.Helper()
-					nodes, err := target.GetNodesByLabel("Doc")
+					nodes, err := target.GetNodesByLabel(context.Background(), "Doc")
 					require.NoError(t, err)
 					actual := make(map[NodeID]string, len(nodes))
 					owners := make(map[string]NodeID, len(nodes))
@@ -225,7 +226,7 @@ func TestPR1655UniqueTransitionsStaleWriterAfterReuse(t *testing.T) {
 				require.Equal(t, "old", third.Properties["id"])
 				_, err = target.GetNode("marker")
 				require.ErrorIs(t, err, ErrNotFound)
-				nodes, err := target.GetNodesByLabel("Doc")
+				nodes, err := target.GetNodesByLabel(context.Background(), "Doc")
 				require.NoError(t, err)
 				require.Len(t, nodes, 2)
 			})
@@ -292,7 +293,7 @@ func TestPR1655UniqueTransitionsPrefixReleasesClaim(t *testing.T) {
 			}
 			require.NoError(t, engine.FlushWriteBehind(nil))
 			for _, store := range []*NamespacedEngine{target, other} {
-				nodes, err := store.GetNodesByLabel("Doc")
+				nodes, err := store.GetNodesByLabel(context.Background(), "Doc")
 				require.NoError(t, err)
 				require.Len(t, nodes, 2)
 				keeper, err := store.GetNode("keeper")
@@ -353,7 +354,7 @@ func TestPR1655UniqueTransitionsConcurrentPrefixReuse(t *testing.T) {
 			_, err = target.CreateNode(&Node{ID: "duplicate", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "reclaimed"}})
 			var violation *ConstraintViolationError
 			require.ErrorAs(t, err, &violation, "bulk retirement cannot erase the peer's later reservation")
-			nodes, err := target.GetNodesByLabel("Doc")
+			nodes, err := target.GetNodesByLabel(context.Background(), "Doc")
 			require.NoError(t, err)
 			require.Len(t, nodes, 1)
 		})
@@ -464,7 +465,7 @@ func TestPR1655UniqueTransitionsBufferedDeleteThenReuse(t *testing.T) {
 					require.ErrorAs(t, err, &violation, "old replay cannot erase a reused %s claim", property)
 					require.Equal(t, []string{property}, violation.Properties)
 				}
-				nodes, err := target.GetNodesByLabel("Doc")
+				nodes, err := target.GetNodesByLabel(context.Background(), "Doc")
 				require.NoError(t, err)
 				require.Len(t, nodes, 1)
 				_, err = target.GetNode("old-owner")
@@ -526,7 +527,7 @@ func TestPR1655UniqueTransitionsIntermediateAcknowledgedClaims(t *testing.T) {
 				require.Equal(t, value, node.Properties["id"])
 				require.Equal(t, "code-"+value, node.Properties["code"])
 			}
-			nodes, err := target.GetNodesByLabel("Doc")
+			nodes, err := target.GetNodesByLabel(context.Background(), "Doc")
 			require.NoError(t, err)
 			require.Len(t, nodes, 2)
 		})

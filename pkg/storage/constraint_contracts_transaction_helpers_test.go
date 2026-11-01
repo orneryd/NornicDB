@@ -41,11 +41,11 @@ func TestConstraintContracts_CurrentStateHelpers(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, e)
 
-	out, err := tx.currentOutgoingEdgesLocked("test:a")
+	out, err := tx.currentDirectedEdgesLocked("test:a", adjacencyOutgoing)
 	require.NoError(t, err)
 	require.NotEmpty(t, out)
 
-	in, err := tx.currentIncomingEdgesLocked("test:b")
+	in, err := tx.currentDirectedEdgesLocked("test:b", adjacencyIncoming)
 	require.NoError(t, err)
 	require.NotEmpty(t, in)
 

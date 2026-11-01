@@ -277,123 +277,68 @@ func (c *CompositeEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 
 // --- MVCC indexed visibility: merge across all readable constituents.
 
-func (c *CompositeEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
-	var merged []*Node
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-			nodes, err := provider.GetNodesByLabelVisibleAt(label, version)
-			if err != nil {
-				return nil, err
+func (c *CompositeEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
+	return materializeConstituents(c, ctx, c.getConstituentsForRead(),
+		func(engine Engine) ([]*Node, error) {
+			if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+				return provider.GetNodesByLabelVisibleAt(ctx, label, version)
 			}
-			for _, node := range nodes {
-				merged = append(merged, c.sourceNode(alias, engine, node))
-			}
-			continue
-		}
-		nodes, err := engine.GetNodesByLabel(label)
-		if err != nil {
-			return nil, err
-		}
-		for _, node := range nodes {
-			merged = append(merged, c.sourceNode(alias, engine, node))
-		}
-	}
-	return merged, nil
+			return engine.GetNodesByLabel(ctx, label)
+		},
+		nodeFromDatabase,
+		compositeFanOutPublishesRaw,
+	)
 }
 
-func (c *CompositeEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (c *CompositeEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	aliases, local, _ := c.constituentsForEntity("4", string(nodeID))
 	nodeID = NodeID(local)
-	var merged []*Edge
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-			edges, err := provider.GetOutgoingEdgesVisibleAt(nodeID, version)
-			if err != nil {
-				return nil, err
+
+	return materializeConstituents(c, ctx, aliases,
+		func(engine Engine) ([]*Edge, error) {
+			if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+				return provider.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
 			}
-			for _, edge := range edges {
-				merged = append(merged, c.sourceEdge(alias, engine, edge))
-			}
-			continue
-		}
-		edges, err := engine.GetOutgoingEdges(nodeID)
-		if err != nil {
-			return nil, err
-		}
-		for _, edge := range edges {
-			merged = append(merged, c.sourceEdge(alias, engine, edge))
-		}
-	}
-	return merged, nil
+			return engine.GetOutgoingEdges(ctx, nodeID)
+		},
+		edgeFromDatabase,
+		compositeFanOutPublishesRaw,
+	)
 }
 
-func (c *CompositeEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (c *CompositeEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	aliases, local, _ := c.constituentsForEntity("4", string(nodeID))
 	nodeID = NodeID(local)
-	var merged []*Edge
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-			edges, err := provider.GetIncomingEdgesVisibleAt(nodeID, version)
-			if err != nil {
-				return nil, err
+
+	return materializeConstituents(c, ctx, aliases,
+		func(engine Engine) ([]*Edge, error) {
+			if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+				return provider.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
 			}
-			for _, edge := range edges {
-				merged = append(merged, c.sourceEdge(alias, engine, edge))
-			}
-			continue
-		}
-		edges, err := engine.GetIncomingEdges(nodeID)
-		if err != nil {
-			return nil, err
-		}
-		for _, edge := range edges {
-			merged = append(merged, c.sourceEdge(alias, engine, edge))
-		}
-	}
-	return merged, nil
+			return engine.GetIncomingEdges(ctx, nodeID)
+		},
+		edgeFromDatabase,
+		compositeFanOutPublishesRaw,
+	)
 }
 
-func (c *CompositeEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
-	var merged []*Edge
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-			edges, err := provider.GetEdgesByTypeVisibleAt(edgeType, version)
-			if err != nil {
-				return nil, err
+func (c *CompositeEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
+	return materializeConstituents(c, ctx, c.getConstituentsForRead(),
+		func(engine Engine) ([]*Edge, error) {
+			if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+				return provider.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
 			}
-			for _, edge := range edges {
-				merged = append(merged, c.sourceEdge(alias, engine, edge))
-			}
-			continue
-		}
-		edges, err := engine.GetEdgesByType(edgeType)
-		if err != nil {
-			return nil, err
-		}
-		for _, edge := range edges {
-			merged = append(merged, c.sourceEdge(alias, engine, edge))
-		}
-	}
-	return merged, nil
+			return engine.GetEdgesByType(ctx, edgeType)
+		},
+		edgeFromDatabase,
+		compositeFanOutPublishesRaw,
+	)
 }
 
-func (c *CompositeEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (c *CompositeEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if engine, start, end, qualified := c.constituentForNodePair(startID, endID); qualified {
 		if engine == nil {
 			return nil, nil
@@ -401,42 +346,32 @@ func (c *CompositeEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, versio
 		var edges []*Edge
 		var err error
 		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-			edges, err = provider.GetEdgesBetweenVisibleAt(start, end, version)
+			edges, err = provider.GetEdgesBetweenVisibleAt(ctx, start, end, version)
 		} else {
-			edges, err = engine.GetEdgesBetween(start, end)
+			edges, err = engine.GetEdgesBetween(ctx, start, end)
 		}
-		return edgesFromDatabase(edges, nodePairDatabase(startID, endID)), err
+		projected, projectionErr := entitiesFromDatabase(ctx, edges, nodePairDatabase(startID, endID))
+		if projectionErr != nil {
+			return nil, projectionErr
+		}
+		return projected, err
 	}
-	var merged []*Edge
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-			edges, err := provider.GetEdgesBetweenVisibleAt(startID, endID, version)
-			if err != nil {
-				return nil, err
+
+	return materializeConstituents(c, ctx, c.getConstituentsForRead(),
+		func(engine Engine) ([]*Edge, error) {
+			if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+				return provider.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
 			}
-			for _, edge := range edges {
-				merged = append(merged, c.sourceEdge(alias, engine, edge))
-			}
-			continue
-		}
-		edges, err := engine.GetEdgesBetween(startID, endID)
-		if err != nil {
-			return nil, err
-		}
-		for _, edge := range edges {
-			merged = append(merged, c.sourceEdge(alias, engine, edge))
-		}
-	}
-	return merged, nil
+			return engine.GetEdgesBetween(ctx, startID, endID)
+		},
+		edgeFromDatabase,
+		compositeFanOutPublishesRaw,
+	)
 }
 
 // --- Label ID iteration merges constituents with deduplication.
 
-func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error {
+func (c *CompositeEngine) ForEachNodeIDByLabel(ctx context.Context, label string, visit func(NodeID) bool) error {
 	if visit == nil {
 		return nil
 	}
@@ -447,7 +382,7 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 		}
 		stop := false
 		if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
-			err = lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
+			err = lookup.ForEachNodeIDByLabel(ctx, label, func(id NodeID) bool {
 				if !visit(c.constituentNodeElementID(alias, engine, id)) {
 					stop = true
 					return false
@@ -455,7 +390,7 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 				return true
 			})
 		} else {
-			nodes, listErr := engine.GetNodesByLabel(label)
+			nodes, listErr := engine.GetNodesByLabel(ctx, label)
 			if listErr != nil {
 				return listErr
 			}
@@ -523,7 +458,10 @@ func (c *CompositeEngine) IterateNodes(fn func(*Node) bool) error {
 			}
 			continue
 		}
-		nodes, err := engine.AllNodes()
+		// IterateNodes keeps its existing public API (no caller context): the
+		// constituent walk runs on context.Background at this context-free
+		// entrance, not on a forwarded default.
+		nodes, err := engine.AllNodes(context.Background())
 		if err != nil {
 			return err
 		}

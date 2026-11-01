@@ -163,7 +163,7 @@ func TestGh683_CompositeTerminalContext(t *testing.T) {
 			}
 			shard, err := manager.GetStorage("share_shard")
 			require.NoError(t, err)
-			nodes, err := shard.GetNodesByLabel("TxShare")
+			nodes, err := shard.GetNodesByLabel(ctx, "TxShare")
 			require.NoError(t, err)
 			if canceledCommit {
 				require.Empty(t, nodes)

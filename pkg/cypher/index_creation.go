@@ -31,7 +31,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 				if name == "" {
 					name = fmt.Sprintf("index_%s_%s", legacy.label, strings.Join(legacy.properties, "_"))
 				}
-				if err := e.addPropertyIndex(name, legacy.label, legacy.properties); err != nil {
+				if err := e.addPropertyIndex(ctx, name, legacy.label, legacy.properties); err != nil {
 					return nil, err
 				}
 				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -85,7 +85,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			if err := e.storage.GetSchema().AddRangeIndexForEntity(name, label, parsed.properties, entityType); err != nil {
 				return nil, err
 			}
-		} else if err := e.addPropertyIndex(name, label, parsed.properties); err != nil {
+		} else if err := e.addPropertyIndex(ctx, name, label, parsed.properties); err != nil {
 			return nil, err
 		}
 	}

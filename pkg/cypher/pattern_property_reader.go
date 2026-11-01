@@ -1,6 +1,8 @@
 package cypher
 
-import "context"
+import (
+	"context"
+)
 
 // patternPropertyReader chooses the phase of the shared pattern reader.
 // Execution supplies parsePropertyMap; inspection reads only property keys.

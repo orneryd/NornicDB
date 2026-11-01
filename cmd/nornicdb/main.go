@@ -1846,7 +1846,7 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 		return newCommandError(cmd, localization.NornicDBCLIDecaySuppressStorage(), nil)
 	}
 
-	nodes, err := db.GetStorage().AllNodes()
+	nodes, err := db.GetStorage().AllNodes(cmd.Context())
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLILoadNodesFailed(err), err)
 	}
@@ -1923,7 +1923,7 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 		return newCommandError(cmd, localization.NornicDBCLIDecayStatsStorage(), nil)
 	}
 
-	nodes, err := db.GetStorage().AllNodes()
+	nodes, err := db.GetStorage().AllNodes(cmd.Context())
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLILoadNodesFailed(err), err)
 	}

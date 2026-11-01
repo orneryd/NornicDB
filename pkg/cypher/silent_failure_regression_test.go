@@ -38,7 +38,7 @@ func TestInvalidCypherCannotSilentlyWriteOrReturnText(t *testing.T) {
 			require.NoError(t, err)
 			_, err = exec.Execute(context.Background(), query, nil)
 			require.Error(t, err)
-			nodes, err := engine.AllNodes()
+			nodes, err := engine.AllNodes(context.Background())
 			require.NoError(t, err)
 			require.Len(t, nodes, 1, "query: %s", query)
 		})

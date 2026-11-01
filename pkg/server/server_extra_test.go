@@ -835,9 +835,9 @@ func TestHeimdallRouterAndHelpers(t *testing.T) {
 	assert.NoError(t, err)
 	err = mem.CreateEdge(&storage.Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "REL"})
 	assert.NoError(t, err)
-	related := router.getRelatedNodes(mem, "nornic:n1", 1)
+	related := router.getRelatedNodes(context.Background(), mem, "nornic:n1", 1)
 	assert.Len(t, related, 1)
-	assert.Nil(t, router.getRelatedNodes(mem, "nornic:n1", 0))
+	assert.Nil(t, router.getRelatedNodes(context.Background(), mem, "nornic:n1", 0))
 
 	assert.Equal(t, "A", getFirstLabel([]string{"A", "B"}))
 	assert.Equal(t, "", getFirstLabel(nil))

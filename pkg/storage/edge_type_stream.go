@@ -61,7 +61,9 @@ func StreamEdgesByType(ctx context.Context, engine Engine, edgeType string, visi
 	if streamer, ok := engine.(EdgeTypeStreamer); ok {
 		return streamer.StreamEdgesByType(ctx, edgeType, visit)
 	}
-	return visitEdgeSlice(ctx, engine.GetEdgesByType, edgeType, visit)
+	return visitEdgeSlice(ctx, func(edgeType string) ([]*Edge, error) {
+		return engine.GetEdgesByType(ctx, edgeType)
+	}, edgeType, visit)
 }
 
 // streamEdgesByTypeInScope is the scoped stream of an inner engine for the
@@ -153,14 +155,18 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 	// edge overlay.
 	var overlay []*Edge
 	var touched map[EdgeID]bool
+	var captureErr error
 	capture := func(w *WriteBehindBuffer) {
+		request := bufferedEntityRead{kind: bufferedEdges, prefix: scope}
 		if edgeType != "" {
-			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope})
-			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
-		} else {
-			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges, prefix: scope})
-			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+			request = bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope}
 		}
+		pendingEdges, err := b.readBufferedEntities(ctx, w, v, request)
+		if err != nil {
+			captureErr = err
+			return
+		}
+		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
 
 	nowNanos := DecayScoringTime()
@@ -174,6 +180,9 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 		return visit(edge)
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr // the canceled capture retires the scan
+		}
 		if edgeType == "" {
 			var offer storedEdgeBodyVisitor
 			if body != nil && v == storedRead {
@@ -315,7 +324,7 @@ func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, 
 	}
 	return view(func(txn *badger.Txn) error {
 		if edgeType == "" {
-			return b.iterateEdgesAtInTxn(txn, version, v, func(edge *Edge) error {
+			return b.iterateEdgesAtInTxn(ctx, txn, version, v, func(edge *Edge) error {
 				if edge == nil || !edgeIDInScope(edge.ID, scope) {
 					return nil
 				}

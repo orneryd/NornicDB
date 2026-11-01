@@ -80,8 +80,12 @@ type schemaTypePropertiesErrEngine struct {
 	err error
 }
 
-func (e *schemaTypePropertiesErrEngine) AllNodes() ([]*storage.Node, error) { return nil, e.err }
-func (e *schemaTypePropertiesErrEngine) AllEdges() ([]*storage.Edge, error) { return nil, e.err }
+func (e *schemaTypePropertiesErrEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return nil, e.err
+}
+func (e *schemaTypePropertiesErrEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
+	return nil, e.err
+}
 
 func TestSchemaTypePropertiesStoreError(t *testing.T) {
 	scanErr := errors.New("scan failed")

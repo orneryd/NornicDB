@@ -266,11 +266,11 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 
 func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}

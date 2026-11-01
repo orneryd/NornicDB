@@ -48,22 +48,22 @@ func TestSnapshotOverlayCaptureClasses(t *testing.T) {
 					point = w.entityStateLocked(bufferedNodeEntity, "test:a")
 					deleted = w.entityStateLocked(bufferedNodeEntity, "test:gone").deleted
 				case "label":
-					nodes, touchedNodes = w.labelOverlayLocked("Live")
+					nodes, touchedNodes, _ = w.labelOverlayLocked(context.Background(), "Live")
 				case "all-nodes":
-					nodes, touchedNodes = w.allNodesOverlayLocked()
+					nodes, touchedNodes, _ = w.allNodesOverlayLocked(context.Background())
 				case "type":
-					edges, touchedEdges = w.typeOverlayLocked("REL")
+					edges, touchedEdges, _ = w.typeOverlayLocked(context.Background(), "REL")
 				case "all-edges":
-					edges, touchedEdges = w.allEdgesOverlayLocked()
+					edges, touchedEdges, _ = w.allEdgesOverlayLocked(context.Background())
 				case "outgoing":
-					edges, _, _ = w.edgeAdjacencyOverlayLocked("test:a", true)
+					edges, _, _, _ = w.edgeAdjacencyOverlayLocked(context.Background(), "test:a", true)
 				case "incoming":
-					edges, _, _ = w.edgeAdjacencyOverlayLocked("test:b", false)
+					edges, _, _, _ = w.edgeAdjacencyOverlayLocked(context.Background(), "test:b", false)
 				case "between":
-					edges, _, _, _ = w.edgesBetweenOverlayLocked("test:a", "test:b")
+					edges, _, _, _, _ = w.edgesBetweenOverlayLocked(context.Background(), "test:a", "test:b")
 				case "node-edge-snapshot":
-					nodes, touchedNodes = w.allNodesOverlayLocked()
-					edges, touchedEdges = w.allEdgesOverlayLocked()
+					nodes, touchedNodes, _ = w.allNodesOverlayLocked(context.Background())
+					edges, touchedEdges, _ = w.allEdgesOverlayLocked(context.Background())
 				}
 			})
 			require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestSnapshotOverlayPublicReaderClasses(t *testing.T) {
 			_, err = read("test:gone")
 			require.ErrorIs(t, err, ErrNotFound)
 		}
-		for _, read := range []func([]NodeID) (map[NodeID]*Node, error){b.BatchGetNodes, b.BatchGetNodesWithoutEmbeddings} {
+		for _, read := range []func([]NodeID) (map[NodeID]*Node, error){func(ids []NodeID) (map[NodeID]*Node, error) { return b.BatchGetNodes(ctx, ids) }, func(ids []NodeID) (map[NodeID]*Node, error) { return b.BatchGetNodesWithoutEmbeddings(ctx, ids) }} {
 			n, err := read([]NodeID{"test:a", "test:new", "test:gone"})
 			require.NoError(t, err)
 			require.Len(t, n, 2)
@@ -121,16 +121,16 @@ func TestSnapshotOverlayPublicReaderClasses(t *testing.T) {
 		labels, err := b.HasLabelBatch([]NodeID{"test:a", "test:new", "test:gone"}, "Live")
 		require.NoError(t, err)
 		require.Len(t, labels, 2)
-		nodes, err := b.GetNodesByLabelInScope("test", "Live")
+		nodes, err := b.GetNodesByLabelInScope(ctx, "test", "Live")
 		require.NoError(t, err)
 		require.Len(t, nodes, 2)
-		nodes, err = b.GetNodesByLabel("Old")
+		nodes, err = b.GetNodesByLabel(ctx, "Old")
 		require.NoError(t, err)
 		require.Len(t, nodes, 1)
-		nodes, err = b.AllNodes()
+		nodes, err = b.AllNodes(ctx)
 		require.NoError(t, err)
 		require.Len(t, nodes, 3)
-		for _, read := range []func() ([]*Edge, error){func() ([]*Edge, error) { return b.GetOutgoingEdges("test:a") }, func() ([]*Edge, error) { return b.GetIncomingEdges("test:b") }, func() ([]*Edge, error) { return b.GetEdgesBetween("test:a", "test:b") }, func() ([]*Edge, error) { return b.GetEdgesByType("REL") }, b.AllEdges} {
+		for _, read := range []func() ([]*Edge, error){func() ([]*Edge, error) { return b.GetOutgoingEdges(ctx, "test:a") }, func() ([]*Edge, error) { return b.GetIncomingEdges(ctx, "test:b") }, func() ([]*Edge, error) { return b.GetEdgesBetween(ctx, "test:a", "test:b") }, func() ([]*Edge, error) { return b.GetEdgesByType(ctx, "REL") }, func() ([]*Edge, error) { return b.AllEdges(ctx) }} {
 			edges, err := read()
 			require.NoError(t, err)
 			require.Len(t, edges, 1)
@@ -143,7 +143,7 @@ func TestSnapshotOverlayPublicReaderClasses(t *testing.T) {
 		edges, err := b.MatchEdgesBetween("test:a", "test:b", "REL", []string{"v"}, func(e *Edge) bool { return e.Properties["v"] == int64(2) })
 		require.NoError(t, err)
 		require.Len(t, edges, 1)
-		out, in, err := b.GetAdjacentEdges("test:a")
+		out, in, err := b.GetAdjacentEdges(ctx, "test:a")
 		require.NoError(t, err)
 		require.Len(t, out, 1)
 		require.Empty(t, in)
@@ -166,7 +166,7 @@ func TestSnapshotOverlayPublicReaderClasses(t *testing.T) {
 			require.Equal(t, 3, n)
 		}
 		n = 0
-		require.NoError(t, b.StreamNodesByLabelProjectedInScope("test", "Live", []string{"v"}, func(*Node) error { n++; return nil }))
+		require.NoError(t, b.StreamNodesByLabelProjectedInScope(ctx, "test", "Live", []string{"v"}, func(*Node) error { n++; return nil }))
 		require.Equal(t, 2, n)
 		for _, stream := range []func(func(*Edge) error) error{func(fn func(*Edge) error) error { return b.StreamEdges(ctx, fn) }, func(fn func(*Edge) error) error { return b.StreamEdgesByTypeInScope(ctx, "test", "REL", fn) }} {
 			n = 0
@@ -220,7 +220,7 @@ func TestSnapshotOverlayStreamRetainsViewAcrossReplay(t *testing.T) {
 			case "nodes":
 				err = b.StreamNodes(context.Background(), nodeFn)
 			case "label":
-				err = b.StreamNodesByLabelProjected("Live", nil, nodeFn)
+				err = b.StreamNodesByLabelProjected(context.Background(), "Live", nil, nodeFn)
 			case "edges":
 				err = b.StreamEdges(context.Background(), edgeFn)
 			case "type":
@@ -257,7 +257,7 @@ func TestSnapshotOverlayTransactionOwnWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(3), n.Properties["v"])
 	require.NoError(t, tx.DeleteEdge("test:r"))
-	edges, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
+	edges, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
 	require.NoError(t, err)
 	require.Empty(t, edges)
 	_, err = tx.GetEdge("test:r")
@@ -323,7 +323,7 @@ func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetNamespace("test"))
-			err = tx.StreamNodesByLabelProjected("Live", []string{"v"}, func(*Node) error {
+			err = tx.StreamNodesByLabelProjected(context.Background(), "Live", []string{"v"}, func(*Node) error {
 				if stopEarly {
 					return ErrIterationStopped
 				}
@@ -345,7 +345,7 @@ func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
 			require.NoError(t, writer.Commit())
 			check := func() {
 				var ids []NodeID
-				require.NoError(t, tx.StreamNodesByLabelProjected("Live", []string{"v"}, func(n *Node) error {
+				require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Live", []string{"v"}, func(n *Node) error {
 					ids = append(ids, n.ID)
 					return nil
 				}))

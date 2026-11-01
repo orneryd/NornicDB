@@ -17,15 +17,15 @@ func ensureBuiltInProceduresRegistered() {
 	builtinProcedureRegistryOnce.Do(func() {
 		registerProcedure(tokenListingProcedureSpec("db.labels", dbLabelsColumns, "A label within the database."),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbLabels()
+				return e.callDbLabels(ctx)
 			})
 		registerProcedure(tokenListingProcedureSpec("db.relationshipTypes", dbRelationshipTypesColumns, "A relationship type in the database."),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbRelationshipTypes()
+				return e.callDbRelationshipTypes(ctx)
 			})
 		registerProcedure(tokenListingProcedureSpec("db.propertyKeys", dbPropertyKeysColumns, "A property key in the database."),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbPropertyKeys()
+				return e.callDbPropertyKeys(ctx)
 			})
 		registerBuiltInProcedure("db.indexes", procedureReturnSignature("db.indexes()", dbIndexesColumns), localization.CypherProcedureMetadata("db.indexes"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -77,20 +77,20 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("db.schema.nodeProperties", procedureReturnSignature("db.schema.nodeProperties()", dbSchemaNodePropertiesColumns), localization.CypherProcedureMetadata("db.schema.nodeProperties"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbSchemaNodeProperties()
+				return e.callDbSchemaNodeProperties(ctx)
 			})
 		registerBuiltInProcedure("db.schema.relProperties", procedureReturnSignature("db.schema.relProperties()", dbSchemaRelPropertiesColumns), localization.CypherProcedureMetadata("db.schema.relProperties"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbSchemaRelProperties()
+				return e.callDbSchemaRelProperties(ctx)
 			})
 
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryNodes", nodeScoreColumns),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryNodes(args)
+				return e.callDbIndexFulltextQueryNodes(ctx, args)
 			})
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryRelationships", relationshipScoreColumns),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryRelationships(args)
+				return e.callDbIndexFulltextQueryRelationships(ctx, args)
 			})
 		registerBuiltInProcedure("db.index.fulltext.createNodeIndex", "db.index.fulltext.createNodeIndex(indexName :: STRING, labels :: LIST<STRING>, properties :: LIST<STRING>)", localization.CypherProcedureMetadata("db.index.fulltext.createNodeIndex"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -269,7 +269,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("nornicdb.stats", procedureReturnSignature("nornicdb.stats()", nornicdbStatsColumns), localization.CypherProcedureMetadata("nornicdb.stats"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callNornicDbStats()
+				return e.callNornicDbStats(ctx)
 			})
 		registerBuiltInProcedure("kp.decayInfo", procedureReturnSignature("kp.decayInfo()", kpDecayInfoColumns), localization.CypherProcedureMetadata("kp.decayInfo"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -556,33 +556,21 @@ func ensureBuiltInProceduresRegistered() {
 				return e.callApocNeighborsByhop(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.load.json", procedureReturnSignature("apoc.load.json(urlOrKeyOrBinary :: STRING, path :: STRING = '', config :: MAP = {})", valueMapColumns), "Loads JSON", ProcedureModeRead, 1, 3, false,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocLoadJson(ctx, args)
-			})
+			jsonLoadProcedure("apoc.load.json"))
 		registerBuiltInProcedureLiteral("apoc.load.jsonArray", procedureReturnSignature("apoc.load.jsonArray(urlOrKeyOrBinary :: STRING, path :: STRING = '', config :: MAP = {})", valueMapColumns), "Loads JSON array", ProcedureModeRead, 1, 3, false,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocLoadJsonArray(ctx, args)
-			})
+			jsonLoadProcedure("apoc.load.jsonArray"))
 		registerBuiltInProcedureLiteral("apoc.load.csv", procedureReturnSignature("apoc.load.csv(urlOrBinary :: STRING, config :: MAP = {}, nullValues :: LIST<STRING> = [])", apocLoadCsvColumns), "Loads CSV", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocLoadCsv(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.export.json.all", procedureReturnSignature("apoc.export.json.all(file :: STRING, config :: MAP = {})", apocExportColumns), "Exports graph to JSON", ProcedureModeRead, 1, 2, false,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocExportJsonAll(ctx, args)
-			})
+			exportProcedure(exportJSONGraphDeclaration))
 		registerStatementProcedureLiteral("apoc.export.json.query", procedureReturnSignature("apoc.export.json.query(query :: STRING, file :: STRING, config :: MAP = {})", apocExportColumns), "Exports query result to JSON", ProcedureModeRead, 2, 3, false,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocExportJsonQuery(ctx, args)
-			})
+			exportProcedure(exportJSONQueryDeclaration))
 		registerBuiltInProcedureLiteral("apoc.export.csv.all", procedureReturnSignature("apoc.export.csv.all(file :: STRING, config :: MAP = {})", apocExportColumns), "Exports graph to CSV", ProcedureModeRead, 1, 2, false,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocExportCsvAll(ctx, args)
-			})
+			exportProcedure(exportCSVGraphDeclaration))
 		registerStatementProcedureLiteral("apoc.export.csv.query", procedureReturnSignature("apoc.export.csv.query(query :: STRING, file :: STRING, config :: MAP = {})", apocExportColumns), "Exports query result to CSV", ProcedureModeRead, 2, 3, false,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocExportCsvQuery(ctx, args)
-			})
+			exportProcedure(exportCSVQueryDeclaration))
 		registerBuiltInProcedureLiteral("apoc.import.json", procedureReturnSignature("apoc.import.json(url :: STRING, config :: MAP = {})", apocImportJsonColumns), "Imports JSON", ProcedureModeWrite, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocImportJson(ctx, args)

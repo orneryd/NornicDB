@@ -16,31 +16,31 @@ type getNodesByLabelErrorEngine struct {
 	errOnLabel string
 }
 
-func (e *getNodesByLabelErrorEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *getNodesByLabelErrorEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if label == e.errOnLabel {
 		return nil, fmt.Errorf("forced label lookup error for %s", label)
 	}
-	return e.MemoryEngine.GetNodesByLabel(label)
+	return e.MemoryEngine.GetNodesByLabel(ctx, label)
 }
 
 // The database wrapper delegates label reads through the scoped methods
 // (storage.ScopedLabelNodeReader); without these overrides the embedded
 // engine's ones would bypass the fake.
-func (e *getNodesByLabelErrorEngine) GetNodesByLabelInScope(_, label string) ([]*storage.Node, error) {
-	return e.GetNodesByLabel(label)
+func (e *getNodesByLabelErrorEngine) GetNodesByLabelInScope(ctx context.Context, _, label string) ([]*storage.Node, error) {
+	return e.GetNodesByLabel(ctx, label)
 }
 
 // Index backfills read stored nodes (storage.StoredEntityReader and its
 // scoped form), so the fake fails those label reads too.
-func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if label == e.errOnLabel {
 		return nil, fmt.Errorf("forced label lookup error for %s", label)
 	}
-	return e.MemoryEngine.GetStoredNodesByLabel(label)
+	return e.MemoryEngine.GetStoredNodesByLabel(ctx, label)
 }
 
-func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabelInScope(_, label string) ([]*storage.Node, error) {
-	return e.GetStoredNodesByLabel(label)
+func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabelInScope(ctx context.Context, _, label string) ([]*storage.Node, error) {
+	return e.GetStoredNodesByLabel(ctx, label)
 }
 
 func TestSchema_CreateIndexBranches(t *testing.T) {
@@ -137,7 +137,7 @@ func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, errStore.GetSchema().AddPropertyIndex("idx_err_label", "ErrLabel", []string{"p"}))
 
-	err = errExec.backfillCompositeIndex("idx_err_label", "ErrLabel", []string{"p"})
+	err = errExec.backfillCompositeIndex(ctx, "idx_err_label", "ErrLabel", []string{"p"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill index for label ErrLabel")
 
@@ -148,7 +148,7 @@ func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 
 	_, err = missingStore.CreateNode(&storage.Node{ID: storage.NodeID("m1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"p": "v"}})
 	require.NoError(t, err)
-	err = missingExec.backfillCompositeIndex("missing_idx", "Doc", []string{"p"})
+	err = missingExec.backfillCompositeIndex(ctx, "missing_idx", "Doc", []string{"p"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill property index")
 

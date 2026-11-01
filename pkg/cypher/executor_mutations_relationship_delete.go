@@ -117,7 +117,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		if rowMatch == nil || !e.pipelineNodeMatchesPattern(source, rowMatch.StartNode) {
 			continue
 		}
-		candidates, err := e.boundRelationshipDeleteCandidateEdges(store, source.ID, rowMatch.Relationship.Direction)
+		candidates, err := e.boundRelationshipDeleteCandidateEdges(ctx, store, source.ID, rowMatch.Relationship.Direction)
 		if err != nil {
 			return nil, true, err
 		}
@@ -181,20 +181,24 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 
 func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Context, sourcePattern nodePatternInfo, inTransactionWrapper bool) ([]*storage.Node, error) {
 	if !inTransactionWrapper {
-		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
+		return e.collectNodesWithStreamingProjection(
+			ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1, nil,
+		)
 	}
 
 	store := e.getStorage(ctx)
 	if txWrapper, ok := store.(*transactionStorageWrapper); !ok || !txWrapper.tx.HasPendingNodeMutations() {
-		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
+		return e.collectNodesWithStreamingProjection(
+			ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1, nil,
+		)
 	}
 
 	var nodes []*storage.Node
 	var err error
 	if len(sourcePattern.labels) > 0 {
-		nodes, err = store.GetNodesByLabel(sourcePattern.labels[0])
+		nodes, err = store.GetNodesByLabel(ctx, sourcePattern.labels[0])
 	} else {
-		nodes, err = store.AllNodes()
+		nodes, err = store.AllNodes(ctx)
 	}
 	if err != nil {
 		return nil, err
@@ -220,27 +224,27 @@ func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Cont
 	return filtered, nil
 }
 
-func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
+func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
 	var edges []*storage.Edge
 	switch direction {
 	case "outgoing":
-		outgoing, err := store.GetOutgoingEdges(nodeID)
+		outgoing, err := store.GetOutgoingEdges(ctx, nodeID)
 		if err != nil {
 			return nil, err
 		}
 		edges = append(edges, outgoing...)
 	case "incoming":
-		incoming, err := store.GetIncomingEdges(nodeID)
+		incoming, err := store.GetIncomingEdges(ctx, nodeID)
 		if err != nil {
 			return nil, err
 		}
 		edges = append(edges, incoming...)
 	case "both":
-		outgoing, err := store.GetOutgoingEdges(nodeID)
+		outgoing, err := store.GetOutgoingEdges(ctx, nodeID)
 		if err != nil {
 			return nil, err
 		}
-		incoming, err := store.GetIncomingEdges(nodeID)
+		incoming, err := store.GetIncomingEdges(ctx, nodeID)
 		if err != nil {
 			return nil, err
 		}

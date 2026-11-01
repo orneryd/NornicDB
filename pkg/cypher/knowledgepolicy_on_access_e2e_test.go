@@ -150,10 +150,10 @@ func TestE2E_OnAccessAcceleratesDecayUntilSuppressed(t *testing.T) {
 		}
 	}
 
-	nodes, err := be.GetNodesByLabel("DecaySource")
+	nodes, err := be.GetNodesByLabel(ctx, "DecaySource")
 	require.NoError(t, err)
 	require.Len(t, nodes, 0, "storage node reads should already honor suppression after 10 accesses")
-	edges, err := be.GetEdgesByType("DECAYS_TO")
+	edges, err := be.GetEdgesByType(ctx, "DECAYS_TO")
 	require.NoError(t, err)
 	require.Len(t, edges, 0, "storage edge reads should already honor suppression after 10 accesses")
 
@@ -264,7 +264,7 @@ func TestE2E_OnAccessPropertyPreservationKeepsOnlyAllowedFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1, "entity should remain visible while only selected properties suppress")
 
-	nodes, err := be.GetNodesByLabel("PropertySource")
+	nodes, err := be.GetNodesByLabel(ctx, "PropertySource")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	nodeProps, ok := exec.nodeToMap(nodes[0])["properties"].(map[string]interface{})
@@ -273,7 +273,7 @@ func TestE2E_OnAccessPropertyPreservationKeepsOnlyAllowedFields(t *testing.T) {
 	_, hasBody := nodeProps["body"]
 	require.False(t, hasBody, "body should be suppressed after repeated access")
 
-	edges, err := be.GetEdgesByType("PRESERVES")
+	edges, err := be.GetEdgesByType(ctx, "PRESERVES")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	edgeProps, ok := exec.edgeToMap(edges[0])["properties"].(map[string]interface{})

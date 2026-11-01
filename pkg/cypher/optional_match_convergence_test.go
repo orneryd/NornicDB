@@ -38,11 +38,11 @@ func TestMandatoryMatchDropsCoalescedNullNodeBinding(t *testing.T) {
 }
 
 func TestOptionalMatchReturnsUndirectedSelfRelationshipOnce(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "optional_self_relationship"))
+	exec, _ := newCypherTestExecutor(t, "optional_self_relationship")
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (a:B)", nil)
 	require.NoError(t, err)
-	nodes, err := exec.storage.GetNodesByLabel("B")
+	nodes, err := exec.storage.GetNodesByLabel(ctx, "B")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{ID: "loop", Type: "LOOP", StartNode: nodes[0].ID, EndNode: nodes[0].ID}))

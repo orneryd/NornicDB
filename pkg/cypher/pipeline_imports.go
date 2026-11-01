@@ -1,6 +1,8 @@
 package cypher
 
-import "context"
+import (
+	"context"
+)
 
 type pipelineImportsKey struct{}
 

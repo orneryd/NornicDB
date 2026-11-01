@@ -1,6 +1,9 @@
 package community
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func louvainScaleGraph() ([]*Node, []*Relationship) {
 	const blocks, width = 64, 16
@@ -24,11 +27,22 @@ func louvainScaleGraph() ([]*Node, []*Relationship) {
 	return nodes, rels
 }
 
-func BenchmarkLouvainScale1024(b *testing.B) {
-	nodes, rels := louvainScaleGraph()
+// runLouvainBenchmark times the Louvain invocation itself. The graph factory
+// runs once, before the timer starts, so no fixture is allocated inside the
+// timed loop.
+func runLouvainBenchmark(b *testing.B, graph func() ([]*Node, []*Relationship)) {
+	b.Helper()
+	nodes, rels := graph()
+	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Louvain(nodes, rels, DefaultLouvainConfig())
+		if _, err := Louvain(ctx, nodes, rels, DefaultLouvainConfig()); err != nil {
+			b.Fatalf("run %d: %v", i, err)
+		}
 	}
+}
+
+func BenchmarkLouvainScale1024(b *testing.B) {
+	runLouvainBenchmark(b, louvainScaleGraph)
 }

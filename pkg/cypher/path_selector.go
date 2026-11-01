@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
@@ -593,7 +594,7 @@ func hasVariableLengthRelationship(q string, start, end int) bool {
 
 // fnAcyclicPath is __nornic_acyclic(path): whether no node of path repeats
 // (null for null).
-func fnAcyclicPath(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnAcyclicPath(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil || len(values) != 1 || values[0] == nil {
 		return nil, err
@@ -607,7 +608,7 @@ func fnAcyclicPath(ctx cypherfn.Context, args []string) (interface{}, error) {
 
 // fnPatternMarker is reached only when a step other than the MATCH step a
 // selector or match mode is written for reads it.
-func fnPatternMarker(cypherfn.Context, []string) (interface{}, error) {
+func fnPatternMarker(_ context.Context, _ cypherfn.Context, _ []string) (interface{}, error) {
 	return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherMatchingPatternMarkerOutsideMatch())
 }
 

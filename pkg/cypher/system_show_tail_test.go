@@ -73,7 +73,7 @@ func TestSystemShowTailThroughExecutor(t *testing.T) {
 				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err), statement)
 				require.Nil(t, result, "a refused SHOW returns no graph data: %s", statement)
 			}
-			written, err := stores["system"].GetNodesByLabel("ShowTailWrite")
+			written, err := stores["system"].GetNodesByLabel(ctx, "ShowTailWrite")
 			require.NoError(t, err)
 			require.Empty(t, written, "no continuation clause ran")
 			user, err := stores["system"].GetNode("show-tail-user")

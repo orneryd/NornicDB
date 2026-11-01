@@ -175,41 +175,41 @@ func (w *WALEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, err
 }
 
 // GetNodesByLabelVisibleAt delegates snapshot-visible label queries when supported.
-func (w *WALEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
+func (w *WALEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
 	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
+		return provider.GetNodesByLabelVisibleAt(ctx, label, version)
 	}
 	return nil, ErrNotImplemented
 }
 
 // GetOutgoingEdgesVisibleAt delegates snapshot-visible outgoing adjacency queries when supported.
-func (w *WALEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (w *WALEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetOutgoingEdgesVisibleAt(nodeID, version)
+		return provider.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
 	}
 	return nil, ErrNotImplemented
 }
 
 // GetIncomingEdgesVisibleAt delegates snapshot-visible incoming adjacency queries when supported.
-func (w *WALEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (w *WALEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetIncomingEdgesVisibleAt(nodeID, version)
+		return provider.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
 	}
 	return nil, ErrNotImplemented
 }
 
 // GetEdgesByTypeVisibleAt delegates snapshot-visible edge-type queries when supported.
-func (w *WALEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
+func (w *WALEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
 	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetEdgesByTypeVisibleAt(edgeType, version)
+		return provider.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
 	}
 	return nil, ErrNotImplemented
 }
 
 // GetEdgesBetweenVisibleAt delegates snapshot-visible topology queries when supported.
-func (w *WALEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (w *WALEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
 	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetEdgesBetweenVisibleAt(startID, endID, version)
+		return provider.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
 	}
 	return nil, ErrNotImplemented
 }
@@ -905,14 +905,14 @@ func (w *WALEngine) GetEdge(id EdgeID) (*Edge, error) {
 }
 
 // GetNodesByLabel delegates to underlying engine.
-func (w *WALEngine) GetNodesByLabel(label string) ([]*Node, error) {
-	return w.engine.GetNodesByLabel(label)
+func (w *WALEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
+	return w.engine.GetNodesByLabel(ctx, label)
 }
 
 // StreamNodesByLabelProjected delegates projected label scans to the underlying engine.
-func (w *WALEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
+func (w *WALEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
 	if reader, ok := w.engine.(ProjectedLabelNodeReader); ok {
-		return reader.StreamNodesByLabelProjected(label, properties, visit)
+		return reader.StreamNodesByLabelProjected(ctx, label, properties, visit)
 	}
 	return ErrNotImplemented
 }
@@ -920,11 +920,11 @@ func (w *WALEngine) StreamNodesByLabelProjected(label string, properties []strin
 // ForEachNodeIDByLabel delegates label-to-nodeID iteration to the underlying
 // engine when available. This keeps LIMIT + label paths fast without forcing
 // full node materialization.
-func (w *WALEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error {
+func (w *WALEngine) ForEachNodeIDByLabel(ctx context.Context, label string, visit func(NodeID) bool) error {
 	if lookup, ok := w.engine.(LabelNodeIDLookupEngine); ok {
-		return lookup.ForEachNodeIDByLabel(label, visit)
+		return lookup.ForEachNodeIDByLabel(ctx, label, visit)
 	}
-	ids, err := NodeIDsByLabel(w.engine, label, 0)
+	ids, err := NodeIDsByLabel(ctx, w.engine, label, 0)
 	if err != nil {
 		return err
 	}
@@ -942,8 +942,8 @@ func (w *WALEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 }
 
 // GetNodesByLabelInScope delegates a scoped label read (ScopedLabelNodeReader).
-func (w *WALEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	return getNodesByLabelInScope(w.engine, scope, label)
+func (w *WALEngine) GetNodesByLabelInScope(ctx context.Context, scope, label string) ([]*Node, error) {
+	return getNodesByLabelInScope(ctx, w.engine, scope, label)
 }
 
 // GetFirstNodeByLabelInScope delegates a scoped first-node read (ScopedLabelNodeReader).
@@ -952,28 +952,28 @@ func (w *WALEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, erro
 }
 
 // StreamNodesByLabelProjectedInScope delegates a scoped projected label scan (ScopedLabelNodeReader).
-func (w *WALEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return streamNodesByLabelProjectedInScope(w.engine, scope, label, properties, visit)
+func (w *WALEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
+	return streamNodesByLabelProjectedInScope(ctx, w.engine, scope, label, properties, visit)
 }
 
 // GetNodesByLabelVisibleAtInScope delegates a scoped snapshot label read (ScopedLabelNodeReader).
-func (w *WALEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
-	return getNodesByLabelVisibleAtInScope(w.engine, scope, label, version)
+func (w *WALEngine) GetNodesByLabelVisibleAtInScope(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error) {
+	return getNodesByLabelVisibleAtInScope(ctx, w.engine, scope, label, version)
 }
 
 // BatchGetNodes delegates to underlying engine.
-func (w *WALEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
-	return w.engine.BatchGetNodes(ids)
+func (w *WALEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
+	return w.engine.BatchGetNodes(ctx, ids)
 }
 
 // BatchGetNodesWithoutEmbeddings forwards a batched embedding-free read
 // without materializing vectors in the WAL wrapper.
-func (w *WALEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]*Node, error) {
+func (w *WALEngine) BatchGetNodesWithoutEmbeddings(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	reader, ok := w.engine.(BatchNodeWithoutEmbeddingsReader)
 	if !ok {
 		return nil, ErrNotImplemented
 	}
-	return reader.BatchGetNodesWithoutEmbeddings(ids)
+	return reader.BatchGetNodesWithoutEmbeddings(ctx, ids)
 }
 
 // BatchGetNodesWithoutEmbeddingsSupported reports the wrapped engine's real
@@ -983,28 +983,28 @@ func (w *WALEngine) BatchGetNodesWithoutEmbeddingsSupported() bool {
 }
 
 // GetOutgoingEdges delegates to underlying engine.
-func (w *WALEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	return w.engine.GetOutgoingEdges(nodeID)
+func (w *WALEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return w.engine.GetOutgoingEdges(ctx, nodeID)
 }
 
 // GetIncomingEdges delegates to underlying engine.
-func (w *WALEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	return w.engine.GetIncomingEdges(nodeID)
+func (w *WALEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return w.engine.GetIncomingEdges(ctx, nodeID)
 }
 
 // GetAdjacentEdges delegates to the inner engine when it implements the
 // optional AdjacentEdgesEngine capability. WAL writes are never reflected
 // in reads (it only logs), so a forwarded call sees the same data as the
 // pair of single-direction methods.
-func (w *WALEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
+func (w *WALEngine) GetAdjacentEdges(ctx context.Context, nodeID NodeID) ([]*Edge, []*Edge, error) {
 	if inner, ok := w.engine.(AdjacentEdgesEngine); ok {
-		return inner.GetAdjacentEdges(nodeID)
+		return inner.GetAdjacentEdges(ctx, nodeID)
 	}
-	out, err := w.engine.GetOutgoingEdges(nodeID)
+	out, err := w.engine.GetOutgoingEdges(ctx, nodeID)
 	if err != nil {
 		return nil, nil, err
 	}
-	in, err := w.engine.GetIncomingEdges(nodeID)
+	in, err := w.engine.GetIncomingEdges(ctx, nodeID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1012,8 +1012,8 @@ func (w *WALEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
 }
 
 // GetEdgesBetween delegates to underlying engine.
-func (w *WALEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
-	return w.engine.GetEdgesBetween(startID, endID)
+func (w *WALEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
+	return w.engine.GetEdgesBetween(ctx, startID, endID)
 }
 
 // GetEdgeBetween delegates to underlying engine.
@@ -1022,23 +1022,18 @@ func (w *WALEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge
 }
 
 // AllNodes delegates to underlying engine.
-func (w *WALEngine) AllNodes() ([]*Node, error) {
-	return w.engine.AllNodes()
+func (w *WALEngine) AllNodes(ctx context.Context) ([]*Node, error) {
+	return w.engine.AllNodes(ctx)
 }
 
 // AllEdges delegates to underlying engine.
-func (w *WALEngine) AllEdges() ([]*Edge, error) {
-	return w.engine.AllEdges()
+func (w *WALEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
+	return w.engine.AllEdges(ctx)
 }
 
 // GetEdgesByType delegates to underlying engine.
-func (w *WALEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
-	return w.engine.GetEdgesByType(edgeType)
-}
-
-// GetAllNodes delegates to underlying engine.
-func (w *WALEngine) GetAllNodes() []*Node {
-	return w.engine.GetAllNodes()
+func (w *WALEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
+	return w.engine.GetEdgesByType(ctx, edgeType)
 }
 
 // GetInDegree delegates to underlying engine.
@@ -1069,41 +1064,18 @@ func (w *WALEngine) NodeCount() (int64, error) {
 	return w.engine.NodeCount()
 }
 
+// NodeCountByPrefix counts the nodes whose ID begins with prefix: the prefix
+// counter, the streaming enumeration and the whole-collection read are the same
+// three sources for nodes and edges, and countByPrefix chooses among them once.
 func (w *WALEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	if stats, ok := w.engine.(PrefixStatsEngine); ok {
-		return stats.NodeCountByPrefix(prefix)
-	}
-
-	// Correctness fallback (slower).
-	if streamer, ok := w.engine.(StreamingEngine); ok {
-		var count int64
-		err := streamer.StreamNodes(context.Background(), func(node *Node) error {
-			if strings.HasPrefix(string(node.ID), prefix) {
-				count++
-			}
-			return nil
-		})
-		return count, err
-	}
-
-	nodes, err := w.engine.AllNodes()
-	if err != nil {
-		return 0, err
-	}
-	var count int64
-	for _, node := range nodes {
-		if strings.HasPrefix(string(node.ID), prefix) {
-			count++
-		}
-	}
-	return count, nil
+	return w.countByPrefix(prefix, countPrefixNodes)
 }
 
 func (w *WALEngine) NodeCountByLabel(label string) (int64, error) {
 	if stats, ok := w.engine.(LabelStatsEngine); ok {
 		return stats.NodeCountByLabel(label)
 	}
-	nodes, err := w.engine.GetNodesByLabel(label)
+	nodes, err := w.engine.GetNodesByLabel(context.Background(), label)
 	if err != nil {
 		return 0, err
 	}
@@ -1147,34 +1119,79 @@ func (w *WALEngine) EdgeCount() (int64, error) {
 	return w.engine.EdgeCount()
 }
 
+// EdgeCountByPrefix is NodeCountByPrefix for relationships.
 func (w *WALEngine) EdgeCountByPrefix(prefix string) (int64, error) {
+	return w.countByPrefix(prefix, countPrefixEdges)
+}
+
+// prefixCountKind selects the collection a prefix count covers.
+type prefixCountKind uint8
+
+const (
+	countPrefixNodes prefixCountKind = iota
+	countPrefixEdges
+)
+
+// countByPrefix counts the records whose ID begins with prefix through the
+// cheapest capability the wrapped engine offers: its prefix counter, else its
+// streaming enumeration, else a whole-collection read. Each read runs on
+// context.Background, the true lifetime at this context-free count boundary (see
+// bulkReadCancellation): a count has no caller to cancel it. A streaming read
+// that fails returns the count it reached together with its own error; a
+// whole-collection read that fails returns no count.
+func (w *WALEngine) countByPrefix(prefix string, kind prefixCountKind) (int64, error) {
 	if stats, ok := w.engine.(PrefixStatsEngine); ok {
-		return stats.EdgeCountByPrefix(prefix)
+		if kind == countPrefixEdges {
+			return stats.EdgeCountByPrefix(prefix)
+		}
+		return stats.NodeCountByPrefix(prefix)
 	}
 
 	// Correctness fallback (slower).
 	if streamer, ok := w.engine.(StreamingEngine); ok {
 		var count int64
-		err := streamer.StreamEdges(context.Background(), func(edge *Edge) error {
-			if strings.HasPrefix(string(edge.ID), prefix) {
-				count++
-			}
-			return nil
-		})
+		var err error
+		if kind == countPrefixEdges {
+			err = streamer.StreamEdges(context.Background(), func(edge *Edge) error {
+				if strings.HasPrefix(string(edge.ID), prefix) {
+					count++
+				}
+				return nil
+			})
+		} else {
+			err = streamer.StreamNodes(context.Background(), func(node *Node) error {
+				if strings.HasPrefix(string(node.ID), prefix) {
+					count++
+				}
+				return nil
+			})
+		}
 		return count, err
 	}
 
-	edges, err := w.engine.AllEdges()
+	if kind == countPrefixEdges {
+		edges, err := w.engine.AllEdges(context.Background())
+		if err != nil {
+			return 0, err
+		}
+		return countWithPrefix(edges, prefix, func(edge *Edge) string { return string(edge.ID) }), nil
+	}
+	nodes, err := w.engine.AllNodes(context.Background())
 	if err != nil {
 		return 0, err
 	}
+	return countWithPrefix(nodes, prefix, func(node *Node) string { return string(node.ID) }), nil
+}
+
+// countWithPrefix counts the records whose ID begins with prefix.
+func countWithPrefix[T any](records []T, prefix string, idOf func(T) string) int64 {
 	var count int64
-	for _, edge := range edges {
-		if strings.HasPrefix(string(edge.ID), prefix) {
+	for _, record := range records {
+		if strings.HasPrefix(idOf(record), prefix) {
 			count++
 		}
 	}
-	return count, nil
+	return count
 }
 
 // Close closes both the WAL and underlying engine.
@@ -1295,7 +1312,7 @@ func (w *WALEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) 
 		return streamer.StreamEdges(ctx, fn)
 	}
 	// Fallback: load all edges
-	edges, err := w.engine.AllEdges()
+	edges, err := w.engine.AllEdges(ctx)
 	if err != nil {
 		return err
 	}

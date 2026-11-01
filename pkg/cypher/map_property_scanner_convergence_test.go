@@ -114,6 +114,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/adminimport/importer.go:withDefaults":                "sets a CSV quote option; does not read Cypher source",
 		"pkg/adminimport/importer.go:openCSVSource":               "validates a CSV quote option before encoding/csv parsing; does not read Cypher source",
 		"pkg/adminimport/neo4j_csv.go:ExportNeo4jCSV":             "sets and validates the CSV output quote option; does not read Cypher source",
+		"pkg/cypher/apoc_load_export.go:writeCSVField":            "One CSV field encoder for the apoc.export.csv.* procedures: it doubles an embedded CSV quote and surrounds a field whose own bytes are a comma, a quote, a CR or a LF. Its only flagged marker is the field byte offset it names quote (quote := strings.IndexByte(field, '\"'), then compared quote < 0): a CSV field position, never Cypher quotation state, and the function does not read Cypher source. The published bytes round-trip through encoding/csv in TestWriteCSVField, TestAPOCExportCSVOrdinaryBytes and TestAPOCExportCSVSpecialFieldsRoundtrip.",
 		"pkg/observability/logging.go:appendEscapedJSONString":    "encodes log attribute values as JSON, not Cypher source",
 		"pkg/observability/logging.go:safeASCII":                  "classifies JSON output escaping, not Cypher source",
 		"internal/rerankwire/decode.go:validateEnvelopeProse":     "validates JSON response-envelope prose, not Cypher source",

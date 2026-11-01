@@ -14,11 +14,11 @@ import (
 
 func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Context) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}

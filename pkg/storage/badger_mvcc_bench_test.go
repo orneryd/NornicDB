@@ -399,7 +399,7 @@ func BenchmarkBadgerEngine_GetNodesByLabelVisibleAt(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		nodes, err := engine.GetNodesByLabelVisibleAt("BenchLabel", head.Version)
+		nodes, err := engine.GetNodesByLabelVisibleAt(context.Background(), "BenchLabel", head.Version)
 		if err != nil {
 			b.Fatal(err)
 		}

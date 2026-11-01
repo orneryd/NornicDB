@@ -1,6 +1,8 @@
 package fabric
 
-import "context"
+import (
+	"context"
+)
 
 type graphSelectionContextKey struct{}
 

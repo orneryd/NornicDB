@@ -26,14 +26,14 @@ func (s *queryMemoryEdgeScanEngine) StreamEdgesByType(ctx context.Context, kind 
 	})
 }
 
-func (s *queryMemoryEdgeScanEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (s *queryMemoryEdgeScanEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	s.adjacencyReads++
-	return s.NamespacedEngine.GetOutgoingEdges(id)
+	return s.NamespacedEngine.GetOutgoingEdges(ctx, id)
 }
 
-func (s *queryMemoryEdgeScanEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (s *queryMemoryEdgeScanEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	s.adjacencyReads++
-	return s.NamespacedEngine.GetIncomingEdges(id)
+	return s.NamespacedEngine.GetIncomingEdges(ctx, id)
 }
 
 // Count edges, not node scans: rejecting an unrelated edge after reading it

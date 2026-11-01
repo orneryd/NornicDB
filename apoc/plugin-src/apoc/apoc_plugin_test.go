@@ -9,7 +9,10 @@ import (
 )
 
 func TestAPOCPluginSeparatesProceduresFromFunctions(t *testing.T) {
-	functions := Plugin.Functions()
+	functions, err := Plugin.Functions()
+	if err != nil {
+		t.Fatalf("admit APOC plugin functions: %v", err)
+	}
 	for _, name := range []string{"apoc.cypher.doIt", "apoc.path.expandConfig", "apoc.load.jdbc", "apoc.neighbors.toHop"} {
 		if _, exists := functions[name]; exists {
 			t.Errorf("procedure %s must not be exported as scalar function", name)
@@ -26,7 +29,10 @@ func TestAPOCPluginSeparatesProceduresFromFunctions(t *testing.T) {
 // loaded plugin function would override the built-in (apoc.map.removeKeys's
 // handler turns a null map into {}, where the built-in fails the call).
 func TestAPOCPluginLeavesBuiltInFunctionsToTheEngine(t *testing.T) {
-	functions := Plugin.Functions()
+	functions, err := Plugin.Functions()
+	if err != nil {
+		t.Fatalf("admit APOC plugin functions: %v", err)
+	}
 	for name := range functions {
 		if apoc.IsBuiltInFunction(name) {
 			t.Errorf("built-in function %s must not be exported", name)

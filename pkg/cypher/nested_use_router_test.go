@@ -84,7 +84,7 @@ func TestNestedUseRunsThroughDatabaseRouter(t *testing.T) {
 					}
 				}
 				for name, store := range stores {
-					nodes, err := store.GetNodesByLabel("NestedUse")
+					nodes, err := store.GetNodesByLabel(ctx, "NestedUse")
 					require.NoError(t, err)
 					want := 0
 					if c.code == "" && name == c.target {

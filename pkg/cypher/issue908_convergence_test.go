@@ -170,7 +170,7 @@ func TestIssue908Convergence(t *testing.T) {
 				} else {
 					require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 				}
-				nodes, readErr := exec.storage.GetNodesByLabel("P")
+				nodes, readErr := exec.storage.GetNodesByLabel(ctx, "P")
 				require.NoError(t, readErr)
 				require.Empty(t, nodes)
 				return
@@ -228,7 +228,7 @@ func TestIssue908NodeJoinBindings(t *testing.T) {
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:A {v: 1}), (:B {v: 1.0})", nil)
 	require.NoError(t, err)
-	nodes, err := exec.storage.GetNodesByLabel("A")
+	nodes, err := exec.storage.GetNodesByLabel(ctx, "A")
 	require.NoError(t, err)
 	parts := []string{"(a:A)", "(b:B)"}
 	rows, handled, err := exec.pipelineApplyNodeJoinProduct(ctx, []pipelineRow{{"a": nodes[0], "marker": int64(7)}}, parts, "a.v = b.v")

@@ -2,7 +2,9 @@
 
 package mcp
 
-import "context"
+import (
+	"context"
+)
 
 type databaseContextKey string
 

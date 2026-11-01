@@ -76,12 +76,18 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			for _, database := range []string{"one", "two"} {
 				source, target := NodeID("4:"+database+":"+string(same)), NodeID("4:"+database+":"+string(localTarget))
 				adjacency := []func() ([]*Edge, error){
-					func() ([]*Edge, error) { return composite.GetOutgoingEdges(source) },
-					func() ([]*Edge, error) { return composite.GetIncomingEdges(target) },
-					func() ([]*Edge, error) { return composite.GetOutgoingEdgesVisibleAt(source, version) },
-					func() ([]*Edge, error) { return composite.GetIncomingEdgesVisibleAt(target, version) },
-					func() ([]*Edge, error) { return composite.GetEdgesBetween(source, target) },
-					func() ([]*Edge, error) { return composite.GetEdgesBetweenVisibleAt(source, target, version) },
+					func() ([]*Edge, error) { return composite.GetOutgoingEdges(context.Background(), source) },
+					func() ([]*Edge, error) { return composite.GetIncomingEdges(context.Background(), target) },
+					func() ([]*Edge, error) {
+						return composite.GetOutgoingEdgesVisibleAt(context.Background(), source, version)
+					},
+					func() ([]*Edge, error) {
+						return composite.GetIncomingEdgesVisibleAt(context.Background(), target, version)
+					},
+					func() ([]*Edge, error) { return composite.GetEdgesBetween(context.Background(), source, target) },
+					func() ([]*Edge, error) {
+						return composite.GetEdgesBetweenVisibleAt(context.Background(), source, target, version)
+					},
 				}
 				for _, read := range adjacency {
 					edges, err := read()
@@ -102,11 +108,11 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 					require.Equal(t, database, edge.Database)
 				}
 			}
-			edges, err := composite.GetEdgesBetween(NodeID("4:one:"+string(same)), NodeID("4:two:"+string(localTarget)))
+			edges, err := composite.GetEdgesBetween(context.Background(), NodeID("4:one:"+string(same)), NodeID("4:two:"+string(localTarget)))
 			require.NoError(t, err)
 			require.Empty(t, edges)
 			one, two := NodeID("4:one:"+string(same)), NodeID("4:two:"+string(same))
-			batch, err := composite.BatchGetNodes([]NodeID{one, two, NodeID("4:missing:" + string(same))})
+			batch, err := composite.BatchGetNodes(context.Background(), []NodeID{one, two, NodeID("4:missing:" + string(same))})
 			require.NoError(t, err)
 			require.Len(t, batch, 2)
 			require.Equal(t, "one", batch[one].RuntimeMetadata().Database)

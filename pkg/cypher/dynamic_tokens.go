@@ -361,7 +361,7 @@ func init() {
 	cypherfn.Register(dynamicLabelPredicateFunction, fnDynamicLabelTest)
 }
 
-func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnDynamicLabelTest(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 3 {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
 			localization.CypherCoreFunctionArgumentCount(dynamicLabelTestFunction, "3", len(args)))

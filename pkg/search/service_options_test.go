@@ -51,8 +51,8 @@ func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
 	require.Zero(t, ttl)
 
 	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
-	service.resultCache.Put("first", &SearchResponse{Query: "first"})
-	service.resultCache.Put("second", &SearchResponse{Query: "second"})
+	service.resultCache.Put(context.Background(), "first", &SearchResponse{Query: "first"})
+	service.resultCache.Put(context.Background(), "second", &SearchResponse{Query: "second"})
 
 	service.SetSearchResultCachePolicy(1, 30*time.Second)
 	maxEntries, ttl = service.SearchResultCachePolicy()
@@ -249,9 +249,9 @@ func TestIndexCapacityAccountingIsReleasedOnRemoval(t *testing.T) {
 
 func TestSearchResultCacheResizeAndTTL(t *testing.T) {
 	cache := newSearchResultCache(3, time.Hour)
-	cache.Put("a", &SearchResponse{Query: "a"})
-	cache.Put("b", &SearchResponse{Query: "b"})
-	cache.Put("c", &SearchResponse{Query: "c"})
+	cache.Put(context.Background(), "a", &SearchResponse{Query: "a"})
+	cache.Put(context.Background(), "b", &SearchResponse{Query: "b"})
+	cache.Put(context.Background(), "c", &SearchResponse{Query: "c"})
 	require.NotNil(t, cache.Get("a"))
 
 	cache.Resize(2)
@@ -263,11 +263,11 @@ func TestSearchResultCacheResizeAndTTL(t *testing.T) {
 	require.NotNil(t, cache.Get("a"))
 	cache.Resize(0)
 	require.Nil(t, cache.Get("a"))
-	cache.Put("disabled", &SearchResponse{Query: "disabled"})
+	cache.Put(context.Background(), "disabled", &SearchResponse{Query: "disabled"})
 	require.Nil(t, cache.Get("disabled"))
 
 	cache.Resize(2)
-	cache.Put("old", &SearchResponse{Query: "old"})
+	cache.Put(context.Background(), "old", &SearchResponse{Query: "old"})
 	time.Sleep(5 * time.Millisecond)
 	cache.SetTTL(time.Millisecond)
 	require.Nil(t, cache.Get("old"))

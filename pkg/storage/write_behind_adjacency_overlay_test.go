@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func readAdjacencySnapshot(t *testing.T, engine *BadgerEngine, nodeIDs []NodeID)
 	snap.namespaceEdges, err = engine.EdgeCountByPrefix("test:")
 	require.NoError(t, err)
 	for _, id := range nodeIDs {
-		out, in, err := engine.GetAdjacentEdges(id)
+		out, in, err := engine.GetAdjacentEdges(context.Background(), id)
 		require.NoError(t, err)
 		snap.outgoing[id] = edgeIDSet(out)
 		snap.incoming[id] = edgeIDSet(in)
@@ -88,7 +89,7 @@ func TestWriteBehind_AdjacencyOverlayMatchesFlushedView(t *testing.T) {
 	for _, e := range edges {
 		got := engine.GetEdgeBetween(e.StartNode, e.EndNode, "Friend")
 		require.NotNil(t, got, "GetEdgeBetween(%s, %s) must see the buffered edge", e.StartNode, e.EndNode)
-		between, err := engine.GetEdgesBetween(e.StartNode, e.EndNode)
+		between, err := engine.GetEdgesBetween(context.Background(), e.StartNode, e.EndNode)
 		require.NoError(t, err)
 		require.Contains(t, edgeIDSet(between), e.ID)
 	}
@@ -127,14 +128,14 @@ func TestWriteBehind_MergeDoesNotDuplicateBufferedEdges(t *testing.T) {
 	// MERGE-equivalent: a second buffered statement must observe the first
 	// edge and skip the create.
 	require.NotNil(t, engine.GetEdgeBetween("test:a", "test:b", "Friend"))
-	between, err := engine.GetEdgesBetween("test:a", "test:b")
+	between, err := engine.GetEdgesBetween(context.Background(), "test:a", "test:b")
 	require.NoError(t, err)
 	require.Len(t, between, 1)
 
 	require.Equal(t, int64(1), mustEdgeCount(t, engine))
 	require.NoError(t, engine.FlushWriteBehind(nil))
 	require.Equal(t, int64(1), mustEdgeCount(t, engine), "flush must not duplicate the edge")
-	between, err = engine.GetEdgesBetween("test:a", "test:b")
+	between, err = engine.GetEdgesBetween(context.Background(), "test:a", "test:b")
 	require.NoError(t, err)
 	require.Len(t, between, 1)
 }
@@ -160,21 +161,21 @@ func TestWriteBehind_DetachDeleteLeavesNoOrphans(t *testing.T) {
 	bufferedWrite(t, engine, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:a", CascadeEdges) })
 
 	// Orphan check before any flush.
-	out, in, err := engine.GetAdjacentEdges("test:a")
+	out, in, err := engine.GetAdjacentEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Empty(t, out, "no outgoing edge may survive the buffered delete")
 	require.Empty(t, in, "no incoming edge may survive the buffered delete")
-	all, err := engine.AllEdges()
+	all, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, all, "every incident edge must be removed while buffered")
 	require.Equal(t, int64(0), mustEdgeCount(t, engine))
 
 	require.NoError(t, engine.FlushWriteBehind(nil))
-	all, err = engine.AllEdges()
+	all, err = engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, all, "no orphan may reappear after the flush")
 	require.Equal(t, int64(0), mustEdgeCount(t, engine))
-	out, in, err = engine.GetAdjacentEdges("test:a")
+	out, in, err = engine.GetAdjacentEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Empty(t, out)
 	require.Empty(t, in)

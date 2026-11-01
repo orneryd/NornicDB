@@ -160,7 +160,7 @@ func TestProjectedScopeAfterClause(t *testing.T) {
 		{"CALL { CALL { RETURN 1 AS deep } RETURN * }", []string{"outer"}, []string{"deep", "outer"}, true},
 		{"RETURN outer AS shown", []string{"outer"}, []string{"shown"}, true},
 		{"CALL custom.unknown_header_procedure()", []string{"outer"}, []string{"outer"}, false},
-		{"LOAD CSV FROM 'file:///unused' AS row RETURN row", nil, nil, false},
+		{"LOAD CSV FROM 'file:///unused' AS row RETURN row", nil, []string{"row"}, true},
 	} {
 		t.Run(tc.clause, func(t *testing.T) {
 			original := append([]string(nil), tc.incoming...)

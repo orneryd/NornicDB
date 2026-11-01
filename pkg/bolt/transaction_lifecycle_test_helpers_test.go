@@ -46,8 +46,8 @@ func (e *countingTransactionEngine) BeginTransaction() (*storage.BadgerTransacti
 	return e.inner.BeginTransaction()
 }
 
-func (e *countingTransactionEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
-	return e.inner.StreamNodesByLabelProjected(label, properties, visit)
+func (e *countingTransactionEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
+	return e.inner.StreamNodesByLabelProjected(ctx, label, properties, visit)
 }
 
 // controlledTransactionExecutor preserves production transaction behavior and

@@ -49,7 +49,7 @@ func TestPrepareMergeKeyMovesSnapshotToCommittedNode(t *testing.T) {
 
 	fresh := beginMergeKeyTx(t, engine)
 	reader := beginMergeKeyTx(t, engine)
-	_, _ = reader.GetNodesByLabel("U") // reads its snapshot
+	_, _ = reader.GetNodesByLabel(ctx, "U") // reads its snapshot
 	nodeID := createKeyNode(t, engine, "n1", 1)
 
 	require.NoError(t, fresh.PrepareMergeKey(ctx, "U", "k", int64(1)))
@@ -181,7 +181,7 @@ func TestReleaseMergeKeysLetsWaitersProceed(t *testing.T) {
 	engine, schema := newMergeKeyTestEngine(t)
 	ctx := context.Background()
 	failed := beginMergeKeyTx(t, engine)
-	_, _ = failed.GetNodesByLabel("U") // observed: the lock applies after reads too
+	_, _ = failed.GetNodesByLabel(ctx, "U") // observed: the lock applies after reads too
 	require.NoError(t, failed.PrepareMergeKey(ctx, "U", "k", int64(40)))
 	waiter := beginMergeKeyTx(t, engine)
 	done := make(chan error, 1)
@@ -277,7 +277,7 @@ func TestPrepareMergeKeyEdgeBranches(t *testing.T) {
 
 	nodeID := createKeyNode(t, engine, "n11", 11)
 	observed := beginMergeKeyTx(t, engine)
-	_, _ = observed.GetNodesByLabel("U")
+	_, _ = observed.GetNodesByLabel(ctx, "U")
 	require.NoError(t, observed.catchUpToNode(nodeID), "the node is in its snapshot")
 	require.NoError(t, observed.Rollback())
 

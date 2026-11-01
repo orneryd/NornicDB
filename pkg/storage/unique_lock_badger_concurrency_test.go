@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -220,7 +221,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 		t.Fatalf("Commit retry: %v", err)
 	}
 
-	nodes, err := engine.GetNodesByLabel("Function")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "Function")
 	if err != nil {
 		t.Fatalf("GetNodesByLabel Function: %v", err)
 	}
@@ -337,7 +338,7 @@ func storedRevision(node *Node) int64 {
 
 func assertBadgerUniqueFunctionExactness(t *testing.T, engine *BadgerEngine, schema *SchemaManager, revision int) {
 	t.Helper()
-	nodes, err := engine.GetNodesByLabel("Function")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "Function")
 	if err != nil {
 		t.Fatalf("GetNodesByLabel Function: %v", err)
 	}

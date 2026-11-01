@@ -16,6 +16,8 @@ func TestPluginFunctionNames(t *testing.T) {
 		exported[name] = true
 	}
 	require.True(t, exported["apoc.math.sigmoid"])
+	require.NotContains(t, List(), "apoc.algo.pageRank", "retired graph-free Go stub is not registered")
+	require.False(t, exported["apoc.algo.pageRank"], "native CALL owns PageRank; no scalar stub")
 	require.True(t, exported["apoc.text.camelCase"])
 	require.False(t, exported["apoc.cypher.doIt"], "a procedure")
 	require.False(t, exported["apoc.map.removeKeys"], "a built-in")

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -47,12 +48,12 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 					for iteration := 0; iteration < b.N; iteration++ {
 						switch mode {
 						case "slice":
-							nodes, err := engine.GetNodesByLabelInScope("a:", "Person")
+							nodes, err := engine.GetNodesByLabelInScope(context.Background(), "a:", "Person")
 							require.NoError(b, err)
 							require.Len(b, nodes, fixture.matching)
 						case "projected":
 							seen := 0
-							require.NoError(b, engine.StreamNodesByLabelProjectedInScope("a:", "Person", []string{"age"}, func(*Node) error { seen++; return nil }))
+							require.NoError(b, engine.StreamNodesByLabelProjectedInScope(context.Background(), "a:", "Person", []string{"age"}, func(*Node) error { seen++; return nil }))
 							require.Equal(b, fixture.matching, seen)
 						case "first":
 							node, err := engine.GetFirstNodeByLabelInScope("a:", "Person")
@@ -62,12 +63,12 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 							tx, err := engine.BeginTransaction()
 							require.NoError(b, err)
 							require.NoError(b, tx.SetNamespace("a"))
-							err = tx.StreamNodesByLabelProjected("Person", []string{"age"}, func(*Node) error { return ErrIterationStopped })
+							err = tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"age"}, func(*Node) error { return ErrIterationStopped })
 							require.ErrorIs(b, err, ErrIterationStopped)
 							require.NoError(b, tx.Rollback())
 						case "id_first":
 							seen := 0
-							require.NoError(b, namespace.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+							require.NoError(b, namespace.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool {
 								seen++
 								require.Equal(b, NodeID("n00000"), id)
 								return false

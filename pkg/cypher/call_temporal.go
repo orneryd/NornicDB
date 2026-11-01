@@ -61,7 +61,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 		return nil, err
 	}
 
-	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
+	nodes, err := temporalNodesByLabel(ctx, e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
@@ -144,7 +144,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 		}
 	}
 
-	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
+	nodes, err := temporalNodesByLabel(ctx, e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
@@ -152,6 +152,11 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 	var bestNode interface{}
 	var bestStart time.Time
 	for _, node := range nodes {
+		// The label read honors this caller context too; checking here keeps a
+		// canceled caller from walking the nodes it already materialized.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if node == nil {
 			continue
 		}
@@ -247,12 +252,12 @@ func coerceUint64Arg(val interface{}, name string) (uint64, error) {
 	return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
 }
 
-func temporalNodesByLabel(engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {
+func temporalNodesByLabel(ctx context.Context, engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {
 	if !hasSnapshot {
-		return engine.GetNodesByLabel(label)
+		return engine.GetNodesByLabel(ctx, label)
 	}
 	if provider, ok := engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
+		return provider.GetNodesByLabelVisibleAt(ctx, label, version)
 	}
 	return nil, storage.ErrNotImplemented
 }

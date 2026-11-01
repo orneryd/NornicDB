@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -38,14 +39,14 @@ func TestEdgesBetweenFallback_FindsEdgeFromEitherSide(t *testing.T) {
 		return txn.Delete(engine.edgeBetweenIndexKeyFromStringIDs(hub.ID, leaf.ID, "HAS", edge.ID))
 	}))
 
-	got, err := engine.edgesBetweenFromLegacyOutgoingIndex(hub.ID, leaf.ID, "HAS")
+	got, err := engine.edgesBetweenFromLegacyOutgoingIndex(context.Background(), hub.ID, leaf.ID, "HAS")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, edge.ID, got[0].ID)
-	none, err := engine.edgesBetweenFromLegacyOutgoingIndex(leaf.ID, hub.ID, "HAS")
+	none, err := engine.edgesBetweenFromLegacyOutgoingIndex(context.Background(), leaf.ID, hub.ID, "HAS")
 	require.NoError(t, err)
 	assert.Empty(t, none, "direction matters")
-	other, err := engine.edgesBetweenFromLegacyOutgoingIndex(hub.ID, leaf.ID, "OTHER")
+	other, err := engine.edgesBetweenFromLegacyOutgoingIndex(context.Background(), hub.ID, leaf.ID, "OTHER")
 	require.NoError(t, err)
 	assert.Empty(t, other, "type matters")
 }
@@ -73,7 +74,7 @@ func TestEdgesBetweenFallback_CostIsTheSmallerDegree(t *testing.T) {
 		_, err = engine.CreateNode(fresh)
 		require.NoError(t, err)
 		return testing.AllocsPerRun(20, func() {
-			got, err := engine.edgesBetweenFromLegacyOutgoingIndex(hub.ID, fresh.ID, "HAS")
+			got, err := engine.edgesBetweenFromLegacyOutgoingIndex(context.Background(), hub.ID, fresh.ID, "HAS")
 			require.NoError(t, err)
 			require.Empty(t, got)
 		})

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -89,14 +90,14 @@ func TestGraphQLCypherEnforcesViewerPermissions(t *testing.T) {
 	require.NotNil(t, response.Data.Cypher)
 	require.Equal(t, [][]any{{map[string]any{"value": float64(1)}}}, response.Data.Cypher.Rows)
 
-	nodes, err := store.GetNodesByLabel("GraphQLAuthorizationProtected")
+	nodes, err := store.GetNodesByLabel(context.Background(), "GraphQLAuthorizationProtected")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 
 	adminToken := getAuthToken(t, authenticator, "admin")
 	response = executeGraphQLAuthorizationRequest(t, server, adminToken, query, "CREATE (:AllowedAdmin)")
 	require.Empty(t, response.Errors)
-	nodes, err = store.GetNodesByLabel("AllowedAdmin")
+	nodes, err = store.GetNodesByLabel(context.Background(), "AllowedAdmin")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 }

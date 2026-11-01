@@ -157,8 +157,6 @@ func isProcedureName(name string) bool {
 		return true
 	case "apoc.meta.graph":
 		return true
-	case "apoc.meta.graphSample":
-		return true
 	case "apoc.meta.nodeTypeProperties":
 		return true
 	case "apoc.meta.relTypeProperties":

@@ -232,7 +232,7 @@ func (e *StorageExecutor) removeFromNode(ctx context.Context, store storage.Engi
 		return nil
 	}
 	node.Labels = next
-	if err := validatePolicyOnLabelChange(store, node, before); err != nil {
+	if err := validatePolicyOnLabelChange(ctx, store, node, before); err != nil {
 		node.Labels = before
 		return err
 	}

@@ -246,7 +246,7 @@ func TestCompositeEntityLookupConsumers(t *testing.T) {
 			}
 			store, err := manager.GetStorage("one")
 			require.NoError(t, err)
-			nodes, err := store.GetNodesByLabel("Created")
+			nodes, err := store.GetNodesByLabel(ctx, "Created")
 			require.NoError(t, err)
 			require.Len(t, nodes, 1)
 		})

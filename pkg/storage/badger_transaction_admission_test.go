@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strconv"
@@ -283,16 +284,18 @@ func TestTransactionWriteAdmissionReadsDoNotAsk(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tx.GetNodeProjected("ro:a", []string{"v"})
 	require.NoError(t, err)
-	nodes, err := tx.GetNodesByLabel("A")
+	nodes, err := tx.GetNodesByLabel(context.Background(), "A")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
-	require.NotEmpty(t, tx.GetAllNodes())
+	all, err := tx.AllNodes(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, all)
 	_, err = tx.GetEdge("ro:ab")
 	require.NoError(t, err)
 	edges, err := tx.IncidentEdges("ro:a")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
-	_, err = tx.GetEdgesByType("R")
+	_, err = tx.GetEdgesByType(context.Background(), "R")
 	require.NoError(t, err)
 	invalid, err := tx.Schema(SchemaPurpose(255))
 	require.ErrorContains(t, err, "invalid transaction schema purpose")

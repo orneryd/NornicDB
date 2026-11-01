@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -202,7 +203,7 @@ func TestStreamNodesByLabelProjected_ScoresBeforeStaleVisibility(t *testing.T) {
 	eng.cacheStoreNode(node, eng.db.oracle.published.Load())
 
 	var visited []NodeID
-	err = eng.StreamNodesByLabelProjected("ReverseMemory", []string{"name"}, func(projected *Node) error {
+	err = eng.StreamNodesByLabelProjected(context.Background(), "ReverseMemory", []string{"name"}, func(projected *Node) error {
 		visited = append(visited, projected.ID)
 		return nil
 	})

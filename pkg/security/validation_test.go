@@ -179,9 +179,9 @@ func TestSanitizeString(t *testing.T) {
 	}
 }
 
-// Private IP Detection Tests
+// IP Restriction Tests
 
-func TestIsPrivateIP(t *testing.T) {
+func TestIsRestrictedIP_LiteralURLPolicy(t *testing.T) {
 	privateTests := []string{
 		"10.0.0.1",
 		"172.16.0.1",
@@ -195,8 +195,8 @@ func TestIsPrivateIP(t *testing.T) {
 		if ip == nil {
 			t.Fatalf("Failed to parse IP: %s", ipStr)
 		}
-		if !isPrivateIP(ip) {
-			t.Errorf("isPrivateIP(%s) = false, expected true", ipStr)
+		if !IsRestrictedIP(ip, IPPolicy{}) {
+			t.Errorf("IsRestrictedIP(%s) = false, expected true", ipStr)
 		}
 	}
 
@@ -211,8 +211,8 @@ func TestIsPrivateIP(t *testing.T) {
 		if ip == nil {
 			t.Fatalf("Failed to parse IP: %s", ipStr)
 		}
-		if isPrivateIP(ip) {
-			t.Errorf("isPrivateIP(%s) = true, expected false", ipStr)
+		if IsRestrictedIP(ip, IPPolicy{}) {
+			t.Errorf("IsRestrictedIP(%s) = true, expected false", ipStr)
 		}
 	}
 }

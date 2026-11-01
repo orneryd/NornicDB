@@ -14,13 +14,17 @@ import (
 
 // bundledAPOCPluginFunctions are the handlers the bundled APOC plugin
 // (apoc.so) exports, installed as a loaded plugin's.
-func bundledAPOCPluginFunctions(t *testing.T) map[string]interface{} {
+func bundledAPOCPluginFunctions(t *testing.T, names ...string) map[string]interface{} {
 	t.Helper()
 	require.NoError(t, apocpkg.Initialize(apocstorage.NewInMemoryStorage(), nil))
-	functions := make(map[string]interface{})
-	for _, name := range apocpkg.PluginFunctionNames() {
+	if names == nil {
+		names = apocpkg.PluginFunctionNames()
+	}
+	functions := make(map[string]interface{}, len(names))
+	for _, name := range names {
 		info, ok := apocpkg.GetInfo(name)
 		require.True(t, ok, name)
+		require.NotNil(t, info.Handler, name)
 		functions[name] = info.Handler
 	}
 	return functions

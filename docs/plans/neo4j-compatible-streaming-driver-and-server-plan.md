@@ -42,7 +42,7 @@ These constraints come from the current code and from Neo4j/Bolt protocol behavi
 
 - `pkg/storage/types.go` defines `StreamingEngine` and fallback helpers.
 - `pkg/storage/label_nodeid_lookup.go` defines label-ID streaming helpers.
-- `pkg/cypher/match_multi.go` has `collectNodesWithStreaming`, but it still returns `[]*storage.Node`.
+- `pkg/cypher/match_multi.go` has `collectNodesWithStreamingProjection`, but it still returns `[]*storage.Node`.
 
 ### Bolt Is Protocol-Streaming, Not Execution-Streaming Yet
 

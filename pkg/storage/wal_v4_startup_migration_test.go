@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -123,7 +124,7 @@ func TestV4StartupUpgradeRestoresHistoricalPendingNewIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, NodeID("legacy:a"), edge.StartNode)
 	require.Equal(t, NodeID("legacy:new"), edge.EndNode)
-	out, err := engine.GetOutgoingEdges("legacy:a")
+	out, err := engine.GetOutgoingEdges(context.Background(), "legacy:a")
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	require.Equal(t, EdgeID("legacy:edge"), out[0].ID)

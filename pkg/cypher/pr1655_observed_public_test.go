@@ -120,7 +120,7 @@ func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
 						_, err = store.GetNode("target")
 					}
 					require.ErrorIs(t, err, storage.ErrNotFound, "no resurrection")
-					markers, err := store.GetNodesByLabel("Marker")
+					markers, err := store.GetNodesByLabel(ctx, "Marker")
 					require.NoError(t, err)
 					require.Empty(t, markers, "failed mutation must not publish its marker")
 				})
@@ -203,7 +203,7 @@ func TestPR1655ExecuteNewlyObservedTargetDisappears(t *testing.T) {
 				require.NotErrorIs(t, err, storage.ErrNotFound)
 				code, _ := nornicerrors.Neo4jCommitStatus(err)
 				require.Equal(t, nornicerrors.TransientOutdated, code)
-				markers, err := store.GetNodesByLabel("Marker")
+				markers, err := store.GetNodesByLabel(ctx, "Marker")
 				require.NoError(t, err)
 				require.Empty(t, markers)
 				if edge {
@@ -233,13 +233,13 @@ func TestPR1655ExecuteOwnDeleteIsNotRetryable(t *testing.T) {
 			require.NotErrorIs(t, err, storage.ErrConflict, "own deletion cannot be repaired by retrying")
 			if edge {
 				require.ErrorIs(t, err, storage.ErrNotFound)
-				edges, readErr := store.GetEdgesByType("TARGET")
+				edges, readErr := store.GetEdgesByType(ctx, "TARGET")
 				require.NoError(t, readErr)
 				require.Len(t, edges, 1, "failed relationship update rolls back its own deletion")
 			} else {
 				// DETACH DELETE clears the subsequent node view, which is skipped.
 				require.NoError(t, err)
-				nodes, readErr := store.GetNodesByLabel("Target")
+				nodes, readErr := store.GetNodesByLabel(ctx, "Target")
 				require.NoError(t, readErr)
 				require.Empty(t, nodes, "SET cannot resurrect the node deleted by its own statement")
 			}

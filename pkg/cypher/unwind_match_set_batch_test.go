@@ -55,7 +55,7 @@ SET n.name = row.name,
 	require.Equal(t, "after", node.Properties["name"])
 	require.Equal(t, "function", node.Properties["semantic_kind"])
 
-	nodes, err := store.GetNodesByLabel("Function")
+	nodes, err := store.GetNodesByLabel(context.Background(), "Function")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1, "MATCH/SET hot path must not create nodes for missing matches")
 	require.NotEqual(t, "content-entity:e_missing", nodes[0].Properties["uid"])
@@ -96,7 +96,7 @@ SET n.name = row.name
 	})
 	require.NoError(t, err)
 
-	nodes, err := store.GetNodesByLabel("Function")
+	nodes, err := store.GetNodesByLabel(context.Background(), "Function")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	for _, node := range nodes {

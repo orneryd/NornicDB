@@ -570,31 +570,26 @@ func isNumericLiteral(s string) bool {
 	return err == nil
 }
 
-// collectNodesWithStreaming efficiently collects nodes from storage using streaming when possible.
-// This avoids loading all nodes into memory, which is critical for performance with large datasets.
+// collectNodesWithStreamingProjection efficiently collects nodes from
+// storage using streaming when possible. This avoids loading all nodes into
+// memory, which is critical for performance with large datasets. It is the
+// collect-mode caller of visitNodesWithStreamingProjection: the scan, its
+// filters, the caller's cancellation stop and the limit early stop belong to
+// that one owner; collecting adds the preallocated result slice.
 //
 // Parameters:
 //   - ctx: Context for cancellation
 //   - labels: Optional label filter (only nodes with this label)
 //   - properties: Optional property filters
+//   - whereVariable: The variable whereClause filters
+//   - whereClause: Optional residual predicate, evaluated per node
 //   - limit: Maximum number of nodes to collect (-1 for unlimited)
+//   - projection: The user properties the label scan reads (nil: whole nodes)
 //
-// Returns collected nodes or error.
-func (e *StorageExecutor) collectNodesWithStreaming(
-	ctx context.Context,
-	labels []string,
-	properties map[string]interface{},
-	whereVariable string,
-	whereClause string,
-	limit int,
-) ([]*storage.Node, error) {
-	return e.collectNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, nil)
-}
-
-// collectNodesWithStreamingProjection is collectNodesWithStreaming whose
-// label scan reads only the projection's user properties; nil reads whole
+// The label scan reads only the projection's user properties; nil reads whole
 // nodes. The caller guarantees nothing else in the statement uses the
-// returned nodes' other properties.
+// returned nodes' other properties. Returns the collected nodes in scan
+// order, or the error that ended the scan.
 func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	ctx context.Context,
 	labels []string,
@@ -641,6 +636,12 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		whereFilter = e.compileNodeWhereFilter(ctx, whereVariable, whereClause)
 	}
 	collect := func(node *storage.Node) error {
+		// The scan honors the same caller context, so a canceled statement ends
+		// in the storage loop; the check here stops before the row work of a
+		// node the iterator already read.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
 			return nil
 		}
@@ -673,13 +674,22 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		return nil
 	}
-	// A materialized fallback's nodes go to visit as a list.
+	// A materialized fallback's nodes go to visit as a list, with the same
+	// caller cancellation stop as the streaming visitor.
 	visitAll := func(nodes []*storage.Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if visit == nil {
 			*collected = append(*collected, nodes...)
 			return nil
 		}
-		return visitNodeList(nodes, visit)
+		return visitNodeList(nodes, func(node *storage.Node) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return visit(node)
+		})
 	}
 	// Whole query rows use the scan's metadata-only hydration decision. The
 	// label body and its sidecar state are read together, once, including in
@@ -699,7 +709,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// materialising rows, and lets LIMIT stop the storage iterator early.
 	if len(labels) > 0 {
 		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
-			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
+			err := reader.StreamNodesByLabelProjected(ctx, labels[0], projection, collect)
 			if err == nil || err == storage.ErrIterationStopped {
 				return nil
 			}
@@ -710,7 +720,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// Compatibility path for stores that expose label IDs but not label-node
 	// streaming. This still avoids a full graph scan for bounded simple reads.
 	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
-		ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
+		ids, err := storage.NodeIDsByLabel(ctx, store, labels[0], limit)
 		if err != nil {
 			return err
 		}
@@ -818,9 +828,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Compatibility fallback for storage implementations without StreamingEngine.
 	if len(labels) > 0 {
-		nodes, err = store.GetNodesByLabel(labels[0])
+		nodes, err = store.GetNodesByLabel(ctx, labels[0])
 	} else {
-		nodes, err = store.AllNodes()
+		nodes, err = store.AllNodes(ctx)
 	}
 	if err != nil {
 		return err
@@ -829,6 +839,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// Filter out system nodes (labels starting with _)
 	filteredNodes := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
 			continue
 		}

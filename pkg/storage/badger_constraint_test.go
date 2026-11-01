@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
@@ -208,7 +209,7 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
 
-	if err := tx2.validateNodeConstraints(duplicate); err == nil {
+	if err := tx2.validateNodeConstraints(context.Background(), duplicate); err == nil {
 		t.Fatal("expected direct unique constraint validation failure")
 	}
 	if err := tx2.checkUniqueConstraint(duplicate, constraints[0]); err == nil {

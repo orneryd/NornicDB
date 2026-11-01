@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -14,7 +15,7 @@ func TestAdvanceImplicitSnapshotAfterBatch(t *testing.T) {
 	require.NoError(t, tx.SetImplicit(true))
 	_, err = tx.GetNode("test:child")
 	require.ErrorIs(t, err, ErrNotFound)
-	nodes, err := tx.GetNodesByLabel("Child")
+	nodes, err := tx.GetNodesByLabel(context.Background(), "Child")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 	peer, err := engine.BeginTransaction()
@@ -30,7 +31,7 @@ func TestAdvanceImplicitSnapshotAfterBatch(t *testing.T) {
 	node, err := tx.GetNode("test:child")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), node.Properties["v"])
-	nodes, err = tx.GetNodesByLabel("Child")
+	nodes, err = tx.GetNodesByLabel(context.Background(), "Child")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:child", Labels: []string{"Child"}, Properties: map[string]interface{}{"v": int64(2)}}, Policy: ClientNodeEdits}))

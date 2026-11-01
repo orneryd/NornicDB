@@ -158,7 +158,7 @@ func TestFastPath_CreateDeleteRelCount_HelperBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, [][]interface{}{{int64(0)}}, noneRes.Rows)
 	assert.Zero(t, noneRes.Stats.RelationshipsCreated)
-	edges, err := engine.AllEdges()
+	edges, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, edges)
 }
@@ -200,7 +200,7 @@ func TestFastPath_CreateDeleteRel_HelperBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, noneRes.Stats.RelationshipsCreated)
 	assert.Zero(t, noneRes.Stats.RelationshipsDeleted)
-	edges, err := engine.AllEdges()
+	edges, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, edges)
 }

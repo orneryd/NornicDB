@@ -4,7 +4,10 @@
 // with the underlying graph database storage engine.
 package storage
 
-import "maps"
+import (
+	"context"
+	"maps"
+)
 
 // Storage defines the interface for graph database operations.
 type Storage interface {
@@ -17,7 +20,12 @@ type Storage interface {
 	RemoveLabels(id int64, labels []string) error
 
 	// Bulk node operations
-	AllNodes() ([]*Node, error)
+	//
+	// A bulk read context is the read lifetime: a read whose context has already
+	// stopped returns that context error instead of a collection, so a caller
+	// never receives a partial whole-graph result. A completed read returns every
+	// entry, and an empty store still returns a non-nil empty collection.
+	AllNodes(ctx context.Context) ([]*Node, error)
 	UpdateNodeLabels(id int64, labels []string) error
 
 	// Relationship operations
@@ -28,7 +36,10 @@ type Storage interface {
 	UpdateRelationshipType(id int64, newType string) error
 
 	// Bulk relationship operations
-	AllRelationships() ([]*Relationship, error)
+	//
+	// AllRelationships is context-first like AllNodes and follows the same
+	// contract.
+	AllRelationships(ctx context.Context) ([]*Relationship, error)
 
 	// Query operations
 	GetNodeRelationships(nodeID int64, relType string, direction Direction) ([]*Relationship, error)
@@ -216,12 +227,38 @@ func (s *InMemoryStorage) DeleteRelationship(id int64) error {
 	return nil
 }
 
-func (s *InMemoryStorage) AllNodes() ([]*Node, error) {
-	nodes := make([]*Node, 0, len(s.nodes))
-	for _, node := range s.nodes {
-		nodes = append(nodes, node)
+// bulkReadInterval is how many entries an in-memory bulk read copies between
+// checks of its caller context. Checking at an interval rather than on every
+// entry keeps the copy tight while bounding how long a read that already lost
+// its caller keeps working.
+const bulkReadInterval = 256
+
+// collectBulk copies one storage map into the collection a whole-graph read
+// returns. The caller context decides the read lifetime: the collection is
+// checked before the result is allocated, every bulkReadInterval entries, and
+// once more before the result is published, so a stopped read returns its
+// context error and no partial collection.
+func collectBulk[T any](ctx context.Context, entries map[int64]*T) ([]*T, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return nodes, nil
+	items := make([]*T, 0, len(entries))
+	for _, entry := range entries {
+		items = append(items, entry)
+		if len(items)%bulkReadInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *InMemoryStorage) AllNodes(ctx context.Context) ([]*Node, error) {
+	return collectBulk(ctx, s.nodes)
 }
 
 func (s *InMemoryStorage) UpdateNodeLabels(id int64, labels []string) error {
@@ -233,12 +270,8 @@ func (s *InMemoryStorage) UpdateNodeLabels(id int64, labels []string) error {
 	return nil
 }
 
-func (s *InMemoryStorage) AllRelationships() ([]*Relationship, error) {
-	rels := make([]*Relationship, 0, len(s.relationships))
-	for _, rel := range s.relationships {
-		rels = append(rels, rel)
-	}
-	return rels, nil
+func (s *InMemoryStorage) AllRelationships(ctx context.Context) ([]*Relationship, error) {
+	return collectBulk(ctx, s.relationships)
 }
 
 func (s *InMemoryStorage) UpdateRelationshipType(id int64, newType string) error {

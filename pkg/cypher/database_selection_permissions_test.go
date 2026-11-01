@@ -47,7 +47,7 @@ func TestDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 					}
 				}
 				for database, store := range stores {
-					nodes, err := store.GetNodesByLabel("Loaded")
+					nodes, err := store.GetNodesByLabel(ctx, "Loaded")
 					require.NoError(t, err)
 					want := 0
 					if access.write && database == route.database {

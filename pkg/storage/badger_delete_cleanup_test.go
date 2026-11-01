@@ -90,7 +90,7 @@ func TestDeleteCleanupDropsDeleteMarkers(t *testing.T) {
 
 	require.Zero(t, countDeleteMarkers(t, eng, prefixNode))
 	require.Zero(t, countDeleteMarkers(t, eng, prefixLabelIndex))
-	keep, err := eng.GetNodesByLabel("Keep")
+	keep, err := eng.GetNodesByLabel(context.Background(), "Keep")
 	require.NoError(t, err)
 	require.Len(t, keep, 50)
 }

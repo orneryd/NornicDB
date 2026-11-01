@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	badger "github.com/dgraph-io/badger/v4"
@@ -82,7 +83,7 @@ func TestIndexTombstone_LabelIndexSkipsTombstoned(t *testing.T) {
 
 	tombstoneLabelIndexEntry(t, eng, "Person", node2.ID)
 
-	nodes, err := eng.GetNodesByLabel("Person")
+	nodes, err := eng.GetNodesByLabel(context.Background(), "Person")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func TestIndexTombstone_RevealAllBypassesTombstone(t *testing.T) {
 	eng.SetRevealAll(true)
 	defer eng.SetRevealAll(false)
 
-	nodes, err := eng.GetNodesByLabel("Person")
+	nodes, err := eng.GetNodesByLabel(context.Background(), "Person")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ func TestIndexTombstone_ForEachNodeIDSkipsTombstoned(t *testing.T) {
 	tombstoneLabelIndexEntry(t, eng, "Item", "nornic:b")
 
 	var visited []string
-	eng.ForEachNodeIDByLabel("Item", func(id NodeID) bool {
+	eng.ForEachNodeIDByLabel(context.Background(), "Item", func(id NodeID) bool {
 		visited = append(visited, string(id))
 		return true
 	})

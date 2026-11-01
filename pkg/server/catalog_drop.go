@@ -1,6 +1,8 @@
 package server
 
-import "context"
+import (
+	"context"
+)
 
 // catalogDropPurpose identifies which manager entry point a catalog drop uses.
 // It also selects whether the regular-database per-database follow-up runs.

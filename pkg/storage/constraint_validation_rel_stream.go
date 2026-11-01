@@ -294,11 +294,7 @@ func newRelDomainCheck(c Constraint) (relEdgeCheck, error) {
 func newRelCardinalityCheck(c Constraint) relEdgeCheck {
 	counts := make(map[NodeID]int)
 	visit := ofType(c.Label, func(edge *Edge) error {
-		if c.Direction == "OUTGOING" {
-			counts[edge.StartNode]++
-		} else {
-			counts[edge.EndNode]++
-		}
+		counts[relationshipCardinalityAnchor(c.Direction, edge)]++
 		return nil
 	})
 	finish := func() error {

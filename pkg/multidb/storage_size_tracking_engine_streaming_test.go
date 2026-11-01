@@ -163,7 +163,7 @@ func TestSizeTrackingEngine_StreamNodesByPrefix_Delegates(t *testing.T) {
 	assert.Equal(t, []storage.NodeID{"tenant_a:n1"}, got)
 }
 
-func (e *sizeTrackingStreamingInner) StreamNodesByLabelProjected(label string, properties []string, fn func(node *storage.Node) error) error {
+func (e *sizeTrackingStreamingInner) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, fn func(node *storage.Node) error) error {
 	e.streamLabelProjectedCalls++
 	e.lastProjectedLabel = label
 	e.lastProjectedProperties = properties
@@ -211,7 +211,7 @@ func TestSizeTrackingEngine_StreamNodesByLabelProjected_Delegates(t *testing.T) 
 	require.True(t, ok, "size tracking wrapper must preserve ProjectedLabelNodeReader")
 
 	var got []storage.NodeID
-	err := labelReader.StreamNodesByLabelProjected("Repository", []string{"name"}, func(node *storage.Node) error {
+	err := labelReader.StreamNodesByLabelProjected(context.Background(), "Repository", []string{"name"}, func(node *storage.Node) error {
 		got = append(got, node.ID)
 		return nil
 	})
@@ -240,7 +240,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_Delegates(t *testing.T) {
 	require.True(t, ok, "size tracking wrapper must preserve LabelNodeIDLookupEngine")
 
 	var count int
-	err := lookup.ForEachNodeIDByLabel("Person", func(id storage.NodeID) bool {
+	err := lookup.ForEachNodeIDByLabel(context.Background(), "Person", func(id storage.NodeID) bool {
 		count++
 		return count < 2
 	})

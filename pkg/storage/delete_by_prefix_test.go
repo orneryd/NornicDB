@@ -23,11 +23,11 @@ func TestBadgerEngine_DeleteByPrefix_DropsOnlyMatchingNamespace(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "db2:e2", StartNode: "db2:n2", EndNode: "db2:n2", Type: "KNOWS"}))
 
 	// Warm caches to ensure DeleteByPrefix invalidates them.
-	nodes, err := engine.GetNodesByLabel("Person")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
-	edges, err := engine.GetEdgesByType("KNOWS")
+	edges, err := engine.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	require.Len(t, edges, 2)
 
@@ -47,13 +47,13 @@ func TestBadgerEngine_DeleteByPrefix_DropsOnlyMatchingNamespace(t *testing.T) {
 	require.NoError(t, err)
 
 	// Label index must not return dropped nodes.
-	nodes, err = engine.GetNodesByLabel("Person")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, NodeID("db2:n2"), nodes[0].ID)
 
 	// Edge type cache must not return dropped edges.
-	edges, err = engine.GetEdgesByType("KNOWS")
+	edges, err = engine.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, EdgeID("db2:e2"), edges[0].ID)
@@ -292,7 +292,7 @@ func TestBadgerEngine_DeleteByPrefix_CleansIndexes(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(e))
 
 	// Verify data exists
-	nodes, err := engine.GetNodesByLabel("Person")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
@@ -303,11 +303,11 @@ func TestBadgerEngine_DeleteByPrefix_CleansIndexes(t *testing.T) {
 	require.Equal(t, int64(1), edgesDeleted)
 
 	// Verify everything is gone
-	nodes, err = engine.GetNodesByLabel("Person")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Len(t, nodes, 0)
 
-	edges, err := engine.GetEdgesByType("KNOWS")
+	edges, err := engine.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	require.Len(t, edges, 0)
 }

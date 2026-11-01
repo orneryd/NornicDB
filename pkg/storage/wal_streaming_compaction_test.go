@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
@@ -38,9 +39,9 @@ func TestAutoCompactionWritesRecoverableStreamingSnapshot(t *testing.T) {
 
 	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(wal.config.Dir, paths[0]))
 	require.NoError(t, err)
-	nodes, err := recovered.AllNodes()
+	nodes, err := recovered.AllNodes(context.Background())
 	require.NoError(t, err)
-	edges, err := recovered.AllEdges()
+	edges, err := recovered.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	require.Len(t, edges, 1)

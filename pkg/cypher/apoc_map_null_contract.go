@@ -3,6 +3,7 @@ package cypher
 // Author: Codex NOR-184 lane: immutable callable metadata preserves identity checks.
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sort"
@@ -134,56 +135,99 @@ func init() {
 	}
 }
 
+// apocMapArity is a map constructor's or remover's accepted argument count.
+type apocMapArity struct{ min, max int }
+
+// contains reports whether count arguments fit the arity.
+func (a apocMapArity) contains(count int) bool { return count >= a.min && count <= a.max }
+
+// apocMapArityOf is the one owner of the map constructors' and removers'
+// argument counts. clean's one- and two-argument forms are the release's
+// shorthand, which reads its missing lists as [].
+func apocMapArityOf(function string) apocMapArity {
+	switch {
+	case strings.EqualFold(function, "apoc.map.fromlists"), strings.EqualFold(function, "apoc.map.merge"):
+		return apocMapArity{min: 2, max: 2}
+	case strings.EqualFold(function, "apoc.map.setkey"):
+		return apocMapArity{min: 3, max: 3}
+	case strings.EqualFold(function, "apoc.map.clean"):
+		return apocMapArity{min: 1, max: 3}
+	case strings.EqualFold(function, "apoc.map.removekey"), strings.EqualFold(function, "apoc.map.removekeys"):
+		return apocMapArity{min: 2, max: 3}
+	default:
+		return apocMapArity{min: 1, max: 1}
+	}
+}
+
+// apocMapRemovalArity is apoc.map.removeKey's and apoc.map.removeKeys'
+// argument count, read from the shared table once.
+var apocMapRemovalArity = apocMapArityOf("apoc.map.removekey")
+
+// apocMapFunctionArguments owns the argument work the map constructors and
+// removers share: the function's argument count, one evaluation of the
+// arguments, clean's omitted-list defaults and the null boundary. Its order
+// preserves the functions' existing error precedence, and its caller supplies
+// the arity the shared table holds, so a statement does not repeat it.
+func apocMapFunctionArguments(function string, arity apocMapArity, ctx cypherfn.Context, args []string) ([]interface{}, error) {
+	if !arity.contains(len(args)) {
+		return nil, functionParameterCountError(function, len(args) > arity.max)
+	}
+	values, err := evalArgs(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	// clean's omitted lists default to [], whereas an explicit null fails.
+	if strings.EqualFold(function, "apoc.map.clean") {
+		for len(values) < 3 {
+			values = append(values, []interface{}{})
+		}
+	}
+	if null, err := apocMapNullInput(function, values); null || err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+// apocMapArgumentMap reads argument index as a Cypher map, not a node or
+// relationship. A null argument is nil, not a type error: apoc.map.merge and
+// apoc.map.setKey accept a null base map, and the null boundary has already
+// rejected a null where the function fails.
+func apocMapArgumentMap(function string, values []interface{}, index int) (map[string]interface{}, error) {
+	if apocNullValue(values[index]) {
+		return nil, nil
+	}
+	entries, isMap := apocMapValue(values[index])
+	if !isMap {
+		return nil, apocMapArgumentTypeError(function, "Map", values[index])
+	}
+	return entries, nil
+}
+
+// apocMapArgumentList reads argument index as a Cypher list.
+func apocMapArgumentList(function string, values []interface{}, index int, expected string) ([]interface{}, error) {
+	items, isList := cypherListValue(values[index])
+	if !isList {
+		return nil, apocMapArgumentTypeError(function, expected, values[index])
+	}
+	return items, nil
+}
+
+// apocMapConstructor owns the map-returning constructors' results. Their
+// argument count, evaluation and null boundary are apocMapFunctionArguments,
+// and their copies observe the caller's statement cancellation.
 func apocMapConstructor(name string) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
-		min, max := 1, 1
-		switch name {
-		case "apoc.map.fromlists", "apoc.map.merge":
-			min, max = 2, 2
-		case "apoc.map.setkey":
-			min, max = 3, 3
-		case "apoc.map.clean":
-			min, max = 1, 3 // retain the release shorthand
+	arity := apocMapArityOf(name)
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
+		// Preserve the native merge shorthand's existing result for a missing
+		// or extra operand. Null operands are the null boundary's.
+		if name == "apoc.map.merge" && !arity.contains(len(args)) {
+			return map[string]interface{}{}, nil
 		}
-		if len(args) < min || len(args) > max {
-			// Preserve the native merge shorthand's existing result for a
-			// missing operand. Null operands are handled separately below.
-			if name == "apoc.map.merge" {
-				return map[string]interface{}{}, nil
-			}
-			return nil, functionParameterCountError(name, len(args) > max)
-		}
-		values, err := evalArgs(ctx, args)
+		values, err := apocMapFunctionArguments(name, arity, ctx, args)
 		if err != nil {
 			return nil, err
 		}
-		// Omitted clean lists default to [], whereas explicit null fails.
-		if name == "apoc.map.clean" {
-			for len(values) < 3 {
-				values = append(values, []interface{}{})
-			}
-		}
-		if null, err := apocMapNullInput(name, values); null || err != nil {
-			return nil, err
-		}
 		out := map[string]interface{}{}
-		readMap := func(value interface{}) (map[string]interface{}, error) {
-			if apocNullValue(value) {
-				return nil, nil
-			}
-			m, ok := apocMapValue(value)
-			if !ok {
-				return nil, apocMapArgumentTypeError(name, "Map", value)
-			}
-			return m, nil
-		}
-		readList := func(value interface{}) ([]interface{}, error) {
-			list, ok := cypherListValue(value)
-			if !ok {
-				return nil, apocMapArgumentTypeError(name, "List", value)
-			}
-			return list, nil
-		}
 		switch name {
 		case "apoc.map.frompairs":
 			// A value whose type becomes known only in the row (including a
@@ -191,11 +235,17 @@ func apocMapConstructor(name string) cypherfn.Func {
 			if isAllStringList(values[0]) {
 				return nil, typeNameMismatchError("List<List<T>>", "List<String>")
 			}
-			pairs, err := readList(values[0])
+			pairs, err := apocMapArgumentList(name, values, 0, "List")
 			if err != nil {
 				return out, nil // retain the native non-list shorthand
 			}
-			for _, pair := range pairs {
+			if err := workCtx.Err(); err != nil {
+				return nil, err
+			}
+			for index, pair := range pairs {
+				if err := apocCopyObserve(workCtx, index+1); err != nil {
+					return nil, err
+				}
 				items, ok := cypherListValue(pair)
 				if !ok {
 					// Neo4j's ANY-to-list argument coercion wraps a map as a
@@ -216,37 +266,43 @@ func apocMapConstructor(name string) cypherfn.Func {
 				out[apocObjectString(items[0])] = value
 			}
 		case "apoc.map.fromlists":
-			keys, err := readList(values[0])
+			keys, err := apocMapArgumentList(name, values, 0, "List")
 			if err != nil {
 				return nil, err
 			}
-			items, err := readList(values[1])
+			items, err := apocMapArgumentList(name, values, 1, "List")
 			if err != nil {
 				return nil, err
 			}
 			if len(keys) != len(items) {
 				return nil, nativeAPOCCallFailure(name, values)
 			}
-			for i, key := range keys {
-				out[fmt.Sprint(key)] = items[i]
+			if err := workCtx.Err(); err != nil {
+				return nil, err
+			}
+			for index, key := range keys {
+				if err := apocCopyObserve(workCtx, index+1); err != nil {
+					return nil, err
+				}
+				out[fmt.Sprint(key)] = items[index]
 			}
 		case "apoc.map.merge":
-			for _, value := range values {
-				m, err := readMap(value)
+			for index := range values {
+				m, err := apocMapArgumentMap(name, values, index)
 				if err != nil {
 					return nil, err
 				}
-				for key, value := range m {
-					out[key] = value
+				if err := apocCopyInto(workCtx, out, m); err != nil {
+					return nil, err
 				}
 			}
 		case "apoc.map.setkey":
-			m, err := readMap(values[0])
+			m, err := apocMapArgumentMap(name, values, 0)
 			if err != nil {
 				return nil, err
 			}
-			for key, value := range m {
-				out[key] = value
+			if err := apocCopyInto(workCtx, out, m); err != nil {
+				return nil, err
 			}
 			if values[1] != nil {
 				key, ok := values[1].(string)
@@ -256,19 +312,27 @@ func apocMapConstructor(name string) cypherfn.Func {
 				out[key] = values[2]
 			}
 		case "apoc.map.clean":
-			m, err := readMap(values[0])
+			m, err := apocMapArgumentMap(name, values, 0)
 			if err != nil {
 				return out, nil // retain the native non-map shorthand
 			}
-			keys, err := readList(values[1])
+			keys, err := apocMapArgumentList(name, values, 1, "List")
 			if err != nil {
 				return nil, err
 			}
-			items, err := readList(values[2])
+			items, err := apocMapArgumentList(name, values, 2, "List")
 			if err != nil {
 				return nil, err
 			}
+			if err := workCtx.Err(); err != nil {
+				return nil, err
+			}
+			copied := 0
 			for key, value := range m {
+				copied++
+				if err := apocCopyObserve(workCtx, copied); err != nil {
+					return nil, err
+				}
 				if value == nil {
 					continue
 				}

@@ -5,6 +5,7 @@
 package stats
 
 import (
+	"context"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
@@ -12,16 +13,30 @@ import (
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// Functions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for.
+type Functions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
+}
 
 // Degrees returns degree statistics for nodes.
 //
 // Example:
 //
 //	apoc.stats.degrees('KNOWS') => {min: 0, max: 100, mean: 5.2, ...}
-func Degrees(relType string) map[string]interface{} {
-	nodes, err := Storage.AllNodes()
+func (f *Functions) Degrees(relType string) map[string]interface{} {
+	// apoc.stats.degrees is procedure-classified and the bundled plugin
+	// implements no such procedure: no statement context reaches this helper,
+	// whose whole-graph read runs on the background lifetime.
+	nodes, err := f.backend.AllNodes(context.Background())
 	if err != nil {
 		return map[string]interface{}{
 			"min":    0,
@@ -34,7 +49,7 @@ func Degrees(relType string) map[string]interface{} {
 
 	degrees := make([]float64, 0, len(nodes))
 	for _, node := range nodes {
-		degree, err := Storage.GetNodeDegree(node.ID, relType, storage.DirectionBoth)
+		degree, err := f.backend.GetNodeDegree(node.ID, relType, storage.DirectionBoth)
 		if err == nil {
 			degrees = append(degrees, float64(degree))
 		}

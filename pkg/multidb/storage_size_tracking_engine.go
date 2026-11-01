@@ -171,7 +171,7 @@ func (t *sizeTrackingEngine) StreamEdges(ctx context.Context, fn func(edge *stor
 	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
 		return streamer.StreamEdges(ctx, fn)
 	}
-	edges, err := t.Engine.AllEdges()
+	edges, err := t.Engine.AllEdges(ctx)
 	if err != nil {
 		return err
 	}
@@ -246,20 +246,20 @@ func (t *sizeTrackingEngine) StreamNodesWithOptions(ctx context.Context, opts st
 // dynamic type happens to implement, so a label-scoped MATCH would otherwise
 // fail this type assertion and fall back to a whole-namespace StreamNodes
 // scan (O(store) instead of O(label); see #561).
-func (t *sizeTrackingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+func (t *sizeTrackingEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
 	if reader, ok := t.Engine.(storage.ProjectedLabelNodeReader); ok {
-		return reader.StreamNodesByLabelProjected(label, properties, visit)
+		return reader.StreamNodesByLabelProjected(ctx, label, properties, visit)
 	}
 	return storage.ErrNotImplemented
 }
 
 // ForEachNodeIDByLabel preserves label->ID lookup capabilities across wrapper
 // boundaries so LIMIT + label paths can avoid full node decode.
-func (t *sizeTrackingEngine) ForEachNodeIDByLabel(label string, visit func(storage.NodeID) bool) error {
+func (t *sizeTrackingEngine) ForEachNodeIDByLabel(ctx context.Context, label string, visit func(storage.NodeID) bool) error {
 	if lookup, ok := t.Engine.(storage.LabelNodeIDLookupEngine); ok {
-		return lookup.ForEachNodeIDByLabel(label, visit)
+		return lookup.ForEachNodeIDByLabel(ctx, label, visit)
 	}
-	ids, err := storage.NodeIDsByLabel(t.Engine, label, 0)
+	ids, err := storage.NodeIDsByLabel(ctx, t.Engine, label, 0)
 	if err != nil {
 		return err
 	}
@@ -299,30 +299,30 @@ func (t *sizeTrackingEngine) GetEdgeVisibleAt(id storage.EdgeID, version storage
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetNodesByLabelVisibleAt(label string, version storage.MVCCVersion) ([]*storage.Node, error) {
+func (t *sizeTrackingEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version storage.MVCCVersion) ([]*storage.Node, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
+		return provider.GetNodesByLabelVisibleAt(ctx, label, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetOutgoingEdgesVisibleAt(nodeID, version)
+		return provider.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetIncomingEdgesVisibleAt(nodeID, version)
+		return provider.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetEdgesByTypeVisibleAt(edgeType, version)
+		return provider.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
@@ -333,9 +333,9 @@ func (t *sizeTrackingEngine) MatchEdgesBetween(startID, endID storage.NodeID, ed
 	return storage.MatchEdgesBetween(t.Engine, startID, endID, edgeType, properties, match)
 }
 
-func (t *sizeTrackingEngine) GetEdgesBetweenVisibleAt(startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetEdgesBetweenVisibleAt(startID, endID, version)
+		return provider.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
@@ -595,7 +595,9 @@ func (t *sizeTrackingEngine) NodeCountByLabel(label string) (int64, error) {
 	if counter, ok := t.Engine.(interface{ NodeCountByLabel(string) (int64, error) }); ok {
 		return counter.NodeCountByLabel(label)
 	}
-	nodes, err := t.Engine.GetNodesByLabel(label)
+	// The label count is a maintenance read without a caller context: it runs
+	// on the wrapper's own lifetime.
+	nodes, err := t.Engine.GetNodesByLabel(context.Background(), label)
 	if err != nil {
 		return 0, err
 	}

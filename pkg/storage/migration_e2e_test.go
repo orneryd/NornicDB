@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"testing"
@@ -488,7 +489,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		"External": {"team-beta:cite-target"},
 	}
 	for label, wantIDs := range labelExpect {
-		nodes, err := eng.GetNodesByLabel(label)
+		nodes, err := eng.GetNodesByLabel(context.Background(), label)
 		require.NoError(t, err, "GetNodesByLabel(%q)", label)
 		gotIDs := make([]NodeID, 0, len(nodes))
 		for _, n := range nodes {
@@ -510,7 +511,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		"CITES":    "team-beta:edge-cites-1",
 		"REVIEWED": "team-alpha:edge-reviewed-1",
 	} {
-		edges, err := eng.GetEdgesByType(edgeType)
+		edges, err := eng.GetEdgesByType(context.Background(), edgeType)
 		require.NoError(t, err, "GetEdgesByType(%q)", edgeType)
 		require.Len(t, edges, 1, "edges of type %q", edgeType)
 		require.Equal(t, wantID, edges[0].ID)
@@ -549,7 +550,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		"team-beta:cite-target": {},
 	}
 	for nodeID, want := range outgoingExpect {
-		got, err := eng.GetOutgoingEdges(nodeID)
+		got, err := eng.GetOutgoingEdges(context.Background(), nodeID)
 		require.NoError(t, err, "GetOutgoingEdges(%q)", nodeID)
 		require.Equal(t, want, extractIDs(got), "outgoing edges for %q", nodeID)
 	}
@@ -573,7 +574,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		"team-alpha:dave":       {},
 	}
 	for nodeID, want := range incomingExpect {
-		got, err := eng.GetIncomingEdges(nodeID)
+		got, err := eng.GetIncomingEdges(context.Background(), nodeID)
 		require.NoError(t, err, "GetIncomingEdges(%q)", nodeID)
 		require.Equal(t, want, extractIDs(got), "incoming edges for %q", nodeID)
 	}
@@ -598,7 +599,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		{"team-beta:cite-target", "team-alpha:alice", []string{}}, // unconnected
 	}
 	for _, tc := range betweenCases {
-		got, err := eng.GetEdgesBetween(tc.start, tc.end)
+		got, err := eng.GetEdgesBetween(context.Background(), tc.start, tc.end)
 		require.NoError(t, err, "GetEdgesBetween(%q, %q)", tc.start, tc.end)
 		require.Equal(t, tc.wantIDs, extractIDs(got),
 			"edges-between %q→%q", tc.start, tc.end)
@@ -707,7 +708,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		for hop := 0; hop < depth; hop++ {
 			var next []NodeID
 			for _, n := range frontier {
-				out, err := eng.GetOutgoingEdges(n)
+				out, err := eng.GetOutgoingEdges(context.Background(), n)
 				require.NoError(t, err, "BFS GetOutgoingEdges(%q)", n)
 				for _, e := range out {
 					if _, ok := visited[e.EndNode]; ok {
@@ -768,7 +769,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		for hop := 0; hop < depth; hop++ {
 			var next []NodeID
 			for _, n := range frontier {
-				in, err := eng.GetIncomingEdges(n)
+				in, err := eng.GetIncomingEdges(context.Background(), n)
 				require.NoError(t, err, "BFS GetIncomingEdges(%q)", n)
 				for _, e := range in {
 					if _, ok := visited[e.StartNode]; ok {

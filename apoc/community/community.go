@@ -6,6 +6,7 @@
 package community
 
 import (
+	"context"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/rand"
 	"sort"
@@ -19,9 +20,6 @@ type Node = storage.Node
 
 // Relationship represents a graph relationship.
 type Relationship = storage.Relationship
-
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
 
 // CommunityResult represents a community detection result.
 type CommunityResult struct {
@@ -65,10 +63,15 @@ func DefaultLouvainConfig() LouvainConfig {
 
 // Louvain adapts APOC's nodes, undirected relationships and configuration to
 // the same engine as gds.louvain.stream and apoc.algo.louvain. Communities are
-// numbered by their first node in the supplied order.
-func Louvain(nodes []*Node, rels []*Relationship, config LouvainConfig) []CommunityResult {
+// numbered by their first node in the supplied order. The adapter, the two
+// relationship passes and the output pass check ctx, and a run that ctx stopped
+// returns no result and ctx's error, never a partial partition.
+func Louvain(ctx context.Context, nodes []*Node, rels []*Relationship, config LouvainConfig) ([]CommunityResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(nodes) == 0 {
-		return []CommunityResult{}
+		return []CommunityResult{}, nil
 	}
 	if config.MaxIterations == 0 {
 		config.MaxIterations = 100
@@ -81,23 +84,33 @@ func Louvain(nodes []*Node, rels []*Relationship, config LouvainConfig) []Commun
 	}
 	index := make(map[int64]int, len(nodes))
 	for i, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		index[node.ID] = i
 	}
 	options := louvain.DefaultOptions()
 	options.MaxIterations = config.MaxIterations
 	options.Tolerance = config.Threshold
 	options.Resolution = config.Resolution
-	membership := louvain.Final(louvain.RunUndirected(len(nodes), len(rels), func(i int) (int, int, float64, bool) {
+	run, err := louvain.RunUndirected(ctx, len(nodes), len(rels), func(i int) (int, int, float64, bool) {
 		rel := rels[i]
 		source, sourceFound := index[rel.StartNode]
 		target, targetFound := index[rel.EndNode]
 		return source, target, getRelWeight(rel), sourceFound && targetFound
-	}, options))
+	}, options)
+	if err != nil {
+		return nil, err
+	}
+	membership := louvain.Final(run)
 	result := make([]CommunityResult, len(nodes))
 	for i, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		result[i] = CommunityResult{Node: node, CommunityID: int64(membership[i])}
 	}
-	return result
+	return result, nil
 }
 
 // LabelPropagation detects communities using label propagation.

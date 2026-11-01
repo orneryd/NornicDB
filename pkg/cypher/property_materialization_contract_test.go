@@ -66,11 +66,11 @@ func TestPropertyMaterializationContract(t *testing.T) {
 						t.Fatal(err)
 					}
 					snapshot := func() string {
-						ns, err := store.AllNodes()
+						ns, err := store.AllNodes(ctx)
 						if err != nil {
 							t.Fatal(err)
 						}
-						rs, err := store.AllEdges()
+						rs, err := store.AllEdges(ctx)
 						if err != nil {
 							t.Fatal(err)
 						}

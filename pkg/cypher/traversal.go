@@ -151,9 +151,9 @@ func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.N
 	var edges []*storage.Edge
 	var err error
 	if outgoing {
-		edges, err = e.storage.GetOutgoingEdges(nodeID)
+		edges, err = e.storage.GetOutgoingEdges(ctx.cancelCtx, nodeID)
 	} else {
-		edges, err = e.storage.GetIncomingEdges(nodeID)
+		edges, err = e.storage.GetIncomingEdges(ctx.cancelCtx, nodeID)
 	}
 	if err != nil && ctx.cancelCtx != nil {
 		recordExpressionFailure(ctx.cancelCtx, err)
@@ -1294,7 +1294,7 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 		}
 	}
 	for _, relationshipType := range relationship.Types {
-		edges, err := store.GetEdgesByType(relationshipType)
+		edges, err := store.GetEdgesByType(ctx, relationshipType)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1343,7 +1343,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 			return nil, false, nil
 		}
 		stream = func(visit func(*storage.Node) error) error {
-			return reader.StreamNodesByLabelProjected(labels[0], nil, visit)
+			return reader.StreamNodesByLabelProjected(ctx, labels[0], nil, visit)
 		}
 	} else {
 		reader, ok := store.(storage.StreamingEngine)

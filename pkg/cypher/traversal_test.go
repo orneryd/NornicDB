@@ -37,7 +37,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 
 	// Create relationships using direct storage
 	// Alice -> Bob (KNOWS)
-	alice, _ := exec.storage.GetNodesByLabel("Person")
+	alice, _ := exec.storage.GetNodesByLabel(ctx, "Person")
 	var aliceNode, bobNode, carolNode, daveNode *storage.Node
 	for _, n := range alice {
 		switch n.Properties["name"] {
@@ -332,7 +332,7 @@ func TestDegreeFunctionsWithTraversal(t *testing.T) {
 	setupTraversalTestData(t, exec)
 
 	// Get Bob's node
-	people, _ := exec.storage.GetNodesByLabel("Person")
+	people, _ := exec.storage.GetNodesByLabel(context.Background(), "Person")
 	var bob *storage.Node
 	for _, n := range people {
 		if n.Properties["name"] == "Bob" {
