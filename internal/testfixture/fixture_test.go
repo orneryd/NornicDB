@@ -1,9 +1,15 @@
 package testfixture
 
+// Author of release-comparison port: L4 lane (Codex), 1 November 2026.
+// The existing current-head failure-contract tests below are copied unchanged.
+
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -114,4 +120,28 @@ func TestOwnKeepsFixtureUntilExplicitBoundary(t *testing.T) {
 	if !reflect.DeepEqual(closed, []string{"process"}) {
 		t.Fatalf("closed %v", closed)
 	}
+}
+
+func TestOwnCloseFailureFailsTestingOwner(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.run=^TestOwnCloseFailureChild$", "-test.count=1")
+	command.Env = append(os.Environ(), "NORNIC_FIXTURE_CLOSE_FAILURE=1")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("close failure passed its testing owner: %s", output)
+	}
+	for _, want := range []string{"--- FAIL: TestOwnCloseFailureChild/owner", "closing test fixture: planted close failure", "fixture_test.go:"} {
+		if !strings.Contains(string(output), want) {
+			t.Errorf("missing close-failure evidence %q: %s", want, output)
+		}
+	}
+}
+
+func TestOwnCloseFailureChild(t *testing.T) {
+	if os.Getenv("NORNIC_FIXTURE_CLOSE_FAILURE") == "" {
+		t.Skip("executed by the parent subprocess contract")
+	}
+	var closed []string
+	t.Run("owner", func(t *testing.T) {
+		Own(t, &failingCloser{recordingCloser: recordingCloser{name: "engine", closed: &closed}, failure: errors.New("planted close failure")})
+	})
 }
