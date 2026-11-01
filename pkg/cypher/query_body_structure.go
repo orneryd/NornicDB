@@ -482,6 +482,10 @@ func queryStatementWindow(ctx context.Context, source string) (start, end int, m
 		return -1, -1, ModeNormal, false
 	}
 	mode = ModeNormal
+	if query.Rule() != cypherantlr.CypherParserRULE_query {
+		start, end = query.Span()
+		return start, end, mode, end > start
+	}
 	start = -1
 	for i := 0; i < query.ChildCount(); i++ {
 		child := query.Child(i)

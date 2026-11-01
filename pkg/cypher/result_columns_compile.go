@@ -80,7 +80,13 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		return programFailure(resultmetadata.ReasonParserDecline, 0, nil)
 	}
 	start, end := query.Span()
-	bodySyntax := query.QueryBody()
+	// A retained window may already be the real body (or clause), without
+	// a query envelope. Only a query envelope needs the grammar-owned required
+	// body check; the same bound compiler admits the projected body below.
+	bodySyntax := query
+	if query.Rule() == cypherantlr.CypherParserRULE_query {
+		bodySyntax = query.QueryBody()
+	}
 	if !bodySyntax.Valid() {
 		return programFailure(resultmetadata.ReasonParserDecline, start, nil)
 	}
