@@ -1,6 +1,11 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -10,7 +15,7 @@ func TestRecoveredUpdateDeleteReleasesIntermediateUniqueValue(t *testing.T) {
 	for _, mode := range []string{"startup", "replay"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
-			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+			engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 			wal := engine.bufferedCommitWAL
 			require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "unique_v", Type: ConstraintUnique, Label: "L", Properties: []string{"v"}}))
 			_, err := engine.CreateNode(&Node{ID: "test:original", Labels: []string{"L"}, Properties: map[string]interface{}{"v": "old"}})
@@ -28,10 +33,9 @@ func TestRecoveredUpdateDeleteReleasesIntermediateUniqueValue(t *testing.T) {
 			require.True(t, tx.AcknowledgedBuffered())
 			entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
 			require.NoError(t, err)
-			crashClose(t, engine, wal)
-			recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+			crashClose(t, engine, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+			recovered, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 			wal2 := recovered.bufferedCommitWAL
-			t.Cleanup(func() { require.NoError(t, wal2.Close()); require.NoError(t, recovered.Close()) })
 			if mode == "startup" {
 				n, err := RecoverBufferedCommits(recovered, wal2)
 				require.NoError(t, err)

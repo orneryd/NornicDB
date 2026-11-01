@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -22,7 +24,7 @@ func TestUseOwnerExplicitTransaction(t *testing.T) {
 				base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 				manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, manager.Close()) })
+				fixtureowner.Own(t, manager)
 				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_a"}))
 				require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 					{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},

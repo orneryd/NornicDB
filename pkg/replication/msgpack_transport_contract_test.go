@@ -1,5 +1,7 @@
 package replication
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"encoding/gob"
@@ -27,10 +29,10 @@ func TestReplicationSnapshotRoundTripsStoredImages(t *testing.T) {
 	require.NoError(t, source.CreateEdge(edge))
 	first, err := NewStorageAdapterWithWAL(source, t.TempDir())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, first)
+	fixtureowner.Own(t, first)
 	second, err := NewStorageAdapterWithWAL(target, t.TempDir())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, second)
+	fixtureowner.Own(t, second)
 	var snapshot bytes.Buffer
 	require.NoError(t, first.WriteSnapshot(&snapshot))
 	require.NoError(t, second.RestoreSnapshot(bytes.NewReader(snapshot.Bytes())))

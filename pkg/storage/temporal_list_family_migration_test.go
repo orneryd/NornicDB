@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -59,7 +61,7 @@ func TestTemporalListFamilyTemporalFormat4Migration(t *testing.T) {
 	for position := 0; position < 2; position++ {
 		for order := 0; order < 2; order++ {
 			t.Run(fmt.Sprintf("position=%d/order=%d", position, order), func(t *testing.T) {
-				inner, dir := createTestBadgerEngineOnDisk(t)
+				inner, dir, closeInner := createTestBadgerEngineOnDisk(t)
 				engine := NewNamespacedEngine(inner, "test")
 				c := tlfMixedConstraint(position, false)
 				pair := tlfMixedPair(order, "mixed")
@@ -76,7 +78,7 @@ func TestTemporalListFamilyTemporalFormat4Migration(t *testing.T) {
 				require.NoError(t, inner.GetSchemaForNamespace("test").AddConstraint(c))
 				old := tlfWriteFormat3Indexes(t, inner, c, pair)
 				require.NoError(t, inner.MarkCleanShutdown(context.Background()))
-				require.NoError(t, inner.Close())
+				closeInner()
 
 				reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 				require.NoError(t, err)

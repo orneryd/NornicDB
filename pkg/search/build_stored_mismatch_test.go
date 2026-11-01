@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -16,7 +18,6 @@ import (
 func TestBuildSkipsAStoredEmbeddingWithOtherDimensions(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(buildWriteNode("nornic:good", "goodterm", []float32{1, 0, 0}))
 	require.NoError(t, err)
 	_, err = engine.CreateNode(buildWriteNode("nornic:bad", "badterm", []float32{1, 0}))

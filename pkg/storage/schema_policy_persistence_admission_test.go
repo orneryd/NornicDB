@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -27,11 +29,15 @@ func policyPersistenceFixturePolicy(name string) knowledgepolicy.PromotionPolicy
 // openPolicyPersistenceEngine opens a disk-backed engine whose durable schema
 // key can be read back by a reopen. Close is idempotent, so a test may close it
 // early to reopen the same directory.
-func openPolicyPersistenceEngine(t *testing.T, dir string) *BadgerEngine {
+func openPolicyPersistenceEngine(t *testing.T, dir string) (*BadgerEngine, func()) {
 	t.Helper()
-	engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine func()
+	if engine != nil {
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+	}
 	require.NoError(t, err)
-	return engine
+	return engine, closeEngine
 }
 
 // TestPolicyMutationWaitsForNativePublicationBeforeReadingSchema pins the
@@ -42,7 +48,7 @@ func openPolicyPersistenceEngine(t *testing.T, dir string) *BadgerEngine {
 // see the native policy and persist a definition containing both changes.
 func TestPolicyMutationWaitsForNativePublicationBeforeReadingSchema(t *testing.T) {
 	dir := t.TempDir()
-	engine := openPolicyPersistenceEngine(t, dir)
+	engine, closeEngine := openPolicyPersistenceEngine(t, dir)
 	const namespace = "policyadmission"
 	committed := engine.GetSchemaForNamespace(namespace)
 
@@ -141,8 +147,8 @@ func TestPolicyMutationWaitsForNativePublicationBeforeReadingSchema(t *testing.T
 	require.True(t, published["native"], "the direct mutation must observe the accepted native policy")
 	require.True(t, published["direct"])
 
-	require.NoError(t, engine.Close())
-	reopened := openPolicyPersistenceEngine(t, dir)
+	closeEngine()
+	reopened, _ := openPolicyPersistenceEngine(t, dir)
 	durable := map[string]bool{}
 	for _, policy := range reopened.GetSchemaForNamespace(namespace).ShowPromotionPolicies() {
 		durable[policy.Name] = true
@@ -158,7 +164,7 @@ func TestPolicyMutationWaitsForNativePublicationBeforeReadingSchema(t *testing.T
 // they must not overwrite each other.
 func TestPolicyAcceptedDirectWritersKeepEveryAcceptedValue(t *testing.T) {
 	dir := t.TempDir()
-	engine := openPolicyPersistenceEngine(t, dir)
+	engine, closeEngine := openPolicyPersistenceEngine(t, dir)
 	const namespace = "policywriters"
 	committed := engine.GetSchemaForNamespace(namespace)
 
@@ -274,8 +280,8 @@ func TestPolicyAcceptedDirectWritersKeepEveryAcceptedValue(t *testing.T) {
 		require.True(t, inMemory[name], "accepted policy %q is missing from memory", name)
 	}
 
-	require.NoError(t, engine.Close())
-	reopened := openPolicyPersistenceEngine(t, dir)
+	closeEngine()
+	reopened, _ := openPolicyPersistenceEngine(t, dir)
 	durable := map[string]bool{}
 	for _, policy := range reopened.GetSchemaForNamespace(namespace).ShowPromotionPolicies() {
 		durable[policy.Name] = true

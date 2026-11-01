@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -74,7 +76,7 @@ func (e *catalogDropBarrierNative) DeleteByPrefix(prefix string) (int64, int64, 
 	}
 	return e.BadgerEngine.DeleteByPrefix(prefix)
 }
-func newCatalogDropBarrier(t *testing.T) (*DatabaseManager, *f25CatalogReceiptProbe, *catalogDropBarrierNative, string) {
+func newCatalogDropBarrier(t *testing.T) (*DatabaseManager, *f25CatalogReceiptProbe, *catalogDropBarrierNative, string, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
@@ -84,17 +86,17 @@ func newCatalogDropBarrier(t *testing.T) (*DatabaseManager, *f25CatalogReceiptPr
 	probe := &f25CatalogReceiptProbe{Engine: native, native: base, ownerContext: t.Context()}
 	manager, err := NewDatabaseManager(t.Context(), probe, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	_, closeManager := fixtureowner.OwnWithClose(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "target"}))
 	view, err := manager.GetStorage("target")
 	require.NoError(t, err)
 	_, err = view.CreateNode(&storage.Node{ID: "old"})
 	require.NoError(t, err)
-	return manager, probe, native, dir
+	return manager, probe, native, dir, closeManager
 }
 
 func TestCatalogDropReceiptOwnsCompletionSync(t *testing.T) {
-	manager, _, native, _ := newCatalogDropBarrier(t)
+	manager, _, native, _, _ := newCatalogDropBarrier(t)
 	native.blockCompletionSync()
 	result := make(chan error, 1)
 	go func() { result <- manager.DropDatabase(t.Context(), "target") }()
@@ -124,7 +126,7 @@ func TestCatalogDropDurabilityFollowsPhysicalOutcome(t *testing.T) {
 		{"accepted-wait", 2, storage.CommitApplied, 2},
 	} {
 		t.Run(fmt.Sprintf("%s/%d", test.phase, test.faultAfter), func(t *testing.T) {
-			manager, probe, native, _ := newCatalogDropBarrier(t)
+			manager, probe, native, _, _ := newCatalogDropBarrier(t)
 			probe.mode = test.phase
 			probe.faultAfter = test.faultAfter
 			if test.phase == "accepted-wait" {
@@ -153,7 +155,7 @@ func TestCatalogDropDurabilityFollowsPhysicalOutcome(t *testing.T) {
 func TestCatalogDropSyncFailureRetainsAbsentNameFence(t *testing.T) {
 	for _, recovery := range []string{"retry", "reopen"} {
 		t.Run(recovery, func(t *testing.T) {
-			manager, _, native, dir := newCatalogDropBarrier(t)
+			manager, _, native, dir, closeManager := newCatalogDropBarrier(t)
 			native.failSync = 2
 			require.ErrorIs(t, manager.DropDatabase(t.Context(), "target"), storage.ErrConflict)
 			assert.False(t, manager.Exists("target"), "Applied catalog removal must not resurrect metadata")
@@ -181,7 +183,7 @@ func TestCatalogDropSyncFailureRetainsAbsentNameFence(t *testing.T) {
 				syncs := native.syncCalls.Load()
 				standby, err := NewDatabaseManager(t.Context(), &identityReadOnlyEngine{Engine: native}, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = standby.Close() })
+				fixtureowner.Own(t, standby)
 				assert.True(t, standby.pendingDrops["target"])
 				assert.False(t, standby.Exists("target"))
 				after, err := native.GetNode("system:databases:metadata")
@@ -189,7 +191,7 @@ func TestCatalogDropSyncFailureRetainsAbsentNameFence(t *testing.T) {
 				assert.Equal(t, before.Properties, after.Properties, "read-only startup never rewrites the absent-record fence")
 				assert.Equal(t, syncs, native.syncCalls.Load())
 				assert.Equal(t, purges, native.purgeCalls.Load())
-				require.NoError(t, manager.Close())
+				closeManager()
 				reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
 				require.NoError(t, err)
 				fixtureowner.Own(t, reopened)
@@ -197,7 +199,7 @@ func TestCatalogDropSyncFailureRetainsAbsentNameFence(t *testing.T) {
 				manager, err = NewDatabaseManager(t.Context(), recovered, nil)
 				require.NoError(t, err)
 				assert.Zero(t, recovered.purgeCalls.Load(), "startup completes absent-record pending marker without a namespace purge")
-				t.Cleanup(func() { _ = manager.Close() })
+				fixtureowner.Own(t, manager)
 				assert.False(t, manager.pendingDrops["target"])
 				assert.True(t, manager.Exists("peer"))
 			}
@@ -228,7 +230,7 @@ func (ctx *catalogDropAttemptContext) Err() error {
 func TestCatalogDropInvocationSerializesOldGenerationPurges(t *testing.T) {
 	for _, cancelSecond := range []bool{false, true} {
 		t.Run(fmt.Sprint(cancelSecond), func(t *testing.T) {
-			manager, _, native, _ := newCatalogDropBarrier(t)
+			manager, _, native, _, _ := newCatalogDropBarrier(t)
 			native.purgeEntered = make(chan int32, 2)
 			native.purgePermits = []chan struct{}{make(chan struct{}), make(chan struct{})}
 			close(native.purgePermits[1])
@@ -270,7 +272,7 @@ func TestCatalogDropInvocationSerializesOldGenerationPurges(t *testing.T) {
 }
 
 func TestCatalogCanceledWaitDuringCompletionSyncRetainsReceiptLease(t *testing.T) {
-	manager, probe, native, _ := newCatalogDropBarrier(t)
+	manager, probe, native, _, _ := newCatalogDropBarrier(t)
 	native.blockCompletionSync()
 	probe.mode = "accepted-wait"
 	probe.faultAfter = 2
@@ -316,7 +318,7 @@ func TestCatalogCanceledWaitDuringCompletionSyncRetainsReceiptLease(t *testing.T
 }
 
 func TestCatalogDurableDropPublicationDuringClose(t *testing.T) {
-	manager, probe, native, _ := newCatalogDropBarrier(t)
+	manager, probe, native, _, _ := newCatalogDropBarrier(t)
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "peer"}))
 	require.NoError(t, manager.SetDatabaseOption(t.Context(), "peer", OptionTxLogEnrichment, "FULL"))
 	require.Equal(t, storage.ChangeCaptureFull, native.ChangeCapture("peer"))

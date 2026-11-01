@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -26,9 +28,7 @@ func TestBoltExecuteWriteConcurrentRelationshipPropertyIdentityPersists(t *testi
 	base := storage.NewWALEngine(badger, wal)
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = mgr.Close()
-	})
+	fixtureowner.Own(t, mgr)
 
 	server := NewWithDatabaseManager(&Config{
 		Port:            0,
@@ -172,9 +172,7 @@ func TestBoltProcedureWriteCommitInvalidatesSharedReadCache(t *testing.T) {
 	base := storage.NewWALEngine(badger, wal)
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = mgr.Close()
-	})
+	fixtureowner.Own(t, mgr)
 
 	server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 8}, &mockExecutor{}, mgr)
 	port := startBoltTestServer(t, server)

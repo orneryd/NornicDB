@@ -1,5 +1,7 @@
 package cypher
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -48,12 +50,16 @@ func TestKnowledgePolicyRawSourceNativeReopenAndEvaluation(t *testing.T) {
 		t.Run(parser, func(t *testing.T) {
 			t.Setenv("NORNIC_CYPHER_PARSER", parser)
 			dir := t.TempDir()
-			open := func() *storage.BadgerEngine {
-				engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
+			open := func() (*storage.BadgerEngine, func()) {
+				engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
+				var closeEngine func()
+				if engine != nil {
+					_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+				}
 				require.NoError(t, err)
-				return engine
+				return engine, closeEngine
 			}
-			engine := open()
+			engine, closeEngine := open()
 			executor := NewStorageExecutor(storage.NewNamespacedEngine(engine, "policy_source"))
 			for _, query := range []string{
 				`CREATE DECAY PROFILE d OPTIONS { halfLifeSeconds: 3600, function: 'none', scope: 'NODE', scoreFrom: 'CREATED' }`,
@@ -64,8 +70,8 @@ func TestKnowledgePolicyRawSourceNativeReopenAndEvaluation(t *testing.T) {
 				require.NoError(t, err, query)
 			}
 			require.Equal(t, `n.literal = '\u005cu0062'`, engine.GetSchemaForNamespace("policy_source").ShowPromotionPolicies()[0].OnAccess.Mutations[0].Expression)
-			require.NoError(t, engine.Close())
-			engine = open()
+			closeEngine()
+			engine, _ = open()
 			require.Equal(t, `n.literal = '\u005cu0062'`, engine.GetSchemaForNamespace("policy_source").ShowPromotionPolicies()[0].OnAccess.Mutations[0].Expression)
 			engine.SetDecayEnabled(true)
 			_, err := engine.CreateNode(&storage.Node{ID: "policy_source:one", Labels: []string{"Fact"}, Properties: map[string]interface{}{}})

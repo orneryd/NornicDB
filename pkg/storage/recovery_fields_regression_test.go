@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -128,7 +130,7 @@ func TestWALEngineRecoveryPreservesSuppliedTimes(t *testing.T) {
 	wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})
 	require.NoError(t, err)
 	live := NewWALEngine(newTestMemoryEngine(t), wal)
-	t.Cleanup(func() { _ = live.Close() })
+	fixtureowner.Own(t, live)
 	n, e := recoveryFieldFixture()
 	_, err = live.CreateNode(n)
 	require.NoError(t, err)
@@ -138,7 +140,6 @@ func TestWALEngineRecoveryPreservesSuppliedTimes(t *testing.T) {
 	require.NoError(t, wal.Close())
 	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = recovered.Close() })
 	gotN, err := recovered.GetNode(n.ID)
 	require.NoError(t, err)
 	gotE, err := recovered.GetEdge(e.ID)
@@ -197,7 +198,7 @@ func newTimestampRecoveryWAL(t *testing.T) (*WALEngine, *WAL, string) {
 	wal, err := NewWAL(dir, &WALConfig{SyncMode: "immediate"})
 	require.NoError(t, err)
 	live := NewWALEngine(newTestMemoryEngine(t), wal)
-	t.Cleanup(func() { _ = live.Close() })
+	fixtureowner.Own(t, live)
 	return live, wal, dir
 }
 
@@ -215,7 +216,6 @@ func TestWALEngineDefaultTimesRecordedBeforeCreation(t *testing.T) {
 	require.NoError(t, wal.Close())
 	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = recovered.Close() })
 	gotN, err := recovered.GetNode(n.ID)
 	require.NoError(t, err)
 	gotE, err := recovered.GetEdge(e.ID)
@@ -241,7 +241,6 @@ func TestWALEngineDefaultUpdateTimeRecordedBeforeMutation(t *testing.T) {
 	require.NoError(t, wal.Close())
 	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = recovered.Close() })
 	got, err := recovered.GetNode(node.ID)
 	require.NoError(t, err)
 	assert.True(t, want.UpdatedAt.Equal(got.UpdatedAt), "default update time must be stamped before appending, not independently at replay")

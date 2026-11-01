@@ -1,5 +1,7 @@
 package search
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -49,7 +51,6 @@ func loadBenchmarkCorpus(tb testing.TB, syntheticCount, syntheticDims int) bench
 			fixtureowner.Own(tb, baseEngine)
 		}
 		if err == nil {
-			tb.Cleanup(func() { _ = baseEngine.Close() })
 			engine := storage.NewNamespacedEngine(baseEngine, dbName)
 			nodes, err := engine.AllNodes(context.Background())
 			if err == nil && len(nodes) > 0 {

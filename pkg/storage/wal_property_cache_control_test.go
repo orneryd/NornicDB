@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"testing"
@@ -17,7 +19,6 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 	open := func() *BadgerEngine {
 		b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, b.Close()) })
 		return b
 	}
 	source, destination := open(), open()

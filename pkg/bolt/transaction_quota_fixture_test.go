@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"net"
 	"testing"
@@ -21,7 +23,7 @@ func newBoltQuotaFixture(t *testing.T, limits *multidb.Limits, decorate func(*st
 	}
 	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close(); _ = base.Close() })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", limits))
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, nil, manager)

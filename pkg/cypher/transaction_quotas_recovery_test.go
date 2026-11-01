@@ -1,5 +1,9 @@
 package cypher
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -26,7 +30,7 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 				logged := storage.NewWALEngine(base, wal)
 				manager, err := multidb.NewDatabaseManager(t.Context(), logged, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = manager.Close(); _ = logged.Close() })
+				_, closeManager := fixtureowner.OwnWithClose(t, manager)
 				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
 				limits := &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1}}
 				query := "UNWIND [1,2] AS id CREATE (:Quota {id:id,content:'rejectedtoken'})"
@@ -95,9 +99,9 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 				}
 				verify(engine, svc)
 				require.NoError(t, wal.Close())
+				closeManager()
 				recovered, err := fixtureowner.OwnResult[*storage.MemoryEngine](t, storage.ErrStorageClosed)(storage.RecoverFromWAL(dir, ""))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = recovered.Close() })
 				recoveredEngine := storage.NewNamespacedEngine(recovered, "quota")
 				recoveredSearch := search.NewService(recoveredEngine, 3, nil)
 				require.NoError(t, recoveredSearch.BuildIndexes(ctx))

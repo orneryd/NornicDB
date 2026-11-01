@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync"
@@ -15,7 +17,6 @@ func TestResidualCommitAdmissionCancellation(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			if route == "count" {
 				for _, id := range []NodeID{"test:a", "test:b"} {
 					_, err := b.CreateNode(&Node{ID: id, Labels: []string{"L"}})

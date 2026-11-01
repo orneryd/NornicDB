@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -13,7 +15,6 @@ import (
 // the label list joins the BM25 build fingerprint only when set (#1067).
 func TestServiceFulltextLabelAllowlist(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	service := NewService(base, DefaultVectorDimensions, nil)
 	service.SetFulltextLabels([]string{"Searchable", " ", "Source", "Searchable"})
 	require.Equal(t, []string{"Searchable", "Source"}, service.FulltextLabels())

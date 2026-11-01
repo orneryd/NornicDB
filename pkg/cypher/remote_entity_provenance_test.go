@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -40,7 +42,7 @@ func TestFabricRemoteEntityGraphFunctions(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "remote_graph", []multidb.ConstituentRef{{Alias: "source", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: server.URL, AuthMode: "oidc_forwarding"}}))
 	store, err := mgr.GetStorage(mgr.DefaultDatabaseName())
 	require.NoError(t, err)

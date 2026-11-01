@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync/atomic"
@@ -12,7 +14,7 @@ import (
 func TestSnapshotOverlayProjectedCallbacksOwnPayload(t *testing.T) {
 	for _, reader := range []string{"stream", "label", "transaction-stream"} {
 		t.Run(reader, func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, time.Hour)
+			b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			b.writeBehind.Close()
 			bufferedCreate(t, b, &Node{ID: "test:owned", Labels: []string{"Doc"},
 				Properties:      map[string]any{"keep": "ack", "drop": "retained"},
@@ -60,7 +62,7 @@ func TestSnapshotOverlayProjectedCallbacksOwnPayload(t *testing.T) {
 func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 	for _, phase := range []string{"idle", "busy", "retired"} {
 		t.Run(phase, func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, time.Hour)
+			b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			b.writeBehind.Close()
 			_, err := b.CreateNode(&Node{ID: "test:cached", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
@@ -108,7 +110,7 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
 	for _, writer := range []string{"engine", "transaction", "buffered"} {
 		t.Run(writer, func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, time.Hour)
+			b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			b.writeBehind.Close()
 			for _, id := range []NodeID{"test:hub", "test:peer"} {
 				_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})

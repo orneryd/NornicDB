@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -12,7 +14,6 @@ import (
 func TestResidualRetainedAuthorityAdmission(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	schema := b.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddUniqueConstraint("retained-key", "Retained", "k"))
 	before := &Node{ID: "test:retained", Labels: []string{"Retained"}, Properties: map[string]any{"k": "old"}}

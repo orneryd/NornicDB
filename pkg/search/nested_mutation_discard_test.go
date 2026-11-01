@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -37,7 +39,6 @@ func (e *xhighNestedFaultEngine) GetEdge(id storage.EdgeID) (*storage.Edge, erro
 func xhighNestedService(t *testing.T) (*storage.NamespacedEngine, *Service, *xhighNestedFaultEngine) {
 	t.Helper()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "nesteddiscard")
 	fault := &xhighNestedFaultEngine{Engine: engine}
 	service := NewService(fault, 2, nil)

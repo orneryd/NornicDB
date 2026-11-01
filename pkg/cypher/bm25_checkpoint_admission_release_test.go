@@ -9,19 +9,18 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
-	"sync/atomic"
-	"testing"
-	"time"
-
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
 )
 
 // The adapter exposes exactly one of the two node traversal contracts, without
@@ -59,12 +58,9 @@ func nor283Source(t *testing.T, engine storage.Engine, traversal string) (storag
 
 func nor283OpenStore(t *testing.T, dir string) (*storage.BadgerEngine, func()) {
 	t.Helper()
-	engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
 	require.NoError(t, err)
-	var once sync.Once
-	closeStore := func() { once.Do(func() { require.NoError(t, engine.Close()) }) }
-	t.Cleanup(closeStore)
-	return engine, closeStore
+	return fixtureowner.OwnWithClose(t, engine)
 }
 
 func nor283Service(t *testing.T, source storage.Engine, dir string) (*search.Service, func()) {

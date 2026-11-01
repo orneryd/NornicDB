@@ -16,7 +16,7 @@ func newFabricIdentityExecutor(t testing.TB) *StorageExecutor {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "identity_part"}))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "identity", []multidb.ConstituentRef{
 		{Alias: "part", DatabaseName: "identity_part", Type: "local", AccessMode: "read_write"},

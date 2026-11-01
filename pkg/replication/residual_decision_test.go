@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -18,7 +20,6 @@ func TestResidualReplicatedPublicationDecision(t *testing.T) {
 		t.Run(fmt.Sprintf("veto=%v", veto), func(t *testing.T) {
 			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = base.Close() })
 			r, mirror := newAcceptedReplicationFixture(t, base, nil, &Config{})
 			owner := NewReplicatedEngine(base, r, time.Second)
 			tx, err := base.BeginTransaction()

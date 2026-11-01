@@ -1,15 +1,16 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"strings"
-	"sync"
-	"testing"
-
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"strings"
+	"sync"
+	"testing"
 )
 
 func quotaExecutor(t testing.TB, limits *multidb.Limits) (*StorageExecutor, storage.Engine, *multidb.DatabaseManager) {
@@ -139,7 +140,7 @@ func TestTransactionQuotasByteAccounting(t *testing.T) {
 
 func TestTransactionQuotasPersistedUsage(t *testing.T) {
 	dir := t.TempDir()
-	open := func() (*storage.BadgerEngine, *multidb.DatabaseManager) {
+	open := func() (*multidb.DatabaseManager, func()) {
 		t.Helper()
 		base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 		if base != nil {
@@ -148,19 +149,18 @@ func TestTransactionQuotasPersistedUsage(t *testing.T) {
 		require.NoError(t, err)
 		manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 		require.NoError(t, err)
-		return base, manager
+		_, closeManager := fixtureowner.OwnWithClose(t, manager)
+		return manager, closeManager
 	}
-	base, manager := open()
+	manager, closeManager := open()
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1}}))
 	engine, err := manager.GetStorage("quota")
 	require.NoError(t, err)
 	_, err = NewStorageExecutor(engine).Execute(context.Background(), "CREATE (:Quota)", nil)
 	require.NoError(t, err)
-	require.NoError(t, manager.Close())
-	require.NoError(t, base.Close())
-	base, manager = open()
-	t.Cleanup(func() { _ = manager.Close(); _ = base.Close() })
+	closeManager()
+	manager, _ = open()
 	engine, err = manager.GetStorage("quota")
 	require.NoError(t, err)
 	_, err = NewStorageExecutor(engine).Execute(context.Background(), "CREATE (:Quota)", nil)

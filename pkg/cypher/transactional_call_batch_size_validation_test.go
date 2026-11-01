@@ -1,5 +1,7 @@
 package cypher_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -24,7 +26,6 @@ func TestTransactionalCallBatchSizePreflight(t *testing.T) {
 		t.Run(query, func(t *testing.T) {
 			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))
 			_, err = exec.Execute(context.Background(), query, nil)
 			require.Error(t, err)

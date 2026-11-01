@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -66,7 +68,6 @@ func BenchmarkSnapshotEncoder(b *testing.B) {
 				ID: "nornic:relationship", StartNode: "nornic:a", EndNode: "nornic:b", Type: "CALLS",
 				Properties: map[string]any{"file": strings.Repeat("source/", 32), "line": int64(123), "algo": "vta", "site": "pkg/storage/snapshot_stream.go:80"},
 			}}
-			defer s.Close()
 			// A 64 MiB pointer graph, in one allocation, gives GC meaningful
 			// marking work without adding a large lab job or a production dataset.
 			var ballast []*byte

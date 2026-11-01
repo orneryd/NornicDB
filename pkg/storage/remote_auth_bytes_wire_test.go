@@ -1,9 +1,17 @@
 package storage_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/bolt"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"io"
 	"log/slog"
 	"net"
@@ -14,13 +22,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"github.com/orneryd/nornicdb/pkg/auth"
-	"github.com/orneryd/nornicdb/pkg/bolt"
-	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 const remoteAuthByteQuery = "RETURN 'wire-ok' AS marker"
@@ -186,6 +187,10 @@ func TestRemoteAuthenticationPreservesAdmittedCredentialBytesOnWire(t *testing.T
 					return engine, err
 				}
 				manager, err := multidb.NewDatabaseManager(ctx, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), cfg)
+				var closeManager func()
+				if manager != nil {
+					_, closeManager = fixtureowner.OwnWithClose(t, fixtureowner.Redacted("manager", manager))
+				}
 				if err != nil {
 					t.Fatal("manager setup failed")
 				}
@@ -196,9 +201,7 @@ func TestRemoteAuthenticationPreservesAdmittedCredentialBytesOnWire(t *testing.T
 					for _, engine := range owned {
 						_ = engine.Close()
 					}
-					if manager.Close() != nil {
-						t.Error("manager close failed")
-					}
+					closeManager()
 				})
 				ref := multidb.ConstituentRef{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: endpoint, AuthMode: "user_password", User: tc.user, Password: tc.password}
 				if tc.source == "uri" || tc.source == "explicit-priority" {

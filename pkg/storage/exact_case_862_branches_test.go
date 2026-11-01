@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -80,7 +82,7 @@ func TestRebuildEdgeTypeIndexBranches(t *testing.T) {
 		require.ErrorContains(t, err, "decode edge for edge-type index")
 	})
 	t.Run("write error", func(t *testing.T) {
-		engine, _ := createTestBadgerEngineOnDisk(t)
+		engine, _, _ := createTestBadgerEngineOnDisk(t)
 		_, err := engine.CreateNode(&Node{ID: "test:a"})
 		require.NoError(t, err)
 		seedRawRecord(t, engine, &Edge{ID: "test:huge", StartNode: "test:a", EndNode: "test:a", Type: oversizedName})
@@ -111,13 +113,13 @@ func TestRebuildLabelAndEdgeBetweenIndexSkipsAndWriteErrors(t *testing.T) {
 		require.Equal(t, 1, processed)
 	})
 	t.Run("label index write error", func(t *testing.T) {
-		engine, _ := createTestBadgerEngineOnDisk(t)
+		engine, _, _ := createTestBadgerEngineOnDisk(t)
 		seedRawRecord(t, engine, &Node{ID: "test:huge", Labels: []string{oversizedName}})
 		_, err := engine.rebuildLabelIndex(context.Background())
 		require.ErrorContains(t, err, "write label index")
 	})
 	t.Run("edge-between index write error", func(t *testing.T) {
-		engine, _ := createTestBadgerEngineOnDisk(t)
+		engine, _, _ := createTestBadgerEngineOnDisk(t)
 		_, err := engine.CreateNode(&Node{ID: "test:a"})
 		require.NoError(t, err)
 		seedRawRecord(t, engine, &Edge{ID: "test:huge", StartNode: "test:a", EndNode: "test:a", Type: oversizedName})
@@ -312,7 +314,7 @@ func TestRebuildCaseSensitiveIndexesErrors(t *testing.T) {
 		require.ErrorContains(t, err, "rebuild edge-type index")
 	})
 	t.Run("edge-between index", func(t *testing.T) {
-		engine, _ := createTestBadgerEngineOnDisk(t)
+		engine, _, _ := createTestBadgerEngineOnDisk(t)
 		_, err := engine.CreateNode(&Node{ID: "test:a"})
 		require.NoError(t, err)
 		// A type-index key (type + 10 bytes) fits Badger's 65,000-byte key
@@ -357,15 +359,16 @@ func hasTombstoneKey(t *testing.T, engine *BadgerEngine, key []byte) bool {
 func TestStartupUpgradeFailsOnAFailedV2ToV3IndexRebuild(t *testing.T) {
 	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger")}
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: "test:a", Labels: []string{"L"}})
 	require.NoError(t, err)
 	writeRawValue(t, engine, nodeKey("test:bad"), []byte{0xFF, 0x00})
 	require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	options.AllowStorageUpgrade = true
 	_, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))

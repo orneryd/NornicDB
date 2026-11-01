@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -1066,8 +1068,9 @@ func TestCreateIndex_RebuildsUsableEntriesAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 
 	base1, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	var closeBase func()
 	if base1 != nil {
-		fixtureowner.Own(t, base1)
+		_, closeBase = fixtureowner.OwnWithClose(t, base1)
 	}
 	require.NoError(t, err)
 	store1 := storage.NewNamespacedEngine(base1, "test")
@@ -1084,7 +1087,7 @@ func TestCreateIndex_RebuildsUsableEntriesAfterRestart(t *testing.T) {
 	pre := store1.GetSchema().PropertyIndexLookup("MongoDocument", "sourceId", "src-002")
 	require.Len(t, pre, 1)
 
-	require.NoError(t, base1.Close())
+	closeBase()
 
 	base2, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
@@ -1105,8 +1108,9 @@ func TestCreateRelationshipIndex_PersistsAcrossRestart_E2E(t *testing.T) {
 	dir := t.TempDir()
 
 	base1, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	var closeBase func()
 	if base1 != nil {
-		fixtureowner.Own(t, base1)
+		_, closeBase = fixtureowner.OwnWithClose(t, base1)
 	}
 	require.NoError(t, err)
 	store1 := storage.NewNamespacedEngine(base1, "test")
@@ -1165,7 +1169,7 @@ func TestCreateRelationshipIndex_PersistsAcrossRestart_E2E(t *testing.T) {
 	require.True(t, listHas(row1["labelsOrTypes"], "RELATES_TO"), "expected RELATES_TO in labelsOrTypes, got %#v", row1["labelsOrTypes"])
 	require.True(t, listHas(row1["properties"], "uuid"), "expected uuid in properties, got %#v", row1["properties"])
 
-	require.NoError(t, base1.Close())
+	closeBase()
 
 	base2, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)

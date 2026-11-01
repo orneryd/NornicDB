@@ -1,5 +1,7 @@
 package bolt
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -18,7 +20,7 @@ func TestCredentialCompositeAliasBoltAdmission(t *testing.T) {
 		t.Run(fmt.Sprintf("remote_last_%t", remoteLast), func(t *testing.T) {
 			mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = mgr.Close() })
+			fixtureowner.Own(t, mgr)
 			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "localdb"}))
 			local := multidb.ConstituentRef{Alias: "Winner", Type: "local", AccessMode: "read_write", DatabaseName: "localdb"}
 			remote := multidb.ConstituentRef{Alias: "winner", Type: "remote", AccessMode: "read", URI: "http://example.invalid", DatabaseName: "remote"}

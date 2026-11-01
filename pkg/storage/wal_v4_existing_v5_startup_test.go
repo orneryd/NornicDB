@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"errors"
 	"os"
@@ -19,7 +21,11 @@ func TestV4ExistingStoreUpgradesV5SemanticWALAtStartup(t *testing.T) {
 		t.Run(map[bool]string{false: "normal", true: "interrupted"}[interrupted], func(t *testing.T) {
 			dir := t.TempDir()
 			options := BadgerOptions{DataDir: dir, LowMemory: true}
-			engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+			var closeEngine func()
+			if engine != nil {
+				_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+			}
 			require.NoError(t, err)
 			_, err = engine.CreateNode(&Node{ID: "test:existing", Properties: map[string]any{"value": "old"}})
 			require.NoError(t, err)
@@ -28,7 +34,7 @@ func TestV4ExistingStoreUpgradesV5SemanticWALAtStartup(t *testing.T) {
 				require.NoError(t, engine.db.Update(func(tx *badger.Txn) error { return tx.Set(v4WALFormatRecoveryKey, []byte{1}) }))
 				require.NoError(t, engine.db.Sync())
 			}
-			require.NoError(t, engine.Close())
+			closeEngine()
 
 			payload, err := encodeV4GobEntityTransaction("test", "historical-v5", []Operation{{
 				Type: OpCreateNode, Node: &Node{ID: "test:replayed", Properties: map[string]any{"count": int64(9)}},
@@ -47,7 +53,10 @@ func TestV4ExistingStoreUpgradesV5SemanticWALAtStartup(t *testing.T) {
 			}
 
 			options.AllowStorageUpgrade = !interrupted
-			engine, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+			engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+			if engine != nil {
+				_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+			}
 			require.NoError(t, err)
 			existing, err := engine.GetStoredNode("test:existing")
 			require.NoError(t, err)
@@ -55,7 +64,7 @@ func TestV4ExistingStoreUpgradesV5SemanticWALAtStartup(t *testing.T) {
 			replayed, err := engine.GetStoredNode("test:replayed")
 			require.NoError(t, err)
 			require.Equal(t, int64(9), replayed.Properties["count"])
-			require.NoError(t, engine.Close())
+			closeEngine()
 
 			options.AllowStorageUpgrade = false
 			engine, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))

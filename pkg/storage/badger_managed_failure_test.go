@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -40,7 +42,7 @@ func overwriteRaw(t *testing.T, engine *BadgerEngine, key []byte) {
 // conflict, ordinary or large, and writes nothing.
 func TestCommit_BadgerConflictAfterValidation(t *testing.T) {
 	for _, large := range []bool{false, true} {
-		engine := openLargeCommitTestEngine(t, t.TempDir())
+		engine, closeEngine := openLargeCommitTestEngine(t, t.TempDir())
 		_, err := engine.CreateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 		require.NoError(t, err)
 		tx, err := engine.BeginTransaction()
@@ -59,7 +61,7 @@ func TestCommit_BadgerConflictAfterValidation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(1), base.Properties["v"])
 		requireNoLargeCommitIntent(t, engine)
-		require.NoError(t, engine.Close())
+		closeEngine()
 	}
 }
 
@@ -76,7 +78,7 @@ func TestLargeCommit_UnrecoverableRollbackRefusesWritesUntilReopen(t *testing.T)
 
 func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	dir := t.TempDir()
-	engine := openLargeCommitTestEngine(t, dir)
+	engine, closeEngine := openLargeCommitTestEngine(t, dir)
 	_, err := engine.CreateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 
@@ -122,10 +124,9 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	require.NoError(t, err)
 	stageLargeCreate(t, big, 6000)
 	require.ErrorContains(t, big.Commit(), "refuses writes until restart")
-	require.NoError(t, engine.Close())
+	closeEngine()
 
-	engine = openLargeCommitTestEngine(t, dir)
-	defer engine.Close()
+	engine, closeEngine = openLargeCommitTestEngine(t, dir)
 	requireNoLargeCommitIntent(t, engine)
 	require.Zero(t, countBigNodes(t, engine))
 	base, err = engine.GetNode("test:base")
@@ -152,15 +153,15 @@ func largeCommitWithLateName(t *testing.T, engine *BadgerEngine) *BadgerTransact
 // deletes the intent — leaves nothing behind, and the same commit succeeds
 // afterwards.
 func TestLargeCommit_FailureAtAnyBatchRollsBack(t *testing.T) {
-	probe := openLargeCommitTestEngine(t, t.TempDir())
+	probe, closeProbe := openLargeCommitTestEngine(t, t.TempDir())
 	batches := countBatches(t)
 	require.NoError(t, largeCommitWithLateName(t, probe).Commit())
 	total := int(batches.Load())
-	require.NoError(t, probe.Close())
+	closeProbe()
 	require.Greater(t, total, 3)
 
 	for _, failAt := range []int{1, total - 1, total} {
-		engine := openLargeCommitTestEngine(t, t.TempDir())
+		engine, closeEngine := openLargeCommitTestEngine(t, t.TempDir())
 		injected := errors.New("injected batch failure")
 		restore := setLargeCommitBatchHook(func(batch int) error {
 			if batch == failAt {
@@ -184,15 +185,14 @@ func TestLargeCommit_FailureAtAnyBatchRollsBack(t *testing.T) {
 		late, err := engine.GetNode("test:late")
 		require.NoError(t, err)
 		require.Equal(t, int64(1), late.Properties["late_name"])
-		require.NoError(t, engine.Close())
+		closeEngine()
 	}
 }
 
 // New property names that need several batches are not marked persisted
 // when the store refuses their writes: the next commit stages them again.
 func TestPropertyKeyDict_ManyNamesRefusedStayUnpersisted(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 	txn, readTs, err := engine.db.beginTxn(true)
 	require.NoError(t, err)
 	defer engine.db.endRead(readTs)
@@ -229,14 +229,18 @@ func TestCommitOracle_FailureReleasesWaiters(t *testing.T) {
 // the control record and returns the store with the options that reopen the
 // same directory. Both recovery tests start from this persisted state and differ
 // only in how the interruption is produced.
-func managedStoreWithValue(t *testing.T) (*managedBadgerDB, badger.Options) {
+func managedStoreWithValue(t *testing.T) (*managedBadgerDB, badger.Options, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	opts := badger.DefaultOptions(dir).WithLogger(nil)
-	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
+	m, err := fixtureowner.TrackResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
+	var closeManaged func()
+	if m != nil {
+		_, closeManaged = fixtureowner.OwnWithClose(t, m)
+	}
 	require.NoError(t, err)
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
-	return m, opts
+	return m, opts, closeManaged
 }
 
 // A store whose interrupted large commit cannot be rolled back (here: it is
@@ -245,7 +249,7 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Badger read-only mode is unsupported on Windows")
 	}
-	m, opts := managedStoreWithValue(t)
+	m, opts, _ := managedStoreWithValue(t)
 	lc, err := m.beginLargeCommitContext(context.Background())
 	require.NoError(t, err)
 	batch := lc.openBatch()
@@ -258,7 +262,6 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 
 	m, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
-	defer m.Close()
 	require.NoError(t, m.View(func(txn *badger.Txn) error {
 		requireValue(t, txn, "k", "a")
 		return nil
@@ -271,12 +274,11 @@ func TestManagedBadger_LargeCommitCannotStartOnReadOnlyStore(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Badger read-only mode is unsupported on Windows")
 	}
-	m, opts := managedStoreWithValue(t)
-	require.NoError(t, m.Close())
+	m, opts, closeManaged := managedStoreWithValue(t)
+	closeManaged()
 
 	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts.WithReadOnly(true)))
 	require.NoError(t, err)
-	defer m.Close()
 	_, err = m.beginLargeCommitContext(context.Background())
 	require.ErrorContains(t, err, "rolling back")
 	require.Error(t, m.oracle.failure())
@@ -335,8 +337,7 @@ func TestManagedBadger_LoadRejectsInvalidBackup(t *testing.T) {
 // The hook a commit sets for what publication needs runs once, when the
 // commit turns large, and not for a commit that fits one batch.
 func TestCommitWriter_BeforeLargeRunsOnceWhenTheCommitTurnsLarge(t *testing.T) {
-	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
+	engine, _ := openLargeCommitTestEngine(t, t.TempDir())
 	write := func(n int, prefix string) int {
 		txn, readTs, err := engine.db.beginTxn(true)
 		require.NoError(t, err)

@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -85,8 +87,7 @@ func (t *lockHoldTracker) forget(mark int) {
 // The tracker records a delivery to listeners on a goroutine that holds a
 // write-order stripe, and none once it released it.
 func TestLockHoldTrackerRecordsDeliveryUnderAStripe(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-	t.Cleanup(func() { _ = engine.Close() })
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	delivered := 0
 	engine.OnNodeUpdated(func(*Node) { delivered++ })
 	mark := lockHolds.mark()

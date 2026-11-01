@@ -1,18 +1,19 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"os"
-	"strings"
-	"testing"
-
 	"github.com/orneryd/nornicdb/pkg/config"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/testing/cypher/dynamiclabels"
 	"github.com/stretchr/testify/require"
+	"os"
+	"strings"
+	"testing"
 )
 
 func TestDynamicLabelPublicExecute(t *testing.T) {
@@ -149,7 +150,7 @@ func TestDynamicLabelPublicRemoteFabric(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "dynamic_remote", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "neo4j", URI: uri, Type: "remote", AccessMode: "read_write", AuthMode: "oidc_forwarding"},
 	}))

@@ -1,5 +1,7 @@
 package main
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"errors"
@@ -233,13 +235,14 @@ func (w *wrapped) Unwrap() error { return w.err }
 func TestCheckIDsCommand(t *testing.T) {
 	dir := t.TempDir()
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	for _, tc := range []struct {
 		args []string

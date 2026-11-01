@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -23,7 +27,11 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 		for _, producer := range []string{"direct", "explicit", "implicit"} {
 			t.Run(fmt.Sprintf("writebehind=%t/%s", writeBehind, producer), func(t *testing.T) {
 				options := BadgerOptions{DataDir: t.TempDir(), LowMemory: true, WriteBehind: writeBehind, WriteBehindInterval: time.Hour}
-				engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+				engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+				var closeEngine func()
+				if engine != nil {
+					_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+				}
 				require.NoError(t, err)
 				target := NewNamespacedEngine(engine, "test")
 				schema := target.GetSchema()
@@ -154,7 +162,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				require.NoError(t, engine.FlushWriteBehind(nil))
 				assertGraph()
 
-				require.NoError(t, engine.Close())
+				closeEngine()
 				engine, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
 				require.NoError(t, err)
 				target = NewNamespacedEngine(engine, "test")
@@ -542,7 +550,7 @@ func TestPR1655UniqueTransitionsRecoveredIntermediateClaims(t *testing.T) {
 		payloadBytes := scenario.payloadBytes
 		t.Run(fmt.Sprintf("payload=%d/semantic=%t", payloadBytes, scenario.semantic), func(t *testing.T) {
 			dir := t.TempDir()
-			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+			engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 			target := NewNamespacedEngine(engine, "test")
 			require.NoError(t, target.GetSchema().AddUniqueConstraint("doc_id", "Doc", "id"))
 			require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, target.GetSchema()))
@@ -571,8 +579,8 @@ func TestPR1655UniqueTransitionsRecoveredIntermediateClaims(t *testing.T) {
 			}
 			_, err = target.CreateNode(&Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"id": "old"}})
 			require.NoError(t, err)
-			crashClose(t, engine, engine.bufferedCommitWAL)
-			recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+			crashClose(t, engine, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+			recovered, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 			_, err = RecoverBufferedCommits(recovered, recovered.bufferedCommitWAL)
 			require.NoError(t, err)
 			target = NewNamespacedEngine(recovered, "test")

@@ -1,5 +1,7 @@
 package search
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -150,9 +152,6 @@ func loadSearchProfileDiskFixture(tb testing.TB) (*Service, []float32) {
 	if err != nil {
 		tb.Skipf("disk fixture storage unavailable (possibly already open/locked): %v", err)
 	}
-	tb.Cleanup(func() {
-		_ = baseEngine.Close()
-	})
 
 	engine := storage.NewNamespacedEngine(baseEngine, dbName)
 	svc := NewService(engine, dims, nil)

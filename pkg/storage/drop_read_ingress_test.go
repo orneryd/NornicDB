@@ -1,5 +1,7 @@
 package storage_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -27,7 +29,7 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				if managed {
 					manager, err = multidb.NewDatabaseManager(t.Context(), b, nil)
 					require.NoError(t, err)
-					t.Cleanup(func() { require.NoError(t, manager.Close()) })
+					fixture.Own(t, manager)
 					require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant"}))
 					require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "peer"}))
 					tenant, err = manager.GetStorage("tenant")

@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -57,8 +61,7 @@ func TestRelationshipEndpointsHoldAcrossOrderedCommits(t *testing.T) {
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-			t.Cleanup(func() { _ = engine.Close() })
+			engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 			for _, id := range []NodeID{"test:a", "test:b"} {
 				_, err := engine.CreateNode(&Node{ID: id})
 				require.NoError(t, err)
@@ -87,7 +90,11 @@ func TestManualSuppressionOrdersAfterBufferedCommits(t *testing.T) {
 		for _, buffered := range []string{"create", "update"} {
 			t.Run(kind+"/"+buffered, func(t *testing.T) {
 				dir := t.TempDir()
-				engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+				engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+				var closeEngine func()
+				if engine != nil {
+					_, closeEngine = runtimeFixtureOwner.OwnWithClose(t, engine)
+				}
 				require.NoError(t, err)
 				engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 				_, err = engine.CreateNode(listenerOrderNode("initial"))
@@ -137,11 +144,10 @@ func TestManualSuppressionOrdersAfterBufferedCommits(t *testing.T) {
 						require.Equal(t, "acknowledged", notified, "the update reported the acknowledged body")
 					}
 				}
-				require.NoError(t, engine.Close())
+				closeEngine()
 
 				reopened, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = reopened.Close() })
 				require.True(t, reopened.HasManualSuppressions(), "the suppression survives")
 				var v any
 				if kind == "node" {
@@ -163,7 +169,11 @@ func TestManualSuppressionOrdersAfterBufferedCommits(t *testing.T) {
 // it survive that update's flush.
 func TestEmbeddingSidecarOrdersAfterBufferedCommits(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	var closeEngine func()
+	if engine != nil {
+		_, closeEngine = runtimeFixtureOwner.OwnWithClose(t, engine)
+	}
 	require.NoError(t, err)
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	_, err = engine.CreateNode(listenerOrderNode("initial"))
@@ -176,11 +186,10 @@ func TestEmbeddingSidecarOrdersAfterBufferedCommits(t *testing.T) {
 	embedded.ChunkEmbeddings = [][]float32{{1, 2, 3}}
 	embedded.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": 1}
 	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(embedded))
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	reopened, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = reopened.Close() })
 	n, err := reopened.GetNode("test:n")
 	require.NoError(t, err)
 	require.Equal(t, "acknowledged", n.Properties["v"])
@@ -193,8 +202,7 @@ func TestEmbeddingSidecarOrdersAfterBufferedCommits(t *testing.T) {
 func TestRelationshipDeleteCountsTheNewestEndpointLabels(t *testing.T) {
 	for _, route := range []string{"direct", "explicit"} {
 		t.Run(route, func(t *testing.T) {
-			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-			t.Cleanup(func() { _ = engine.Close() })
+			engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 			_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"Old"}})
 			require.NoError(t, err)
 			_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"End"}})
@@ -223,8 +231,7 @@ func TestRelationshipDeleteCountsTheNewestEndpointLabels(t *testing.T) {
 // finds what they wrote: endpoints created in the buffer exist, and a
 // relationship created there already exists.
 func TestDirectRelationshipCreateSeesAcknowledgedCommits(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-	t.Cleanup(func() { _ = engine.Close() })
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	require.NoError(t, engine.BulkCreateNodes([]*Node{{ID: "test:a"}, {ID: "test:b"}}))
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}), "the acknowledged endpoints exist")
 	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {

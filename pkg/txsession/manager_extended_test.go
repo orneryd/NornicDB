@@ -1,5 +1,7 @@
 package txsession
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -43,7 +45,6 @@ func TestSetTerminalErrorObserver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create badger engine: %v", err)
 	}
-	t.Cleanup(func() { _ = engine.Close() })
 	controller := &lifecycleControllerStub{}
 	engine.SetLifecycleController(controller)
 	exec := cypher.NewStorageExecutor(engine)
@@ -96,7 +97,6 @@ func TestManagerTerminalLifecycleScenarios(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create badger engine: %v", err)
 			}
-			t.Cleanup(func() { _ = engine.Close() })
 			controller := &lifecycleControllerStub{}
 			engine.SetLifecycleController(controller)
 			exec := cypher.NewStorageExecutor(engine)

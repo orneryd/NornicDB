@@ -1,15 +1,12 @@
 package qdrantgrpc
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"path/filepath"
-	"sync"
-	"sync/atomic"
-	"testing"
-
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -19,6 +16,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
 )
 
 // sharedSearchProvider hands out one search service per database, built from
@@ -144,6 +145,7 @@ func TestSharedIndexRestartBoundaries(t *testing.T) {
 			}
 			dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 			require.NoError(t, err)
+			_, closeManager := fixtureowner.OwnWithClose(t, dbm)
 			provider := sharedSearchProvider()
 			first := startSharedIndexServer(t, dbm, base, provider)
 			createCosineCollection(t, ctx, first.collections, tc.collection, 4)
@@ -152,7 +154,7 @@ func TestSharedIndexRestartBoundaries(t *testing.T) {
 			}
 			first.stop()
 			if tc.cold {
-				require.NoError(t, dbm.Close())
+				closeManager()
 				disk, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
 				if disk != nil {
 					fixtureowner.Own(t, disk)
@@ -161,7 +163,7 @@ func TestSharedIndexRestartBoundaries(t *testing.T) {
 				base = disk
 				dbm, err = multidb.NewDatabaseManager(t.Context(), base, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, dbm.Close()) })
+				fixtureowner.Own(t, dbm)
 				// Both the database manager and its search-service cache are reconstructed.
 				provider = sharedSearchProvider()
 			}

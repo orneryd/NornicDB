@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"expvar"
 	"fmt"
@@ -22,7 +24,6 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 		for _, history := range []int{0, 256} {
 			t.Run(fmt.Sprintf("%s/history_%d", operation, history), func(t *testing.T) {
 				engine := newTestMemoryEngine(t).BadgerEngine
-				t.Cleanup(func() { require.NoError(t, engine.Close()) })
 				body := &Node{ID: "test:history-owner", Labels: []string{"Doc"}, Properties: map[string]any{"text": "original"}}
 				_, err := engine.CreateNode(body)
 				require.NoError(t, err)

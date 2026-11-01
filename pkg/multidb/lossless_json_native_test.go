@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -27,7 +29,7 @@ func TestLosslessCatalogSchemaNativeReopen(t *testing.T) {
 	engine := open()
 	manager, err := NewDatabaseManager(context.Background(), engine, nil)
 	require.NoError(t, err)
-	defer func(owner *DatabaseManager) { require.NoError(t, owner.Close()) }(manager)
+	_, closeManager := fixtureowner.OwnWithClose(t, manager)
 	for _, name := range []string{"ordinary_café", `literal\ud800`, "catalog_" + high, "catalog_" + low} {
 		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: name}))
 	}
@@ -58,9 +60,13 @@ func TestLosslessCatalogSchemaNativeReopen(t *testing.T) {
 	id, err := ns.CreateNode(node)
 	require.NoError(t, err)
 	require.NoError(t, engine.GetSchemaForNamespace("nornic").AddPropertyIndex("index_"+high, "Label"+high, []string{high}))
-	require.NoError(t, manager.Close())
+	closeManager()
 	snapshot := func() map[string][]byte {
-		native, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
+		native, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
+		var closeNative func()
+		if native != nil {
+			_, closeNative = fixtureowner.OwnWithClose(t, native)
+		}
 		require.NoError(t, err)
 		values := map[string][]byte{}
 		err = native.View(func(txn *badger.Txn) error {
@@ -77,14 +83,14 @@ func TestLosslessCatalogSchemaNativeReopen(t *testing.T) {
 			return nil
 		})
 		require.NoError(t, err)
-		require.NoError(t, native.Close())
+		closeNative()
 		return values
 	}
 	before := snapshot()
 	engine = open()
 	manager, err = NewDatabaseManager(context.Background(), engine, nil)
 	require.NoError(t, err)
-	defer func(owner *DatabaseManager) { require.NoError(t, owner.Close()) }(manager)
+	_, closeManager = fixtureowner.OwnWithClose(t, manager)
 	for _, name := range []string{"ordinary_café", `literal\ud800`, "catalog_" + high, "catalog_" + low} {
 		require.True(t, manager.Exists(name), "identity bytes %x", name)
 	}
@@ -102,7 +108,7 @@ func TestLosslessCatalogSchemaNativeReopen(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(metadata.Properties["data"].(string)), &oldReader))
 	require.Contains(t, oldReader, "ordinary_café")
 	require.Contains(t, oldReader, `literal\ud800`)
-	require.NoError(t, manager.Close())
+	closeManager()
 	after := snapshot()
 	for key, value := range before {
 		require.True(t, bytes.Equal(value, after[key]), "startup must not rewrite logical key %x (before %x, after %x)", key, sha256.Sum256(value), sha256.Sum256(after[key]))
@@ -116,7 +122,7 @@ func TestCompleteCatalogStartupGuardPreservesInitialization(t *testing.T) {
 			inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			first, err := NewDatabaseManager(t.Context(), inner, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = first.Close() })
+			fixtureowner.Own(t, first)
 			system := storage.NewNamespacedEngine(inner, "system")
 			metadata, err := system.GetNode(metadataNodeID)
 			require.NoError(t, err)
@@ -140,7 +146,7 @@ func TestCompleteCatalogStartupGuardPreservesInitialization(t *testing.T) {
 			require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: metadata}))
 			restored, err := NewDatabaseManager(t.Context(), inner, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = restored.Close() })
+			fixtureowner.Own(t, restored)
 			require.True(t, restored.Exists("nornic"))
 			require.True(t, restored.Exists("system"))
 			persisted, err := system.GetNode(metadataNodeID)

@@ -1,5 +1,7 @@
 package fabric
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -42,7 +44,7 @@ func TestCatalogRemoteMixedCaseLookup(t *testing.T) {
 	})
 	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "MixedCatalog", []multidb.ConstituentRef{{Alias: "Remote", DatabaseName: "nornic", URI: remote.URL, Type: "remote", AccessMode: "read"}}))
 	catalog := NewCatalog()
 	require.NoError(t, catalog.PopulateFromManager(manager))
@@ -136,7 +138,7 @@ func TestRemoteFactoryDecorators(t *testing.T) {
 			})
 			manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
 			require.NoError(t, err)
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "decorator_contract", []multidb.ConstituentRef{{Alias: "r", DatabaseName: "nornic", URI: remote.URL, Type: "remote", AccessMode: "read", AuthMode: "user_password", User: "admin", Password: password}}))
 			catalog := NewCatalog()
 			require.NoError(t, catalog.PopulateFromManager(manager))

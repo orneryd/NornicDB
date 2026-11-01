@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"runtime"
@@ -16,7 +18,7 @@ import (
 // release what it held — including the pending-node index the schema
 // attaches, whose maps Go never shrinks.
 func TestWriteBehind_MemoryComesDownAfterBurst(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, 50*time.Millisecond)
+	engine, _ := newWriteBehindTestEngine(t, t, 50*time.Millisecond)
 
 	heapMB := func() float64 {
 		runtime.GC()

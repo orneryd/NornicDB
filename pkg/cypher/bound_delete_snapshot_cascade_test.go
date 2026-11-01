@@ -2,6 +2,8 @@
 // Deterministic bound-delete snapshot diagnostic. It is a test-only race harness, not a fix.
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -50,7 +52,6 @@ func TestBoundDeleteSnapshotSurvivesPeerEndpointCascade(t *testing.T) {
 				fixtureowner.Own(t, base)
 			}
 			require.NoError(t, err)
-			defer func() { require.NoError(t, base.Close()) }()
 
 			const namespace = "snapshot_cascade"
 			store := storage.NewNamespacedEngine(base, namespace)

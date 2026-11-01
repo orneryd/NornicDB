@@ -2,6 +2,8 @@
 // These tests cover multi-segment patterns like (a)<-[:R1]-(b)-[:R2]->(c)
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -464,7 +466,6 @@ func TestTraverseFromNode(t *testing.T) {
 			forcedOutgoing: make(map[storage.NodeID][]*storage.Edge),
 			missingNodeIDs: make(map[storage.NodeID]error),
 		}
-		defer inner.Close()
 		engine := storage.NewNamespacedEngine(inner, "test_traverse")
 
 		exec := NewStorageExecutor(engine)

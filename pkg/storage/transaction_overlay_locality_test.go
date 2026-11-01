@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"github.com/stretchr/testify/require"
@@ -117,7 +119,7 @@ func TestTransactionEqualityOverlayPreservesCandidatesAndSnapshot(t *testing.T) 
 }
 
 func TestTransactionEqualityOverlayDeclinesUnstableAndOversizeViews(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	tx := beginMergeKeyTx(t, engine)
 	_, complete, err := tx.LookupNodesByEquality("P", map[string]interface{}{"k": int64(1)})
 	require.NoError(t, err)

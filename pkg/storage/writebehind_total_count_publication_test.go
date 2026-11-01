@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -12,7 +16,7 @@ import (
 )
 
 func TestWriteBehindTotalCountsDuringPublicationCallbacks(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	_, err := engine.CreateNode(&Node{ID: "test:anchor", Labels: []string{"Anchor"}})
 	require.NoError(t, err)
 	type observation struct {
@@ -77,7 +81,7 @@ func TestWriteBehindTotalCountsDuringPublicationCallbacks(t *testing.T) {
 }
 
 func TestWriteBehindTotalCountsIgnoreUpdates(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := engine.CreateNode(&Node{ID: id})
 		require.NoError(t, err)
@@ -109,11 +113,11 @@ func TestWriteBehindTotalCountsIgnoreUpdates(t *testing.T) {
 func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"test:a", "test:b", "other:z"} {
 		_, err = engine.CreateNode(&Node{ID: id})
 		require.NoError(t, err)
@@ -194,7 +198,7 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	require.NoError(t, engine.FlushWriteBehind(nil))
 	check(read())
 	require.Empty(t, observed, "empty commits do not republish callbacks")
-	require.NoError(t, engine.Close())
+	closeEngine()
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
 	if engine != nil {
 		fixtureowner.Own(t, engine)
@@ -208,7 +212,7 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 	// requires durable ACK capture, independently of test execution order.
 	defer config.WithWALEnabled()()
 	dir := t.TempDir()
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
 	_, err := engine.CreateNode(&Node{ID: "test:a"})
 	require.NoError(t, err)
@@ -244,10 +248,9 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 	marker, err := engine.observeBufferedCommitReceipt(bufferedReceiptRead{txID: tx.ID})
 	require.NoError(t, err)
 	require.False(t, marker.present, "crash fixture must not be durably replayed")
-	crashClose(t, engine, wal)
-	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	crashClose(t, engine, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+	recovered, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal2 := recovered.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 	observed := make(chan []int64, 2)
 	read := func() {
 		nodes, err1 := recovered.NodeCount()

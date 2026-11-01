@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -15,7 +17,6 @@ import (
 func TestResidualCacheFloorRetention(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	const capacity = 8
 	b.nodeCacheMaxEntries, b.edgeCacheMaxItems, b.adjCacheMaxNodes = capacity, capacity, capacity
 	b.edgeTypeCacheMaxTypes, b.labelFirstCacheMax = capacity, capacity
@@ -73,9 +74,12 @@ func TestResidualCacheFloorRetention(t *testing.T) {
 // the existing Close owner, which releases retained caches after all work ends.
 func TestResidualClosedCacheProvenance(t *testing.T) {
 	dir := t.TempDir()
-	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeB func()
+	if b != nil {
+		_, closeB = fixtureowner.OwnWithClose(t, b)
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []NodeID{"test:close-a", "test:close-b"} {
 		_, err = b.CreateNode(&Node{ID: id})
 		require.NoError(t, err)
@@ -83,7 +87,7 @@ func TestResidualClosedCacheProvenance(t *testing.T) {
 	require.NoError(t, b.CreateEdge(&Edge{ID: "test:close-e", StartNode: "test:close-a", EndNode: "test:close-b", Type: "CLOSE"}))
 	// Settle construction/count work first: an incidental count-fold fence on
 	// Close must not be the lifetime owner of the new cache provenance state.
-	require.NoError(t, b.Close())
+	closeB()
 	b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	_, err = b.GetOutgoingEdges(context.Background(), "test:close-a")

@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,7 +14,7 @@ func TestDatabaseCreateInitialOptions(t *testing.T) {
 	require.NoError(t, err)
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	options := map[string]string{OptionTxLogEnrichment: " full "}
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "initial", Options: options}))
 	options[OptionTxLogEnrichment] = "OFF"

@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -28,7 +30,7 @@ func (s *raftDeferredStorage) ApplyCommand(cmd *Command) error {
 func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 	for _, route := range []string{"enqueue-shutdown", "raw-leader", "late", "role-change", "queued-shutdown", "commit-timeout", "apply-failure", "committed-shutdown", "uncommitted-truncate"} {
 		t.Run(route, func(t *testing.T) {
-			engine, adapter := wireFixture(t, false)
+			engine, adapter, _, _ := wireFixture(t, false)
 			r, _ := newCoverageRaftReplicator(t)
 			r.storage = adapter
 			r.started.Store(true)

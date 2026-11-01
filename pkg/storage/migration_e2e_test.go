@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -200,8 +202,9 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 	// runs the full migration chain.
 	{
 		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		var closeEng func()
 		if eng != nil {
-			fixtureowner.Own(t, eng)
+			_, closeEng = fixtureowner.OwnWithClose(t, eng)
 		}
 		require.NoError(t, err)
 
@@ -330,7 +333,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		}
 
 		require.NoError(t, eng.writeSchemaVersion(0))
-		require.NoError(t, eng.Close())
+		closeEng()
 	}
 
 	// Stage 2: reopen with the upgrade flag — the full chain runs.
@@ -842,8 +845,9 @@ func TestMigrationE2E_MVCCAsOfReadsSurvive(t *testing.T) {
 	// version back to 0 at the end so the next open runs the chain.
 	{
 		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		var closeEng func()
 		if eng != nil {
-			fixtureowner.Own(t, eng)
+			_, closeEng = fixtureowner.OwnWithClose(t, eng)
 		}
 		require.NoError(t, err)
 
@@ -944,7 +948,7 @@ func TestMigrationE2E_MVCCAsOfReadsSurvive(t *testing.T) {
 		}))
 
 		require.NoError(t, eng.writeSchemaVersion(0))
-		require.NoError(t, eng.Close())
+		closeEng()
 	}
 
 	// Stage 2: reopen with the upgrade flag — full chain runs.

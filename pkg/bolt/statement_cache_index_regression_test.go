@@ -1,5 +1,7 @@
 package bolt
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -15,7 +17,7 @@ func TestRule73CachedBoltViewsDropCycles64(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	server := &Server{dbManager: manager, executors: make(map[string]QueryExecutor)}
 	session := &Session{server: server}
 	fixtureowner.RunCatalogDropCycles(t, 64, "gate_cached_",
@@ -51,7 +53,7 @@ func TestStatementCacheFamilyCachedIndexConcurrentDrop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	server := &Server{dbManager: manager, executors: make(map[string]QueryExecutor)}
 	defer server.Close()
 	if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "index_concurrent"}); err != nil {

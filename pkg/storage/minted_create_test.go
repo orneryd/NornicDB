@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -27,7 +29,6 @@ func TestCreatePresenceReadSkipsOnlyMintedIDs(t *testing.T) {
 				DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour,
 			}))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = engine.Close() })
 			hiddenNode := NodeID("test:" + uuid.NewString())
 			hiddenEdge := EdgeID("test:" + uuid.NewString())
 			for _, node := range []*Node{
@@ -122,7 +123,6 @@ func TestWALReplayCreateMeetsHiddenPredecessor(t *testing.T) {
 			DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour,
 		}))
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = engine.Close() })
 		raw := uuid.NewString()
 		hidden := NodeID("test:" + raw)
 		_, err = engine.CreateNode(&Node{ID: hidden, Labels: []string{"Original"}})

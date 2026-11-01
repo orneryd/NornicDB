@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -16,15 +18,16 @@ import (
 // after a restart.
 func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 	dir := t.TempDir()
-	open := func() *BadgerEngine {
+	open := func() (*BadgerEngine, func()) {
 		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+		var closeFixture func()
 		if engine != nil {
-			fixtureowner.Own(t, engine)
+			_, closeFixture = fixtureowner.OwnWithClose(t, engine)
 		}
 		require.NoError(t, err)
-		return engine
+		return engine, closeFixture
 	}
-	engine := open()
+	engine, closeEngine := open()
 	pendingEntries := func() int {
 		count := 0
 		for i := range engine.idDict.nodes {
@@ -61,9 +64,8 @@ func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 	require.Empty(t, engine.idDict.txnCommitting)
 	engine.idDict.txnMu.Unlock()
 
-	require.NoError(t, engine.Close())
-	engine = open()
-	t.Cleanup(func() { _ = engine.Close() })
+	closeEngine()
+	engine, closeEngine = open()
 	nodes, err := engine.GetNodesByLabel(context.Background(), "L")
 	require.NoError(t, err)
 	require.Len(t, nodes, 20)

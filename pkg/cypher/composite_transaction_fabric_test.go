@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -25,7 +27,6 @@ func TestResidualCompositePreambles(t *testing.T) {
 			t.Cleanup(func() { config.SetParserType(previous) })
 			manager := newCompositeNativeManager(t, nil)
 			var err error
-			t.Cleanup(func() { require.NoError(t, manager.Close()) })
 			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "preamble_shard"}))
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "preamble_cmp", []multidb.ConstituentRef{
 				{Alias: "sh", DatabaseName: "preamble_shard", Type: "local", AccessMode: "read_write"},
@@ -67,7 +68,6 @@ func TestResidualCompositePreambles(t *testing.T) {
 func TestCompositeExplicitTx_SecondWriteShardRejected(t *testing.T) {
 	mgr := newCompositeNativeManager(t, nil)
 	var err error
-	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_a"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_b"}))
@@ -105,7 +105,6 @@ func TestCompositeExplicitTx_SecondWriteShardRejected(t *testing.T) {
 func TestCompositeExplicitTx_BeginCommitLifecycle(t *testing.T) {
 	mgr := newCompositeNativeManager(t, nil)
 	var err error
-	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_c"}))
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp2", []multidb.ConstituentRef{
@@ -134,7 +133,6 @@ func TestGh683_CompositeTerminalContext(t *testing.T) {
 		t.Run(fmt.Sprint(canceledCommit), func(t *testing.T) {
 			manager := newCompositeNativeManager(t, nil)
 			var err error
-			defer manager.Close()
 			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "share_shard"}))
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "cmp_sh", []multidb.ConstituentRef{{Alias: "sh", DatabaseName: "share_shard", Type: "local", AccessMode: "read_write"}}))
 			store, err := manager.GetStorage("cmp_sh")
@@ -177,7 +175,6 @@ func TestGh683_CompositeTerminalContext(t *testing.T) {
 func TestCompositeExplicitTx_DocumentationExamples(t *testing.T) {
 	mgr := newCompositeNativeManager(t, nil)
 	var err error
-	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -252,7 +249,6 @@ func TestCompositeExplicitTx_FailureReleasesParticipantMergeKeys(t *testing.T) {
 					t.Cleanup(func() { config.SetParserType(previous) })
 					mgr := newCompositeNativeManager(t, nil)
 					var err error
-					t.Cleanup(func() { require.NoError(t, mgr.Close()) })
 					require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "mk_a"}))
 					require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "mk_b"}))
 					require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_mk", []multidb.ConstituentRef{
@@ -360,7 +356,6 @@ RETURN c
 		t.Run(string(tc.operation), func(t *testing.T) {
 			mgr := newCompositeNativeManager(t, nil)
 			var err error
-			defer mgr.Close()
 
 			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: tc.shard}))
 			require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), tc.composite, []multidb.ConstituentRef{
@@ -458,7 +453,6 @@ func TestCompositeExplicitTx_RemoteParticipantTerminalLifecycle(t *testing.T) {
 				},
 			})
 			var err error
-			defer mgr.Close()
 
 			require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), tc.composite, []multidb.ConstituentRef{
 				{Alias: "r", DatabaseName: tc.database, Type: "remote", AccessMode: "read_write", URI: remote.URL, AuthMode: "oidc_forwarding"},
@@ -494,7 +488,6 @@ func TestCompositeExplicitTx_RemoteParticipantTerminalLifecycle(t *testing.T) {
 func TestCompositeExplicitTx_StatementsShareShardTransaction(t *testing.T) {
 	mgr := newCompositeNativeManager(t, nil)
 	var err error
-	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "share_shard"}))
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_sh", []multidb.ConstituentRef{

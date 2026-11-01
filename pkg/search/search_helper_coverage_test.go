@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -12,7 +14,6 @@ import (
 
 func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { engine.Close() })
 
 	svc := NewService(engine, 4, nil)
 	require.Equal(t, "unknown", svc.CurrentStrategy())
@@ -36,7 +37,6 @@ func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 
 func TestPropertyVectorHelpers(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { engine.Close() })
 
 	svc := NewService(engine, 4, nil)
 	svc.buildInProgress.Store(true)
@@ -91,7 +91,6 @@ func TestScoreVectorIDDotBranches(t *testing.T) {
 	require.Equal(t, 0.0, score)
 
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { engine.Close() })
 	svc = NewService(engine, 2, nil)
 	score, ok = svc.scoreVectorIDDot([]float32{1, 0}, "missing")
 	require.False(t, ok)

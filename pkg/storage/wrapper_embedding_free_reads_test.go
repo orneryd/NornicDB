@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -285,7 +287,6 @@ type engineWithoutEmbeddingFreeReads struct{ Engine }
 func newEngineWithoutEmbeddingFreeReads(t *testing.T) Engine {
 	t.Helper()
 	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	return &engineWithoutEmbeddingFreeReads{Engine: base}
 }
 

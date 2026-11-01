@@ -1,8 +1,11 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"runtime"
 	"sync"
 	"testing"
@@ -20,7 +23,7 @@ func TestPR1655ObservedWALRejectsBeforeJournaling(t *testing.T) {
 			wal, err := NewWAL(t.TempDir(), nil)
 			require.NoError(t, err)
 			owner := NewWALEngine(b, wal)
-			t.Cleanup(func() { require.NoError(t, owner.Close()) })
+			fixtureowner.Own(t, owner)
 			var updateErr error
 			if kind == "node" {
 				updateErr = owner.UpdateNode(NodeUpdateRequest{Before: &Node{ID: "test:gone"}, After: &Node{ID: "test:gone", Properties: map[string]any{"v": "rejected"}}})
@@ -47,7 +50,7 @@ func TestPR1655ObservedWALAcceptedSemanticReplay(t *testing.T) {
 	wal, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	owner := NewWALEngine(b, wal)
-	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	fixtureowner.Own(t, owner)
 	for _, engine := range []*BadgerEngine{b, destination} {
 		for _, id := range []NodeID{"test:a", "test:b"} {
 			_, err := engine.CreateNode(&Node{ID: id, Properties: map[string]any{"v": "before"}})
@@ -105,7 +108,7 @@ func TestPR1655ObservedWALPreservesAcceptedFailure(t *testing.T) {
 	require.NoError(t, err)
 	physicalErr := errors.New("physical submit unavailable after journal acceptance")
 	owner := NewWALEngine(&pr1655RejectedPhysicalSubmitter{Engine: b, failure: physicalErr}, wal)
-	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	fixtureowner.Own(t, owner)
 	err = owner.UpdateNode(NodeUpdateRequest{Before: before, After: &Node{ID: before.ID, Properties: map[string]any{"v": "accepted"}}})
 	var accepted *AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
@@ -142,7 +145,7 @@ func TestPR1655ObservedWALHonorsManagedAdmission(t *testing.T) {
 	wal, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	owner := NewWALEngine(b, wal)
-	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	fixtureowner.Own(t, owner)
 	err = owner.UpdateNode(NodeUpdateRequest{Before: before, After: &Node{ID: before.ID, Properties: map[string]any{"v": "rejected"}}})
 	require.ErrorIs(t, err, rejected)
 	require.Equal(t, 1, calls)
@@ -165,7 +168,7 @@ func TestPR1655ObservedWALPreparationHoldsSnapshotBarrier(t *testing.T) {
 	require.NoError(t, err)
 	owner := NewWALEngine(b, wal)
 	owner.snapshotDir = t.TempDir()
-	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	fixtureowner.Own(t, owner)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
@@ -257,7 +260,7 @@ func TestPR1655ObservedWALUpdateKeepsMissingTimeDefaults(t *testing.T) {
 	wal, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	owner := NewWALEngine(engine, wal)
-	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	fixtureowner.Own(t, owner)
 	require.NoError(t, owner.UpdateNode(NodeUpdateRequest{Before: before, After: &Node{ID: before.ID}}))
 	stored, err := engine.GetNode(before.ID)
 	require.NoError(t, err)

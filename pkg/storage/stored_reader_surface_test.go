@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -55,7 +57,6 @@ func (c idCheck) edges(edges []*Edge, err error) []string {
 // what its visible reads return.
 func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 	base := runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, NewMemoryEngine(), ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	walEngine := NewWALEngine(base, wal)

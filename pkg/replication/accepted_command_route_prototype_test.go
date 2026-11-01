@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -131,7 +133,7 @@ func TestDatabaseDropPreservesAcceptedCatalogAcknowledgementError(t *testing.T) 
 	engine := NewReplicatedEngine(base, r, time.Second)
 	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "victim"}))
 	view, err := manager.GetStorage("victim")
 	require.NoError(t, err)

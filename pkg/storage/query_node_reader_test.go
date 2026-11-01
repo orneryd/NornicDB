@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"sync"
 	"sync/atomic"
@@ -305,7 +307,7 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		require.Equal(t, stripVectors(full), stripVectors(node))
 	})
 	t.Run("write-behind", func(t *testing.T) {
-		b := newWriteBehindTestEngine(t, time.Hour)
+		b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 		id := NodeID("test:buffered")
 		bufferedCreate(t, b, &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "t"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
 		full, err := b.GetNode(id)

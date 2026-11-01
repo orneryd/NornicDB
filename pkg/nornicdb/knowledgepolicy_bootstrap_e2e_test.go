@@ -1,5 +1,7 @@
 package nornicdb
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -70,8 +72,9 @@ func TestOpen_DoesNotBootstrapDefaultKnowledgePolicyWhenDecayDisabledOrPoliciesE
 		dataDir := t.TempDir()
 
 		eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+		var closeEngine func()
 		if eng != nil {
-			fixtureowner.Own(t, eng)
+			_, closeEngine = fixtureowner.OwnWithClose(t, eng)
 		}
 		require.NoError(t, err)
 		schema := eng.GetSchemaForNamespace("nornic")
@@ -85,7 +88,7 @@ func TestOpen_DoesNotBootstrapDefaultKnowledgePolicyWhenDecayDisabledOrPoliciesE
 			Enabled:             true,
 			DecayEnabled:        true,
 		}))
-		require.NoError(t, eng.Close())
+		closeEngine()
 
 		db, err := Open(dataDir, config)
 		require.NoError(t, err)

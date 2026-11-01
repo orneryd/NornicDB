@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -101,7 +105,7 @@ func TestStoredEntityPublicationRejectedBeforePhysical(t *testing.T) {
 }
 
 func TestStoredEntityPublicationBufferedAckOnce(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	var events []StoredEntityPublication
 	require.NoError(t, b.InitializeStoredEntityObserver("test", func(StoredEntitySnapshot) (StoredEntityObserver, error) {
 		return func(event StoredEntityPublication) (func(), error) {
@@ -345,7 +349,7 @@ func TestStoredEntityReadBoundaryUsesActualNamespaceRead(t *testing.T) {
 func TestStoredEntityPublicationLargeSidecarAndPrecommitAbort(t *testing.T) {
 	for _, reject := range []bool{false, true} {
 		t.Run(fmt.Sprint("reject=", reject), func(t *testing.T) {
-			b := openLargeCommitTestEngine(t, t.TempDir())
+			b, _ := openLargeCommitTestEngine(t, t.TempDir())
 			_, err := b.CreateNode(&Node{ID: "test:large", Labels: []string{"Doc"}, Properties: map[string]any{"text": "source"}})
 			require.NoError(t, err)
 			node, err := b.GetNode("test:large")

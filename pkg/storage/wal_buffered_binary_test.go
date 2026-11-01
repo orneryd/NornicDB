@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -53,7 +55,7 @@ func TestBufferedWALPreservesPhysicalKeysAndTypedOperations(t *testing.T) {
 }
 
 func TestBufferedWALBinaryIndexPublicReplay(t *testing.T) {
-	source := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
+	source, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 	dest := newTestEngine(t)
 	for i := 0; i < 140; i++ {
 		id := NodeID(fmt.Sprintf("test:n%d", i))
@@ -101,7 +103,7 @@ func TestBufferedWALBinaryIndexPublicReplay(t *testing.T) {
 // A target can assign different numeric IDs to the same logical nodes. Replay
 // must preserve traversal and not install source-local IDs into that target.
 func TestBufferedWALForeignNumericIDsPublicReplay(t *testing.T) {
-	source := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
+	source, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 	dest := newTestEngine(t)
 	for i := 0; i < 140; i++ {
 		_, err := source.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i))})

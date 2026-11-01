@@ -4,10 +4,14 @@
 // the Cypher query executor, simulating real-world Neo4j driver usage.
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"net"
 	"os"
 	"runtime"
@@ -17,9 +21,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/cypher"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // skipDiskIOTestOnWindows skips disk I/O intensive tests on Windows to avoid OOM
@@ -818,11 +819,8 @@ func TestBoltIntegration_G2GVersionNodesFallbackRowShape_ServerStack(t *testing.
 	walStore := storage.NewWALEngine(baseStore, wal)
 	asyncStore := walStore
 	store := storage.NewNamespacedEngine(asyncStore, "test")
-	t.Cleanup(func() {
-		requireNoError(t, wal.Close())
-		requireNoError(t, asyncStore.Close())
-		requireNoError(t, baseStore.Close())
-	})
+	fixtureowner.Own(t, asyncStore)
+	t.Cleanup(func() { requireNoError(t, wal.Close()) })
 
 	_, port := startBoltIntegrationServer(t, store)
 	conn := openBoltTestConn(t, port)
@@ -1287,7 +1285,6 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
-	defer badgerEngine.Close()
 
 	asyncBase := badgerEngine
 	store := storage.NewNamespacedEngine(asyncBase, "test")

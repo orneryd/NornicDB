@@ -1,6 +1,8 @@
 // Package storage provides WAL compaction tests.
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -317,7 +319,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		walEngine := NewWALEngine(engine, wal)
+		walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 		// Create 100 nodes
 		for i := 1; i <= 100; i++ {
@@ -352,7 +354,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		assert.Less(t, sizeAfter, sizeBefore, "WAL should be smaller after truncation")
 		assert.Less(t, sizeAfter, int64(1000), "WAL should be nearly empty after truncation")
 
-		walEngine.Close()
+		closeWALEngine()
 	})
 
 	t.Run("truncate_preserves_entries_after_snapshot", func(t *testing.T) {
@@ -364,7 +366,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		walEngine := NewWALEngine(engine, wal)
+		walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 		// Create 50 nodes before snapshot
 		for i := 1; i <= 50; i++ {
@@ -397,7 +399,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		assert.GreaterOrEqual(t, len(entries), 50, "Should preserve entries after snapshot")
 		assert.LessOrEqual(t, len(entries), 52, "Should not have entries before snapshot")
 
-		walEngine.Close()
+		closeWALEngine()
 	})
 
 	t.Run("truncate_recoverable_after_crash", func(t *testing.T) {
@@ -412,7 +414,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 			require.NoError(t, err)
 
 			engine := newTestMemoryEngine(t)
-			walEngine := NewWALEngine(engine, wal)
+			walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 			// Create nodes
 			for i := 1; i <= 100; i++ {
@@ -437,7 +439,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 				walEngine.CreateNode(node)
 			}
 
-			walEngine.Close()
+			closeWALEngine()
 		}()
 
 		// Session 2: Recover from snapshot + truncated WAL
@@ -477,7 +479,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		walEngine := NewWALEngine(engine, wal)
+		walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 		// Enable auto-compaction
 		err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -488,7 +490,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		require.NoError(t, err, "Snapshot directory should be created")
 
 		walEngine.DisableAutoCompaction()
-		walEngine.Close()
+		closeWALEngine()
 	})
 
 	t.Run("cannot_enable_auto_compaction_twice", func(t *testing.T) {
@@ -501,7 +503,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		walEngine := NewWALEngine(engine, wal)
+		walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 		// Enable first time - should succeed
 		err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -513,7 +515,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		assert.Contains(t, err.Error(), "already enabled")
 
 		walEngine.DisableAutoCompaction()
-		walEngine.Close()
+		closeWALEngine()
 	})
 
 	t.Run("auto_compaction_runs_at_configured_interval", func(t *testing.T) {
@@ -531,7 +533,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		walEngine := NewWALEngine(engine, wal)
+		walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 		// Add some data before enabling compaction
 		for i := 1; i <= 20; i++ {
@@ -572,7 +574,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		assert.GreaterOrEqual(t, len(files), 1, "Should have at least 1 snapshot file")
 
 		walEngine.DisableAutoCompaction()
-		walEngine.Close()
+		closeWALEngine()
 	})
 
 	t.Run("disable_auto_compaction_stops_snapshots", func(t *testing.T) {
@@ -589,7 +591,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		walEngine := NewWALEngine(engine, wal)
+		walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 		// Enable auto-compaction
 		err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -612,7 +614,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		countAfter, _ := walEngine.GetSnapshotStats()
 		assert.LessOrEqual(t, countAfter, countAtDisable+1, "Snapshot count should not increase significantly after disable")
 
-		walEngine.Close()
+		closeWALEngine()
 	})
 }
 
@@ -635,7 +637,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		walEngine := NewWALEngine(engine, wal)
+		walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 		err = walEngine.EnableAutoCompaction(snapshotDir)
 		require.NoError(t, err)
@@ -682,7 +684,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(writers*writeCount), totalNodes, "Should have all nodes")
 
-		walEngine.Close()
+		closeWALEngine()
 	})
 }
 
@@ -705,7 +707,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		walEngine := NewWALEngine(engine, wal)
+		walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 		// Write a lot of data to grow the WAL
 		for i := 1; i <= 500; i++ {
@@ -754,7 +756,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(500), count, "All nodes should still exist")
 
-		walEngine.Close()
+		closeWALEngine()
 	})
 }
 
@@ -779,7 +781,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			require.NoError(t, err)
 
 			engine := newTestMemoryEngine(t)
-			walEngine := NewWALEngine(engine, wal)
+			walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 			err = walEngine.EnableAutoCompaction(snapshotDir)
 			require.NoError(t, err)
@@ -796,7 +798,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			}
 
 			walEngine.DisableAutoCompaction()
-			walEngine.Close()
+			closeWALEngine()
 		}()
 
 		// Find the latest snapshot (by name; snapshot-YYYYMMDD-HHMMSS.json sorts chronologically)
@@ -834,14 +836,14 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			require.NoError(t, err)
 
 			engine := newTestMemoryEngine(t)
-			walEngine := NewWALEngine(engine, wal)
+			walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 			for i := 1; i <= 50; i++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
 				walEngine.CreateNode(node)
 			}
 
-			walEngine.Close()
+			closeWALEngine()
 		}()
 
 		// Session 2: Recover without snapshot
@@ -873,7 +875,7 @@ func TestWALCompactionEdgeCases(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		walEngine := NewWALEngine(engine, wal)
+		walEngine, closeWALEngine := fixtureowner.OwnWithClose(t, NewWALEngine(engine, wal))
 
 		// Enable auto-compaction on empty WAL
 		err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -884,7 +886,7 @@ func TestWALCompactionEdgeCases(t *testing.T) {
 
 		// Should not crash, snapshots might be created (empty ones)
 		walEngine.DisableAutoCompaction()
-		walEngine.Close()
+		closeWALEngine()
 	})
 
 	t.Run("truncate_closed_wal_returns_error", func(t *testing.T) {
@@ -936,7 +938,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 			wal, _ := NewWAL("", cfg)
 
 			engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
-			walEngine := NewWALEngine(engine, wal)
+			walEngine, closeWALEngine := fixtureowner.OwnWithClose(b, NewWALEngine(engine, wal))
 
 			// Create data
 			for j := 0; j < 1000; j++ {
@@ -953,7 +955,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 			wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
 
 			b.StopTimer()
-			walEngine.Close()
+			closeWALEngine()
 		}
 	})
 
@@ -963,7 +965,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 		wal, _ := NewWAL("", cfg)
 
 		engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
-		walEngine := NewWALEngine(engine, wal)
+		_, closeWALEngine := fixtureowner.OwnWithClose(b, NewWALEngine(engine, wal))
 
 		// Create test data
 		for j := 0; j < 10000; j++ {
@@ -980,6 +982,6 @@ func BenchmarkWALCompaction(b *testing.B) {
 			}
 		}
 
-		walEngine.Close()
+		closeWALEngine()
 	})
 }

@@ -1,5 +1,7 @@
 package testfixture
 
+// Author of fixture cleanup changes: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"go/parser"
 	"go/token"
@@ -37,6 +39,18 @@ func TestConstructorEntryLint(t *testing.T) {
 		{"managed_function_value", "", "var open=openManagedBadger", true, false, 1},
 		{"managed_owned", "", "func TestX(t *testing.T){_,_=fixture.OwnResult[*managedBadgerDB](t,nil)(openManagedBadger(opts))}", true, false, 0},
 		{"recovery_unregistered", "", "func TestX(t *testing.T){_,_=storage.RecoverFromWAL(dir,path)}", false, false, 1},
+		{"recovery_adjacent_registered", "", "func TestX(t *testing.T){e,_,err:=storage.RecoverFromWALWithResult(dir,path);e=fixture.Track(t,e,storage.ErrStorageClosed);_=err}", false, false, 0},
+		{"recovery_adjacent_generic", "", "func TestX(t *testing.T){e,_,err:=storage.RecoverFromWALWithResult(dir,path);e=fixture.Track[*storage.MemoryEngine](t,e,storage.ErrStorageClosed);_=err}", false, false, 0},
+		{"recovery_switch_case_adjacent", "", "func TestX(t *testing.T){var e *storage.MemoryEngine;var err error;switch mode {case 1:e,_,err=storage.RecoverFromWALWithResult(dir,path);e=fixture.Track(t,e,storage.ErrStorageClosed);_=err}}", false, false, 0},
+		{"recovery_select_case_adjacent", "", "func TestX(t *testing.T){select {case <-ready:e,_,err:=storage.RecoverWithTransactions(dir,path);e=fixture.Track(t,e,storage.ErrStorageClosed);_=err}}", false, false, 0},
+		{"recovery_switch_track_after_case", "", "func TestX(t *testing.T){var e *storage.MemoryEngine;var err error;switch mode {case 1:e,_,err=storage.RecoverFromWALWithResult(dir,path)};e=fixture.Track(t,e,storage.ErrStorageClosed);_=err}", false, false, 1},
+		{"recovery_switch_track_sibling_case", "", "func TestX(t *testing.T){var e *storage.MemoryEngine;var err error;switch mode {case 1:e,_,err=storage.RecoverFromWALWithResult(dir,path);case 2:e=fixture.Track(t,e,storage.ErrStorageClosed)};_=err}", false, false, 1},
+		{"recovery_switch_track_after_assertion", "", "func TestX(t *testing.T){var e *storage.MemoryEngine;var err error;switch mode {case 1:e,_,err=storage.RecoverFromWALWithResult(dir,path);check(err);e=fixture.Track(t,e,storage.ErrStorageClosed)}}", false, false, 1},
+		{"recovery_track_after_assertion", "", "func TestX(t *testing.T){e,_,err:=storage.RecoverFromWALWithResult(dir,path);check(err);e=fixture.Track(t,e,storage.ErrStorageClosed)}", false, false, 1},
+		{"recovery_track_other_binding", "", "func TestX(t *testing.T){e,_,err:=storage.RecoverFromWALWithResult(dir,path);other=fixture.Track(t,e,storage.ErrStorageClosed);_=err}", false, false, 1},
+		{"recovery_track_other_resource", "", "func TestX(t *testing.T){e,_,err:=storage.RecoverFromWALWithResult(dir,path);e=fixture.Track(t,other,storage.ErrStorageClosed);_=err}", false, false, 1},
+		{"recovery_unrelated_track", "", "func TestX(t *testing.T){e,_,err:=storage.RecoverFromWALWithResult(dir,path);e=other.Track(t,e,storage.ErrStorageClosed);_=err}", false, false, 1},
+		{"recovery_nested_track", "", "func TestX(t *testing.T){e,_,err:=storage.RecoverFromWALWithResult(dir,path);if err==nil { e=fixture.Track(t,e,storage.ErrStorageClosed) }}", false, false, 1},
 		{"recovery_owned", "", "func TestX(t *testing.T){_,_,_=fixture.OwnResult3[*storage.MemoryEngine,storage.ReplayResult](t,storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(dir,path))}", false, false, 0},
 		{"no_resource", "", "func TestX(t *testing.T){fixture.Track(t,nil,nil)}", false, false, 0},
 	} {

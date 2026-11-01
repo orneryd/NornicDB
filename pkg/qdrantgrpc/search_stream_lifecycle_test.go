@@ -1,5 +1,7 @@
 package qdrantgrpc
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -10,8 +12,7 @@ import (
 
 // Standard Qdrant scroll and numeric-offset search do not allocate durable qids.
 func TestSearchStreamLifecycleQdrantStatelessPaging(t *testing.T) {
-	service, _, base := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 	ctx := context.Background()
 	points := make([]*qpb.PointStruct, 3)
 	for i := range points {

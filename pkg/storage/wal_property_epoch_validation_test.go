@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bufio"
 	"bytes"
@@ -211,7 +213,6 @@ func TestWALPropertyEpochSalvageCannotBorrowAcrossDamage(t *testing.T) {
 	require.Nil(t, entries[0].PropertyEpoch)
 	dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = dest.Close() })
 	require.ErrorContains(t, ReplayWALEntry(dest, entries[0]), "missing property name binding")
 	for _, legacy := range []bool{false, true} {
 		entry, err := WALEntry{}, error(nil)
@@ -269,7 +270,7 @@ func TestWALPropertyEpochCannotAcknowledgeUnboundOrFailedHeader(t *testing.T) {
 	wal.mu.Unlock()
 	require.ErrorIs(t, err, io.ErrClosedPipe)
 	require.Nil(t, previous)
-	closed := reviewBindingEngine(t, t.TempDir())
+	closed, _ := reviewBindingEngine(t, t.TempDir())
 	require.NoError(t, closed.Close())
 	closed.SetBufferedCommitWAL(wal)
 	require.ErrorIs(t, closed.beginSemanticPropertyRestore(), ErrStorageClosed)
@@ -294,7 +295,6 @@ func TestWALPropertyEpochPlanSurvivesPartialDrainPersistence(t *testing.T) {
 	require.NoError(t, err)
 	dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = dest.Close() })
 	prepared, err := dest.importBufferedWALRecord(&data, walForeignImport)
 	require.NoError(t, err)
 	require.Len(t, prepared.propKeyDrain.pending, 160)
@@ -315,7 +315,7 @@ func TestWALPropertyEpochUnappliedLogCannotGainCleanProof(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	for _, record := range []map[string]any{{}, {"tx_id": "never-applied"}, {"tx_id": []string{"invalid"}}} {
 		dir := t.TempDir()
-		dest := reviewBindingEngine(t, dir)
+		dest, _ := reviewBindingEngine(t, dir)
 		require.NoError(t, dest.beginSemanticPropertyRestore())
 		wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 		require.NoError(t, err)
@@ -325,7 +325,7 @@ func TestWALPropertyEpochUnappliedLogCannotGainCleanProof(t *testing.T) {
 		require.NoError(t, wal.Close())
 		_, _, controls := walEpochRawBodies(t, walActivePath(wal.Config().Dir))
 		require.NotZero(t, controls, "failed clean shutdown preserves the unapplied authority control")
-		dest = reviewBindingEngine(t, dir)
+		dest, _ = reviewBindingEngine(t, dir)
 		require.True(t, dest.walPropertySource.foreign)
 		require.False(t, dest.walPropertySource.clean)
 	}

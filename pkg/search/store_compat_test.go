@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 // Legacy search layouts remain usable across versions. Pre-vkey2 indexes are
 // rebuilt from their graph records once; current indexes restore without a scan.
 // Generate the old layouts in temporary directories instead of shipping archives.
@@ -64,8 +66,9 @@ var compatStoreLiveNode = &storage.Node{ID: "nornic:d", Labels: []string{"Doc"},
 func writeCompatStore(t *testing.T, dir string) {
 	t.Helper()
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 	for _, n := range compatStoreNodes {
@@ -80,7 +83,7 @@ func writeCompatStore(t *testing.T, dir string) {
 	require.NoError(t, svc.IndexNode(live))
 	svc.PersistIndexesToDisk()
 	require.NoError(t, svc.Close())
-	require.NoError(t, engine.Close())
+	closeEngine()
 }
 
 func requireCompatStoreServes(t *testing.T, dir string, wantIterations int32) {
@@ -88,13 +91,15 @@ func requireCompatStoreServes(t *testing.T, dir string, wantIterations int32) {
 	plan, err := multidb.NewCatalogUpgradeV4("system", "")
 	require.NoError(t, err)
 	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: filepath.Join(dir, "graph"), AllowStorageUpgrade: true, CatalogUpgradeV4: plan}))
+	var closeBadger func()
 	if badger != nil {
-		fixtureowner.Own(t, badger)
+		_, closeBadger = fixtureowner.OwnWithClose(t, badger)
 	}
 	require.NoError(t, err)
+	defer closeBadger()
 	engine := &countingStoreEngine{BadgerEngine: badger}
 	svc := compatStoreService(engine, dir)
-	defer func() { require.NoError(t, svc.Close()); require.NoError(t, badger.Close()) }()
+	defer func() { require.NoError(t, svc.Close()) }()
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.Equal(t, wantIterations, engine.iterations.Load(), "legacy indexes rebuild once; current indexes restore without scanning storage")
 	require.True(t, svc.IsReady())

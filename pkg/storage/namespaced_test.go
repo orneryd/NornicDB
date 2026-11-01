@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
@@ -318,7 +320,6 @@ func (e *namespacedSchemaFallbackEngine) GetSchema() *SchemaManager {
 
 func TestNamespacedEngine_BasicOperations(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 
 	// Create namespaced engine for tenant_a
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
@@ -349,7 +350,6 @@ func TestNamespacedEngine_BasicOperations(t *testing.T) {
 
 func TestNamespacedEngine_StreamNodes_UsesPrefixStreamingWhenAvailable(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	defer base.Close()
 
 	_, err := base.CreateNode(&Node{ID: NodeID("tenant_a:n1"), Labels: []string{"L"}, Properties: map[string]any{"name": "a1"}})
 	require.NoError(t, err)
@@ -375,7 +375,6 @@ func TestNamespacedEngine_StreamNodes_UsesPrefixStreamingWhenAvailable(t *testin
 
 func TestNamespacedEngine_Isolation(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 	tenantB := NewNamespacedEngine(inner, "tenant_b")
@@ -411,7 +410,6 @@ func TestNamespacedEngine_Isolation(t *testing.T) {
 
 func TestNamespacedEngine_Edges(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
@@ -452,7 +450,6 @@ func TestNamespacedEngine_Edges(t *testing.T) {
 
 func TestNamespacedEngine_QueryOperations(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 	tenantB := NewNamespacedEngine(inner, "tenant_b")
@@ -490,7 +487,6 @@ func TestNamespacedEngine_QueryOperations(t *testing.T) {
 
 func TestNamespacedEngine_DeleteByPrefix(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
@@ -521,7 +517,6 @@ func TestNamespacedEngine_DeleteByPrefix(t *testing.T) {
 
 func TestNamespacedEngine_Stats(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
@@ -554,7 +549,6 @@ func TestNamespacedEngine_Stats(t *testing.T) {
 
 func TestNamespacedEngine_BulkOperations(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
@@ -593,7 +587,6 @@ func TestNamespacedEngine_BulkOperations(t *testing.T) {
 
 func TestNamespacedEngine_Close(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
@@ -609,7 +602,6 @@ func TestNamespacedEngine_Close(t *testing.T) {
 
 func TestNamespacedEngine_StreamingAPIs(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 	tenantB := NewNamespacedEngine(inner, "tenant_b")
@@ -653,7 +645,6 @@ func TestNamespacedEngine_StreamingAPIs(t *testing.T) {
 
 func TestNamespacedEngine_EmbeddingWrappersAndLastWriteTime(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
 	// Wrapper methods should prefix transparently and not panic.
@@ -773,7 +764,6 @@ func BenchmarkNamespacedRefreshPendingEmbeddingsIndex(b *testing.B) {
 
 func TestNamespacedEngine_QueryDelegateMethods(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	defer inner.Close()
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
 	_, err := tenantA.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "A"}})
@@ -812,7 +802,6 @@ func TestNamespacedEngine_QueryDelegateMethods(t *testing.T) {
 func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 	t.Run("direct streaming filters namespace and propagates errors", func(t *testing.T) {
 		inner := &namespacedHelperEngine{MemoryEngine: newTestMemoryEngine(t)}
-		t.Cleanup(func() { _ = inner.Close() })
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 		tenantB := NewNamespacedEngine(inner, "tenant_b")
 
@@ -891,7 +880,6 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 			},
 			missingIDs: map[NodeID]bool{"tenant_a:stale": true},
 		}
-		t.Cleanup(func() { _ = inner.Close() })
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 
 		_, err := inner.CreateNode(&Node{ID: "tenant_a:valid", Labels: []string{"Doc"}, Properties: map[string]any{"text": "keep"}})
@@ -908,7 +896,6 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 			MemoryEngine: newTestMemoryEngine(t),
 			refreshCount: 2,
 		}
-		t.Cleanup(func() { _ = inner.Close() })
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 
 		_, err := tenantA.CreateNode(&Node{ID: "needs", Labels: []string{"Doc"}, Properties: map[string]any{"text": "embed me"}})
@@ -986,7 +973,6 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 
 	t.Run("node count by label covers stats streaming and all-nodes fallbacks", func(t *testing.T) {
 		statsInner := &namespacedLabelStatsEngine{Engine: newTestMemoryEngine(t), count: 9}
-		t.Cleanup(func() { _ = statsInner.Close() })
 		statsTenant := NewNamespacedEngine(statsInner, "tenant_a")
 		count, err := statsTenant.NodeCountByLabel("Person")
 		require.NoError(t, err)
@@ -1053,7 +1039,6 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 			MemoryEngine: newTestMemoryEngine(t),
 			findQueue:    foreignQueue,
 		}
-		t.Cleanup(func() { _ = inner.Close() })
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 
 		_, err := tenantA.CreateNode(&Node{
@@ -1202,11 +1187,6 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 			Engine: newTestMemoryEngine(t),
 			ids:    []NodeID{"tenant_b:skip", "tenant_a:one", "tenant_a:two"},
 		}
-		t.Cleanup(func() {
-			if closer, ok := engine.Engine.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-		})
 		tenantA := NewNamespacedEngine(engine, "tenant_a")
 
 		var seen []NodeID
@@ -1334,7 +1314,6 @@ func TestNamespacedEngine_MVCCIndexedVisibilityFiltersAndStripsNamespace(t *test
 			{ID: "tenant_b:e4", Type: "REL", StartNode: "tenant_b:n4", EndNode: "tenant_b:n1"},
 		},
 	}
-	t.Cleanup(func() { _ = inner.Close() })
 
 	ns := NewNamespacedEngine(inner, "tenant_a")
 
@@ -1366,7 +1345,6 @@ func TestNamespacedEngine_MVCCIndexedVisibilityPropagatesProviderErrors(t *testi
 		outgoingErr:  errors.New("outgoing boom"),
 		incomingErr:  errors.New("incoming boom"),
 	}
-	t.Cleanup(func() { _ = inner.Close() })
 	ns := NewNamespacedEngine(inner, "tenant_a")
 
 	_, err := ns.GetOutgoingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})

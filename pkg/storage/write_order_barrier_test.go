@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -21,13 +23,6 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	// No background flusher: only the ordered write's drain applies the
 	// acknowledged generation.
 	engine.writeBehind.Close()
-	// A deadlocked engine cannot close: the failure below leaves it.
-	deadlocked := false
-	t.Cleanup(func() {
-		if !deadlocked {
-			_ = engine.Close()
-		}
-	})
 	_, err = engine.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 	require.NoError(t, engine.FlushWriteBehind(nil))
@@ -72,13 +67,11 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	case err := <-updated:
 		require.NoError(t, err)
 	case <-time.After(30 * time.Second):
-		deadlocked = true
 		t.Fatal("the ordered write's drain waits for the barrier behind the queued exclusive writer, which waits for the ordered write")
 	}
 	select {
 	case <-exclusive:
 	case <-time.After(30 * time.Second):
-		deadlocked = true
 		t.Fatal("the exclusive writer never acquired the barrier")
 	}
 	node, err := engine.GetNode("test:n")

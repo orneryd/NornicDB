@@ -1,5 +1,7 @@
 package nornicdb
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -185,8 +187,9 @@ func TestRecoverBadgerFromSnapshotAndWAL_HandlesEmptyRecoveryInputs(t *testing.T
 func TestRecoverBadgerFromSnapshotAndWAL_RejectsEmptyReplayOfExistingStore(t *testing.T) {
 	dataDir := t.TempDir()
 	store, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+	var closeStore func()
 	if store != nil {
-		fixtureowner.Own(t, store)
+		_, closeStore = fixtureowner.OwnWithClose(t, store)
 	}
 	require.NoError(t, err)
 	_, err = store.CreateNode(&storage.Node{
@@ -194,7 +197,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_RejectsEmptyReplayOfExistingStore(t *te
 		Properties: map[string]interface{}{"name": "preserved"},
 	})
 	require.NoError(t, err)
-	require.NoError(t, store.Close())
+	closeStore()
 
 	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{DataDir: dataDir})
 	if recovered != nil {

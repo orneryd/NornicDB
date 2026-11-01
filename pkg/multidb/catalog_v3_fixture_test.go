@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"crypto/sha256"
@@ -21,9 +23,13 @@ import (
 // It preserves every other native key/value and records the baseline hash.
 func markClosedASCIICatalogFixtureV3(t *testing.T, dir string) {
 	t.Helper()
-	db, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil).WithMemTableSize(8 << 20).WithBlockCacheSize(8 << 20)))
+	db, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil).WithMemTableSize(8 << 20).WithBlockCacheSize(8 << 20)))
+	var closeDB func()
+	if db != nil {
+		_, closeDB = fixtureowner.OwnWithClose(t, db)
+	}
 	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
+	defer closeDB()
 	snapshot := func() map[string][]byte {
 		result := make(map[string][]byte)
 		require.NoError(t, db.View(func(txn *badger.Txn) error {
@@ -76,9 +82,13 @@ func openCatalogUpgradeFixture(t *testing.T, dir string, cfg *Config) (*storage.
 
 func closedCatalogFixtureDigest(t *testing.T, dir string) [32]byte {
 	t.Helper()
-	db, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil).WithReadOnly(true).WithMemTableSize(8 << 20).WithBlockCacheSize(8 << 20)))
+	db, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil).WithReadOnly(true).WithMemTableSize(8 << 20).WithBlockCacheSize(8 << 20)))
+	var closeDB func()
+	if db != nil {
+		_, closeDB = fixtureowner.OwnWithClose(t, db)
+	}
 	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
+	defer closeDB()
 	hash := sha256.New()
 	require.NoError(t, db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)

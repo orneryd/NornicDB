@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"fmt"
@@ -31,7 +33,6 @@ func dateTimeReferenceAddress(t *testing.T) string {
 
 func TestLegacyDateTimeWire(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 	testDateTimeWire(t, fmt.Sprintf("127.0.0.1:%d", port), false)
 }
@@ -145,7 +146,6 @@ func dateTimeWireQuery(t *testing.T, conn net.Conn, query string, params []byte)
 // was added. No driver code or HELLO message is modified for these tests.
 func TestLegacyDateTimeRealDriver(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 	testLegacyDateTimeDriver(t, fmt.Sprintf("bolt://127.0.0.1:%d", port), false)
 }

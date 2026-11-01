@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -313,7 +315,7 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 }
 
 func TestSharedEndpointConcurrentBufferedCommitCounts(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 	for _, id := range []NodeID{"test:hub", "test:left", "test:right"} {
 		_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}})
 		require.NoError(t, err)

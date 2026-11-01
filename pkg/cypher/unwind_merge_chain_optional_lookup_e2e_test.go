@@ -1,14 +1,15 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
 func newTestBadgerNamespacedStore(t *testing.T) storage.Engine {
@@ -32,10 +33,8 @@ func newTestServerLikeNamespacedStore(t *testing.T) storage.Engine {
 	require.NoError(t, err)
 	walStore := storage.NewWALEngine(baseStore, wal)
 	asyncStore := walStore
-	t.Cleanup(func() {
-		require.NoError(t, wal.Close())
-		require.NoError(t, asyncStore.Close())
-	})
+	fixtureowner.Own(t, asyncStore)
+	t.Cleanup(func() { require.NoError(t, wal.Close()) })
 	return storage.NewNamespacedEngine(asyncStore, "test")
 }
 

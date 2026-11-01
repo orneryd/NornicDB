@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -14,7 +16,6 @@ import (
 
 func TestNewTransaction(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	tx, err := engine.BeginTransaction()
 	if err != nil {
@@ -274,7 +275,6 @@ func TestTransaction_UpdateNode(t *testing.T) {
 
 func TestTransaction_CommitRejectsConstraintContractViolation(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	contract := ConstraintContract{
 		Name:              "person_contract",
@@ -356,7 +356,6 @@ func TestTransaction_CreateEdge(t *testing.T) {
 
 func TestTransaction_UpdateEdge(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	node1 := &Node{ID: NodeID(prefixTestID("update-edge-node-1")), Labels: []string{"Node"}}
 	node2 := &Node{ID: NodeID(prefixTestID("update-edge-node-2")), Labels: []string{"Node"}}
@@ -446,7 +445,6 @@ func TestTransaction_UpdateEdge(t *testing.T) {
 
 func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	tx, _ := engine.BeginTransaction()
 	if err := tx.UpdateEdge(EdgeUpdateRequest{After: nil}); err != ErrInvalidData {
@@ -637,7 +635,6 @@ func TestTransaction_IsActive(t *testing.T) {
 
 func TestTransaction_ConfigSettersAndSkipCreateHelpers(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	tx, _ := engine.BeginTransaction()
 	if err := tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
@@ -696,7 +693,6 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 
 	t.Run("validates basic temporal inputs", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		defer engine.Close()
 		tx, _ := engine.BeginTransaction()
 
 		err := tx.checkTemporalConstraint(context.Background(), newTemporalNode(prefixTestID("temporal-count"), "acct", now, now.Add(time.Hour)), Constraint{
@@ -727,7 +723,6 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 
 	t.Run("detects overlap and invalid pending nodes", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		defer engine.Close()
 		tx, _ := engine.BeginTransaction()
 
 		tx.pendingNodes[NodeID(prefixTestID("pending-invalid"))] = &Node{
@@ -1224,7 +1219,6 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 
 func TestTransaction_Isolation(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Transaction 1 creates a node
 	tx1, _ := engine.BeginTransaction()
@@ -1258,7 +1252,6 @@ func TestTransaction_Isolation(t *testing.T) {
 
 func TestTransaction_WriteWriteConflict(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	nodeID := NodeID(prefixTestID("ww-conflict-node"))
 	_, err := engine.CreateNode(&Node{
@@ -1294,7 +1287,6 @@ func TestTransaction_WriteWriteConflict(t *testing.T) {
 
 func TestTransaction_WriteWriteConflict_OnEdge(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	start := NodeID(prefixTestID("ww-edge-start"))
 	end := NodeID(prefixTestID("ww-edge-end"))

@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -12,9 +14,9 @@ import (
 // populateUnwindDeleteFixture seeds a fresh in-memory engine with `batchSize`
 // source/target node pairs joined by TAINT_FLOWS_TO edges and returns the
 // uids/edge IDs the benchmark iteration will drive through the executor.
-func populateUnwindDeleteFixture(b *testing.B, batchSize int) (*storage.MemoryEngine, []string, []storage.EdgeID) {
+func populateUnwindDeleteFixture(b *testing.B, batchSize int) (*storage.MemoryEngine, []string, []storage.EdgeID, func()) {
 	b.Helper()
-	store := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	store, closeStore := fixtureowner.OwnWithClose(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	uids := make([]string, 0, batchSize)
 	edgeIDs := make([]storage.EdgeID, 0, batchSize)
 	for j := 0; j < batchSize; j++ {
@@ -48,7 +50,7 @@ func populateUnwindDeleteFixture(b *testing.B, batchSize int) (*storage.MemoryEn
 		uids = append(uids, uid)
 		edgeIDs = append(edgeIDs, edgeID)
 	}
-	return store, uids, edgeIDs
+	return store, uids, edgeIDs, closeStore
 }
 
 func BenchmarkUnwindRelationshipDeleteTransactionRouting(b *testing.B) {
@@ -72,7 +74,7 @@ DELETE rel`
 						// Keep setup out of the hot path without prebuilding b.N engines,
 						// which can blow up memory as the harness increases iteration count.
 						b.StopTimer()
-						store, uids, edgeIDs := populateUnwindDeleteFixture(b, batchSize)
+						store, uids, edgeIDs, closeStore := populateUnwindDeleteFixture(b, batchSize)
 						exec := NewStorageExecutor(store)
 						b.StartTimer()
 						if explicit {
@@ -99,9 +101,7 @@ DELETE rel`
 								b.Fatalf("edge %s survived", edgeID)
 							}
 						}
-						if err := store.Close(); err != nil {
-							b.Fatal(err)
-						}
+						closeStore()
 						b.StartTimer()
 					}
 				})

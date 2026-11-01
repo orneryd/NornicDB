@@ -1,5 +1,7 @@
 package search
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 // Live writes during an explicit build: they never wait for it, and the
 // indexes after the build hold exactly what they would hold had the writes
 // waited. The build reads a storage snapshot the writes overtake, drops BM25
@@ -10,7 +12,8 @@ import (
 	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"log/slog"
 	"path/filepath"
 	"runtime"
@@ -18,9 +21,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
 // nodeSnapshotGateEngine reads the stored nodes for the build, then parks
@@ -35,7 +35,7 @@ type nodeSnapshotGateEngine struct {
 func newNodeSnapshotGateEngine(t *testing.T) *nodeSnapshotGateEngine {
 	t.Helper()
 	e := &nodeSnapshotGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
-	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
+	t.Cleanup(e.open)
 	return e
 }
 
@@ -258,7 +258,6 @@ func TestBuildLiveWritesDuringWarmupSurviveTheBM25Reload(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			dir := t.TempDir()
 			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			t.Cleanup(func() { _ = engine.Close() })
 			_, err := engine.CreateNode(buildWriteNode("nornic:a", "oldterm", []float32{1, 0, 0}))
 			require.NoError(t, err)
 			svc := buildWriteService(t, engine, dir, backend, nil)

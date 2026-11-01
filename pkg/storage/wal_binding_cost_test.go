@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"testing"
@@ -17,7 +19,6 @@ func bindingCostFixture(t testing.TB, count int) (*BadgerEngine, *WAL, *buffered
 	t.Cleanup(config.WithWALEnabled())
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	properties := make(map[string]any, count)
 	for i := 0; i < count; i++ {
 		properties[fmt.Sprintf("property_%03d", i)] = int64(i)

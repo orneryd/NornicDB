@@ -1,5 +1,7 @@
 package testutil
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -19,7 +21,7 @@ func RequireCatalogOptionContext(t *testing.T, factory func(*multidb.DatabaseMan
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	const database = "catalog_context_options"
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 	adapter := factory(manager)

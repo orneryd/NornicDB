@@ -1,5 +1,7 @@
 package cypher
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -58,12 +60,16 @@ func TestCypherValuesUnchangedByStoredImage(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/write-behind=%v", parser, buffered), func(t *testing.T) {
 				config.SetParserType(parser)
 				dir := t.TempDir()
-				open := func() (*storage.BadgerEngine, *StorageExecutor) {
-					base, err := runtimeFixtureOwner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+				open := func() (*StorageExecutor, func()) {
+					base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+					var closeBase func()
+					if base != nil {
+						_, closeBase = runtimeFixtureOwner.OwnWithClose(t, base)
+					}
 					require.NoError(t, err)
-					return base, NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"))
+					return NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic")), closeBase
 				}
-				base, exec := open()
+				exec, closeBase := open()
 				ctx := context.Background()
 				created, err := exec.Execute(ctx, "CREATE (n:K {id: 'n'"+set+"}) RETURN "+returns, params)
 				require.NoError(t, err)
@@ -82,10 +88,9 @@ func TestCypherValuesUnchangedByStoredImage(t *testing.T) {
 				require.NoError(t, err)
 				afterRel, err := exec.Execute(ctx, matchRel, nil)
 				require.NoError(t, err)
-				require.NoError(t, base.Close())
+				closeBase()
 
-				base, exec = open()
-				t.Cleanup(func() { _ = base.Close() })
+				exec, _ = open()
 				restartNode, err := exec.Execute(ctx, matchNode, nil)
 				require.NoError(t, err)
 				restartRel, err := exec.Execute(ctx, matchRel, nil)

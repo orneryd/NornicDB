@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -1496,7 +1498,6 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		boom := errors.New("boom")
 		errEngine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
 		okEngine := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = errEngine.MemoryEngine.Close() })
 
 		okNode := &Node{ID: NodeID(prefixTestID("ok-node")), Labels: []string{"Person"}}
 		_, err := okEngine.CreateNode(okNode)
@@ -1592,7 +1593,6 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		boom := errors.New("boom")
 		errEngine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
 		okEngine := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = errEngine.MemoryEngine.Close() })
 
 		composite := NewCompositeEngine(
 			map[string]Engine{"err": errEngine, "ok": okEngine},

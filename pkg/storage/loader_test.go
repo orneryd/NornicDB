@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -48,7 +50,6 @@ func TestLoadFromNeo4jExport(t *testing.T) {
 		require.NoError(t, err)
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err = LoadFromNeo4jExport(engine, exportPath)
 		require.NoError(t, err)
@@ -75,7 +76,6 @@ func TestLoadFromNeo4jExport(t *testing.T) {
 
 	t.Run("file not found", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := LoadFromNeo4jExport(engine, "/nonexistent/path.json")
 		assert.Error(t, err)
@@ -87,7 +87,6 @@ func TestLoadFromNeo4jExport(t *testing.T) {
 		os.WriteFile(exportPath, []byte("not json"), 0644)
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := LoadFromNeo4jExport(engine, exportPath)
 		assert.Error(t, err)
@@ -99,7 +98,6 @@ func TestLoadFromNeo4jExport(t *testing.T) {
 		os.WriteFile(exportPath, []byte(`{"nodes": [], "relationships": []}`), 0644)
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := LoadFromNeo4jExport(engine, exportPath)
 		require.NoError(t, err)
@@ -123,7 +121,6 @@ func TestLoadFromNeo4jJSON(t *testing.T) {
 		os.WriteFile(filepath.Join(tmpDir, "relationships.json"), []byte(relsJSON), 0644)
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := LoadFromNeo4jJSON(engine, tmpDir)
 		require.NoError(t, err)
@@ -142,7 +139,6 @@ func TestLoadFromNeo4jJSON(t *testing.T) {
 		os.WriteFile(filepath.Join(tmpDir, "nodes.json"), []byte(nodesJSON), 0644)
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := LoadFromNeo4jJSON(engine, tmpDir)
 		require.NoError(t, err)
@@ -155,7 +151,6 @@ func TestLoadFromNeo4jJSON(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := LoadFromNeo4jJSON(engine, tmpDir)
 		require.NoError(t, err) // Should succeed with no files
@@ -171,7 +166,6 @@ func TestLoadFromNeo4jJSON(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "relationships.json"), []byte(`not-json`), 0644))
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := LoadFromNeo4jJSON(engine, tmpDir)
 		require.ErrorContains(t, err, "loading relationships")
@@ -181,7 +175,6 @@ func TestLoadFromNeo4jJSON(t *testing.T) {
 func TestSaveToNeo4jExport(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		_, err := engine.CreateNode(&Node{
 			ID:         "person-1",
@@ -210,7 +203,6 @@ func TestSaveToNeo4jExport(t *testing.T) {
 
 		// Load back and verify
 		base2 := newTestMemoryEngine(t)
-		defer base2.Close()
 		engine2 := NewNamespacedEngine(base2, "test")
 		err = LoadFromNeo4jExport(engine2, exportPath)
 		require.NoError(t, err)
@@ -224,7 +216,6 @@ func TestSaveToNeo4jExport(t *testing.T) {
 
 	t.Run("empty engine", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 
 		tmpDir := t.TempDir()
@@ -266,7 +257,6 @@ func TestSaveToNeo4jExport(t *testing.T) {
 func TestGenericSaveToNeo4jExport(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		_, err := engine.CreateNode(&Node{
 			ID:     "test-1",
@@ -309,7 +299,6 @@ func TestLoadNodesFromReader(t *testing.T) {
 {"id": "n3", "labels": ["A", "B"], "properties": {}}`
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := loadNodesFromReader(engine, strings.NewReader(input))
 		require.NoError(t, err)
@@ -324,7 +313,6 @@ func TestLoadNodesFromReader(t *testing.T) {
 {"id": "n2", "labels": [], "properties": {}}
 `
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := loadNodesFromReader(engine, strings.NewReader(input))
 		require.NoError(t, err)
@@ -339,7 +327,6 @@ not valid json
 {"id": "n2", "labels": [], "properties": {}}`
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := loadNodesFromReader(engine, strings.NewReader(input))
 		assert.Error(t, err)
@@ -349,7 +336,6 @@ not valid json
 		input := `{"id": "", "labels": [], "properties": {}}`
 
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		err := loadNodesFromReader(engine, strings.NewReader(input))
 		assert.ErrorIs(t, err, ErrInvalidID)
@@ -359,7 +345,6 @@ not valid json
 func TestLoadRelationshipsFromReader(t *testing.T) {
 	t.Run("multiple relationships", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		_, err := engine.CreateNode(&Node{ID: "n1"})
 		require.NoError(t, err)
@@ -380,7 +365,6 @@ func TestLoadRelationshipsFromReader(t *testing.T) {
 
 	t.Run("with confidence", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		_, err := engine.CreateNode(&Node{ID: "n1"})
 		require.NoError(t, err)
@@ -402,7 +386,6 @@ func TestLoadRelationshipsFromReader(t *testing.T) {
 
 	t.Run("missing node", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		_, err := engine.CreateNode(&Node{ID: "n1"})
 		require.NoError(t, err)
@@ -416,7 +399,6 @@ func TestLoadRelationshipsFromReader(t *testing.T) {
 
 	t.Run("invalid JSON and empty ID", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		defer base.Close()
 		engine := NewNamespacedEngine(base, "test")
 		_, err := engine.CreateNode(&Node{ID: "n1"})
 		require.NoError(t, err)
@@ -578,7 +560,7 @@ func TestMemoryEngine_AllNodes(t *testing.T) {
 
 	t.Run("closed engine", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		engine.Close()
+		require.NoError(t, engine.Close())
 
 		_, err := engine.AllNodes(context.Background())
 		assert.ErrorIs(t, err, ErrStorageClosed)
@@ -604,7 +586,7 @@ func TestMemoryEngine_AllEdges(t *testing.T) {
 
 	t.Run("closed engine", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		engine.Close()
+		require.NoError(t, engine.Close())
 
 		_, err := engine.AllEdges(context.Background())
 		assert.ErrorIs(t, err, ErrStorageClosed)
@@ -615,7 +597,6 @@ func TestRoundTrip(t *testing.T) {
 	t.Run("full round trip with complex data", func(t *testing.T) {
 		// Create engine with complex data
 		base1 := newTestMemoryEngine(t)
-		defer base1.Close()
 		engine1 := NewNamespacedEngine(base1, "test")
 
 		_, err := engine1.CreateNode(&Node{
@@ -672,7 +653,6 @@ func TestRoundTrip(t *testing.T) {
 
 		// Import into new engine
 		base2 := newTestMemoryEngine(t)
-		defer base2.Close()
 		engine2 := NewNamespacedEngine(base2, "test")
 		err = LoadFromNeo4jExport(engine2, exportPath)
 		require.NoError(t, err)
@@ -720,7 +700,6 @@ func TestMemoryEngine_ImplementsExportableEngine(t *testing.T) {
 
 func TestLoadFromNeo4jJSON_MissingDir(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// nodes.json not found is OK (optional), but if the dir doesn't exist
 	// it should still handle gracefully
@@ -731,7 +710,6 @@ func TestLoadFromNeo4jJSON_MissingDir(t *testing.T) {
 
 func TestLoadFromNeo4jJSON_InvalidNodesJSON(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	dir := t.TempDir()
 	// Write invalid JSON to nodes.json
@@ -744,7 +722,6 @@ func TestLoadFromNeo4jJSON_InvalidNodesJSON(t *testing.T) {
 
 func TestLoadFromNeo4jJSON_InvalidRelationshipsJSON(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	dir := t.TempDir()
 	// Write valid nodes (empty) but invalid relationships
@@ -757,7 +734,6 @@ func TestLoadFromNeo4jJSON_InvalidRelationshipsJSON(t *testing.T) {
 
 func TestLoadFromNeo4jExport_FileNotFound(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	err := LoadFromNeo4jExport(engine, "/nonexistent/export.json")
 	require.Error(t, err)
@@ -766,7 +742,6 @@ func TestLoadFromNeo4jExport_FileNotFound(t *testing.T) {
 
 func TestLoadFromNeo4jExport_InvalidJSON(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	path := filepath.Join(t.TempDir(), "bad.json")
 	require.NoError(t, os.WriteFile(path, []byte("not json"), 0644))
@@ -778,7 +753,6 @@ func TestLoadFromNeo4jExport_InvalidJSON(t *testing.T) {
 
 func TestSaveToNeo4jExport_InvalidPath(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	err := SaveToNeo4jExport(engine, "/nonexistent/dir/export.json")
 	require.Error(t, err)
@@ -786,7 +760,6 @@ func TestSaveToNeo4jExport_InvalidPath(t *testing.T) {
 
 func TestGenericSaveToNeo4jExport_InvalidPath(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	err := GenericSaveToNeo4jExport(engine, "/nonexistent/dir/export.json")
 	require.Error(t, err)
@@ -794,7 +767,6 @@ func TestGenericSaveToNeo4jExport_InvalidPath(t *testing.T) {
 
 func TestLoadRelationshipsFromReader_InvalidJSON(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	reader := strings.NewReader(`{"not": "a valid relationship"}`)
 	err := loadRelationshipsFromReader(engine, reader)
@@ -813,7 +785,6 @@ func TestLoadReadersEmptyInput(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			engine := newTestMemoryEngine(t)
-			defer engine.Close()
 			require.NoError(t, test.load(engine, strings.NewReader("")))
 			nodes, err := engine.AllNodes(context.Background())
 			require.NoError(t, err)
@@ -827,7 +798,6 @@ func TestLoadReadersEmptyInput(t *testing.T) {
 
 func TestLoadFromNeo4jExport_Roundtrip(t *testing.T) {
 	engine1 := newTestMemoryEngine(t)
-	defer engine1.Close()
 
 	// Create test data with internal properties that exercise _createdAt, _confidence, _autoGenerated
 	_, err := engine1.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
@@ -851,7 +821,6 @@ func TestLoadFromNeo4jExport_Roundtrip(t *testing.T) {
 
 	// Reimport into fresh engine
 	engine2 := newTestMemoryEngine(t)
-	defer engine2.Close()
 
 	err = LoadFromNeo4jExport(engine2, exportPath)
 	require.NoError(t, err)
@@ -870,7 +839,6 @@ func TestLoadFromNeo4jExport_Roundtrip(t *testing.T) {
 
 func TestGenericSaveToNeo4jExport_Roundtrip(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "hello"}})
 	require.NoError(t, err)
@@ -887,7 +855,6 @@ func TestGenericSaveToNeo4jExport_Roundtrip(t *testing.T) {
 
 func TestLoadNodesFile_NonExistentIsOptional(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Loading from a non-existent file should be a no-op (optional)
 	err := loadNodesFile(engine, "/nonexistent/nodes.json")
@@ -896,7 +863,6 @@ func TestLoadNodesFile_NonExistentIsOptional(t *testing.T) {
 
 func TestLoadRelationshipsFile_NonExistentIsOptional(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	err := loadRelationshipsFile(engine, "/nonexistent/relationships.json")
 	assert.NoError(t, err)

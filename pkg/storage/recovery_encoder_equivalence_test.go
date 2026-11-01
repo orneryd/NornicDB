@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -161,7 +163,6 @@ func TestRecoveryEncoderOwnedBytesAndConcurrentUse(t *testing.T) {
 			defer workers.Done()
 			var buffer bytes.Buffer
 			stream := snapshotEncoderFixture{MemoryEngine: newTestMemoryEngine(t), edge: e}
-			defer stream.Close()
 			for j := 0; j < 20; j++ {
 				raw, err := marshalWALRecoveryPayload(&buffer, WALEdgeData{Edge: e})
 				if err == nil {

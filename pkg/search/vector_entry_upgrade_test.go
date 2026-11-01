@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"archive/zip"
 	"bytes"
@@ -37,10 +39,11 @@ func TestVectorEntryUpgradeFromRelease143Store(t *testing.T) {
 	require.NoError(t, archive.Close())
 	plan, err := multidb.NewCatalogUpgradeV4("system", "")
 	require.NoError(t, err)
-	open := func() (*storage.BadgerEngine, storage.Engine, *Service) {
+	open := func() (func(), storage.Engine, *Service) {
 		base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: filepath.Join(dir, "graph"), AllowStorageUpgrade: true, CatalogUpgradeV4: plan}))
+		var closeBase func()
 		if base != nil {
-			fixtureowner.Own(t, base)
+			_, closeBase = fixtureowner.OwnWithClose(t, base)
 		}
 		require.NoError(t, err)
 		engine := storage.NewNamespacedEngine(base, "nornic")
@@ -50,9 +53,9 @@ func TestVectorEntryUpgradeFromRelease143Store(t *testing.T) {
 		svc.SetHNSWIndexPath(filepath.Join(dir, "search", "hnsw"))
 		svc.SetPersistenceEnabled(true)
 		require.NoError(t, svc.BuildIndexes(context.Background()))
-		return base, engine, svc
+		return closeBase, engine, svc
 	}
-	base, engine, svc := open()
+	closeBase, engine, svc := open()
 	require.Equal(t, 4, svc.EmbeddingCount(), "recover the vector overwritten in the 1.4.3 search cache")
 	assertVectorOwners(t, svc, []vectorOwnerQuery{{axis: 1, owner: "x"}, {axis: 3, owner: "x-chunk-1"}})
 	// Exercise writes made after the upgrade, then reopen the graph and indexes.
@@ -62,12 +65,14 @@ func TestVectorEntryUpgradeFromRelease143Store(t *testing.T) {
 	require.NoError(t, svc.IndexNode(control))
 	svc.PersistIndexesToDisk()
 	require.NoError(t, svc.Close())
-	require.NoError(t, base.Close())
+	closeBase()
 	if os.Getenv("NORNICDB_VECTOR_ROLLBACK_FIXTURE") == "1" {
 		writeVectorRollbackFixture(t, dir)
 	}
-	base, engine, svc = open()
-	t.Cleanup(func() { _ = svc.Close(); _ = base.Close() })
+	_, engine, svc = open()
+	t.Cleanup(func() {
+		_ = svc.Close()
+	})
 	require.Equal(t, 5, svc.EmbeddingCount())
 	assertVectorOwners(t, svc, []vectorOwnerQuery{{axis: 1, owner: "x"}, {axis: 3, owner: "x-chunk-1"}})
 	require.NoError(t, engine.DeleteNode("x"))

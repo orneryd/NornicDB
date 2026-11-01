@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,17 +15,17 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 		for _, recovery := range []string{"retry", "reopen", "restore"} {
 			t.Run(phase+"/"+recovery, func(t *testing.T) {
 				dir := filepath.Join(t.TempDir(), "store")
-				open := func() (*storage.BadgerEngine, *managedCatalogFailureEngine, *DatabaseManager) {
+				open := func() (*storage.BadgerEngine, *managedCatalogFailureEngine, *DatabaseManager, func()) {
 					base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
 					require.NoError(t, err)
 					fixtureowner.Own(t, base)
 					e := &managedCatalogFailureEngine{Engine: base}
 					m, err := NewDatabaseManager(t.Context(), e, nil)
 					require.NoError(t, err)
-					t.Cleanup(func() { _ = m.Close() })
-					return base, e, m
+					_, closeManager := fixtureowner.OwnWithClose(t, m)
+					return base, e, m, closeManager
 				}
-				base, e, m := open()
+				base, e, m, closeManager := open()
 				var victimView storage.Engine
 				for _, name := range []string{"victim", "peer"} {
 					require.NoError(t, m.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: name}))
@@ -76,7 +78,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					require.NoError(t, err)
 					standby, err := NewDatabaseManager(t.Context(), &identityReadOnlyEngine{Engine: e}, nil)
 					require.NoError(t, err)
-					t.Cleanup(func() { _ = standby.Close() })
+					fixtureowner.Own(t, standby)
 					require.True(t, standby.pendingDrops["victim"])
 					_, err = standby.GetStorage("victim")
 					require.ErrorIs(t, err, ErrDatabaseOffline)
@@ -105,8 +107,8 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					}
 				}
 				if recovery == "reopen" {
-					require.NoError(t, m.Close())
-					base, e, m = open()
+					closeManager()
+					base, e, m, closeManager = open()
 					if phase == "intent-rejected" {
 						require.True(t, m.Exists("victim"))
 						node, err := base.GetNode("victim:keep")
@@ -131,8 +133,8 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 				require.Zero(t, count)
 				_, err = view.CreateNode(&storage.Node{ID: "fresh", Properties: map[string]interface{}{"value": "new"}})
 				require.NoError(t, err)
-				require.NoError(t, m.Close())
-				base, _, m = open()
+				closeManager()
+				base, _, m, closeManager = open()
 				fresh, err := base.GetNode("victim:fresh")
 				require.NoError(t, err)
 				require.Equal(t, "new", fresh.Properties["value"])

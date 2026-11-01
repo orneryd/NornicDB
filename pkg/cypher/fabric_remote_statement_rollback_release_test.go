@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -62,7 +64,6 @@ func newCompositeFailureExecutor(t *testing.T, remote *failingCompositeRemote) (
 	cfg := multidb.DefaultConfig()
 	cfg.RemoteEngineFactory = func(multidb.ConstituentRef, string) (storage.Engine, error) { return remote, nil }
 	manager := newCompositeNativeManager(t, cfg)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
 	ctx := context.Background()
 	require.NoError(t, manager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: "one"}))
 	require.NoError(t, manager.CreateCompositeDatabase(ctx, "comp", []multidb.ConstituentRef{

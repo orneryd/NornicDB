@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -16,15 +18,16 @@ import (
 
 func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 	dir := t.TempDir()
-	open := func() *BadgerEngine {
+	open := func() (*BadgerEngine, func()) {
 		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true}))
+		var closeFixture func()
 		if engine != nil {
-			fixtureowner.Own(t, engine)
+			_, closeFixture = fixtureowner.OwnWithClose(t, engine)
 		}
 		require.NoError(t, err)
-		return engine
+		return engine, closeFixture
 	}
-	engine := open()
+	engine, closeEngine := open()
 	keepID := NodeID(prefixTestID("keep"))
 	_, err := engine.CreateNode(&Node{ID: keepID, Labels: []string{"Keep"}, Properties: map[string]interface{}{"value": "original"}})
 	require.NoError(t, err)
@@ -48,10 +51,9 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 		require.NoError(t, tx.Rollback())
 	}
 	require.True(t, errors.Is(oversizedErr, badger.ErrTxnTooBig), "expected oversized transaction, got %v", oversizedErr)
-	require.NoError(t, engine.Close())
+	closeEngine()
 
-	engine = open()
-	defer engine.Close()
+	engine, closeEngine = open()
 	kept, err := engine.GetNode(keepID)
 	require.NoError(t, err)
 	require.Equal(t, "original", kept.Properties["value"])

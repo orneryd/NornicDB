@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -54,7 +56,6 @@ func TestRevealExpressionBypassesDecayDuringQuery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = engine.Close() })
 
 			schema := engine.GetSchemaForNamespace("testns")
 			if err := schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
@@ -169,7 +170,6 @@ func TestUnwrapBadgerEngine_Direct(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 
 	got := unwrapBadgerEngine(eng)
 	if got != eng {
@@ -192,7 +192,6 @@ func TestSetRevealOnEngine_BadgerEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 
 	_, cleanup, _ := setRevealOnEngine(context.Background(), eng, true)
 
@@ -213,7 +212,6 @@ func TestSetRevealOnEngine_BlocksConcurrentNonRevealScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 
 	ctx, cleanup, _ := setRevealOnEngine(context.Background(), eng, true)
 
@@ -250,7 +248,6 @@ func TestSetRevealOnEngine_ExecutionStateBlocksConcurrentRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 
 	revealCtx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
 	revealCtx, releaseReveal, revealEngine := setRevealOnEngine(revealCtx, eng, true)

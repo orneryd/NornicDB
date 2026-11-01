@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -35,7 +37,6 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 		t.Run(fmt.Sprintf("write-behind=%v", writeBehind), func(t *testing.T) {
 			engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: writeBehind, WriteBehindInterval: time.Millisecond}))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = engine.Close() })
 			node := func(r *rand.Rand) NodeID { return NodeID(fmt.Sprintf("test:n%d", r.Intn(6))) }
 			edge := func(r *rand.Rand) *Edge {
 				i := r.Intn(6)

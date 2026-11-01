@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -24,7 +26,7 @@ func TestFollowerCreateMeetsHiddenPredecessor(t *testing.T) {
 		require.NoError(t, err)
 		adapter, err := NewStorageAdapterWithWAL(base, t.TempDir())
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = adapter.Close(); _ = base.Close() })
+		t.Cleanup(func() { _ = adapter.Close() })
 		hiddenNode := storage.NodeID("test:" + uuid.NewString())
 		hiddenEdge := storage.EdgeID("test:" + uuid.NewString())
 		for _, node := range []*storage.Node{

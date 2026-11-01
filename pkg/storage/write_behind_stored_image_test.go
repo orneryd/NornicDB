@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -21,7 +23,6 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 		DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour,
 	}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	zone := time.FixedZone("plus-one", 3600)
 	properties := func() map[string]any {
 		return map[string]any{
@@ -106,7 +107,6 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 func TestWrittenSourceIsStoredImage(t *testing.T) {
 	engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	zone := time.FixedZone("minus-three-thirty", -(3*3600 + 1800))
 	times := []time.Time{
 		{},
@@ -279,7 +279,6 @@ func TestWriteBehindOverlayKeepsSidecarEmbedding(t *testing.T) {
 		DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour,
 	}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetEmbeddingsEnabled(true)
 	engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 	now := time.Now().UTC().Truncate(time.Millisecond)

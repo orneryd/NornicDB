@@ -1,6 +1,8 @@
 // Package cypher - Executor cache integration tests.
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -120,7 +122,6 @@ func TestExecutor_CacheDoesNotPublishOverlappingReadAtNewRevision(t *testing.T) 
 func TestExecutor_CacheReflectsExternalAsyncNodeDeleteBeforeFlush(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	asyncStore := baseStore
-	t.Cleanup(func() { require.NoError(t, asyncStore.Close()) })
 	store := storage.NewNamespacedEngine(asyncStore, "test")
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	ctx := context.Background()
@@ -141,7 +142,6 @@ func TestExecutor_CacheReflectsExternalAsyncNodeDeleteBeforeFlush(t *testing.T) 
 func TestExecutor_CacheReflectsExternalAsyncEdgeDeleteBeforeFlush(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	asyncStore := baseStore
-	t.Cleanup(func() { require.NoError(t, asyncStore.Close()) })
 	store := storage.NewNamespacedEngine(asyncStore, "test")
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	ctx := context.Background()

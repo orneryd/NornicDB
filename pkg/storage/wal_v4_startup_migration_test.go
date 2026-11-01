@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -25,7 +27,7 @@ func TestV4StartupUpgradeMigratesGenuineWAL(t *testing.T) {
 			require.NoError(t, os.Rename(filepath.Join(root, "wal"), walDir))
 			old, err := os.ReadFile(filepath.Join(walDir, "wal.log"))
 			require.NoError(t, err)
-			engine := reviewBindingEngine(t, dataDir)
+			engine, closeEngine := reviewBindingEngine(t, dataDir)
 			node, err := engine.GetNode("upgrade:a")
 			require.NoError(t, err)
 			require.Equal(t, int64(20), node.Properties["value"], "all acknowledged writes are recovered before V4")
@@ -45,8 +47,8 @@ func TestV4StartupUpgradeMigratesGenuineWAL(t *testing.T) {
 			require.NoError(t, err)
 			require.Zero(t, replayed, "restart must not replay already settled commits")
 			require.NoError(t, wal.Close())
-			require.NoError(t, engine.Close())
-			reopened := reviewBindingEngine(t, dataDir)
+			closeEngine()
+			reopened, _ := reviewBindingEngine(t, dataDir)
 			node, err = reopened.GetNode("upgrade:a")
 			require.NoError(t, err)
 			require.Equal(t, int64(20), node.Properties["value"])
@@ -60,7 +62,7 @@ func TestV4StartupUpgradeMigratesGenuineWAL(t *testing.T) {
 func TestV4StartupUpgradeRestoresHistoricalPendingNewIDs(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	dir := t.TempDir()
-	engine := reviewBindingEngine(t, dir)
+	engine, _ := reviewBindingEngine(t, dir)
 	_, err := engine.CreateNode(&Node{ID: "legacy:a"})
 	require.NoError(t, err)
 	require.NoError(t, engine.FlushWriteBehind(nil))
@@ -115,7 +117,7 @@ func TestV4StartupUpgradeRestoresHistoricalPendingNewIDs(t *testing.T) {
 	walDir := filepath.Join(dir, "wal")
 	require.NoError(t, os.MkdirAll(walDir, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(walDir, "wal.log"), old, 0600))
-	engine = reviewBindingEngine(t, dir)
+	engine, _ = reviewBindingEngine(t, dir)
 	node, err := engine.GetNode("legacy:new")
 	require.NoError(t, err)
 	require.Equal(t, []string{"New"}, node.Labels)
@@ -134,11 +136,11 @@ func TestV4StartupConvertsOlderWALWhenSchemaAlreadyV4(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	root := fixtureowner.ExtractZip(t, filepath.Join("testdata", "wal-pre-identity", "release.zip"), "")
 	dataDir := filepath.Join(root, "data")
-	engine := reviewBindingEngine(t, dataDir)
-	require.NoError(t, engine.Close())
+	engine, closeEngine := reviewBindingEngine(t, dataDir)
+	closeEngine()
 	walDir := filepath.Join(dataDir, "wal")
 	require.NoError(t, os.Rename(filepath.Join(root, "wal"), walDir))
-	engine = reviewBindingEngine(t, dataDir)
+	engine, closeEngine = reviewBindingEngine(t, dataDir)
 	node, err := engine.GetNode("upgrade:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(20), node.Properties["value"])

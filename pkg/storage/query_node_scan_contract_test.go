@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -17,7 +19,7 @@ func TestQueryNodeScanDecayOptionAcrossReadViews(t *testing.T) {
 			var b *BadgerEngine
 			buffered := view == "buffered-storage" || view == "buffered-tx"
 			if buffered {
-				b = newWriteBehindTestEngine(t, time.Hour)
+				b, _ = newWriteBehindTestEngine(t, t, time.Hour)
 			} else {
 				var err error
 				b, err = runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
@@ -90,7 +92,7 @@ func TestQueryNodeScanDecayOptionAcrossReadViews(t *testing.T) {
 }
 
 func TestQueryNodeScanBufferedCallerCopy(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	bufferedCreate(t, b, &Node{
 		ID: "test:buffered", Labels: []string{"Doc"}, Properties: map[string]any{"title": "original"},
 		ChunkEmbeddings: [][]float32{{1, 2, 3}}, NamedEmbeddings: map[string][]float32{"named": {4, 5, 6}},

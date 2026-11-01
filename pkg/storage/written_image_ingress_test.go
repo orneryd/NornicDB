@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -107,7 +109,6 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 					DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour,
 				}))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = engine.Close() })
 				for _, endpoint := range []NodeID{"test:a", "test:b"} {
 					_, err := engine.CreateNode(&Node{ID: endpoint, Labels: []string{"E"}})
 					require.NoError(t, err)

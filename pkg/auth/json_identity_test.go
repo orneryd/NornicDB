@@ -1,5 +1,9 @@
 package auth
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"crypto/hmac"
 	"crypto/sha256"
@@ -23,13 +27,12 @@ func TestAuthJSONAdmittedIdentityReopenAndTokens(t *testing.T) {
 			cfg.BcryptCost = 4
 			cfg.JWTSecret = []byte("synthetic-auth-json-stable-signing-key")
 			dir := t.TempDir()
-			engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+			engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+			var closeEngine func()
+			if engine != nil {
+				_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+			}
 			require.NoError(t, err)
-			t.Cleanup(func() {
-				if engine != nil {
-					_ = engine.Close()
-				}
-			})
 			users, err := NewAuthenticator(cfg, engine)
 			require.NoError(t, err)
 			name := "user-" + tc.unit
@@ -41,7 +44,7 @@ func TestAuthJSONAdmittedIdentityReopenAndTokens(t *testing.T) {
 			require.Equal(t, name, created.Username)
 			metadata := map[string]string{"key-" + tc.unit: "value-" + tc.unit, "literal": `\ud800`}
 			require.NoError(t, users.UpdateUser(name, email, metadata))
-			require.NoError(t, engine.Close())
+			closeEngine()
 			engine, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 			require.NoError(t, err)
 			users, err = NewAuthenticator(cfg, engine)
@@ -88,7 +91,6 @@ func TestAuthJSONAcceptsExistingStandardSignedTokens(t *testing.T) {
 	cfg.BcryptCost = 4
 	cfg.JWTSecret = []byte("synthetic-auth-json-old-token-key")
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = engine.Close() })
 	users, err := NewAuthenticator(cfg, engine)
 	require.NoError(t, err)
 	for _, name := range []string{"old-ascii", "old-é-😀", `old-literal-\ud800`} {

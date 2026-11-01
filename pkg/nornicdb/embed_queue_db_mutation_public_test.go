@@ -1,5 +1,7 @@
 package nornicdb
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -123,7 +125,11 @@ func TestEmbedWorkerDLQPublicDBMutationWakesAndDrains(t *testing.T) {
 			entry.buildOnce.Do(func() {})
 			db := &DB{storage: ns, baseStorage: store, config: config, embedQueue: worker,
 				searchServices: map[string]*dbSearchService{"nornic": entry}}
-			t.Cleanup(func() { release(); worker.Close(); _ = svc.Close(); _ = disk.Close() })
+			t.Cleanup(func() {
+				release()
+				worker.Close()
+				_ = svc.Close()
+			})
 			require.NoError(t, svc.BuildIndexes(context.Background()))
 			_, err = ns.CreateNode(&storage.Node{ID: "doc", Properties: map[string]any{"text": "same source", "annotation": "before", "user_id": "subject"}})
 			require.NoError(t, err)

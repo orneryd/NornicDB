@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -47,19 +49,17 @@ func TestResidualForwardedCypherDecision(t *testing.T) {
 			t.Run(fmt.Sprintf("bulk=%v/veto=%v", bulk, veto), func(t *testing.T) {
 				leader, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = leader.Close() })
 				follower, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = follower.Close() })
 				r, mirror := newAcceptedReplicationFixture(t, leader, follower, &Config{})
 				leaderManager, err := multidb.NewDatabaseManager(context.Background(), NewReplicatedEngine(leader, r, time.Second), nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = leaderManager.Close() })
+				fixtureowner.Own(t, leaderManager)
 				require.NoError(t, leaderManager.CreateDatabase(context.Background(), multidb.DatabaseCreateRequest{Name: "forwarded"}))
 				transport := &residualForwardingReplicator{StandaloneReplicator: r}
 				followerManager, err := multidb.NewDatabaseManager(context.Background(), NewReplicatedEngine(follower, transport, time.Second), nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = followerManager.Close() })
+				fixtureowner.Own(t, followerManager)
 				view, err := followerManager.GetStorage("forwarded")
 				require.NoError(t, err)
 				before := mirror.calls.Load()

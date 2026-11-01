@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -20,16 +22,18 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	for _, startup := range []bool{false, true} {
 		t.Run(fmt.Sprintf("startup=%v", startup), func(t *testing.T) {
-			open := func(dir string) *BadgerEngine {
-				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+			open := func(dir string) (*BadgerEngine, func()) {
+				b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+				var closeFixture func()
+				if b != nil {
+					_, closeFixture = fixtureowner.OwnWithClose(t, b)
+				}
 				require.NoError(t, err)
-				return b
+				return b, closeFixture
 			}
-			source := open(t.TempDir())
-			t.Cleanup(func() { _ = source.Close() })
+			source, _ := open(t.TempDir())
 			dir := t.TempDir()
-			destination := open(dir)
-			t.Cleanup(func() { _ = destination.Close() })
+			destination, closeDestination := open(dir)
 			before := map[string]any{"alpha": "before-alpha"}
 			first := map[string]any{"alpha": int64(71), "beta": []byte{4, 2}}
 			last := map[string]any{"alpha": []float64{1.25, 2.5}, "beta": time.Date(2026, 10, 21, 1, 2, 3, 0, time.UTC)}
@@ -115,8 +119,8 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 				}
 			}
 			check()
-			require.NoError(t, destination.Close())
-			destination = open(dir)
+			closeDestination()
+			destination, closeDestination = open(dir)
 			check()
 		})
 	}
@@ -148,7 +152,6 @@ func TestBufferedWALLegacyBindings(t *testing.T) {
 			t.Run(fmt.Sprintf("startup=%v/bound=%v", startup, bound), func(t *testing.T) {
 				source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = source.Close() })
 				_, err = source.CreateNode(&Node{ID: "binding:a", Properties: map[string]any{"alpha": int64(17)}})
 				require.NoError(t, err)
 				var body []byte
@@ -175,7 +178,6 @@ func TestBufferedWALLegacyBindings(t *testing.T) {
 				t.Cleanup(func() { _ = wal.Close() })
 				destination, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = destination.Close() })
 				_, err = destination.CreateNode(&Node{ID: "binding:sentinel", Properties: map[string]any{"beta": "keep"}})
 				require.NoError(t, err)
 				if startup {
@@ -219,7 +221,6 @@ func TestRemapPropertyTokensPreservesValueBytes(t *testing.T) {
 func TestBufferedWALNativeBackupBindings(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.CreateNode(&Node{ID: "binding:a", Properties: map[string]any{"alpha": int64(1)}})
 	require.NoError(t, err)
 	_, err = b.CreateNode(&Node{ID: "binding:b", Properties: map[string]any{"beta": int64(2)}})
@@ -228,7 +229,6 @@ func TestBufferedWALNativeBackupBindings(t *testing.T) {
 	require.NoError(t, b.Backup(backup))
 	fresh, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = fresh.Close() })
 	_, err = fresh.CreateNode(&Node{ID: "binding:old", Properties: map[string]any{"beta": "different dictionary"}})
 	require.NoError(t, err)
 	require.NoError(t, fresh.Restore(backup))
@@ -263,7 +263,6 @@ func TestBufferedWALBindingValidation(t *testing.T) {
 	require.ErrorContains(t, err, "no source name")
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.importBufferedWALRecord(&WALBufferedCommitData{PropKeys: []WALPropKeyEntry{{Namespace: "test", Name: "a", ID: 1}, {Namespace: "test", Name: "b", ID: 1}}}, walForeignImport)
 	require.ErrorContains(t, err, "conflicting property bindings")
 	c, err := b.importBufferedWALRecord(&WALBufferedCommitData{Deletes: []string{"old"}, Writes: map[string][]byte{"": nil, "metadata": {1}}}, walForeignImport)

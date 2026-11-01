@@ -1,5 +1,7 @@
 package testfixture
 
+// Author of fixture cleanup changes: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"go/ast"
 	"strings"
@@ -55,6 +57,60 @@ func fixtureFactory(path, name string) string {
 		return "badger." + name
 	}
 	return ""
+}
+
+// fixtureAdjacentConstructorTrack recognizes a constructor's first result
+// entering Track in the immediately following statement of the same statement
+// list: a block, switch case or select case.
+// No assertion, branch, alias, reassignment or unknown call can intervene.
+// The syntax lint and the typed allocation inventory share this one matcher.
+func fixtureAdjacentConstructorTrack(expression ast.Expr, parents map[ast.Node]ast.Node, isTrack func(ast.Expr) bool) bool {
+	for {
+		parent, ok := parents[expression].(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		expression = parent
+	}
+	assignment, ok := parents[expression].(*ast.AssignStmt)
+	if !ok || len(assignment.Rhs) != 1 || assignment.Rhs[0] != expression || len(assignment.Lhs) < 2 {
+		return false
+	}
+	resource, ok := assignment.Lhs[0].(*ast.Ident)
+	if !ok || resource.Name == "_" {
+		return false
+	}
+	var statements []ast.Stmt
+	switch scope := parents[assignment].(type) {
+	case *ast.BlockStmt:
+		statements = scope.List
+	case *ast.CaseClause:
+		statements = scope.Body
+	case *ast.CommClause:
+		statements = scope.Body
+	default:
+		return false
+	}
+	for index, statement := range statements {
+		if statement != assignment || index+1 >= len(statements) {
+			continue
+		}
+		next, ok := statements[index+1].(*ast.AssignStmt)
+		if !ok || len(next.Lhs) != 1 || len(next.Rhs) != 1 {
+			return false
+		}
+		left, ok := next.Lhs[0].(*ast.Ident)
+		if !ok || left.Name != resource.Name || (left.Obj != nil && resource.Obj != nil && left.Obj != resource.Obj) {
+			return false
+		}
+		tracked, ok := fixtureUnwrap(next.Rhs[0]).(*ast.CallExpr)
+		if !ok || !isTrack(tracked.Fun) || len(tracked.Args) != 3 {
+			return false
+		}
+		argument, ok := fixtureUnwrap(tracked.Args[1]).(*ast.Ident)
+		return ok && argument.Name == resource.Name && (argument.Obj == nil || resource.Obj == nil || argument.Obj == resource.Obj)
+	}
+	return false
 }
 
 func fixtureConstructorCall(stack []ast.Node, reference ast.Expr) (*ast.CallExpr, int) {

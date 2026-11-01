@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -93,7 +95,7 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 		t.Run(map[bool]string{false: "update_not_lost", true: "removal_not_resurrected"}[removal], func(t *testing.T) {
 			engine := &edgeStreamGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
 			release := sync.OnceFunc(func() { close(engine.release) })
-			t.Cleanup(func() { release(); _ = engine.MemoryEngine.Close() })
+			t.Cleanup(release)
 			for _, id := range []storage.NodeID{"nornic:s", "nornic:e"} {
 				_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "node"}})
 				require.NoError(t, err)

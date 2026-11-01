@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -101,7 +103,6 @@ func TestGraphFunctionsOutsideComposite(t *testing.T) {
 func createCompositeTestManager(t *testing.T, name string, refs []multidb.ConstituentRef) (*multidb.DatabaseManager, *testDatabaseManagerAdapter) {
 	t.Helper()
 	mgr := newCompositeNativeManager(t, nil)
-	t.Cleanup(func() { _ = mgr.Close() })
 
 	for _, ref := range refs {
 		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: ref.DatabaseName}))

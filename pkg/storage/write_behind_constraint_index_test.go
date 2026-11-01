@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"testing"
@@ -27,7 +29,7 @@ func bufferedTry(t *testing.T, engine *BadgerEngine, node *Node) error {
 }
 
 func TestWriteBehind_NodeKeySeesBufferedKeys(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	sm := engine.GetSchemaForNamespace("test")
 	require.NoError(t, sm.AddConstraint(factKey))
 	idx, owned := sm.ConstraintPropertyIndex(factKey.Name)
@@ -41,7 +43,7 @@ func TestWriteBehind_NodeKeySeesBufferedKeys(t *testing.T) {
 }
 
 func TestWriteBehind_TemporalSeesBufferedPeriods(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	sm := engine.GetSchemaForNamespace("test")
 	require.NoError(t, sm.AddConstraint(factWindow))
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{factWindow}))
@@ -61,7 +63,7 @@ func TestWriteBehind_NodeKeyBulkLoadScalesLinearly(t *testing.T) {
 	run := func(n int) time.Duration {
 		var elapsed time.Duration
 		t.Run(fmt.Sprintf("nodes-%d", n), func(t *testing.T) {
-			engine := newWriteBehindTestEngine(t, time.Hour)
+			engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			sm := engine.GetSchemaForNamespace("test")
 			require.NoError(t, sm.AddConstraint(factKey))
 			idx, _ := sm.ConstraintPropertyIndex(factKey.Name)

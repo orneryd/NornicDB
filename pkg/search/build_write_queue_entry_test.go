@@ -1,5 +1,7 @@
 package search
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 // An entry decision reads only inputs no queued operation ahead can change;
 // everything else is decided in queue order (build_write_queue.go). Each test
 // compares a sequence of calls made during a gated build with the same calls
@@ -8,6 +10,8 @@ package search
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"runtime"
 	"runtime/debug"
 	"runtime/metrics"
@@ -16,9 +20,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
 // TestBuildRemoveLastVectorThenNewDimensions: with automatic dimensions, a
@@ -258,7 +259,7 @@ type nodeReadParkEngine struct {
 func newNodeReadParkEngine(t *testing.T) *nodeReadParkEngine {
 	t.Helper()
 	e := &nodeReadParkEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
-	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
+	t.Cleanup(e.open)
 	return e
 }
 

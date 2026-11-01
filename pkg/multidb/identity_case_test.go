@@ -1,5 +1,7 @@
 package multidb
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"testing"
 
@@ -13,7 +15,7 @@ func identityCaseManagerFixture(t testing.TB, refs []ConstituentRef) *DatabaseMa
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	for _, name := range []string{"identity_one", "identity_two"} {
 		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: name}))
 	}

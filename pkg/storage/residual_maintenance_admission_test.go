@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"io"
@@ -17,7 +19,6 @@ func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: route == "lifecycle-stripes", WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			var target sync.Locker = &b.db.commitGate
 			var run func(context.Context) error
 			switch route {
@@ -124,7 +125,6 @@ func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 func TestResidualCleanMarkerKeepsGraphCachesWarm(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.CreateNode(&Node{ID: "test:marker-peer"})
 	require.NoError(t, err)
 	_, err = b.GetNode("test:marker-peer")

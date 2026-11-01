@@ -1,6 +1,9 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
+	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"os/exec"
@@ -23,7 +26,10 @@ func TestMain(m *testing.M) {
 	boundary := fixtureowner.BeginStoreBoundary()
 	code := m.Run()
 	code = boundary.Check(code, os.Stderr, "cypher")
-	processFixtures.Close()
+	if err := processFixtures.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "cypher: process fixtures: %v\n", err)
+		code = 1
+	}
 	os.Exit(code)
 }
 

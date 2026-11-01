@@ -1,6 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,7 +30,7 @@ func TestAutoCompactionRemovesInterruptedSnapshots(t *testing.T) {
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate", SnapshotInterval: time.Hour})
 	require.NoError(t, err)
 	engine := NewWALEngine(newTestMemoryEngine(t), wal)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	fixtureowner.Own(t, engine)
 	require.NoError(t, engine.EnableAutoCompaction(dir))
 	require.NoFileExists(t, stale, "startup must reclaim interrupted automatic snapshots")
 	for _, name := range keep {

@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -58,7 +60,6 @@ func (e *refreshIndexesPartialEdgeRead) GetEdge(id storage.EdgeID) (*storage.Edg
 func newRefreshIndexesStore(t *testing.T) storage.Engine {
 	t.Helper()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	return storage.NewNamespacedEngine(base, "test")
 }
 

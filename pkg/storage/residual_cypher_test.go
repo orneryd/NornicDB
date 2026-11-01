@@ -1,5 +1,7 @@
 package storage_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -20,7 +22,6 @@ func residualExecutor(b *storage.BadgerEngine) *cypher.StorageExecutor {
 func TestResidualCypherMergeAdmissionCancellation(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	require.NoError(t, b.GetSchemaForNamespace("test").AddUniqueConstraint("merge-context", "MergeContext", "id"))
 	release, waiting := b.ResidualHoldWriteBarrierForTest()
 	defer release()
@@ -61,7 +62,6 @@ func TestResidualCypherMergeAdmissionCancellation(t *testing.T) {
 func TestResidualCypherDurableBody(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	writer, reader := residualExecutor(b), residualExecutor(b)
 	ctx := context.Background()
 	_, err = writer.Execute(ctx, "CREATE (:Owned {id:'durable', v:1})", nil)
@@ -98,7 +98,6 @@ func TestResidualCypherFinalRelationshipImage(t *testing.T) {
 		t.Run(fmt.Sprintf("buffered=%v", buffered), func(t *testing.T) {
 			b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			writer, reader := residualExecutor(b), residualExecutor(b)
 			ctx := context.Background()
 			run := func(query string) {
@@ -143,7 +142,6 @@ func TestResidualCypherFinalRelationshipImage(t *testing.T) {
 func TestResidualPrefixDropDurableFence(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []storage.NodeID{"victim:a", "victim:b"} {
 		_, err = b.CreateNode(&storage.Node{ID: id, Labels: []string{"Owned"}, Properties: map[string]any{"v": int64(1)}})
 		require.NoError(t, err)

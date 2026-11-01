@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 // Individual/batch mutation equivalence across Memory and the production stack
 // (plan §3.5): a write performed through the single-record entry points and
 // the same write performed through the bulk entry points must produce
@@ -42,7 +44,7 @@ func mutationEquivalenceStacks(t *testing.T) map[string]func(*testing.T) Engine 
 			require.NoError(t, err)
 			walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = walLog.Close(); _ = engine.Close() })
+			t.Cleanup(func() { _ = walLog.Close() })
 			return NewWALEngine(engine, walLog)
 		},
 		"namespaced+wal": func(t *testing.T) Engine {
@@ -54,7 +56,7 @@ func mutationEquivalenceStacks(t *testing.T) map[string]func(*testing.T) Engine 
 			walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 			require.NoError(t, err)
 			wal := NewWALEngine(engine, walLog)
-			t.Cleanup(func() { _ = walLog.Close(); _ = engine.Close() })
+			t.Cleanup(func() { _ = walLog.Close() })
 			return NewNamespacedEngine(wal, "tenant")
 		},
 	}

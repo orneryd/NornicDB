@@ -1,5 +1,7 @@
 package resolvers
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -17,7 +19,7 @@ func TestRule73GraphQLPublicLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	resolver := NewResolver(nil, manager)
 	owner, err := cypher.DatabaseStatementCaches(manager, "nornic")
 	if err != nil {

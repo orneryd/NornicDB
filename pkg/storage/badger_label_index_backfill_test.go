@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 // Tests for the label-index startup backfill that closes the v1.1.1 /
 // v1.1.2 bug where MATCH (n:Label) returned 0 for restored / pre-
 // existing nodes after a server restart. Reproduce the on-disk shape
@@ -55,8 +57,9 @@ func TestLabelIndexBackfill_HandlesMultiLabelNodesCorrectly(t *testing.T) {
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 	for i := 0; i < 50; i++ {
@@ -67,7 +70,7 @@ func TestLabelIndexBackfill_HandlesMultiLabelNodesCorrectly(t *testing.T) {
 		require.NoError(t, err)
 	}
 	wipeLabelIndexAndMarker(t, engine1, prefixLabelIndex)
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
@@ -107,8 +110,9 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
@@ -118,7 +122,7 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	// Reopen: marker should already be set (every CreateNode in stage 1
 	// went through the live write path which writes both body and
@@ -128,12 +132,13 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 	// first open's marker-gated label initialization runs. Pin that subsequent opens
 	// see the marker and don't redo work).
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine2 func()
 	if engine2 != nil {
-		fixtureowner.Own(t, engine2)
+		_, closeEngine2 = fixtureowner.OwnWithClose(t, engine2)
 	}
 	require.NoError(t, err)
 	require.True(t, waitForLabelIndexReady(t, engine2, 5*time.Second))
-	require.NoError(t, engine2.Close())
+	closeEngine2()
 
 	// Open a third time — marker is set, nothing should happen.
 	engine3, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
@@ -161,8 +166,9 @@ func TestLabelIndexBackfill_BackfillCancelledOnClose(t *testing.T) {
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 	const n = 5_000
@@ -175,7 +181,7 @@ func TestLabelIndexBackfill_BackfillCancelledOnClose(t *testing.T) {
 	}
 	require.NoError(t, engine1.BulkCreateNodes(nodes))
 	wipeLabelIndexAndMarker(t, engine1, prefixLabelIndex)
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	if engine2 != nil {
@@ -203,8 +209,9 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 	dir := t.TempDir()
 
 	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	var closeEngine1 func()
 	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+		_, closeEngine1 = fixtureowner.OwnWithClose(t, engine1)
 	}
 	require.NoError(t, err)
 	_, err = engine1.CreateNode(&Node{ID: "test:fresh-1", Labels: []string{"Real"}})
@@ -218,7 +225,7 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 		return txn.Set(stale, []byte{})
 	}))
 	wipeLabelIndexAndMarker(t, engine1) // keep the planted entry, only wipe the marker
-	require.NoError(t, engine1.Close())
+	closeEngine1()
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)

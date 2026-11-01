@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync/atomic"
@@ -87,7 +89,7 @@ func TestNativeSchemaPublicationGateSerializesDirectSchemaMutations(t *testing.T
 	for _, mutation := range schemaPublicationGateMutations() {
 		t.Run(mutation.name, func(t *testing.T) {
 			dir := t.TempDir()
-			engine := openPolicyPersistenceEngine(t, dir)
+			engine, closeEngine := openPolicyPersistenceEngine(t, dir)
 			const namespace = "publicationgate"
 			schema := engine.GetSchemaForNamespace(namespace)
 
@@ -168,8 +170,8 @@ func TestNativeSchemaPublicationGateSerializesDirectSchemaMutations(t *testing.T
 			require.True(t, policies["native"], "the direct mutation must observe the accepted native policy")
 			require.True(t, mutation.published(schema), "the direct schema change is missing from the live schema")
 
-			require.NoError(t, engine.Close())
-			reopened := openPolicyPersistenceEngine(t, dir)
+			closeEngine()
+			reopened, _ := openPolicyPersistenceEngine(t, dir)
 			reopenedSchema := reopened.GetSchemaForNamespace(namespace)
 			durablePolicies := map[string]bool{}
 			for _, policy := range reopenedSchema.ShowPromotionPolicies() {
@@ -187,7 +189,7 @@ func TestNativeSchemaPublicationGateSerializesDirectSchemaMutations(t *testing.T
 // callback.
 func TestNativeSchemaCommitCanceledWaitingForPublicationGate(t *testing.T) {
 	dir := t.TempDir()
-	engine := openPolicyPersistenceEngine(t, dir)
+	engine, closeEngine := openPolicyPersistenceEngine(t, dir)
 	const namespace = "canceledpublication"
 	schema := engine.GetSchemaForNamespace(namespace)
 
@@ -244,8 +246,8 @@ func TestNativeSchemaCommitCanceledWaitingForPublicationGate(t *testing.T) {
 	require.Equal(t, TxStatusRolledBack, tx.Status)
 	require.Empty(t, schema.ShowPromotionPolicies(), "a canceled native schema commit must not publish its definition")
 
-	require.NoError(t, engine.Close())
-	reopened := openPolicyPersistenceEngine(t, dir)
+	closeEngine()
+	reopened, _ := openPolicyPersistenceEngine(t, dir)
 	require.Empty(t, reopened.GetSchemaForNamespace(namespace).ShowPromotionPolicies(),
 		"a canceled native schema commit must not write its definition")
 }
@@ -255,7 +257,7 @@ func TestNativeSchemaCommitCanceledWaitingForPublicationGate(t *testing.T) {
 // takes the gate, so ordinary writes never wait for a native schema
 // publication.
 func TestSchemaPublicationGateLeavesEntityOnlyCommitsFree(t *testing.T) {
-	engine := openPolicyPersistenceEngine(t, t.TempDir())
+	engine, _ := openPolicyPersistenceEngine(t, t.TempDir())
 	schema := engine.GetSchemaForNamespace("entitycommit")
 	require.NoError(t, schema.RegisterTokens([]string{"Doc"}, nil))
 

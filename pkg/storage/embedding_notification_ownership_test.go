@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -112,7 +114,7 @@ func TestEmbeddingOutcomeSnapshotOwnership(t *testing.T) {
 }
 
 func TestEmbeddingRevisionCapturedBufferedUpdates(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	b.writeBehind.Close()
 	bufferedCreate(t, b, &Node{ID: "test:doc", Properties: map[string]any{"text": "before"}})
 	require.NoError(t, b.FlushWriteBehind(nil))

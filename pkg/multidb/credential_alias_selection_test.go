@@ -1,5 +1,7 @@
 package multidb
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"testing"
 
@@ -11,7 +13,7 @@ import (
 func TestCredentialAliasSelectionConsumers(t *testing.T) {
 	mgr, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 	require.NoError(t, mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "firstdb"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "lastdb"}))
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "comp", []ConstituentRef{

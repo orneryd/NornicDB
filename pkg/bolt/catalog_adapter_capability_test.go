@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"testing"
 
@@ -16,7 +18,7 @@ func TestBoltAdapterRequiredContractAndCapabilityMatrix(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	adapter := &boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(manager)}
 
 	t.Run("required contract is preserved", func(t *testing.T) {

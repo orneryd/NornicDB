@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -33,12 +35,16 @@ func TestGoAPIReadAfterWriteMatchesReadAfterRestart(t *testing.T) {
 		for _, update := range []bool{false, true} {
 			t.Run(fmt.Sprintf("write-behind=%v/update=%v", buffered, update), func(t *testing.T) {
 				dir := t.TempDir()
-				open := func() *BadgerEngine {
-					engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+				open := func() (*BadgerEngine, func()) {
+					engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+					var closeFixture func()
+					if engine != nil {
+						_, closeFixture = runtimeFixtureOwner.OwnWithClose(t, engine)
+					}
 					require.NoError(t, err)
-					return engine
+					return engine, closeFixture
 				}
-				engine := open()
+				engine, closeEngine := open()
 				properties := func() map[string]any {
 					out := make(map[string]any, len(kinds))
 					for k, v := range kinds {
@@ -61,10 +67,9 @@ func TestGoAPIReadAfterWriteMatchesReadAfterRestart(t *testing.T) {
 				require.NoError(t, err)
 				afterWriteEdge, err := engine.GetEdge("test:e")
 				require.NoError(t, err)
-				require.NoError(t, engine.Close())
+				closeEngine()
 
-				engine = open()
-				t.Cleanup(func() { _ = engine.Close() })
+				engine, closeEngine = open()
 				afterRestart, err := engine.GetNode("test:n")
 				require.NoError(t, err)
 				afterRestartEdge, err := engine.GetEdge("test:e")
@@ -104,21 +109,25 @@ func TestStoredIntegersReadAsInt64(t *testing.T) {
 	}
 	for _, buffered := range []bool{false, true} {
 		dir := t.TempDir()
-		open := func() *BadgerEngine {
-			engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+		open := func() (*BadgerEngine, func()) {
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+			var closeFixture func()
+			if engine != nil {
+				_, closeFixture = runtimeFixtureOwner.OwnWithClose(t, engine)
+			}
 			require.NoError(t, err)
-			return engine
+			return engine, closeFixture
 		}
-		engine := open()
+		engine, closeEngine := open()
 		_, err := engine.CreateNode(&Node{ID: "test:n", Labels: []string{"K"}, Properties: written})
 		require.NoError(t, err)
 		afterWrite, err := engine.GetNode("test:n")
 		require.NoError(t, err)
-		require.NoError(t, engine.Close())
-		engine = open()
+		closeEngine()
+		engine, closeEngine = open()
 		afterRestart, err := engine.GetNode("test:n")
 		require.NoError(t, err)
-		require.NoError(t, engine.Close())
+		closeEngine()
 		for name, expected := range want {
 			require.Equal(t, expected, afterWrite.Properties[name], "write-behind=%v %s after write", buffered, name)
 			require.Equal(t, expected, afterRestart.Properties[name], "write-behind=%v %s after restart", buffered, name)

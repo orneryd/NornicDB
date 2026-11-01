@@ -1,9 +1,13 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,9 +15,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
 // wordVector embeds text as a bag of three words, enough to rank by meaning
@@ -53,7 +54,6 @@ func (c *countingEmbed) embed(_ context.Context, edge *storage.Edge) (Relationsh
 func relationshipTestEngine(t *testing.T) storage.Engine {
 	t.Helper()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
 		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"name": "doc " + string(id)}})

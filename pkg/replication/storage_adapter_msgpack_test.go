@@ -1,5 +1,7 @@
 package replication
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -13,7 +15,7 @@ import (
 func TestReplicationRejectsForgedNamedValueLengthsWithoutApplying(t *testing.T) {
 	for _, field := range []string{"properties", "metadata"} {
 		t.Run(field, func(t *testing.T) {
-			engine, adapter := wireFixture(t, false)
+			engine, adapter, _, _ := wireFixture(t, false)
 			node := wireNode("safe", "expected")
 			change := storage.Operation{Type: storage.OpCreateNode, Node: node}
 			command := wireCommand(t, "forged", change)
@@ -46,7 +48,7 @@ func TestReplicationRejectsForgedNamedValueLengthsWithoutApplying(t *testing.T) 
 }
 
 func TestReplicationRetainsFailedAcceptedTransactionForRecovery(t *testing.T) {
-	engine, adapter := wireFixture(t, false)
+	engine, adapter, _, _ := wireFixture(t, false)
 	edge := wireEdge("invalid", "missing-start", "missing-end", "value")
 	command := wireCommand(t, "uncommittable", storage.Operation{Type: storage.OpCreateEdge, Edge: edge})
 	require.Error(t, adapter.ApplyCommand(command))
@@ -60,7 +62,7 @@ func TestReplicationRetainsFailedAcceptedTransactionForRecovery(t *testing.T) {
 }
 
 func TestLeaderRejectsUncommittableCommandBeforePublication(t *testing.T) {
-	engine, adapter := wireFixture(t, false)
+	engine, adapter, _, _ := wireFixture(t, false)
 	leader := NewStandaloneReplicator(DefaultConfig(), adapter)
 	require.NoError(t, leader.Start(context.Background()))
 	t.Cleanup(func() { require.NoError(t, leader.Shutdown()) })

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"strings"
 	"testing"
@@ -143,8 +145,7 @@ func TestEmbeddingSidecar_SourceReadAndWriteFailures(t *testing.T) {
 		require.NotErrorIs(t, err, ErrEmbeddingSourceChanged)
 	})
 	t.Run("chunk write fails", func(t *testing.T) {
-		b, _ := createTestBadgerEngineOnDisk(t)
-		t.Cleanup(func() { _ = b.Close() })
+		b, _, _ := createTestBadgerEngineOnDisk(t)
 		// The node key fits Badger's key limit; its embedding chunk keys,
 		// five bytes longer, don't.
 		node := &Node{ID: NodeID("test:" + strings.Repeat("k", 65000-len("test:")-2)), Labels: []string{"Doc"}, Properties: map[string]any{"title": "v1"}}

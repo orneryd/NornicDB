@@ -1,5 +1,7 @@
 package storage_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"testing"
 
@@ -13,7 +15,6 @@ import (
 func TestResidualProjectedReadOwnership(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	id, err := b.CreateNode(&storage.Node{ID: "test:projected-owned", Properties: map[string]any{"values": []int64{1, 2}, "omitted": "retained"}})
 	require.NoError(t, err)
 	_, err = b.GetStoredNode(id) // Warm the full image consumed by projection.

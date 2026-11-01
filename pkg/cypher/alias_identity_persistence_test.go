@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"testing"
 
@@ -17,19 +19,19 @@ func TestNativeAliasQuotedIdentityPersists(t *testing.T) {
 	for _, operation := range []string{"create", "drop"} {
 		t.Run(operation, func(t *testing.T) {
 			dir := t.TempDir()
-			open := func() (*multidb.DatabaseManager, *StorageExecutor) {
+			open := func() (*multidb.DatabaseManager, *StorageExecutor, func()) {
 				base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 				require.NoError(t, err)
 				manager, err := multidb.NewDatabaseManager(t.Context(), base, multidb.DefaultConfig())
 				require.NoError(t, err)
+				_, closeManager := fixtureowner.OwnWithClose(t, manager)
 				engine, err := manager.GetStorage("nornic")
 				require.NoError(t, err)
 				exec := NewStorageExecutor(engine)
 				exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
-				return manager, exec
+				return manager, exec, closeManager
 			}
-			manager, exec := open()
-			t.Cleanup(func() { _ = manager.Close() })
+			manager, exec, closeManager := open()
 			require.NoError(t, manager.CreateAlias(t.Context(), "kept", "nornic"))
 			want := map[string]string{"kept": "nornic"}
 			for _, name := range []struct{ raw, quoted string }{
@@ -51,8 +53,8 @@ func TestNativeAliasQuotedIdentityPersists(t *testing.T) {
 			_, err := exec.Execute(t.Context(), "DROP ALIAS `ke pt`", nil)
 			require.Error(t, err)
 			require.Equal(t, want, manager.ListAliases(""))
-			require.NoError(t, manager.Close())
-			manager, _ = open()
+			closeManager()
+			manager, _, _ = open()
 			require.Equal(t, want, manager.ListAliases(""), "catalog identity survives native reopen")
 		})
 	}

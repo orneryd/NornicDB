@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -50,7 +52,6 @@ func TestRecoverFromWALWithResult_RestoresLargeEdgeSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, recovered)
 	require.Zero(t, result.Failed)
-	t.Cleanup(func() { _ = recovered.Close() })
 
 	recoveredEdges, err := recovered.AllEdges(context.Background())
 	require.NoError(t, err)

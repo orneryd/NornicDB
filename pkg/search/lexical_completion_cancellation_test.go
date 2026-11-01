@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -15,7 +17,6 @@ func TestSearchTextChunksProviderDeadlineKeepsLexicalFallback(t *testing.T) {
 	for _, mode := range []string{"single", "multi"} {
 		t.Run(mode, func(t *testing.T) {
 			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			t.Cleanup(func() { _ = engine.Close() })
 			store := storage.NewNamespacedEngine(engine, "nornic")
 			_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})
 			require.NoError(t, err)

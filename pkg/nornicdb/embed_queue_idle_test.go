@@ -1,18 +1,19 @@
 package nornicdb
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/embed"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
 // Count queue reads rather than sampling CPU: even a cheap empty lookup must
@@ -129,14 +130,15 @@ func TestEmbedWorkerIdleEnqueueRacesEmptyClaim(t *testing.T) {
 func TestEmbedWorkerIdleStartupPendingAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	var closeBase func()
 	if base != nil {
-		fixtureowner.Own(t, base)
+		_, closeBase = fixtureowner.OwnWithClose(t, base)
 	}
 	require.NoError(t, err)
 	base.SetEmbeddingsEnabled(true)
 	store := storage.NewNamespacedEngine(base, "idle")
 	idleTestCreate(t, store, "persisted")
-	require.NoError(t, base.Close())
+	closeBase()
 	base, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })

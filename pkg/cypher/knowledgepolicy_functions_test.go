@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -20,7 +22,6 @@ func setupDecayEngine(t *testing.T, enabled ...bool) (*storage.BadgerEngine, *St
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { eng.Close() })
 
 	eng.SetDecayEnabled(len(enabled) == 0 || enabled[0])
 

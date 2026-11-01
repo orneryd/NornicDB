@@ -1,6 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -8,7 +11,7 @@ import (
 
 func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	source := reviewBindingEngine(t, t.TempDir())
+	source, _ := reviewBindingEngine(t, t.TempDir())
 	// Persist a schema with no remaining live rows. The supported complete WAL
 	// records must carry these already-persisted names independently of that store.
 	for _, item := range []struct{ id, name string }{{"rebuild:warm-beta", "beta"}, {"rebuild:warm-alpha", "alpha"}} {
@@ -20,7 +23,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	w, err := NewWAL(walDir, DefaultWALConfig())
 	require.NoError(t, err)
 	journal := NewWALEngine(source, w)
-	t.Cleanup(func() { _ = journal.Close() })
+	_, closeJournal := fixtureowner.OwnWithClose(t, journal)
 	for _, item := range []struct{ id, name string }{{"rebuild:a", "alpha"}, {"rebuild:b", "beta"}} {
 		tx, e := source.BeginTransaction()
 		require.NoError(t, e)
@@ -32,8 +35,9 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 		require.True(t, tx.AcknowledgedBuffered())
 		require.NoError(t, source.FlushWriteBehind(nil))
 	}
-	require.NoError(t, w.Close())
-	rebuilt := reviewBindingEngine(t, t.TempDir())
+	sourceAlpha, _ := source.propKeyDict.lookupID("rebuild", "alpha")
+	closeJournal()
+	rebuilt, _ := reviewBindingEngine(t, t.TempDir())
 	first, _, err := RecoverIntoEngine(rebuilt, walDir, "")
 	require.NoError(t, err)
 	t.Logf("first rebuild: %s", first.Summary())
@@ -45,7 +49,6 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 		require.Equal(t, map[string]any{item.name: int64(1)}, n.Properties)
 	}
 	assertPropertyDictionaryBijection(t, rebuilt)
-	sourceAlpha, _ := source.propKeyDict.lookupID("rebuild", "alpha")
 	rebuiltAlpha, _ := rebuilt.propKeyDict.lookupID("rebuild", "alpha")
 	t.Logf("source alpha=%d rebuilt alpha=%d", sourceAlpha, rebuiltAlpha)
 	require.NotEqual(t, sourceAlpha, rebuiltAlpha, "fixture forces a legitimate allocation-order change")
@@ -58,7 +61,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	continuation, err := NewWAL(walDir, DefaultWALConfig())
 	require.NoError(t, err)
 	continuedJournal := NewWALEngine(rebuilt, continuation)
-	t.Cleanup(func() { _ = continuedJournal.Close() })
+	_, closeContinuedJournal := fixtureowner.OwnWithClose(t, continuedJournal)
 	tx, err := rebuilt.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("rebuild"))
@@ -67,7 +70,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	require.NoError(t, rebuilt.FlushWriteBehind(nil))
-	require.NoError(t, continuation.Close())
+	closeContinuedJournal()
 	entries, err := ReadWALEntriesFromDir(walDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 3)
@@ -78,7 +81,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 		require.Empty(t, record.PropKeys)
 		t.Logf("seq=%d tx=%s complete bindings=%+v", entry.Sequence, record.TxID, legacyBindingEntries(t, record.PropertyBindings))
 	}
-	secondStore := reviewBindingEngine(t, t.TempDir())
+	secondStore, _ := reviewBindingEngine(t, t.TempDir())
 	second, _, err := RecoverIntoEngine(secondStore, walDir, "")
 	require.NoError(t, err)
 	t.Logf("second rebuild: %s errors=%+v", second.Summary(), second.Errors)

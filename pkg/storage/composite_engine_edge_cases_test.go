@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"strings"
@@ -109,10 +111,10 @@ func TestCompositeEngine_ClosedConstituentReads(t *testing.T) {
 
 			// Close the constituents this case marks offline.
 			if tc.closeDB1 {
-				engine1.Close()
+				require.NoError(t, engine1.Close())
 			}
 			if tc.closeDB2 {
-				engine2.Close()
+				require.NoError(t, engine2.Close())
 			}
 
 			// A readable offline constituent makes the combined result incomplete.
@@ -136,7 +138,6 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		// Test that nested composites work correctly (A -> B -> C where B is composite)
 		// This is not a cycle, just nesting
 		engineC := newTestMemoryEngine(t)
-		defer engineC.Close()
 
 		// Create composite B with constituent C
 		constituentsB := map[string]Engine{
@@ -177,7 +178,6 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		// Test that direct self-reference (A -> A) is detected or handled gracefully
 		// In practice, this should be prevented by DatabaseManager, but we test the engine behavior
 		engine1 := newTestMemoryEngine(t)
-		defer engine1.Close()
 
 		// Create composite A
 		constituentsA := map[string]Engine{
@@ -220,7 +220,6 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		// Test indirect cycle (A -> B -> A)
 		// This should be prevented by DatabaseManager, but we test engine behavior
 		engine1 := newTestMemoryEngine(t)
-		defer engine1.Close()
 
 		// Create composite A with engine1
 		constituentsA := map[string]Engine{
@@ -285,7 +284,6 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		// a composite as constituent, it still works (the engine doesn't prevent it)
 
 		engine1 := newTestMemoryEngine(t)
-		defer engine1.Close()
 
 		// Create first composite
 		constituents1 := map[string]Engine{
@@ -329,7 +327,6 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 func TestCompositeEngine_GetConstituentByAlias(t *testing.T) {
 	engine1 := newTestMemoryEngine(t)
-	defer engine1.Close()
 
 	constituents := map[string]Engine{"db1": engine1}
 	constituentNames := map[string]string{"db1": "database1"}
@@ -351,7 +348,6 @@ func TestCompositeEngine_GetConstituentByAlias(t *testing.T) {
 
 func TestCompositeEngine_IsComposite(t *testing.T) {
 	engine1 := newTestMemoryEngine(t)
-	defer engine1.Close()
 
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1},
@@ -372,8 +368,6 @@ func TestCompositeEngine_IsComposite(t *testing.T) {
 func TestCompositeEngine_routeWrite_EmptyDatabaseID(t *testing.T) {
 	engine1 := newTestMemoryEngine(t)
 	engine2 := newTestMemoryEngine(t)
-	defer engine1.Close()
-	defer engine2.Close()
 
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1, "db2": engine2},
@@ -391,8 +385,6 @@ func TestCompositeEngine_routeWrite_EmptyDatabaseID(t *testing.T) {
 func TestCompositeEngine_routeWrite_ByConstituentName(t *testing.T) {
 	engine1 := newTestMemoryEngine(t)
 	engine2 := newTestMemoryEngine(t)
-	defer engine1.Close()
-	defer engine2.Close()
 
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1, "db2": engine2},
@@ -409,7 +401,6 @@ func TestCompositeEngine_routeWrite_ByConstituentName(t *testing.T) {
 
 func TestCompositeEngine_UpdateEdge_CrossConstituent(t *testing.T) {
 	engine1 := newTestMemoryEngine(t)
-	defer engine1.Close()
 
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1},
@@ -439,7 +430,6 @@ func TestCompositeEngine_UpdateEdge_CrossConstituent(t *testing.T) {
 
 func TestCompositeEngine_DeleteEdge_CrossConstituent(t *testing.T) {
 	engine1 := newTestMemoryEngine(t)
-	defer engine1.Close()
 
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1},
@@ -467,7 +457,6 @@ func TestCompositeEngine_DeleteEdge_CrossConstituent(t *testing.T) {
 func TestCompositeEngine_StreamEdges_Fallback(t *testing.T) {
 	// Use a plain MemoryEngine which doesn't implement StreamingEngine
 	engine1 := newTestMemoryEngine(t)
-	defer engine1.Close()
 
 	// Create test data — IDs must be namespace-prefixed
 	n1 := &Node{ID: "db1:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}

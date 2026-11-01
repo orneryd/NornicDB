@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -27,7 +29,7 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 					require.NoError(t, err)
 					manager, err := NewDatabaseManager(t.Context(), base, nil)
 					require.NoError(t, err)
-					t.Cleanup(func() { _ = manager.Close() })
+					runtimeFixtureOwner.Own(t, manager)
 					engine, err := manager.GetStorage("nornic")
 					require.NoError(t, err)
 					tracker := engine.(*sizeTrackingEngine)

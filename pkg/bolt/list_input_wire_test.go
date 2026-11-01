@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -44,7 +46,6 @@ func runListInputBoltStatement(ctx context.Context, driver neo4j.DriverWithConte
 
 func TestListInputBoltRepresentations(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	store := storage.NewNamespacedEngine(engine, "list_inputs")
 	inputs := listinputs.TransportInputs()
 	for _, input := range inputs {

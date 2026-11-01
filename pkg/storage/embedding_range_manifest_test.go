@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/binary"
@@ -12,7 +14,6 @@ import (
 
 func TestEmbeddingRangeManifestReplacementSnapshotsAndMetadata(t *testing.T) {
 	engine := newTestMemoryEngine(t).BadgerEngine
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	body := &Node{ID: "test:manifest-owner", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same source"}}
 	_, err := engine.CreateNode(body)
 	require.NoError(t, err)
@@ -84,7 +85,6 @@ func TestEmbeddingRangeManifestInvalidRecordRepairsThroughPublicReplacement(t *t
 	} {
 		t.Run(name, func(t *testing.T) {
 			engine := newTestMemoryEngine(t).BadgerEngine
-			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			body := &Node{ID: "test:manifest-repair", Properties: map[string]any{"text": "unchanged"}}
 			_, err := engine.CreateNode(body)
 			require.NoError(t, err)
@@ -123,7 +123,6 @@ func TestEmbeddingRangeManifestInvalidRecordRepairsThroughPublicReplacement(t *t
 
 func TestEmbeddingRangeManifestLargeMetadataKeepsStorageLimit(t *testing.T) {
 	engine := newTestMemoryEngine(t).BadgerEngine
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	body := &Node{ID: "test:manifest-large-meta", Properties: map[string]any{"text": "unchanged"}}
 	_, err := engine.CreateNode(body)
 	require.NoError(t, err)

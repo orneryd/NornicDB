@@ -1,5 +1,7 @@
 package server
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -12,7 +14,7 @@ func TestRule73CachedHeimdallViewsDropCycles64(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	router := newHeimdallDBRouter(nil, manager, nil)
 	fixtureowner.RunCatalogDropCycles(t, 64, "gate_cached_",
 		func(name string) error {

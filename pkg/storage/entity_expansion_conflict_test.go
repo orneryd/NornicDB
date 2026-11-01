@@ -1,5 +1,7 @@
 package storage
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -327,7 +329,6 @@ func TestNativeCompleteFootprintCloseDrainsQueuedSuppression(t *testing.T) {
 	b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	if b != nil {
 		fixtureowner.Own(t, b)
-		t.Cleanup(func() { _ = b.Close() })
 	}
 	require.NoError(t, err)
 	edge := suppressedEdgeForCleanup(t, b)
@@ -335,7 +336,6 @@ func TestNativeCompleteFootprintCloseDrainsQueuedSuppression(t *testing.T) {
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	if reopened != nil {
 		fixtureowner.Own(t, reopened)
-		t.Cleanup(func() { _ = reopened.Close() })
 	}
 	require.NoError(t, err)
 	require.False(t, reopened.HasManualSuppressions())

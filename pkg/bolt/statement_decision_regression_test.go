@@ -1,5 +1,7 @@
 package bolt
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -19,7 +21,7 @@ func TestStatementBoltUseAndFabric(t *testing.T) {
 	users, _, fixture, stores := boltProductionFixture(t)
 	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 	for _, database := range []string{"other", "r2source", "r2target"} {
 		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 	}

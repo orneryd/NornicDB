@@ -1,5 +1,7 @@
 package qdrantgrpc
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -25,7 +27,7 @@ func newPointsServiceFixture(t *testing.T, purpose pointsFixturePurpose) (*Point
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = dbm.Close() })
+	fixtureowner.Own(t, dbm)
 	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
 	cfg := DefaultConfig()

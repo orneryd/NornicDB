@@ -1,5 +1,7 @@
 package storage_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -18,13 +20,16 @@ func TestResidualRegisteredPropertyImages(t *testing.T) {
 	for _, route := range []string{"direct", "transaction", "buffered", "wal"} {
 		t.Run(route, func(t *testing.T) {
 			dir := t.TempDir()
-			open := func() *storage.BadgerEngine {
-				b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: route == "buffered", WriteBehindInterval: time.Hour}))
+			open := func() (*storage.BadgerEngine, func()) {
+				b, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: route == "buffered", WriteBehindInterval: time.Hour}))
+				var closeFixture func()
+				if b != nil {
+					_, closeFixture = fixtureowner.OwnWithClose(t, b)
+				}
 				require.NoError(t, err)
-				return b
+				return b, closeFixture
 			}
-			b := open()
-			t.Cleanup(func() { _ = b.Close() })
+			b, closeB := open()
 			var wal *storage.WAL
 			walDir := ""
 			if route == "wal" {
@@ -130,7 +135,6 @@ func TestResidualRegisteredPropertyImages(t *testing.T) {
 				require.NoError(t, wal.Close())
 				recovered, result, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(walDir, ""))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = recovered.Close() })
 				require.Empty(t, result.Errors)
 				recoveredNode, err := recovered.GetStoredNode(n.ID)
 				require.NoError(t, err)
@@ -140,8 +144,8 @@ func TestResidualRegisteredPropertyImages(t *testing.T) {
 				require.Equal(t, warmEdge.Properties, recoveredEdge.Properties)
 			}
 			require.NoError(t, b.FlushWriteBehind(nil))
-			require.NoError(t, b.Close())
-			b = open()
+			closeB()
+			b, closeB = open()
 			coldNode, err := b.GetStoredNode(n.ID)
 			require.NoError(t, err)
 			coldEdge, err := b.GetStoredEdge(edge.ID)
@@ -161,7 +165,6 @@ func TestResidualPropertyImageKeepsCodecRejection(t *testing.T) {
 	} {
 		b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = b.Close() })
 		_, err = b.CreateNode(&storage.Node{ID: "test:invalid", Properties: map[string]any{"nested": []any{value}}})
 		require.Error(t, err)
 		_, err = b.GetStoredNode("test:invalid")

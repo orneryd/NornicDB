@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -92,7 +94,7 @@ func TestScopedLabelSnapshotResumeSurvivesLiveDictionaryEviction(t *testing.T) {
 }
 
 func TestScopedLabelReadersKeepBufferedReplacementVisibility(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	for _, id := range []NodeID{"test:remove-label", "test:delete", "other:foreign"} {
 		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Person"}})
 		require.NoError(t, err)

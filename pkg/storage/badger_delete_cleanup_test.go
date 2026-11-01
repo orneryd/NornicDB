@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -160,5 +162,4 @@ func TestDeleteCleanupLifecycle(t *testing.T) {
 	_, err = mem.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
 	require.NoError(t, mem.DeleteNode("test:a"))
-	require.NoError(t, mem.Close())
 }

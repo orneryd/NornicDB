@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"sync"
 	"testing"
@@ -15,7 +17,6 @@ import (
 func TestResidualCleanupKeepsUnrelatedCacheWarm(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []NodeID{"test:keep-cleanup", "test:delete-cleanup"} {
 		_, err := b.CreateNode(&Node{ID: id})
 		require.NoError(t, err)

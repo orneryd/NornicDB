@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 // Frozen compatibility INPUTS, independent of NornicDB's current writers/types.
 // Sources: v1.4.3 and 24d08776c storage/{badger_helpers,property_codec,
 // property_key_dictionary,id_dictionary,badger_serialization}.go and search
@@ -320,8 +322,9 @@ func writeLegacyCompatStore(t *testing.T, dir string, scalar bool) {
 	require.NoError(t, os.MkdirAll(graphDir, 0o755))
 	// Direct third-party raw KV writes; never storage.NewBadgerEngine/CreateNode.
 	db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(graphDir).WithLogger(nil)))
+	var closeDB func()
 	if db != nil {
-		fixtureowner.Own(t, db)
+		_, closeDB = fixtureowner.OwnWithClose(t, db)
 	}
 	require.NoError(t, err)
 	err = db.Update(func(txn *badger.Txn) error {
@@ -333,7 +336,7 @@ func writeLegacyCompatStore(t *testing.T, dir string, scalar bool) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.Close())
+	closeDB()
 	searchDir := filepath.Join(dir, "search")
 	require.NoError(t, os.MkdirAll(searchDir, 0o755))
 	for name, data := range files {

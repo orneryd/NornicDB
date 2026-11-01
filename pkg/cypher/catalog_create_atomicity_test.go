@@ -1,5 +1,7 @@
 package cypher
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -65,7 +67,7 @@ func TestCreateDatabaseOptionsFailurePublishesNothing(t *testing.T) {
 			backing := &createOptionsSubmissionProbe{Engine: native, native: native}
 			manager, err := multidb.NewDatabaseManager(t.Context(), backing, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, manager.Close()) })
+			fixtureowner.Own(t, manager)
 			adapter := &catalogRequestContextAdapter{optionsTestManager: optionsTestManager{&testDatabaseManagerAdapter{manager: manager}}}
 			executor := NewStorageExecutor(storage.NewNamespacedEngine(backing, "nornic"))
 			executor.SetDatabaseManager(adapter)

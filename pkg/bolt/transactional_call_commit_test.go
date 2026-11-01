@@ -1,5 +1,7 @@
 package bolt
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -11,7 +13,6 @@ import (
 func TestBoltTransactionalCallKeepsCommittedBatches(t *testing.T) {
 	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))
 	writer := openBoltTestConn(t, port)
 	require.NoError(t, SendRun(t, writer, "UNWIND [1,2,0] AS x CALL { WITH x CREATE (:B {v: 10/x}) } IN TRANSACTIONS OF 1 ROW", nil, nil))
@@ -50,7 +51,6 @@ func TestBoltTransactionalCallBatchSizeExpressionContract(t *testing.T) {
 		t.Run(sample.name, func(t *testing.T) {
 			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))
 			writer := openBoltTestConn(t, port)
 			input := "[1,2,0,4]"

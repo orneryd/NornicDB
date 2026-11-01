@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -9,7 +11,7 @@ import (
 )
 
 func TestDirectDeleteKernelPhysicalCompletion(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	bufferedCreate(t, b, &Node{ID: "test:delete", Labels: []string{"L"}})
 	bufferedWrite(t, b, func(tx *BadgerTransaction) error {
 		return tx.CreateEdge(&Edge{ID: "test:loop", StartNode: "test:delete", EndNode: "test:delete", Type: "SELF"})

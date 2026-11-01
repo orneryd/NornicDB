@@ -1,5 +1,7 @@
 package nornicdb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -67,7 +69,6 @@ func newMutationOrderDB(t *testing.T) (*DB, *dbSearchService, storage.Engine, *r
 		}
 		entry.pendingFlushMu.Unlock()
 		_ = svc.Close()
-		_ = base.Close()
 	})
 	return db, entry, store, barrier
 }

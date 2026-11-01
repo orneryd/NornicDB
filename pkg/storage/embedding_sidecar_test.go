@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -224,7 +226,6 @@ type EmbeddingFailureLike struct {
 // each writeback targeting the next node (bounded per-key churn).
 func BenchmarkUpdateNodeEmbeddingSidecar(b *testing.B) {
 	engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)).BadgerEngine
-	defer engine.Close()
 	now := time.Now()
 	const pool = 2000
 	nodes := make([]*Node, pool)

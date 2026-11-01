@@ -1,6 +1,8 @@
 // Package server provides HTTP REST API server tests.
 package server
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -1045,7 +1047,7 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	require.NoError(t, err)
 	// RemoteEngine.Close releases its completed transport, rather than making
 	// later engine calls return the native ErrStorageClosed sentinel.
-	remote = runtimeFixtureOwner.Own(t, remote)
+	_, closeRemote := runtimeFixtureOwner.OwnWithClose(t, remote)
 	query, ok := remote.(interface {
 		QueryCypher(context.Context, string, map[string]interface{}, storage.RemoteAccessMode) ([]string, [][]interface{}, error)
 	})
@@ -1056,7 +1058,7 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"adapter-wire-control"}}, rows)
 	require.Equal(t, int64(1), wireCalls.Load())
 	require.False(t, wrongAuthentication.Load())
-	require.NoError(t, remote.Close())
+	closeRemote()
 	err = adapter.RemoveConstituent(t.Context(), "cmp_adapter", "extra")
 	assert.NoError(t, err)
 	err = adapter.AddConstituent(t.Context(), "cmp_adapter", 123)

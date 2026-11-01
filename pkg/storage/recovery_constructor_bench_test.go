@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"path/filepath"
@@ -10,7 +12,7 @@ import (
 
 // BenchmarkRecoveryConstructors measures the public recovery operation itself.
 // Fixture creation, result validation and closing the recovered store are outside
-// the timer. The same benchmark source is used on the base and corrected trees.
+// the timer. The public recovery workload and its timing boundaries are retained.
 func BenchmarkRecoveryConstructors(b *testing.B) {
 	for _, count := range []int{0, 64} {
 		b.Run(fmt.Sprintf("nodes_%d", count), func(b *testing.B) {
@@ -32,13 +34,19 @@ func BenchmarkRecoveryConstructors(b *testing.B) {
 						var err error
 						switch api {
 						case "plain":
-							engine, err = fixtureowner.OwnResult[*MemoryEngine](b, ErrStorageClosed)(RecoverFromWAL(filepath.Join(dir, "wal"), snapshot))
+							engine, err = fixtureowner.TrackResult[*MemoryEngine](b, ErrStorageClosed)(RecoverFromWAL(filepath.Join(dir, "wal"), snapshot))
 						case "logger":
-							engine, err = fixtureowner.OwnResult[*MemoryEngine](b, ErrStorageClosed)(RecoverFromWALWithLogger(filepath.Join(dir, "wal"), snapshot, nil))
+							engine, err = fixtureowner.TrackResult[*MemoryEngine](b, ErrStorageClosed)(RecoverFromWALWithLogger(filepath.Join(dir, "wal"), snapshot, nil))
 						case "with_result":
-							engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](b, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshot))
+							engine, _, err = RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshot)
+							engine = fixtureowner.Track(b, engine, ErrStorageClosed)
 						case "transactions":
-							engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](b, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshot))
+							engine, _, err = RecoverWithTransactions(filepath.Join(dir, "wal"), snapshot)
+							engine = fixtureowner.Track(b, engine, ErrStorageClosed)
+						}
+						var closeEngine func()
+						if engine != nil {
+							_, closeEngine = fixtureowner.OwnWithClose(b, engine)
 						}
 						b.StopTimer()
 						if err != nil {
@@ -48,9 +56,7 @@ func BenchmarkRecoveryConstructors(b *testing.B) {
 						if err != nil || actual != int64(count) {
 							b.Fatalf("recovered nodes=%d want=%d err=%v", actual, count, err)
 						}
-						if err := engine.Close(); err != nil {
-							b.Fatal(err)
-						}
+						closeEngine()
 						b.StartTimer()
 					}
 				})

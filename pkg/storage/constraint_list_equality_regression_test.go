@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -56,11 +60,11 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 			t.Run(entity+"/"+mode, func(t *testing.T) {
 				path := t.TempDir()
 				engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+				var closeEngine func()
 				if engine != nil {
-					fixtureowner.Own(t, engine)
+					_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 				}
 				require.NoError(t, err)
-				defer func() { require.NoError(t, engine.Close()) }()
 				for _, id := range []NodeID{"test:a", "test:b"} {
 					_, err = engine.CreateNode(&Node{ID: id})
 					require.NoError(t, err)
@@ -106,7 +110,7 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 				}
 				require.NoError(t, create(nil, "one", first))
 				if mode == "restart" {
-					require.NoError(t, engine.Close())
+					closeEngine()
 					engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 					if engine != nil {
 						fixtureowner.Own(t, engine)
@@ -133,15 +137,15 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 func TestUniqueListPreservesLargeIntegerIdentityAfterRestart(t *testing.T) {
 	path := t.TempDir()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
-	defer func() { engine.Close() }()
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "large_list", Type: ConstraintUnique, Label: "LongList", Properties: []string{"id"}}))
 	_, err = engine.CreateNode(&Node{ID: "test:first", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []int64{1 << 53}}})
 	require.NoError(t, err)
-	require.NoError(t, engine.Close())
+	closeEngine()
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 	if engine != nil {
 		fixtureowner.Own(t, engine)
@@ -231,8 +235,7 @@ func TestConstraintListCanonicalKeysPreserveEquality(t *testing.T) {
 
 func TestUniqueListRejectsDuplicateAfterBufferedRecovery(t *testing.T) {
 	dir := t.TempDir()
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
-	wal := engine.bufferedCommitWAL
+	engine, closeEngine := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := engine.CreateNode(&Node{ID: id})
 		require.NoError(t, err)
@@ -245,10 +248,9 @@ func TestUniqueListRejectsDuplicateAfterBufferedRecovery(t *testing.T) {
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:recovered", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	crashClose(t, engine, wal)
-	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	crashClose(t, engine, fixtureowner.CloseFunc(func() error { closeEngine(); return nil }))
+	recovered, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal2 := recovered.bufferedCommitWAL
-	t.Cleanup(func() { require.NoError(t, wal2.Close()); require.NoError(t, recovered.Close()) })
 	n, err := RecoverBufferedCommits(recovered, wal2)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)

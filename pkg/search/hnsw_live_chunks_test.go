@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -14,7 +16,6 @@ import (
 func TestHNSWLiveIndexTakesEveryChunk(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewService(engine, 3, nil)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "first", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
 	index, err := svc.getOrCreateHNSWIndex(context.Background(), 3)

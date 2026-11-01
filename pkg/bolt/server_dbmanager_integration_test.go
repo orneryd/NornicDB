@@ -1,27 +1,28 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"net"
-	"testing"
-	"time"
-
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"net"
+	"testing"
+	"time"
 )
 
 func TestSessionGetExecutorForDatabase_WiresDatabaseManagerCommands(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"}))
 	provider, ok := interface{}(&boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(mgr)}).(cypher.DatabaseIdentityProvider)
@@ -44,7 +45,7 @@ func TestSessionGetExecutorForDatabase_WiresDatabaseManagerCommands(t *testing.T
 func TestBoltListConnectionsReportsLiveConnection(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	t.Cleanup(func() { _ = server.Close() })
 	port := startBoltTestServer(t, server)
@@ -82,7 +83,7 @@ func TestBoltListConnectionsReportsLiveConnection(t *testing.T) {
 func TestGh738_BoltStatementAdmission(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	t.Cleanup(func() { _ = server.Close() })
 	port := startBoltTestServer(t, server)
@@ -134,7 +135,7 @@ func TestGh738_BoltStatementAdmission(t *testing.T) {
 func TestGh745_BoltCompositeSubqueryResults(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "pother"}))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "pcomp", []multidb.ConstituentRef{{Alias: "other", DatabaseName: "pother", Type: "local", AccessMode: "read_write"}}))
 	store, err := manager.GetStorage("pother")
@@ -205,7 +206,7 @@ func TestGh683_BoltCompositeCommit(t *testing.T) {
 			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = manager.Close() })
+			fixtureowner.Own(t, manager)
 			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "share_shard"}))
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "cmp_sh", []multidb.ConstituentRef{
 				{Alias: "sh", DatabaseName: "share_shard", Type: "local", AccessMode: "read_write"},
@@ -339,9 +340,7 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesGeneratedNodeIDs(t *t
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = mgr.Close()
-	})
+	fixtureowner.Own(t, mgr)
 
 	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
 	defer func() {
@@ -377,9 +376,7 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesCanonicalUnwindIDs(t 
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = mgr.Close()
-	})
+	fixtureowner.Own(t, mgr)
 
 	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
 	defer func() {

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"testing"
@@ -29,7 +31,7 @@ func typedPropertyRecordFixture(t *testing.T, data WALBufferedCommitData, proper
 
 func TestWALUnstampedForeignCannotBorrowPriorRecord(t *testing.T) {
 	_, data := r2BindingData(t, 1)
-	dest := reviewBindingEngine(t, t.TempDir())
+	dest, _ := reviewBindingEngine(t, t.TempDir())
 	_, err := dest.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
 	payload, err := json.Marshal(data)

@@ -1,5 +1,7 @@
 package nornicdb_test
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -119,11 +121,10 @@ func (s *dlqPublicStore) UpdateNodeEmbeddingSidecar(n *storage.Node) error {
 	}
 	return s.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(n)
 }
-func dlqPublicFixture(t *testing.T, p *dlqPublicProvider, configure ...func(*nornicdb.EmbedWorkerConfig)) (*nornicdb.EmbedWorker, *dlqPublicStore) {
+func dlqPublicFixture(t *testing.T, p *dlqPublicProvider, configure ...func(*nornicdb.EmbedWorkerConfig)) (*nornicdb.EmbedWorker, *dlqPublicStore, func()) {
 	t.Helper()
 	path := t.TempDir()
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
-	fixtureowner.Own(t, base)
 	require.NoError(t, err)
 	s := &dlqPublicStore{Engine: storage.NewNamespacedEngine(base, "dlq"), disk: base, path: path, reject: make(map[storage.NodeID]bool)}
 	cfg := nornicdb.DefaultEmbedWorkerConfig()
@@ -140,8 +141,11 @@ func dlqPublicFixture(t *testing.T, p *dlqPublicProvider, configure ...func(*nor
 		fn(cfg)
 	}
 	w := nornicdb.NewEmbedWorker(p, s, cfg)
-	t.Cleanup(func() { w.Close(); require.NoError(t, s.disk.Close()) })
-	return w, s
+	// Cleanups run last-in, first-out: the worker stops before Own closes
+	// the disk engine it writes to.
+	_, closeBase := fixtureowner.OwnWithClose(t, base)
+	t.Cleanup(w.Close)
+	return w, s, closeBase
 }
 func dlqPublicAdd(t *testing.T, s *dlqPublicStore, id string) {
 	t.Helper()
@@ -151,7 +155,7 @@ func dlqPublicAdd(t *testing.T, s *dlqPublicStore, id string) {
 }
 
 func TestEmbedWorkerDLQPublicMainBeforeReadyRetry(t *testing.T) {
-	w, s := dlqPublicFixture(t, &dlqPublicProvider{})
+	w, s, _ := dlqPublicFixture(t, &dlqPublicProvider{})
 	var paused atomic.Bool
 	s.pause = &paused
 	w.SetShouldYield(paused.Load)
@@ -174,7 +178,7 @@ func TestEmbedWorkerDLQPublicMainBeforeReadyRetry(t *testing.T) {
 
 func TestEmbedWorkerDLQPublicProviderTerminal(t *testing.T) {
 	p := &dlqPublicProvider{poison: true}
-	w, s := dlqPublicFixture(t, p)
+	w, s, _ := dlqPublicFixture(t, p)
 	dlqPublicAdd(t, s, "poison")
 	dlqPublicAdd(t, s, "healthy")
 	w.StartWorkers()
@@ -196,7 +200,7 @@ func dlqPublicAttempts(s *dlqPublicStore) []storage.NodeID {
 	return append([]storage.NodeID(nil), s.attempts...)
 }
 func TestEmbedWorkerDLQPublicTailAndArrivingMain(t *testing.T) {
-	w, s := dlqPublicFixture(t, &dlqPublicProvider{})
+	w, s, _ := dlqPublicFixture(t, &dlqPublicProvider{})
 	var paused atomic.Bool
 	s.pause = &paused
 	w.SetShouldYield(paused.Load)
@@ -234,7 +238,7 @@ func TestEmbedWorkerDLQPublicTailAndArrivingMain(t *testing.T) {
 
 func TestEmbedWorkerDLQPublicUpdatePullsMainAndRejectsStale(t *testing.T) {
 	p := &dlqPublicProvider{}
-	w, s := dlqPublicFixture(t, p)
+	w, s, _ := dlqPublicFixture(t, p)
 	var paused atomic.Bool
 	s.pause = &paused
 	w.SetShouldYield(paused.Load)
@@ -265,12 +269,12 @@ func TestEmbedWorkerDLQPublicUpdatePullsMainAndRejectsStale(t *testing.T) {
 
 func TestEmbedWorkerDLQPublicTerminalSurvivesRestart(t *testing.T) {
 	p := &dlqPublicProvider{poison: true}
-	w, s := dlqPublicFixture(t, p)
+	w, s, closeDisk := dlqPublicFixture(t, p)
 	dlqPublicAdd(t, s, "poison")
 	w.StartWorkers()
 	require.Eventually(t, func() bool { return w.Stats().Parked == 1 }, 4*time.Second, time.Millisecond)
 	w.Close()
-	require.NoError(t, s.disk.Close())
+	closeDisk()
 	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(s.path))
 	fixtureowner.Own(t, reopened)
 	require.NoError(t, err)
@@ -291,7 +295,7 @@ func TestEmbedWorkerDLQPublicTerminalSurvivesRestart(t *testing.T) {
 
 func TestEmbedWorkerDLQPublicBackoffNeverDelaysMain(t *testing.T) {
 	p := &dlqPublicProvider{poison: true}
-	w, s := dlqPublicFixture(t, p, func(c *nornicdb.EmbedWorkerConfig) {
+	w, s, _ := dlqPublicFixture(t, p, func(c *nornicdb.EmbedWorkerConfig) {
 		c.MaxRetries = 1
 		c.ProviderRetryBackoff = 400 * time.Millisecond
 		c.ProviderRetryBackoffMax = 400 * time.Millisecond
@@ -316,7 +320,7 @@ func TestEmbedWorkerDLQPublicBackoffNeverDelaysMain(t *testing.T) {
 }
 
 func TestEmbedWorkerDLQPublicUpdateResetsRetryLimit(t *testing.T) {
-	w, s := dlqPublicFixture(t, &dlqPublicProvider{}, func(c *nornicdb.EmbedWorkerConfig) { c.MaxRetries = 1 })
+	w, s, _ := dlqPublicFixture(t, &dlqPublicProvider{}, func(c *nornicdb.EmbedWorkerConfig) { c.MaxRetries = 1 })
 	var paused atomic.Bool
 	s.pause = &paused
 	w.SetShouldYield(paused.Load)
@@ -344,7 +348,7 @@ func TestEmbedWorkerDLQPublicUpdateResetsRetryLimit(t *testing.T) {
 
 func TestEmbedWorkerDLQPublicUpdateRejectsInFlightRetry(t *testing.T) {
 	p := &dlqPublicProvider{}
-	w, s := dlqPublicFixture(t, p)
+	w, s, _ := dlqPublicFixture(t, p)
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
@@ -391,7 +395,7 @@ func TestEmbedWorkerDLQPublicUpdateRejectsInFlightRetry(t *testing.T) {
 
 func TestEmbedWorkerDLQPublicRestartRequeuesUnfinishedNode(t *testing.T) {
 	p := &dlqPublicProvider{}
-	w, s := dlqPublicFixture(t, p)
+	w, s, _ := dlqPublicFixture(t, p)
 	var paused atomic.Bool
 	s.pause = &paused
 	w.SetShouldYield(paused.Load)
@@ -455,7 +459,7 @@ func TestEmbedWorkerDLQPublicFailureRoutes(t *testing.T) {
 	for _, route := range []string{"whole", "document-single", "document-batch", "resolver-single", "resolver-batch", "property-single", "property-batch"} {
 		t.Run(route, func(t *testing.T) {
 			p := &dlqPublicProvider{poison: true}
-			w, s := dlqPublicFixture(t, p, func(c *nornicdb.EmbedWorkerConfig) {
+			w, s, _ := dlqPublicFixture(t, p, func(c *nornicdb.EmbedWorkerConfig) {
 				if strings.HasSuffix(route, "batch") {
 					c.EmbedBatchSize = 8
 				}
@@ -490,7 +494,7 @@ func TestEmbedWorkerDLQPublicFailureRoutes(t *testing.T) {
 }
 
 func TestEmbedWorkerDLQPublicEnqueueDoesNotWaitForClaim(t *testing.T) {
-	w, s := dlqPublicFixture(t, &dlqPublicProvider{})
+	w, s, _ := dlqPublicFixture(t, &dlqPublicProvider{})
 	started, release := make(chan struct{}), make(chan struct{})
 	var once, releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })

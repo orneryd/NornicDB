@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -128,7 +130,7 @@ func BenchmarkTransactionOverlayDetachCost(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+				engine, closeEngine := fixtureowner.OwnWithClose(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 				exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 				b.StartTimer()
 				result, err := exec.Execute(context.Background(), overlayCostCreate+"\n"+overlayCostDelete, map[string]interface{}{
@@ -136,16 +138,14 @@ func BenchmarkTransactionOverlayDetachCost(b *testing.B) {
 				})
 				b.StopTimer()
 				if err != nil {
-					_ = engine.Close()
+					closeEngine()
 					b.Fatal(err)
 				}
 				if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != int64(106) {
-					_ = engine.Close()
+					closeEngine()
 					b.Fatalf("removed rows = %v, want [[106]]", result.Rows)
 				}
-				if err := engine.Close(); err != nil {
-					b.Fatal(err)
-				}
+				closeEngine()
 				b.StartTimer()
 			}
 		})
@@ -166,13 +166,13 @@ func BenchmarkTransactionOverlayMergeCost(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					b.StopTimer()
-					engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+					engine, closeEngine := fixtureowner.OwnWithClose(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 					store := storage.NewNamespacedEngine(engine, "test")
 					exec := NewStorageExecutor(store)
 					if committed {
 						_, err := exec.Execute(context.Background(), `UNWIND range(0,105) AS i CREATE (:Probe {id: toString(i)})`, nil)
 						if err != nil {
-							_ = engine.Close()
+							closeEngine()
 							b.Fatal(err)
 						}
 					}
@@ -180,16 +180,14 @@ func BenchmarkTransactionOverlayMergeCost(b *testing.B) {
 					result, err := exec.Execute(context.Background(), overlayCostMerge, map[string]interface{}{"edges": int64(size)})
 					b.StopTimer()
 					if err != nil {
-						_ = engine.Close()
+						closeEngine()
 						b.Fatal(err)
 					}
 					if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != int64(size) {
-						_ = engine.Close()
+						closeEngine()
 						b.Fatalf("processed rows = %v, want %d", result.Rows, size)
 					}
-					if err := engine.Close(); err != nil {
-						b.Fatal(err)
-					}
+					closeEngine()
 					b.StartTimer()
 				}
 			})

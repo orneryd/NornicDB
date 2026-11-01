@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"encoding/gob"
@@ -23,14 +25,15 @@ func seedBadgerDir(t *testing.T, seed func(txn *badger.Txn) error) string {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+	var closeDB func()
 	if db != nil {
-		fixtureowner.Own(t, db)
+		_, closeDB = fixtureowner.OwnWithClose(t, db)
 	}
 	require.NoError(t, err)
 	require.NoError(t, db.Update(func(txn *badger.Txn) error {
 		return seed(txn)
 	}))
-	require.NoError(t, db.Close())
+	closeDB()
 	return dir
 }
 
@@ -44,7 +47,6 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 			fixtureowner.Own(t, engine)
 		}
 		require.NoError(t, err)
-		require.NoError(t, engine.Close())
 	})
 
 	t.Run("data dir points to file", func(t *testing.T) {
@@ -79,7 +81,6 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 			fixtureowner.Own(t, engine)
 		}
 		require.NoError(t, err)
-		require.NoError(t, engine.Close())
 	})
 
 	t.Run("id dictionary load failure", func(t *testing.T) {

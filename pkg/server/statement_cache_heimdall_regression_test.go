@@ -1,5 +1,7 @@
 package server
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -18,7 +20,7 @@ func TestRule73HeimdallPublicColdAdmission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "gate_heimdall_leaf"}); err != nil {
 				t.Fatal(err)
 			}

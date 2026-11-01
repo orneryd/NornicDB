@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -85,7 +87,7 @@ func TestF25CompositeCatalogPublicationPrototype(t *testing.T) {
 				backing := &f25CatalogReceiptProbe{Engine: base, native: base, ownerContext: context.Background()}
 				manager, err := NewDatabaseManager(context.Background(), backing, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = manager.Close() })
+				_, closeManager := fixtureowner.OwnWithClose(t, manager)
 				for _, name := range []string{"firstdb", "lastdb"} {
 					require.NoError(t, manager.CreateDatabase(backing.ownerContext, DatabaseCreateRequest{Name: name}))
 				}
@@ -179,14 +181,13 @@ func TestF25CompositeCatalogPublicationPrototype(t *testing.T) {
 					}
 				}
 				backing.mode = ""
-				require.NoError(t, manager.Close())
-				require.NoError(t, base.Close())
+				closeManager()
 				reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
 				require.NoError(t, err)
 				fixtureowner.Own(t, reopened)
 				reloaded, err := NewDatabaseManager(context.Background(), reopened, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = reloaded.Close() })
+				fixtureowner.Own(t, reloaded)
 				inspect(fmt.Sprintf("reopened applied=%v", applied), reloaded, applied)
 				reloadID, reloadCreated := reloaded.ServerIdentity()
 				assert.Equal(t, beforeID, reloadID)
@@ -207,7 +208,7 @@ func TestF25OtherCatalogPublicationPrototype(t *testing.T) {
 				backing := &f25CatalogReceiptProbe{Engine: base, native: base, ownerContext: context.Background()}
 				manager, err := NewDatabaseManager(context.Background(), backing, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = manager.Close() })
+				_, closeManager := fixtureowner.OwnWithClose(t, manager)
 				if operation != "create-database" {
 					require.NoError(t, manager.CreateDatabase(backing.ownerContext, DatabaseCreateRequest{Name: "target"}))
 					_, err = manager.GetStorage("target")
@@ -312,14 +313,13 @@ func TestF25OtherCatalogPublicationPrototype(t *testing.T) {
 				if applied {
 					expected = durable()
 				}
-				require.NoError(t, manager.Close())
-				require.NoError(t, base.Close())
+				closeManager()
 				reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
 				require.NoError(t, err)
 				fixtureowner.Own(t, reopened)
 				reloaded, err := NewDatabaseManager(context.Background(), reopened, nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = reloaded.Close() })
+				fixtureowner.Own(t, reloaded)
 				actual, err := json.Marshal(live(reloaded))
 				require.NoError(t, err)
 				assert.JSONEq(t, string(expected), string(actual), "reopened metadata follows physical result")
@@ -338,7 +338,7 @@ func TestF25StandardDropCompletionPrototype(t *testing.T) {
 			backing := &f25CatalogReceiptProbe{Engine: base, native: base, ownerContext: context.Background()}
 			manager, err := NewDatabaseManager(context.Background(), backing, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = manager.Close() })
+			_, closeManager := fixtureowner.OwnWithClose(t, manager)
 			for _, name := range []string{"target", "peer"} {
 				require.NoError(t, manager.CreateDatabase(backing.ownerContext, DatabaseCreateRequest{Name: name}))
 				view, err := manager.GetStorage(name)
@@ -381,14 +381,13 @@ func TestF25StandardDropCompletionPrototype(t *testing.T) {
 				inspect("terminal")
 			}
 			backing.mode = ""
-			require.NoError(t, manager.Close())
-			require.NoError(t, base.Close())
+			closeManager()
 			reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
 			require.NoError(t, err)
 			fixtureowner.Own(t, reopened)
 			reloaded, err := NewDatabaseManager(context.Background(), reopened, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = reloaded.Close() })
+			fixtureowner.Own(t, reloaded)
 			assert.False(t, reloaded.Exists("target"), "durable pending intent completes during writable reopen")
 			_, err = reopened.GetNode("peer:keep")
 			assert.NoError(t, err)
@@ -400,7 +399,6 @@ func TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority(t *testing.T
 	for _, terminal := range []storage.CommitOutcomeState{storage.CommitApplied, storage.CommitDiscarded} {
 		t.Run(fmt.Sprint(terminal), func(t *testing.T) {
 			manager, backing := newCatalogPublicationProbe(t)
-			t.Cleanup(func() { _ = manager.Close() })
 			backing.mode = "accepted-wait"
 			backing.submitted = make(chan struct{})
 			ctx, cancel := context.WithCancel(t.Context())
@@ -466,5 +464,6 @@ func newCatalogPublicationProbe(t *testing.T) (*DatabaseManager, *f25CatalogRece
 	probe := &f25CatalogReceiptProbe{Engine: base, native: base.BadgerEngine, ownerContext: context.Background()}
 	manager, err := NewDatabaseManager(t.Context(), probe, nil)
 	require.NoError(t, err)
+	fixtureowner.Own(t, manager)
 	return manager, probe
 }

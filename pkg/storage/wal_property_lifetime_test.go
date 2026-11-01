@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"runtime"
@@ -31,7 +33,7 @@ func walReplayLifetimeFixture(t *testing.T, mode string) (*BadgerEngine, func() 
 	t.Helper()
 	_, data := r2BindingData(t, 1)
 	dir := t.TempDir()
-	b := reviewBindingEngine(t, dir)
+	b, _ := reviewBindingEngine(t, dir)
 	_, err := b.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
 	if mode == "importer" {
@@ -134,10 +136,14 @@ func TestReviewR73ReplayLifetime(t *testing.T) {
 					}
 					// Even if later CRUD sees closed, provenance must have become
 					// durable before the admitted operation released its handle.
-					raw, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
+					raw, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
+					var closeRaw func()
+					if raw != nil {
+						_, closeRaw = fixtureowner.OwnWithClose(t, raw)
+					}
 					require.NoError(t, err)
 					require.NoError(t, raw.View(func(tx *badger.Txn) error { _, err := tx.Get(walPropertyForeignKey); return err }))
-					require.NoError(t, raw.Close())
+					closeRaw()
 				})
 			}
 		})

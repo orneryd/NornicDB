@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -233,7 +235,6 @@ func TestErrors(t *testing.T) {
 
 func TestCollectLabels(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
@@ -248,7 +249,6 @@ func TestCollectLabels(t *testing.T) {
 
 func TestCollectEdgeTypes(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
@@ -265,7 +265,6 @@ func TestCollectEdgeTypes(t *testing.T) {
 
 func TestStreamNodesWithFallback(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
@@ -283,7 +282,6 @@ func TestStreamNodesWithFallback(t *testing.T) {
 
 func TestStreamEdgesWithFallback(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)

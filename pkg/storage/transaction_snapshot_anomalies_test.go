@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -18,7 +20,6 @@ import (
 
 func TestTransaction_WriteSkew_IsAllowedUnderSnapshotIsolation(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	doctor1 := NodeID(prefixTestID("doctor-1"))
 	doctor2 := NodeID(prefixTestID("doctor-2"))
@@ -64,7 +65,6 @@ func TestCommitConflictError_MapsBadgerConflict(t *testing.T) {
 
 func TestTransaction_ReadYourWritesDoesNotBreakAnchoredSnapshot(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	nodeID := NodeID(prefixTestID("anchored-read-node"))
 
@@ -115,7 +115,6 @@ func TestTransaction_ScanRepeatabilityWithinSnapshot(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			engine := newTestMemoryEngine(t)
-			defer engine.Close()
 			for i := 0; i < 3; i++ {
 				_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID(fmt.Sprintf("%s-%d", test.idPrefix, i))), Labels: []string{test.label}, Properties: map[string]interface{}{"index": i}})
 				require.NoError(t, err)
@@ -157,7 +156,6 @@ func TestTransaction_NodeDeleteAndEdgeCreateConflict(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := newTestMemoryEngine(t)
-			defer engine.Close()
 			start := NodeID(prefixTestID(tc.start))
 			target := NodeID(prefixTestID(tc.target))
 			edgeID := EdgeID(prefixTestID(tc.edge))
@@ -209,7 +207,6 @@ func TestTransaction_NodeDeleteAndEdgeCreateConflict(t *testing.T) {
 
 func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	start := NodeID(prefixTestID("adjacency-snapshot-start"))
 	target := NodeID(prefixTestID("adjacency-snapshot-target"))
@@ -258,7 +255,6 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 
 func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelete(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	start := NodeID(prefixTestID("snapshot-edge-start"))
 	target := NodeID(prefixTestID("snapshot-edge-target"))

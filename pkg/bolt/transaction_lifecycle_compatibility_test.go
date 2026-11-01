@@ -1,13 +1,14 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"net"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -226,7 +227,6 @@ func TestBoltDuplicateBeginPreservesOriginalTransactionExecutor(t *testing.T) {
 	originalBase := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	otherBase := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
-		require.NoError(t, originalBase.Close())
 		require.NoError(t, otherBase.Close())
 	})
 	original := &countingTransactionEngine{Engine: originalBase, inner: originalBase}

@@ -1,6 +1,8 @@
 // Package search tests
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
@@ -8,7 +10,13 @@ import (
 	"errors"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
 	"log"
 	"math"
 	"os"
@@ -17,14 +25,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
-	"github.com/orneryd/nornicdb/pkg/gpu"
-	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 type testReranker struct {
@@ -109,7 +109,6 @@ func newNamespacedEngine(tb testing.TB) storage.Engine {
 	// calls share this root, so Windows file capabilities close before removal.
 	_ = tb.TempDir()
 	base := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	tb.Cleanup(func() { base.Close() })
 	return storage.NewNamespacedEngine(base, "nornic")
 }
 
@@ -1418,7 +1417,6 @@ func TestSearchService_BuildIndexes_ForcedRebuildOnSettingsMismatch(t *testing.T
 
 func TestSearchService_BuildIndexes_DoesNotReuseDiskIndexesWhenStorageEmpty(t *testing.T) {
 	root := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { root.Close() })
 	base := storage.NewNamespacedEngine(root, "test")
 	_, err := base.CreateNode(&storage.Node{
 		ID:              "stale-1",

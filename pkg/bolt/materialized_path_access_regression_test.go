@@ -1,5 +1,7 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
@@ -39,7 +41,6 @@ func TestMaterializedPathAccessBolt(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			inner := &materializedPathAccessEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-			t.Cleanup(func() { _ = inner.Close() })
 			store := storage.NewNamespacedEngine(inner, "materialized")
 			_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "a"}})
 			require.NoError(t, err)

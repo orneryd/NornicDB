@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync"
@@ -13,7 +15,6 @@ import (
 func TestResidualFlushWaitCancellation(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = b.Close() })
 	workerAtDispatch, releaseDispatch := make(chan struct{}), make(chan struct{})
 	var dispatchOnce, releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(releaseDispatch) })

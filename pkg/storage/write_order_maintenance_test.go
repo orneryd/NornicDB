@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -36,7 +40,6 @@ func countKeysWithPrefix(t *testing.T, b *BadgerEngine, prefix byte) int {
 func TestTemporalConstraintBackfillsBufferedNodes(t *testing.T) {
 	inner, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = inner.Close() })
 	engine := NewNamespacedEngine(inner, "test")
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	tx, err := inner.BeginTransaction()
@@ -62,7 +65,7 @@ func TestTemporalConstraintBackfillsBufferedNodes(t *testing.T) {
 // to the legacy index heals the between index for what it found. A
 // relationship deleted after that read, before the heal, keeps no entry.
 func TestBetweenSelfHealWritesOnlyWhatIsStored(t *testing.T) {
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := b.CreateNode(&Node{ID: id})
 		require.NoError(t, err)

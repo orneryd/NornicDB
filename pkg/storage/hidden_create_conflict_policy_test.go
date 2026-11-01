@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -89,14 +91,18 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				dir := t.TempDir()
-				open := func() *BadgerEngine {
-					engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
+				open := func() (*BadgerEngine, func()) {
+					engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 						DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour,
 					}))
+					var closeFixture func()
+					if engine != nil {
+						_, closeFixture = runtimeFixtureOwner.OwnWithClose(t, engine)
+					}
 					require.NoError(t, err)
-					return engine
+					return engine, closeFixture
 				}
-				engine := open()
+				engine, closeEngine := open()
 				for _, node := range []*Node{
 					{ID: "test:a", Labels: []string{"A"}},
 					{ID: "test:b", Labels: []string{"B"}},
@@ -251,9 +257,8 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 					require.NoError(t, engine.FlushWriteBehind(nil))
 					check("flushed")
 				}
-				require.NoError(t, engine.Close())
-				engine = open()
-				t.Cleanup(func() { _ = engine.Close() })
+				closeEngine()
+				engine, closeEngine = open()
 				check("reopened")
 			})
 		}
@@ -274,7 +279,6 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 				DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour,
 			}))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = engine.Close() })
 			for _, id := range []NodeID{"test:a", "test:b"} {
 				_, err := engine.CreateNode(&Node{ID: id})
 				require.NoError(t, err)
@@ -384,7 +388,6 @@ func comparableStoredEdge(edge *Edge) *Edge {
 func TestHiddenEdgeCandidateLifecycle(t *testing.T) {
 	engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := engine.CreateNode(&Node{ID: id})
 		require.NoError(t, err)
@@ -522,7 +525,6 @@ func TestHiddenEdgeIdentityUsesStoredValueRepresentation(t *testing.T) {
 					DataDir: t.TempDir(), WriteBehind: mode.buffered, WriteBehindInterval: time.Hour,
 				}))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = engine.Close() })
 				for _, id := range []NodeID{"test:a", "test:b"} {
 					_, err := engine.CreateNode(&Node{ID: id})
 					require.NoError(t, err)

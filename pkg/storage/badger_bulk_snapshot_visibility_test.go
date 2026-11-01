@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -9,7 +11,6 @@ import (
 
 func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
 	require.NoError(t, engine.BulkCreateNodes([]*Node{
 		{ID: "snapshot_bulk:owner", Labels: []string{"Owner"}},

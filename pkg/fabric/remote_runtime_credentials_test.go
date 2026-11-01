@@ -1,5 +1,7 @@
 package fabric
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -48,7 +50,7 @@ func TestCatalogRemoteRuntimeCredentials(t *testing.T) {
 			})
 			manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
 			require.NoError(t, err)
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			ref := multidb.ConstituentRef{Alias: "r", DatabaseName: "nornic", URI: remote.URL, Type: "remote", AccessMode: "read", AuthMode: "user_password", User: "admin", Password: password}
 			if uriAuth {
 				ref.URI = "http://admin:" + password + "@" + remote.Listener.Addr().String()

@@ -1,17 +1,18 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dgraph-io/badger/v4"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/dgraph-io/badger/v4"
-	"github.com/stretchr/testify/require"
 )
 
 func countNodeMVCCVersions(t *testing.T, engine *BadgerEngine, nodeID NodeID) int {
@@ -519,8 +520,9 @@ func TestBadgerEngine_PruneFloorSurvivesReopenAndRestore(t *testing.T) {
 		},
 	}
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 	nodeID := NodeID(prefixTestID("mvcc-floor-node"))
@@ -541,7 +543,7 @@ func TestBadgerEngine_PruneFloorSurvivesReopenAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	backupPath := filepath.Join(t.TempDir(), "floor.backup")
 	require.NoError(t, engine.Backup(backupPath))
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	check := func(current *BadgerEngine) {
 		t.Helper()
@@ -558,12 +560,13 @@ func TestBadgerEngine_PruneFloorSurvivesReopenAndRestore(t *testing.T) {
 	}
 
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	var closeReopened func()
 	if reopened != nil {
-		fixtureowner.Own(t, reopened)
+		_, closeReopened = fixtureowner.OwnWithClose(t, reopened)
 	}
 	require.NoError(t, err)
 	check(reopened)
-	require.NoError(t, reopened.Close())
+	closeReopened()
 
 	restored, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, EngineOptions: options.EngineOptions}))
 	require.NoError(t, err)
@@ -813,7 +816,6 @@ func TestNamespacedEngine_MVCCDelegation(t *testing.T) {
 	require.Equal(t, EdgeID("mvcc-ns-edge"), between[0].ID)
 
 	fallbackInner := &nonMVCCEngine{Engine: newTestMemoryEngine(t)}
-	t.Cleanup(func() { _ = fallbackInner.Close() })
 	fallback := NewNamespacedEngine(fallbackInner, "test")
 	_, err = fallback.GetOutgoingEdgesVisibleAt(context.Background(), "mvcc-ns-start", edgeHead.Version)
 	require.ErrorIs(t, err, ErrNotImplemented)
@@ -992,8 +994,9 @@ func TestBadgerEngine_MVCCDirectionalAdjacencySurvivesRestart(t *testing.T) {
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
 		},
 	}))
+	var closeEngine func()
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	require.NoError(t, err)
 
@@ -1009,7 +1012,7 @@ func TestBadgerEngine_MVCCDirectionalAdjacencySurvivesRestart(t *testing.T) {
 	head, err := engine.GetEdgeCurrentHead(edgeID)
 	require.NoError(t, err)
 	require.NoError(t, engine.DeleteEdge(edgeID))
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir: dir,

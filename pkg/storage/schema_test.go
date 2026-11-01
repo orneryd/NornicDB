@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"encoding/json"
 	"errors"
@@ -1240,7 +1242,6 @@ func TestSchemaManager_PersistenceErrorRollback(t *testing.T) {
 
 func TestValidateConstraintOnCreation_UnknownType(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
 		Name:       "bad",
@@ -1254,7 +1255,6 @@ func TestValidateConstraintOnCreation_UnknownType(t *testing.T) {
 
 func TestValidateConstraintOnCreation_UniqueViolation(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Create two nodes with the same property value
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
@@ -1276,7 +1276,6 @@ func TestValidateConstraintOnCreation_UniqueViolation(t *testing.T) {
 
 func TestValidateConstraintOnCreation_ExistenceViolation(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Create a node missing the required property
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
@@ -1296,7 +1295,6 @@ func TestValidateConstraintOnCreation_ExistenceViolation(t *testing.T) {
 
 func TestValidateConstraintOnCreation_UniqueMultipleProperties(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
 		Name:       "composite_unique",
@@ -1350,7 +1348,6 @@ func TestValidateExistenceRelationshipConstraint_MultipleProperties(t *testing.T
 
 func TestValidateConstraintOnCreation_NodeKeyViolation(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Create two nodes with the same composite key
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
@@ -1372,7 +1369,6 @@ func TestValidateConstraintOnCreation_NodeKeyViolation(t *testing.T) {
 
 func TestValidateConstraintOnCreation_NodeKeyNullProperty(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John"}})
 	require.NoError(t, err)
@@ -1392,7 +1388,6 @@ func TestValidateConstraintOnCreation_NodeKeyNullProperty(t *testing.T) {
 
 func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	// Create two nodes with overlapping temporal intervals for the same key
 	_, err := engine.CreateNode(&Node{
@@ -1426,7 +1421,6 @@ func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
 
 func TestValidateConstraintOnCreation_TemporalBadProperties(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
 		Name:       "bad_temporal",
@@ -1440,7 +1434,6 @@ func TestValidateConstraintOnCreation_TemporalBadProperties(t *testing.T) {
 
 func TestValidateConstraintOnCreation_ExistenceMultipleProperties(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	defer engine.Close()
 
 	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
 		Name:       "bad_exists",

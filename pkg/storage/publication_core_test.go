@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -148,7 +150,7 @@ func TestPublicationCoreMetadataCommitDoesNotWaitOnStage(t *testing.T) {
 func TestPublicationCoreLargeCommitPublishesOnceAndAbortPublishesNothing(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprint("abort=", fail), func(t *testing.T) {
-			b := openLargeCommitTestEngine(t, t.TempDir())
+			b, _ := openLargeCommitTestEngine(t, t.TempDir())
 			var published atomic.Int32
 			failure := errors.New("stop large commit")
 			if fail {

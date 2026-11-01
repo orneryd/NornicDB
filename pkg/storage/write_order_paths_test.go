@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -15,9 +17,13 @@ import (
 
 // newDecayWriteBehindEngine is a write-behind engine whose "Doc" label decays
 // below visibility within a second (labelChangeDecayFixture's binding).
-func newDecayWriteBehindEngine(t *testing.T, dir string) *BadgerEngine {
+func newDecayWriteBehindEngine(t *testing.T, dir string) (*BadgerEngine, func()) {
 	t.Helper()
-	engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	var closeEngine func()
+	if engine != nil {
+		_, closeEngine = runtimeFixtureOwner.OwnWithClose(t, engine)
+	}
 	require.NoError(t, err)
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	engine.SetDecayEnabled(true)
@@ -30,7 +36,7 @@ func newDecayWriteBehindEngine(t *testing.T, dir string) *BadgerEngine {
 	require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
 		Name: "doc_binding", ProfileRef: "doc_decay", TargetLabels: []string{"Doc"},
 	}))
-	return engine
+	return engine, closeEngine
 }
 
 // The decay suppression rewrite rescores the newest body of the entity: run
@@ -39,8 +45,7 @@ func newDecayWriteBehindEngine(t *testing.T, dir string) *BadgerEngine {
 func TestDecaySuppressionRescoresTheNewestBufferedBody(t *testing.T) {
 	old := time.Now().Add(-72 * time.Hour)
 	run := func(flushFirst bool) (bool, bool) {
-		engine := newDecayWriteBehindEngine(t, t.TempDir())
-		t.Cleanup(func() { _ = engine.Close() })
+		engine, _ := newDecayWriteBehindEngine(t, t.TempDir())
 		_, err := engine.CreateNode(&Node{ID: "test:n", Labels: []string{"Untargeted"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 		require.NoError(t, engine.FlushWriteBehind(nil))
@@ -72,7 +77,11 @@ func TestDecaySuppressionRescoresTheNewestBufferedBody(t *testing.T) {
 // it is the first to use moves with it and survives a restart.
 func TestDrainedTransactionKeepsItsNewPropertyKeys(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	var closeEngine func()
+	if engine != nil {
+		_, closeEngine = runtimeFixtureOwner.OwnWithClose(t, engine)
+	}
 	require.NoError(t, err)
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	_, err = engine.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"v": "initial"}})
@@ -88,11 +97,10 @@ func TestDrainedTransactionKeepsItsNewPropertyKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "explicit", "first_seen_here": "kept"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	reopened, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = reopened.Close() })
 	stored, err := reopened.GetStoredNode("test:n")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"v": "explicit", "first_seen_here": "kept"}, stored.Properties)
@@ -103,7 +111,7 @@ func TestDrainedTransactionKeepsItsNewPropertyKeys(t *testing.T) {
 // explicit transaction or suppression rewrite lands ahead of a commit that
 // has not reached storage.
 func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
-	engine := newDecayWriteBehindEngine(t, t.TempDir())
+	engine, closeEngine := newDecayWriteBehindEngine(t, t.TempDir())
 	// The buffer's apply is wrapped once, before any commit signals the
 	// flusher; failing is then switched atomically.
 	injected := errors.New("injected flush failure")
@@ -117,7 +125,7 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		failing.Store(false)
-		_ = engine.Close()
+		closeEngine()
 	})
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := engine.CreateNode(&Node{ID: id, Properties: map[string]any{"v": "initial"}})

@@ -1,5 +1,7 @@
 package nornicdb_test
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"sync"
@@ -13,7 +15,7 @@ import (
 
 func TestReviewDLQTerminalWriteCannotOverrideUpdate(t *testing.T) {
 	p := &dlqPublicProvider{poison: true}
-	w, s := dlqPublicFixture(t, p, func(c *nornicdb.EmbedWorkerConfig) { c.MaxRetries = 0 })
+	w, s, _ := dlqPublicFixture(t, p, func(c *nornicdb.EmbedWorkerConfig) { c.MaxRetries = 0 })
 	started, resume := make(chan struct{}), make(chan struct{})
 	var gate, release sync.Once
 	t.Cleanup(func() { release.Do(func() { close(resume) }) })

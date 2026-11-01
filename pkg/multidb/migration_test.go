@@ -1,8 +1,11 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -58,8 +61,10 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 
 	// Step 2: Create DatabaseManager (simulates upgrade to multi-db version)
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
+	if manager != nil {
+		fixtureowner.Own(t, manager)
+	}
 	require.NoError(t, err)
-	defer manager.Close()
 
 	// Step 3: Verify migration completed
 	assert.True(t, manager.isMigrationComplete(), "Migration should be marked as complete")
@@ -114,8 +119,10 @@ func TestMigration_NoUnprefixedData(t *testing.T) {
 
 	// Create DatabaseManager with fresh storage (no unprefixed data)
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
+	if manager != nil {
+		fixtureowner.Own(t, manager)
+	}
 	require.NoError(t, err)
-	defer manager.Close()
 
 	// Migration should be marked as complete (nothing to migrate)
 	assert.True(t, manager.isMigrationComplete(), "Migration should be marked as complete")
@@ -176,8 +183,10 @@ func TestMigration_MixedData(t *testing.T) {
 
 	// Create DatabaseManager
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
+	if manager != nil {
+		fixtureowner.Own(t, manager)
+	}
 	require.NoError(t, err)
-	defer manager.Close()
 
 	// Migration should complete
 	assert.True(t, manager.isMigrationComplete())
@@ -246,8 +255,10 @@ func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
 
 	// Migrate
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
+	if manager != nil {
+		fixtureowner.Own(t, manager)
+	}
 	require.NoError(t, err)
-	defer manager.Close()
 
 	store, err := manager.GetDefaultStorage()
 	require.NoError(t, err)
@@ -300,8 +311,10 @@ func TestMigration_LabelIndexesPreserved(t *testing.T) {
 
 	// Migrate
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
+	if manager != nil {
+		fixtureowner.Own(t, manager)
+	}
 	require.NoError(t, err)
-	defer manager.Close()
 
 	store, err := manager.GetDefaultStorage()
 	require.NoError(t, err)
@@ -345,8 +358,10 @@ func TestMigration_CustomDefaultDatabase(t *testing.T) {
 		AllowDropDefault: false,
 	}
 	manager, err := NewDatabaseManager(t.Context(), inner, config)
+	if manager != nil {
+		fixtureowner.Own(t, manager)
+	}
 	require.NoError(t, err)
-	defer manager.Close()
 
 	// Verify migration completed
 	assert.True(t, manager.isMigrationComplete())
@@ -376,8 +391,10 @@ func TestMigration_NodePropertiesRemainUserOwned(t *testing.T) {
 				require.NoError(t, err)
 			}
 			manager, err := NewDatabaseManager(t.Context(), inner, &Config{DefaultDatabase: "nornic", SystemDatabase: "system", MaxDatabases: 0, AllowDropDefault: false})
+			if manager != nil {
+				fixtureowner.Own(t, manager)
+			}
 			require.NoError(t, err)
-			defer manager.Close()
 			if legacy {
 				assert.True(t, manager.isMigrationComplete())
 			}
@@ -407,17 +424,20 @@ func runMigrationVisibility(t *testing.T, seed *storage.Node, readID string, pro
 	require.NoError(t, err)
 
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
+	if manager != nil {
+		fixtureowner.Own(t, manager)
+	}
 	require.NoError(t, err)
 	assert.True(t, manager.isMigrationComplete())
 
 	if restart {
 		manager2, err := NewDatabaseManager(t.Context(), inner, nil)
+		if manager2 != nil {
+			fixtureowner.Own(t, manager2)
+		}
 		require.NoError(t, err)
-		defer manager2.Close()
 		assert.True(t, manager2.isMigrationComplete(), "Migration should already be complete")
 		manager = manager2
-	} else {
-		defer manager.Close()
 	}
 
 	store, err := manager.GetDefaultStorage()

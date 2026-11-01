@@ -1,5 +1,7 @@
 package main
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -35,8 +37,6 @@ func TestSeedProfileInProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open engine: %v", err)
 	}
-	defer func() { _ = engine.Close() }()
-
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
 	ctx := context.Background()
 

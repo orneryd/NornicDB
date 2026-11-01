@@ -1,5 +1,7 @@
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"testing"
@@ -18,7 +20,6 @@ func TestCompositeAutocommitReleaseRollback(t *testing.T) {
 			config.SetParserType(parser)
 			t.Cleanup(func() { config.SetParserType(previous) })
 			manager := newCompositeNativeManager(t, nil)
-			t.Cleanup(func() { require.NoError(t, manager.Close()) })
 			ctx := context.Background()
 			for _, name := range []string{"one", "two"} {
 				require.NoError(t, manager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: name}))

@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -36,7 +38,7 @@ func TestIndependentContinuationPreservesLifecycleConflict(t *testing.T) {
 			t.Run(fmt.Sprintf("write-behind=%t/%s", writeBehind, tc.name), func(t *testing.T) {
 				var b *BadgerEngine
 				if writeBehind {
-					b = newWriteBehindTestEngine(t, time.Hour)
+					b, _ = newWriteBehindTestEngine(t, t, time.Hour)
 				} else {
 					b = createTestBadgerEngine(t)
 				}

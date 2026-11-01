@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/binary"
@@ -51,6 +53,7 @@ func TestCatalogV4ProcessInterruptionAndReopen(t *testing.T) {
 	cfg := DefaultConfig()
 	manager, err := NewDatabaseManager(t.Context(), inner, cfg)
 	require.NoError(t, err)
+	_, closeManager := fixtureowner.OwnWithClose(t, manager)
 	ref := ConstituentRef{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://synthetic-user:synthetic-process-password@127.0.0.1:1?token=enc:v1:literal"}
 	manager.databases["legacy"] = &DatabaseInfo{Name: "legacy", Type: "composite", Status: "online", Constituents: []ConstituentRef{ref}}
 	system := storage.NewNamespacedEngine(inner, "system")
@@ -60,7 +63,7 @@ func TestCatalogV4ProcessInterruptionAndReopen(t *testing.T) {
 	require.NoError(t, err)
 	node.Properties["data"] = string(legacy)
 	require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: node}))
-	require.NoError(t, manager.Close())
+	closeManager()
 	markClosedASCIICatalogFixtureV3(t, dir)
 	before := closedCatalogFixtureDigest(t, dir)
 	child := func(phase string) *exec.Cmd {
@@ -88,15 +91,23 @@ func TestCatalogV4ProcessInterruptionAndReopen(t *testing.T) {
 	require.Error(t, cmd.Wait())
 	// Badger must replay its process-crash WAL before read-only inspection.
 	recoverNative := func() {
-		db, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+		db, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+		var closeDB func()
+		if db != nil {
+			_, closeDB = fixtureowner.OwnWithClose(t, db)
+		}
 		require.NoError(t, err)
-		require.NoError(t, db.Close())
+		closeDB()
 	}
 	recoverNative()
 	require.Equal(t, before, closedCatalogFixtureDigest(t, dir), "interrupted transform changed logical native data")
 	require.NoError(t, child("committed").Run())
 	recoverNative()
-	raw, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil).WithReadOnly(true)))
+	raw, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil).WithReadOnly(true)))
+	var closeRaw func()
+	if raw != nil {
+		_, closeRaw = fixtureowner.OwnWithClose(t, raw)
+	}
 	require.NoError(t, err)
 	require.NoError(t, raw.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte{0x10, 0x02})
@@ -110,13 +121,13 @@ func TestCatalogV4ProcessInterruptionAndReopen(t *testing.T) {
 		require.Equal(t, uint64(4), binary.BigEndian.Uint64(value))
 		return nil
 	}))
-	require.NoError(t, raw.Close())
+	closeRaw()
 	inner, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	cfg.RemoteCredentialEncryptionKey = "synthetic-process-upgrade-key"
 	manager, err = NewDatabaseManager(t.Context(), inner, cfg)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	refs, err := manager.GetCompositeConstituents("legacy")
 	require.NoError(t, err)
 	require.Len(t, refs, 1)

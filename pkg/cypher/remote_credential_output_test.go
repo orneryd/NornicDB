@@ -1,21 +1,22 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
-	"strings"
-	"testing"
-	"time"
-
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
 )
 
 type remoteOutputConstituents struct {
@@ -82,7 +83,7 @@ func TestCompositeRemoteCredentialOutput(t *testing.T) {
 				if err != nil {
 					t.Fatal("manager setup failed; details withheld")
 				}
-				defer manager.Close()
+				fixtureowner.Own(t, manager)
 				engine, err := manager.GetStorage("nornic")
 				if err != nil {
 					t.Fatal("storage setup failed")

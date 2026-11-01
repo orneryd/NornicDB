@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
@@ -10,10 +12,11 @@ import (
 
 func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	dir := t.TempDir()
-	open := func() (*BadgerEngine, *WAL) {
+	open := func() (*BadgerEngine, *WAL, func()) {
 		b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+		var closeEngine func()
 		if b != nil {
-			fixtureowner.Own(t, b)
+			_, closeEngine = fixtureowner.OwnWithClose(t, b)
 		}
 		require.NoError(t, err)
 		cfg := DefaultWALConfig()
@@ -21,9 +24,9 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 		w, err := NewWAL(cfg.Dir, cfg)
 		require.NoError(t, err)
 		b.SetBufferedCommitWAL(w)
-		return b, w
+		return b, w, closeEngine
 	}
-	b, w := open()
+	b, w, closeEngine := open()
 	tx, err := b.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
@@ -65,8 +68,9 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	}
 	require.Len(t, versions, 3)
 	crashClose(t, b, w)
-	b, w = open()
-	t.Cleanup(func() { _ = w.Close(); _ = b.Close() })
+	closeEngine()
+	b, w, closeEngine = open()
+	t.Cleanup(func() { _ = w.Close(); closeEngine() })
 	count, err := RecoverBufferedCommits(b, w)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
@@ -90,7 +94,7 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	b.edgeCacheMu.Unlock()
 	check("evicted")
 	require.NoError(t, w.Close())
-	require.NoError(t, b.Close())
-	b, w = open()
+	closeEngine()
+	b, w, closeEngine = open()
 	check("reopened")
 }

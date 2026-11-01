@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -22,10 +24,14 @@ func graphOnlyCatalogUpgradeV4() *CatalogUpgradeV4 {
 	}}
 }
 
-func catalogV4Engine(t *testing.T, plan *CatalogUpgradeV4) (*BadgerEngine, string) {
+func catalogV4Engine(t *testing.T, plan *CatalogUpgradeV4) (*BadgerEngine, string, func()) {
 	t.Helper()
 	dir := t.TempDir()
-	engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true}))
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true}))
+	var closeEngine func()
+	if engine != nil {
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
+	}
 	require.NoError(t, err)
 	// Construct the pinned V3 fixture after opening the test engine. These
 	// bodies use the unchanged V3 codec; the tested arm must advance its marker.
@@ -35,7 +41,7 @@ func catalogV4Engine(t *testing.T, plan *CatalogUpgradeV4) (*BadgerEngine, strin
 	}
 	require.NoError(t, engine.writeSchemaVersion(storageVersionEdgeAdjacencyV3))
 	engine.storageVersion = storageVersionEdgeAdjacencyV3
-	return engine, dir
+	return engine, dir, closeEngine
 }
 func catalogV4Snapshot(t *testing.T, b *BadgerEngine) map[string][]byte {
 	t.Helper()
@@ -87,7 +93,7 @@ func TestCatalogUpgradeV4AtomicPayloadAndVersion(t *testing.T) {
 		require.Equal(t, `{"secret":"old"}`, data)
 		return `{"secret":"encrypted"}`, true, nil
 	}}
-	b, dir := catalogV4Engine(t, plan)
+	b, dir, closeB := catalogV4Engine(t, plan)
 	catalogV4Seed(t, b, id, `{"secret":"old"}`)
 	catalogV4Seed(t, b, "tenant:databases:metadata", `{"secret":"old"}`)
 	catalogV4Seed(t, b, "configured:decoy", `{"secret":"old"}`)
@@ -95,8 +101,11 @@ func TestCatalogUpgradeV4AtomicPayloadAndVersion(t *testing.T) {
 	// migration snapshot. The fixture uses the unchanged V3 native body codec;
 	// its pinned V3 marker is installed after this normal startup preparation.
 	require.NoError(t, b.writeSchemaVersion(storageVersionCurrent))
-	require.NoError(t, b.Close())
-	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true, CatalogUpgradeV4: plan}))
+	closeB()
+	b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true, CatalogUpgradeV4: plan}))
+	if b != nil {
+		_, closeB = fixtureowner.OwnWithClose(t, b)
+	}
 	require.NoError(t, err)
 	require.NoError(t, b.writeSchemaVersion(storageVersionEdgeAdjacencyV3))
 	b.storageVersion = storageVersionEdgeAdjacencyV3
@@ -131,7 +140,7 @@ func TestCatalogUpgradeV4AtomicPayloadAndVersion(t *testing.T) {
 	require.NoError(t, catalogV4Run(b, t.Context()))
 	require.Equal(t, 1, calls, "V4 does not transform twice")
 	require.Equal(t, after, catalogV4Snapshot(t, b))
-	require.NoError(t, b.Close())
+	closeB()
 	reopened, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true}))
 	require.NoError(t, err)
 	require.Equal(t, after, catalogV4Snapshot(t, reopened), "reopen preserves the complete settled image")
@@ -160,7 +169,7 @@ func TestCatalogUpgradeV4RejectsWithoutWrites(t *testing.T) {
 			} else if kind == "empty-id" {
 				plan.NodeID = ""
 			}
-			b, _ := catalogV4Engine(t, plan)
+			b, _, _ := catalogV4Engine(t, plan)
 			catalogV4Seed(t, b, id, `{"old":1}`)
 			if kind == "wrong-data-type" {
 				node, err := b.GetNode(id)
@@ -200,7 +209,7 @@ func TestCatalogUpgradeV4MissingAndUnchanged(t *testing.T) {
 		t.Run(fmt.Sprintf("missing=%v", missing), func(t *testing.T) {
 			calls := 0
 			id := NodeID("configured:catalog")
-			b, _ := catalogV4Engine(t, &CatalogUpgradeV4{NodeID: id, Transform: func(_ context.Context, data string) (string, bool, error) {
+			b, _, _ := catalogV4Engine(t, &CatalogUpgradeV4{NodeID: id, Transform: func(_ context.Context, data string) (string, bool, error) {
 				calls++
 				return "ignored replacement", false, nil
 			}})
@@ -228,7 +237,7 @@ func TestCatalogUpgradeV4PendingTransformHasNoPartialPublication(t *testing.T) {
 	id := NodeID("configured:catalog")
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
-	b, _ := catalogV4Engine(t, &CatalogUpgradeV4{NodeID: id, Transform: func(_ context.Context, data string) (string, bool, error) {
+	b, _, _ := catalogV4Engine(t, &CatalogUpgradeV4{NodeID: id, Transform: func(_ context.Context, data string) (string, bool, error) {
 		close(entered)
 		<-release
 		return `{"new":1}`, true, nil
@@ -262,7 +271,7 @@ func TestCatalogUpgradeV4GrowthAndUnsupportedVectorImage(t *testing.T) {
 	for _, vectors := range []bool{false, true} {
 		t.Run(fmt.Sprintf("vectors=%v", vectors), func(t *testing.T) {
 			id := NodeID("configured:catalog")
-			b, _ := catalogV4Engine(t, &CatalogUpgradeV4{NodeID: id, Transform: func(context.Context, string) (string, bool, error) {
+			b, _, _ := catalogV4Engine(t, &CatalogUpgradeV4{NodeID: id, Transform: func(context.Context, string) (string, bool, error) {
 				return strings.Repeat("x", maxNodeSize+1), true, nil
 			}})
 			if vectors {

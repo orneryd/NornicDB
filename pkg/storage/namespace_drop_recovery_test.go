@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -20,16 +22,16 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 			for _, resolution := range []string{"retry", "reopen", "restore"} {
 				t.Run(fmt.Sprintf("buffered=%v/%s/%s", buffered, phase, resolution), func(t *testing.T) {
 					dir := t.TempDir()
-					open := func() *BadgerEngine {
+					open := func() (*BadgerEngine, func()) {
 						b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+						var closeFixture func()
 						if b != nil {
-							fixtureowner.Own(t, b)
-							t.Cleanup(func() { _ = b.Close() })
+							_, closeFixture = fixtureowner.OwnWithClose(t, b)
 						}
 						require.NoError(t, err)
-						return b
+						return b, closeFixture
 					}
-					b := open()
+					b, closeB := open()
 					require.NoError(t, b.GetSchemaForNamespace("victim").AddUniqueConstraint("uid", "Person", "uid"))
 					tx, err := b.BeginTransaction()
 					require.NoError(t, err)
@@ -131,8 +133,8 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 						require.EqualValues(t, 1, edges)
 						require.EqualValues(t, 1, resets.Load())
 					case "reopen":
-						require.NoError(t, b.Close())
-						b = open()
+						closeB()
+						b, closeB = open()
 					case "restore":
 						backup := filepath.Join(t.TempDir(), "pending.backup")
 						require.NoError(t, b.Backup(backup))
@@ -179,7 +181,6 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 
 func TestNamespaceDropIntentUsesAtomicLargeWriter(t *testing.T) {
 	b := newTestEngine(t)
-	defer b.Close()
 	lease, err := b.beginLifecycleWrite(context.Background(), "")
 	require.NoError(t, err)
 	defer lease.finish()

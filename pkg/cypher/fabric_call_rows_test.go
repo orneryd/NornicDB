@@ -1,18 +1,18 @@
 package cypher
 
-import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
 
+import (
 	"context"
 	"encoding/json"
-	"os"
-	"strings"
-	"testing"
-
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"os"
+	"strings"
+	"testing"
 )
 
 func newFabricCallRowsExecutor(t testing.TB, narrow ...bool) *StorageExecutor {
@@ -30,7 +30,7 @@ func newFabricCallRowsExecutor(t testing.TB, narrow ...bool) *StorageExecutor {
 	}
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, config)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
+	runtimeFixtureOwner.Own(t, mgr)
 	for _, db := range []string{"one", "two"} {
 		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db}))
 		store, err := mgr.GetStorage(db)

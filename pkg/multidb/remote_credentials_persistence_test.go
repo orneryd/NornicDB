@@ -1,5 +1,7 @@
 package multidb
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"crypto/sha256"
@@ -32,7 +34,7 @@ func TestSolReview1513PersistedCredentials(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer manager.Close()
+				fixtureowner.Own(t, manager)
 				ref := ConstituentRef{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://127.0.0.1:1"}
 				if form != "uri" {
 					ref.AuthMode, ref.User, ref.Password = "user_password", "admin", password
@@ -86,6 +88,7 @@ func TestRemoteCredentialPersistenceMigration(t *testing.T) {
 					config.RemoteCredentialEncryptionKey = key
 					manager, err := NewDatabaseManager(t.Context(), inner, config)
 					require.NoError(t, err)
+					_, closeManager := fixtureowner.OwnWithClose(t, manager)
 					ref := ConstituentRef{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://127.0.0.1:1"}
 					if form == "explicit" || form == "both" || form == "encrypted-password" {
 						ref.AuthMode, ref.User, ref.Password = "user_password", "admin", password
@@ -111,7 +114,7 @@ func TestRemoteCredentialPersistenceMigration(t *testing.T) {
 					require.NoError(t, err)
 					node.Properties["data"] = string(legacy)
 					require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: node}))
-					require.NoError(t, manager.Close())
+					closeManager()
 					markClosedASCIICatalogFixtureV3(t, dir)
 
 					if route == "native-backup" {
@@ -119,12 +122,16 @@ func TestRemoteCredentialPersistenceMigration(t *testing.T) {
 						// never reopened through storage.NewBadgerEngine, which would run
 						// the catalog upgrade gate and consume it before the proof.
 						sourceDigest := closedCatalogFixtureDigest(t, dir)
-						sourceDB, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil).WithReadOnly(true).WithMemTableSize(8 << 20).WithBlockCacheSize(8 << 20)))
+						sourceDB, err := fixtureowner.TrackResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil).WithReadOnly(true).WithMemTableSize(8 << 20).WithBlockCacheSize(8 << 20)))
+						var closeSourceDB func()
+						if sourceDB != nil {
+							_, closeSourceDB = fixtureowner.OwnWithClose(t, sourceDB)
+						}
 						require.NoError(t, err)
 						var corpus bytes.Buffer
 						_, err = sourceDB.Backup(&corpus, 0)
 						require.NoError(t, err)
-						require.NoError(t, sourceDB.Close())
+						closeSourceDB()
 						require.Equal(t, sourceDigest, closedCatalogFixtureDigest(t, dir))
 						backupPath := filepath.Join(t.TempDir(), "catalog-v3.backup")
 						require.NoError(t, os.WriteFile(backupPath, corpus.Bytes(), 0o600))
@@ -133,10 +140,14 @@ func TestRemoteCredentialPersistenceMigration(t *testing.T) {
 						backupFileDigest := sha256.Sum256(backupBytes)
 						// No DatabaseManager is attached while the target restores.
 						restoredDir := t.TempDir()
-						restored, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(restoredDir))
+						restored, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(restoredDir))
+						var closeRestored func()
+						if restored != nil {
+							_, closeRestored = fixtureowner.OwnWithClose(t, restored)
+						}
 						require.NoError(t, err)
 						require.NoError(t, restored.Restore(backupPath))
-						require.NoError(t, restored.Close())
+						closeRestored()
 						dir = restoredDir
 						t.Cleanup(func() {
 							reread, err := os.ReadFile(backupPath)
@@ -163,6 +174,7 @@ func TestRemoteCredentialPersistenceMigration(t *testing.T) {
 						}
 						manager, err = NewDatabaseManager(t.Context(), inner, config)
 						require.NoError(t, err)
+						_, closeManager = fixtureowner.OwnWithClose(t, manager)
 						stored, err := manager.GetCompositeConstituents("legacy")
 						require.NoError(t, err)
 						require.True(t, isEncryptedRemoteCredential(stored[0].ConnectionV1))
@@ -177,17 +189,18 @@ func TestRemoteCredentialPersistenceMigration(t *testing.T) {
 						require.NotContains(t, node.Properties["data"], password)
 						_, err = manager.GetStorage("legacy.r")
 						require.NoError(t, err)
-						require.NoError(t, manager.Close())
+						closeManager()
 					}
 					inner, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 					require.NoError(t, err)
 					config.RemoteCredentialEncryptionKey = "synthetic-wrong-key-738192"
 					manager, err = NewDatabaseManager(t.Context(), inner, config)
 					require.NoError(t, err)
+					_, closeManager = fixtureowner.OwnWithClose(t, manager)
 					_, err = manager.GetStorage("legacy.r")
 					require.Error(t, err)
 					require.NotContains(t, err.Error(), password)
-					require.NoError(t, manager.Close())
+					closeManager()
 				})
 			}
 		})
@@ -200,7 +213,7 @@ func TestRemoteCredentialPersistenceEveryWriter(t *testing.T) {
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(t.Context(), inner, config)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	const password = "synthetic-writer-password-619382"
 	// An unrelated metadata write must never perform an implicit upgrade.
 	manager.databases["legacy"] = &DatabaseInfo{Name: "legacy", Type: "composite", Status: "online", Constituents: []ConstituentRef{{Alias: "r", Type: "remote", URI: "http://admin:" + password + "@127.0.0.1:1"}}}
@@ -226,7 +239,6 @@ func TestRemoteCredentialPersistenceInput(t *testing.T) {
 			}
 			manager, _, err := newCredentialPersistenceFixture(t, config)
 			require.NoError(t, err)
-			defer manager.Close()
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "input", []ConstituentRef{{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: test.uri, AuthMode: test.mode, User: test.user, Password: test.password}}))
 			_, err = manager.GetStorage("input.r")
 			require.NoError(t, err)
@@ -245,6 +257,7 @@ func TestRemoteCredentialPersistenceUpgrade(t *testing.T) {
 			config.RemoteCredentialEncryptionKey = "synthetic-legacy-key-319827"
 			manager, err := NewDatabaseManager(t.Context(), inner, config)
 			require.NoError(t, err)
+			_, closeManager := fixtureowner.OwnWithClose(t, manager)
 			manager.databases["legacy"] = &DatabaseInfo{Name: "legacy", Type: "composite", Status: "online", Constituents: []ConstituentRef{{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://admin:" + password + "@127.0.0.1:1"}}}
 			node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
 			require.NoError(t, err)
@@ -252,7 +265,7 @@ func TestRemoteCredentialPersistenceUpgrade(t *testing.T) {
 			require.NoError(t, err)
 			node.Properties["data"] = string(data)
 			require.NoError(t, storage.NewNamespacedEngine(inner, "system").UpdateNode(storage.NodeUpdateRequest{After: node}))
-			require.NoError(t, manager.Close())
+			closeManager()
 			inner, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 			require.NoError(t, err)
 			base := &leaderAwareEngine{opaqueEntityEngine: &opaqueEntityEngine{Engine: inner}, leader: failure != "read-only"}
@@ -273,6 +286,7 @@ func TestRemoteCredentialPersistenceUpgrade(t *testing.T) {
 			defer log.SetOutput(previous)
 			manager, err = NewDatabaseManager(t.Context(), base, config)
 			require.NoError(t, err)
+			_, closeManager = fixtureowner.OwnWithClose(t, manager)
 			_, err = manager.GetStorage("legacy.r")
 			require.NoError(t, err)
 			require.NotContains(t, logs.String(), "reopen on writable storage to migrate")
@@ -284,7 +298,7 @@ func TestRemoteCredentialPersistenceUpgrade(t *testing.T) {
 			require.NoError(t, err)
 			require.Contains(t, node.Properties["data"], password)
 			// Only an explicit native upgrade transforms this constructed V3 catalog.
-			require.NoError(t, manager.Close())
+			closeManager()
 			markClosedASCIICatalogFixtureV3(t, dir)
 			if failure == "missing-key" {
 				before := closedCatalogFixtureDigest(t, dir)
@@ -303,13 +317,14 @@ func TestRemoteCredentialPersistenceUpgrade(t *testing.T) {
 			logs.Reset()
 			manager, err = NewDatabaseManager(t.Context(), base, config)
 			require.NoError(t, err)
+			_, closeManager = fixtureowner.OwnWithClose(t, manager)
 			_, err = manager.GetStorage("legacy.r")
 			require.NoError(t, err)
 			node, err = storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
 			require.NoError(t, err)
 			require.NotContains(t, node.Properties["data"], password)
 			require.NotContains(t, logs.String(), "legacy remote credentials remain unencrypted")
-			require.NoError(t, manager.Close())
+			closeManager()
 		})
 	}
 }
@@ -321,7 +336,6 @@ func TestRemoteCredentialPersistenceNewInputRequiresKey(t *testing.T) {
 			t.Run(writer+"/"+form, func(t *testing.T) {
 				manager, inner, err := newCredentialPersistenceFixture(t, DefaultConfig())
 				require.NoError(t, err)
-				defer manager.Close()
 				ref := ConstituentRef{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://127.0.0.1:1"}
 				if form != "uri" {
 					ref.AuthMode, ref.User, ref.Password = "user_password", "admin", "synthetic-new-password-813792"
@@ -353,5 +367,8 @@ func newCredentialPersistenceFixture(t *testing.T, cfg *Config) (*DatabaseManage
 	t.Helper()
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(t.Context(), inner, cfg)
+	if manager != nil {
+		fixtureowner.Own(t, manager)
+	}
 	return manager, inner, err
 }

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -113,8 +115,9 @@ func TestPendingCandidatesFailedEngineWrite(t *testing.T) {
 func TestPendingCandidatesRecoveryAndRestore(t *testing.T) {
 	path := t.TempDir()
 	e, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	var closeE func()
 	if e != nil {
-		fixtureowner.Own(t, e)
+		_, closeE = fixtureowner.OwnWithClose(t, e)
 	}
 	require.NoError(t, err)
 	e.SetEmbeddingsEnabled(true)
@@ -122,7 +125,7 @@ func TestPendingCandidatesRecoveryAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	backup := filepath.Join(t.TempDir(), "pending.backup")
 	require.NoError(t, e.Backup(backup))
-	require.NoError(t, e.Close())
+	closeE()
 	e, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 	require.NoError(t, err)
 	defer e.Close()
@@ -162,8 +165,7 @@ func TestPendingCandidatesDeletedAndChangedSource(t *testing.T) {
 func TestPendingCandidatesLargeCommitPublication(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rollback=%t", fail), func(t *testing.T) {
-			e := openLargeCommitTestEngine(t, t.TempDir())
-			defer e.Close()
+			e, _ := openLargeCommitTestEngine(t, t.TempDir())
 			e.SetEmbeddingsEnabled(true)
 			for i := 0; i < 3; i++ {
 				_, err := e.CreateNode(pendingCandidateNode(i))
@@ -301,8 +303,9 @@ func TestPendingCandidatesWALReplay(t *testing.T) {
 func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 	path := t.TempDir()
 	e, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	var closeE func()
 	if e != nil {
-		fixtureowner.Own(t, e)
+		_, closeE = fixtureowner.OwnWithClose(t, e)
 	}
 	require.NoError(t, err)
 	e.SetEmbeddingsEnabled(true)
@@ -319,7 +322,7 @@ func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 	require.NoError(t, e.db.syncIfPersistent())
 	// Model the exact crash boundary: the marker is durable but the commit
 	// writer's volatile hint publication has not run. Discard all RAM state.
-	require.NoError(t, e.Close())
+	closeE()
 	e, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 	require.NoError(t, err)
 	defer e.Close()
@@ -330,8 +333,9 @@ func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 func TestPendingCandidatesRestartLargeBacklog(t *testing.T) {
 	path := t.TempDir()
 	e, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	var closeE func()
 	if e != nil {
-		fixtureowner.Own(t, e)
+		_, closeE = fixtureowner.OwnWithClose(t, e)
 	}
 	require.NoError(t, err)
 	e.SetEmbeddingsEnabled(true)
@@ -341,7 +345,7 @@ func TestPendingCandidatesRestartLargeBacklog(t *testing.T) {
 		nodes[i] = pendingCandidateNode(i)
 	}
 	require.NoError(t, e.BulkCreateNodes(nodes))
-	require.NoError(t, e.Close())
+	closeE()
 	e, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 	require.NoError(t, err)
 	defer e.Close()

@@ -1,21 +1,22 @@
 package bolt
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/config"
-	"github.com/orneryd/nornicdb/pkg/cypher"
-	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
 // compositeRoutingManager is the part of the database manager composite
@@ -94,7 +95,7 @@ func TestCompositeExplicitTx_FailureRollsBackRemoteParticipant(t *testing.T) {
 					},
 				})
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = mgr.Close() })
+				fixtureowner.Own(t, mgr)
 				require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_rk", []multidb.ConstituentRef{
 					{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: fmt.Sprintf("bolt://127.0.0.1:%d", port), AuthMode: "oidc_forwarding"},
 				}))
@@ -267,7 +268,7 @@ func TestCompositeExplicitTx_FailureDoesNotWaitOnUnresponsiveRemote(t *testing.T
 				},
 			})
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = mgr.Close() })
+			fixtureowner.Own(t, mgr)
 			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "st_local"}))
 			local, err := mgr.GetStorage("st_local")
 			require.NoError(t, err)

@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -16,7 +18,6 @@ import (
 
 func TestReviewerR6FinalDrainDoesNotPublishReadiness(t *testing.T) {
 	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)

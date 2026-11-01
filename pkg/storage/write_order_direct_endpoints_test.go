@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"testing"
 	"time"
@@ -48,7 +50,7 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := newWriteBehindTestEngine(t, time.Hour)
+			b, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			for id, label := range map[NodeID]string{"test:n0": "A", "test:n1": "B", "test:n2": "D"} {
 				_, err := b.CreateNode(&Node{ID: id, Labels: []string{label}})
 				require.NoError(t, err)

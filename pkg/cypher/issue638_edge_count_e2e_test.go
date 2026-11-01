@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 package cypher
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"testing"
-	"time"
-
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"testing"
+	"time"
 )
 
 // Issue #638 e2e regression: every relationship-count shape the issue
@@ -218,7 +219,6 @@ func TestOptionalOrderCountThroughAsyncStorage(t *testing.T) {
 	}
 	require.NoError(t, err)
 	async := base
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
 	store := storage.NewNamespacedEngine(async, "nornic")
 	for _, node := range []*storage.Node{
 		{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "With orders"}},

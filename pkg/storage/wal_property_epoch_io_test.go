@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bufio"
 	"bytes"
@@ -178,7 +180,7 @@ func TestWALPropertyEpochSealingFailureKeepsControls(t *testing.T) {
 func TestWALPropertyEpochFailedSyncCannotPublishCleanProof(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	dir := t.TempDir()
-	dest := reviewBindingEngine(t, dir)
+	dest, _ := reviewBindingEngine(t, dir)
 	require.NoError(t, dest.beginSemanticPropertyRestore())
 	wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
@@ -186,22 +188,22 @@ func TestWALPropertyEpochFailedSyncCannotPublishCleanProof(t *testing.T) {
 	require.NoError(t, wal.file.Close())
 	require.Error(t, dest.Close())
 	_ = wal.Close()
-	dest = reviewBindingEngine(t, dir)
+	dest, _ = reviewBindingEngine(t, dir)
 	require.False(t, dest.walPropertySource.clean)
 	require.True(t, dest.walPropertySource.foreign)
 }
 
 func TestWALPropertyEpochCorruptNativeIdentityRejectsOpenAndRestore(t *testing.T) {
 	dir := t.TempDir()
-	source := reviewBindingEngine(t, dir)
+	source, closeSource := reviewBindingEngine(t, dir)
 	require.NoError(t, source.db.Update(func(tx *badger.Txn) error { return tx.Set(walPropertyIdentityKey, []byte("not an identity")) }))
 	backup := filepath.Join(t.TempDir(), "invalid-identity.backup")
 	require.NoError(t, source.Backup(backup))
-	require.NoError(t, source.Close())
+	closeSource()
 	opened, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.ErrorContains(t, err, "property dictionary identity")
 	require.Nil(t, opened)
-	dest := reviewBindingEngine(t, t.TempDir())
+	dest, _ := reviewBindingEngine(t, t.TempDir())
 	require.ErrorContains(t, dest.Restore(backup), "property dictionary identity")
 }
 

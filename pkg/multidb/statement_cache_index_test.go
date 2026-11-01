@@ -1,5 +1,7 @@
 package multidb
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,7 +15,7 @@ func TestStatementCacheIndexCleanupOutsideMetadataLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	if err := manager.CreateAlias(t.Context(), "index_alias", "nornic"); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func TestStatementCacheIndexBindCloseRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	for range 32 {
 		var index StatementCacheIndex
 		var workers sync.WaitGroup

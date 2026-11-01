@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"bytes"
 	"encoding/gob"
@@ -438,8 +440,9 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 	// Build a V1 data directory: open, write a node, force version 1, close.
 	{
 		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		var closeEng func()
 		if eng != nil {
-			fixtureowner.Own(t, eng)
+			_, closeEng = fixtureowner.OwnWithClose(t, eng)
 		}
 		require.NoError(t, err)
 		writeV1NodeBody(t, eng, &Node{
@@ -447,7 +450,7 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 			Properties: map[string]any{"k": "v"},
 		})
 		require.NoError(t, eng.writeSchemaVersion(storageVersionV1))
-		require.NoError(t, eng.Close())
+		closeEng()
 	}
 
 	// Reopen WITHOUT the upgrade flag — must refuse.
@@ -485,14 +488,15 @@ func TestRunOnStartMigrations_ChainsV0ThroughV2(t *testing.T) {
 	// Build a V0 store: open, force version 0, write a legacy-shaped node.
 	{
 		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		var closeEng func()
 		if eng != nil {
-			fixtureowner.Own(t, eng)
+			_, closeEng = fixtureowner.OwnWithClose(t, eng)
 		}
 		require.NoError(t, err)
 		require.NoError(t, eng.writeSchemaVersion(0))
 
 		writeLegacyNodeBytes(t, eng, "test:legacy", 0.5, time.Unix(1700000000, 0).UTC(), 99)
-		require.NoError(t, eng.Close())
+		closeEng()
 	}
 
 	// Reopen with the upgrade flag — both arms run.

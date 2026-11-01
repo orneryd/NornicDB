@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"testing"
 
@@ -9,10 +11,7 @@ import (
 
 func TestBadgerEngineDataDirFreeSpace(t *testing.T) {
 	t.Run("engine data dir reports free space", func(t *testing.T) {
-		engine, _ := createTestBadgerEngineOnDisk(t)
-		t.Cleanup(func() {
-			require.NoError(t, engine.Close())
-		})
+		engine, _, _ := createTestBadgerEngineOnDisk(t)
 
 		free, err := engine.DataDirFreeSpace()
 		require.NoError(t, err)

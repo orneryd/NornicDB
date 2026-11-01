@@ -1,13 +1,14 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
-	"testing"
-	"time"
-
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/stretchr/testify/require"
+	"testing"
+	"time"
 )
 
 func pr1655PresenceLifetimeEngine(t *testing.T) (*BadgerEngine, *memory.Policy) {
@@ -19,7 +20,7 @@ func pr1655PresenceLifetimeEngine(t *testing.T) (*BadgerEngine, *memory.Policy) 
 	require.NoError(t, policy.Refresh())
 	// These cases explicitly control each flush and inspect its exact generation.
 	// Adaptive background draining may replace that generation before capture.
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{
+	engine, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{
 		lowMemory: true, manualDrain: true, memoryPolicy: policy,
 	})
 	return engine, policy

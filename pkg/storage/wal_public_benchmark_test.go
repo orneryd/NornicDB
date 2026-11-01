@@ -1,5 +1,7 @@
 package storage_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"os"
@@ -13,8 +15,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// This file can be copied unchanged onto the release base. It deliberately
-// uses only public APIs: no bufferedCommit, dictionary bindings, private
+// The workload uses public storage APIs; fixture ownership supplies teardown.
+// It deliberately avoids storage internals: no bufferedCommit, dictionary bindings, private
 // importer, crash-close helper, or AppendBufferedCommit signature dependency.
 // One benchmark operation is 32 real write-behind commits or recovered records.
 // Use a bounded sample (for example -benchtime=8x); setup, validation and file
@@ -91,12 +93,16 @@ func walPublicTmpfs(b *testing.B) string {
 	return root
 }
 
-func walPublicOpen(b *testing.B, path string) *storage.BadgerEngine {
-	store, err := fixtureowner.OwnResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+func walPublicOpen(b *testing.B, path string) (*storage.BadgerEngine, func()) {
+	store, err := fixtureowner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir: path, WriteBehind: true, WriteBehindInterval: time.Hour, WriteBehindMaxOps: 2 * walPublicBatch,
 	}))
+	var closeStore func()
+	if store != nil {
+		_, closeStore = fixtureowner.OwnWithClose(b, store)
+	}
 	walPublicCheck(b, err)
-	return store
+	return store, closeStore
 }
 
 func walPublicCheck(b *testing.B, err error) {
@@ -139,12 +145,7 @@ func walPublicValidate(b *testing.B, store *storage.BadgerEngine, nodes []*stora
 
 func walPublicSource(b *testing.B, root string, nodes []*storage.Node, keys int, persistedNames, timed bool) (string, string) {
 	storeDir := filepath.Join(root, "store")
-	store := walPublicOpen(b, storeDir)
-	defer func() {
-		if store != nil {
-			_ = store.Close()
-		}
-	}()
+	store, _ := walPublicOpen(b, storeDir)
 	seed := &storage.Node{ID: "walbench:seed"}
 	if persistedNames {
 		seed.Properties = nodes[0].Properties
@@ -160,7 +161,7 @@ func walPublicSource(b *testing.B, root string, nodes []*storage.Node, keys int,
 	wal, err := storage.NewWAL(walDir, storage.DefaultWALConfig())
 	walPublicCheck(b, err)
 	defer func() { _ = wal.Close() }()
-	journal := storage.NewWALEngine(store, wal)
+	_, closeJournal := fixtureowner.OwnWithClose(b, storage.NewWALEngine(store, wal))
 	if timed {
 		b.StartTimer()
 	}
@@ -170,8 +171,7 @@ func walPublicSource(b *testing.B, root string, nodes []*storage.Node, keys int,
 	}
 	walPublicCheck(b, store.FlushWriteBehind(nil))
 	walPublicValidate(b, store, nodes, keys)
-	walPublicCheck(b, journal.Close())
-	store = nil
+	closeJournal()
 	entries, err := storage.ReadWALEntriesFromDir(walDir)
 	walPublicCheck(b, err)
 	if len(entries) != walPublicBatch {
@@ -190,15 +190,9 @@ func walPublicRecover(b *testing.B, dir, walDir, backup string, nodes []*storage
 	// Graceful Close flushes write-behind. Restore a public native backup of
 	// the pre-WAL state, then close it, so the timed reopen must actually
 	// recover all 32 records rather than merely skip already-flushed markers.
-	store := walPublicOpen(b, dir)
-	defer func() {
-		if store != nil {
-			_ = store.Close()
-		}
-	}()
+	store, closeStore := walPublicOpen(b, dir)
 	walPublicCheck(b, store.Restore(backup))
-	walPublicCheck(b, store.Close())
-	store = nil
+	closeStore()
 	var wal *storage.WAL
 	defer func() {
 		if wal != nil {
@@ -206,7 +200,7 @@ func walPublicRecover(b *testing.B, dir, walDir, backup string, nodes []*storage
 		}
 	}()
 	b.StartTimer()
-	store = walPublicOpen(b, dir)
+	store, closeStore = walPublicOpen(b, dir)
 	applied := 0
 	if mode == "reopen" {
 		var err error
@@ -228,8 +222,7 @@ func walPublicRecover(b *testing.B, dir, walDir, backup string, nodes []*storage
 	}
 	walPublicValidate(b, store, nodes, keys)
 	b.StartTimer()
-	walPublicCheck(b, store.Close())
-	store = nil
+	closeStore()
 	if wal != nil {
 		walPublicCheck(b, wal.Close())
 		wal = nil

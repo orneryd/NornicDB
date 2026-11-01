@@ -1,5 +1,7 @@
 package testfixture
 
+// Author of fixture cleanup changes: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"fmt"
 	"go/ast"
@@ -21,7 +23,8 @@ type constructorGap struct {
 }
 
 // This lint decides only whether a constructor enters the runtime registry.
-// It does not inspect bindings, reassignment, Close, defer or control flow.
+// It accepts inline entry or an immediate Track of the same first-result binding.
+// It does not inspect later reassignment, Close, defer or control flow.
 func constructorRegistrationGaps(set *token.FileSet, file *ast.File, localStorage, allowProcess bool) []constructorGap {
 	imports, dots := map[string]string{}, map[string]bool{}
 	for _, spec := range file.Imports {
@@ -43,10 +46,14 @@ func constructorRegistrationGaps(set *token.FileSet, file *ast.File, localStorag
 	}
 	var gaps []constructorGap
 	var stack []ast.Node
+	parents := map[ast.Node]ast.Node{}
 	ast.Inspect(file, func(node ast.Node) bool {
 		if node == nil {
 			stack = stack[:len(stack)-1]
 			return false
+		}
+		if len(stack) != 0 {
+			parents[node] = stack[len(stack)-1]
 		}
 		stack = append(stack, node)
 		reference, ok := node.(ast.Expr)
@@ -89,6 +96,12 @@ func constructorRegistrationGaps(set *token.FileSet, file *ast.File, localStorag
 					registered = p == fixtureImport && (n == "TrackResult" || n == "OwnResult" || n == "OwnResult3")
 				}
 			}
+		}
+		if !registered && call != nil {
+			registered = fixtureAdjacentConstructorTrack(call, parents, func(expression ast.Expr) bool {
+				path, name := fixtureCallTarget(expression, imports, dots, false)
+				return path == fixtureImport && name == "Track"
+			})
 		}
 		if !registered {
 			gaps = append(gaps, constructorGap{reference.Pos(), factory})

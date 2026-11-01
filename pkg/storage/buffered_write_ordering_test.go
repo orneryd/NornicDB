@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -100,7 +102,6 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 					t.Run(fmt.Sprintf("write-behind=%v/%s/%s/%s", buffered, r.name, kind, op), func(t *testing.T) {
 						b, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 						require.NoError(t, err)
-						t.Cleanup(func() { _ = b.Close() })
 						if buffered {
 							// The order of the writes decides, not a flush racing them.
 							b.writeBehind.SetDelayBounds(time.Hour, time.Hour)
@@ -182,7 +183,6 @@ func TestSynchronousDeleteRemovesBufferedRelationships(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			b, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			b.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 			for _, id := range []NodeID{"test:a", "test:b"} {
 				_, err := b.CreateNode(&Node{ID: id})

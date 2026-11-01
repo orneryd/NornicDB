@@ -1,5 +1,9 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"testing"
 	"time"
@@ -10,9 +14,8 @@ import (
 
 func TestPendingCandidatesBufferedFixtureOwnsWALState(t *testing.T) {
 	t.Cleanup(config.WithWALDisabled())
-	e := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
+	e, _ := newWriteBehindTestEngine(t, t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	wal := e.bufferedCommitWAL
-	t.Cleanup(func() { _ = e.Close(); _ = wal.Close() })
 	require.True(t, config.IsWALEnabled(), "the shared WAL fixture must enable its required feature independently of prior tests")
 	tx, err := e.BeginTransaction()
 	require.NoError(t, err)

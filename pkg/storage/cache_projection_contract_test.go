@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -17,9 +19,12 @@ func TestCacheProjectionNestedOwnership(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		t.Run(fmt.Sprintf("buffered=%v", buffered), func(t *testing.T) {
 			dir := t.TempDir()
-			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+			var closeB func()
+			if b != nil {
+				_, closeB = fixtureowner.OwnWithClose(t, b)
+			}
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
 			node := &Node{ID: "test:projection-contract", Labels: []string{"ProjectionContract"}, Properties: map[string]any{
 				"left":    map[string]any{"values": []int64{1, 2}},
 				"right":   map[string]any{"values": []int64{3, 4}},
@@ -72,7 +77,7 @@ func TestCacheProjectionNestedOwnership(t *testing.T) {
 				})
 			}
 			require.NoError(t, b.FlushWriteBehind(nil))
-			require.NoError(t, b.Close())
+			closeB()
 			b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			cold, err := b.GetStoredNode(node.ID)

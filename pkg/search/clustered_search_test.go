@@ -1,21 +1,21 @@
 // Package search tests for K-means clustered search integration
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"strings"
-	"testing"
-
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"strings"
+	"testing"
 )
 
 func newNamespacedMemoryEngine(t *testing.T) storage.Engine {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { base.Close() })
 	return storage.NewNamespacedEngine(base, "nornic")
 }
 

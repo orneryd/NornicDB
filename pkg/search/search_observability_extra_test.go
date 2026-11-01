@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -18,7 +20,6 @@ import (
 
 func TestServiceIndexSizeBytes(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { engine.Close() })
 
 	svc := NewService(engine, 4, nil)
 	require.Equal(t, uint64(0), (*Service)(nil).IndexSizeBytes("hnsw"))
@@ -40,7 +41,6 @@ func TestServiceIndexSizeBytes(t *testing.T) {
 
 func TestObserveSearchStageDirect(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { engine.Close() })
 	svc := NewService(engine, 4, nil)
 	reg := prometheus.NewRegistry()
 	svc.AttachMetrics(observability.NewSearchMetrics(reg, false, &nilSearchProbe{}))

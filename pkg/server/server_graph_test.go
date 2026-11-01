@@ -1,5 +1,7 @@
 package server
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -594,7 +596,6 @@ func TestGraphEdgesForNode_ErrorAndFilterBranches(t *testing.T) {
 	t.Run("outgoing error", func(t *testing.T) {
 		wantErr := fmt.Errorf("outgoing failed")
 		engine := &graphEdgesStubEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), outErr: wantErr}
-		t.Cleanup(func() { _ = engine.Close() })
 
 		_, err := graphEdgesForNode(context.Background(), engine, "n1", "both")
 		require.ErrorIs(t, err, wantErr)
@@ -604,7 +605,6 @@ func TestGraphEdgesForNode_ErrorAndFilterBranches(t *testing.T) {
 	t.Run("context canceled after outgoing lookup", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		engine := &graphEdgesStubEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), cancel: cancel}
-		t.Cleanup(func() { _ = engine.Close() })
 
 		_, err := graphEdgesForNode(ctx, engine, "n1", "both")
 		require.ErrorIs(t, err, context.Canceled)
@@ -614,7 +614,6 @@ func TestGraphEdgesForNode_ErrorAndFilterBranches(t *testing.T) {
 	t.Run("incoming error", func(t *testing.T) {
 		wantErr := fmt.Errorf("incoming failed")
 		engine := &graphEdgesStubEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), inErr: wantErr}
-		t.Cleanup(func() { _ = engine.Close() })
 
 		_, err := graphEdgesForNode(context.Background(), engine, "n1", "both")
 		require.ErrorIs(t, err, wantErr)
@@ -629,7 +628,6 @@ func TestGraphEdgesForNode_ErrorAndFilterBranches(t *testing.T) {
 			outgoing: []*storage.Edge{nil, shared},
 			incoming: []*storage.Edge{nil, shared, incomingOnly},
 		}
-		t.Cleanup(func() { _ = engine.Close() })
 
 		edges, err := graphEdgesForNode(context.Background(), engine, "n1", "both")
 		require.NoError(t, err)
@@ -985,7 +983,6 @@ func TestCollectLatestNeighborhood_CanceledContext(t *testing.T) {
 func TestCollectLatestNeighborhood_SeedAndFilterBranches(t *testing.T) {
 	server := &Server{}
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 	engine := &graphNeighborhoodStubEngine{
 		graphEdgesStubEngine: &graphEdgesStubEngine{
 			Engine: base,
@@ -1027,7 +1024,6 @@ func TestCollectLatestNeighborhood_SeedAndFilterBranches(t *testing.T) {
 func TestCollectLatestNeighborhood_TruncatesSeedListAndPropagatesEdgeError(t *testing.T) {
 	server := &Server{}
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	engine := &graphNeighborhoodStubEngine{
 		graphEdgesStubEngine: &graphEdgesStubEngine{Engine: base},
@@ -1068,7 +1064,6 @@ func TestCollectLatestPath_SourceEqualsTargetBranches(t *testing.T) {
 func TestCollectLatestInducedSubgraph_PropagatesOutgoingError(t *testing.T) {
 	server, _ := setupTestServer(t)
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 	_, err := base.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Node"}})
 	require.NoError(t, err)
 
@@ -1080,7 +1075,6 @@ func TestCollectLatestInducedSubgraph_PropagatesOutgoingError(t *testing.T) {
 func TestCollectSnapshotInducedSubgraph_RequiresMVCCInterfaces(t *testing.T) {
 	server, _ := setupTestServer(t)
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	engine := &graphNoMVCCEngine{Engine: base}
 	_, err := server.collectSnapshotInducedSubgraph(context.Background(), engine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
@@ -1090,7 +1084,6 @@ func TestCollectSnapshotInducedSubgraph_RequiresMVCCInterfaces(t *testing.T) {
 func TestCollectSnapshotInducedSubgraph_UsesSingleVisibleEdgeScan(t *testing.T) {
 	server, _ := setupTestServer(t)
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	engine := &graphSnapshotIndexEngine{
 		Engine: base,
@@ -1237,7 +1230,6 @@ func TestWriteGraphResolveError_NilNoWrite(t *testing.T) {
 func TestCollectLatestNeighborhood_CancelledDuringEdgeIteration(t *testing.T) {
 	server := &Server{}
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	engine := &graphNeighborhoodStubEngine{
@@ -1261,7 +1253,6 @@ func TestCollectLatestNeighborhood_CancelledDuringEdgeIteration(t *testing.T) {
 func TestCollectLatestPath_CanceledContextBranches(t *testing.T) {
 	server := &Server{}
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1311,7 +1302,6 @@ func TestCollectLatestInducedSubgraph_SkipsSelfAndOutsideEdges(t *testing.T) {
 func TestCollectSnapshotInducedSubgraph_AdditionalErrorBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	visibilityOnly := &graphMVCCVisibilityOnlyEngine{
 		Engine: base,
@@ -1336,7 +1326,6 @@ func TestCollectSnapshotInducedSubgraph_AdditionalErrorBranches(t *testing.T) {
 func TestCollectSnapshotInducedSubgraph_EmptyResolvedNodesReturnsEarly(t *testing.T) {
 	server, _ := setupTestServer(t)
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	engine := &graphSnapshotIndexEngine{
 		Engine: base,
@@ -1364,7 +1353,6 @@ func TestGraphVersionAndEdgeIterationCancellationBranches(t *testing.T) {
 		outgoing: []*storage.Edge{{ID: "o1", StartNode: "a", EndNode: "b", Type: "REL"}},
 		cancel:   cancelOut,
 	}
-	t.Cleanup(func() { _ = engineOut.Close() })
 	_, err = graphEdgesForNode(ctxOut, engineOut, "a", "both")
 	require.ErrorIs(t, err, context.Canceled)
 
@@ -1375,7 +1363,6 @@ func TestGraphVersionAndEdgeIterationCancellationBranches(t *testing.T) {
 		incoming: []*storage.Edge{{ID: "i1", StartNode: "b", EndNode: "a", Type: "REL"}},
 		cancel:   cancelIn,
 	}
-	t.Cleanup(func() { _ = engineIn.Close() })
 	_, err = graphEdgesForNode(ctxIn, engineIn, "a", "both")
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -1399,7 +1386,6 @@ func TestGraphHandlers_DirectBadJSONBranches(t *testing.T) {
 func TestCollectLatestNeighborhood_TruncatesWhenNewNeighborExceedsLimit(t *testing.T) {
 	server := &Server{}
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 	engine := &graphNeighborhoodStubEngine{
 		graphEdgesStubEngine: &graphEdgesStubEngine{
 			Engine:   base,
@@ -1420,7 +1406,6 @@ func TestCollectLatestNeighborhood_TruncatesWhenNewNeighborExceedsLimit(t *testi
 func TestCollectLatestPath_SkipsMissingOrFilteredNeighborBranches(t *testing.T) {
 	server := &Server{}
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 	engine := &graphNeighborhoodStubEngine{
 		graphEdgesStubEngine: &graphEdgesStubEngine{
 			Engine:   base,
@@ -1439,7 +1424,6 @@ func TestCollectLatestPath_SkipsMissingOrFilteredNeighborBranches(t *testing.T) 
 func TestCollectSnapshotInducedSubgraph_SkipsEdgesOutsideResolvedSet(t *testing.T) {
 	server, _ := setupTestServer(t)
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	engine := &graphSnapshotIndexEngine{
 		Engine: base,
@@ -1463,7 +1447,6 @@ func TestCollectSnapshotInducedSubgraph_SkipsEdgesOutsideResolvedSet(t *testing.
 
 func TestGraphEdgesForNode_OutgoingDuplicateAndLoopCancellationBranches(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	dupEngine := &graphEdgesStubEngine{
 		Engine: base,
@@ -1524,7 +1507,6 @@ func TestGraphHandlers_ResolveAndCollectionErrorBranches(t *testing.T) {
 func TestCollectLatestNeighborhood_CanceledInsideEdgeLoop(t *testing.T) {
 	server := &Server{}
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	engine := &graphNeighborhoodStubEngine{

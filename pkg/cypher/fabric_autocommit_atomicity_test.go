@@ -1,5 +1,7 @@
 package cypher
 
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
+
 import (
 	"context"
 	"encoding/json"
@@ -77,7 +79,6 @@ func newFabricAtomicityFixture(t *testing.T) *fabricAtomicityFixture {
 		}
 	}
 	mgr := newCompositeNativeManager(t, config)
-	t.Cleanup(func() { _ = mgr.Close() })
 	constituents := []multidb.ConstituentRef{}
 	for _, db := range []string{"one", "two"} {
 		require.NoError(t, mgr.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: db}))

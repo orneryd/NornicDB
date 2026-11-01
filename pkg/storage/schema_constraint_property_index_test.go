@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -187,7 +189,7 @@ func TestDropConstraintDropsItsPropertyIndex(t *testing.T) {
 // Node writes maintain an unfilled owned index, and a restart fills it from
 // the stored nodes.
 func TestBadgerConstraintPropertyIndexMaintainedAndRebuilt(t *testing.T) {
-	engine, dir := createTestBadgerEngineOnDisk(t)
+	engine, dir, closeEngine := createTestBadgerEngineOnDisk(t)
 	schema := engine.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddUniqueConstraint("c_uid", "Rec", "uid"))
 
@@ -199,7 +201,7 @@ func TestBadgerConstraintPropertyIndexMaintainedAndRebuilt(t *testing.T) {
 
 	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "b"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.Close())
+	closeEngine()
 
 	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)

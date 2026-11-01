@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"fmt"
@@ -22,7 +24,6 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 		for _, remove := range []bool{false, true} {
 			t.Run(fmt.Sprintf("remove=%t", remove), func(t *testing.T) {
 				base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-				t.Cleanup(func() { _ = base.Close() })
 				engine := storage.NewNamespacedEngine(base, "test")
 				svc := NewService(engine, 2, nil)
 				t.Cleanup(func() { _ = svc.Close() })
@@ -64,7 +65,6 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 
 	t.Run("concurrent reservations and direct writes", func(t *testing.T) {
 		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-		t.Cleanup(func() { _ = base.Close() })
 		engine := storage.NewNamespacedEngine(base, "test")
 		svc := NewService(engine, 2, nil)
 		t.Cleanup(func() { _ = svc.Close() })
@@ -108,7 +108,6 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 // stays current, so the older queued or pending write still applies.
 func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
@@ -123,7 +122,6 @@ func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 // before a newer one stays obsolete after the newer one retired.
 func TestRefreshNodeFollowsStorage(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
@@ -167,7 +165,6 @@ func (b *edgeReadBarrier) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
 // refresh applied must not put its vector back.
 func TestRefreshEdgeReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b"} {
 		_, err := engine.CreateNode(&storage.Node{ID: id})

@@ -1,5 +1,7 @@
 package search
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -18,7 +20,6 @@ import (
 
 func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
 	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
@@ -65,7 +66,6 @@ func (e *readinessHandoffEngine) OpenReadSnapshot(ctx context.Context) (storage.
 
 func TestBuildReadinessWaitsForOverlappingFinalSequence(t *testing.T) {
 	engine := &readinessHandoffEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
-	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)

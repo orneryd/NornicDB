@@ -1,13 +1,18 @@
 package tck
 
-import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+// Author of fixture cleanup changes: L4 implementation lane (Claude and Codex), 1 November 2026.
 
+import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"math"
 	"os"
 	"path/filepath"
@@ -15,11 +20,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
-	"github.com/orneryd/nornicdb/pkg/config"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGh531_BoltNativeKnowledgeRouting(t *testing.T) {
@@ -32,7 +32,11 @@ func TestGh531_BoltNativeKnowledgeRouting(t *testing.T) {
 				engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = engine.Close() })
-				driver, shutdown := startConformanceServerWithEngine(t, engine)
+				driver, shutdown := startConformanceServerWithEngine(t, engine, func() {
+					if err := engine.Close(); err != nil {
+						t.Errorf("close storage engine: %v", err)
+					}
+				})
 				defer shutdown()
 				require.Equal(t, parser, config.GetParserType())
 				ctx := context.Background()

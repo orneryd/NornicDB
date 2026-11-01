@@ -1,5 +1,7 @@
 package cypher_test
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -16,7 +18,6 @@ import (
 func BenchmarkTransactionalCallBatchCompile(b *testing.B) {
 	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(b, err)
-	b.Cleanup(func() { require.NoError(b, base.Close()) })
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))
 	ctx := context.Background()
 	b.ReportAllocs()
@@ -37,7 +38,6 @@ func BenchmarkTransactionalCallChainPlanning(b *testing.B) {
 		b.Run(sample.name, func(b *testing.B) {
 			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(b, err)
-			b.Cleanup(func() { require.NoError(b, base.Close()) })
 			exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))
 			ctx := context.Background()
 			query := "CALL { CREATE (:BatchChainBenchmark {v:99}) } IN TRANSACTIONS OF 1 ROWS " + sample.boundary + "CALL { CREATE (:BatchChainBenchmark {v:1}) } IN TRANSACTIONS OF 1 ROWS"

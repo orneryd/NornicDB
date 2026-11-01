@@ -1,5 +1,7 @@
 package storage
 
+// Fixture cleanup migration: L4 implementation lane (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -76,7 +78,7 @@ func TestEmbeddingAttemptCachedBodySnapshot(t *testing.T) {
 func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 	for _, updated := range []bool{false, true} {
 		t.Run(map[bool]string{false: "same_commit_after_flush", true: "idempotent_update"}[updated], func(t *testing.T) {
-			disk := newWriteBehindTestEngine(t, time.Hour)
+			disk, _ := newWriteBehindTestEngine(t, t, time.Hour)
 			bufferedCreate(t, disk, &Node{ID: "test:doc", Properties: map[string]any{"text": "same"}})
 			payload, err := disk.GetNode("test:doc")
 			require.NoError(t, err)
@@ -181,7 +183,7 @@ func TestEmbeddingPendingCounterNamespaceAndExclusion(t *testing.T) {
 }
 
 func TestEmbeddingRevisionIdentityAcrossFlush(t *testing.T) {
-	disk := newWriteBehindTestEngine(t, time.Hour)
+	disk, _ := newWriteBehindTestEngine(t, t, time.Hour)
 	bufferedCreate(t, disk, &Node{ID: "test:doc", Properties: map[string]any{"text": "same"}})
 	acknowledged, err := disk.GetNode("test:doc")
 	require.NoError(t, err)

@@ -1,5 +1,7 @@
 package storage
 
+// Author: L4 fixture ownership migration (Codex), 1 November 2026.
+
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -20,7 +22,6 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 		DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour,
 	}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	for _, node := range []*Node{
 		{ID: "test:a", Labels: []string{"A"}},
 		{ID: "test:b", Labels: []string{"B"}},
