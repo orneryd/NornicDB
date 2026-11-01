@@ -107,7 +107,9 @@ func (root *retainedSyntaxRoot) inspectionAt(id, start, end int, entry SyntaxEnt
 			if entry == StatementEntry {
 				switch node.rule {
 				case CypherParserRULE_query, CypherParserRULE_regularQuery,
-					CypherParserRULE_singleQuery, CypherParserRULE_subqueryBody:
+					CypherParserRULE_singleQuery, CypherParserRULE_subqueryBody,
+					CypherParserRULE_singlePartQ, CypherParserRULE_multiPartQ,
+					CypherParserRULE_readingStatement, CypherParserRULE_updatingStatement:
 					return view, true
 				}
 			}

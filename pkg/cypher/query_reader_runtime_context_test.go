@@ -61,7 +61,7 @@ func TestCanceledRuntimeReaderCachesDoNotPoisonPublicExecute(t *testing.T) {
 				plan := returnPlanForTest(canceled, query)
 				require.False(t, plan.valid)
 				returnProjectionPlans.RLock()
-				_, found := returnProjectionPlans.plans[query]
+				_, found := returnProjectionPlans.plans[projectionPlanKey{accepted: query, submitted: query}]
 				returnProjectionPlans.RUnlock()
 				require.False(t, found)
 			case "execution policy":

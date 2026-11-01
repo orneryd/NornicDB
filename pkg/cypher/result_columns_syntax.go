@@ -100,7 +100,7 @@ func projectionNameOnSource(expression cypherantlr.SyntaxNode, source *cyphertex
 		}
 		return name
 	}
-	return expression.Text()
+	return expression.SubmittedText()
 }
 
 func projectionVariableFromSyntax(expression cypherantlr.SyntaxNode) (string, bool) {

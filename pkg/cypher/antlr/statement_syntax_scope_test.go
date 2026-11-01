@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/stretchr/testify/require"
 )
 
@@ -144,4 +145,28 @@ func TestStatementSyntaxStatementReadersUseRetainedQueryBodies(t *testing.T) {
 	}
 	_, err = ParseSyntax(ctx, ReadStatement("7 AS call"), StatementEntry, false, AcceptedSource)
 	require.Error(t, err, "a projection fragment is not a retained statement body")
+}
+
+func TestStatementSyntaxAcceptedViewRetainsSubmittedOccurrence(t *testing.T) {
+	raw, accepted := "RETURN x + 1, `x` + 1", "RETURN x + 1, x + 1"
+	source := cyphertext.NewSource(t.Context(), raw, cyphertext.AcceptedSource)
+	source = source.Rewrite(accepted, []cyphertext.SourceEdit{{Original: cyphertext.Span{Start: 14, End: 17}, Accepted: cyphertext.Span{Start: 14, End: 15}}})
+	ctx := cyphertext.WithSourceView(t.Context(), source)
+	ctx = WithNewStatementSyntax(ctx, raw, accepted)
+	syntax, err := ParseSyntax(ctx, ReadStatement(accepted), StatementEntry, false, AcceptedSource)
+	require.NoError(t, err)
+	var written []string
+	syntax.Walk(func(node SyntaxNode) func() {
+		if node.Rule() == CypherParserRULE_projectionItem {
+			written = append(written, node.ChildRule(CypherParserRULE_expression).SubmittedText())
+		}
+		return nil
+	})
+	require.Equal(t, []string{"x + 1", "`x` + 1"}, written)
+	// A different ingress can share the canonical CST but not its spelling.
+	other := WithNewStatementSyntax(t.Context(), accepted, accepted)
+	plain, err := ParseSyntax(other, ReadStatement(accepted), StatementEntry, false, AcceptedSource)
+	require.NoError(t, err)
+	require.Same(t, &syntax.data.nodes[0], &plain.data.nodes[0])
+	require.Equal(t, accepted, plain.Root().SubmittedText())
 }

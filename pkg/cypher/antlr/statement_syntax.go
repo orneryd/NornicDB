@@ -158,6 +158,7 @@ type SyntaxVisitor func(SyntaxNode) func()
 type statementSyntaxData struct {
 	source      string
 	view        *cyphertext.Source
+	submitted   *cyphertext.Source // parser input mapped to this execution ingress spelling
 	effects     statementEffectsData
 	offset      int // original-source origin of this retained window
 	sourceEnd   int // original-source end of this retained window
@@ -289,6 +290,7 @@ func syntaxSourceView(data *statementSyntaxData, source *cyphertext.Source) *sta
 	}
 	view := *data
 	view.view = source
+	view.submitted = source
 	view.offset = 0
 	view.inputOffset = 0
 	view.sourceEnd = len(source.Original)
@@ -626,6 +628,19 @@ func (root SyntaxNode) Walk(visitors ...SyntaxVisitor) {
 
 // ID returns this node's stable identity in its statement product.
 func (node SyntaxNode) ID() int { return node.id }
+
+// SubmittedText reads this occurrence through the execution ingress source
+// owner. Accepted-stage adapters may present normalized text for evaluation;
+// expression column names still belong to their own submitted occurrence.
+func (node SyntaxNode) SubmittedText() string {
+	source := node.data.submitted
+	if source == nil {
+		source = node.data.view
+	}
+	start, end := node.inputSpan()
+	text, _ := source.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExtent, nil)
+	return text
+}
 
 // Source is the unmodified statement shared by every node in this product.
 func (node SyntaxNode) Source() string {

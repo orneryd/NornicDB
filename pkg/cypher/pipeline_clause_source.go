@@ -63,6 +63,9 @@ func pipelineClauseFromSyntax(node cypherantlr.SyntaxNode) (pipelineClause, bool
 // WHERE when present, else the pattern). ok is false without a pattern.
 // Author: Claude R17 implementation agent, 30 October 2026.
 func implicitMatchExtent(container cypherantlr.SyntaxNode) (pattern, last cypherantlr.SyntaxNode, ok bool) {
+	if container.Rule() == cypherantlr.CypherParserRULE_patternWhere || container.Rule() == cypherantlr.CypherParserRULE_pattern {
+		return container, container, true
+	}
 	pattern = container.ChildRule(cypherantlr.CypherParserRULE_patternWhere)
 	if !pattern.Valid() {
 		pattern = container.ChildRule(cypherantlr.CypherParserRULE_pattern)

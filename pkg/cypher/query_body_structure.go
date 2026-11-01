@@ -140,6 +140,9 @@ func readQueryBodyText(ctx context.Context, source string, start, end int) query
 					return body
 				}
 			}
+			if body, _, complete := queryExpressionBody(pattern); complete {
+				return body
+			}
 		}
 		return readQueryBody(root)
 	}
@@ -323,8 +326,13 @@ func queryExpressionBody(container cypherantlr.SyntaxNode) (queryBody, cypherant
 	inputStart, _ := pattern.InputSpan()
 	_, inputEnd := last.InputSpan()
 	containerStart, _ := container.InputSpan()
-	prefix := container.InputBefore(container.Child(container.ChildCount() - 1))
-	source := prefix.Window(inputStart-containerStart, inputEnd-containerStart)
+	var source *cyphertext.Source
+	if pattern.ID() == container.ID() {
+		source = container.CodeSource(nil)
+	} else {
+		prefix := container.InputBefore(container.Child(container.ChildCount() - 1))
+		source = prefix.Window(inputStart-containerStart, inputEnd-containerStart)
+	}
 	text := container.Source()[start:end]
 	branch := queryBodyBranch{syntax: container, source: source, executionText: text, start: start, end: end, useStart: -1, useEnd: -1, finishStart: -1, finishEnd: -1}
 	branch.clauses = []queryBodyClause{queryBodyClauseFromSyntax(container)}

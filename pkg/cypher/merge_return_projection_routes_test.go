@@ -235,7 +235,7 @@ func TestReturnProjectionPlanIsParsedOncePerText(t *testing.T) {
 
 	returnProjectionPlans.Lock()
 	for index := len(returnProjectionPlans.plans); index < returnProjectionPlanLimit; index++ {
-		returnProjectionPlans.plans[fmt.Sprintf("RETURN %d", index)] = &returnProjectionPlan{}
+		returnProjectionPlans.plans[projectionPlanKey{accepted: fmt.Sprintf("RETURN %d", index), submitted: fmt.Sprintf("RETURN %d", index)}] = &returnProjectionPlan{}
 	}
 	returnProjectionPlans.Unlock()
 	returnPlanForTest(t.Context(), "RETURN 'after the limit'")

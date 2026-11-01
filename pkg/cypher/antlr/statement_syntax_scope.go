@@ -143,6 +143,10 @@ func (scope *statementSyntaxScope) acquire(ctx context.Context, key statementSyn
 func stageRoot(root *retainedSyntaxRoot, stage SourceStage) *retainedSyntaxRoot {
 	if stage == AcceptedSource && root.data.view.Original != root.data.source {
 		data := syntaxSourceView(root.data, &cyphertext.Source{Original: root.data.source, Text: root.data.source})
+		data.submitted = root.data.submitted
+		if data.submitted == nil {
+			data.submitted = root.data.view
+		}
 		return &retainedSyntaxRoot{key: root.key, data: data}
 	}
 	return root

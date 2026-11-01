@@ -48,10 +48,12 @@ type returnProjectionPlan struct {
 // immutable once cached; the cache is cleared when it reaches
 // returnProjectionPlanLimit entries, which bounds it for workloads with
 // unbounded distinct query texts.
+type projectionPlanKey struct{ accepted, submitted string }
+
 var returnProjectionPlans = struct {
 	sync.RWMutex
-	plans map[string]*returnProjectionPlan
-}{plans: make(map[string]*returnProjectionPlan)}
+	plans map[projectionPlanKey]*returnProjectionPlan
+}{plans: make(map[projectionPlanKey]*returnProjectionPlan)}
 
 const returnProjectionPlanLimit = 4096
 
@@ -85,7 +87,7 @@ func projectionPlanOfNode(clause cypherantlr.SyntaxNode) *returnProjectionPlan {
 	if !clause.Valid() {
 		return absentProjectionPlan()
 	}
-	key := clause.Text()
+	key := projectionPlanKey{accepted: clause.Code(), submitted: clause.SubmittedText()}
 	returnProjectionPlans.RLock()
 	plan, cached := returnProjectionPlans.plans[key]
 	returnProjectionPlans.RUnlock()
@@ -95,7 +97,7 @@ func projectionPlanOfNode(clause cypherantlr.SyntaxNode) *returnProjectionPlan {
 	plan = projectionPlanFromSyntax(clause)
 	returnProjectionPlans.Lock()
 	if len(returnProjectionPlans.plans) >= returnProjectionPlanLimit {
-		returnProjectionPlans.plans = make(map[string]*returnProjectionPlan)
+		returnProjectionPlans.plans = make(map[projectionPlanKey]*returnProjectionPlan)
 	}
 	returnProjectionPlans.plans[key] = plan
 	returnProjectionPlans.Unlock()
