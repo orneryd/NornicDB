@@ -277,34 +277,14 @@ func pipelineScopeFailure(ctx context.Context) error {
 	return err
 }
 
-// restoreResultColumns preserves final RETURN spelling after quoted variables
-// have executed with internal identities. Parsed aliases are already decoded.
-// Both item lists are the retained RETURN occurrences of the original and the
-// canonical statement; neither final body is reframed as a new RETURN text.
-func (names *quotedVariableNames) restoreResultColumns(result *ExecuteResult, parseItems func(statement string, at int) []returnItem) {
+// restoreResultColumns orders wildcard columns after binding identities have
+// been restored. Explicit projection labels belong to their retained syntax
+// occurrences; this boundary does not read original/canonical RETURN copies.
+func (names *quotedVariableNames) restoreResultColumns(result *ExecuteResult) {
 	if start, end, ok := finalReturnBody(names.Text); ok {
 		body, _ := cutDistinct(strings.TrimSpace(names.Text[start:end]))
 		if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(body, "UNION") < 0 {
 			sortColumnsByName(result)
-		} else {
-			keyword := start - len("RETURN")
-			originalKeyword, mapped := names.OriginalOffset(keyword, true, cyphertext.SourceExactBoundaries)
-			if !mapped {
-				return
-			}
-			items := parseItems(names.Original, originalKeyword)
-			canonicalItems := parseItems(names.Text, keyword)
-			if len(items) == len(result.Columns) && len(canonicalItems) == len(items) {
-				for index, item := range items {
-					if item.alias != strings.TrimSpace(item.expr) {
-						result.Columns[index] = item.alias
-					} else if name, isName := isOneSymbolicName(item.expr); isName {
-						result.Columns[index] = name
-					} else {
-						result.Columns[index] = strings.TrimSpace(item.expr)
-					}
-				}
-			}
 		}
 	}
 }

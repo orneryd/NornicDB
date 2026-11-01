@@ -122,3 +122,26 @@ func TestStatementSyntaxScopeEstablishesCanonicalRootBeforeInspection(t *testing
 	require.Error(t, err, "a different statement requires a distinct ingress")
 	require.Len(t, scope.roots, 1)
 }
+
+// Author: Codex R17 implementation lane, 1 November 2026.
+func TestStatementSyntaxStatementReadersUseRetainedQueryBodies(t *testing.T) {
+	source := "USE alpha CALL () { USE beta RETURN 7 AS call } RETURN call UNION RETURN 8 AS call"
+	ctx := WithNewStatementSyntax(t.Context(), source, source)
+	whole, err := ParseSyntax(ctx, ReadStatement(source), StatementEntry, false, AcceptedSource)
+	require.NoError(t, err)
+	for _, window := range []string{
+		"CALL () { USE beta RETURN 7 AS call } RETURN call UNION RETURN 8 AS call",
+		"USE beta RETURN 7 AS call",
+		"RETURN 7 AS call",
+		"RETURN 8 AS call",
+	} {
+		t.Run(window, func(t *testing.T) {
+			syntax, err := ParseSyntax(ctx, ReadStatement(window), StatementEntry, false, AcceptedSource)
+			require.NoError(t, err)
+			require.Equal(t, window, syntax.Source())
+			require.Same(t, &whole.data.nodes[0], &syntax.data.nodes[0])
+		})
+	}
+	_, err = ParseSyntax(ctx, ReadStatement("7 AS call"), StatementEntry, false, AcceptedSource)
+	require.Error(t, err, "a projection fragment is not a retained statement body")
+}

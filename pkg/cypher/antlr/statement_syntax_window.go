@@ -101,6 +101,16 @@ func (root *retainedSyntaxRoot) inspectionAt(id, start, end int, entry SyntaxEnt
 			if entry == fragmentEntry {
 				return view, true
 			}
+			// A routed statement or UNION branch is already a complete query
+			// production inside its enclosing Script. Statement readers consume
+			// that production; they must not demand a second Script parse.
+			if entry == StatementEntry {
+				switch node.rule {
+				case CypherParserRULE_query, CypherParserRULE_regularQuery,
+					CypherParserRULE_singleQuery, CypherParserRULE_subqueryBody:
+					return view, true
+				}
+			}
 			if ownEntry, owned := inspectionEntry(node.rule); owned && ownEntry == entry {
 				return view, true
 			}

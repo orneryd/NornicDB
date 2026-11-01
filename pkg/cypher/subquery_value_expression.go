@@ -308,18 +308,9 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		body = grouped
 	}
 	query := strings.TrimSpace(body)
-	patternOnly := strings.HasPrefix(query, "(")
-	if patternOnly {
-		query = "MATCH " + query
-	}
-	if topLevelKeywordIndex(query, "RETURN") < 0 {
-		switch kind {
-		case "COUNT":
-			query += " RETURN 1 AS __count"
-		case "EXISTS":
-			query += " RETURN 1 AS __exists LIMIT 1"
-		}
-	}
+	// The retained expression body already owns an implicit MATCH and its
+	// terminal row contract. COUNT/EXISTS consume those rows; manufacturing
+	// MATCH/RETURN text would create an overlapping, unowned grammar input.
 	result, err := e.runCorrelatedSubquery(ctx, query, values)
 	if err != nil {
 		return nil, false, err
@@ -397,9 +388,29 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	// The body runs as the seeded pipeline over the row's values, the one
 	// contract of a correlated body (as a CALL subquery branch runs); no
 	// binding clauses are composed in front of it.
-	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
-	if outcome.terminal() {
-		return outcome.result, outcome.err
+	body := readQueryBodyText(ctx, query, 0, len(query))
+	clauses, admitted := splitPipelineClausesAllowingProcedureCalls(ctx, body)
+	if admitted {
+		correlated := e.correlatedSubqueryExecutor(ctx, values)
+		row := make(pipelineRow, len(correlated.fabricRecordBindings))
+		scope := make(map[string]struct{}, len(correlated.fabricRecordBindings))
+		for name, value := range correlated.fabricRecordBindings {
+			row[name] = value
+			if !strings.HasPrefix(name, "$") {
+				scope[name] = struct{}{}
+			}
+		}
+		bindParameterRow(ctx, row)
+		output := &pipelineRowOutput{}
+		result, handled, err := correlated.runPipelineClauseRows(ctx, []pipelineRow{row}, scope, clauses, clauses, output)
+		if handled || err != nil {
+			if err == nil && result != nil && !pipelineHasClauseKind(clauses, pipelineClauseReturn) {
+				// Row identities are not exported by EXISTS/COUNT, only their
+				// multiplicity. Explicit RETURN retains its actual values.
+				result.Rows = make([][]interface{}, len(output.rows))
+			}
+			return result, err
+		}
 	}
 	return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "subquery body could not be executed as a clause pipeline")
 }

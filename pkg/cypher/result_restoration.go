@@ -80,7 +80,7 @@ func (restoration resultRestoration) restore(result *ExecuteResult, err error, p
 					}
 				}
 				if !restoreRows && len(restored.Columns) > 0 {
-					restoration.names.restoreResultColumns(&restored, parseItems)
+					restoration.names.restoreResultColumns(&restored)
 				}
 			}
 			result = &restored

@@ -412,17 +412,11 @@ func (names *quotedVariableNames) restoreColumn(column string) string {
 	if internal, ok := names.internal[column]; ok {
 		return internal.name
 	}
-	if isPlainVariableName(column) || !names.HasRewrite(cyphertext.RewriteMatch{Policy: cyphertext.RewriteFragmentMention, Fragment: column, Markers: names.internalOrder}) {
-		return column
-	}
-	// The final RETURN names the columns, so its text is the last
-	// occurrence.
-	if start := strings.LastIndex(names.Text, column); start >= 0 {
-		if span, ok := names.OriginalSpan(cyphertext.Span{Start: start, End: start + len(column)}, cyphertext.SourceExactBoundaries); ok {
-			return names.Original[span.Start:span.End]
-		}
-	}
-	return names.restoreSourceText(column, quotedNamesOnly)
+	// Expressions already carry the retained occurrence's source spelling.
+	// Replacing an equal canonical substring chooses another occurrence when
+	// both x + 1 and `x` + 1 are projected. Only an internal binding identity
+	// needs translation at this presentation boundary.
+	return column
 }
 
 type quotedSourceTextPolicy uint8
