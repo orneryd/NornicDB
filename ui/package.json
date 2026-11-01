@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@ornery/ui-grid-core": "^5.0.1",
+    "@ornery/ui-grid-core": "^5.0.2",
     "@ornery/ui-grid-react": "^5.0.1",
     "@ornery/ui-grid-vanilla": "^5.0.1",
     "3d-force-graph": "^1.80.0",
