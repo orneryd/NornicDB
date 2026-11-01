@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
 	"fmt"
@@ -104,12 +105,12 @@ func TestRuntimeReaderPublicContextAndLiveShapes(t *testing.T) {
 				t.Run(fmt.Sprint(index), func(t *testing.T) {
 					executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "reader_shapes"))
 					for _, budget := range []int{16, 64, 256} {
-						checkpoint := newCheckpointContext(budget, nil)
+						checkpoint := fixtureowner.NewCheckpointContext(budget, nil)
 						_, err := executor.Execute(checkpoint, query, nil)
 						if checkpoint.Context.Err() != nil {
 							require.ErrorIs(t, err, context.Canceled)
 						}
-						checkpoint.cancel()
+						checkpoint.Cancel()
 					}
 					result, err := executor.Execute(t.Context(), query, nil)
 					require.NoError(t, err)

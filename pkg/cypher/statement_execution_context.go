@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/apocio"
 )
 
 // statementOutcome belongs to the semantic statement, not a registered Execute
@@ -27,10 +29,11 @@ type statementExecutionContext struct {
 	state   *queryEmbedderState
 	outcome *statementOutcome
 	owned   statementOutcome
+	apocIO  apocio.Capability // One handle to this statement's APOC I/O capability.
 }
 
 func (e *StorageExecutor) newStatementExecutionContext(ctx context.Context, instant time.Time, outcome *statementOutcome) *statementExecutionContext {
-	statement := &statementExecutionContext{Context: ctx, instant: instant, binding: e.queryEmbedder}
+	statement := &statementExecutionContext{Context: ctx, instant: instant, binding: e.queryEmbedder, apocIO: e.apocIO.Capability()}
 	statement.outcome = outcome
 	if statement.outcome == nil {
 		statement.outcome = &statement.owned
@@ -51,6 +54,12 @@ func (c *statementExecutionContext) Value(key any) any {
 		return &c.instant
 	case queryEmbeddingStatementKey:
 		return c
+	case apocio.CapabilityKey:
+		// The native APOC procedures and the bundled plugin loaders both read
+		// the statement's one I/O capability here, so neither path rebuilds a
+		// policy per call and a per-row or per-call invocation allocates no
+		// extra context.
+		return c.apocIO
 	}
 	return c.Context.Value(key)
 }

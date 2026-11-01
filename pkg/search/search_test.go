@@ -61,7 +61,7 @@ func (e *iteratorEngine) IterateNodes(fn func(*storage.Node) bool) error {
 	if e.iterateErr != nil {
 		return e.iterateErr
 	}
-	nodes, err := e.AllNodes()
+	nodes, err := e.AllNodes(context.Background())
 	if err != nil {
 		return err
 	}
@@ -593,19 +593,19 @@ func TestSearchResultCacheHelpers(t *testing.T) {
 		require.Nil(t, c.Get("missing"))
 		c.Invalidate()
 
-		c.Put("nil", nil)
+		c.Put(context.Background(), "nil", nil)
 		require.Nil(t, c.Get("nil"))
 
 		r1 := &SearchResponse{Status: "ok", Query: "q1"}
 		r2 := &SearchResponse{Status: "ok", Query: "q2"}
 		r3 := &SearchResponse{Status: "ok", Query: "q3"}
-		c.Put("k1", r1)
-		c.Put("k2", r2)
+		c.Put(context.Background(), "k1", r1)
+		c.Put(context.Background(), "k2", r2)
 		require.Equal(t, r1, c.Get("k1"))
 		require.Equal(t, r2, c.Get("k2"))
 
 		// Evict oldest when max size is reached.
-		c.Put("k3", r3)
+		c.Put(context.Background(), "k3", r3)
 		require.Nil(t, c.Get("k1"))
 		require.Equal(t, r2, c.Get("k2"))
 		require.Equal(t, r3, c.Get("k3"))
@@ -618,7 +618,7 @@ func TestSearchResultCacheHelpers(t *testing.T) {
 	t.Run("Get expires stale entries when ttl is set", func(t *testing.T) {
 		c := newSearchResultCache(2, 5*time.Millisecond)
 		r := &SearchResponse{Status: "ok", Query: "ttl"}
-		c.Put("k", r)
+		c.Put(context.Background(), "k", r)
 		require.Equal(t, r, c.Get("k"))
 
 		time.Sleep(12 * time.Millisecond)
@@ -651,8 +651,8 @@ func TestSearchResultCacheEvictsByRetainedBytes(t *testing.T) {
 			}},
 		}
 	}
-	c.Put("first", response("a"))
-	c.Put("second", response("b"))
+	c.Put(context.Background(), "first", response("a"))
+	c.Put(context.Background(), "second", response("b"))
 
 	require.Nil(t, c.Get("first"), "the byte budget must evict incrementally before the entry limit")
 	require.NotNil(t, c.Get("second"))
@@ -663,7 +663,7 @@ func BenchmarkSearchResultCacheHit(b *testing.B) {
 	cache := newSearchResultCache(1_000, time.Minute)
 	for i := 0; i < 1_000; i++ {
 		key := strconv.Itoa(i)
-		cache.Put(key, &SearchResponse{Status: "success", Query: key})
+		cache.Put(context.Background(), key, &SearchResponse{Status: "success", Query: key})
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -4743,8 +4743,8 @@ func TestSearchResultCacheInvalidate(t *testing.T) {
 	cache := newSearchResultCache(8, time.Minute)
 	require.Zero(t, testing.AllocsPerRun(100, cache.Invalidate))
 
-	cache.Put("a", &SearchResponse{Query: "a"})
-	cache.Put("b", &SearchResponse{Query: "b"})
+	cache.Put(context.Background(), "a", &SearchResponse{Query: "a"})
+	cache.Put(context.Background(), "b", &SearchResponse{Query: "b"})
 	require.NotNil(t, cache.Get("a"))
 	cache.Invalidate()
 	require.Nil(t, cache.Get("a"))
@@ -4752,7 +4752,7 @@ func TestSearchResultCacheInvalidate(t *testing.T) {
 	require.Zero(t, cache.retainedBytes)
 	require.Zero(t, cache.lru.Len())
 
-	cache.Put("c", &SearchResponse{Query: "c"})
+	cache.Put(context.Background(), "c", &SearchResponse{Query: "c"})
 	require.NotNil(t, cache.Get("c"), "the cache keeps working after an invalidation")
 }
 

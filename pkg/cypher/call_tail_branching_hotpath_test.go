@@ -194,7 +194,7 @@ RETURN count(o) AS prepared
 	})
 	require.NoError(t, err)
 
-	roots, err := store.GetNodesByLabel("OriginalText")
+	roots, err := store.GetNodesByLabel(ctx, "OriginalText")
 	require.NoError(t, err)
 	rootByKey := make(map[string]*storage.Node, len(roots))
 	for _, root := range roots {

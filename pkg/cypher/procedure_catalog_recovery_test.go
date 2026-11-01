@@ -53,7 +53,7 @@ func TestProcedureCatalogMutationRecoversLegacyIdentity(t *testing.T) {
 				}
 				ClearUserProcedures()
 				exec = NewStorageExecutor(fault)
-				nodes, err := base.GetNodesByLabel(procedureCatalogLabel)
+				nodes, err := base.GetNodesByLabel(context.Background(), procedureCatalogLabel)
 				require.NoError(t, err)
 				var names []string
 				for _, node := range nodes {
@@ -128,7 +128,7 @@ func TestProcedureCatalogMutationRecoveryFailureIsRetryable(t *testing.T) {
 				require.NoError(t, mutate())
 				ClearUserProcedures()
 				exec = NewStorageExecutor(engine)
-				nodes, err := base.GetNodesByLabel(procedureCatalogLabel)
+				nodes, err := base.GetNodesByLabel(context.Background(), procedureCatalogLabel)
 				require.NoError(t, err)
 				if operation == "drop" {
 					require.Empty(t, nodes)

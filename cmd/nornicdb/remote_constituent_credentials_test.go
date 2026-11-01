@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"net/http"
@@ -179,12 +180,6 @@ func (w *investigationWire) info() (int, bool, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.requests, w.correct > 0 || bytes.Contains(w.data, []byte(investigationPass)), w.encrypted > 0 || bytes.Contains(w.data, []byte("enc:v1:"))
-}
-
-func (w *investigationWire) trace() []string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return append([]string(nil), w.events...)
 }
 
 type investigationStatusWriter struct {
@@ -397,7 +392,7 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 						ok, failed, status, requestErr := investigationIngress(local, "bolt://127.0.0.1:"+lb, ingress, query)
 						requests, correct, encrypted := target.wire.info()
 						t.Logf("marker=%t http_status=%d transport_error=%t outgoing_requests=%d plaintext_password=%t encrypted_password=%t", ok, status, requestErr != nil, requests, correct, encrypted)
-						for _, event := range target.wire.trace() {
+						for _, event := range fixtureowner.Snapshot(&target.wire.mu, &target.wire.events) {
 							t.Log(event)
 						}
 						var neoErr *neo4j.Neo4jError
@@ -519,7 +514,7 @@ func investigationAssertHTTPWorkflow(t *testing.T, wire *investigationWire, tran
 		return
 	}
 	var opened, queried, ended bool
-	for _, event := range wire.trace() {
+	for _, event := range fixtureowner.Snapshot(&wire.mu, &wire.events) {
 		t.Log(event)
 		if !strings.Contains(event, "auth=correct") || strings.Contains(event, "remote_status=401") {
 			t.Error("remote workflow request did not retain its credentials")

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
@@ -57,7 +58,7 @@ func TestBadgerEngine_Backup(t *testing.T) {
 		}
 
 		// Add test edges
-		nodes, _ := engine.GetNodesByLabel("TestNode")
+		nodes, _ := engine.GetNodesByLabel(context.Background(), "TestNode")
 		for i := 0; i < len(nodes)-1; i++ {
 			edge := &Edge{
 				ID:         EdgeID(generateUniqueTestID()),
@@ -142,7 +143,7 @@ func TestBadgerEngine_RestoreNativeStream(t *testing.T) {
 	node, err := target.GetNode(nodeID)
 	require.NoError(t, err)
 	require.Equal(t, "source", node.Properties["name"])
-	edges, err := target.GetOutgoingEdges(nodeID)
+	edges, err := target.GetOutgoingEdges(context.Background(), nodeID)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }

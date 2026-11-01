@@ -89,7 +89,7 @@ func TestDeleteUserData(t *testing.T) {
 		assert.Error(t, err)
 		_, err = db.GetNode(ctx, second.ID)
 		assert.Error(t, err)
-		allEdges, err := db.storage.AllEdges()
+		allEdges, err := db.storage.AllEdges(ctx)
 		require.NoError(t, err)
 		for _, existingEdge := range allEdges {
 			assert.NotEqual(t, edge.ID, string(existingEdge.ID))

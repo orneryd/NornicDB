@@ -315,7 +315,7 @@ func ensureLabel(labels []string, label string) []string {
 }
 
 func (e *StorageExecutor) loadPersistedProcedures(ctx context.Context) error {
-	nodes, err := e.storage.GetNodesByLabel(procedureCatalogLabel)
+	nodes, err := e.storage.GetNodesByLabel(ctx, procedureCatalogLabel)
 	if err != nil {
 		return localizedError(localization.CypherProceduresCatalogReadFailed(err), nerrors.ErrProcedureCatalogReadFailed)
 	}

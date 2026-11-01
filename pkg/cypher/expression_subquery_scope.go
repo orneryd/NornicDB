@@ -1,7 +1,8 @@
 package cypher
 
-import "context"
-
+import (
+	"context"
+)
 import "strings"
 
 // expressionSubqueryClauseBindingError protects an expression subquery's

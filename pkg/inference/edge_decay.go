@@ -235,7 +235,7 @@ func (ed *EdgeDecay) scanAndDecay(ctx context.Context) (scanned, decayed, delete
 		return 0, 0, 0, fmt.Errorf("storage does not support edge export")
 	}
 
-	edges, err := exporter.AllEdges()
+	edges, err := exporter.AllEdges(ctx)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to get edges: %w", err)
 	}

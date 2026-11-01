@@ -24,6 +24,7 @@ package storage
 // isolated t.TempDir; no global state, no wall-clock races.
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"sync"
@@ -293,7 +294,7 @@ func assertPR1655AcceptanceGraph(t *testing.T, b *BadgerEngine, scenario pr1655A
 
 	// No relationship survives the peer's cascade or refers to a deleted
 	// endpoint: scanning every stored relationship is the dangling-edge check.
-	edges, err := b.GetStoredEdgesByType("")
+	edges, err := b.GetStoredEdgesByType(context.Background(), "")
 	require.NoError(t, err)
 	for _, edge := range edges {
 		for _, endpoint := range []NodeID{edge.StartNode, edge.EndNode} {

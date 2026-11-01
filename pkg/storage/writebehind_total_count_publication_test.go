@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
@@ -138,7 +139,7 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 		}
 		child, childErr := engine.GetNode("test:c")
 		_, goneErr := engine.GetNode("test:b")
-		edges, edgeErr := engine.GetOutgoingEdges("test:a")
+		edges, edgeErr := engine.GetOutgoingEdges(context.Background(), "test:a")
 		got.visible = childErr == nil && child.Properties["body"] == "new" && goneErr != nil && edgeErr == nil && len(edges) == 1 && edges[0].ID == "test:new"
 		return got
 	}

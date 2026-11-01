@@ -24,18 +24,16 @@ type backupErrorEngine struct {
 	allEdgesErr error
 }
 
-func (e *backupErrorEngine) AllNodes() ([]*storage.Node, error) {
-	if e.allNodesErr != nil {
-		return nil, e.allNodesErr
-	}
-	return e.Engine.AllNodes()
+func (e *backupErrorEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return runtimeFixtureOwner.ReadWithFailure(ctx, e.allNodesErr, func(ctx context.Context) ([]*storage.Node, error) {
+		return e.Engine.AllNodes(ctx)
+	})
 }
 
-func (e *backupErrorEngine) AllEdges() ([]*storage.Edge, error) {
-	if e.allEdgesErr != nil {
-		return nil, e.allEdgesErr
-	}
-	return e.Engine.AllEdges()
+func (e *backupErrorEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
+	return runtimeFixtureOwner.ReadWithFailure(ctx, e.allEdgesErr, func(ctx context.Context) ([]*storage.Edge, error) {
+		return e.Engine.AllEdges(ctx)
+	})
 }
 
 // The backup fallback streams stored nodes; the fake fails that stream as it

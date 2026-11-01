@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -137,9 +138,9 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 
 			require.NoError(t, engine.FlushWriteBehind(nil))
 			engine.invalidateCachesAfterRestore()
-			nodes, err := engine.AllNodes()
+			nodes, err := engine.AllNodes(context.Background())
 			require.NoError(t, err)
-			edges, err := engine.AllEdges()
+			edges, err := engine.AllEdges(context.Background())
 			require.NoError(t, err)
 			for _, e := range edges {
 				if !writeBehind {

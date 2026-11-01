@@ -159,7 +159,7 @@ func TestReviewR8HTTPCommitEntries(t *testing.T) {
 					}
 				}
 				require.Eventually(t, func() bool { return server.activeTxReqs.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
-				nodes, err := leaf.GetNodesByLabel("ReviewR7Outcome")
+				nodes, err := leaf.GetNodesByLabel(t.Context(), "ReviewR7Outcome")
 				require.NoError(t, err)
 				require.Len(t, nodes, 1)
 				if !strings.HasPrefix(mode, "implicit") {

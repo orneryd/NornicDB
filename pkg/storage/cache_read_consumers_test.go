@@ -40,7 +40,7 @@ func TestCachedNestedValuesAcrossPopulationReaders(t *testing.T) {
 					case "transaction-point":
 						return reader.GetNodeProjected(id, []string{"nested"})
 					default:
-						nodes, err := b.AllNodes()
+						nodes, err := b.AllNodes(context.Background())
 						if err != nil {
 							return nil, err
 						}

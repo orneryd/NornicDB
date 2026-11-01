@@ -14,52 +14,127 @@ import (
 // CREATE with Inline Node Definitions
 // =============================================================================
 
-// TestCreateInlineNodeInRelationship tests creating a new node inline within a relationship pattern
-func TestCreateInlineNodeInRelationship(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
+// TestCreateInlineNodeVariants covers the CREATE statements that define both
+// inline nodes in the relationship pattern; both cases share this fixture and the
+// stats assertions, and each keeps its own statement and verification.
+func TestCreateInlineNodeVariants(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		statement string
+		wantNodes int
+		nodesMsg  []interface{}
+		wantRels  int
+		relsMsg   []interface{}
+		verify    func(t *testing.T, store *storage.NamespacedEngine)
+	}{
+		{
+			name:      "TestCreateInlineNodeInRelationship",
+			statement: `CREATE (a:Person {name: 'Alice'})-[:KNOWS]->(b:Person {name: 'Bob'})`,
+			wantNodes: 2,
+			nodesMsg:  []interface{}{"Should create 2 nodes"},
+			wantRels:  1,
+			relsMsg:   []interface{}{"Should create 1 relationship"},
+			verify: func(t *testing.T, store *storage.NamespacedEngine) {
+				// Verify nodes exist
+				nodes, _ := store.GetNodesByLabel(context.Background(), "Person")
+				assert.Len(t, nodes, 2)
+			},
+		},
+		{
+			name: "TestMatchCreateBothInline",
+			statement: `
+		CREATE (a:Person {name: 'Alice'})-[:FRIEND_OF]->(b:Person {name: 'Bob'})
+	`,
+			wantNodes: 2,
+			nodesMsg:  []interface{}{"Should create 2 nodes"},
+			wantRels:  1,
+			relsMsg:   []interface{}{"Should create 1 relationship"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
 
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
 
-	// Create nodes and relationship in one CREATE statement with inline definitions
-	result, err := exec.Execute(ctx, `CREATE (a:Person {name: 'Alice'})-[:KNOWS]->(b:Person {name: 'Bob'})`, nil)
-	require.NoError(t, err)
+			result, err := exec.Execute(ctx, tc.statement, nil)
+			require.NoError(t, err)
 
-	assert.Equal(t, 2, result.Stats.NodesCreated, "Should create 2 nodes")
-	assert.Equal(t, 1, result.Stats.RelationshipsCreated, "Should create 1 relationship")
+			assert.Equal(t, tc.wantNodes, result.Stats.NodesCreated, tc.nodesMsg...)
+			assert.Equal(t, tc.wantRels, result.Stats.RelationshipsCreated, tc.relsMsg...)
 
-	// Verify nodes exist
-	nodes, _ := store.GetNodesByLabel("Person")
-	assert.Len(t, nodes, 2)
+			if tc.verify != nil {
+				tc.verify(t, store)
+			}
+		})
+	}
 }
 
-// TestMatchCreateWithInlineNode tests MATCH followed by CREATE with inline node definition
-func TestMatchCreateWithInlineNode(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// First create a person
-	_, err := exec.Execute(ctx, `CREATE (p:Person {name: 'Alice'})`, nil)
-	require.NoError(t, err)
-
-	// MATCH the person and CREATE a company with relationship using inline definition
-	result, err := exec.Execute(ctx, `
+// TestMatchCreateInlineNodeWithVariable covers MATCH ... CREATE statements that
+// build one inline Company node and connect it to the matched node. Both cases
+// share this fixture and the stats assertions; seeds, statements, messages and the
+// company-name check stay per case.
+func TestMatchCreateInlineNodeWithVariable(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		seed        string
+		statement   string
+		wantNodes   int
+		nodesMsg    []interface{}
+		wantRels    int
+		relsMsg     []interface{}
+		companyName string
+	}{
+		{
+			name: "TestMatchCreateWithInlineNode",
+			seed: `CREATE (p:Person {name: 'Alice'})`,
+			statement: `
 		MATCH (p:Person {name: 'Alice'})
 		CREATE (c:Company {name: 'Acme'})-[:EMPLOYS]->(p)
-	`, nil)
-	require.NoError(t, err)
+	`,
+			wantNodes:   1,
+			nodesMsg:    []interface{}{"Should create 1 company node"},
+			wantRels:    1,
+			relsMsg:     []interface{}{"Should create 1 relationship"},
+			companyName: "Acme",
+		},
+		{
+			name: "TestMatchCreateWithInlineAndVariable",
+			seed: `CREATE (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})`,
+			statement: `
+		MATCH (a:Person {name: 'Alice'})
+		CREATE (c:Company {name: 'TechCorp'})-[:EMPLOYS]->(a)
+	`,
+			wantNodes: 1,
+			wantRels:  1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
 
-	assert.Equal(t, 1, result.Stats.NodesCreated, "Should create 1 company node")
-	assert.Equal(t, 1, result.Stats.RelationshipsCreated, "Should create 1 relationship")
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
 
-	// Verify company exists
-	companies, _ := store.GetNodesByLabel("Company")
-	assert.Len(t, companies, 1)
-	assert.Equal(t, "Acme", companies[0].Properties["name"])
+			// Create the nodes the statement matches.
+			_, err := exec.Execute(ctx, tc.seed, nil)
+			require.NoError(t, err)
+
+			result, err := exec.Execute(ctx, tc.statement, nil)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.wantNodes, result.Stats.NodesCreated, tc.nodesMsg...)
+			assert.Equal(t, tc.wantRels, result.Stats.RelationshipsCreated, tc.relsMsg...)
+
+			// Verify the company was created (and connected).
+			companies, _ := store.GetNodesByLabel(ctx, "Company")
+			assert.Len(t, companies, 1)
+			if tc.companyName != "" {
+				assert.Equal(t, tc.companyName, companies[0].Properties["name"])
+			}
+		})
+	}
 }
 
 // TestMatchCreateWithInlineNodeReverse tests CREATE with inline node in reverse direction
@@ -85,58 +160,13 @@ func TestMatchCreateWithInlineNodeReverse(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.RelationshipsCreated, "Should create 1 relationship")
 
 	// Verify relationship direction
-	companies, _ := store.GetNodesByLabel("Company")
-	persons, _ := store.GetNodesByLabel("Person")
+	companies, _ := store.GetNodesByLabel(ctx, "Company")
+	persons, _ := store.GetNodesByLabel(ctx, "Person")
 
-	edges, _ := store.GetIncomingEdges(companies[0].ID)
+	edges, _ := store.GetIncomingEdges(ctx, companies[0].ID)
 	assert.Len(t, edges, 1)
 	assert.Equal(t, "WORKS_AT", edges[0].Type)
 	assert.Equal(t, persons[0].ID, edges[0].StartNode)
-}
-
-// TestMatchCreateBothInline tests CREATE with inline nodes on both sides
-func TestMatchCreateBothInline(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create two new nodes with a relationship between them (no MATCH)
-	result, err := exec.Execute(ctx, `
-		CREATE (a:Person {name: 'Alice'})-[:FRIEND_OF]->(b:Person {name: 'Bob'})
-	`, nil)
-	require.NoError(t, err)
-
-	assert.Equal(t, 2, result.Stats.NodesCreated, "Should create 2 nodes")
-	assert.Equal(t, 1, result.Stats.RelationshipsCreated, "Should create 1 relationship")
-}
-
-// TestMatchCreateWithInlineAndVariable tests mixing inline definition with variable reference
-func TestMatchCreateWithInlineAndVariable(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create initial nodes
-	_, err := exec.Execute(ctx, `CREATE (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})`, nil)
-	require.NoError(t, err)
-
-	// MATCH one node, CREATE inline node connecting to matched node
-	result, err := exec.Execute(ctx, `
-		MATCH (a:Person {name: 'Alice'})
-		CREATE (c:Company {name: 'TechCorp'})-[:EMPLOYS]->(a)
-	`, nil)
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, result.Stats.NodesCreated)
-	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
-
-	// Verify company was created and connected
-	companies, _ := store.GetNodesByLabel("Company")
-	assert.Len(t, companies, 1)
 }
 
 // TestMatchCreateMultipleInlineRelationships tests creating multiple relationships with inline nodes
@@ -180,7 +210,7 @@ func TestCreateInlineWithProperties(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
 
 	// Verify properties were set
-	persons, _ := store.GetNodesByLabel("Person")
+	persons, _ := store.GetNodesByLabel(ctx, "Person")
 	require.Len(t, persons, 1)
 	assert.Equal(t, "Alice", persons[0].Properties["name"])
 	// Age can be int64 or float64 depending on how it was parsed
@@ -194,7 +224,7 @@ func TestCreateInlineWithProperties(t *testing.T) {
 		t.Errorf("unexpected age type: %T", age)
 	}
 
-	companies, _ := store.GetNodesByLabel("Company")
+	companies, _ := store.GetNodesByLabel(ctx, "Company")
 	require.Len(t, companies, 1)
 	assert.Equal(t, "Acme", companies[0].Properties["name"])
 }
@@ -215,7 +245,7 @@ func TestMatchMatchWhereCreate_TwoMatchWithWhere(t *testing.T) {
 	_, err := exec.Execute(ctx, `CREATE (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})`, nil)
 	require.NoError(t, err)
 
-	persons, err := store.GetNodesByLabel("Person")
+	persons, err := store.GetNodesByLabel(ctx, "Person")
 	require.NoError(t, err)
 	require.Len(t, persons, 2)
 
@@ -234,7 +264,7 @@ func TestMatchMatchWhereCreate_TwoMatchWithWhere(t *testing.T) {
 	assert.Equal(t, elemB, fmt.Sprint(result.Rows[0][1]))
 
 	// Verify relationship exists in store
-	edges, err := store.GetOutgoingEdges(persons[0].ID)
+	edges, err := store.GetOutgoingEdges(ctx, persons[0].ID)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	assert.Equal(t, "KNOWS", edges[0].Type)
@@ -250,7 +280,7 @@ func TestMatchCreateRelationship_CommaSeparatedElementIDWhere(t *testing.T) {
 	_, err := exec.Execute(ctx, `CREATE (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})`, nil)
 	require.NoError(t, err)
 
-	persons, err := store.GetNodesByLabel("Person")
+	persons, err := store.GetNodesByLabel(ctx, "Person")
 	require.NoError(t, err)
 	require.Len(t, persons, 2)
 
@@ -281,7 +311,7 @@ func TestMatchCreateRelationship_CommaSeparatedElementIDWhere(t *testing.T) {
 	assert.Equal(t, params["from"], fmt.Sprint(result.Rows[0][0]))
 	assert.Equal(t, params["to"], fmt.Sprint(result.Rows[0][1]))
 
-	edges, err := store.GetOutgoingEdges(alice.ID)
+	edges, err := store.GetOutgoingEdges(ctx, alice.ID)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	assert.Equal(t, "KNOWS", edges[0].Type)
@@ -335,7 +365,7 @@ func TestCreateSingleNodeComprehensive(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 1, result.Stats.NodesCreated)
 
-			nodes, _ := store.GetNodesByLabel(tt.labels[0])
+			nodes, _ := store.GetNodesByLabel(ctx, tt.labels[0])
 			require.Len(t, nodes, 1)
 
 			if tt.propKey != "" {
@@ -586,7 +616,7 @@ func TestCreateWithParameterizedProperties(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 
-	nodes, _ := store.GetNodesByLabel("Person")
+	nodes, _ := store.GetNodesByLabel(ctx, "Person")
 	require.Len(t, nodes, 1)
 	assert.Equal(t, "Alice", nodes[0].Properties["name"])
 	// Age can be int or float depending on how parameter was processed
@@ -605,10 +635,7 @@ func TestCreateWithParameterizedProperties(t *testing.T) {
 
 // TestCreateVariableReuse tests that variables can be reused correctly
 func TestCreateVariableReuse(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	exec, _ := newCypherTestExecutor(t, "test")
 	ctx := context.Background()
 
 	// Create node, then use variable in another CREATE
@@ -624,10 +651,7 @@ func TestCreateVariableReuse(t *testing.T) {
 
 // TestMatchCreateDoesNotDuplicateExistingVariable tests that referencing existing variable doesn't create new node
 func TestMatchCreateDoesNotDuplicateExistingVariable(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	exec, store := newCypherTestExecutor(t, "test")
 	ctx := context.Background()
 
 	// Create initial node
@@ -644,6 +668,6 @@ func TestMatchCreateDoesNotDuplicateExistingVariable(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesCreated, "Should only create the Friend node")
 
 	// Verify we have exactly 2 Person nodes total
-	nodes, _ := store.GetNodesByLabel("Person")
+	nodes, _ := store.GetNodesByLabel(ctx, "Person")
 	assert.Len(t, nodes, 2, "Should have exactly 2 Person nodes")
 }

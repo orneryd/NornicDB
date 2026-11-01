@@ -99,7 +99,7 @@ func TestUseClause_AuthorizesAgainstTargetDatabase(t *testing.T) {
 	_, err := exec.Execute(ctx, "USE cmp CREATE (:AllowedOnTarget)", nil)
 	require.NoError(t, err)
 
-	nodes, err := target.GetNodesByLabel("AllowedOnTarget")
+	nodes, err := target.GetNodesByLabel(ctx, "AllowedOnTarget")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 }

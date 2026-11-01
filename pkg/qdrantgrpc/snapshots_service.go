@@ -98,7 +98,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 	}
 	// A snapshot holds every stored point, those the visibility layer hides
 	// from reads included.
-	nodes, err := storage.GetStoredNodesByLabel(store, QdrantPointLabel)
+	nodes, err := storage.GetStoredNodesByLabel(ctx, store, QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetCollectionPointsFailed(err), grpcresponse.QdrantSourceFallback)
 	}

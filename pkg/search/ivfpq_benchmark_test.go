@@ -51,7 +51,7 @@ func loadBenchmarkCorpus(tb testing.TB, syntheticCount, syntheticDims int) bench
 		if err == nil {
 			tb.Cleanup(func() { _ = baseEngine.Close() })
 			engine := storage.NewNamespacedEngine(baseEngine, dbName)
-			nodes, err := engine.AllNodes()
+			nodes, err := engine.AllNodes(context.Background())
 			if err == nil && len(nodes) > 0 {
 				corpus := benchmarkVectorCorpus{
 					IDs:  make([]string, 0, maxVectors),

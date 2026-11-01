@@ -116,6 +116,16 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.BadgerTransaction.commitMode": {class: "transaction producer durability and ACK policy"},
 	"pkg/storage.CommitOutcome.State":          {class: "accepted command outcome value"},
 
+	// The bulk read owns this stack-local polling countdown. It controls only
+	// when ctx.Err is observed; it is neither an entity count nor a persisted,
+	// quota, suppression or publication-order value. Classify the exact field,
+	// so new state on the type still requires its own census decision.
+	"pkg/storage.bulkReadCancellation.remaining": {class: "request-local cancellation polling progress"},
+	// This counter belongs to one synchronous constraint validation. It is
+	// neither an engine total nor quota/publication state; only counts changes
+	// it as the validation streams its selected edge images.
+	"pkg/storage.edgeCardinalityCounter.count": {class: "validation-local relationship cardinality count"},
+
 	// These are explicit per-field classifications, not type exemptions.
 	// MarshalJSON owns the request buffer; it never publishes stored entities.
 	"pkg/storage.remoteHTTPWriter.buf": {class: "request serialization scratch"},

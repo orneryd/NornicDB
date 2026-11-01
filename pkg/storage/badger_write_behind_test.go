@@ -188,7 +188,7 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 	// Nothing has flushed: every read path below must see the buffered data.
 	require.Greater(t, engine.writeBehind.PendingOps(), 0)
 
-	nodes, err := engine.GetNodesByLabel("Order")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "Order")
 	require.NoError(t, err)
 	require.Len(t, nodes, 5, "GetNodesByLabel must merge the overlay")
 
@@ -200,7 +200,7 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(5), nsLabelCount, "NodeCountByLabelInNamespace must include buffered deltas")
 
-	allNodes, err := engine.AllNodes()
+	allNodes, err := engine.AllNodes(context.Background())
 	require.NoError(t, err)
 	foundOrder := 0
 	for _, n := range allNodes {
@@ -213,14 +213,14 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 	require.Equal(t, 5, foundOrder, "AllNodes must merge the overlay")
 
 	var streamed int
-	err = engine.StreamNodesByLabelProjected("Order", nil, func(n *Node) error {
+	err = engine.StreamNodesByLabelProjected(context.Background(), "Order", nil, func(n *Node) error {
 		streamed++
 		return nil
 	})
 	require.NoError(t, err)
 	require.Equal(t, 5, streamed, "StreamNodesByLabelProjected must merge the overlay")
 
-	edges, err := engine.GetEdgesByType("PURCHASED")
+	edges, err := engine.GetEdgesByType(context.Background(), "PURCHASED")
 	require.NoError(t, err)
 	require.Len(t, edges, 3, "GetEdgesByType must merge the overlay")
 
@@ -228,7 +228,7 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(3), edgeCount, "EdgeCountByType must include buffered deltas")
 
-	allEdges, err := engine.AllEdges()
+	allEdges, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	purchased := 0
 	for _, e := range allEdges {
@@ -254,12 +254,12 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 	require.NoError(t, tx.DeleteGraphNode("test:o0", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
-	nodes, err = engine.GetNodesByLabel("Order")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "Order")
 	require.NoError(t, err)
 	require.Len(t, nodes, 4, "buffered delete must hide the node from label scans")
 
 	require.NoError(t, engine.FlushWriteBehind(nil))
-	nodes, err = engine.GetNodesByLabel("Order")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "Order")
 	require.NoError(t, err)
 	require.Len(t, nodes, 4, "delete persists through the flush")
 }
@@ -350,7 +350,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	// The buffered delete must hide the relationship immediately.
 	require.True(t, engine.writeBehind.EdgeDeleted("test:ab"))
 	require.Equal(t, int64(-1), engine.writeBehind.EdgeTypeCountDelta("R"))
-	edges, err := engine.GetEdgesByType("R")
+	edges, err := engine.GetEdgesByType(context.Background(), "R")
 	require.NoError(t, err)
 	require.Len(t, edges, 1, "buffered detach delete must hide the relationship from type scans")
 
@@ -368,7 +368,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	require.True(t, engine.writeBehind.EdgeDeleted("test:ab"))
 	require.True(t, engine.writeBehind.EdgeDeleted("test:bc"))
 
-	edges, err = engine.GetEdgesByType("R")
+	edges, err = engine.GetEdgesByType(context.Background(), "R")
 	require.NoError(t, err)
 	require.Empty(t, edges, "both relationships hidden before the flush")
 
@@ -380,7 +380,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	count, err := engine.EdgeCountByType("R")
 	require.NoError(t, err)
 	require.Zero(t, count, "wipe must not double-delete derived edge-type counts")
-	edges, err = engine.GetEdgesByType("R")
+	edges, err = engine.GetEdgesByType(context.Background(), "R")
 	require.NoError(t, err)
 	require.Empty(t, edges)
 

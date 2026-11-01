@@ -37,10 +37,10 @@ func TestStatementHTTPUseTarget(t *testing.T) {
 	for database, want := range map[string]int{"nornic": 0, "other": 6} {
 		store, err := server.dbManager.GetStorage(database)
 		require.NoError(t, err)
-		nodes, err := store.GetNodesByLabel("R2")
+		nodes, err := store.GetNodesByLabel(ctx, "R2")
 		require.NoError(t, err)
 		require.Len(t, nodes, want)
-		nodes, err = store.GetNodesByLabel("RejectedSelection")
+		nodes, err = store.GetNodesByLabel(ctx, "RejectedSelection")
 		require.NoError(t, err)
 		require.Empty(t, nodes)
 	}

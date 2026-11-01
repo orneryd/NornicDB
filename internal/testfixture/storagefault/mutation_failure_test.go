@@ -31,7 +31,7 @@ func TestMutationFailureEngineSelectsOneCallAndRollsBackStagedWrites(t *testing.
 	require.ErrorIs(t, err, injected, "the second create of the selection fails")
 	_, err = fixture.CreateNode(node("third"))
 	require.NoError(t, err, "later creates of the selection pass through")
-	created, err := system.AllNodes()
+	created, err := system.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, created, 2)
 
@@ -43,13 +43,13 @@ func TestMutationFailureEngineSelectsOneCallAndRollsBackStagedWrites(t *testing.
 	require.Equal(t, storage.NodeID("third"), nodeRead.ID, "the real engine's read passes through")
 
 	fixture.Select(storagefault.MutationScan, "", 0)
-	_, err = fixture.GetNodesByLabel("_Test")
+	_, err = fixture.GetNodesByLabel(ctx, "_Test")
 	require.ErrorIs(t, err, injected)
 	fixture.Select(storagefault.MutationList, "", 0)
-	_, err = fixture.AllNodes()
+	_, err = fixture.AllNodes(ctx)
 	require.ErrorIs(t, err, injected)
 	fixture.Select("", "", 0)
-	listed, err := fixture.AllNodes()
+	listed, err := fixture.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, listed, 2, "the empty operation injects nothing")
 
@@ -65,7 +65,7 @@ func TestMutationFailureEngineSelectsOneCallAndRollsBackStagedWrites(t *testing.
 	})
 	require.ErrorIs(t, err, injected)
 	require.Equal(t, 2, staged, "writes before the failure reach the real transaction")
-	surviving, err := system.AllNodes()
+	surviving, err := system.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, surviving, 2, "a failed transaction commits nothing")
 

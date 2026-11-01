@@ -28,12 +28,6 @@ func (r *refreshIndexesRecorder) PrepareSearchRefresh(_ context.Context, request
 	return r.svc, r.deferred, r.err
 }
 
-func (r *refreshIndexesRecorder) recorded() []RefreshRequest {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]RefreshRequest(nil), r.requests...)
-}
-
 // refreshIndexesPartialNodeRead fails the node read of "gone" so the operation
 // can be observed applying the relationship after a failed node refresh.
 type refreshIndexesPartialNodeRead struct {
@@ -72,7 +66,7 @@ func TestRefreshIndexes_EmptyRequestResolvesNoService(t *testing.T) {
 	scope := &refreshIndexesRecorder{err: errors.New("scope must not be asked")}
 	require.NoError(t, RefreshIndexes(context.Background(), scope, RefreshRequest{}))
 	require.NoError(t, RefreshIndexes(context.Background(), scope, RefreshRequest{PostCommit: true}))
-	require.Empty(t, scope.recorded(), "an empty request resolved a service")
+	require.Empty(t, fixtureowner.Snapshot(&scope.mu, &scope.requests), "an empty request resolved a service")
 }
 
 func TestRefreshIndexes_PropagatesPrepareErrorWithoutRefreshing(t *testing.T) {
@@ -87,7 +81,7 @@ func TestRefreshIndexes_PropagatesPrepareErrorWithoutRefreshing(t *testing.T) {
 	failure := errors.New("resolver unavailable")
 	scope := &refreshIndexesRecorder{svc: svc, err: failure}
 	require.EqualError(t, RefreshIndexes(ctx, scope, RefreshRequest{Node: "b", Edge: "r"}), failure.Error())
-	require.Len(t, scope.recorded(), 1, "the operation retried a failed prepare")
+	require.Len(t, fixtureowner.Snapshot(&scope.mu, &scope.requests), 1, "the operation retried a failed prepare")
 	require.Zero(t, svc.FulltextDocCount(), "a failed prepare still refreshed the node")
 	require.False(t, svc.HasRelationshipVectorEntries("CITES", "vec"), "a failed prepare still refreshed the relationship")
 }
@@ -105,12 +99,12 @@ func TestRefreshIndexes_DeferredRequestRefreshesNothing(t *testing.T) {
 	require.NoError(t, RefreshIndexes(ctx, scope, RefreshRequest{Node: "b", Edge: "r"}))
 	require.Zero(t, svc.FulltextDocCount(), "a deferred request refreshed the node")
 	require.False(t, svc.HasRelationshipVectorEntries("CITES", "vec"), "a deferred request refreshed the relationship")
-	require.Len(t, scope.recorded(), 1)
+	require.Len(t, fixtureowner.Snapshot(&scope.mu, &scope.requests), 1)
 
 	// A deferral without a service is the same: the deferring owner refreshes.
 	scope = &refreshIndexesRecorder{deferred: true}
 	require.NoError(t, RefreshIndexes(ctx, scope, RefreshRequest{Node: "b"}))
-	require.Len(t, scope.recorded(), 1)
+	require.Len(t, fixtureowner.Snapshot(&scope.mu, &scope.requests), 1)
 }
 
 // A node refresh that fails does not skip the relationship refresh, and the
@@ -165,11 +159,11 @@ func TestRefreshIndexes_PreparesTheWholeRequestOnce(t *testing.T) {
 	scope := &refreshIndexesRecorder{svc: svc}
 	request := RefreshRequest{Node: "a", Edge: "r", PostCommit: true}
 	require.NoError(t, RefreshIndexes(context.Background(), scope, request))
-	require.Equal(t, []RefreshRequest{request}, scope.recorded())
+	require.Equal(t, []RefreshRequest{request}, fixtureowner.Snapshot(&scope.mu, &scope.requests))
 }
 
 func TestRefreshIndexes_NilServiceStopsAfterPrepare(t *testing.T) {
 	scope := &refreshIndexesRecorder{}
 	require.NoError(t, RefreshIndexes(context.Background(), scope, RefreshRequest{Node: "a"}))
-	require.Len(t, scope.recorded(), 1)
+	require.Len(t, fixtureowner.Snapshot(&scope.mu, &scope.requests), 1)
 }

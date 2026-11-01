@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -51,7 +52,7 @@ func TestHTTPSystemShowTailReturnsNoGraphDataOrClauseResults(t *testing.T) {
 			require.Len(t, body.Results[0].Data, 1)
 		}
 	}
-	written, err := system.GetNodesByLabel("ShowTailWrite")
+	written, err := system.GetNodesByLabel(context.Background(), "ShowTailWrite")
 	require.NoError(t, err)
 	require.Empty(t, written, "no continuation clause ran")
 	user, err := system.GetNode("show-tail-user")

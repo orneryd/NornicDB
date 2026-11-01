@@ -63,7 +63,7 @@ func TestNormalGraphQueriesProjectSuppressedProperties(t *testing.T) {
 	raw, err := engine.GetNode("a")
 	require.NoError(t, err)
 	require.Equal(t, "hidden", raw.Properties["secret"])
-	history, err := s.collectLatestInducedSubgraph(engine, []string{"a", "b"}, newGraphFilterSet(nil, nil))
+	history, err := s.collectLatestInducedSubgraph(context.Background(), engine, []string{"a", "b"}, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.Contains(t, history.nodes["a"].Properties, "secret")
 }

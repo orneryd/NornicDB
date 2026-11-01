@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -18,14 +19,14 @@ type adjacentFallbackEngine struct {
 	inErr    error
 }
 
-func (e *adjacentFallbackEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
+func (e *adjacentFallbackEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	if e.outErr != nil {
 		return nil, e.outErr
 	}
 	return e.outgoing, nil
 }
 
-func (e *adjacentFallbackEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
+func (e *adjacentFallbackEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	if e.inErr != nil {
 		return nil, e.inErr
 	}
@@ -62,7 +63,7 @@ func (e *namespaceLifecycleRecorder) RecordMaterializedAccess(entityID string) {
 	e.accesses = append(e.accesses, entityID)
 }
 
-func (e *adjacentDirectEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
+func (e *adjacentDirectEngine) GetAdjacentEdges(ctx context.Context, nodeID NodeID) ([]*Edge, []*Edge, error) {
 	if e.adjErr != nil {
 		return nil, nil, e.adjErr
 	}
@@ -111,7 +112,7 @@ func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 		incoming: []*Edge{{ID: "tenant:e3", StartNode: "tenant:n3", EndNode: "tenant:n1"}},
 	}
 	ns := NewNamespacedEngine(fallback, "tenant")
-	out, in, err := ns.GetAdjacentEdges("n1")
+	out, in, err := ns.GetAdjacentEdges(context.Background(), "n1")
 	require.NoError(t, err)
 	require.Equal(t, []*Edge{{Database: "tenant", ID: "e1", StartNode: "n1", EndNode: "n2"}}, out)
 	require.Equal(t, []*Edge{{Database: "tenant", ID: "e3", StartNode: "n3", EndNode: "n1"}}, in)
@@ -121,25 +122,25 @@ func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 	wantErr := errors.New("adjacent failed")
 	direct := &adjacentDirectEngine{adjacentFallbackEngine: &adjacentFallbackEngine{Engine: newTestMemoryEngine(t)}, adjErr: wantErr}
 	ns = NewNamespacedEngine(direct, "tenant")
-	_, _, err = ns.GetAdjacentEdges("n1")
+	_, _, err = ns.GetAdjacentEdges(context.Background(), "n1")
 	require.ErrorIs(t, err, wantErr)
 
 	direct.adjErr = nil
 	direct.adjOut = []*Edge{{ID: "tenant:e4", StartNode: "tenant:n1", EndNode: "tenant:n4"}}
 	direct.adjIn = []*Edge{{ID: "other:e5", StartNode: "other:n5", EndNode: "other:n1"}}
-	out, in, err = ns.GetAdjacentEdges("n1")
+	out, in, err = ns.GetAdjacentEdges(context.Background(), "n1")
 	require.NoError(t, err)
 	require.Equal(t, []*Edge{{Database: "tenant", ID: "e4", StartNode: "n1", EndNode: "n4"}}, out)
 	require.Empty(t, in)
 
 	fallback.outErr = wantErr
 	ns = NewNamespacedEngine(fallback, "tenant")
-	_, _, err = ns.GetAdjacentEdges("n1")
+	_, _, err = ns.GetAdjacentEdges(context.Background(), "n1")
 	require.ErrorIs(t, err, wantErr)
 
 	fallback.outErr = nil
 	fallback.inErr = wantErr
-	_, _, err = ns.GetAdjacentEdges("n1")
+	_, _, err = ns.GetAdjacentEdges(context.Background(), "n1")
 	require.ErrorIs(t, err, wantErr)
 }
 

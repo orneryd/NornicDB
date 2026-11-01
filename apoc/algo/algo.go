@@ -26,56 +26,6 @@ type Relationship struct {
 	Properties map[string]interface{}
 }
 
-// PageRank calculates PageRank scores for nodes.
-//
-// Example:
-//
-//	apoc.algo.pageRank(nodes) => [{node: n, score: 0.15}, ...]
-func PageRank(nodes []*Node, iterations int, dampingFactor float64) []map[string]interface{} {
-	if len(nodes) == 0 {
-		return []map[string]interface{}{}
-	}
-
-	// Initialize scores
-	scores := make(map[int64]float64)
-	for _, node := range nodes {
-		scores[node.ID] = 1.0 / float64(len(nodes))
-	}
-
-	// Iterate
-	for iter := 0; iter < iterations; iter++ {
-		newScores := make(map[int64]float64)
-
-		for _, node := range nodes {
-			// Get incoming links (placeholder)
-			incomingLinks := getIncomingLinks(node)
-
-			sum := 0.0
-			for _, link := range incomingLinks {
-				outDegree := getOutDegree(link)
-				if outDegree > 0 {
-					sum += scores[link.ID] / float64(outDegree)
-				}
-			}
-
-			newScores[node.ID] = (1-dampingFactor)/float64(len(nodes)) + dampingFactor*sum
-		}
-
-		scores = newScores
-	}
-
-	// Convert to result format
-	result := make([]map[string]interface{}, len(nodes))
-	for i, node := range nodes {
-		result[i] = map[string]interface{}{
-			"node":  node,
-			"score": scores[node.ID],
-		}
-	}
-
-	return result
-}
-
 // BetweennessCentrality calculates betweenness centrality.
 //
 // Example:
@@ -498,16 +448,6 @@ func (pq *PriorityQueue) Pop() interface{} {
 	item.index = -1
 	*pq = old[0 : n-1]
 	return item
-}
-
-func getIncomingLinks(node *Node) []*Node {
-	// Placeholder - would query database
-	return []*Node{}
-}
-
-func getOutDegree(node *Node) int {
-	// Placeholder - would query database
-	return 0
 }
 
 func getNeighbors(node *Node) []*Node {

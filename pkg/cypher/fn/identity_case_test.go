@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
@@ -33,12 +34,12 @@ func TestIdentityFunctionNamesPreserveCodeUnits(t *testing.T) {
 	})
 	for index, unit := range units {
 		want := int64(index + 1)
-		Register("identity_units."+unit, func(Context, []string) (interface{}, error) { return want, nil })
+		Register("identity_units."+unit, func(_ context.Context, _ Context, _ []string) (interface{}, error) { return want, nil })
 	}
 	ctx := Context{Eval: func(string) (interface{}, error) { return nil, nil }, Now: time.Now}
 	for index, unit := range units {
 		for _, prefix := range []string{"identity_units.", "IDENTITY_UNITS."} {
-			value, found, err := EvaluateFunction(prefix+unit, nil, ctx)
+			value, found, err := EvaluateFunction(context.Background(), prefix+unit, nil, ctx)
 			require.NoError(t, err)
 			require.True(t, found)
 			require.Equal(t, int64(index+1), value, "exact registered name %q", prefix+unit)

@@ -118,16 +118,16 @@ func (e *MutationFailureEngine) GetNode(id storage.NodeID) (*storage.Node, error
 	return e.Engine.GetNode(id)
 }
 
-func (e *MutationFailureEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *MutationFailureEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if e.Fails(MutationScan, "") {
 		return nil, e.Failure
 	}
-	return e.Engine.GetNodesByLabel(label)
+	return e.Engine.GetNodesByLabel(ctx, label)
 }
 
-func (e *MutationFailureEngine) AllNodes() ([]*storage.Node, error) {
+func (e *MutationFailureEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	if e.Fails(MutationList, "") {
 		return nil, e.Failure
 	}
-	return e.Engine.AllNodes()
+	return e.Engine.AllNodes(ctx)
 }

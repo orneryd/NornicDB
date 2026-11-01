@@ -2,7 +2,7 @@
 //
 // These executors implement specialized algorithms that are significantly faster
 // than generic traversal for certain query patterns. Each executor is designed
-// for a specific pattern detected by DetectQueryPattern(ctx, ).
+// for a specific pattern detected by DetectQueryPattern(ctx).
 //
 // Performance characteristics:
 //   - MutualRelationship: O(E) instead of O(N * D²)
@@ -38,7 +38,7 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 
 		// Get edges by type directly (MUCH faster than AllEdges + filter)
 		// This uses the edge type index for O(edges_of_type) instead of O(all_edges)
-		edgeList, err := e.storage.GetEdgesByType(patternInfo.RelType)
+		edgeList, err := e.storage.GetEdgesByType(ctx, patternInfo.RelType)
 		if err != nil {
 			return nil, false
 		}
@@ -128,7 +128,7 @@ func (e *StorageExecutor) executeRelationshipCountOptimized(ctx context.Context,
 	}
 
 	// Get all edges
-	allEdges, err := e.storage.AllEdges()
+	allEdges, err := e.storage.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	}
 
 	// Get all edges
-	allEdges, err := e.storage.AllEdges()
+	allEdges, err := e.storage.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +349,7 @@ func (e *StorageExecutor) getPropertyString(node *storage.Node, prop string) str
 
 // BatchGetNodes retrieves multiple nodes in a single operation
 // Used for large result set optimization
-func (e *StorageExecutor) BatchGetNodes(ids []storage.NodeID) map[storage.NodeID]*storage.Node {
+func (e *StorageExecutor) BatchGetNodes(ctx context.Context, ids []storage.NodeID) map[storage.NodeID]*storage.Node {
 	result := make(map[storage.NodeID]*storage.Node, len(ids))
 	for _, id := range ids {
 		if node, err := e.storage.GetNode(id); err == nil && node != nil {

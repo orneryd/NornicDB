@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
@@ -45,13 +46,13 @@ func TestEntityRecreatedAfterRolledBackCreateSurvivesReopen(t *testing.T) {
 	edge, err := engine.GetEdge("test:merge-x")
 	require.NoError(t, err)
 	require.Equal(t, "new", edge.Properties["id"])
-	outgoing, err := engine.GetOutgoingEdges("test:a")
+	outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, EdgeID("test:merge-x"), outgoing[0].ID)
 	_, err = engine.GetNode("test:fixed")
 	require.NoError(t, err)
-	fixed, err := engine.GetNodesByLabel("Fixed")
+	fixed, err := engine.GetNodesByLabel(context.Background(), "Fixed")
 	require.NoError(t, err)
 	require.Len(t, fixed, 1)
 }

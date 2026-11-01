@@ -55,7 +55,7 @@ type fullScanCountingEngine struct {
 	allNodes atomic.Int64
 }
 
-func (e *fullScanCountingEngine) AllNodes() ([]*storage.Node, error) {
+func (e *fullScanCountingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	e.allNodes.Add(1)
-	return e.Engine.AllNodes()
+	return e.Engine.AllNodes(ctx)
 }

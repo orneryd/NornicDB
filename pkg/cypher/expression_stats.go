@@ -1,6 +1,8 @@
 package cypher
 
-import "context"
+import (
+	"context"
+)
 
 // Expression subqueries return scalar/list values, while their completed
 // child summary belongs to the surrounding statement. Every query scope

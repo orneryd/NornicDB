@@ -163,7 +163,9 @@ type roleOwnedRecord struct {
 func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwnedRecord, error) {
 	var records []roleOwnedRecord
 	for _, label := range []string{procedurePrivilegeLabel, dbPrivLabel, roleDbAccessLabel, roleEntitlementLabel, "_User", roleLabel} {
-		nodes, err := view.GetNodesByLabel(label)
+		// Role record enumeration keeps its existing API (no caller context): it
+		// runs on the auth store's own lifetime.
+		nodes, err := view.GetNodesByLabel(context.Background(), label)
 		if err != nil {
 			return nil, err
 		}

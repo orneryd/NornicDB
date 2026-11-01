@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -68,13 +69,13 @@ func TestBadgerTransaction_ScanForNodeKeyViolation_AndCheckNodeKeyConstraintBran
 		Properties: map[string]any{"tenant": "t2", "ext": "e2"},
 	}
 	c := Constraint{Type: ConstraintNodeKey, Label: "Account", Properties: []string{"tenant", "ext"}}
-	err = tx.checkNodeKeyConstraint(&Node{ID: "test:new", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t2", "ext": "e2"}}, c)
+	err = tx.checkNodeKeyConstraint(context.Background(), &Node{ID: "test:new", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t2", "ext": "e2"}}, c)
 	require.Error(t, err)
 	require.ErrorAs(t, err, &cv)
 	require.Equal(t, ConstraintNodeKey, cv.Type)
 
 	// Null property branch.
-	err = tx.checkNodeKeyConstraint(&Node{ID: "test:null", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t2"}}, c)
+	err = tx.checkNodeKeyConstraint(context.Background(), &Node{ID: "test:null", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t2"}}, c)
 	require.Error(t, err)
 	require.ErrorAs(t, err, &cv)
 	require.Equal(t, ConstraintNodeKey, cv.Type)

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
@@ -26,7 +27,7 @@ func TestGH448_EmbeddingWritebackPersistsAcrossBadgerReopen(t *testing.T) {
 	node.ChunkEmbeddings = [][]float32{{0.25, 0.5, 0.75}}
 	node.EmbedMeta = map[string]any{"embedded": true, "chunk_count": 1}
 	require.NoError(t, store.UpdateNodeEmbeddingSidecar(node))
-	staged, err := store.GetNodesByLabel("Doc")
+	staged, err := store.GetNodesByLabel(context.Background(), "Doc")
 	require.NoError(t, err)
 	require.Len(t, staged, 2)
 	require.NoError(t, engine.Close())
@@ -35,7 +36,7 @@ func TestGH448_EmbeddingWritebackPersistsAcrossBadgerReopen(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	store = NewNamespacedEngine(engine, "gh448_disk")
-	nodes, err := store.GetNodesByLabel("Doc")
+	nodes, err := store.GetNodesByLabel(context.Background(), "Doc")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	count, err := store.NodeCountByLabel("Doc")

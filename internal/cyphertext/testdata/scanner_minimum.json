@@ -144,9 +144,6 @@
     "splitTopLevelComma",
     "splitTopLevelCommaKeepEmpty"
   ],
-  "pkg/cypher/call_vector.go": [
-    "parseVectorQueryParams"
-  ],
   "pkg/cypher/case_closure_balance.go": [
     "caseEndFollowsBarePrefix",
     "casePrefixEndRequired"

@@ -21,7 +21,7 @@ type graphOutgoingErrorEngine struct {
 	storage.Engine
 }
 
-func (e *graphOutgoingErrorEngine) GetOutgoingEdges(storage.NodeID) ([]*storage.Edge, error) {
+func (e *graphOutgoingErrorEngine) GetOutgoingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
 	return nil, fmt.Errorf("boom")
 }
 
@@ -36,7 +36,7 @@ type graphEdgesStubEngine struct {
 	incomingCalls int
 }
 
-func (e *graphEdgesStubEngine) GetOutgoingEdges(storage.NodeID) ([]*storage.Edge, error) {
+func (e *graphEdgesStubEngine) GetOutgoingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
 	if e.cancel != nil {
 		e.cancel()
 	}
@@ -46,7 +46,7 @@ func (e *graphEdgesStubEngine) GetOutgoingEdges(storage.NodeID) ([]*storage.Edge
 	return e.outgoing, nil
 }
 
-func (e *graphEdgesStubEngine) GetIncomingEdges(storage.NodeID) ([]*storage.Edge, error) {
+func (e *graphEdgesStubEngine) GetIncomingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
 	e.incomingCalls++
 	if e.cancelIn != nil {
 		e.cancelIn()
@@ -100,7 +100,7 @@ type graphSnapshotIndexedErrorEngine struct {
 	err error
 }
 
-func (e *graphSnapshotIndexedErrorEngine) GetEdgesByTypeVisibleAt(string, storage.MVCCVersion) ([]*storage.Edge, error) {
+func (e *graphSnapshotIndexedErrorEngine) GetEdgesByTypeVisibleAt(context.Context, string, storage.MVCCVersion) ([]*storage.Edge, error) {
 	return nil, e.err
 }
 
@@ -197,7 +197,7 @@ func (e *graphSnapshotIndexEngine) GetEdgeVisibleAt(id storage.EdgeID, _ storage
 	return nil, nil
 }
 
-func (e *graphSnapshotIndexEngine) GetNodesByLabelVisibleAt(label string, _ storage.MVCCVersion) ([]*storage.Node, error) {
+func (e *graphSnapshotIndexEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, _ storage.MVCCVersion) ([]*storage.Node, error) {
 	out := make([]*storage.Node, 0, len(e.nodes))
 	for _, node := range e.nodes {
 		if node == nil {
@@ -217,27 +217,28 @@ func (e *graphSnapshotIndexEngine) GetNodesByLabelVisibleAt(label string, _ stor
 	return out, nil
 }
 
-func (e *graphSnapshotIndexEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+// visibleEdgesMatching is the one directional-filter kernel behind both
+// adjacency directions: nil entries are skipped, insertion order is kept and
+// the result is always non-nil, exactly as the two direction spies returned it.
+func (e *graphSnapshotIndexEngine) visibleEdgesMatching(keep func(*storage.Edge) bool) []*storage.Edge {
 	out := make([]*storage.Edge, 0, len(e.edges))
 	for _, edge := range e.edges {
-		if edge != nil && edge.StartNode == nodeID {
+		if edge != nil && keep(edge) {
 			out = append(out, edge)
 		}
 	}
-	return out, nil
+	return out
 }
 
-func (e *graphSnapshotIndexEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
-	out := make([]*storage.Edge, 0, len(e.edges))
-	for _, edge := range e.edges {
-		if edge != nil && edge.EndNode == nodeID {
-			out = append(out, edge)
-		}
-	}
-	return out, nil
+func (e *graphSnapshotIndexEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+	return e.visibleEdgesMatching(func(edge *storage.Edge) bool { return edge.StartNode == nodeID }), nil
 }
 
-func (e *graphSnapshotIndexEngine) GetEdgesByTypeVisibleAt(edgeType string, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+func (e *graphSnapshotIndexEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+	return e.visibleEdgesMatching(func(edge *storage.Edge) bool { return edge.EndNode == nodeID }), nil
+}
+
+func (e *graphSnapshotIndexEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, _ storage.MVCCVersion) ([]*storage.Edge, error) {
 	e.getEdgesByTypeCalls++
 	out := make([]*storage.Edge, 0, len(e.edges))
 	for _, edge := range e.edges {
@@ -251,7 +252,7 @@ func (e *graphSnapshotIndexEngine) GetEdgesByTypeVisibleAt(edgeType string, _ st
 	return out, nil
 }
 
-func (e *graphSnapshotIndexEngine) GetEdgesBetweenVisibleAt(startID, endID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+func (e *graphSnapshotIndexEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
 	e.getEdgesBetweenCalls++
 	out := make([]*storage.Edge, 0)
 	for _, edge := range e.edges {
@@ -1072,7 +1073,7 @@ func TestCollectLatestInducedSubgraph_PropagatesOutgoingError(t *testing.T) {
 	require.NoError(t, err)
 
 	engine := &graphOutgoingErrorEngine{Engine: base}
-	_, err = server.collectLatestInducedSubgraph(engine, []string{"nornic:a"}, newGraphFilterSet(nil, nil))
+	_, err = server.collectLatestInducedSubgraph(context.Background(), engine, []string{"nornic:a"}, newGraphFilterSet(nil, nil))
 	require.EqualError(t, err, "boom")
 }
 
@@ -1082,7 +1083,7 @@ func TestCollectSnapshotInducedSubgraph_RequiresMVCCInterfaces(t *testing.T) {
 	defer func() { _ = base.Close() }()
 
 	engine := &graphNoMVCCEngine{Engine: base}
-	_, err := server.collectSnapshotInducedSubgraph(engine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
+	_, err := server.collectSnapshotInducedSubgraph(context.Background(), engine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 }
 
@@ -1107,7 +1108,7 @@ func TestCollectSnapshotInducedSubgraph_UsesSingleVisibleEdgeScan(t *testing.T) 
 	}
 	version := storage.MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: ^uint64(0)}
 
-	collection, err := server.collectSnapshotInducedSubgraph(engine, []string{"a", "b", "c"}, version, newGraphFilterSet(nil, []string{"LINKS"}))
+	collection, err := server.collectSnapshotInducedSubgraph(context.Background(), engine, []string{"a", "b", "c"}, version, newGraphFilterSet(nil, []string{"LINKS"}))
 	require.NoError(t, err)
 	require.Equal(t, 1, engine.getEdgesByTypeCalls)
 	require.Equal(t, 0, engine.getEdgesBetweenCalls)
@@ -1300,7 +1301,7 @@ func TestCollectLatestInducedSubgraph_SkipsSelfAndOutsideEdges(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"}))
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "REL"}))
 
-	collection, err := server.collectLatestInducedSubgraph(engine, []string{"a", "b"}, newGraphFilterSet(nil, nil))
+	collection, err := server.collectLatestInducedSubgraph(context.Background(), engine, []string{"a", "b"}, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.Contains(t, collection.edges, "ab")
 	require.NotContains(t, collection.edges, "self")
@@ -1316,7 +1317,7 @@ func TestCollectSnapshotInducedSubgraph_AdditionalErrorBranches(t *testing.T) {
 		Engine: base,
 		nodes:  map[storage.NodeID]*storage.Node{"a": {ID: "a", Labels: []string{"Node"}}},
 	}
-	_, err := server.collectSnapshotInducedSubgraph(visibilityOnly, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
+	_, err := server.collectSnapshotInducedSubgraph(context.Background(), visibilityOnly, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 
 	errEngine := &graphSnapshotIndexedErrorEngine{
@@ -1328,7 +1329,7 @@ func TestCollectSnapshotInducedSubgraph_AdditionalErrorBranches(t *testing.T) {
 		},
 		err: fmt.Errorf("indexed edge scan failed"),
 	}
-	_, err = server.collectSnapshotInducedSubgraph(errEngine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
+	_, err = server.collectSnapshotInducedSubgraph(context.Background(), errEngine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
 	require.EqualError(t, err, "indexed edge scan failed")
 }
 
@@ -1346,7 +1347,7 @@ func TestCollectSnapshotInducedSubgraph_EmptyResolvedNodesReturnsEarly(t *testin
 			{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"},
 		},
 	}
-	collection, err := server.collectSnapshotInducedSubgraph(engine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet([]string{"Topic"}, nil))
+	collection, err := server.collectSnapshotInducedSubgraph(context.Background(), engine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet([]string{"Topic"}, nil))
 	require.NoError(t, err)
 	require.Empty(t, collection.nodes)
 	require.Empty(t, collection.edges)
@@ -1453,7 +1454,7 @@ func TestCollectSnapshotInducedSubgraph_SkipsEdgesOutsideResolvedSet(t *testing.
 		},
 	}
 
-	collection, err := server.collectSnapshotInducedSubgraph(engine, []string{"a", "b"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
+	collection, err := server.collectSnapshotInducedSubgraph(context.Background(), engine, []string{"a", "b"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.Contains(t, collection.edges, "ab")
 	require.NotContains(t, collection.edges, "ac")

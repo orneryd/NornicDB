@@ -131,9 +131,9 @@ func (s *delegationSpyEngine) DeleteEdge(id EdgeID) error {
 	return s.MemoryEngine.DeleteEdge(id)
 }
 
-func (s *delegationSpyEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (s *delegationSpyEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	s.record("GetNodesByLabel")
-	return s.MemoryEngine.GetNodesByLabel(label)
+	return s.MemoryEngine.GetNodesByLabel(ctx, label)
 }
 
 func (s *delegationSpyEngine) GetFirstNodeByLabel(label string) (*Node, error) {
@@ -143,9 +143,9 @@ func (s *delegationSpyEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 
 // The scoped label reads (ScopedLabelNodeReader, #851) are how the wrappers
 // delegate the label reads above; they record under the same names.
-func (s *delegationSpyEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
+func (s *delegationSpyEngine) GetNodesByLabelInScope(ctx context.Context, scope, label string) ([]*Node, error) {
 	s.record("GetNodesByLabel")
-	return s.MemoryEngine.GetNodesByLabelInScope(scope, label)
+	return s.MemoryEngine.GetNodesByLabelInScope(ctx, scope, label)
 }
 
 func (s *delegationSpyEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
@@ -153,29 +153,29 @@ func (s *delegationSpyEngine) GetFirstNodeByLabelInScope(scope, label string) (*
 	return s.MemoryEngine.GetFirstNodeByLabelInScope(scope, label)
 }
 
-func (s *delegationSpyEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
+func (s *delegationSpyEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
 	s.record("StreamNodesByLabelProjected")
-	return s.MemoryEngine.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
+	return s.MemoryEngine.StreamNodesByLabelProjectedInScope(ctx, scope, label, properties, visit)
 }
 
-func (s *delegationSpyEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
+func (s *delegationSpyEngine) GetNodesByLabelVisibleAtInScope(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error) {
 	s.record("GetNodesByLabelVisibleAt")
-	return s.MemoryEngine.GetNodesByLabelVisibleAtInScope(scope, label, version)
+	return s.MemoryEngine.GetNodesByLabelVisibleAtInScope(ctx, scope, label, version)
 }
 
-func (s *delegationSpyEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	s.record("GetOutgoingEdges")
-	return s.MemoryEngine.GetOutgoingEdges(nodeID)
+	return s.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
 }
 
-func (s *delegationSpyEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	s.record("GetIncomingEdges")
-	return s.MemoryEngine.GetIncomingEdges(nodeID)
+	return s.MemoryEngine.GetIncomingEdges(ctx, nodeID)
 }
 
-func (s *delegationSpyEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
 	s.record("GetEdgesBetween")
-	return s.MemoryEngine.GetEdgesBetween(startID, endID)
+	return s.MemoryEngine.GetEdgesBetween(ctx, startID, endID)
 }
 
 func (s *delegationSpyEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
@@ -183,24 +183,19 @@ func (s *delegationSpyEngine) GetEdgeBetween(startID, endID NodeID, edgeType str
 	return s.MemoryEngine.GetEdgeBetween(startID, endID, edgeType)
 }
 
-func (s *delegationSpyEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
 	s.record("GetEdgesByType")
-	return s.MemoryEngine.GetEdgesByType(edgeType)
+	return s.MemoryEngine.GetEdgesByType(ctx, edgeType)
 }
 
-func (s *delegationSpyEngine) AllNodes() ([]*Node, error) {
+func (s *delegationSpyEngine) AllNodes(ctx context.Context) ([]*Node, error) {
 	s.record("AllNodes")
-	return s.MemoryEngine.AllNodes()
+	return s.MemoryEngine.AllNodes(ctx)
 }
 
-func (s *delegationSpyEngine) AllEdges() ([]*Edge, error) {
+func (s *delegationSpyEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 	s.record("AllEdges")
-	return s.MemoryEngine.AllEdges()
-}
-
-func (s *delegationSpyEngine) GetAllNodes() []*Node {
-	s.record("GetAllNodes")
-	return s.MemoryEngine.GetAllNodes()
+	return s.MemoryEngine.AllEdges(ctx)
 }
 
 func (s *delegationSpyEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(node *Node) error) error {
@@ -246,9 +241,9 @@ func (s *delegationSpyEngine) BulkDeleteEdges(ids []EdgeID) error {
 	return s.MemoryEngine.BulkDeleteEdges(ids)
 }
 
-func (s *delegationSpyEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+func (s *delegationSpyEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	s.record("BatchGetNodes")
-	return s.MemoryEngine.BatchGetNodes(ids)
+	return s.MemoryEngine.BatchGetNodes(ctx, ids)
 }
 
 func (s *delegationSpyEngine) Close() error {
@@ -413,29 +408,29 @@ func (s *delegationSpyEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (
 	return s.MemoryEngine.GetEdgeVisibleAt(id, version)
 }
 
-func (s *delegationSpyEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
+func (s *delegationSpyEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
 	s.record("GetNodesByLabelVisibleAt")
-	return s.MemoryEngine.GetNodesByLabelVisibleAt(label, version)
+	return s.MemoryEngine.GetNodesByLabelVisibleAt(ctx, label, version)
 }
 
-func (s *delegationSpyEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	s.record("GetOutgoingEdgesVisibleAt")
-	return s.MemoryEngine.GetOutgoingEdgesVisibleAt(nodeID, version)
+	return s.MemoryEngine.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
 }
 
-func (s *delegationSpyEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	s.record("GetIncomingEdgesVisibleAt")
-	return s.MemoryEngine.GetIncomingEdgesVisibleAt(nodeID, version)
+	return s.MemoryEngine.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
 }
 
-func (s *delegationSpyEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
 	s.record("GetEdgesByTypeVisibleAt")
-	return s.MemoryEngine.GetEdgesByTypeVisibleAt(edgeType, version)
+	return s.MemoryEngine.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
 }
 
-func (s *delegationSpyEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
 	s.record("GetEdgesBetweenVisibleAt")
-	return s.MemoryEngine.GetEdgesBetweenVisibleAt(startID, endID, version)
+	return s.MemoryEngine.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
 }
 
 func (s *delegationSpyEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
@@ -601,15 +596,15 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 
 			_, err = engine.GetNode(id("n1"))
 			check("GetNode", err)
-			_, err = engine.GetNodesByLabel("Person")
+			_, err = engine.GetNodesByLabel(ctx, "Person")
 			check("GetNodesByLabel", err)
 			_, err = engine.GetFirstNodeByLabel("Person")
 			check("GetFirstNodeByLabel", err)
-			_, err = engine.GetOutgoingEdges(id("n1"))
+			_, err = engine.GetOutgoingEdges(ctx, id("n1"))
 			check("GetOutgoingEdges", err)
-			_, err = engine.GetIncomingEdges(id("n2"))
+			_, err = engine.GetIncomingEdges(ctx, id("n2"))
 			check("GetIncomingEdges", err)
-			_, err = engine.GetEdgesBetween(id("n1"), id("n2"))
+			_, err = engine.GetEdgesBetween(ctx, id("n1"), id("n2"))
 			check("GetEdgesBetween", err)
 			matched, err := engine.MatchEdgesBetween(id("n1"), id("n2"), "KNOWS", []string{}, func(*Edge) bool { return true })
 			check("MatchEdgesBetween", err)
@@ -622,20 +617,12 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 				// assert the handled result instead of inner delegation.
 				require.NotNilf(t, edge, "%s.GetEdgeBetween must resolve the seeded edge", stack)
 			}
-			_, err = engine.GetEdgesByType("KNOWS")
+			_, err = engine.GetEdgesByType(ctx, "KNOWS")
 			check("GetEdgesByType", err)
-			_, err = engine.AllNodes()
+			_, err = engine.AllNodes(ctx)
 			check("AllNodes", err)
-			_, err = engine.AllEdges()
+			_, err = engine.AllEdges(ctx)
 			check("AllEdges", err)
-			allNodes := engine.GetAllNodes()
-			if stack == "badger" || stack == "wal" {
-				check("GetAllNodes", nil)
-			} else {
-				// AsyncEngine composes GetAllNodes over its merged overlay;
-				// assert the handled result instead of inner delegation.
-				require.NotEmptyf(t, allNodes, "%s.GetAllNodes must return the seeded nodes", stack)
-			}
 			_, err = engine.GetEdge(eid("e1"))
 			check("GetEdge", err)
 
@@ -666,7 +653,7 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			} else {
 				check("GetSchema", nil)
 			}
-			_, err = engine.BatchGetNodes([]NodeID{id("n1"), id("n2")})
+			_, err = engine.BatchGetNodes(ctx, []NodeID{id("n1"), id("n2")})
 			check("BatchGetNodes", err)
 			_, err = engine.NodeCount()
 			if stack == "namespaced+wal" {
@@ -836,15 +823,15 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			check("GetNodeVisibleAt", err)
 			_, err = engine.GetEdgeVisibleAt(eid("e1"), version)
 			check("GetEdgeVisibleAt", err)
-			_, err = engine.GetNodesByLabelVisibleAt("Person", version)
+			_, err = engine.GetNodesByLabelVisibleAt(ctx, "Person", version)
 			check("GetNodesByLabelVisibleAt", err)
-			_, err = engine.GetOutgoingEdgesVisibleAt(id("n1"), version)
+			_, err = engine.GetOutgoingEdgesVisibleAt(ctx, id("n1"), version)
 			check("GetOutgoingEdgesVisibleAt", err)
-			_, err = engine.GetIncomingEdgesVisibleAt(id("n2"), version)
+			_, err = engine.GetIncomingEdgesVisibleAt(ctx, id("n2"), version)
 			check("GetIncomingEdgesVisibleAt", err)
-			_, err = engine.GetEdgesByTypeVisibleAt("KNOWS", version)
+			_, err = engine.GetEdgesByTypeVisibleAt(ctx, "KNOWS", version)
 			check("GetEdgesByTypeVisibleAt", err)
-			_, err = engine.GetEdgesBetweenVisibleAt(id("n1"), id("n2"), version)
+			_, err = engine.GetEdgesBetweenVisibleAt(ctx, id("n1"), id("n2"), version)
 			check("GetEdgesBetweenVisibleAt", err)
 			_, err = engine.GetNodeCurrentHead(id("n1"))
 			check("GetNodeCurrentHead", err)

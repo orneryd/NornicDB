@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"slices"
@@ -121,7 +122,10 @@ func refreshUniqueConstraintValues(engine Engine, schema *SchemaManager, uniqueC
 	for _, label := range labels {
 		properties := propertiesByLabel[label]
 		var violation error
-		err := StreamStoredNodesByLabelProjected(engine, label, properties, func(node *Node) error {
+		// Constraint validation is a write-owned integrity read: its lifetime is
+		// the accepted write's own (context.Background), never a statement
+		// read's context.
+		err := StreamStoredNodesByLabelProjected(context.Background(), engine, label, properties, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
@@ -170,6 +174,17 @@ func isValueInAllowedList(value interface{}, allowedValues []interface{}) bool {
 	return false
 }
 
+// constraintCreationNodes owns the stored-node population and localized read
+// failure for creation-time integrity checks. Accepted writes own this lifetime;
+// statement cancellation must not interrupt an integrity scan after acceptance.
+func constraintCreationNodes(engine Engine, label string) ([]*Node, error) {
+	nodes, err := GetStoredNodesByLabel(context.Background(), engine, label)
+	if err != nil {
+		return nil, localizedError(localization.StorageValidationScanNodesFailed(err), err)
+	}
+	return nodes, nil
+}
+
 // validateDomainConstraintOnCreationForEngine validates that all existing nodes satisfy the domain constraint.
 func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) error {
 	if len(c.Properties) != 1 {
@@ -181,9 +196,9 @@ func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) er
 
 	property := c.Properties[0]
 
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
+	nodes, err := constraintCreationNodes(engine, c.Label)
 	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+		return err
 	}
 
 	for _, node := range nodes {
@@ -213,9 +228,9 @@ func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) e
 	seen := make(constraintCreationValues)
 
 	// Scan all nodes with this label
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
+	nodes, err := constraintCreationNodes(engine, c.Label)
 	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+		return err
 	}
 
 	for _, node := range nodes {
@@ -242,9 +257,9 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 
 	seen := make(constraintCreationValues)
 
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
+	nodes, err := constraintCreationNodes(engine, c.Label)
 	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+		return err
 	}
 
 	for _, node := range nodes {
@@ -290,9 +305,9 @@ func validateExistenceConstraintOnCreationWithEngine(engine Engine, c Constraint
 
 	property := c.Properties[0]
 
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
+	nodes, err := constraintCreationNodes(engine, c.Label)
 	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+		return err
 	}
 
 	for _, node := range nodes {
@@ -315,9 +330,9 @@ func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint)
 		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
 
-	nodes, err := GetStoredNodesByLabel(engine, c.Label)
+	nodes, err := constraintCreationNodes(engine, c.Label)
 	if err != nil {
-		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
+		return err
 	}
 
 	groups := temporalCreationGroups{spec: spec}
@@ -655,7 +670,8 @@ func ValidatePropertyTypeConstraintOnCreationForEngine(engine Engine, ptc Proper
 		return validateRelPropertyTypeOnCreationForEngine(engine, ptc)
 	}
 
-	nodes, err := GetStoredNodesByLabel(engine, ptc.Label)
+	// A write-owned integrity scan: the accepted write's own lifetime.
+	nodes, err := GetStoredNodesByLabel(context.Background(), engine, ptc.Label)
 	if err != nil {
 		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
 	}

@@ -19,8 +19,19 @@ type Relationship = storage.Relationship
 // Path represents a path through the graph.
 type Path = storage.Path
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// Functions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for.
+type Functions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
+}
 
 // Config holds path finding configuration.
 type Config struct {
@@ -38,7 +49,7 @@ type Config struct {
 // Example:
 //
 //	apoc.path.subgraphNodes(startNode, {maxLevel: 3})
-func SubgraphNodes(start *Node, config Config) []*Node {
+func (f *Functions) SubgraphNodes(start *Node, config Config) []*Node {
 	visited := make(map[int64]bool)
 	result := make([]*Node, 0)
 	queue := list.New()
@@ -56,7 +67,7 @@ func SubgraphNodes(start *Node, config Config) []*Node {
 		}
 
 		if state.depth < config.MaxLevel {
-			neighbors, err := Storage.GetNodeNeighbors(state.node.ID, config.RelationshipFilter, storage.DirectionBoth)
+			neighbors, err := f.backend.GetNodeNeighbors(state.node.ID, config.RelationshipFilter, storage.DirectionBoth)
 			if err == nil {
 				for _, neighbor := range neighbors {
 					if !visited[neighbor.ID] {
@@ -80,7 +91,7 @@ func SubgraphNodes(start *Node, config Config) []*Node {
 // Example:
 //
 //	apoc.path.subgraphAll(startNode, {maxLevel: 3})
-func SubgraphAll(start *Node, config Config) (nodes []*Node, rels []*Relationship) {
+func (f *Functions) SubgraphAll(start *Node, config Config) (nodes []*Node, rels []*Relationship) {
 	visited := make(map[int64]bool)
 	nodes = make([]*Node, 0)
 	rels = make([]*Relationship, 0)
@@ -99,7 +110,7 @@ func SubgraphAll(start *Node, config Config) (nodes []*Node, rels []*Relationshi
 		}
 
 		if state.depth < config.MaxLevel {
-			relationships, err := Storage.GetNodeRelationships(state.node.ID, config.RelationshipFilter, storage.DirectionBoth)
+			relationships, err := f.backend.GetNodeRelationships(state.node.ID, config.RelationshipFilter, storage.DirectionBoth)
 			if err == nil {
 				for _, rel := range relationships {
 					rels = append(rels, rel)
@@ -112,7 +123,7 @@ func SubgraphAll(start *Node, config Config) (nodes []*Node, rels []*Relationshi
 					}
 
 					if !visited[neighborID] {
-						neighbor, err := Storage.GetNode(neighborID)
+						neighbor, err := f.backend.GetNode(neighborID)
 						if err == nil {
 							visited[neighborID] = true
 							queue.PushBack(&pathState{node: neighbor, depth: state.depth + 1})
@@ -131,7 +142,7 @@ func SubgraphAll(start *Node, config Config) (nodes []*Node, rels []*Relationshi
 // Example:
 //
 //	apoc.path.expandConfig(startNode, {relationshipFilter: 'KNOWS>'})
-func ExpandConfig(start *Node, config Config) []*Path {
+func (f *Functions) ExpandConfig(start *Node, config Config) []*Path {
 	paths := make([]*Path, 0)
 	visited := make(map[int64]bool)
 
@@ -154,7 +165,7 @@ func ExpandConfig(start *Node, config Config) []*Path {
 			return
 		}
 
-		relationships, err := Storage.GetNodeRelationships(node.ID, config.RelationshipFilter, storage.DirectionBoth)
+		relationships, err := f.backend.GetNodeRelationships(node.ID, config.RelationshipFilter, storage.DirectionBoth)
 		if err == nil {
 			for _, rel := range relationships {
 				var neighborID int64
@@ -168,7 +179,7 @@ func ExpandConfig(start *Node, config Config) []*Path {
 					continue
 				}
 
-				neighbor, err := Storage.GetNode(neighborID)
+				neighbor, err := f.backend.GetNode(neighborID)
 				if err != nil {
 					continue
 				}
@@ -196,7 +207,7 @@ func ExpandConfig(start *Node, config Config) []*Path {
 // Example:
 //
 //	apoc.path.spanningTree(startNode, {maxLevel: 5})
-func SpanningTree(start *Node, config Config) []*Path {
+func (f *Functions) SpanningTree(start *Node, config Config) []*Path {
 	visited := make(map[int64]bool)
 	paths := make([]*Path, 0)
 
@@ -215,7 +226,7 @@ func SpanningTree(start *Node, config Config) []*Path {
 			return
 		}
 
-		relationships, err := Storage.GetNodeRelationships(node.ID, config.RelationshipFilter, storage.DirectionBoth)
+		relationships, err := f.backend.GetNodeRelationships(node.ID, config.RelationshipFilter, storage.DirectionBoth)
 		if err == nil {
 			for _, rel := range relationships {
 				var neighborID int64
@@ -226,7 +237,7 @@ func SpanningTree(start *Node, config Config) []*Path {
 				}
 
 				if !visited[neighborID] {
-					neighbor, err := Storage.GetNode(neighborID)
+					neighbor, err := f.backend.GetNode(neighborID)
 					if err == nil {
 						visited[neighborID] = true
 						newNodes := append(nodes, neighbor)
@@ -249,8 +260,8 @@ func SpanningTree(start *Node, config Config) []*Path {
 // Example:
 //
 //	apoc.path.shortestPath(start, end, 'KNOWS>', 10)
-func ShortestPath(start, end *Node, relFilter string, maxHops int) *Path {
-	path, err := Storage.FindShortestPath(start.ID, end.ID, relFilter, maxHops)
+func (f *Functions) ShortestPath(start, end *Node, relFilter string, maxHops int) *Path {
+	path, err := f.backend.FindShortestPath(start.ID, end.ID, relFilter, maxHops)
 	if err != nil {
 		return nil
 	}
@@ -262,8 +273,8 @@ func ShortestPath(start, end *Node, relFilter string, maxHops int) *Path {
 // Example:
 //
 //	apoc.path.allShortestPaths(start, end, 'KNOWS>', 10)
-func AllShortestPaths(start, end *Node, relFilter string, maxHops int) []*Path {
-	paths, err := Storage.FindAllPaths(start.ID, end.ID, relFilter, maxHops)
+func (f *Functions) AllShortestPaths(start, end *Node, relFilter string, maxHops int) []*Path {
+	paths, err := f.backend.FindAllPaths(start.ID, end.ID, relFilter, maxHops)
 	if err != nil {
 		return []*Path{}
 	}

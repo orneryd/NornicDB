@@ -52,7 +52,7 @@ func TestWriteOnlyDatabaseAccessRunsOnlyWrites(t *testing.T) {
 	}
 	nornic, err := server.dbManager.GetStorage("nornic")
 	require.NoError(t, err)
-	loaded, err := nornic.GetNodesByLabel("Loaded")
+	loaded, err := nornic.GetNodesByLabel(ctx, "Loaded")
 	require.NoError(t, err)
 	require.Len(t, loaded, 15)
 }
@@ -88,7 +88,7 @@ func TestHTTPDatabaseSelectionRefusesWritesWithoutWriteAccess(t *testing.T) {
 	}
 	nornic, err := server.dbManager.GetStorage("nornic")
 	require.NoError(t, err)
-	nodes, err := nornic.GetNodesByLabel("DeniedSelection")
+	nodes, err := nornic.GetNodesByLabel(ctx, "DeniedSelection")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }

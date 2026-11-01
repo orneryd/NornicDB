@@ -1,12 +1,16 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 // readAlgorithmGraph is the call contract and relationship reader shared by the
 // six whole-graph APOC extension algorithms. Existing (nodes, config) calls keep
 // their configuration; (nodes, types, config) adds the documented type filter.
 // Omitted/null types and ["*"] select all types; [] selects no relationships.
-func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, map[string]interface{}, error) {
+func (e *StorageExecutor) readAlgorithmGraph(ctx context.Context, procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, map[string]interface{}, error) {
 	var config map[string]interface{}
 	var types map[string]struct{}
 	second := procedureArgument(args, 1)
@@ -43,7 +47,7 @@ func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{
 			return nil, nil, nil, procedureArgumentTypeError(procedure, "config", "MAP", args[2])
 		}
 	}
-	graph, nodes, err := e.algorithmIdentityInput(procedure, args)
+	graph, nodes, err := e.algorithmIdentityInput(ctx, procedure, args)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -74,12 +78,12 @@ func (r *algorithmRelationshipReader) selectEdges(edges []*storage.Edge, err err
 	return selected, nil
 }
 
-func (r *algorithmRelationshipReader) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	return r.selectEdges(r.Engine.GetOutgoingEdges(id))
+func (r *algorithmRelationshipReader) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return r.selectEdges(r.Engine.GetOutgoingEdges(ctx, id))
 }
 
-func (r *algorithmRelationshipReader) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	return r.selectEdges(r.Engine.GetIncomingEdges(id))
+func (r *algorithmRelationshipReader) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return r.selectEdges(r.Engine.GetIncomingEdges(ctx, id))
 }
 
 // SubscribeEvents preserves storage event delivery through the relationship

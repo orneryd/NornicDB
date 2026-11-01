@@ -3,6 +3,7 @@ package cypher
 // Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
 
 import (
+	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
@@ -58,7 +59,7 @@ func requireFulltextIndex(indexName string, declared bool) error {
 	return localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
 }
 
-func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryNodes(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: columnNames(nodeScoreColumns),
 		Rows:    [][]interface{}{},
@@ -107,22 +108,27 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 	// every node in the database. This was the May 2026 mcp-neo4j-memory
 	// Bug 2: fulltext index ignored its declared label scope.
 	if isFulltextWildcard(query) {
-		nodes, err := e.storage.AllNodes()
-		if err != nil {
-			return nil, err
-		}
-		for _, node := range nodes {
+		// Stream the population on the statement context, so a caller that
+		// cancels ends the scan where it stands.
+		err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if !matchesLabels(node, targetLabels) {
-				continue
+				return nil
 			}
 			// Skip nodes with no content in any of the indexed properties.
 			// Without this, a wildcard query against an index declared on
 			// e.g. `m.name, m.type` would still surface unrelated labels
 			// that happen to share a property name.
 			if extractTextContent(node, targetProperties) == "" {
-				continue
+				return nil
 			}
 			result.Rows = append(result.Rows, []interface{}{node, 1.0})
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
 		applyFulltextOptions(result, opts)
 		return result, nil
@@ -135,18 +141,21 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 		if !containsString(targetProperties, propName) {
 			return result, nil
 		}
-		nodes, err := e.storage.AllNodes()
-		if err != nil {
-			return nil, err
-		}
-		for _, node := range nodes {
+		err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if !matchesLabels(node, targetLabels) {
-				continue
+				return nil
 			}
 			if !nodeHasNonEmptyProperty(node, propName) {
-				continue
+				return nil
 			}
 			result.Rows = append(result.Rows, []interface{}{node, 1.0})
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
 		applyFulltextOptions(result, opts)
 		return result, nil
@@ -164,27 +173,27 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 		return result, nil
 	}
 
-	nodes, err := e.storage.AllNodes()
-	if err != nil {
-		return nil, err
-	}
-
 	// First pass: build the per-doc content strings and populate docFreq
 	// for BM25 IDF, restricted to the terms the parser actually scores.
+	// The population is streamed on the statement context, so a caller that
+	// cancels ends the scan where it stands.
 	type nodeDoc struct {
 		node *storage.Node
 		doc  *ftDoc
 	}
-	docs := make([]nodeDoc, 0, len(nodes))
+	docs := make([]nodeDoc, 0)
 	docFreq := make(map[string]int, len(parsed.PrimaryTerms()))
 	var totalDocLen int64
-	for _, node := range nodes {
+	if err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !matchesLabels(node, targetLabels) {
-			continue
+			return nil
 		}
 		doc := buildNodeFulltextDoc(node, targetProperties)
 		if doc == nil {
-			continue
+			return nil
 		}
 		docs = append(docs, nodeDoc{node: node, doc: doc})
 		totalDocLen += int64(doc.contentTokenN)
@@ -193,6 +202,9 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 				docFreq[term]++
 			}
 		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	totalDocs := len(docs)
 	avgDocLen := 100.0
@@ -200,7 +212,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 		avgDocLen = float64(totalDocLen) / float64(totalDocs)
 	}
 
-	ctx := &ftEvalCtx{
+	evalCtx := &ftEvalCtx{
 		DefaultFields: targetProperties,
 		avgDocLen:     avgDocLen,
 		totalDocs:     totalDocs,
@@ -213,7 +225,10 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 	}
 	scoredNodes := make([]scoredNode, 0, len(docs))
 	for _, d := range docs {
-		matched, score := parsed.Match(ctx, d.doc)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		matched, score := parsed.Match(evalCtx, d.doc)
 		if !matched {
 			continue
 		}

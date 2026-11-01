@@ -203,7 +203,7 @@ func TestExecutor_CacheReflectsExternalCompositeConstituentDelete(t *testing.T) 
 	require.Equal(t, int64(1), hits)
 
 	require.NoError(t, constituent.DeleteNode("node"))
-	nodes, err := constituent.GetNodesByLabel("CompositeCache")
+	nodes, err := constituent.GetNodesByLabel(ctx, "CompositeCache")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 	result, err = exec.Execute(ctx, query, nil)

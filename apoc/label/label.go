@@ -2,24 +2,26 @@
 package label
 
 import (
+	"context"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
 
-var (
-	store storage.Storage
-	mu    sync.RWMutex
-)
+// Functions binds this package's storage-backed label helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for, and no
+// lookup locks a shared owner.
+type Functions struct {
+	backend storage.Storage
+}
 
-// SetStorage sets the storage backend for label operations.
-// Called by the parent apoc package during initialization.
-func SetStorage(s storage.Storage) {
-	mu.Lock()
-	defer mu.Unlock()
-	store = s
+// New returns this package's storage-backed helpers bound to backend. The
+// label helpers that only reshape a node argument stay free functions; one
+// instance serves one backend.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
 }
 
 // Node represents a graph node.
@@ -34,16 +36,14 @@ type Node struct {
 // Example:
 //
 //	apoc.label.exists('Person') => true
-func Exists(label string) bool {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
+func (f *Functions) Exists(ctx context.Context, label string) bool {
+	s := f.backend
 
 	if s == nil {
 		return false
 	}
 
-	nodes, err := s.AllNodes()
+	nodes, err := s.AllNodes(ctx)
 	if err != nil {
 		return false
 	}
@@ -63,16 +63,14 @@ func Exists(label string) bool {
 // Example:
 //
 //	apoc.label.list() => ['Person', 'Company', 'Product']
-func List() []string {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
+func (f *Functions) List(ctx context.Context) []string {
+	s := f.backend
 
 	if s == nil {
 		return []string{}
 	}
 
-	nodes, err := s.AllNodes()
+	nodes, err := s.AllNodes(ctx)
 	if err != nil {
 		return []string{}
 	}
@@ -96,16 +94,14 @@ func List() []string {
 // Example:
 //
 //	apoc.label.count('Person') => 42
-func Count(label string) int {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
+func (f *Functions) Count(ctx context.Context, label string) int {
+	s := f.backend
 
 	if s == nil {
 		return 0
 	}
 
-	nodes, err := s.AllNodes()
+	nodes, err := s.AllNodes(ctx)
 	if err != nil {
 		return 0
 	}
@@ -127,16 +123,14 @@ func Count(label string) int {
 // Example:
 //
 //	apoc.label.nodes('Person') => [node1, node2, ...]
-func Nodes(label string) []*Node {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
+func (f *Functions) Nodes(ctx context.Context, label string) []*Node {
+	s := f.backend
 
 	if s == nil {
 		return []*Node{}
 	}
 
-	storageNodes, err := s.AllNodes()
+	storageNodes, err := s.AllNodes(ctx)
 	if err != nil {
 		return []*Node{}
 	}
@@ -448,10 +442,8 @@ func FromPattern(pattern string) []string {
 // Example:
 //
 //	apoc.label.stats() => {total: 5, counts: {...}}
-func Stats() map[string]interface{} {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
+func (f *Functions) Stats(ctx context.Context) map[string]interface{} {
+	s := f.backend
 
 	if s == nil {
 		return map[string]interface{}{
@@ -460,7 +452,7 @@ func Stats() map[string]interface{} {
 		}
 	}
 
-	nodes, err := s.AllNodes()
+	nodes, err := s.AllNodes(ctx)
 	if err != nil {
 		return map[string]interface{}{
 			"total":  0,
@@ -487,16 +479,14 @@ func Stats() map[string]interface{} {
 // Example:
 //
 //	apoc.label.search('Per*') => ['Person', 'Permission']
-func Search(pattern string) []string {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
+func (f *Functions) Search(ctx context.Context, pattern string) []string {
+	s := f.backend
 
 	if s == nil {
 		return []string{}
 	}
 
-	nodes, err := s.AllNodes()
+	nodes, err := s.AllNodes(ctx)
 	if err != nil {
 		return []string{}
 	}

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -76,25 +77,12 @@ func TestBadgerTransaction_ConflictHelpers(t *testing.T) {
 }
 
 func TestBadgerTransaction_GetNodesByLabelLocked_Branches(t *testing.T) {
-	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:u1", Labels: []string{"User"}})
-	require.NoError(t, err)
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetNamespace("test"))
-	defer tx.Rollback()
-
-	// readTS == zero branch.
-	nodes, err := tx.getNodesByLabelLocked("User")
-	require.NoError(t, err)
-	require.NotEmpty(t, nodes)
-
-	// readTS != zero branch.
-	tx.readTS = MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-	nodes, err = tx.getNodesByLabelLocked("User")
-	require.NoError(t, err)
-	require.NotEmpty(t, nodes)
+	runGetNodesByLabelLockedReadTSCases(t, []getNodesByLabelLockedReadTSCase{
+		{name: "pinned begin snapshot", nodeID: "test:u1", label: "User", namespace: "test"},
+		{name: "pinned explicit nonzero readTS", nodeID: "test:u1", label: "User", namespace: "test", readTS: func() MVCCVersion {
+			return MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
+		}},
+	})
 }
 
 func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
@@ -294,7 +282,7 @@ func TestBadgerTransaction_NodeConstraintExtraBranches(t *testing.T) {
 	}))
 
 	// Domain constraint branch: disallowed value.
-	err = tx.validateNodeConstraints(&Node{
+	err = tx.validateNodeConstraints(context.Background(), &Node{
 		ID:         "test:u1",
 		Labels:     []string{"User"},
 		Properties: map[string]any{"status": "bad"},
@@ -307,7 +295,7 @@ func TestBadgerTransaction_NodeConstraintExtraBranches(t *testing.T) {
 		Labels:     []string{"User"},
 		Properties: map[string]any{"tenant": "t1", "email": "other@example.com"},
 	}
-	err = tx.checkNodeKeyConstraint(&Node{
+	err = tx.checkNodeKeyConstraint(context.Background(), &Node{
 		ID:         "test:u3",
 		Labels:     []string{"User"},
 		Properties: map[string]any{"tenant": "t1", "email": "u3@example.com"},

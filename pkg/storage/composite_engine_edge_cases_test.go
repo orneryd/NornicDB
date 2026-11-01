@@ -21,15 +21,15 @@ func TestCompositeEngine_EmptyComposite(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Operations should handle empty composite gracefully
-	nodes, err := composite.GetNodesByLabel("Person")
+	nodes, err := composite.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(nodes))
 
-	edges, err := composite.GetEdgesByType("KNOWS")
+	edges, err := composite.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(edges))
 
-	allNodes, err := composite.AllNodes()
+	allNodes, err := composite.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(allNodes))
 
@@ -40,87 +40,91 @@ func TestCompositeEngine_EmptyComposite(t *testing.T) {
 	assert.Contains(t, err.Error(), "no writable constituents available")
 }
 
-func TestCompositeEngine_OfflineConstituent(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
+// TestCompositeEngine_ClosedConstituentReads merges the offline-constituent cases.
+// Both share this fixture, the combined-read error expectation and the targeted
+// write; each case keeps its own seeding, close set and write expectation.
+func TestCompositeEngine_ClosedConstituentReads(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		seedDB1    bool
+		closeDB1   bool
+		closeDB2   bool
+		writeNode  *Node
+		checkWrite func(t *testing.T, err error)
+	}{
+		{
+			name:     "TestCompositeEngine_OfflineConstituent",
+			seedDB1:  true,
+			closeDB2: true,
+			writeNode: &Node{
+				ID:         NodeID(prefixTestID("node2")),
+				Labels:     []string{"Person"},
+				Properties: map[string]interface{}{"database_id": "db1"},
+			},
+			checkWrite: func(t *testing.T, err error) {
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:     "TestCompositeEngine_AllConstituentsOffline",
+			closeDB1: true,
+			closeDB2: true,
+			writeNode: &Node{
+				ID:         NodeID(prefixTestID("node1")),
+				Labels:     []string{"Person"},
+				Properties: map[string]interface{}{"database_id": "db1"},
+			},
+			checkWrite: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.True(t, err.Error() == "storage closed" || containsSubstring(err.Error(), "storage closed"))
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create constituent engines
+			engine1 := newTestMemoryEngine(t)
+			engine2 := newTestMemoryEngine(t)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
+			// Create composite engine
+			constituents := map[string]Engine{
+				"db1": engine1,
+				"db2": engine2,
+			}
+			constituentNames := map[string]string{
+				"db1": "db1",
+				"db2": "db2",
+			}
+			accessModes := map[string]string{
+				"db1": "read_write",
+				"db2": "read_write",
+			}
+			composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+
+			if tc.seedDB1 {
+				// Create node in db1
+				node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+				_, seedErr := engine1.CreateNode(node1)
+				require.NoError(t, seedErr)
+			}
+
+			// Close the constituents this case marks offline.
+			if tc.closeDB1 {
+				engine1.Close()
+			}
+			if tc.closeDB2 {
+				engine2.Close()
+			}
+
+			// A readable offline constituent makes the combined result incomplete.
+			nodes, err := composite.GetNodesByLabel(context.Background(), "Person")
+			require.ErrorIs(t, err, ErrStorageClosed)
+			require.Nil(t, nodes)
+
+			// Write expectations stay per case (online target vs all offline).
+			_, err = composite.CreateNode(tc.writeNode)
+			tc.checkWrite(t, err)
+		})
 	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Create node in db1
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	_, err := engine1.CreateNode(node1)
-	require.NoError(t, err)
-
-	// Close db2 (simulate offline)
-	engine2.Close()
-
-	// A readable offline constituent makes the combined result incomplete.
-	nodes, err := composite.GetNodesByLabel("Person")
-	require.ErrorIs(t, err, ErrStorageClosed)
-	require.Nil(t, nodes)
-
-	// Write should still work when explicitly targeted to online db1.
-	node2 := &Node{
-		ID:         NodeID(prefixTestID("node2")),
-		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"database_id": "db1"},
-	}
-	_, err = composite.CreateNode(node2)
-	require.NoError(t, err)
-}
-
-func TestCompositeEngine_AllConstituentsOffline(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Close both engines (simulate all offline)
-	engine1.Close()
-	engine2.Close()
-
-	// Reads must report that the constituent data is unavailable.
-	nodes, err := composite.GetNodesByLabel("Person")
-	require.ErrorIs(t, err, ErrStorageClosed)
-	require.Nil(t, nodes)
-
-	// Write operations should fail with storage closed error when explicitly targeted.
-	node := &Node{
-		ID:         NodeID(prefixTestID("node1")),
-		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"database_id": "db1"},
-	}
-	_, err = composite.CreateNode(node)
-	assert.Error(t, err)
-	assert.True(t, err.Error() == "storage closed" || containsSubstring(err.Error(), "storage closed"))
 }
 
 func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
@@ -164,7 +168,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		compositeA := NewCompositeEngine(constituentsA, constituentNamesA, accessModesA)
 
 		// Query A should find nodes from C (through B)
-		nodes, err := compositeA.GetNodesByLabel("Person")
+		nodes, err := compositeA.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(nodes), 1, "Should find node from nested composite")
 	})
@@ -207,7 +211,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Query should work (it will query compositeA, which queries engine1)
 		// The self-reference doesn't cause infinite loop because compositeA doesn't reference itself
-		nodes, err := compositeSelf.GetNodesByLabel("Person")
+		nodes, err := compositeSelf.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(nodes), 1, "Should find node through self-referencing composite")
 	})
@@ -267,7 +271,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		// compositeB will query compositeA, which will query engine1 and compositeB
 		// This creates a cycle, but each CompositeEngine queries its constituents once per call
 		// So it should still work (though inefficient)
-		nodes, err := compositeAWithB.GetNodesByLabel("Person")
+		nodes, err := compositeAWithB.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		// Should find the node (may appear multiple times due to cycle, but that's expected)
 		assert.GreaterOrEqual(t, len(nodes), 1, "Should find node even with indirect cycle")
@@ -314,7 +318,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		composite2 := NewCompositeEngine(constituents2, constituentNames2, accessModes2)
 
 		// Query should work - composite2 queries composite1, which queries engine1
-		nodes, err := composite2.GetNodesByLabel("Person")
+		nodes, err := composite2.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(nodes), 1, "Should find node through nested composite")
 

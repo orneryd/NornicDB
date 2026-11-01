@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/relatedwalk"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -456,7 +457,7 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 
 		// Get related nodes when depth >= 1 (1 = direct neighbors, 2+ = multi-hop)
 		if depth >= 1 {
-			sr.Related = r.getRelatedNodesContext(ctx, engine, r0.ID, depth)
+			sr.Related = r.getRelatedNodes(ctx, engine, r0.ID, depth)
 		}
 
 		results = append(results, sr)
@@ -473,12 +474,34 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 	}, nil
 }
 
-// getRelatedNodes fetches connected nodes up to the specified depth (BFS).
-func (r *heimdallDBRouter) getRelatedNodes(engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
-	return r.getRelatedNodesContext(context.Background(), engine, nodeID, depth)
+// heimdallRelatedAcceptor is the server router's consumer boundary of the
+// canonical walk: it skips missing nodes without expanding them and publishes
+// the first label plus the visible title only.
+type heimdallRelatedAcceptor struct {
+	engine  storage.Engine
+	visible storage.QueryResultProjection
 }
 
-func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
+func (a heimdallRelatedAcceptor) Discover(_ context.Context, n *relatedwalk.Neighbor) (heimdall.RelatedNode, bool, bool) {
+	node, err := a.engine.GetNode(storage.NodeID(n.ID))
+	if err != nil || node == nil {
+		return heimdall.RelatedNode{}, false, false
+	}
+	return heimdall.RelatedNode{
+		ID:           n.ID,
+		Type:         getFirstLabel(node.Labels),
+		Title:        getStringProperty(a.visible.NodeProperties(node), "title"),
+		Distance:     n.Distance,
+		Relationship: n.Relationship,
+		Direction:    n.Direction.String(),
+	}, true, true
+}
+
+// getRelatedNodes fetches connected nodes up to the specified depth through the
+// canonical bounded traversal. The server contract keeps depth as the number of
+// hops, caps the collection at 50 records, reports the first label and the
+// visible title only, and skips missing nodes without expanding them.
+func (r *heimdallDBRouter) getRelatedNodes(ctx context.Context, engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
 	if depth < 1 || engine == nil {
 		return nil
 	}
@@ -486,77 +509,17 @@ func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine st
 	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
 	defer release()
 
-	var related []heimdall.RelatedNode
-	visited := map[string]bool{nodeID: true}
+	const maxRelated = 50
 
-	type queueItem struct {
-		id       string
-		distance int
+	related, err := relatedwalk.Walk[heimdall.RelatedNode](ctx,
+		relatedwalk.StorageSource{Engine: engine},
+		heimdallRelatedAcceptor{engine: engine, visible: visible},
+		nodeID,
+		relatedwalk.Options{MaxHops: depth, Limit: maxRelated},
+	)
+	if err != nil {
+		return nil
 	}
-	queue := []queueItem{{id: nodeID, distance: 0}}
-
-	for len(queue) > 0 && len(related) < 50 {
-		current := queue[0]
-		queue = queue[1:]
-
-		if current.distance >= depth {
-			continue
-		}
-
-		out, _ := engine.GetOutgoingEdges(storage.NodeID(current.id))
-		in, _ := engine.GetIncomingEdges(storage.NodeID(current.id))
-
-		type edgeRef struct {
-			edge      *storage.Edge
-			direction string
-		}
-		edgeRefs := make([]edgeRef, 0, len(out)+len(in))
-		for _, e := range out {
-			edgeRefs = append(edgeRefs, edgeRef{edge: e, direction: "outgoing"})
-		}
-		for _, e := range in {
-			edgeRefs = append(edgeRefs, edgeRef{edge: e, direction: "incoming"})
-		}
-
-		for _, er := range edgeRefs {
-			e := er.edge
-			if e == nil {
-				continue
-			}
-
-			var neighborID string
-			if string(e.StartNode) == current.id {
-				neighborID = string(e.EndNode)
-			} else {
-				neighborID = string(e.StartNode)
-			}
-
-			if neighborID == "" || visited[neighborID] {
-				continue
-			}
-			visited[neighborID] = true
-
-			node, err := engine.GetNode(storage.NodeID(neighborID))
-			if err != nil || node == nil {
-				continue
-			}
-
-			rel := heimdall.RelatedNode{
-				ID:           neighborID,
-				Type:         getFirstLabel(node.Labels),
-				Title:        getStringProperty(visible.NodeProperties(node), "title"),
-				Distance:     current.distance + 1,
-				Relationship: e.Type,
-				Direction:    er.direction,
-			}
-			related = append(related, rel)
-
-			if current.distance+1 < depth {
-				queue = append(queue, queueItem{id: neighborID, distance: current.distance + 1})
-			}
-		}
-	}
-
 	return related
 }
 

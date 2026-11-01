@@ -365,6 +365,36 @@ func TestGraphitiScenarioE2E_BulkEdgeSaveIndexedRepeatedEntityMatches(t *testing
 	require.Equal(t, int64(len(edges)), countEdges)
 }
 
+// removeEntityUUIDIndexEntries reproduces the stale-substrate shape the
+// incomplete-index test and benchmark share: the logical Entity nodes stay
+// visible by label scan while the declared uuid index loses the entries the
+// predicate selects. It returns the schema used and how many uuids it removed.
+func removeEntityUUIDIndexEntries(tb testing.TB, store *storage.NamespacedEngine, ctx context.Context, match func(uuid string) bool) (*storage.SchemaManager, int) {
+	tb.Helper()
+	schema := store.GetSchema()
+	require.NotNil(tb, schema)
+	nodes, err := store.GetNodesByLabel(ctx, "Entity")
+	require.NoError(tb, err)
+	require.NotEmpty(tb, nodes)
+	removed := 0
+	for _, node := range nodes {
+		uuid, _ := node.Properties["uuid"].(string)
+		if uuid == "" {
+			continue
+		}
+		if !match(uuid) {
+			continue
+		}
+		ids := schema.PropertyIndexLookup("Entity", "uuid", uuid)
+		require.NotEmpty(tb, ids)
+		for _, id := range ids {
+			require.NoError(tb, schema.PropertyIndexDelete("Entity", "uuid", id, uuid))
+		}
+		removed++
+	}
+	return schema, removed
+}
+
 func TestGraphitiScenarioE2E_BulkEdgeSaveIndexedEntityMatchesSurviveIncompleteIndex(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
@@ -383,26 +413,9 @@ func TestGraphitiScenarioE2E_BulkEdgeSaveIndexedEntityMatchesSurviveIncompleteIn
 	// visible by label scan, but the declared property index is missing a
 	// subset of uuid entries. Relationship MATCH must use the index only as
 	// an accelerator, not as proof that those endpoint nodes are absent.
-	schema := ns.GetSchema()
-	require.NotNil(t, schema)
-	nodes, err := ns.GetNodesByLabel("Entity")
-	require.NoError(t, err)
-	require.NotEmpty(t, nodes)
-	removed := 0
-	for _, node := range nodes {
-		uuid, _ := node.Properties["uuid"].(string)
-		if uuid == "" {
-			continue
-		}
-		if uuid == "entity-000003" || uuid == "entity-000007" || uuid == "entity-000011" || uuid == "entity-000017" {
-			ids := schema.PropertyIndexLookup("Entity", "uuid", uuid)
-			require.NotEmpty(t, ids)
-			for _, id := range ids {
-				require.NoError(t, schema.PropertyIndexDelete("Entity", "uuid", id, uuid))
-			}
-			removed++
-		}
-	}
+	schema, removed := removeEntityUUIDIndexEntries(t, ns, ctx, func(uuid string) bool {
+		return uuid == "entity-000003" || uuid == "entity-000007" || uuid == "entity-000011" || uuid == "entity-000017"
+	})
 	require.Equal(t, 4, removed)
 	require.Empty(t, schema.PropertyIndexLookup("Entity", "uuid", "entity-000003"))
 
@@ -1138,27 +1151,9 @@ func BenchmarkGraphitiBulkEdgeSaveIncompleteIndex(b *testing.B) {
 	require.NoError(b, err)
 	require.Len(b, res.Rows, len(payload.nodes))
 
-	schema := ns.GetSchema()
-	require.NotNil(b, schema)
-	entityNodes, err := ns.GetNodesByLabel("Entity")
-	require.NoError(b, err)
-	require.NotEmpty(b, entityNodes)
-
-	removed := 0
-	for _, node := range entityNodes {
-		uuid, _ := node.Properties["uuid"].(string)
-		if uuid == "" {
-			continue
-		}
-		if strings.HasSuffix(uuid, "003") || strings.HasSuffix(uuid, "007") || strings.HasSuffix(uuid, "011") || strings.HasSuffix(uuid, "017") {
-			ids := schema.PropertyIndexLookup("Entity", "uuid", uuid)
-			require.NotEmpty(b, ids)
-			for _, id := range ids {
-				require.NoError(b, schema.PropertyIndexDelete("Entity", "uuid", id, uuid))
-			}
-			removed++
-		}
-	}
+	_, removed := removeEntityUUIDIndexEntries(b, ns, ctx, func(uuid string) bool {
+		return strings.HasSuffix(uuid, "003") || strings.HasSuffix(uuid, "007") || strings.HasSuffix(uuid, "011") || strings.HasSuffix(uuid, "017")
+	})
 	require.NotZero(b, removed)
 
 	// Warm one-time executor/query setup so the measurement reflects the

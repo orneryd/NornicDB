@@ -293,9 +293,9 @@ type gh640CountingEngine struct {
 	allNodesCalls atomic.Int64
 }
 
-func (e *gh640CountingEngine) AllNodes() ([]*storage.Node, error) {
+func (e *gh640CountingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	e.allNodesCalls.Add(1)
-	return e.Engine.AllNodes()
+	return e.Engine.AllNodes(ctx)
 }
 
 func TestGh640_FindMergeNodeDoesNotScanAllNodes(t *testing.T) {

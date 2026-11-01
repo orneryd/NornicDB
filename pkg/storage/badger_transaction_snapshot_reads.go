@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -299,14 +300,14 @@ func snapshotEdgeBytes(edge *Edge) (int, bool) {
 	return bytes, true
 }
 
-func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
+func (tx *BadgerTransaction) getAllCommittedNodesLocked(ctx context.Context) ([]*Node, error) {
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.AllNodes()
+		return tx.engine.AllNodes(ctx)
 	}
-	return tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
+	return tx.engine.getNodesByLabelVisibleAtWithView(ctx, "", "", tx.readTS, tx.withSnapshotViewLocked)
 }
 
 // EdgeDirection selects which adjacency side an adjacency read resolves. It is
@@ -368,7 +369,7 @@ func (cache *snapshotAdjacencyCache) clear() {
 // scanned every visible edge in the graph and filtered by endpoint in memory,
 // which degraded linearly with the total edge count on large graphs. Pending
 // transaction writes are merged by the caller.
-func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection) ([]*Edge, error) {
+func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(ctx context.Context, nodeID NodeID, direction EdgeDirection) ([]*Edge, error) {
 	// Write-behind reads are read-committed: the flusher may land a buffered
 	// commit after the pinned snapshot, and buffered-but-unflushed edges are
 	// invisible to the pinned view. Read the latest overlaid engine view
@@ -376,17 +377,17 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		switch direction {
 		case Outgoing:
-			return tx.engine.GetOutgoingEdges(nodeID)
+			return tx.engine.GetOutgoingEdges(ctx, nodeID)
 		case Incoming:
-			return tx.engine.GetIncomingEdges(nodeID)
+			return tx.engine.GetIncomingEdges(ctx, nodeID)
 		default:
 			return nil, ErrInvalidData
 		}
 	}
 	if tx.snapshotDeregister != nil {
-		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false)
+		return tx.readCachedSnapshotAdjacentEdgesLocked(ctx, nodeID, direction, false)
 	}
-	return tx.engine.readAdjacentEdgesAtWithView(nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
+	return tx.engine.readAdjacentEdgesAtWithView(ctx, nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
 }
 
 // readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships visible at
@@ -398,7 +399,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 // snapshot record is read. The adjacency cache is filled only after the whole
 // view succeeds: a partial edge ID list would make a later read of the same
 // node report a truncated adjacency as complete.
-func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]*Edge, error) {
+func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(ctx context.Context, nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]*Edge, error) {
 	var cache *snapshotAdjacencyCache
 	switch direction {
 	case Outgoing:
@@ -420,7 +421,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 			case Incoming:
 				prefix = tx.engine.mvccIncomingAdjacencyPrefixString(nodeID)
 			}
-			edgeIDs, err = tx.engine.collectVisibleAdjacencyEdgeIDsInTxn(snapshot, prefix, tx.readTS)
+			edgeIDs, err = tx.engine.collectVisibleAdjacencyEdgeIDsInTxn(ctx, snapshot, prefix, tx.readTS)
 			if err != nil {
 				return err
 			}
@@ -510,23 +511,34 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 		if err != nil {
 			return nil, true, err
 		}
-		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+		edges, mergeErr := tx.mergePendingEdgesLocked(context.Background(), committed, func(edge *Edge) bool {
 			if direction == Outgoing {
 				return edge.StartNode == nodeID
 			}
 			return edge.EndNode == nodeID
-		}), true, nil
+		})
+		if mergeErr != nil {
+			return nil, true, mergeErr
+		}
+		return edges, true, nil
 	}
-	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, true)
+	// Header reads keep their existing public API (no caller context): the
+	// snapshot adjacency read runs on the transaction's own lifetime, which is
+	// context.Background at this context-free boundary.
+	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(context.Background(), nodeID, direction, true)
 	if err != nil {
 		return nil, true, err
 	}
-	return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+	edges, mergeErr := tx.mergePendingEdgesLocked(context.Background(), committed, func(edge *Edge) bool {
 		if direction == Outgoing {
 			return edge.StartNode == nodeID
 		}
 		return edge.EndNode == nodeID
-	}), true, nil
+	})
+	if mergeErr != nil {
+		return nil, true, mergeErr
+	}
+	return edges, true, nil
 }
 
 // snapshotHeaderLocked returns edgeID's header from headers when its MVCC head

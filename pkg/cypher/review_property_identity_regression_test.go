@@ -64,10 +64,10 @@ func TestReviewWholePathMergeUsesStoredIdentity(t *testing.T) {
 				_, err = e.Execute(ctx, "COMMIT", nil)
 				require.NoError(t, err)
 			}
-			nodes, err := be.AllNodes()
+			nodes, err := be.AllNodes(ctx)
 			require.NoError(t, err)
 			require.Len(t, nodes, 3)
-			edges, err := be.AllEdges()
+			edges, err := be.AllEdges(ctx)
 			require.NoError(t, err)
 			require.Len(t, edges, 2)
 			for _, n := range nodes {

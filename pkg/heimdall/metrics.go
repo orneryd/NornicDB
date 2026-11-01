@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/relatedwalk"
 	"github.com/orneryd/nornicdb/pkg/search"
 )
 
@@ -505,77 +506,88 @@ func (e *QueryExecutor) Discover(ctx context.Context, query string, nodeTypes []
 	}, nil
 }
 
-// getRelatedNodes fetches nodes connected to the given node up to the specified depth.
+// relatedSearcherSource adapts the Heimdall semantic searcher to the canonical
+// traversal. It preserves the searcher's own GetEdgesForNode order and derives
+// the direction from the edge endpoints.
+//
+// An errored edge list is discarded: the query executor skipped a node whose
+// GetEdgesForNode failed, so none of its neighbors were published. A returned
+// list is walked in place, and a nil edge still reaches the walk with an empty
+// neighbor id so an adjacency made of unusable edges cannot bypass the walk's
+// cancellation poll.
+type relatedSearcherSource struct {
+	searcher SemanticSearcher
+}
+
+// EachIncidentEdge implements relatedwalk.Source.
+func (s relatedSearcherSource) EachIncidentEdge(ctx context.Context, nodeID string, visit relatedwalk.StepVisitor) error {
+	edges, err := s.searcher.GetEdgesForNode(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	for _, edge := range edges {
+		if edge == nil {
+			if !visit.Step("", "", relatedwalk.Outgoing) {
+				return nil
+			}
+			continue
+		}
+		neighbor := edge.SourceID
+		direction := relatedwalk.Incoming
+		if edge.SourceID == nodeID {
+			neighbor = edge.TargetID
+			direction = relatedwalk.Outgoing
+		}
+		if !visit.Step(neighbor, edge.Type, direction) {
+			return nil
+		}
+	}
+	return nil
+}
+
+// queryExecutorRelatedAcceptor is the query executor's consumer boundary of the
+// canonical walk: it skips missing nodes without expanding them and publishes
+// the first label plus the title only.
+type queryExecutorRelatedAcceptor struct {
+	searcher SemanticSearcher
+}
+
+func (a queryExecutorRelatedAcceptor) Discover(ctx context.Context, n *relatedwalk.Neighbor) (RelatedNode, bool, bool) {
+	node, err := a.searcher.GetNode(ctx, n.ID)
+	if err != nil || node == nil {
+		return RelatedNode{}, false, false
+	}
+	return RelatedNode{
+		ID:           n.ID,
+		Type:         getLabelType(node.Labels),
+		Title:        getStringProp(node.Properties, "title"),
+		Distance:     n.Distance,
+		Relationship: n.Relationship,
+		Direction:    n.Direction.String(),
+	}, true, true
+}
+
+// getRelatedNodes fetches nodes connected to the given node up to the specified
+// depth through the canonical bounded traversal. The query-executor contract
+// keeps depth as the number of hops, caps the collection at 100 records, reports
+// the first label and the title only, and skips missing nodes without expanding
+// them.
 func (e *QueryExecutor) getRelatedNodes(ctx context.Context, nodeID string, depth int) []RelatedNode {
 	if e.searcher == nil || depth < 1 {
 		return nil
 	}
 
-	var related []RelatedNode
-	visited := make(map[string]bool)
-	visited[nodeID] = true
+	const maxRelated = 100
 
-	// BFS traversal
-	type queueItem struct {
-		id       string
-		distance int
+	related, err := relatedwalk.Walk[RelatedNode](ctx,
+		relatedSearcherSource{searcher: e.searcher},
+		queryExecutorRelatedAcceptor{searcher: e.searcher},
+		nodeID,
+		relatedwalk.Options{MaxHops: depth, Limit: maxRelated},
+	)
+	if err != nil {
+		return nil
 	}
-	queue := []queueItem{{id: nodeID, distance: 0}}
-
-	for len(queue) > 0 && len(related) < 100 {
-		current := queue[0]
-		queue = queue[1:]
-
-		if current.distance >= depth {
-			continue
-		}
-
-		// Get edges for this node
-		edges, err := e.searcher.GetEdgesForNode(ctx, current.id)
-		if err != nil {
-			continue
-		}
-
-		for _, edge := range edges {
-			var relatedID string
-			var direction string
-			if edge.SourceID == current.id {
-				relatedID = edge.TargetID
-				direction = "outgoing"
-			} else {
-				relatedID = edge.SourceID
-				direction = "incoming"
-			}
-
-			if visited[relatedID] {
-				continue
-			}
-			visited[relatedID] = true
-
-			// Get node info
-			node, err := e.searcher.GetNode(ctx, relatedID)
-			if err != nil {
-				continue
-			}
-
-			rel := RelatedNode{
-				ID:           relatedID,
-				Type:         getLabelType(node.Labels),
-				Title:        getStringProp(node.Properties, "title"),
-				Distance:     current.distance + 1,
-				Relationship: edge.Type,
-				Direction:    direction,
-			}
-
-			related = append(related, rel)
-
-			// Add to queue for next level
-			if current.distance+1 < depth {
-				queue = append(queue, queueItem{id: relatedID, distance: current.distance + 1})
-			}
-		}
-	}
-
 	return related
 }
 

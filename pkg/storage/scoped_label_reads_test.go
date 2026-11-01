@@ -5,6 +5,7 @@ package storage
 // database, and a scan in a small database decoded a large one's nodes.
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
@@ -62,11 +63,11 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 	require.NoError(t, b.DeleteNode("p0"))
 
 	want := []string{"a:p0", "a:p1", "a:p2", "a:p9"}
-	nodes, err := engine.GetNodesByLabelInScope("a:", "Person")
+	nodes, err := engine.GetNodesByLabelInScope(context.Background(), "a:", "Person")
 	require.NoError(t, err)
 	require.Equal(t, want, sortedIDs(nodes), "wal")
 	var streamed []*Node
-	require.NoError(t, engine.StreamNodesByLabelProjectedInScope("a:", "Person", []string{"age"}, func(node *Node) error {
+	require.NoError(t, engine.StreamNodesByLabelProjectedInScope(context.Background(), "a:", "Person", []string{"age"}, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
@@ -76,7 +77,7 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 	require.Contains(t, []NodeID{"b:p1", "b:p2", "b:p9"}, first.ID)
 
 	// Through the database wrapper: each database sees its own nodes.
-	nodes, err = b.GetNodesByLabel("Person")
+	nodes, err = b.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"p1", "p2", "p9"}, sortedIDs(nodes))
 	first, err = a.GetFirstNodeByLabel("Person")
@@ -84,7 +85,7 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 	require.Contains(t, []NodeID{"p0", "p1", "p2", "p9"}, first.ID)
 
 	// The unscoped reads still return every database.
-	nodes, err = engine.GetNodesByLabel("Person")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Len(t, nodes, 7)
 }
@@ -98,10 +99,10 @@ func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
 		require.NoError(t, err)
 	}
 	version := engine.currentMVCCReadVersion("a")
-	nodes, err := engine.GetNodesByLabelVisibleAtInScope("a:", "Person", version)
+	nodes, err := engine.GetNodesByLabelVisibleAtInScope(context.Background(), "a:", "Person", version)
 	require.NoError(t, err)
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(nodes))
-	nodes, err = NewNamespacedEngine(engine, "b").GetNodesByLabelVisibleAt("Person", engine.currentMVCCReadVersion("b"))
+	nodes, err = NewNamespacedEngine(engine, "b").GetNodesByLabelVisibleAt(context.Background(), "Person", engine.currentMVCCReadVersion("b"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"p1"}, sortedIDs(nodes))
 
@@ -113,29 +114,29 @@ func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
 	require.Equal(t, "", tx.labelScanScopeLocked(), "unpinned")
 	require.NoError(t, tx.SetNamespace("a"))
 	var streamed []*Node
-	require.NoError(t, tx.StreamNodesByLabelProjected("Person", nil, func(node *Node) error {
+	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Person", nil, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(streamed))
-	nodes, err = tx.getNodesByLabelLocked("Person")
+	nodes, err = tx.getNodesByLabelLocked(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(nodes))
 	tx.readTS = MVCCVersion{}
-	nodes, err = tx.getNodesByLabelLocked("Person")
+	nodes, err = tx.getNodesByLabelLocked(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(nodes))
 	tx.snapshotTx.Discard()
 	tx.snapshotTx = nil
 	streamed = nil
-	require.NoError(t, tx.StreamNodesByLabelProjected("Person", []string{"x"}, func(node *Node) error {
+	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"x"}, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(streamed))
 	tx.readTS = engine.currentMVCCReadVersion("a")
 	streamed = nil
-	require.NoError(t, tx.StreamNodesByLabelProjected("Person", []string{"y"}, func(node *Node) error {
+	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"y"}, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
@@ -161,9 +162,9 @@ func TestScopedLabelReadCostIgnoresOtherDatabases(t *testing.T) {
 		start := time.Now()
 		for r := 0; r < 5; r++ {
 			seen := 0
-			require.NoError(t, a.StreamNodesByLabelProjected("Person", []string{"age"}, func(*Node) error { seen++; return nil }))
+			require.NoError(t, a.StreamNodesByLabelProjected(context.Background(), "Person", []string{"age"}, func(*Node) error { seen++; return nil }))
 			require.Equal(t, 1000, seen)
-			nodes, err := a.GetNodesByLabel("Person")
+			nodes, err := a.GetNodesByLabel(context.Background(), "Person")
 			require.NoError(t, err)
 			require.Len(t, nodes, 1000)
 		}

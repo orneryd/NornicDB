@@ -515,8 +515,8 @@ func edgeFromNeo4j(r *Neo4jRelationship) (*Edge, error) {
 // ExportableEngine extends Engine with export capabilities.
 type ExportableEngine interface {
 	Engine
-	AllNodes() ([]*Node, error)
-	AllEdges() ([]*Edge, error)
+	AllNodes(ctx context.Context) ([]*Node, error)
+	AllEdges(ctx context.Context) ([]*Edge, error)
 }
 
 // FindNodeNeedingEmbedding finds a single node that needs embedding.
@@ -524,7 +524,9 @@ type ExportableEngine interface {
 func FindNodeNeedingEmbedding(engine Engine) *Node {
 	// Use AllNodes but stop early - not ideal but works with any engine
 	if exportable, ok := engine.(ExportableEngine); ok {
-		nodes, err := exportable.AllNodes()
+		// Selection has no caller context: context.Background is the true
+		// lifetime at this context-free boundary.
+		nodes, err := exportable.AllNodes(context.Background())
 		if err != nil {
 			return nil
 		}
@@ -581,7 +583,9 @@ func exportNodes(engine ExportableEngine) ([]*Node, error) {
 			return CollectStoredNodes(context.Background(), full)
 		}
 	}
-	return engine.AllNodes()
+	// An export without a caller context reads on context.Background: the true
+	// lifetime at this context-free boundary.
+	return engine.AllNodes(context.Background())
 }
 
 // exportEdges is exportNodes for relationships (CollectStoredEdges).
@@ -591,5 +595,5 @@ func exportEdges(engine ExportableEngine) ([]*Edge, error) {
 			return CollectStoredEdges(context.Background(), full)
 		}
 	}
-	return engine.AllEdges()
+	return engine.AllEdges(context.Background())
 }

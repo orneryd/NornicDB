@@ -118,7 +118,7 @@ func TestTransactionCountsEqualScan(t *testing.T) {
 			for _, label := range labels {
 				counted, err := store.NodeCountByLabel(label)
 				require.NoError(t, err)
-				nodes, err := store.GetNodesByLabel(label)
+				nodes, err := store.GetNodesByLabel(ctx, label)
 				require.NoError(t, err)
 				require.EqualValues(t, len(nodes), counted, "committed nodes :%s", label)
 				if end == "ROLLBACK" {
@@ -128,7 +128,7 @@ func TestTransactionCountsEqualScan(t *testing.T) {
 			for _, edgeType := range types {
 				counted, err := store.EdgeCountByType(edgeType)
 				require.NoError(t, err)
-				edges, err := store.GetEdgesByType(edgeType)
+				edges, err := store.GetEdgesByType(ctx, edgeType)
 				require.NoError(t, err)
 				require.EqualValues(t, len(edges), counted, "committed relationships :%s", edgeType)
 				for _, label := range labels {

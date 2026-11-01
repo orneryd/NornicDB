@@ -778,40 +778,173 @@ func (c *CompositeEngine) DeleteEdge(id EdgeID) error {
 // Query Operations - Merge results from all constituents
 // ============================================================================
 
+// ============================================================================
+// Constituent fan-out
+// ============================================================================
+
+// compositeFanOutFailure selects the error representation a constituent
+// fan-out publishes for a failed constituent read. Each composite operation
+// keeps the representation its contract already published: ordinary engine
+// reads localize the failure with the constituent alias, while GetNodesByLabel
+// and the MVCC indexed-visibility merges publish the constituent error
+// unchanged.
+type compositeFanOutFailure int
+
+const (
+	compositeFanOutPublishesRaw compositeFanOutFailure = iota
+	compositeFanOutPublishesLocalizedQuery
+	compositeFanOutPublishesLocalizedStream
+)
+
+func (failure compositeFanOutFailure) wrap(alias string, err error) error {
+	switch failure {
+	case compositeFanOutPublishesLocalizedQuery:
+		return localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
+	case compositeFanOutPublishesLocalizedStream:
+		return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
+	default:
+		return err
+	}
+}
+
+// materializeConstituents is the canonical materialising fan-out shared by the
+// composite merge reads: it walks the selected sources once, reads each one and
+// publishes every value stamped with the source that owns it. The caller's
+// context is checked before each source, for each value a source returns and
+// again before the merged result is published, so a cancelled caller never
+// receives a partial collection.
+func materializeConstituents[T any](
+	composite *CompositeEngine,
+	ctx context.Context,
+	aliases []string,
+	read func(engine Engine) ([]T, error),
+	source func(value T, database string) T,
+	failure compositeFanOutFailure,
+) ([]T, error) {
+	var merged []T
+	for _, alias := range aliases {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		engine, err := composite.getConstituent(alias)
+		if err != nil {
+			// Constituent not found or offline - skip it.
+			continue
+		}
+		values, err := read(engine)
+		if err != nil {
+			return nil, failure.wrap(alias, err)
+		}
+		database := composite.constituentDatabase(alias, engine)
+		for _, value := range values {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			merged = append(merged, source(value, database))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return merged, nil
+}
+
+// streamConstituents is the canonical streaming fan-out shared by StreamNodes
+// and StreamEdges: it walks the selected sources once, preferring each source's
+// streaming kernel and materialising a source that has none. The caller's
+// context is checked before each source and for each value before it is
+// published, so a cancelled caller stops the walk and receives its own context
+// error instead of a partial stream.
+// compositeStreamFrame binds one synchronous source at a time to one visitor.
+// A StreamingEngine finishes its callback iteration before returning, so the
+// same frame can advance to the next source without allocating per-source
+// closures. Cancellation observed by the visitor retains its original error.
+type compositeStreamFrame[T any] struct {
+	ctx          context.Context
+	database     string
+	publish      func(string, T) error
+	cancellation error
+}
+
+func (frame *compositeStreamFrame[T]) visit(value T) error {
+	if err := frame.ctx.Err(); err != nil {
+		frame.cancellation = err
+		return err
+	}
+	return frame.publish(frame.database, value)
+}
+func streamConstituents[T any](
+	composite *CompositeEngine,
+	ctx context.Context,
+	aliases []string,
+	stream func(StreamingEngine, func(T) error) error,
+	materialize func(Engine) ([]T, error),
+	publish func(string, T) error,
+) error {
+	var frame *compositeStreamFrame[T]
+	var visitor func(T) error
+	for _, alias := range aliases {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		engine, err := composite.getConstituent(alias)
+		if err != nil {
+			continue
+		}
+		database := composite.constituentDatabase(alias, engine)
+		if streamer, ok := engine.(StreamingEngine); ok {
+			if frame == nil {
+				frame = &compositeStreamFrame[T]{ctx: ctx, publish: publish}
+				visitor = frame.visit
+			}
+			frame.database, frame.cancellation = database, nil
+			err := stream(streamer, visitor)
+			if frame.cancellation != nil {
+				return frame.cancellation
+			}
+			if err != nil {
+				return compositeFanOutPublishesLocalizedStream.wrap(alias, err)
+			}
+			continue
+		}
+		values, err := materialize(engine)
+		if err != nil {
+			return compositeFanOutPublishesLocalizedQuery.wrap(alias, err)
+		}
+		for _, value := range values {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := publish(database, value); err != nil {
+				return err
+			}
+		}
+	}
+	return ctx.Err()
+}
+
 // GetNodesByLabel returns nodes with the given label from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
 // Returns empty slice if no readable constituents are available.
-func (c *CompositeEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (c *CompositeEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	readConstituents := c.getConstituentsForRead()
 	if len(readConstituents) == 0 {
 		// No readable constituents available (empty composite or all offline)
 		return []*Node{}, nil
 	}
 
-	var allNodes []*Node
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			// Constituent not found or offline - skip it
-			continue
-		}
-
-		nodes, err := engine.GetNodesByLabel(label)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, node := range nodes {
-			allNodes = append(allNodes, c.sourceNode(alias, engine, node))
-		}
-	}
-
-	return allNodes, nil
+	return materializeConstituents(c, ctx, readConstituents,
+		func(engine Engine) ([]*Node, error) { return engine.GetNodesByLabel(ctx, label) },
+		nodeFromDatabase,
+		compositeFanOutPublishesRaw,
+	)
 }
 
 // StreamNodesByLabelProjected streams deduplicated projected nodes from readable constituents.
-func (c *CompositeEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
+func (c *CompositeEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -833,7 +966,7 @@ func (c *CompositeEngine) StreamNodesByLabelProjected(label string, properties [
 		readers = append(readers, sourceReader{reader: reader, alias: alias, engine: engine})
 	}
 	for _, source := range readers {
-		err := source.reader.StreamNodesByLabelProjected(label, properties, func(node *Node) error {
+		err := source.reader.StreamNodesByLabelProjected(ctx, label, properties, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
@@ -876,86 +1009,53 @@ func (c *CompositeEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 
 // GetOutgoingEdges returns outgoing edges from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
-func (c *CompositeEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
+func (c *CompositeEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	readConstituents, local, _ := c.constituentsForEntity("4", string(nodeID))
 	nodeID = NodeID(local)
-	var allEdges []*Edge
 
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		edges, err := engine.GetOutgoingEdges(nodeID)
-		if err != nil {
-			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
-		}
-
-		for _, edge := range edges {
-			allEdges = append(allEdges, c.sourceEdge(alias, engine, edge))
-		}
-	}
-
-	return allEdges, nil
+	return materializeConstituents(c, ctx, readConstituents,
+		func(engine Engine) ([]*Edge, error) { return engine.GetOutgoingEdges(ctx, nodeID) },
+		edgeFromDatabase,
+		compositeFanOutPublishesLocalizedQuery,
+	)
 }
 
 // GetIncomingEdges returns incoming edges from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
-func (c *CompositeEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
+func (c *CompositeEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	readConstituents, local, _ := c.constituentsForEntity("4", string(nodeID))
 	nodeID = NodeID(local)
-	var allEdges []*Edge
 
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		edges, err := engine.GetIncomingEdges(nodeID)
-		if err != nil {
-			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
-		}
-
-		for _, edge := range edges {
-			allEdges = append(allEdges, c.sourceEdge(alias, engine, edge))
-		}
-	}
-
-	return allEdges, nil
+	return materializeConstituents(c, ctx, readConstituents,
+		func(engine Engine) ([]*Edge, error) { return engine.GetIncomingEdges(ctx, nodeID) },
+		edgeFromDatabase,
+		compositeFanOutPublishesLocalizedQuery,
+	)
 }
 
 // GetEdgesBetween returns edges between two nodes from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
-func (c *CompositeEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
+func (c *CompositeEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if engine, start, end, qualified := c.constituentForNodePair(startID, endID); qualified {
 		if engine == nil {
 			return nil, nil
 		}
-		edges, err := engine.GetEdgesBetween(start, end)
-		return edgesFromDatabase(edges, nodePairDatabase(startID, endID)), err
-	}
-	readConstituents := c.getConstituentsForRead()
-	var allEdges []*Edge
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+		edges, err := engine.GetEdgesBetween(ctx, start, end)
+		projected, projectionErr := entitiesFromDatabase(ctx, edges, nodePairDatabase(startID, endID))
+		if projectionErr != nil {
+			return nil, projectionErr
 		}
-
-		edges, err := engine.GetEdgesBetween(startID, endID)
-		if err != nil {
-			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
-		}
-
-		for _, edge := range edges {
-			allEdges = append(allEdges, c.sourceEdge(alias, engine, edge))
-		}
+		return projected, err
 	}
 
-	return allEdges, nil
+	return materializeConstituents(c, ctx, c.getConstituentsForRead(),
+		func(engine Engine) ([]*Edge, error) { return engine.GetEdgesBetween(ctx, startID, endID) },
+		edgeFromDatabase,
+		compositeFanOutPublishesLocalizedQuery,
+	)
 }
 
 // GetEdgeBetween returns an edge between two nodes from any constituent.
@@ -985,83 +1085,32 @@ func (c *CompositeEngine) GetEdgeBetween(startID, endID NodeID, edgeType string)
 
 // GetEdgesByType returns edges of the given type from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
-func (c *CompositeEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
-	readConstituents := c.getConstituentsForRead()
-	var allEdges []*Edge
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		edges, err := engine.GetEdgesByType(edgeType)
-		if err != nil {
-			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
-		}
-
-		for _, edge := range edges {
-			allEdges = append(allEdges, c.sourceEdge(alias, engine, edge))
-		}
-	}
-
-	return allEdges, nil
+func (c *CompositeEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
+	return materializeConstituents(c, ctx, c.getConstituentsForRead(),
+		func(engine Engine) ([]*Edge, error) { return engine.GetEdgesByType(ctx, edgeType) },
+		edgeFromDatabase,
+		compositeFanOutPublishesLocalizedQuery,
+	)
 }
 
 // AllNodes returns all nodes from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
-func (c *CompositeEngine) AllNodes() ([]*Node, error) {
-	readConstituents := c.getConstituentsForRead()
-	var allNodes []*Node
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		nodes, err := engine.AllNodes()
-		if err != nil {
-			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
-		}
-
-		for _, node := range nodes {
-			allNodes = append(allNodes, c.sourceNode(alias, engine, node))
-		}
-	}
-
-	return allNodes, nil
+func (c *CompositeEngine) AllNodes(ctx context.Context) ([]*Node, error) {
+	return materializeConstituents(c, ctx, c.getConstituentsForRead(),
+		func(engine Engine) ([]*Node, error) { return engine.AllNodes(ctx) },
+		nodeFromDatabase,
+		compositeFanOutPublishesLocalizedQuery,
+	)
 }
 
 // AllEdges returns all edges from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
-func (c *CompositeEngine) AllEdges() ([]*Edge, error) {
-	readConstituents := c.getConstituentsForRead()
-	var allEdges []*Edge
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		edges, err := engine.AllEdges()
-		if err != nil {
-			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
-		}
-
-		for _, edge := range edges {
-			allEdges = append(allEdges, c.sourceEdge(alias, engine, edge))
-		}
-	}
-
-	return allEdges, nil
-}
-
-// GetAllNodes returns all nodes from all constituents (non-error version).
-func (c *CompositeEngine) GetAllNodes() []*Node {
-	nodes, _ := c.AllNodes()
-	return nodes
+func (c *CompositeEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
+	return materializeConstituents(c, ctx, c.getConstituentsForRead(),
+		func(engine Engine) ([]*Edge, error) { return engine.AllEdges(ctx) },
+		edgeFromDatabase,
+		compositeFanOutPublishesLocalizedQuery,
+	)
 }
 
 // ============================================================================
@@ -1446,7 +1495,7 @@ func (c *CompositeEngine) BulkDeleteEdges(ids []EdgeID) error {
 // ============================================================================
 
 // BatchGetNodes retrieves multiple nodes from all constituents.
-func (c *CompositeEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+func (c *CompositeEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	result := make(map[NodeID]*Node)
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
@@ -1474,7 +1523,7 @@ func (c *CompositeEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) 
 		if len(requests) == 0 {
 			continue
 		}
-		nodes, err := engine.BatchGetNodes(requests)
+		nodes, err := engine.BatchGetNodes(ctx, requests)
 		if err != nil {
 			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
@@ -1626,85 +1675,52 @@ func (c *CompositeEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edg
 
 // StreamNodes streams nodes from all constituents.
 func (c *CompositeEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
-	readConstituents := c.getConstituentsForRead()
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		if streamer, ok := engine.(StreamingEngine); ok {
-			if err := streamer.StreamNodes(ctx, func(node *Node) error { return fn(c.sourceNode(alias, engine, node)) }); err != nil {
-				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
-			}
-		} else {
-			// Fallback to AllNodes
-			nodes, err := engine.AllNodes()
-			if err != nil {
-				return localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
-			}
-
-			for _, node := range nodes {
-				if err := fn(c.sourceNode(alias, engine, node)); err != nil {
-					return err
-				}
-			}
-		}
-	}
-
-	return nil
+	return streamConstituents(c, ctx, c.getConstituentsForRead(),
+		func(streamer StreamingEngine, visit func(*Node) error) error { return streamer.StreamNodes(ctx, visit) },
+		func(engine Engine) ([]*Node, error) { return engine.AllNodes(ctx) },
+		func(database string, node *Node) error { return fn(nodeFromDatabase(node, database)) },
+	)
 }
 
 // StreamEdges streams edges from all constituents.
 func (c *CompositeEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	readConstituents := c.getConstituentsForRead()
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		if streamer, ok := engine.(StreamingEngine); ok {
-			if err := streamer.StreamEdges(ctx, func(edge *Edge) error { return fn(c.sourceEdge(alias, engine, edge)) }); err != nil {
-				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
-			}
-		} else {
-			// Fallback to AllEdges
-			edges, err := engine.AllEdges()
-			if err != nil {
-				return localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
-			}
-
-			for _, edge := range edges {
-				if err := fn(c.sourceEdge(alias, engine, edge)); err != nil {
-					return err
-				}
-			}
-		}
-	}
-
-	return nil
+	return streamConstituents(c, ctx, c.getConstituentsForRead(),
+		func(streamer StreamingEngine, visit func(*Edge) error) error { return streamer.StreamEdges(ctx, visit) },
+		func(engine Engine) ([]*Edge, error) { return engine.AllEdges(ctx) },
+		func(database string, edge *Edge) error { return fn(edgeFromDatabase(edge, database)) },
+	)
 }
 
 // StreamNodeChunks streams nodes in chunks from all constituents.
 func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	readConstituents := c.getConstituentsForRead()
 
 	for _, alias := range readConstituents {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
 		}
 
+		database := c.constituentDatabase(alias, engine)
 		if streamer, ok := engine.(StreamingEngine); ok {
-			if err := streamer.StreamNodeChunks(ctx, chunkSize, func(nodes []*Node) error { return fn(nodesFromDatabase(nodes, c.constituentDatabase(alias, engine))) }); err != nil {
+			if err := streamer.StreamNodeChunks(ctx, chunkSize, func(nodes []*Node) error {
+				projected, err := entitiesFromDatabase(ctx, nodes, database)
+				if err != nil {
+					return err
+				}
+				return fn(projected)
+			}); err != nil {
 				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
 			}
 		} else {
 			// Fallback
-			nodes, err := engine.AllNodes()
+			nodes, err := engine.AllNodes(ctx)
 			if err != nil {
 				return localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 			}
@@ -1714,14 +1730,18 @@ func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, f
 				if end > len(nodes) {
 					end = len(nodes)
 				}
-				if err := fn(nodesFromDatabase(nodes[i:end], c.constituentDatabase(alias, engine))); err != nil {
+				projected, err := entitiesFromDatabase(ctx, nodes[i:end], database)
+				if err != nil {
+					return err
+				}
+				if err := fn(projected); err != nil {
 					return err
 				}
 			}
 		}
 	}
 
-	return nil
+	return ctx.Err()
 }
 
 // IsComposite returns true, identifying this engine as a composite database.

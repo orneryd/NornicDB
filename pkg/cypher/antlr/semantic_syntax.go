@@ -1,6 +1,8 @@
 package antlr
 
-import "context"
+import (
+	"context"
+)
 
 // ReadClauseSyntax is the clause-entry view of the canonical lexical product.
 func ReadClauseSyntax(ctx context.Context, query string, consume func(StatementSyntax)) error {

@@ -81,14 +81,14 @@ type visualizationErrorEngine struct {
 	err       error
 }
 
-func (engine visualizationErrorEngine) AllNodes() ([]*storage.Node, error) {
+func (engine visualizationErrorEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	if engine.failNodes {
 		return nil, engine.err
 	}
-	return engine.Engine.AllNodes()
+	return engine.Engine.AllNodes(ctx)
 }
 
-func (engine visualizationErrorEngine) AllEdges() ([]*storage.Edge, error) {
+func (engine visualizationErrorEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	return nil, engine.err
 }
 

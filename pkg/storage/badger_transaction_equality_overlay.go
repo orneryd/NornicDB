@@ -1,6 +1,9 @@
 package storage
 
-import "sort"
+import (
+	"context"
+	"sort"
+)
 
 // TransactionEqualityLookup exposes complete candidates from a transaction's
 // pinned label population. False asks the caller to use its normal scan (for
@@ -75,7 +78,10 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 			}
 			return true
 		}
-		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", visibleRead, func(node *Node) error {
+		// Equality lookups keep their existing public API (no caller context);
+		// the scan runs on the transaction's own lifetime, which is
+		// context.Background at this context-free boundary.
+		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(context.Background(), tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", visibleRead, func(node *Node) error {
 			if cacheable {
 				bytes, ok := snapshotLabelPrefixNodeBytes(node)
 				if !ok || len(population.nodes) >= maxSnapshotNodeLabelCacheNodes || bytes > maxSnapshotLabelPrefixBytes-retainedBytes || tx.nodeHasEmbeddingSidecar(tx.snapshotTx, node.ID) {

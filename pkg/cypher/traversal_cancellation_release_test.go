@@ -20,29 +20,36 @@ type cancellationTraversalEngine struct {
 func (s *cancellationTraversalEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 	return s.nodes[id], nil
 }
-func (s *cancellationTraversalEngine) adjacent(id storage.NodeID) ([]*storage.Edge, error) {
+
+// adjacent reads one node's relationships for the traversal's direction: it
+// counts the read, cancels at the configured read, then applies that
+// direction's first-edge endpoint test to the root's fan-out.
+func (s *cancellationTraversalEngine) adjacent(id storage.NodeID, incoming bool) ([]*storage.Edge, error) {
 	s.reads++
 	if s.reads == s.cancelAt {
 		s.cancel()
 	}
-	if id == "root" {
-		return s.edges, nil
+	if id != "root" {
+		return nil, nil
 	}
-	return nil, nil
+	if len(s.edges) > 0 {
+		endpoint := s.edges[0].StartNode
+		if incoming {
+			endpoint = s.edges[0].EndNode
+		}
+		if endpoint != id {
+			return nil, nil
+		}
+	}
+	return s.edges, nil
 }
-func (s *cancellationTraversalEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := s.adjacent(id)
-	if len(edges) > 0 && edges[0].StartNode != id {
-		return nil, err
-	}
-	return edges, err
+
+func (s *cancellationTraversalEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return s.adjacent(id, false)
 }
-func (s *cancellationTraversalEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := s.adjacent(id)
-	if len(edges) > 0 && edges[0].EndNode != id {
-		return nil, err
-	}
-	return edges, err
+
+func (s *cancellationTraversalEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return s.adjacent(id, true)
 }
 
 // A high-fanout DFS must stop sibling expansion after cancellation. Counting

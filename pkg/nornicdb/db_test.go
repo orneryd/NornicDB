@@ -64,11 +64,11 @@ type temporalMaintenanceTestEngine struct {
 	lifecycleResumed  int
 }
 
-func (e *allNodesErrorEngine) AllNodes() ([]*storage.Node, error) {
+func (e *allNodesErrorEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	if e.allNodesErr != nil {
 		return nil, e.allNodesErr
 	}
-	return e.Engine.AllNodes()
+	return e.Engine.AllNodes(ctx)
 }
 
 func (e *temporalMaintenanceTestEngine) RebuildTemporalIndexes(ctx context.Context) error {

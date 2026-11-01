@@ -1347,7 +1347,7 @@ type snapshotEncodeErrorEngine struct {
 	storage.Engine
 }
 
-func (e *snapshotEncodeErrorEngine) AllNodes() ([]*storage.Node, error) {
+func (e *snapshotEncodeErrorEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	return []*storage.Node{
 		{
 			ID:     "bad-node",
@@ -1359,13 +1359,13 @@ func (e *snapshotEncodeErrorEngine) AllNodes() ([]*storage.Node, error) {
 	}, nil
 }
 
-func (e *snapshotEncodeErrorEngine) AllEdges() ([]*storage.Edge, error) {
+func (e *snapshotEncodeErrorEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	return nil, nil
 }
 
 // The snapshot streams stored nodes: the fake serves AllNodes' node.
 func (e *snapshotEncodeErrorEngine) StreamNodesWithOptions(_ context.Context, _ storage.StreamNodesOptions, visit func(*storage.Node) error) error {
-	nodes, _ := e.AllNodes()
+	nodes, _ := e.AllNodes(context.Background())
 	for _, node := range nodes {
 		if err := visit(node); err != nil {
 			return err

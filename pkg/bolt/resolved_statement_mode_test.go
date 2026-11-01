@@ -68,7 +68,7 @@ func TestRemotePeriodicCoordinatorMetadataBolt(t *testing.T) {
 				}
 				_, _, err = tx.QueryCypher(context.Background(), "CALL apoc.cypher.run($body,{}) YIELD value RETURN value", map[string]interface{}{"body": body})
 				require.ErrorContains(t, err, "unsupported query type in transaction")
-				nodes, err := store.GetNodesByLabel("U5PeriodicRemote")
+				nodes, err := store.GetNodesByLabel(context.Background(), "U5PeriodicRemote")
 				require.NoError(t, err)
 				require.Empty(t, nodes, "coordinator-owned periodic call must fail before its first action")
 			})

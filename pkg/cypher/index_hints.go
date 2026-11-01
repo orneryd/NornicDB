@@ -35,6 +35,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -323,6 +324,7 @@ func (ctx *IndexHintContext) ShouldForceScan(variable, label string) bool {
 // Returns nodes matching the index lookup, or nil if index doesn't exist.
 //
 // Parameters:
+//   - ctx: The caller's context; its cancellation ends the label-scan fallback
 //   - storage: The storage engine to query
 //   - schema: The schema manager for index lookup
 //   - hint: The index hint to apply
@@ -332,7 +334,7 @@ func (ctx *IndexHintContext) ShouldForceScan(variable, label string) bool {
 //   - Matching nodes if index exists and value found
 //   - nil, nil if index doesn't exist (fall back to scan)
 //   - nil, error if lookup fails
-func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint IndexHint, propertyValue interface{}) ([]*storage.Node, error) {
+func ApplyIndexHint(ctx context.Context, store storage.Engine, schema *storage.SchemaManager, hint IndexHint, propertyValue interface{}) ([]*storage.Node, error) {
 	if hint.Type != HintIndex {
 		return nil, nil // Not an index hint
 	}
@@ -357,7 +359,7 @@ func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint In
 	}
 
 	// No index found - fall back to label scan with property filter
-	nodes, err := store.GetNodesByLabel(hint.Label)
+	nodes, err := store.GetNodesByLabel(ctx, hint.Label)
 	if err != nil {
 		return nil, err
 	}

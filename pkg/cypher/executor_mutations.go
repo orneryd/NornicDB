@@ -121,8 +121,8 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 		}
 		edgesCount := 0
 		if needEdgeStats {
-			outgoingEdges, _ := store.GetOutgoingEdges(storage.NodeID(nodeID))
-			incomingEdges, _ := store.GetIncomingEdges(storage.NodeID(nodeID))
+			outgoingEdges, _ := store.GetOutgoingEdges(ctx, storage.NodeID(nodeID))
+			incomingEdges, _ := store.GetIncomingEdges(ctx, storage.NodeID(nodeID))
 			edgesCount = len(outgoingEdges) + len(incomingEdges)
 		}
 		if err := store.DeleteNode(storage.NodeID(nodeID)); err == nil {
@@ -220,9 +220,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 	}
 	if !usedIndex {
 		if len(nodePat.labels) > 0 {
-			nodes, err = e.storage.GetNodesByLabel(nodePat.labels[0])
+			nodes, err = e.storage.GetNodesByLabel(ctx, nodePat.labels[0])
 		} else {
-			nodes, err = e.storage.AllNodes()
+			nodes, err = e.storage.AllNodes(ctx)
 		}
 		if err != nil {
 			return nil, true, err
@@ -851,12 +851,12 @@ func (e *StorageExecutor) idCounter() int64 {
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
 // like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
 // Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
-func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool {
+func (e *StorageExecutor) evaluateRelationshipPatternInWhere(ctx context.Context, node *storage.Node, variable, pattern string) bool {
 	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
 		return false
 	}
 	if e.isChainedPattern(pattern) {
-		return e.checkChainedPattern(node, variable, pattern, "")
+		return e.checkChainedPattern(ctx, node, variable, pattern, "")
 	}
 	_ = e.extractTargetVariable(pattern, variable) // not needed for simple (var)-[]->() pattern
 	relPattern := e.parseOptionalRelPattern(context.Background(), pattern)
@@ -883,7 +883,7 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 	var relTypes []string
 	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
 	if checkIncoming {
-		edges, _ := e.storage.GetIncomingEdges(node.ID)
+		edges, _ := e.storage.GetIncomingEdges(ctx, node.ID)
 		for _, edge := range edges {
 			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.StartNode) {
 				return true
@@ -891,7 +891,7 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		}
 	}
 	if checkOutgoing {
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
 		for _, edge := range edges {
 			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.EndNode) {
 				return true
@@ -899,15 +899,15 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		}
 	}
 	if !checkIncoming && !checkOutgoing {
-		incoming, _ := e.storage.GetIncomingEdges(node.ID)
-		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
+		incoming, _ := e.storage.GetIncomingEdges(ctx, node.ID)
+		outgoing, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
 		return len(incoming) > 0 || len(outgoing) > 0
 	}
 	return false
 }
 
 // checkChainedPattern handles chained relationship patterns like (p)-[:KNOWS]->()-[:KNOWS]->()
-func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable, pattern, innerWhere string) bool {
+func (e *StorageExecutor) checkChainedPattern(ctx context.Context, node *storage.Node, variable, pattern, innerWhere string) bool {
 	// Parse the pattern to extract relationship hops
 	// E.g., (p)-[:KNOWS]->()-[:KNOWS]->() has two hops
 
@@ -931,7 +931,7 @@ func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable, patt
 	}
 
 	// Traverse the chain starting from the given node
-	return e.traverseChain(node, hops, 0)
+	return e.traverseChain(ctx, node, hops, 0)
 }
 
 // relationshipHop represents one step in a chained relationship pattern
@@ -997,7 +997,7 @@ func forEachRelationshipSource(pattern string, visit func(start, open, close, en
 	}
 }
 
-func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipHop, hopIndex int) bool {
+func (e *StorageExecutor) traverseChain(ctx context.Context, node *storage.Node, hops []relationshipHop, hopIndex int) bool {
 	if hopIndex >= len(hops) {
 		return true // All hops matched
 	}
@@ -1005,7 +1005,7 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 	hop := hops[hopIndex]
 
 	if hop.outgoing {
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
 		for _, edge := range edges {
 			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
 				// Get the target node and recurse
@@ -1013,13 +1013,13 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 				if err != nil {
 					continue
 				}
-				if e.traverseChain(nextNode, hops, hopIndex+1) {
+				if e.traverseChain(ctx, nextNode, hops, hopIndex+1) {
 					return true
 				}
 			}
 		}
 	} else {
-		edges, _ := e.storage.GetIncomingEdges(node.ID)
+		edges, _ := e.storage.GetIncomingEdges(ctx, node.ID)
 		for _, edge := range edges {
 			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
 				// Get the source node and recurse
@@ -1027,7 +1027,7 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 				if err != nil {
 					continue
 				}
-				if e.traverseChain(nextNode, hops, hopIndex+1) {
+				if e.traverseChain(ctx, nextNode, hops, hopIndex+1) {
 					return true
 				}
 			}
@@ -1196,7 +1196,7 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 // change. It validates all adjacent edges (outgoing and incoming) against the current
 // policy constraints to ensure no DISALLOWED pair is formed and any ALLOWED whitelist
 // is still satisfied.
-func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string) error {
+func validatePolicyOnLabelChange(ctx context.Context, store storage.Engine, node *storage.Node, oldLabels []string) error {
 	schema := store.GetSchema()
 	if schema == nil {
 		return nil
@@ -1215,7 +1215,7 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 	}
 
 	// Check outgoing edges (node is the source).
-	outgoing, _ := store.GetOutgoingEdges(node.ID)
+	outgoing, _ := store.GetOutgoingEdges(ctx, node.ID)
 	for _, edge := range outgoing {
 		targetNode, err := store.GetNode(storage.NodeID(edge.EndNode))
 		if err != nil || targetNode == nil {
@@ -1227,7 +1227,7 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 	}
 
 	// Check incoming edges (node is the target).
-	incoming, _ := store.GetIncomingEdges(node.ID)
+	incoming, _ := store.GetIncomingEdges(ctx, node.ID)
 	for _, edge := range incoming {
 		sourceNode, err := store.GetNode(storage.NodeID(edge.StartNode))
 		if err != nil || sourceNode == nil {

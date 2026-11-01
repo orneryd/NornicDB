@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -208,7 +209,7 @@ func TestSynchronousDeleteRemovesBufferedRelationships(t *testing.T) {
 				t.Helper()
 				_, err := b.GetStoredEdge("test:s")
 				require.ErrorIs(t, err, ErrNotFound, stage)
-				incoming, err := b.GetStoredIncomingEdges("test:b")
+				incoming, err := b.GetStoredIncomingEdges(context.Background(), "test:b")
 				require.NoError(t, err, stage)
 				require.Empty(t, incoming, stage)
 				count, err := b.EdgeCount()

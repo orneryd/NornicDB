@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -71,7 +72,7 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 	b := snapshotOverlayFixture(t)
 	var overlay []*Node
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) { overlay, _ = w.allNodesOverlayLocked() }, readViewOptions{longLived: true})
+	view, err := b.captureReadView(func(w *WriteBehindBuffer) { overlay, _, _ = w.allNodesOverlayLocked(context.Background()) }, readViewOptions{longLived: true})
 	require.NoError(t, err)
 	require.Nil(t, view.txn)
 	require.Len(t, overlay, 2)
@@ -101,13 +102,15 @@ func TestSnapshotOverlayBusyCachedBatchAndAdjacency(t *testing.T) {
 	// The committed part has hot caches; pending rows must shadow just their IDs.
 	_, err := b.CreateNode(&Node{ID: "other:unrelated"})
 	require.NoError(t, err)
-	for _, read := range []func([]NodeID) (map[NodeID]*Node, error){b.BatchGetNodes, b.BatchGetNodesWithoutEmbeddings} {
+	for _, read := range []func([]NodeID) (map[NodeID]*Node, error){func(ids []NodeID) (map[NodeID]*Node, error) { return b.BatchGetNodes(context.Background(), ids) }, func(ids []NodeID) (map[NodeID]*Node, error) {
+		return b.BatchGetNodesWithoutEmbeddings(context.Background(), ids)
+	}} {
 		nodes, err := read([]NodeID{"test:a", "test:b", "test:new", "test:gone", "other:unrelated"})
 		require.NoError(t, err)
 		require.Len(t, nodes, 4)
 		require.Equal(t, int64(2), nodes["test:a"].Properties["v"])
 	}
-	edges, err := b.GetOutgoingEdges("test:a")
+	edges, err := b.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, EdgeID("test:r"), edges[0].ID)

@@ -1,6 +1,7 @@
 package louvain
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"os"
@@ -8,6 +9,17 @@ import (
 	"strconv"
 	"testing"
 )
+
+// mustRun runs a healthy standalone engine invocation; these fixtures measure
+// partitions, so a cancelled run is a fixture failure, not a result.
+func mustRun(t *testing.T, graph *Graph, options Options) Result {
+	t.Helper()
+	result, err := Run(context.Background(), graph, options)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	return result
+}
 
 // The Cypher sweep separately verifies every projection and stream option.
 // Here its full-size, unseeded simple graphs exercise the engine directly,
@@ -105,7 +117,7 @@ func TestRunMatchesProjectedGDSReferences(t *testing.T) {
 			if v, ok := tc.Config["tolerance"].(float64); ok {
 				options.Tolerance = v
 			}
-			actual := Final(Run(graph, options))
+			actual := Final(mustRun(t, graph, options))
 			expected := make([]float64, tc.N)
 			for _, row := range tc.Expected {
 				expected[position[int(row[0].(float64))]] = row[1].(float64)
@@ -126,7 +138,7 @@ func TestRunMatchesProjectedGDSReferences(t *testing.T) {
 }
 
 func TestRunSeedsResolutionAndEmptyGraph(t *testing.T) {
-	empty := Run(NewGraph(0), DefaultOptions())
+	empty := mustRun(t, NewGraph(0), DefaultOptions())
 	if len(Final(empty)) != 0 || len(empty.Levels) != 1 {
 		t.Fatalf("empty graph result: %+v", empty)
 	}
@@ -135,7 +147,7 @@ func TestRunSeedsResolutionAndEmptyGraph(t *testing.T) {
 	graph.Link(2, 3, 1)
 	options := DefaultOptions()
 	options.Seed = []int{0, 0, 2, 2}
-	actual := Final(Run(graph, options))
+	actual := Final(mustRun(t, graph, options))
 	for i, want := range []int{0, 0, 1, 1} {
 		if actual[i] != want {
 			t.Fatalf("seeded communities %v", actual)
@@ -146,7 +158,7 @@ func TestRunSeedsResolutionAndEmptyGraph(t *testing.T) {
 	for _, resolution := range []float64{0, 1, 2, 0.25} {
 		options := DefaultOptions()
 		options.Resolution = resolution
-		actual := Final(Run(pair, options))
+		actual := Final(mustRun(t, pair, options))
 		together := resolution != 0.25
 		if (actual[0] == actual[1]) != together {
 			t.Fatalf("resolution %v: communities %v", resolution, actual)

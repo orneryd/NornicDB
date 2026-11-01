@@ -5,7 +5,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"slices"
 	"sort"
 	"strings"
@@ -198,7 +197,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: columnNames(relationshipScoreColumns),
 		Rows:    [][]interface{}{},
@@ -242,7 +241,10 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 			return result, nil
 		}
 		seen := 0
-		err := storage.StreamEdgesWithFallback(context.Background(), e.storage, 1024, func(edge *storage.Edge) error {
+		err := storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if !matchesRelationshipTypes(edge, targetTypes) {
 				return nil
 			}
@@ -271,11 +273,6 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 		return result, nil
 	}
 
-	edges, err := e.storage.AllEdges()
-	if err != nil {
-		return nil, err
-	}
-
 	parsed, err := ParseFulltextQuery(query)
 	if err != nil {
 		return nil, err
@@ -288,16 +285,19 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 		edge *storage.Edge
 		doc  *ftDoc
 	}
-	docs := make([]edgeDoc, 0, len(edges))
+	docs := make([]edgeDoc, 0)
 	docFreq := make(map[string]int, len(parsed.PrimaryTerms()))
 	var totalDocLen int64
-	for _, edge := range edges {
+	if err := storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !matchesRelationshipTypes(edge, targetTypes) {
-			continue
+			return nil
 		}
 		doc := buildEdgeFulltextDoc(edge, targetProperties)
 		if doc == nil {
-			continue
+			return nil
 		}
 		docs = append(docs, edgeDoc{edge: edge, doc: doc})
 		totalDocLen += int64(doc.contentTokenN)
@@ -306,6 +306,9 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 				docFreq[term]++
 			}
 		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	totalDocs := len(docs)
 	avgDocLen := 100.0
@@ -313,7 +316,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 		avgDocLen = float64(totalDocLen) / float64(totalDocs)
 	}
 
-	ctx := &ftEvalCtx{
+	evalCtx := &ftEvalCtx{
 		DefaultFields: targetProperties,
 		avgDocLen:     avgDocLen,
 		totalDocs:     totalDocs,
@@ -326,7 +329,10 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 	}
 	scored := make([]scoredEdge, 0, len(docs))
 	for _, d := range docs {
-		matched, score := parsed.Match(ctx, d.doc)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		matched, score := parsed.Match(evalCtx, d.doc)
 		if !matched {
 			continue
 		}
@@ -482,102 +488,10 @@ func edgeToMap(edge *storage.Edge) map[string]interface{} {
 	return result
 }
 
-// callDbIndexVectorQueryRelationships searches relationships using vector similarity - Neo4j db.index.vector.queryRelationships()
-// Syntax: CALL db.index.vector.queryRelationships('indexName', k, queryInput)
-// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
-func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Parse parameters from: CALL db.index.vector.queryRelationships('indexName', k, queryInput)
-	// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
-	indexName, k, input, err := e.parseVectorQueryParams(cypher)
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresVectorQueryParseFailed(err), err)
-	}
-	return e.callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
-}
-
-func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
-	// Resolve the query vector (same logic as queryNodes)
-	var queryVector []float32
-
-	if len(input.vector) > 0 {
-		// Direct vector provided (Neo4j compatible)
-		queryVector = input.vector
-	} else if input.stringQuery != "" {
-		// String query - embed server-side (NornicDB enhancement)
-		if e.queryEmbedderForStatement(ctx) == nil {
-			return nil, localizedError(localization.CypherProceduresStringQueryEmbedderRequired(), nil)
-		}
-		embedded, embedErr := e.embedVectorQueryText(ctx, input.stringQuery)
-		if embedErr != nil {
-			return nil, localizedError(localization.CypherProceduresEmbedQueryFailed(input.stringQuery, embedErr), embedErr)
-		}
-		queryVector = embedded
-	} else if input.hasValue || input.paramName != "" {
-		// Parameter reference - resolve from context parameters
-		paramValue := input.value
-		if !input.hasValue {
-			params := getParamsFromContext(ctx)
-			if params == nil {
-				return &ExecuteResult{Columns: columnNames(relationshipScoreColumns), Rows: [][]interface{}{}}, nil
-			}
-			var exists bool
-			paramValue, exists = params[input.paramName]
-			if !exists {
-				return nil, localizedError(localization.CypherProceduresParameterNotProvided(input.paramName), nil)
-			}
-		}
-
-		if text, isText := paramValue.(string); isText {
-			// String parameter - embed it
-			if e.queryEmbedderForStatement(ctx) == nil {
-				return nil, localizedError(localization.CypherProceduresParameterStringEmbedderRequired(input.paramName), nil)
-			}
-			embedded, embedErr := e.embedVectorQueryText(ctx, text)
-			if embedErr != nil {
-				return nil, localizedError(localization.CypherProceduresEmbedParameterFailed(input.paramName, text, embedErr), embedErr)
-			}
-			queryVector = embedded
-		} else {
-			list, ok := valueconvert.ReadList(paramValue)
-			if !ok {
-				return nil, localizedError(localization.CypherProceduresParameterUnsupportedType(input.paramName, cypherTypeName(paramValue)), nil)
-			}
-			var issue *valueconvert.NumberListIssue
-			queryVector, issue = list.Numbers32()
-			if issue != nil {
-				if issue.OutOfRange {
-					return nil, localizedError(localization.CypherCoreFunctionArgumentInvalid("vector query", "representable numeric coordinates", fmt.Sprint(issue.Value)), nil)
-				}
-				return nil, localizedError(localization.CypherProceduresParameterNonNumeric(input.paramName, fmt.Sprintf("%T", issue.Value)), nil)
-			}
-		}
-	} else {
-		// No query input provided - check if this might be a substituted invalid parameter
-		params := getParamsFromContext(ctx)
-		if params != nil {
-			// Parameters were provided, so if we have no input, it might be a substituted invalid type
-			// Check which parameters have unsupported types to provide a better error message
-			var unsupportedParams []string
-			for paramName, paramValue := range params {
-				// Check if this parameter has an unsupported type for vector queries
-				_, list := valueconvert.ReadList(paramValue)
-				_, text := paramValue.(string)
-				if !list && !text {
-					unsupportedParams = append(unsupportedParams, fmt.Sprintf("$%s (%T)", paramName, paramValue))
-				}
-			}
-
-			if len(unsupportedParams) > 0 {
-				// Found parameters with unsupported types - provide specific error
-				paramList := strings.Join(unsupportedParams, ", ")
-				return nil, localizedError(localization.CypherProceduresUnsupportedParameters(paramList), nil)
-			}
-			// Parameters exist but all have supported types - might be a different issue
-			return nil, localizedError(localization.CypherProceduresQueryInputPossiblyUnsupported(), nil)
-		}
-		return nil, localizedError(localization.CypherProceduresQueryInputRequired(), nil)
-	}
-
+// callDbIndexVectorQueryRelationshipsWithVector implements the search half of
+// db.index.vector.queryRelationships. The statement has already bound and
+// resolved the procedure's arguments, once, in callVectorQueryArguments.
+func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx context.Context, indexName string, k int, queryVector []float32) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: columnNames(relationshipScoreColumns),
 		Rows:    [][]interface{}{},
@@ -625,23 +539,22 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		return result, nil
 	}
 
-	// Get all edges and filter to those with embeddings
-	edges, err := e.storage.AllEdges()
-	if err != nil {
-		return nil, err
-	}
-
-	// Collect edges with embeddings and calculate similarities
+	// Collect edges with embeddings and calculate similarities. The population
+	// is read on the statement context, so a caller that cancels ends the scan
+	// and the scoring where they stand.
 	type scoredEdge struct {
 		edge  *storage.Edge
 		score float64
 	}
 	var scoredEdges []scoredEdge
 
-	for _, edge := range edges {
+	if err := storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Check relationship type filter if index specifies one
 		if targetRelType != "" && edge.Type != targetRelType {
-			continue
+			return nil
 		}
 
 		// Get embedding from property
@@ -653,21 +566,24 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		}
 
 		if len(edgeEmbedding) == 0 {
-			continue
+			return nil
 		}
 
 		// Skip if dimensions don't match
 		if len(edgeEmbedding) != len(queryVector) {
-			continue
+			return nil
 		}
 
 		// Neo4j's score for the index's similarity (#907).
 		score, ok := scoreVectorForFastPath(queryVector, edgeEmbedding, similarityFunc)
 		if !ok {
-			continue
+			return nil
 		}
 
 		scoredEdges = append(scoredEdges, scoredEdge{edge: edge, score: score})
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	// Sort by score descending

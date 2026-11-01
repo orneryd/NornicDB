@@ -78,11 +78,13 @@ func TestRemotePublicEdgeListDirectionsAndValues(t *testing.T) {
 		params          map[string]interface{}
 		run             func(*RemoteEngine) ([]*Edge, error)
 	}{
-		{"outgoing", "MATCH (n)-[r]->() WHERE n.id = $id RETURN r", map[string]interface{}{"id": "node:start"}, func(e *RemoteEngine) ([]*Edge, error) { return e.GetOutgoingEdges("node:start") }},
-		{"incoming", "MATCH ()-[r]->(n) WHERE n.id = $id RETURN r", map[string]interface{}{"id": "node:end"}, func(e *RemoteEngine) ([]*Edge, error) { return e.GetIncomingEdges("node:end") }},
-		{"between", "MATCH (a)-[r]->(b) WHERE a.id = $start AND b.id = $end RETURN r", map[string]interface{}{"start": "node:start", "end": "node:end"}, func(e *RemoteEngine) ([]*Edge, error) { return e.GetEdgesBetween("node:start", "node:end") }},
-		{"type escaped", "MATCH ()-[r:`REL``TYPE`]->() RETURN r", nil, func(e *RemoteEngine) ([]*Edge, error) { return e.GetEdgesByType(edgeType) }},
-		{"all", "MATCH ()-[r]->() RETURN r", nil, func(e *RemoteEngine) ([]*Edge, error) { return e.AllEdges() }},
+		{"outgoing", "MATCH (n)-[r]->() WHERE n.id = $id RETURN r", map[string]interface{}{"id": "node:start"}, func(e *RemoteEngine) ([]*Edge, error) { return e.GetOutgoingEdges(context.Background(), "node:start") }},
+		{"incoming", "MATCH ()-[r]->(n) WHERE n.id = $id RETURN r", map[string]interface{}{"id": "node:end"}, func(e *RemoteEngine) ([]*Edge, error) { return e.GetIncomingEdges(context.Background(), "node:end") }},
+		{"between", "MATCH (a)-[r]->(b) WHERE a.id = $start AND b.id = $end RETURN r", map[string]interface{}{"start": "node:start", "end": "node:end"}, func(e *RemoteEngine) ([]*Edge, error) {
+			return e.GetEdgesBetween(context.Background(), "node:start", "node:end")
+		}},
+		{"type escaped", "MATCH ()-[r:`REL``TYPE`]->() RETURN r", nil, func(e *RemoteEngine) ([]*Edge, error) { return e.GetEdgesByType(context.Background(), edgeType) }},
+		{"all", "MATCH ()-[r]->() RETURN r", nil, func(e *RemoteEngine) ([]*Edge, error) { return e.AllEdges(context.Background()) }},
 	} {
 		t.Run(operation.name, func(t *testing.T) {
 			for _, failure := range []bool{false, true} {
@@ -186,7 +188,7 @@ func TestRemotePublicBatchGetNodesSharesDeadline(t *testing.T) {
 		}
 		return []string{"n"}, [][]interface{}{{map[string]interface{}{"id": id, "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"name": id, "rank": int64(2)}}}}, nil
 	}}}
-	nodes, err := engine.BatchGetNodes([]NodeID{"node:first", "missing", "node:last"})
+	nodes, err := engine.BatchGetNodes(context.Background(), []NodeID{"node:first", "missing", "node:last"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"node:first", "missing", "node:last"}, seen)
 	require.Len(t, nodes, 2)
@@ -227,7 +229,7 @@ func TestRemotePublicReadCardinality(t *testing.T) {
 			return []string{string(value.ID)}, nil
 		}},
 		{"all nodes", false, node, "node:one", func(engine *RemoteEngine) ([]string, error) {
-			values, err := engine.AllNodes()
+			values, err := engine.AllNodes(context.Background())
 			if err != nil {
 				return nil, err
 			}
@@ -238,7 +240,7 @@ func TestRemotePublicReadCardinality(t *testing.T) {
 			return ids, nil
 		}},
 		{"all edges", false, edge, "edge:one", func(engine *RemoteEngine) ([]string, error) {
-			values, err := engine.AllEdges()
+			values, err := engine.AllEdges(context.Background())
 			if err != nil {
 				return nil, err
 			}

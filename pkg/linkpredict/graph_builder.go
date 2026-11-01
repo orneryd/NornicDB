@@ -148,11 +148,18 @@ func (b *GraphBuilder) Build(ctx context.Context) (Graph, error) {
 		return nil, errors.New("storage engine is nil")
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	startTime := time.Now()
 
 	// Check cache first
 	if b.config.CachePath != "" {
 		if cached, err := b.loadFromCache(); err == nil && cached != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			atomic.AddInt64(&b.cacheHits, 1)
 			return cached, nil
 		}
@@ -162,6 +169,16 @@ func (b *GraphBuilder) Build(ctx context.Context) (Graph, error) {
 	// Build graph with streaming + parallelization
 	graph, nodeCount, edgeCount, err := b.buildStreaming(ctx)
 	if err != nil {
+		// Storage now receives the caller context. Preserve its cancellation
+		// identity through contextual read errors without reclassifying an
+		// independent storage failure merely because cancellation also occurred.
+		if callerErr := ctx.Err(); callerErr != nil && errors.Is(err, callerErr) {
+			return nil, callerErr
+		}
+		return nil, err
+	}
+	// The final progress callback can cancel after the last worker has joined.
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -181,13 +198,16 @@ func (b *GraphBuilder) Build(ctx context.Context) (Graph, error) {
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return graph, nil
 }
 
 // buildStreaming constructs graph with chunked processing and parallel edge fetching.
 func (b *GraphBuilder) buildStreaming(ctx context.Context) (Graph, int, int, error) {
 	// Get all nodes (we need IDs, but won't hold all data at once)
-	nodes, err := b.storage.AllNodes()
+	nodes, err := b.storage.AllNodes(ctx)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("failed to get nodes: %w", err)
 	}
@@ -283,7 +303,7 @@ schedule:
 			defer wg.Done()
 			defer func() { <-sem }() // Release semaphore
 
-			edges, err := b.storage.GetOutgoingEdges(nodeID)
+			edges, err := b.storage.GetOutgoingEdges(ctx, nodeID)
 			if err != nil {
 				firstError.Do(func() { readErr = fmt.Errorf("failed to read relationships of node %q: %w", nodeID, err) })
 				return
@@ -820,7 +840,7 @@ func NewGraphStreamer(engine storage.Engine, config *BuildConfig) *GraphStreamer
 
 // StreamNodes iterates over all nodes without loading all into memory.
 func (s *GraphStreamer) StreamNodes(ctx context.Context, fn func(node *storage.Node) error) error {
-	nodes, err := s.engine.AllNodes()
+	nodes, err := s.engine.AllNodes(ctx)
 	if err != nil {
 		return err
 	}
@@ -847,7 +867,7 @@ func (s *GraphStreamer) StreamNodes(ctx context.Context, fn func(node *storage.N
 
 // StreamEdges iterates over all edges for a node.
 func (s *GraphStreamer) StreamEdges(ctx context.Context, nodeID storage.NodeID, fn func(edge *storage.Edge) error) error {
-	edges, err := s.engine.GetOutgoingEdges(nodeID)
+	edges, err := s.engine.GetOutgoingEdges(ctx, nodeID)
 	if err != nil {
 		return err
 	}

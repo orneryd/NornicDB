@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -294,18 +295,18 @@ func TestApplyAndValidateIndexHints(t *testing.T) {
 	require.NoError(t, schema.AddPropertyIndex("person_name_idx", "Person", []string{"name"}))
 	require.NoError(t, schema.PropertyIndexInsert("Person", "name", storage.NodeID("n1"), "alice"))
 
-	nodes, err := ApplyIndexHint(eng, schema, IndexHint{Type: HintIndex, Variable: "n", Label: "Person", Property: "name"}, "alice")
+	nodes, err := ApplyIndexHint(context.Background(), eng, schema, IndexHint{Type: HintIndex, Variable: "n", Label: "Person", Property: "name"}, "alice")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	assert.Equal(t, storage.NodeID("n1"), nodes[0].ID)
 
 	// Non-index hint should no-op.
-	nodes, err = ApplyIndexHint(eng, schema, IndexHint{Type: HintScan, Variable: "n", Label: "Person"}, "alice")
+	nodes, err = ApplyIndexHint(context.Background(), eng, schema, IndexHint{Type: HintScan, Variable: "n", Label: "Person"}, "alice")
 	require.NoError(t, err)
 	assert.Nil(t, nodes)
 
 	// Missing index should fall back to label scan+filter.
-	nodes, err = ApplyIndexHint(eng, schema, IndexHint{Type: HintIndex, Variable: "n", Label: "Person", Property: "age"}, int64(40))
+	nodes, err = ApplyIndexHint(context.Background(), eng, schema, IndexHint{Type: HintIndex, Variable: "n", Label: "Person", Property: "age"}, int64(40))
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	assert.Equal(t, storage.NodeID("n2"), nodes[0].ID)

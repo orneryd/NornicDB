@@ -1,6 +1,8 @@
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 // CatalogUpgradeV4 identifies the one configured catalog record transformed by
 // the V3-to-V4 storage upgrade. NodeID is fully namespace-qualified. Transform

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -40,7 +41,7 @@ func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 	assert.EqualValues(t, 1, b.nodeCount.Load())
 	_, ok := b.nodeCache[n.ID]
 	assert.True(t, ok)
-	require.NoError(t, b.ForEachNodeIDByLabel("Legacy", func(NodeID) bool { return true }))
+	require.NoError(t, b.ForEachNodeIDByLabel(context.Background(), "Legacy", func(NodeID) bool { return true }))
 	n2 := &Node{ID: n.ID, Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{"name": "b"}}
 	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: n2}))
 	assert.Equal(t, "b", b.nodeCache[n.ID].Properties["name"])
@@ -57,7 +58,7 @@ func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 	for _, edgeID := range []EdgeID{EdgeID(prefixTestID("cascade-1")), EdgeID(prefixTestID("cascade-2"))} {
 		require.NoError(t, b.CreateEdge(&Edge{ID: edgeID, StartNode: id, EndNode: id, Type: "KNOWS"}))
 	}
-	_, err = b.GetEdgesByType("KNOWS")
+	_, err = b.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	beforeEdges := b.edgeCount.Load()
 	require.NoError(t, b.DeleteNode(id))
@@ -75,7 +76,7 @@ func TestBadgerCache_EdgeCreateUpdateDelete_Extra(t *testing.T) {
 	}
 	eid := EdgeID(prefixTestID("edge-1"))
 	e := &Edge{ID: eid, StartNode: source, EndNode: target, Type: "KNOWS"}
-	_, err := b.GetEdgesByType("KNOWS")
+	_, err := b.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	require.NoError(t, b.CreateEdge(e))
 	assert.EqualValues(t, 1, b.edgeCount.Load())
@@ -84,9 +85,9 @@ func TestBadgerCache_EdgeCreateUpdateDelete_Extra(t *testing.T) {
 
 	e.Type = "LIKES"
 	require.NoError(t, b.UpdateEdge(EdgeUpdateRequest{After: e}))
-	_, err = b.GetEdgesByType("LIKES")
+	_, err = b.GetEdgesByType(context.Background(), "LIKES")
 	require.NoError(t, err)
-	_, err = b.GetEdgesByType("HATES")
+	_, err = b.GetEdgesByType(context.Background(), "HATES")
 	require.NoError(t, err)
 	e.Type = "HATES"
 	require.NoError(t, b.UpdateEdge(EdgeUpdateRequest{After: e}))

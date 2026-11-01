@@ -376,6 +376,12 @@ func (s *BaseCypherParserListener) EnterForSt(ctx *ForStContext) {}
 // ExitForSt is called when production forSt is exited.
 func (s *BaseCypherParserListener) ExitForSt(ctx *ForStContext) {}
 
+// EnterLoadCSVSt is called when production loadCSVSt is entered.
+func (s *BaseCypherParserListener) EnterLoadCSVSt(ctx *LoadCSVStContext) {}
+
+// ExitLoadCSVSt is called when production loadCSVSt is exited.
+func (s *BaseCypherParserListener) ExitLoadCSVSt(ctx *LoadCSVStContext) {}
+
 // EnterReadingStatement is called when production readingStatement is entered.
 func (s *BaseCypherParserListener) EnterReadingStatement(ctx *ReadingStatementContext) {}
 

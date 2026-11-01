@@ -41,7 +41,7 @@ func TestLouvainEntryPointsShareRingCommunities(t *testing.T) {
 		require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
 		registered, found := apoc.GetInfo("apoc.community.louvain")
 		require.True(t, found)
-		value, err := registered.Handler.Call([]interface{}{nodes, relationships, community.DefaultLouvainConfig()})
+		value, err := registered.Handler.Call([]interface{}{context.Background(), nodes, relationships, community.DefaultLouvainConfig()})
 		require.NoError(t, err)
 		result, ok := value.([]community.CommunityResult)
 		require.True(t, ok)
@@ -76,7 +76,9 @@ func TestLouvainEntryPointsSelfLoopsAndParallelEdges(t *testing.T) {
 				rels = append(rels, &community.Relationship{ID: int64(i), StartNode: int64(edge[0]), EndNode: int64(edge[1]), Properties: map[string]interface{}{"weight": float64(edge[2])}})
 				graph.Link(edge[0], edge[1], float64(edge[2]))
 			}
-			require.Equal(t, tc.want, louvain.Final(louvain.Run(graph, louvain.DefaultOptions())), "engine reference")
+			engineResult, err := louvain.Run(context.Background(), graph, louvain.DefaultOptions())
+			require.NoError(t, err)
+			require.Equal(t, tc.want, louvain.Final(engineResult), "engine reference")
 			check := func(t *testing.T, rows []community.CommunityResult) {
 				t.Helper()
 				got := make([]int, len(rows))
@@ -85,12 +87,14 @@ func TestLouvainEntryPointsSelfLoopsAndParallelEdges(t *testing.T) {
 				}
 				require.Equal(t, tc.want, got)
 			}
-			check(t, community.Louvain(nodes, rels, community.DefaultLouvainConfig()))
+			adapted, err := community.Louvain(context.Background(), nodes, rels, community.DefaultLouvainConfig())
+			require.NoError(t, err)
+			check(t, adapted)
 			require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
 			registered, ok := apoc.GetInfo("apoc.community.louvain")
 			require.True(t, ok)
 			handler := registered.Handler
-			registeredValue, err := handler.Call([]interface{}{nodes, rels, community.DefaultLouvainConfig()})
+			registeredValue, err := handler.Call([]interface{}{context.Background(), nodes, rels, community.DefaultLouvainConfig()})
 			require.NoError(t, err)
 			check(t, registeredValue.([]community.CommunityResult))
 			// Exercise the bundled typed-dispatch path, rather than calling the

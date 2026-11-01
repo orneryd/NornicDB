@@ -35,9 +35,9 @@ func (engine *forwardingNamespacedEngine) GetInnerEngine() storage.Engine {
 	return engine.Engine
 }
 
-func (p *getEdgesByTypeProbe) GetEdgesByType(edgeType string) ([]*storage.Edge, error) {
+func (p *getEdgesByTypeProbe) GetEdgesByType(ctx context.Context, edgeType string) ([]*storage.Edge, error) {
 	p.calls++
-	return p.Engine.GetEdgesByType(edgeType)
+	return p.Engine.GetEdgesByType(ctx, edgeType)
 }
 
 func newIssue638E2EStore(t *testing.T) (*storage.NamespacedEngine, *storage.BadgerEngine, *StorageExecutor, *getEdgesByTypeProbe) {
