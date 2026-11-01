@@ -1,0 +1,17 @@
+{
+  "author": "Codex (implementation sub-agent), 2026-10-26",
+  "families": [
+    {
+      "name": "text",
+      "packages": ["github.com/orneryd/nornicdb/pkg/cypher/antlr"],
+      "functions": ["github.com/orneryd/nornicdb/pkg/cypher.scanCanonicalQueryText", "github.com/orneryd/nornicdb/pkg/cypher.skipCypherLexicalToken", "github.com/orneryd/nornicdb/pkg/cypher.scanIdentifierToken", "github.com/orneryd/nornicdb/pkg/cypher.scanCypherQuotedText"],
+      "contracts": []
+    },
+    {
+      "name": "contracts",
+      "packages": [],
+      "functions": [],
+      "contracts": []
+    }
+  ]
+}
