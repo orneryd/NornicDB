@@ -52,11 +52,15 @@ func TestStreamNodesByLabelProjectedReadsRemainingNodesInOnePass(t *testing.T) {
 	const count = labelScanPointLookups + 300
 	eng, created := labelScanFixture(t, count)
 
-	require.True(t, eng.labelCoversScope("test:", "Common"))
-	require.False(t, eng.labelCoversScope("test:", "Rare"))
-	require.False(t, eng.labelCoversScope("test:", "Missing"))
-	require.True(t, eng.labelCoversScope("", "Common"))
-	require.False(t, eng.labelCoversScope("", "Rare"))
+	// Context-bearing owner adoption: storage-format-owners lane (Codex), 1 Nov.
+	for _, hint := range []struct {
+		scope, label string
+		covers       bool
+	}{{"test:", "Common", true}, {"test:", "Rare", false}, {"test:", "Missing", false}, {"", "Common", true}, {"", "Rare", false}} {
+		covers, err := eng.labelCoversScope(t.Context(), hint.scope, hint.label)
+		require.NoError(t, err)
+		require.Equal(t, hint.covers, covers)
+	}
 
 	eng.cacheStoreNode(&Node{ID: created[count-2], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}}, eng.db.oracle.published.Load())
 	nodes := streamLabelNodes(t, eng, "test:", "Common", []string{"i"})
@@ -287,7 +291,7 @@ func TestReadNodeRecordsInOnePassStopsOnCallbackError(t *testing.T) {
 	stop := fmt.Errorf("stop reading records")
 	visited := 0
 	require.ErrorIs(t, eng.withView(func(txn *badger.Txn) error {
-		return readNodeRecordsInOnePass(txn, "test:", ids, func(NodeID, *badger.Item) error {
+		return readNodeRecordsInOnePass(t.Context(), txn, "test:", ids, func(NodeID, *badger.Item) error {
 			visited++
 			return stop
 		})
@@ -345,7 +349,7 @@ func BenchmarkLabelRecordReads(b *testing.B) {
 		{
 			name: "one_pass",
 			read: func(read func(NodeID, *badger.Item) error) error {
-				return readNodeRecordsInOnePass(txn, "test:", ids, read)
+				return readNodeRecordsInOnePass(b.Context(), txn, "test:", ids, read)
 			},
 		},
 	} {

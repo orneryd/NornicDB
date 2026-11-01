@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -226,13 +227,14 @@ func deleteBulkEntities[T ~string](b *BadgerEngine, ids []T, remove func(*Badger
 
 // GetInDegree returns the number of incoming edges to a node.
 func (b *BadgerEngine) GetInDegree(nodeID NodeID) int {
-	count, _ := b.countByPrefix("", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: true})
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	count, _ := b.countByPrefix(context.Background(), "", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: true})
 	return int(count)
 }
 
 // GetOutDegree returns the number of outgoing edges from a node.
 func (b *BadgerEngine) GetOutDegree(nodeID NodeID) int {
-	count, _ := b.countByPrefix("", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: false})
+	count, _ := b.countByPrefix(context.Background(), "", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: false})
 	return int(count)
 }
 

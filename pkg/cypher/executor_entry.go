@@ -854,11 +854,14 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			// So we'll check it in the write handlers too
 
 			// Apply query timeout and concurrent query limits
-			var err error
-			ctx, queryLimitCancel, err = qlc.CheckQueryLimits(ctx)
+			// Author: storage-format-owners lane (Codex), 1 November 2026.
+			// A rejected admission has no replacement context. Cleanup still
+			// belongs to the original request, including its deferred readers.
+			limitedCtx, cancel, err := qlc.CheckQueryLimits(ctx)
 			if err != nil {
 				return nil, err
 			}
+			ctx, queryLimitCancel = limitedCtx, cancel
 			deadlineCtx = ctx
 		}
 	}

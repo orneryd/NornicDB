@@ -1,5 +1,7 @@
 package storage
 
+// ID admission context: storage-format-owners lane (Codex), 1 November 2026.
+
 import (
 	"encoding/binary"
 	"strconv"
@@ -13,7 +15,7 @@ func TestNodeReferenceUsesCapturedSnapshot(t *testing.T) {
 	b := newReadSnapshotTestEngine(t, false)
 	first, err := b.CreateNode(&Node{ID: "test:reference-first", Labels: []string{"Reference"}})
 	require.NoError(t, err)
-	view, err := b.captureReadView(nil, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: []NodeID{first}})
+	view, err := b.captureReadView(nil, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: []NodeID{first}, nodeReadCtx: t.Context()})
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	defer view.Close()

@@ -358,7 +358,12 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 				continue
 			}
 			if !coversDecided && lookups >= labelScanPointLookups {
-				covers = b.labelCoversScope(scope, label)
+				// Author: storage-format-owners lane (Codex), 1 November 2026.
+				var err error
+				covers, err = b.labelCoversScope(ctx, scope, label)
+				if err != nil {
+					return err
+				}
 				coversDecided = true
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
@@ -390,7 +395,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 		// in label-index order.
 		nodes := make(map[NodeID]*Node, len(pending))
 		readErrors := make(map[NodeID]error)
-		if err := readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
+		if err := readNodeRecordsInOnePass(ctx, txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
 			node, err := readItem(nodeID, item)
 			nodes[nodeID] = node
 			if err != nil {

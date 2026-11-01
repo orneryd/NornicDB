@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -22,6 +23,11 @@ const (
 type readViewOptions struct {
 	scopeKind readScopeKind
 	nodeIDs   []NodeID
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	// ID admission walks the batch, so it uses the same request as its reader.
+	// Only readNodeIDsScope consumes this field; its callers must supply it.
+	nodeReadCtx context.Context
+
 	longLived bool
 	scope     string
 	cached    func(*WriteBehindBuffer) (bool, error)
@@ -213,10 +219,17 @@ func (b *BadgerEngine) pendingReadConflict(opts readViewOptions) error {
 	case readPrefixScope:
 		return b.pendingPrefixConflict(opts.scope)
 	case readNodeIDsScope:
+		if err := opts.nodeReadCtx.Err(); err != nil {
+			return err
+		}
 		if b.pendingNamespaceConflict("") == nil {
 			return nil
 		}
+		var cancel bulkReadCancellation
 		for _, id := range opts.nodeIDs {
+			if err := cancel.check(opts.nodeReadCtx); err != nil {
+				return err
+			}
 			if id != "" {
 				if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
 					return err

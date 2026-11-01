@@ -1,6 +1,9 @@
 package storage
 
+// ID admission context: storage-format-owners lane (Codex), 1 November 2026.
+
 import (
+	"context"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
@@ -119,7 +122,7 @@ func (b *BadgerEngine) beginTransactionSnapshot(db *managedBadgerDB) (*badger.Tx
 	var captureErr error
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 		presence, captureErr = w.pinTransactionBeginLocked()
-	}, readViewOptions{longLived: true, scopeKind: readNodeIDsScope})
+	}, readViewOptions{longLived: true, scopeKind: readNodeIDsScope, nodeReadCtx: context.Background()})
 	if err == nil {
 		err = captureErr
 	}
