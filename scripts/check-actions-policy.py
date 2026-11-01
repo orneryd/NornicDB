@@ -2,8 +2,8 @@
 """Check the metered Actions policy; requires PyYAML (pip install pyyaml).
 
 Run from any directory with ``python3 scripts/check-actions-policy.py``.
-PR events and schedules are forbidden; every runner job must wait on the
-administrator environment unless it comes from an existing publishing push.
+Only release-to-main PR verification may start automatically; runner jobs require
+administrator approval except approved publishing pushes and PR-closing governance.
 """
 from pathlib import Path
 import sys
@@ -31,6 +31,28 @@ def violations(name, workflow):
     triggers = workflow.get("on", workflow.get(True, {}))
     if not isinstance(triggers, dict):
         return [f"{name}: triggers must be a mapping"]
+    if name == "release-verification.yml":
+        expected = {"pull_request_target": {"branches": ["main"], "types": ["opened", "reopened", "synchronize", "edited"]}}
+        jobs = workflow.get("jobs", {})
+        job = jobs.get("verify", {})
+        if (triggers != expected or set(jobs) != {"verify"}
+                or job.get("environment") != "admin-approved-actions"
+                or job.get("if") != "${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') && (github.event.action != 'edited' || github.event.changes.base.ref.from != '') }}"
+                or workflow.get("permissions") != {"contents": "read"}):
+            errors.append(f"{name}: invalid release-to-main verification policy")
+        return errors
+    if name == "reject-develop-pr.yml":
+        expected = {"pull_request_target": {"branches": ["develop"], "types": ["opened", "reopened", "edited"]}}
+        jobs = workflow.get("jobs", {})
+        job = jobs.get("close", {})
+        steps = job.get("steps", [])
+        if (triggers != expected or workflow.get("permissions") != {"contents": "read", "pull-requests": "write"}
+                or set(jobs) != {"close"} or job.get("runs-on") != "ubuntu-latest"
+                or len(steps) != 1 or "uses" in steps[0]
+                or "gh api --method PATCH" not in steps[0].get("run", "")
+                or "state=closed" not in steps[0].get("run", "")):
+            errors.append(f"{name}: invalid develop PR governance workflow")
+        return errors
     if set(triggers) - {"push", "workflow_dispatch", "workflow_call"}:
         errors.append(f"{name}: automatic non-push event is forbidden")
     if "push" in triggers and (name not in PUSH_WORKFLOWS or triggers["push"] != PUSH_WORKFLOWS[name]):
@@ -51,6 +73,8 @@ def self_test():
         assert violations("ci.yml", {**base, "on": {event: None}})
     assert violations("ci.yml", {**base, "jobs": {"test": {"runs-on": "ubuntu-latest"}}})
     assert violations("ci.yml", {**base, "on": {"push": {"branches": ["develop"]}}})
+    assert violations("release-verification.yml", {**base, "on": {"push": {"branches": ["**"]}}})
+    assert violations("release-verification.yml", {**base, "on": {"push": {"tags": ["*"]}}})
     for name, push in PUSH_WORKFLOWS.items():
         assert not violations(name, {**base, "on": {"push": push}})
     assert violations("ci.yml", {**base, "jobs": {"other": {"uses": "someone/repo/.github/workflows/ci.yml@main"}}})

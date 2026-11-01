@@ -1,0 +1,85 @@
+name: Release verification
+
+# A release-to-main PR requests verification; no tests start before admin approval.
+# The base-repository workflow is trusted; forked or non-release heads are excluded.
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Full verification and differential ratchet
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') && (github.event.action != 'edited' || github.event.changes.base.ref.from != '') }}
+    environment: admin-approved-actions
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout exact requested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Record exact PR revisions
+        id: revisions
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          [[ "$head" == "$EXPECTED_HEAD" ]]
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git merge-base --is-ancestor "$BASE_SHA" "$head" || {
+            echo "The main PR base is not an ancestor of the release head; sync main and request verification again." >&2
+            exit 1
+          }
+          echo "base=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'Verified head: %s\nPR base: %s\n' "$head" "$BASE_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Run every make verify check
+        id: full_verify
+        run: make verify ALL=1 BASE='${{ steps.revisions.outputs.base }}'
+
+      - name: Build the local GGUF provider
+        if: ${{ !cancelled() && steps.full_verify.outcome != 'skipped' }}
+        run: CGO_ENABLED=0 go build -tags 'noui,localllm,yzma' -o /tmp/nornicdb-yzma ./cmd/nornicdb
+
+      - name: Run the Cypher differential ratchet
+        if: ${{ !cancelled() && steps.full_verify.outcome != 'skipped' }}
+        run: |
+          set -o pipefail
+          mkdir -p .verify/ratchet
+          make cypher-differential-ratchet 2>&1 | tee .verify/ratchet/differential-ratchet.log
+
+      - name: Upload verification logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .verify/runs/
+            .verify/ratchet/
+          if-no-files-found: warn
+          include-hidden-files: true

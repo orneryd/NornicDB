@@ -1,7 +1,7 @@
 name: Cypher Conformance
 
-# Actions minutes are budgeted: nothing runs automatically on pushes or pull
-# requests. Run checks locally with `make verify`; manual GitHub runs require
+# Release-to-main pull requests request release-verification.yml; other PRs
+# do not run CI automatically. Manual GitHub runs require
 # approval through the admin-approved-actions environment before jobs start.
 # See CONTRIBUTING.md, "Development workflow".
 on:
