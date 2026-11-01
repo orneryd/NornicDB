@@ -1,6 +1,10 @@
 package workcensus
 
 import (
+	"fmt"
+	"go/token"
+	"go/types"
+	"slices"
 	"sort"
 
 	"golang.org/x/tools/go/callgraph"
@@ -109,32 +113,100 @@ func (p *Program) functionSuccessors(fn *ssa.Function) []*ssa.Function {
 // A source-origin query unions its visible generic instances. Querying one
 // concrete instance retains that instance's attribution instead.
 func (p *Program) SourceCallSites(fn *ssa.Function) []ssa.CallInstruction {
-	seen := map[*ssa.Function]bool{}
 	sites := map[ssa.CallInstruction]bool{}
-	var visit func(*ssa.Function)
-	visit = func(fn *ssa.Function) {
-		if seen[fn] || p.CallGraph == nil {
-			return
-		}
-		seen[fn] = true
-		if node := p.CallGraph.Nodes[fn]; node != nil {
-			for _, edge := range node.In {
-				if edge.Site != nil && realSourceInstruction(edge.Site) {
-					sites[edge.Site] = true
-				} else if edge.Caller.Func != nil && edge.Caller.Func.Synthetic != "" {
-					visit(edge.Caller.Func)
-				}
-			}
-		}
-	}
-	for _, variant := range p.sourceInstances(fn) {
-		visit(variant)
+	for _, path := range p.SourceCallPaths(fn) {
+		sites[path.Site] = true
 	}
 	var out []ssa.CallInstruction
 	for site := range sites {
 		out = append(out, site)
 	}
 	sort.Slice(out, func(i, j int) bool { return instructionLess(out[i], out[j]) })
+	return out
+}
+
+// CallPath is one way a real source call reaches a function: the call, and the
+// source-less wrappers between it and the function, nearest the call first.
+type CallPath struct {
+	Site ssa.CallInstruction
+	Via  []*ssa.Function
+}
+
+// SourceCallPaths lists every path SourceCallSites follows, each with its
+// wrappers, in stable order. A wrapper repeated on one path ends that path.
+func (p *Program) SourceCallPaths(fn *ssa.Function) []CallPath {
+	if p.CallGraph == nil {
+		return nil
+	}
+	var out []CallPath
+	done := map[string]bool{}
+	var visit func(fn *ssa.Function, via []*ssa.Function)
+	visit = func(fn *ssa.Function, via []*ssa.Function) {
+		node := p.CallGraph.Nodes[fn]
+		if node == nil {
+			return
+		}
+		for _, edge := range node.In {
+			if edge.Site != nil && realSourceInstruction(edge.Site) {
+				key := fmt.Sprintf("%p %v", edge.Site, via)
+				if !done[key] {
+					done[key] = true
+					out = append(out, CallPath{Site: edge.Site, Via: append([]*ssa.Function(nil), via...)})
+				}
+			} else if caller := edge.Caller.Func; caller != nil && caller.Synthetic != "" && !slices.Contains(via, caller) {
+				visit(caller, append([]*ssa.Function{caller}, via...))
+			}
+		}
+	}
+	for _, variant := range p.sourceInstances(fn) {
+		visit(variant, nil)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return instructionLess(out[i].Site, out[j].Site) })
+	return out
+}
+
+// BoundReceiver returns the receiver of the method value on this path: the
+// bound variable of its $bound wrapper for a method named name, when there is
+// one.
+func (c CallPath) BoundReceiver(name string) (types.Type, bool) {
+	for _, wrapper := range c.Via {
+		if wrapper.Name() == name+"$bound" && len(wrapper.FreeVars) == 1 {
+			return wrapper.FreeVars[0].Type(), true
+		}
+	}
+	return nil, false
+}
+
+// SuppliedContexts lists the context values a call passes, in Is order: its
+// context arguments, and what is stored into context fields of a struct it
+// passes by value from a local variable.
+func SuppliedContexts(site ssa.CallInstruction, isContext func(types.Type) bool) []ssa.Value {
+	var out []ssa.Value
+	for _, arg := range site.Common().Args {
+		if isContext(arg.Type()) {
+			out = append(out, arg)
+			continue
+		}
+		load, ok := arg.(*ssa.UnOp)
+		if !ok || load.Op != token.MUL {
+			continue
+		}
+		cell, ok := load.X.(*ssa.Alloc)
+		if !ok || cell.Referrers() == nil {
+			continue
+		}
+		for _, ref := range *cell.Referrers() {
+			field, ok := ref.(*ssa.FieldAddr)
+			if !ok || field.Referrers() == nil {
+				continue
+			}
+			for _, use := range *field.Referrers() {
+				if store, ok := use.(*ssa.Store); ok && store.Addr == ssa.Value(field) && isContext(store.Val.Type()) {
+					out = append(out, store.Val)
+				}
+			}
+		}
+	}
 	return out
 }
 

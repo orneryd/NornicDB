@@ -8,12 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
+// Repair-route additions: storage-format-owners lane (Codex), 1 November 2026.
+// Synchronous repairs are part of the public read that discovers them. They
+// share the existing admission schedule with request-owned maintenance writes.
 func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
-	for _, route := range []string{"mark-clean", "consume-clean", "temporal-rebuild", "mvcc-rebuild", "temporal-write", "lifecycle-stripes", "lifecycle-suppression", "mvcc-prune", "label-drop", "edge-type-drop", "between-drop", "raw-drop-all", "raw-load"} {
+	for _, route := range []string{"mark-clean", "consume-clean", "temporal-rebuild", "mvcc-rebuild", "temporal-write", "lifecycle-stripes", "lifecycle-suppression", "mvcc-prune", "label-drop", "edge-type-drop", "between-drop", "raw-drop-all", "raw-load", "between-repair", "label-scan-repair"} {
 		t.Run(route, func(t *testing.T) {
 			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: route == "lifecycle-stripes", WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
@@ -62,6 +66,28 @@ func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 						return current.Load(ctx, strings.NewReader(""), 1)
 					}
 					return any(b.db).(interface{ Load(io.Reader, int) error }).Load(strings.NewReader(""), 1)
+				}
+			case "between-repair":
+				for _, id := range []NodeID{"test:a", "test:b"} {
+					_, err := b.CreateNode(&Node{ID: id})
+					require.NoError(t, err)
+				}
+				edge := &Edge{ID: "test:repair", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}
+				require.NoError(t, b.CreateEdge(edge))
+				require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+					return b.deleteEdgeBetweenIndexesInTxn(txn, edge)
+				}))
+				run = func(ctx context.Context) error {
+					_, err := b.GetEdgesBetween(ctx, edge.StartNode, edge.EndNode)
+					return err
+				}
+			case "label-scan-repair":
+				seedCancellationNodes(t, b, labelScanPointLookups+2)
+				require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+					return txn.Set(labelCountKey("test", "Doc"), []byte{1})
+				}))
+				run = func(ctx context.Context) error {
+					return b.StreamNodesByLabelProjectedInScope(ctx, "test:", "Doc", nil, func(*Node) error { return nil })
 				}
 			}
 			target.Lock()

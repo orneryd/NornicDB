@@ -1,0 +1,88 @@
+{
+  "author": "storage-format-owners lane (Claude), #1693, 30 October 2026",
+  "note": "Read-based census outcomes outside Contract A, each ruled by Nornic2. outOfContract: a function whose fresh context reaches no storage function that reads it while a request is in scope (the census's call graph over-approximates that reach). excludedPackages: tooling and test packages outside the product contract; the rule is a package no product package imports (no non-test file outside the package imports it), checked at each listed head. trackedDefects: a real defect filed for Linear (sig/handoff/linear-pending-issues.md), listed and counted until fixed. deferredPublicAPI: NOT an exclusion. Contract A is unfulfilled wherever a request holder reaches a substitution only across the public API (a caller in another package, or dynamic dispatch into an exported method, Engine or any other interface); each such site is listed and counted as unfulfilled-contract-a against this tracked deferral, never as a pass. Each entry is logged and counted; an entry that matches nothing fails. publicPackages: packages whose exported API, like storage's, is the deferred public boundary (Nornic2, 31 October 2026: exported auth APIs). publicEntries: single exported functions that are the same deferred boundary (Nornic2, 31 October 2026: cypher.RedactLiterals).",
+  "outOfContract": {
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).publishDirectStatementCommit": {
+      "Reason": "the fresh context feeds only QueryPermissionRequirements, a static check of the query text (did the statement write?), which reaches no storage function; the request context is passed to publishStatementCommit",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/pkg/lifecycle.Run": {
+      "Reason": "the shutdown drain is deliberately fresh (OBS-09): it must outlive the cancelled run context.",
+      "Approver": "Nornic2 ruling (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+18 in github.com/orneryd/nornicdb/pkg/lifecycle.Run)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistMVCCSequence": {
+      "Reason": "MVCC sequence persistence after the commit point: a request cancellation must not cut it short, and no request context is replaced.",
+      "Approver": "Nornic2 ruling (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+15 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistMVCCSequence)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).updateMetadata": {
+      "Reason": "ID counter persistence after the commit point: a request cancellation must not cut it short, and no request context is replaced.",
+      "Approver": "Nornic2 ruling (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).updateMetadata)"
+      ]
+    }
+  },
+  "excludedPackages": {
+    "github.com/orneryd/nornicdb/cmd/recall-bench": {
+      "Reason": "benchmark tool, outside the product contract",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/internal/streamretrytest": {
+      "Reason": "test helper package, outside the product contract",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/testing/search/contract": {
+      "Reason": "test contract package, outside the product contract",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/internal/transactionalcalltest": {
+      "Reason": "test helper package (the shared Execute checks of the fixture and Cypher tests); no product package imports it",
+      "Approver": "Nornic2 (31 October 2026)"
+    }
+  },
+  "trackedDefects": {
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).graphFunctionStorage": {
+      "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md)",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/pkg/cypher.rowStatementContextOrBackground": {
+      "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md): the row-evaluation fallback (temporal_values.go)",
+      "Approver": "Nornic2 (31 October 2026)"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).evaluateRowValueText": {
+      "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md): the shortest-path row branch (row_expression.go)",
+      "Approver": "Nornic2 (31 October 2026)"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).endSuppressions": {
+      "Reason": "owned by #1691 obligation 3; the decision lands with #1691 in the stack.",
+      "Approver": "Nornic2 (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+17 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).endSuppressions)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition": {
+      "Reason": "#1548's context.Background() on ReconcileDecaySuppression's path; kept as merged. It is the same never-cancelled value as namespaceMaintenanceContext, and its owner context arrives with U-1636.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Occurrences": [
+        "call context.Background (+18 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition)"
+      ]
+    }
+  },
+  "deferredPublicAPI": {
+    "Reason": "the exported storage API (Engine and the optional interfaces) the exported auth API (publicPackages) and cypher.RedactLiterals (publicEntries) take no request context (no new or changed exported API in 1.4.4), so a caller holding one loses it there; 1.5.0 design, tracked as the pending Linear entry 'the exported storage API has no request context, so callers that hold one lose it (reads and writes)' (sig/handoff/linear-pending-issues.md). A 1.4.4 release scope decision, not proof that these paths carry no request.",
+    "Approver": "Nornic2 (30 October 2026), corrected by audit #33"
+  },
+  "publicPackages": [
+    "github.com/orneryd/nornicdb/pkg/auth"
+  ],
+  "publicEntries": [
+    "github.com/orneryd/nornicdb/pkg/cypher.RedactLiterals"
+  ],
+  "reviewedHeldValues": {}
+}
