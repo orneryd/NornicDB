@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -52,6 +53,8 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 		}
 		return nil, e.failTransaction(ctx, statementTypeError(ctx, statement, "Administration", "Data", transaction))
 	}
+	ctx = cypherantlr.StatementSyntaxIngress(ctx)
+	ctx = withBoundStatementProgram(ctx, nil)
 	return e.executeInternal(ctx, statement, params)
 }
 
@@ -166,10 +169,13 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	if labelRewrite != nil {
 		cypher = desugared
+		ctx = withSourceRewrite(ctx, labelRewrite)
 		defer func() {
 			result, retErr = (resultRestoration{source: labelRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
 		}()
 	}
+
+	ctx = cypherantlr.WithExecutionStatementSyntax(ctx, source.Text, cypher)
 
 	// Basic syntax validation to preserve existing error behavior.
 	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {

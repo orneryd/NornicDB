@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +18,7 @@ func TestRetainedCarrierPublicRepeatedUnwindStages(t *testing.T) {
 			previous := config.GetParserType()
 			config.SetParserType(parser)
 			t.Cleanup(func() { config.SetParserType(previous) })
-			exec := NewStorageExecutor(newTestMemoryEngine(t))
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "retained_carrier"))
 			result, err := exec.Execute(t.Context(), `
 				UNWIND $rows AS row
 				MERGE (n:RetainedCarrierWindow {id: row.id})

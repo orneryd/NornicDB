@@ -18,7 +18,7 @@ func TestMergeNodeProducersAdmitBeforeSnapshot(t *testing.T) {
 	want := map[string]string{
 		"executeMergeWithContext": "findMergeNode",
 		"pipelineMergePath":       "pipelineMatchRows",
-		"pipelineApplyMerge":      "findMergeNodesScanned",
+		"pipelineApplyMergeInput": "findMergeNodesScanned",
 	}
 	seen := make(map[string]bool)
 	entries, err := os.ReadDir(".")

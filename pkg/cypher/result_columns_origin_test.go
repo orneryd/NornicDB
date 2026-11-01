@@ -36,7 +36,7 @@ func TestRetainedSyntaxFactsKeepCacheOnlyHeadersAndRebindNodeOrigins(t *testing.
 	// An independent execution of the same text owns a whole Script instead
 	// of the earlier nested window. The cache key is unchanged; its node IDs
 	// must be rebound while cache-only headers remain reusable.
-	ctx = cypherantlr.WithStatementSyntax(ctx, source)
+	ctx = cypherantlr.WithNewStatementSyntax(ctx, source)
 	script, err := cypherantlr.ParseSyntax(ctx, cypherantlr.ReadStatement(source), cypherantlr.StatementEntry, false, cypherantlr.AcceptedSource)
 	require.NoError(t, err)
 	require.NotEqual(t, body.Origin(), script.Origin())

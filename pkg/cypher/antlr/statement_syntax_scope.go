@@ -16,6 +16,23 @@ import (
 func WithNewStatementSyntax(ctx context.Context, sources ...string) context.Context {
 	return newStatementSyntaxScope(ctx, true, sources...)
 }
+
+// StatementSyntaxIngress marks a new client or generated participant input.
+// Frontend adapters establish its accepted source before execution retains a
+// syntax product; an enclosing execution's tree cannot admit that new input.
+func StatementSyntaxIngress(ctx context.Context) context.Context {
+	return context.WithValue(ctx, statementSyntaxScopeKey{}, (*statementSyntaxScope)(nil))
+}
+
+// WithExecutionStatementSyntax retains the accepted execution input. Routed
+// windows keep their existing owner; a new ingress gets one full-statement
+// owner, rather than the standalone fragment adapter's ingress.
+func WithExecutionStatementSyntax(ctx context.Context, sources ...string) context.Context {
+	if statementSyntaxScopeFrom(ctx) == nil {
+		return newStatementSyntaxScope(ctx, true, sources...)
+	}
+	return WithStatementSyntax(ctx, sources...)
+}
 func newStatementSyntaxScope(ctx context.Context, full bool, sources ...string) context.Context {
 	scope := &statementSyntaxScope{fullStatement: full}
 	if len(sources) > 0 {
@@ -25,7 +42,11 @@ func newStatementSyntaxScope(ctx context.Context, full bool, sources ...string) 
 		scope.canonical = sources[1]
 	}
 	if len(sources) > 0 {
-		if view, ok := cyphertext.RetainedSource(ctx, sources[0], RawSource); ok {
+		text, stage := sources[0], RawSource
+		if len(sources) > 1 {
+			text, stage = sources[1], AcceptedSource
+		}
+		if view, ok := cyphertext.RetainedSource(ctx, text, stage); ok {
 			scope.source = view
 		}
 	}

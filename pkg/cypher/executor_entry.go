@@ -149,9 +149,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		ctx = withStatementCredentials(ctx, cypher)
 	}
 	if clientText {
-		ctx = cypherantlr.WithNewStatementSyntax(ctx, source.Text)
-	} else {
-		ctx = cypherantlr.WithStatementSyntax(ctx, source.Text)
+		ctx = cypherantlr.StatementSyntaxIngress(ctx)
+		ctx = withBoundStatementProgram(ctx, nil)
 	}
 	// The statement's context (deadlineCtx, once the database's query limits
 	// apply) ends at the first of its deadlines, and its cause names that
@@ -321,7 +320,6 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		ctx = withSourceRewrite(ctx, rewrite)
 		defer func() { result, retErr = (resultRestoration{source: rewrite}).restore(result, retErr, nil) }()
 	}
-	ctx = cypherantlr.WithStatementSyntax(ctx, source.Text, cypher)
 	// Digit-grouping underscores (1_000) go here, on every route; columns
 	// and messages keep the client's text (#907).
 	if grouped, numericRewrite := canonicalizeNumericLiterals(cypher); numericRewrite != nil {
@@ -526,6 +524,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if fabricQuery || e.shouldUseFabricPlanner(ctx, cypher) {
+		ctx = cypherantlr.WithExecutionStatementSyntax(ctx, source.Text, cypher)
 		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
@@ -648,6 +647,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			result, retErr = (resultRestoration{source: labelRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
 		}()
 	}
+	ctx = cypherantlr.WithExecutionStatementSyntax(ctx, source.Text, cypher)
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
 	}

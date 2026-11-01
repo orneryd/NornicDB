@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -838,6 +839,16 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
+	// A participant receives a whole physical statement, including planner-
+	// generated imports. It is a new ingress, just as on a remote participant;
+	// its frontend must not read the composite coordinator's syntax window.
+	ctx = cypherantlr.StatementSyntaxIngress(ctx)
+	ctx = withBoundStatementProgram(ctx, nil)
+	participantSource, retainedSource := cyphertext.RetainedSource(ctx, query, cyphertext.AcceptedSource)
+	if !retainedSource {
+		participantSource = cyphertext.NewSource(ctx, query, cyphertext.AcceptedSource)
+	}
+	ctx = cyphertext.WithSourceView(ctx, participantSource)
 	previousIdentityScope := exec.graphIdentityScope
 	var catalog *fabric.Catalog
 	if prepared, err := exec.preparedFabricFromContext(ctx); err == nil && prepared != nil {
@@ -858,18 +869,8 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	exec.fabricRecordBindings = recordBindings
 	defer func() { exec.fabricRecordBindings = previousBindings }()
 	parseReturnItems := func(statement string, at int) []returnItem { return exec.parseReturnItems(ctx, statement, at) }
-	// Fragment imports are installed before the engine's shared compile-time
-	// scope/type owner runs. As at the composite entry, this validation copy
-	// must desugar label expressions first. executeInternal owns rewriting the
-	// actual local execution and restoring its result to the fragment source.
-	scopeQuery, _, scopeErr := desugarLabelExpressions(query, params, cypherVersionFromContext(ctx) == "25")
-	if scopeErr == nil {
-		scopeErr = exec.validateMatchSemanticScopes(ctx, scopeQuery, cypherVersionFromContext(ctx) == "25")
-	}
-	if scopeErr != nil {
-		_, scopeErr = (resultRestoration{names: names}).restore(nil, scopeErr, parseReturnItems)
-		return nil, nil, scopeErr
-	}
+	// Internal execution lowers and validates the accepted participant input
+	// once, after the record bindings above have been installed.
 	var result *ExecuteResult
 	var err error
 	if stripped, embedding := stripWithEmbeddingSuffix(query); embedding || statementHasEmbeddingCandidate(ctx, query) {
