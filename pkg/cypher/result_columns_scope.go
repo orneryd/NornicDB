@@ -92,7 +92,15 @@ func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, 
 	key := projectionKey(query, incoming, retained, cypher25)
 	generation := globalProcedureRegistry.generation.Load()
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == generation {
-		return facts
+		if facts.bound == nil {
+			return facts
+		}
+		// A derived window may use another parent arena on the next execution.
+		// Keep de70's cache identity, but never reuse node-ID effects across arenas.
+		syntax, err := cypherantlr.ParseSyntax(ctx, query, cypherantlr.StatementEntry, cypher25, cypherantlr.AcceptedSource)
+		if err == nil && syntax.Origin() == facts.bound.syntax.Origin() {
+			return facts
+		}
 	}
 	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25)
 	if err := ctx.Err(); err != nil {

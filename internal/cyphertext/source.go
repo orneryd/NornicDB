@@ -218,6 +218,13 @@ func (source *Source) OriginalSpan(span Span, policy SourceMappingPolicy) (Span,
 
 type sourceKey struct{}
 
+// CurrentSource returns the retained rewrite/window association without
+// interpreting a child fragment as a new submitted input.
+func CurrentSource(ctx context.Context) *Source {
+	source, _ := ctx.Value(sourceKey{}).(*Source)
+	return source
+}
+
 // RetainedSource returns only an existing source association. Accepted callers
 // never reinterpret their text as raw input when no association exists.
 func RetainedSource(ctx context.Context, text string, stage SourceStage) (*Source, bool) {
@@ -376,4 +383,22 @@ func (source *Source) HasRewrite(match RewriteMatch) bool {
 		}
 	}
 	return false
+}
+
+// AcceptedSourceFor retains a compiler window without interpreting accepted
+// bytes as a new raw submission. Legacy string adapters use source-local spans;
+// equal occurrences have the same local lexical view. Explicit raw ingress
+// continues to use WithSource and never searches an enclosing statement.
+func AcceptedSourceFor(ctx context.Context, text string) *Source {
+	if source, ok := RetainedSource(ctx, text, AcceptedSource); ok {
+		return source
+	}
+	if text != "" {
+		for view := CurrentSource(ctx); view != nil; view = view.parent {
+			if at := strings.Index(view.Text, text); at >= 0 {
+				return view.Window(at, at+len(text))
+			}
+		}
+	}
+	return NewSource(ctx, text, AcceptedSource)
 }

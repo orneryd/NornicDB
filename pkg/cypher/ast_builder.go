@@ -4,6 +4,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strconv"
 	"strings"
 )
@@ -336,10 +337,15 @@ func astWithoutComments(source *cyphertext.Source) *cyphertext.Source {
 
 // Build parses a Cypher query into an AST.
 func (b *ASTBuilder) Build(cypher string) (*AST, error) {
-	source := cyphertext.NormalizeSource(cypher)
+	return b.BuildContext(context.Background(), cypher)
+}
+
+func (b *ASTBuilder) BuildContext(ctx context.Context, cypher string) (*AST, error) {
+	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		return nil, source.Err
 	}
+	ctx = cypherantlr.EnsureSyntaxOwner(ctx, source.Text)
 	ast := &AST{
 		RawQuery: cypher,
 		Clauses:  make([]ASTClause, 0),
@@ -352,7 +358,7 @@ func (b *ASTBuilder) Build(cypher string) (*AST, error) {
 	clauses := b.splitIntoClauses(source.Text)
 
 	for _, clauseInfo := range clauses {
-		clause := b.parseClause(context.Background(), clauseInfo.clauseType, source.Window(clauseInfo.startPos, clauseInfo.startPos+len(clauseInfo.text)))
+		clause := b.parseClause(ctx, clauseInfo.clauseType, source.Window(clauseInfo.startPos, clauseInfo.startPos+len(clauseInfo.text)))
 		ast.Clauses = append(ast.Clauses, *clause)
 	}
 
@@ -704,7 +710,7 @@ func (b *ASTBuilder) parseProjection(ctx context.Context, source *cyphertext.Sou
 		item := ASTReturnItem{RawText: astRaw(partSource)}
 
 		// Check for AS alias
-		projectionSource := cyphertext.NewSource(ctx, "RETURN "+part, cyphertext.AcceptedSource)
+		projectionSource := partSource.Rewrite("RETURN "+part, []cyphertext.SourceEdit{{Original: cyphertext.Span{Start: 0, End: 0}, Accepted: cyphertext.Span{Start: 0, End: 7}}})
 		itemSource := readProjectionItemSource(cyphertext.WithSourceView(ctx, projectionSource), part, projectionAdmitted)
 		if itemSource.as > 0 {
 			item.Alias = itemSource.alias

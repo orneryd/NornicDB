@@ -132,16 +132,10 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			index = name.End
 			continue
 		}
-		if upper == "USE" {
-			// The USE grammar owns its graph reference, which may be spelled
-			// like a clause keyword: USE GRAPH limit CALL { … }.
-			if referenceEnd := useClauseReferenceEnd(query[:end], index, start > 0); referenceEnd > name.End {
-				reference := strings.TrimRightFunc(query[index:referenceEnd], cyphertext.IsWhitespace)
-				inProjection = false
-				previousWord, last = "", cyphertext.RuneAt(reference, len(reference)-1)
-				index = referenceEnd
-				continue
-			}
+		if useGraphNameAt(query[:end], index) {
+			previousWord, last = "", cyphertext.RuneAt(query, name.End-1)
+			index = name.End
+			continue
 		}
 		if kind == standaloneStageItems {
 			switch upper {

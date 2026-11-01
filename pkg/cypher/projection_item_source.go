@@ -39,9 +39,9 @@ func readProjectionItemSource(ctx context.Context, item string, stage projection
 		}
 	} else {
 		const prefix = "RETURN "
-		var ok bool
-		clause, ok = canonicalQueryClause(ctx, prefix+item)
-		if !ok {
+		var err error
+		clause, err = cypherantlr.ProjectionClauseSyntax(ctx, item, cypherVersionFromContext(ctx) == "25")
+		if err != nil || !clause.Valid() {
 			return out
 		}
 		items := clause.ChildRule(cypherantlr.CypherParserRULE_projectionBody).ChildRule(cypherantlr.CypherParserRULE_projectionItems)

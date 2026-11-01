@@ -257,7 +257,8 @@ func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 				return err
 			}
 			if wrap {
-				columns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(open+1, close, firstEdit), AcceptedSource)
+				program := r.rewrittenRegionText(open+1, close, firstEdit)
+				columns, err := r.columns.StatementResultColumnsContext(compilerStatementContext(r.ctx, program), program, AcceptedSource)
 				if err != nil {
 					return err
 				}
@@ -334,7 +335,8 @@ func (r *structureRewriter) conditional(start, end int) error {
 		if err := r.region(branch.bodyStart, branch.bodyEnd, false); err != nil {
 			return err
 		}
-		bodyColumns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit), AcceptedSource)
+		program := r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit)
+		bodyColumns, err := r.columns.StatementResultColumnsContext(compilerStatementContext(r.ctx, program), program, AcceptedSource)
 		if err != nil {
 			return err
 		}

@@ -31,15 +31,14 @@ func callSubqueryImportedVariables(ctx context.Context, scope string, scoped boo
 // a variable's name here, as in Neo4j, and is an error only where no such
 // variable is defined.
 func callScopeClauseVariables(ctx context.Context, list string) ([]string, error) {
-	const prefix = "CALL ("
-	syntax, err := cypherantlr.ParseSyntax(ctx, prefix+list+") { RETURN 0 }", cypherantlr.CallEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	call, err := cypherantlr.CallScopeSyntax(ctx, list, cypherVersionFromContext(ctx) == "25")
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err != nil {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", localization.CypherResultMetadataImportVariablesRequired())
 	}
-	scope := scopeClauseFromSyntax(syntax.Root())
+	scope := scopeClauseFromSyntax(call)
 	if scope.names == nil {
 		return []string{"*"}, nil
 	}

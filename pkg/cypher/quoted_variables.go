@@ -487,6 +487,9 @@ type quotedVariablesKey struct{}
 // executes, so checks that must see the statement as written (column names,
 // the validation cache) can map back to it.
 func withQuotedVariableNames(ctx context.Context, names *quotedVariableNames) context.Context {
+	if names != nil {
+		ctx = withSourceRewrite(ctx, &queryRewrite{Source: names.Source})
+	}
 	return context.WithValue(ctx, quotedVariablesKey{}, names)
 }
 

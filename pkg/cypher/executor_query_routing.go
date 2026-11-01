@@ -512,7 +512,7 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 			return err
 		}
 		if parserError == nil {
-			e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
+			e.markCachedValidSyntaxContext(ctx, cypher, syntaxValidANTLR|syntaxGrammarAccepted)
 			return nil
 		}
 	}
@@ -642,21 +642,21 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 		if braceCount != 0 {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced curly braces")
 		}
-		e.markCachedValidSyntax(original, syntaxValidNornic)
+		e.markCachedValidSyntaxContext(ctx, original, syntaxValidNornic)
 		cypher = original
 	}
 	if parserError != nil {
 		if err := e.validateMatchSemanticScopes(ctx, cypher, cypher25); err != nil {
 			return err
 		}
-		if err := validateKnownFunctions(cypher); err != nil {
+		if err := validateKnownFunctionsContext(ctx, cypher); err != nil {
 			return err
 		}
 		err := syntaxAdmissionError(ctx, cypher, AcceptedSource, parserError)
 		return observability.RedactError(err, observability.ContextCredentials(cypher)...)
 	}
 	if validator == syntaxValidANTLR {
-		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
+		e.markCachedValidSyntaxContext(ctx, cypher, syntaxValidANTLR)
 	}
 	return nil
 }
@@ -988,10 +988,14 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string, validator uint8) b
 }
 
 func (e *StorageExecutor) markCachedValidSyntax(cypher string, validator uint8) {
+	e.markCachedValidSyntaxContext(context.Background(), cypher, validator)
+}
+
+func (e *StorageExecutor) markCachedValidSyntaxContext(ctx context.Context, cypher string, validator uint8) {
 	if cypher == "" {
 		return
 	}
-	scopes, cacheable := e.cacheDependencyScopes(cypher)
+	scopes, cacheable := e.cacheDependencyScopesContext(ctx, cypher)
 	if !cacheable {
 		return
 	}

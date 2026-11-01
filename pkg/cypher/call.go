@@ -492,7 +492,7 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 		query = strings.Join(prefix, " ") + " " + query
 	}
 
-	inner, err := e.executeInternal(ctx, query, params)
+	inner, err := e.executeInternal(generatedStatementContext(ctx, query), query, params)
 	if err != nil {
 		return nil, err
 	}

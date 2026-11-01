@@ -43,7 +43,7 @@ func ReadUseReference(ctx context.Context, source *cyphertext.Source) (UseRefere
 
 func (node SyntaxNode) UseReference(source *cyphertext.Source) UseReference {
 	_, end := node.Span()
-	reference := UseReference{End: end, AcceptedEnd: node.data.nodes[node.id].end}
+	reference := UseReference{End: end, AcceptedEnd: end}
 	if source != nil {
 		span, _ := source.OriginalSpan(cyphertext.Span{Start: 0, End: reference.AcceptedEnd}, cyphertext.SourceExtent)
 		reference.End = span.End
@@ -102,17 +102,9 @@ func (p *CypherParser) useGraphKeyword() bool {
 		return false
 	}
 	next := stream.LT(2)
-	if next.GetTokenType() == -1 || next.GetTokenType() == CypherParserDOT || next.GetTokenType() == CypherParserLPAREN {
-		return false
-	}
-	if !IsUseClauseFollower(next.GetText(), false) {
-		return true
-	}
+	blocked := next.GetTokenType() == -1 || next.GetTokenType() == CypherParserDOT || next.GetTokenType() == CypherParserLPAREN
 	after := stream.LT(3)
-	if after.GetTokenType() == CypherParserDOT {
-		return true
-	}
-	return IsUseClauseFollower(after.GetText(), false)
+	return UseGraphKeywordRole(next.GetText(), blocked, after.GetText(), after.GetTokenType() == CypherParserDOT)
 }
 
 func IsUseClauseFollower(word string, inSubquery bool) bool {
@@ -156,4 +148,17 @@ func (*UseReferenceError) Error() string { return "invalid USE reference" }
 func (p *CypherParser) useReferenceComplete() bool {
 	next := p.GetTokenStream().LA(1)
 	return next != CypherParserDOT && next != CypherParserLPAREN && !(next == CypherParserFLOAT && strings.HasPrefix(p.GetTokenStream().LT(1).GetText(), "."))
+}
+
+// UseGraphKeywordRole is the one GRAPH-prefix decision shared by the grammar
+// and native token-role navigation. It classifies neighbouring tokens only;
+// graph-reference admission and routing stay with ReadUseReference/ReadUseClause.
+func UseGraphKeywordRole(next string, blocked bool, after string, afterDot bool) bool {
+	if blocked {
+		return false
+	}
+	if !IsUseClauseFollower(next, false) {
+		return true
+	}
+	return afterDot || IsUseClauseFollower(after, false)
 }

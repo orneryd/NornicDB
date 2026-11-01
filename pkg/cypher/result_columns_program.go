@@ -45,7 +45,9 @@ func (e *StorageExecutor) StatementFactsWith(query string, incoming resultmetada
 			return participant(obligation)
 		}
 	}
-	return e.statementProjectionProgram(context.Background(), query, incoming, cypher25, schema).facts.SourceView(source)
+	ctx := cyphertext.WithSourceView(context.Background(), source)
+	ctx = cypherantlr.WithSyntaxOwner(ctx, query)
+	return e.statementProjectionProgram(ctx, query, incoming, cypher25, schema).facts.SourceView(source)
 }
 
 func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, query string, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema) *projectedScopeFacts {

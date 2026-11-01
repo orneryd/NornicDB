@@ -172,7 +172,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	}
 	// Every function a statement calls, in any clause, is known (#1166).
 	// Neo4j reports the statement's other semantic errors first.
-	if err := validateKnownFunctions(cypher); err != nil {
+	if err := validateKnownFunctionsContext(ctx, cypher); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -249,6 +249,7 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 		body := strings.TrimSpace(cypher[index+1 : closeBrace])
 		if stripped, finishes := stripUnionBranchFinishes(ctx, body); finishes {
 			body = stripped
+			_ = compilerStatementContext(ctx, body)
 		}
 		// A RETURN inside the body projects its columns too: two items of
 		// one name are as malformed there as at the top level.
@@ -306,10 +307,12 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 		if scoped && scope.names == nil || startsWithKeywordFold(body, "WITH *") {
 			continue
 		}
+		bodyCtx := ctx
 		var retained []string
 		if scoped && len(scope.names) > 0 {
 			retained = scope.names
 			body = "WITH " + imports + " " + body
+			bodyCtx = compilerStatementContext(ctx, body)
 		}
 		if body == "" {
 			continue
@@ -317,14 +320,14 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 		// A body that imports nothing (CALL () { … }) sees no outer
 		// variable: it is checked as a statement of its own.
 		if scoped && len(scope.names) == 0 {
-			if err := e.validateMatchSemanticScopes(ctx, body, cypher25); err != nil {
+			if err := e.validateMatchSemanticScopes(bodyCtx, body, cypher25); err != nil {
 				return err
 			}
 		}
-		if err := e.validateSetSemanticScopes(ctx, body, retained...); err != nil {
+		if err := e.validateSetSemanticScopes(bodyCtx, body, retained...); err != nil {
 			return err
 		}
-		if err := e.validateCallSubqueryScopes(ctx, body, cypher25); err != nil {
+		if err := e.validateCallSubqueryScopes(bodyCtx, body, cypher25); err != nil {
 			return err
 		}
 	}

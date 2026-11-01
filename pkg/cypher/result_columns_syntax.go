@@ -12,6 +12,10 @@ import (
 func canonicalQueryClause(ctx context.Context, source string) (cypherantlr.SyntaxNode, bool) {
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
+		if cypherantlr.HasSyntaxOwner(ctx) && strings.HasPrefix(source, "RETURN ") {
+			node, err := cypherantlr.ProjectionClauseSyntax(ctx, source[len("RETURN "):], cypherVersionFromContext(ctx) == "25")
+			return node, err == nil && node.Valid()
+		}
 		return cypherantlr.SyntaxNode{}, false
 	}
 	root := statementSyntaxQuery(syntax)

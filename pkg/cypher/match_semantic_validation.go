@@ -42,7 +42,11 @@ func (e *StorageExecutor) validateMatchSemanticScopes(ctx context.Context, cyphe
 		return nil
 	}
 	if err := checkedWithoutUnaryPlus(cypher, cypher25, func(text string) error {
-		return e.validateMatchSemanticScopesUncached(ctx, text, cypher25)
+		checkCtx := ctx
+		if text != cypher {
+			checkCtx = compilerStatementContext(ctx, text)
+		}
+		return e.validateMatchSemanticScopesUncached(checkCtx, text, cypher25)
 	}); err != nil {
 		return err
 	}
@@ -1107,21 +1111,23 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(ctx context.Context, s
 			}
 		}
 		body := strings.TrimSpace(subquery.body)
+		bodyCtx := ctx
 		if strings.HasPrefix(body, "(") {
 			body = "MATCH " + body
+			bodyCtx = compilerStatementContext(ctx, body)
 		}
 		// Each UNION branch is a query of its own.
 		branches := []string{body}
-		if unionBranches, _, _, union := parseTopLevelUnionBranches(ctx, body); union && len(unionBranches) > 0 {
+		if unionBranches, _, _, union := parseTopLevelUnionBranches(bodyCtx, body); union && len(unionBranches) > 0 {
 			branches = unionBranches
 		}
 		visible := typeScopeOf(local)
 		for _, branch := range branches {
-			clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, branch)
+			clauses, ok := splitPipelineClausesAllowingProcedureCalls(bodyCtx, branch)
 			if !ok {
 				continue
 			}
-			if _, _, err := e.semanticScopeWalk(ctx, clauses, maps.Clone(visible), scope.cypher25, subqueryScope{visible: visible, outer: true}); err != nil {
+			if _, _, err := e.semanticScopeWalk(bodyCtx, clauses, maps.Clone(visible), scope.cypher25, subqueryScope{visible: visible, outer: true}); err != nil {
 				return err
 			}
 		}

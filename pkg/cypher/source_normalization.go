@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"strconv"
 	"strings"
@@ -71,8 +72,13 @@ func withSourceRewrite(ctx context.Context, rewrite *queryRewrite) context.Conte
 	if rewrite == nil {
 		return ctx
 	}
-	source := cyphertext.SourceFor(ctx, rewrite.Original)
-	return cyphertext.WithSourceView(ctx, source.Rewrite(rewrite.Text, rewrite.Edits))
+	source, known := cypherantlr.RetainedSyntaxSource(ctx, rewrite.Original)
+	if !known {
+		source = cyphertext.AcceptedSourceFor(ctx, rewrite.Original)
+	}
+	view := source.Rewrite(rewrite.Text, rewrite.Edits)
+	ctx = cypherantlr.WithSyntaxProgram(ctx, view)
+	return cyphertext.WithSourceView(ctx, view)
 }
 
 type sourceTrimPolicy uint8
@@ -110,5 +116,32 @@ func trimSourceText(ctx context.Context, text string, policy sourceTrimPolicy) (
 			return ctx, trimmed
 		}
 	}
-	return cyphertext.WithSourceView(ctx, source.Window(start, start+len(trimmed))), trimmed
+	view := source.Window(start, start+len(trimmed))
+	return cyphertext.WithSourceView(ctx, view), trimmed
+}
+
+// generatedStatementContext is the explicit ingress of a new execution program
+// constructed by an existing planner (new predicates/projections/bindings).
+// A mere source window or an adapter miss must never call it. Each producer is
+// enumerated in the R17 source ledger; execution decisions remain with de70.
+func generatedStatementContext(ctx context.Context, text string) context.Context {
+	return statementProgramContext(ctx, text, cyphertext.RawSource)
+}
+
+// compilerStatementContext is an independently declared, already-accepted
+// schema/validation program. It shares the constructor, but never normalizes
+// compiler text as raw transport input.
+func compilerStatementContext(ctx context.Context, text string) context.Context {
+	return statementProgramContext(ctx, text, cyphertext.AcceptedSource)
+}
+
+func statementProgramContext(ctx context.Context, text string, stage cyphertext.SourceStage) context.Context {
+	var source *cyphertext.Source
+	if stage == cyphertext.RawSource {
+		ctx, source = cyphertext.WithSource(ctx, text)
+	} else {
+		source = cyphertext.NewSource(ctx, text, stage)
+		ctx = cyphertext.WithSourceView(ctx, source)
+	}
+	return cypherantlr.WithSyntaxOwner(ctx, source.Text)
 }

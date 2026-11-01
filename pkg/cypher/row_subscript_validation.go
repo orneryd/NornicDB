@@ -319,7 +319,7 @@ func (e *StorageExecutor) validatePipelineSizeArguments(ctx context.Context, row
 		}
 		// Aggregates have no value in an input row. Their argument is checked
 		// by the aggregate projection after its group has been evaluated.
-		if containsAggregateFunc(argument) || needsRowStatementContext(argument) {
+		if containsAggregateFunc(argument) || needsRowStatementContextContext(ctx, argument) {
 			continue
 		}
 		for _, row := range rows {

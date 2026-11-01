@@ -17,11 +17,16 @@ import (
 // calls. A SHOW command's YIELD / WHERE / RETURN tail is checked, as in
 // Neo4j.
 func validateKnownFunctions(expression string) error {
+	return validateKnownFunctionsContext(context.Background(), expression)
+}
+
+// validateKnownFunctionsContext shares the existing scanner decisions with execution's owner.
+func validateKnownFunctionsContext(ctx context.Context, expression string) error {
 	if !startsWithKeywordFold(strings.TrimSpace(expression), "SHOW") &&
 		(isSchemaCommandStatement(expression) || isMetadataCommand(expression, metadataCreateAdmission)) {
 		return nil
 	}
-	return forEachFunctionCall(expression, func(name, normalized string) error {
+	return forEachFunctionCallContext(ctx, expression, func(name, normalized string) error {
 		if _, known := builtInCypherFunctions[normalized]; known {
 			if nativeAPOCCaseMismatch(name) {
 				if _, found := pluginFunctionHandler(name); !found {
@@ -54,10 +59,15 @@ func validateKnownFunctions(expression string) error {
 // rewrite: Execute's statement and the statement text a procedure runs
 // (executeUserStatement).
 func internalFunctionCallError(text string) error {
+	return internalFunctionCallErrorContext(context.Background(), text)
+}
+
+// internalFunctionCallErrorContext shares the existing scanner decisions with execution's owner.
+func internalFunctionCallErrorContext(ctx context.Context, text string) error {
 	if !containsInternalFunctionPrefix(text) {
 		return nil
 	}
-	return forEachFunctionCall(text, func(name, normalized string) error {
+	return forEachFunctionCallContext(ctx, text, func(name, normalized string) error {
 		if _, internal := builtInCypherFunctions[normalized]; internal && strings.HasPrefix(normalized, "__nornic_") {
 			return unknownFunctionError(name)
 		}
@@ -90,12 +100,22 @@ func unknownFunctionError(name string) error {
 // backticks. Strings and comments, a procedure a CALL names, the graph a USE
 // names and the keywords that can stand before a parenthesis are not calls.
 func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
-	return forEachFunctionInvocation(text, func(name, normalized string, _ int) error { return visit(name, normalized) })
+	return forEachFunctionCallContext(context.Background(), text, visit)
+}
+
+// forEachFunctionCallContext shares the existing scanner decisions with execution's owner.
+func forEachFunctionCallContext(ctx context.Context, text string, visit func(name, normalized string) error) error {
+	return forEachFunctionInvocationContext(ctx, text, func(name, normalized string, _ int) error { return visit(name, normalized) })
 }
 
 // forEachFunctionInvocation preserves the common semantic scanner and also
 // exposes the argument delimiter to consumers that need invocation semantics.
 func forEachFunctionInvocation(text string, visit func(name, normalized string, open int) error) error {
+	return forEachFunctionInvocationContext(context.Background(), text, visit)
+}
+
+// forEachFunctionInvocationContext shares the existing scanner decisions with execution's owner.
+func forEachFunctionInvocationContext(ctx context.Context, text string, visit func(name, normalized string, open int) error) error {
 	expression := text
 	for index := 0; index < len(expression); {
 		if expression[index] >= 0x80 {
@@ -118,7 +138,7 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 			continue
 		}
 		if !isCypherBacktickByte(expression[index]) && isUseKeyword(name.Value) {
-			syntax, err := cypherantlr.ParseSyntax(context.Background(), expression[index:], cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
+			syntax, err := cypherantlr.ParseSyntax(ctx, expression[index:], cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
 			if err != nil {
 				// USE may also be an identifier in a fragment. Syntax validation
 				// owns invalid clauses; this scanner never guesses their extent.
@@ -135,7 +155,7 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 					continue
 				}
 				start, end := argument.Span()
-				if err := forEachFunctionInvocation(expression[index+start:index+end], func(name, normalized string, open int) error {
+				if err := forEachFunctionInvocationContext(ctx, expression[index+start:index+end], func(name, normalized string, open int) error {
 					return visit(name, normalized, index+start+open)
 				}); err != nil {
 					return err

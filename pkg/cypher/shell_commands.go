@@ -319,7 +319,8 @@ func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExp
 			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryInvalid(pair), nil)
 		}
 
-		result, err := e.executeInternal(ctx, "RETURN "+valueExpr+" AS value", params)
+		program := "RETURN " + valueExpr + " AS value"
+		result, err := e.executeInternal(generatedStatementContext(ctx, program), program, params)
 		if err != nil {
 			if cyphertext.IsIdentifier(valueExpr) {
 				return nil, localizedError(localization.CypherCommandRoutingParameterExpressionUnresolved(key, valueExpr), nerrors.ErrExpressionEvaluationFailed)

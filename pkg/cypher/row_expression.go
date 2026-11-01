@@ -1340,13 +1340,13 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 	}
 	// A predicate evaluated before is evaluated from its program: the
 	// decisions below, read from its text once (row_predicate_program.go).
-	if program := rowPredicateProgramFor(expression); program != nil {
+	if program := rowPredicateProgramForContext(ctx, expression); program != nil {
 		return program.holds(e, ctx, values)
 	}
 	// CASE stays in the value program at its original operand position,
 	// including on the first row.
 	if mayContainCaseKeyword(expression) && len(caseBlockSpans(expression)) > 0 {
-		program := compileRowPredicateProgram(expression)
+		program := compileRowPredicateProgramContext(ctx, expression)
 		rowPredicatePrograms.put(expression, program)
 		return program.holds(e, ctx, values)
 	}
@@ -1362,7 +1362,7 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 // expressions need execution state, as evaluateRowExpressionWithContext binds
 // it for a projection. The caller removes a newly bound context on return.
 func rowValuesWithStatementContext(ctx context.Context, expression string, values map[string]interface{}) (map[string]interface{}, bool) {
-	if _, bound := values[rowStatementContextKey]; bound || !rowPredicateNeedsStatementContext(expression) {
+	if _, bound := values[rowStatementContextKey]; bound || !rowPredicateNeedsStatementContextContext(ctx, expression) {
 		return values, false
 	}
 	return rowValuesBindingStatementContext(ctx, values)
@@ -1392,10 +1392,14 @@ var rowPredicateStatementContextNeeds = newBoundedCache[string, bool](1024, boun
 // every value operand, including a whole NOT EXISTS. Logical folds evaluate
 // subqueries through the same row value owner as projections and CALL bodies.
 func rowPredicateNeedsStatementContext(expression string) bool {
+	return rowPredicateNeedsStatementContextContext(context.Background(), expression)
+}
+
+func rowPredicateNeedsStatementContextContext(ctx context.Context, expression string) bool {
 	if needs, cached := rowPredicateStatementContextNeeds.get(expression); cached {
 		return needs
 	}
-	needs := needsRowStatementContext(expression)
+	needs := needsRowStatementContextContext(ctx, expression)
 	rowPredicateStatementContextNeeds.put(expression, needs)
 	return needs
 }

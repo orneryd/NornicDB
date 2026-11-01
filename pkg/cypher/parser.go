@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -195,10 +196,16 @@ type SetItem struct {
 
 // Parse parses a Cypher query string into a Query AST.
 func (p *Parser) Parse(cypher string) (*Query, error) {
-	ctx, source := cyphertext.WithSource(context.Background(), cypher)
+	return p.ParseContext(context.Background(), cypher)
+}
+
+// ParseContext retains execution's syntax owner; Parse is standalone ingress.
+func (p *Parser) ParseContext(ctx context.Context, cypher string) (*Query, error) {
+	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		return nil, source.Err
 	}
+	ctx = cypherantlr.EnsureSyntaxOwner(ctx, source.Text)
 	trimmed := strings.TrimSpace(source.Text)
 	start := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
 	source = source.Window(start, start+len(trimmed))
@@ -431,7 +438,7 @@ func NewExecutor() *Executor {
 // parses and validates a Cypher query but, does not execute.
 func (e *Executor) ParseAndValidate(ctx context.Context, cypher string, params map[string]any) (*Result, error) {
 	// Parse query
-	query, err := e.parser.Parse(cypher)
+	query, err := e.parser.ParseContext(ctx, cypher)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreParseFailed(err), err)
 	}

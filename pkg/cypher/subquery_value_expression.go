@@ -284,6 +284,7 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
 	body = strings.TrimSpace(body)
+	originalBody := body
 	if body == "" {
 		return nil, false, nil
 	}
@@ -319,6 +320,9 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		case "EXISTS":
 			query += " RETURN 1 AS __exists LIMIT 1"
 		}
+	}
+	if query != originalBody {
+		ctx = generatedStatementContext(ctx, query)
 	}
 	result, err := e.runCorrelatedSubquery(ctx, query, values)
 	if err != nil {
@@ -449,7 +453,12 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	if len(carried) > 0 {
 		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
 	}
-	return e.executeInternal(ctx, prefix.String()+query, params)
+	program := prefix.String() + query
+	programCtx := ctx
+	if prefix.Len() > 0 {
+		programCtx = generatedStatementContext(ctx, program)
+	}
+	return e.executeInternal(programCtx, program, params)
 }
 
 // boundNodeLookupCount counts the rows of a body that is one labelled node

@@ -2,6 +2,8 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"strings"
 	"testing"
 
@@ -138,7 +140,10 @@ func TestDesugarStandaloneOrderClausesKeepsUseGraphNames(t *testing.T) {
 				// consumes following whitespace on its next iteration.
 				start := strings.Index(query, "USE ")
 				end := start + len("USE "+reference)
-				gotEnd := useClauseReferenceEnd(query, start, strings.HasPrefix(query, "CALL"))
+				parsed, _, hasUse, err := fabric.ReadUseClause(t.Context(), query[start:], strings.HasPrefix(query, "CALL"), cyphertext.AcceptedSource)
+				require.NoError(t, err, query)
+				require.True(t, hasUse, query)
+				gotEnd := start + parsed.End
 				require.Equal(t, end, gotEnd, query)
 				require.Equal(t, "USE "+reference, query[start:gotEnd], query)
 			}

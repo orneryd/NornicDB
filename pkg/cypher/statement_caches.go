@@ -176,6 +176,10 @@ func (e *StorageExecutor) routedStatementScope() *multidb.StatementCacheScope {
 // cacheDependencyScopes runs on misses, outside cache locks. Reuse the existing
 // USE parser/scanner for full texts; routed bodies carry their resolved token.
 func (e *StorageExecutor) cacheDependencyScopes(query string) ([]*multidb.StatementCacheScope, bool) {
+	return e.cacheDependencyScopesContext(context.Background(), query)
+}
+
+func (e *StorageExecutor) cacheDependencyScopesContext(ctx context.Context, query string) ([]*multidb.StatementCacheScope, bool) {
 	if !e.statementCacheScope.Valid() {
 		return nil, false
 	}
@@ -201,7 +205,7 @@ func (e *StorageExecutor) cacheDependencyScopes(query string) ([]*multidb.Statem
 		if at < 0 {
 			break
 		}
-		use, _, hasUse, err := fabric.ParseUseClause(context.Background(), query[at:], true, cyphertext.AcceptedSource)
+		use, _, hasUse, err := fabric.ParseUseClause(ctx, query[at:], true, cyphertext.AcceptedSource)
 		if hasUse && err == nil && !use.IsDynamic() {
 			scope, err := resolver.StatementCacheScope(use.Name)
 			if err != nil {
@@ -301,6 +305,10 @@ func (e *StorageExecutor) recordStatementReference(query, name string) error {
 }
 
 func (e *StorageExecutor) cachedUpperQuery(query string) string {
+	return e.cachedUpperQueryContext(context.Background(), query)
+}
+
+func (e *StorageExecutor) cachedUpperQueryContext(ctx context.Context, query string) string {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return ""
@@ -331,7 +339,7 @@ func (e *StorageExecutor) cachedUpperQuery(query string) string {
 		c.mu.Unlock()
 	}
 	upper = upperASCII(query)
-	scopes, cacheable := e.cacheDependencyScopes(query)
+	scopes, cacheable := e.cacheDependencyScopesContext(ctx, query)
 	if !cacheable {
 		return upper
 	}

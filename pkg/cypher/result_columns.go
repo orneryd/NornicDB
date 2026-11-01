@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -16,6 +17,10 @@ func (e *StorageExecutor) ResultColumns(ctx context.Context, query string, incom
 		return nil, source.Err
 	}
 	query = source.Text
+	if !cypherantlr.HasSyntaxOwner(ctx) {
+		ctx = cyphertext.WithSourceView(ctx, source)
+		ctx = cypherantlr.WithSyntaxOwner(ctx, query)
+	}
 	var columns []string
 	var failure error
 	program := e.statementProjectionProgram(ctx, query, incoming, cypher25, nil)
@@ -72,6 +77,10 @@ func (e *StorageExecutor) StatementResultColumnsContext(ctx context.Context, que
 		return nil, source.Err
 	}
 	query = source.Text
+	if !cypherantlr.HasSyntaxOwner(ctx) {
+		ctx = cyphertext.WithSourceView(ctx, source)
+		ctx = cypherantlr.WithSyntaxOwner(ctx, query)
+	}
 	var columns []string
 	var failure error
 	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strconv"
 	"strings"
 	"time"
@@ -133,6 +134,11 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			return nil, invalidUnicodeLiteralError(invalid.Offset)
 		}
 		return nil, source.Err
+	}
+	if clientText {
+		ctx = cypherantlr.WithNewSyntaxExecution(ctx, source.Text)
+	} else {
+		ctx = cypherantlr.EnsureSyntaxOwner(ctx, source.Text)
 	}
 	// Retain the original credential context across admission and routing errors.
 	defer func(original string) {
@@ -291,7 +297,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Transparent routing continues already-admitted text, including generated
 	// functions. A public reentrant call still admits its own client text.
 	if clientText {
-		if err := internalFunctionCallError(cypher); err != nil {
+		if err := internalFunctionCallErrorContext(ctx, cypher); err != nil {
 			return nil, err
 		}
 	}
@@ -300,7 +306,6 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// NORNICDB_CYPHER_QUERY_NORMALIZATION=false skips the pass: the
 	// statement runs as sent.
 	canonical, rewrite := cypher, (*queryRewrite)(nil)
-	// Fabric admission is lexical; its planner reads the statement only once engaged.
 	fabricQuery := e.shouldUseFabricPlanner(ctx, cypher)
 	if config.IsCypherQueryNormalizationEnabled() {
 		var err error
@@ -409,6 +414,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	finishTerminated := false
 	if stripped, ok := stripUnionBranchFinishes(ctx, cypher); ok {
 		cypher = strings.TrimSpace(stripped)
+		ctx = compilerStatementContext(ctx, cypher)
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
 	}
@@ -447,6 +453,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 	ctx = processedCtx
+	if processedQuery != cypher && processedQuery != "" {
+		ctx = generatedStatementContext(ctx, processedQuery)
+	}
 	cypher = processedQuery
 	if cypher == "" {
 		return shellResult, nil
@@ -909,7 +918,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 
 	// For routing, we still need upperQuery for some handlers
 	// TODO: Migrate handlers to use QueryInfo directly
-	upperQuery := e.cachedUpperQuery(cypher)
+	upperQuery := e.cachedUpperQueryContext(ctx, cypher)
 
 	// Capture the storage and search-index revisions before execution so
 	// mutations performed outside this executor cannot leave a stale cached

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -28,6 +29,9 @@ import (
 // data statement (ForbiddenDueToTransactionType), in auto-commit as in an
 // explicit transaction.
 func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (result *ExecuteResult, err error) {
+	input := cyphertext.NewSource(ctx, statement, cyphertext.RawSource)
+	ctx = cyphertext.WithSourceView(ctx, input)
+	ctx = cypherantlr.WithSyntaxOwner(ctx, input.Text)
 	if totals, ok := ctx.Value(procedureStatementStatsKey{}).(*procedureStatementStats); ok && totals != nil {
 		// Every nested procedure installs its own invocation collector. Its
 		// completed summary enters this collector only through this result.
@@ -37,7 +41,7 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 			}
 		}()
 	}
-	if err := internalFunctionCallError(statement); err != nil {
+	if err := internalFunctionCallErrorContext(ctx, statement); err != nil {
 		// Refused like any statement of the caller's transaction: it fails
 		// an explicit transaction (executeInternal fails it for the rest).
 		return nil, e.failTransaction(ctx, err)
@@ -69,6 +73,13 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Preserve the old raw-admission/restoration decision while retaining the
+	// known parent window for syntax adapters. A continuation cannot lose its
+	// association merely because WithSource normalizes a new string instance.
+	var inherited *cyphertext.Source
+	if cypherantlr.HasSyntaxOwner(ctx) {
+		inherited = cyphertext.AcceptedSourceFor(ctx, cypher)
+	}
 	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		if invalid, ok := source.Err.(*cyphertext.UnicodeSourceError); ok {
@@ -76,6 +87,12 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		}
 		return nil, source.Err
 	}
+	if inherited != nil {
+		if associated, ok := source.Reframe(inherited); ok {
+			ctx = cyphertext.WithSourceView(ctx, associated)
+		}
+	}
+	ctx = cypherantlr.EnsureSyntaxOwner(ctx, source.Text)
 	if cypher != source.Text {
 		normalized := sourceQueryRewrite(source)
 		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(result, retErr, nil) }()
@@ -115,6 +132,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	finishTerminated := false
 	if stripped, ok := stripUnionBranchFinishes(ctx, cypher); ok {
 		cypher = strings.TrimSpace(stripped)
+		ctx = compilerStatementContext(ctx, cypher)
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
 	}
@@ -164,6 +182,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 	if labelRewrite != nil {
+		ctx = withSourceRewrite(ctx, labelRewrite)
 		cypher = desugared
 		defer func() {
 			result, retErr = (resultRestoration{source: labelRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
@@ -190,7 +209,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
 	}
-	upper := e.cachedUpperQuery(cypher)
+	upper := e.cachedUpperQueryContext(ctx, cypher)
 	// This is executable, normalized statement text with its actual parameter
 	// values installed. Nested dynamic handlers return through this same gate;
 	// no admission parser attempts to reconstruct their arguments.

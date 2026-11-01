@@ -60,7 +60,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 	}
 
 	outerQuery := strings.TrimSpace(outerPart) + " RETURN " + seedVar + ", " + importVar
-	outerResult, err := e.executeInternal(ctx, outerQuery, nil)
+	outerResult, err := e.executeInternal(generatedStatementContext(ctx, outerQuery), outerQuery, nil)
 	if err != nil {
 		return nil, false, localizedError(localization.CypherSubqueriesCorrelatedImportFailed(importVar, err), err)
 	}
@@ -118,7 +118,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 			if prefixEnd := keywordEndAt(optionalPart, 0, "OPTIONAL MATCH"); prefixEnd > 0 {
 				requiredPart := "MATCH" + optionalPart[prefixEnd:]
 				seedScoped := fmt.Sprintf("MATCH (%s) WHERE id(%s) = %s %s RETURN %s", seedVar, seedVar, quoteCypherStringLiteral(seedID), requiredPart, importVar)
-				fallbackRes, fallbackErr := e.executeInternal(ctx, seedScoped, nil)
+				fallbackRes, fallbackErr := e.executeInternal(generatedStatementContext(ctx, seedScoped), seedScoped, nil)
 				if fallbackErr != nil {
 					return nil, false, localizedError(localization.CypherSubqueriesOptionalImportFallbackFailed(importVar, fallbackErr), fallbackErr)
 				}
@@ -292,7 +292,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 					return nodes, nil
 				}
 				seedQuery := "MATCH " + matchBody + " WHERE " + whereClause + " RETURN " + variable
-				outerRes, err := e.executeInternal(ctx, seedQuery, nil)
+				outerRes, err := e.executeInternal(generatedStatementContext(ctx, seedQuery), seedQuery, nil)
 				if err != nil {
 					return nil, err
 				}
@@ -310,7 +310,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			// Same rule: preserve non-indexable WHERE semantics through generic executor.
 			if whereClause != "" {
 				seedQuery := "MATCH " + matchBody + " WHERE " + whereClause + " RETURN " + variable
-				outerRes, err := e.executeInternal(ctx, seedQuery, nil)
+				outerRes, err := e.executeInternal(generatedStatementContext(ctx, seedQuery), seedQuery, nil)
 				if err != nil {
 					return nil, err
 				}
@@ -321,10 +321,12 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 	}
 
 	seedQuery := trimmedOuter
+	seedCtx := ctx
 	if topLevelKeywordIndex(seedQuery, "RETURN") < 0 {
 		seedQuery += " RETURN " + variable
+		seedCtx = generatedStatementContext(ctx, seedQuery)
 	}
-	outerRes, err := e.executeInternal(ctx, seedQuery, nil)
+	outerRes, err := e.executeInternal(seedCtx, seedQuery, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -431,6 +433,9 @@ func (e *StorageExecutor) parseCallSubquery(ctx context.Context, cypher string) 
 	body = call.Body
 	if stripped, finishes := stripUnionBranchFinishes(ctx, body); finishes && strings.TrimSpace(stripped) != "" {
 		body = stripped
+		// This text-only adapter keeps its de70 signature. Register the explicit
+		// FINISH-lowering product; downstream syntax reads select that program.
+		_ = compilerStatementContext(ctx, body)
 	}
 	return body, call.After, call.Batch != nil, call.Batch
 }
@@ -1285,7 +1290,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 	params := map[string]interface{}{
 		"__call_subquery_lookup_keys": keys,
 	}
-	innerRes, err := e.executeInternal(ctx, rewritten.String(), params)
+	innerRes, err := e.executeInternal(generatedStatementContext(ctx, rewritten.String()), rewritten.String(), params)
 	if err != nil {
 		return nil, true, localizedError(localization.CypherSubqueriesBatchedLookupFailed(err), err)
 	}

@@ -21,6 +21,10 @@ var rowPredicatePrograms = newBoundedCache[string, *rowPredicateProgram](4096, b
 // rowPredicateProgramFor returns expression's program, or nil when it is to
 // be read from the text this time.
 func rowPredicateProgramFor(expression string) *rowPredicateProgram {
+	return rowPredicateProgramForContext(context.Background(), expression)
+}
+
+func rowPredicateProgramForContext(ctx context.Context, expression string) *rowPredicateProgram {
 	if rowPredicateProgramsDisabled.Load() || rowValueProgramsDisabled.Load() {
 		return nil
 	}
@@ -32,7 +36,7 @@ func rowPredicateProgramFor(expression string) *rowPredicateProgram {
 	if program != rowPredicateSeen {
 		return program
 	}
-	program = compileRowPredicateProgram(expression)
+	program = compileRowPredicateProgramContext(ctx, expression)
 	rowPredicatePrograms.put(expression, program)
 	return program
 }
@@ -48,7 +52,11 @@ type rowPredicateNode interface {
 }
 
 func compileRowPredicateProgram(expression string) *rowPredicateProgram {
-	p := &rowPredicateProgram{expression: expression, statementContext: rowPredicateNeedsStatementContext(expression)}
+	return compileRowPredicateProgramContext(context.Background(), expression)
+}
+
+func compileRowPredicateProgramContext(ctx context.Context, expression string) *rowPredicateProgram {
+	p := &rowPredicateProgram{expression: expression, statementContext: rowPredicateNeedsStatementContextContext(ctx, expression)}
 	if mayContainCaseKeyword(expression) && len(caseBlockSpans(expression)) > 0 {
 		p.root = &rowPredicateStrictNode{text: expression, value: compileRowPredicateValue(expression), arithmetic: predicateIsArithmetic(expression)}
 	} else {

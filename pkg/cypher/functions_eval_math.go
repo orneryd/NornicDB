@@ -1163,7 +1163,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 	for name, value := range parameterRowValues(ctx) {
 		bindAbsent(name, value)
 	}
-	if needsRowStatementContext(predicate) {
+	if needsRowStatementContextContext(ctx, predicate) {
 		bindAbsent(rowStatementContextKey, ctx)
 	}
 	value, _, err := rowQuantifierLoop(function, coerceToUnwindItems(list), func(item interface{}) { values[varName] = item }, func() (interface{}, bool, error) {

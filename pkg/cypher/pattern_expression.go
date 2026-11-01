@@ -298,12 +298,16 @@ type rowContextShape struct {
 var rowContextShapes = newBoundedCache[string, *rowContextShape](8192, boundedCacheStringShardIndex)
 
 func rowContextShapeOf(expr string) *rowContextShape {
+	return rowContextShapeOfContext(context.Background(), expr)
+}
+
+func rowContextShapeOfContext(ctx context.Context, expr string) *rowContextShape {
 	if shape, cached := rowContextShapes.get(expr); cached {
 		return shape
 	}
 	shape := &rowContextShape{
 		pattern:          containsRelationshipPattern(expr),
-		statementContext: needsRowStatementContext(expr),
+		statementContext: needsRowStatementContextContext(ctx, expr),
 		trimmed:          strings.TrimSpace(expr),
 		brace:            strings.Contains(expr, "{"),
 	}
@@ -334,7 +338,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 			return cypherfn.RuntimeValue(value), true
 		}
 	}
-	shape := rowContextShapeOf(expr)
+	shape := rowContextShapeOfContext(ctx, expr)
 	// A legacy fallback can reenter through an ordinary literal reader too.
 	// Its dispatch/depth context must survive independently of the expression's
 	// compile-time need for a clock, plugin or graph context.

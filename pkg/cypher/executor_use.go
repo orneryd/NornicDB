@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"sort"
 	"strings"
 
@@ -34,18 +35,6 @@ func parseUseClause(ctx context.Context, cypher string, inSubquery bool, stage c
 		err = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntaxErr.Message)
 	}
 	return clause, remaining, hasUse, err
-}
-
-// useClauseReferenceEnd is where the graph reference of the USE clause
-// starting at s[start:] ends: the offset of the text after it. It is -1 when
-// no valid USE clause starts there. Lexical scanners use it so that a graph
-// spelled like a clause keyword (USE GRAPH limit CALL { … }) stays a name.
-func useClauseReferenceEnd(s string, start int, inSubquery bool) int {
-	reference, _, hasUse, err := fabric.ReadUseClause(context.Background(), s[start:], inSubquery, cyphertext.AcceptedSource)
-	if !hasUse || err != nil {
-		return -1
-	}
-	return start + reference.End
 }
 
 // dynamicUseError is Neo4j's SyntaxError for a dynamic graph reference
@@ -469,26 +458,37 @@ func useKeywordIndexFrom(query string, from int, opts keywordScanOpts) int {
 // USE owns graph-name boundaries, including the optional GRAPH keyword.
 // Reuse that owner when a graph is spelled like a clause keyword.
 func useGraphNameAt(s string, pos int) bool {
-	// A graph name directly follows USE or USE GRAPH. Unless a comment can
-	// sit between them, the raw preceding word decides without a full scan.
-	if word := rawWordBefore(s, pos); !strings.EqualFold(word, "USE") && !strings.EqualFold(word, "GRAPH") &&
-		!strings.Contains(s[:pos], "//") && !strings.Contains(s[:pos], "*/") {
-		return false
-	}
 	end := lastLiveByte(s, pos) + 1
 	start := end
 	for start > 0 && cyphertext.NamePartAt(s, start-1) {
 		start--
 	}
-	if strings.EqualFold(s[start:end], "GRAPH") {
+	graphPrefix := strings.EqualFold(s[start:end], "GRAPH")
+	if graphPrefix {
 		end = lastLiveByte(s, start) + 1
 		start = end
 		for start > 0 && cyphertext.NamePartAt(s, start-1) {
 			start--
 		}
 	}
-	if !strings.EqualFold(s[start:end], "USE") {
+	if !strings.EqualFold(s[start:end], "USE") || clauseKeywordNamedByContext(s, start, end, "USE") {
 		return false
 	}
-	return pos < useClauseReferenceEnd(s, start, true)
+	if graphPrefix {
+		// The grammar decides whether GRAPH is the name or a modifier. Native
+		// navigation observes that same token-role fact without parsing a window.
+		next, ok := cyphertext.ScanIdentifier(s, pos)
+		if !ok {
+			return false
+		}
+		after := queryGapEnd(s, next.End)
+		afterText := ""
+		if word, ok := cyphertext.ScanIdentifier(s, after); ok {
+			afterText = s[after:word.End]
+		}
+		if !cypherantlr.UseGraphKeywordRole(s[pos:next.End], false, afterText, after < len(s) && s[after] == '.') {
+			return false
+		}
+	}
+	return true
 }

@@ -467,14 +467,17 @@ var fabricUnionContract = fabric.UnionContract{
 // Diagnostics are mapped back to those names.
 func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cypher string, params map[string]interface{}) error {
 	statement := fabricSingleGraphStatement(ctx, cypher)
+	// de70 validates a distinct single-graph compiler program. Retain that
+	// semantic decision and declare its input before quoted-name adaptation.
+	ctx = compilerStatementContext(ctx, statement)
 	canonical, names := canonicalizeQuotedVariablesWithBindings(ctx, statement, nil)
 	if names != nil {
 		ctx = withQuotedVariableNames(ctx, names)
 		params = names.parameterValues(params)
 	}
-	desugared, _, err := desugarLabelExpressions(canonical, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressions(canonical, params, cypherVersionFromContext(ctx) == "25")
 	if err == nil {
-		err = e.validateSemanticScopes(ctx, desugared)
+		err = e.validateSemanticScopes(withSourceRewrite(ctx, labelRewrite), desugared)
 	}
 	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
 	_, err = (resultRestoration{names: names}).restore(nil, err, parseItems)
@@ -831,7 +834,11 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 		return nil, nil, err
 	}
 	if len(recordBindings) > 0 {
+		before := query
 		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
+		if query != before {
+			ctx = generatedStatementContext(ctx, query)
+		}
 	}
 	ctx = withExecutionDatabase(ctx, dbName)
 	return c.executeFragmentQuery(ctx, exec, query, params, recordBindings)
@@ -862,9 +869,9 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	// scope/type owner runs. As at the composite entry, this validation copy
 	// must desugar label expressions first. executeInternal owns rewriting the
 	// actual local execution and restoring its result to the fragment source.
-	scopeQuery, _, scopeErr := desugarLabelExpressions(query, params, cypherVersionFromContext(ctx) == "25")
+	scopeQuery, scopeRewrite, scopeErr := desugarLabelExpressions(query, params, cypherVersionFromContext(ctx) == "25")
 	if scopeErr == nil {
-		scopeErr = exec.validateMatchSemanticScopes(ctx, scopeQuery, cypherVersionFromContext(ctx) == "25")
+		scopeErr = exec.validateMatchSemanticScopes(withSourceRewrite(ctx, scopeRewrite), scopeQuery, cypherVersionFromContext(ctx) == "25")
 	}
 	if scopeErr != nil {
 		_, scopeErr = (resultRestoration{names: names}).restore(nil, scopeErr, parseReturnItems)
@@ -1047,7 +1054,9 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		query, names := canonicalizeQuotedVariablesWithBindings(ctx, "RETURN "+expression, values)
+		program := "RETURN " + expression
+		ctx = generatedStatementContext(ctx, program)
+		query, names := canonicalizeQuotedVariablesWithBindings(ctx, program, values)
 		bindings, params := values, values
 		if names != nil {
 			bindings, params = names.bindingValues(values), names.parameterValues(values)
