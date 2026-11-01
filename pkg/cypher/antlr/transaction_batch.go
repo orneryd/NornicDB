@@ -124,8 +124,8 @@ func DescribeCall(call SyntaxNode) CallClause {
 	bodyEnd, _ := close.Span()
 	_, end := call.Span()
 	result := CallClause{
-		Body:  strings.TrimSpace(call.data.view.Original[bodyStart:bodyEnd]),
-		After: strings.TrimSpace(call.data.view.Original[end:]),
+		Body:  strings.TrimSpace(call.Source()[bodyStart:bodyEnd]),
+		After: strings.TrimSpace(call.Source()[end:]),
 	}
 	batch := call.ChildRule(CypherParserRULE_transactionBatch)
 	if !batch.Valid() {

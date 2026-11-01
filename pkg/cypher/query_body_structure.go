@@ -124,7 +124,12 @@ func readQueryBody(ctx context.Context, source string, start, end int) queryBody
 	if err != nil || ctx.Err() != nil {
 		return declinedQueryBody(start, end)
 	}
-	node, ok := syntax.Window(start, end, cypherantlr.CypherParserRULE_query, cypherantlr.CypherParserRULE_regularQuery, cypherantlr.CypherParserRULE_subqueryBody, cypherantlr.CypherParserRULE_singleQuery, cypherantlr.CypherParserRULE_matchSt)
+	node, ok := syntax.Window(start, end, cypherantlr.CypherParserRULE_query, cypherantlr.CypherParserRULE_regularQuery, cypherantlr.CypherParserRULE_subqueryBody, cypherantlr.CypherParserRULE_singleQuery, cypherantlr.CypherParserRULE_matchSt,
+		cypherantlr.CypherParserRULE_withSt, cypherantlr.CypherParserRULE_returnSt,
+		cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_callSubquery,
+		cypherantlr.CypherParserRULE_queryCallSt, cypherantlr.CypherParserRULE_createSt,
+		cypherantlr.CypherParserRULE_mergeSt, cypherantlr.CypherParserRULE_deleteSt,
+		cypherantlr.CypherParserRULE_setSt, cypherantlr.CypherParserRULE_removeSt)
 	if !ok {
 		pattern, found := syntax.Window(start, end, cypherantlr.CypherParserRULE_patternWhere, cypherantlr.CypherParserRULE_pattern)
 		if found {
@@ -236,7 +241,12 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 		branch := newQueryBodyBranch(node)
 		appendQuerySyntax(&branch, node)
 		body.branches = []queryBodyBranch{branch}
-	case cypherantlr.CypherParserRULE_matchSt:
+	case cypherantlr.CypherParserRULE_matchSt, cypherantlr.CypherParserRULE_withSt,
+		cypherantlr.CypherParserRULE_returnSt, cypherantlr.CypherParserRULE_unwindSt,
+		cypherantlr.CypherParserRULE_callSubquery, cypherantlr.CypherParserRULE_queryCallSt,
+		cypherantlr.CypherParserRULE_standaloneCall, cypherantlr.CypherParserRULE_createSt,
+		cypherantlr.CypherParserRULE_mergeSt, cypherantlr.CypherParserRULE_deleteSt,
+		cypherantlr.CypherParserRULE_setSt, cypherantlr.CypherParserRULE_removeSt:
 		branch := newQueryBodyBranch(node)
 		appendQuerySyntax(&branch, node)
 		body.branches = []queryBodyBranch{branch}
@@ -446,7 +456,21 @@ func querySyntaxClauseKind(node cypherantlr.SyntaxNode) (pipelineClauseKind, boo
 
 func statementSyntaxQuery(syntax cypherantlr.StatementSyntax) cypherantlr.SyntaxNode {
 	root := syntax.Root()
-	if root.Rule() == cypherantlr.CypherParserRULE_query {
+	if root.Rule() == cypherantlr.CypherParserRULE_query ||
+		root.Rule() == cypherantlr.CypherParserRULE_regularQuery ||
+		root.Rule() == cypherantlr.CypherParserRULE_singleQuery ||
+		root.Rule() == cypherantlr.CypherParserRULE_subqueryBody ||
+		root.Rule() == cypherantlr.CypherParserRULE_matchSt ||
+		root.Rule() == cypherantlr.CypherParserRULE_withSt ||
+		root.Rule() == cypherantlr.CypherParserRULE_returnSt ||
+		root.Rule() == cypherantlr.CypherParserRULE_unwindSt ||
+		root.Rule() == cypherantlr.CypherParserRULE_callSubquery ||
+		root.Rule() == cypherantlr.CypherParserRULE_queryCallSt ||
+		root.Rule() == cypherantlr.CypherParserRULE_createSt ||
+		root.Rule() == cypherantlr.CypherParserRULE_mergeSt ||
+		root.Rule() == cypherantlr.CypherParserRULE_deleteSt ||
+		root.Rule() == cypherantlr.CypherParserRULE_setSt ||
+		root.Rule() == cypherantlr.CypherParserRULE_removeSt {
 		return root
 	}
 	script := root.ChildRule(cypherantlr.CypherParserRULE_script)

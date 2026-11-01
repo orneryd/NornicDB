@@ -93,6 +93,13 @@ func (effects StatementEffects) RemoteReadOnly() bool {
 func (syntax StatementSyntax) collectEffects() statementEffectsData {
 	result := statementEffectsData{}
 	query, remoteEffect, nonReadEffect, explained := false, false, false, 0
+	if syntax.data.window != nil {
+		// A derived program/clause was admitted as a real query descendant.
+		query = true
+		if syntax.Root().Rule() != CypherParserRULE_query {
+			result.executableQueries = append(result.executableQueries, syntax.Root().id)
+		}
+	}
 	syntax.Walk(func(node SyntaxNode) func() {
 		if node.Rule() == CypherParserRULE_query {
 			hasBody, explains := false, false
@@ -122,7 +129,9 @@ func (syntax StatementSyntax) collectEffects() statementEffectsData {
 			}
 		}
 		switch node.Rule() {
-		case CypherParserRULE_updatingStatement, CypherParserRULE_schemaCommand, CypherParserRULE_administrationCommand, CypherParserRULE_privilegeCommand, CypherParserRULE_terminateCommand:
+		case CypherParserRULE_updatingStatement, CypherParserRULE_createSt,
+			CypherParserRULE_mergeSt, CypherParserRULE_deleteSt, CypherParserRULE_setSt,
+			CypherParserRULE_removeSt, CypherParserRULE_foreachSt, CypherParserRULE_schemaCommand, CypherParserRULE_administrationCommand, CypherParserRULE_privilegeCommand, CypherParserRULE_terminateCommand:
 			result.writes = true
 			if explained == 0 {
 				remoteEffect = true
