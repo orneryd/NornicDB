@@ -1,21 +1,16 @@
 name: Release verification
 
-# Every update to a release branch is verified, including merged PRs. Manual
-# requests run the same suite only after the administrator approves the job.
+# A release-to-main PR requests verification; no tests start before admin approval.
+# The base-repository workflow is trusted; forked or non-release heads are excluded.
 on:
-  push:
+  pull_request_target:
     branches:
-      - 'release/**'
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Branch or commit to verify (default: selected workflow ref)'
-        required: false
-        type: string
-      base:
-        description: 'Allocation baseline ref (default: origin/main)'
-        required: false
-        type: string
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
 
 permissions:
   contents: read
@@ -23,55 +18,39 @@ permissions:
 jobs:
   verify:
     name: Full verification and differential ratchet
-    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') && (github.event.action != 'edited' || github.event.changes.base.ref.from != '') }}
+    environment: admin-approved-actions
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
       - name: Checkout exact requested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Select and record immutable allocation baseline
+      - name: Record exact PR revisions
         id: revisions
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
-          REQUESTED_BASE: ${{ inputs.base }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           head=$(git rev-parse HEAD)
-          if [[ "$EVENT_NAME" == push ]]; then
-            if [[ "$BEFORE" =~ ^0+$ ]]; then
-              # A newly created branch has no previous tip. Use its parent,
-              # or itself if it is a root commit, and disclose that choice.
-              base=$(git rev-parse 'HEAD^' 2>/dev/null || git rev-parse HEAD)
-              echo 'New release branch: using its parent (or root) as the allocation baseline.'
-            else
-              base=$(git rev-parse --verify "${BEFORE}^{commit}")
-              git merge-base --is-ancestor "$base" "$head" || {
-                echo 'Previous release tip is not an ancestor; refusing an ambiguous allocation baseline.' >&2
-                exit 1
-              }
-            fi
-          else
-            base=$(git rev-parse --verify "${REQUESTED_BASE:-origin/main}^{commit}")
-          fi
-          echo "head=$head" >> "$GITHUB_OUTPUT"
-          echo "base=$base" >> "$GITHUB_OUTPUT"
-          printf 'Verified head: %s\nAllocation baseline ref: %s\n' "$head" "$base" | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$head" == "$EXPECTED_HEAD" ]]
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git merge-base "$BASE_SHA" "$head" >/dev/null
+          echo "base=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'Verified head: %s\nPR base: %s\n' "$head" "$BASE_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: '20'
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'

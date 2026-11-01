@@ -2,8 +2,8 @@
 """Check the metered Actions policy; requires PyYAML (pip install pyyaml).
 
 Run from any directory with ``python3 scripts/check-actions-policy.py``.
-CI PR events and schedules are forbidden; runner jobs require administrator
-approval except approved release/publishing pushes and the PR-closing governance job.
+Only release-to-main PR verification may start automatically; runner jobs require
+administrator approval except approved publishing pushes and PR-closing governance.
 """
 from pathlib import Path
 import sys
@@ -13,7 +13,6 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 GATE = "${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}"
 PUSH_WORKFLOWS = {
-    "release-verification.yml": {"branches": ["release/**"]},
     "cd.yml": {"tags": ["*"]},
     "release-macos.yml": {"tags": ["*"]},
     "cd-llama-cpu.yml": {"branches": ["main"], "paths": ["docker/Dockerfile.llama-cpu"]},
@@ -32,6 +31,16 @@ def violations(name, workflow):
     triggers = workflow.get("on", workflow.get(True, {}))
     if not isinstance(triggers, dict):
         return [f"{name}: triggers must be a mapping"]
+    if name == "release-verification.yml":
+        expected = {"pull_request_target": {"branches": ["main"], "types": ["opened", "reopened", "synchronize", "edited"]}}
+        jobs = workflow.get("jobs", {})
+        job = jobs.get("verify", {})
+        if (triggers != expected or set(jobs) != {"verify"}
+                or job.get("environment") != "admin-approved-actions"
+                or job.get("if") != "${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') && (github.event.action != 'edited' || github.event.changes.base.ref.from != '') }}"
+                or workflow.get("permissions") != {"contents": "read"}):
+            errors.append(f"{name}: invalid release-to-main verification policy")
+        return errors
     if name == "reject-develop-pr.yml":
         expected = {"pull_request_target": {"branches": ["develop"], "types": ["opened", "reopened", "edited"]}}
         jobs = workflow.get("jobs", {})
@@ -47,7 +56,7 @@ def violations(name, workflow):
     if set(triggers) - {"push", "workflow_dispatch", "workflow_call"}:
         errors.append(f"{name}: automatic non-push event is forbidden")
     if "push" in triggers and (name not in PUSH_WORKFLOWS or triggers["push"] != PUSH_WORKFLOWS[name]):
-        errors.append(f"{name}: push differs from approved release/main/tag triggers")
+        errors.append(f"{name}: push differs from approved main/tag publishing triggers")
     for job_name, job in workflow.get("jobs", {}).items():
         if "runs-on" in job and job.get("environment") != GATE:
             errors.append(f"{name}/{job_name}: runner lacks administrator approval gate")

@@ -1,7 +1,7 @@
 name: Cypher Conformance
 
-# Pull requests do not run checks automatically. Release-branch pushes run
-# release-verification.yml; manual GitHub runs require
+# Release-to-main pull requests request release-verification.yml; other PRs
+# do not run CI automatically. Manual GitHub runs require
 # approval through the admin-approved-actions environment before jobs start.
 # See CONTRIBUTING.md, "Development workflow".
 on:

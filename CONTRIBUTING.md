@@ -32,7 +32,7 @@ fix/<topic>     ──┘                                     │ pull request (
 |---|---|---|---|
 | `feature/*`, `fix/*` | anyone with write access | push freely; target `release/vX.Y.Z` for release fixes | none |
 | `develop` | integration branch | direct integration only; pull requests targeting develop are closed (no force-push, no deletion) | manual, admin-approved |
-| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | automatic full verification on every push; manual runs require admin approval |
+| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | no automatic CI on release pushes; manual runs require admin approval |
 | `main` | maintainers only | fast-forward from a finished release branch, or a scoped operational/documentation PR | local verification; manual, admin-approved GitHub checks |
 
 - **Experiment on `feature/<topic>` branches** cut from `develop`, iterate as fast as you like, and merge them into
@@ -71,23 +71,11 @@ inspect the relevant workflow triggers before merging.
 
 ### Checks: local, release, and administrator-approved runs
 
-Pull requests do **not** start CI automatically. A small governance workflow closes pull requests targeting `develop` without running PR code or tests; GitHub may briefly show them open before the job runs. Instead:
+Full CI is requested automatically only for a PR from a `release/**` branch in this repository targeting `main`. Opening, reopening, updating, or retargeting such a PR to `main` requests the full `make verify ALL=1` suite and the Cypher differential ratchet. The job waits for `admin-approved-actions` before allocating a runner. It checks out the event's exact release head and uses the event's base SHA as the allocation baseline; approval must be renewed for new runs. Release branch pushes alone do not run CI.
 
-1. **Locally, before asking for a merge:** `make verify BASE=origin/develop` (use the actual PR base) runs every check CI runs (localization, UI build, build,
-   all test groups, allocation ratchet, Cypher conformance, the Neo4j differential, docs) for the files your branch
-   changes, with one summary at the end. `make verify-list` shows what would run, `make verify-help` lists the
-   options, and `make verify BRANCH=<branch>` verifies another branch without touching your checkout.
-2. **On GitHub, when needed:** use *Run workflow* on a trusted workflow ref and specify the target branch or SHA as an input where supported, then an administrator approves
-   the waiting jobs through the `admin-approved-actions` environment. PR events and labels, including
-   `ci:run`, never start CI checks. Check the exact ref before approving; approval permits that run's jobs.
-3. **Release branches:** each push to `release/**` (including a PR merge) runs the full `make verify ALL=1` suite and the Cypher differential ratchet without path filtering. The push checks out the exact pushed SHA and uses the previous branch tip as the allocation baseline. A new branch uses its parent (or itself for a root commit); a non-ancestor previous tip fails rather than silently selecting a different baseline. The workflow records the resolved revisions and uploads logs. Direct pushes also trigger this verification; it is not a pre-merge check.
-4. **Full manual checks:** dispatch `Release verification` on a trusted workflow ref, optionally specifying the target ref and allocation baseline. The job waits for `admin-approved-actions` before any runner starts. Review the chosen ref and baseline before approval. The default manual baseline is `origin/main`.
-5. **Automatic develop runs remain paused:** nightly verification and weekly canary publishing remain manual-only.
+PRs targeting `develop` are closed by a governance-only workflow without executing PR code or tests; GitHub may briefly show them open before that workflow runs. Other PRs do not automatically run CI. When needed, dispatch existing CI workflows from a trusted workflow ref, specify the intended target SHA, and have an administrator approve the waiting job. Check the workflow definition and target before approval. Workflow editors can remove YAML gates in their own branches; do not dispatch untrusted workflow definitions.
 
-Existing tag pushes still build/publish images and macOS releases. Release verification triggers on branch pushes only, not tags. Existing pushes to `main` can publish
-GitHub Pages and rebuild llama libraries when their path filters match. These push jobs use the
-`automatic-publishing` environment without an approval requirement. All manual runs, including runs
-selected on `main`, and reusable runs from manual callers require admin approval before runner allocation.
+Existing tag pushes still build and publish images and macOS releases. Existing pushes to `main` may publish GitHub Pages and rebuild llama libraries when their path filters match. Automatic develop nightly and canary jobs remain paused.
 
 #### Administrator approval setting
 
