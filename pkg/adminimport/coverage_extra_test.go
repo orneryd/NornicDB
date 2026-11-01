@@ -1250,7 +1250,8 @@ func TestRebuildSchemaDerivedState_IndexesExistingNodes(t *testing.T) {
 	require.NoError(t, rebuildSchemaDerivedState(ns, schema))
 
 	// After rebuild the property index should resolve both seeded nodes.
-	got := ns.GetSchema().PropertyIndexLookup("Person", "email", "alice@example.com")
+	got, err := ns.GetSchema().PropertyIndexLookup(t.Context(), "Person", "email", "alice@example.com")
+	require.NoError(t, err)
 	require.Contains(t, got, storage.NodeID("u1"))
 }
 

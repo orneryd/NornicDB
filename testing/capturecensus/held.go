@@ -753,10 +753,11 @@ func callerSymbols(p *workcensus.Program, target string) []string {
 // sourceDigests computes sourceDigest per symbol, and reads the module's
 // go.mod for Modules.
 type sourceDigests struct {
-	p      *workcensus.Program
-	byName map[string]string
-	files  map[string][]byte
-	gomod  string
+	p           *workcensus.Program
+	byName      map[string]string
+	files       map[string][]byte
+	gomod       string
+	sourceFiles []workcensus.SourceBoundary // exact loaded-file fingerprints from the shared extraction
 }
 
 func newSourceDigests(p *workcensus.Program) *sourceDigests {

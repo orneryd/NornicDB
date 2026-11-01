@@ -19,9 +19,13 @@ func TestNumericKeyZeroSignsSerializeAlike(t *testing.T) {
 	for _, zero := range zeros {
 		k, ok := indexValueKey(zero)
 		require.True(t, ok)
-		hashes = append(hashes, NewCompositeKey(k, uint64(9007199254740993)).Hash)
+		composite, err := NewCompositeKey(t.Context(), k, uint64(9007199254740993))
+		require.NoError(t, err)
+		hashes = append(hashes, composite.Hash)
+
 		props := map[string]interface{}{"tenant": zero, "v": int64(9007199254740993)}
-		lock, ok := nodeConstraintLockKey(tuple, &Node{Properties: props})
+		lock, ok, err := nodeConstraintLockKey(t.Context(), tuple, &Node{Properties: props})
+		require.NoError(t, err)
 		require.True(t, ok)
 		locks = append(locks, lock)
 		rel, ok := relationshipConstraintValues([]string{"tenant"}, props)
@@ -35,7 +39,12 @@ func TestNumericKeyZeroSignsSerializeAlike(t *testing.T) {
 	}
 	// Non-zero keys and NaN keep their own forms.
 	one, _ := indexValueKey(int64(1))
-	require.NotEqual(t, NewCompositeKey(key).Hash, NewCompositeKey(one).Hash)
+	keyHash, err := NewCompositeKey(t.Context(), key)
+	require.NoError(t, err)
+	oneHash, err := NewCompositeKey(t.Context(), one)
+	require.NoError(t, err)
+	require.NotEqual(t, keyHash.Hash, oneHash.Hash)
+
 	_, ok = relationshipConstraintValues([]string{"v"}, map[string]interface{}{"v": math.NaN()})
 	require.False(t, ok, "NaN is no equality key")
 }

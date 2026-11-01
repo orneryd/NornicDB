@@ -32,10 +32,13 @@ func (sm *SchemaManager) VisitPropertyIndexGroupsInRange(ctx context.Context, la
 	if err := sm.mu.RLockContext(ctx); err != nil {
 		return false, err
 	}
-	idx, exists := sm.seekablePropertyIndexLocked(label, property)
+	idx, exists, lookupErr := sm.seekablePropertyIndexLocked(ctx, label, property)
 	sm.mu.RUnlock()
+	if lookupErr != nil {
+		return false, lookupErr
+	}
 	if !exists {
-		return false, ctx.Err()
+		return false, nil
 	}
 	// Snapshot every group's membership before callbacks. No callback runs with
 	// either lock held, and a canceled preparation exposes no partial snapshot.

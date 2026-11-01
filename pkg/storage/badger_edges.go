@@ -58,7 +58,11 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 		return err
 	}
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID))
-	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, schema.appendConstraintValueKeys(nil, nil, []*Edge{edge}))
+	valueKeys, constraintErr := schema.appendConstraintValueKeys(write.ctx, nil, nil, []*Edge{edge})
+	if constraintErr != nil {
+		return constraintErr
+	}
+	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, valueKeys)
 	if constraintErr != nil {
 		return constraintErr
 	}
@@ -359,7 +363,11 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		return err
 	}
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID))
-	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, schema.appendConstraintValueKeys(nil, nil, []*Edge{edge}))
+	valueKeys, constraintErr := schema.appendConstraintValueKeys(write.ctx, nil, nil, []*Edge{edge})
+	if constraintErr != nil {
+		return constraintErr
+	}
+	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, valueKeys)
 	if constraintErr != nil {
 		return constraintErr
 	}

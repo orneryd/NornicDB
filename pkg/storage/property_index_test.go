@@ -207,7 +207,7 @@ func TestGetPropertyIndex(t *testing.T) {
 	sm := NewSchemaManager()
 
 	// Non-existent index
-	_, exists := sm.GetPropertyIndex("Person", "name")
+	_, exists := checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "Person", "name"))
 	if exists {
 		t.Error("Expected index to not exist")
 	}
@@ -219,7 +219,7 @@ func TestGetPropertyIndex(t *testing.T) {
 	}
 
 	// Now it should exist
-	idx, exists := sm.GetPropertyIndex("Person", "name")
+	idx, exists := checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "Person", "name"))
 	if !exists {
 		t.Error("Expected index to exist")
 	}

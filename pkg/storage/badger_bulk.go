@@ -78,7 +78,13 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 				if value == nil {
 					continue
 				}
-				key := fmt.Sprintf("%s:%s:%s", dbName, c.Name, constraintValueKey(value))
+				// BulkCreateNodes is a context-free native API; this preflight
+				// runs before inBulkTransaction, not under accepted write ownership.
+				composite, err := NewCompositeKey(context.Background(), value)
+				if err != nil {
+					return err
+				}
+				key := fmt.Sprintf("%s:%s:%s", dbName, c.Name, composite.Hash)
 				if _, exists := seen[key]; exists {
 					return &ConstraintViolationError{
 						Type:       ConstraintUnique,
@@ -101,7 +107,12 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 						}
 					}
 				}
-				key := fmt.Sprintf("%s:%s:%s", dbName, c.Name, constraintCompositeKey(values))
+				// Native bulk preflight has no caller context to inherit.
+				composite, err := NewCompositeKey(context.Background(), values...)
+				if err != nil {
+					return err
+				}
+				key := fmt.Sprintf("%s:%s:%s", dbName, c.Name, composite.Hash)
 				if _, exists := seen[key]; exists {
 					return &ConstraintViolationError{
 						Type:       ConstraintNodeKey,

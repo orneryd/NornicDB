@@ -20,7 +20,10 @@ func TestGh875ConstraintIndexFilledAndUsed(t *testing.T) {
 	require.NoError(t, err)
 
 	schema := exec.storage.GetSchema()
-	require.True(t, schema.HasPropertyIndex("Rec", "uid"))
+	hasIndex, indexErr := schema.HasPropertyIndex(ctx, "Rec", "uid")
+	require.NoError(t, indexErr)
+	require.True(t, hasIndex)
+
 	indexedIDs, lookupErr := schema.PropertyIndexLookup(ctx, "Rec", "uid", "u3")
 	require.NoError(t, lookupErr)
 	require.Len(t, indexedIDs, 1)

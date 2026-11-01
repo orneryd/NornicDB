@@ -113,12 +113,19 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 		probed := false
 		if len(nodeInfo.labels) > 0 {
 			// Labelled: probe the (label, prop) index when one exists.
-			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
+			indexed, indexErr := schema.HasPropertyIndex(ctx, nodeInfo.labels[0], prop)
+			if indexErr != nil {
+				return nil, false, indexErr
+			}
+			if indexed {
 				ids, err = propertyIndexLookup(ctx, store, schema, nodeInfo.labels[0], prop, val)
 				probed = true
 			}
 		} else {
-			labels := e.indexCandidateLabels(schema, nil, prop)
+			labels, labelErr := e.indexCandidateLabels(ctx, schema, nil, prop)
+			if labelErr != nil {
+				return nil, false, labelErr
+			}
 			if labellessPropertyIndexUsable(store, labels...) {
 				ids, err = schema.PropertyIndexLookupAnyLabel(ctx, prop, val)
 				probed = true

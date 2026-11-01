@@ -305,7 +305,11 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 		bestCount := -1
 		for _, prop := range mergePropertyNamesSorted(props) {
 			val := props[prop]
-			if _, ok := schema.GetPropertyIndex(label, prop); !ok {
+			indexed, err := schema.HasPropertyIndex(ctx, label, prop)
+			if err != nil {
+				return nil, err
+			}
+			if !indexed {
 				continue
 			}
 			schemaLookupUsed = true
@@ -484,7 +488,11 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(ctx context.Context, stor
 	var best []storage.NodeID
 	found := false
 	for _, prop := range mergePropertyNamesSorted(props) {
-		if _, ok := schema.GetPropertyIndex(label, prop); !ok {
+		indexed, err := schema.HasPropertyIndex(ctx, label, prop)
+		if err != nil {
+			return nil, false, err
+		}
+		if !indexed {
 			continue
 		}
 		ids, err := propertyIndexLookup(ctx, store, schema, label, prop, props[prop])

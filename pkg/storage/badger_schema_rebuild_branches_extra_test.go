@@ -49,7 +49,7 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 		require.Len(t, uc.values, 2)
 		uc.mu.RUnlock()
 
-		pidx, ok := sm.GetPropertyIndex("User", "name")
+		pidx, ok := checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "User", "name"))
 		require.True(t, ok)
 		pidx.mu.RLock()
 		require.Len(t, pidx.values, 2)

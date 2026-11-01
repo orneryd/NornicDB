@@ -101,24 +101,28 @@ func (f *nilFlow) use(v ssa.Value, at ssa.Instruction) []string {
 	return f.value(v)
 }
 
-// callSuccess returns the block that runs only where call's trailing error
-// result is nil, from the engine's one call-success analysis
-// (SuccessfulCallEdge, which also follows the error through a cell it is
-// stored in, only while that cell still holds it), or nil.
-func callSuccess(call *ssa.Call) *ssa.BasicBlock {
+// callSuccess returns the If of call's trailing error test and the block that
+// runs only where that result is nil, from the engine's one call-success
+// analysis (SuccessfulCallEdge, which also follows the error through a cell it
+// is stored in, only while that cell still holds it), or nil, nil.
+func callSuccess(call *ssa.Call) (*ssa.If, *ssa.BasicBlock) {
 	tuple, ok := call.Type().(*types.Tuple)
 	if !ok || tuple.Len() < 2 || !types.Identical(tuple.At(tuple.Len()-1).Type(), types.Universe.Lookup("error").Type()) {
-		return nil
+		return nil, nil
 	}
-	_, success := SuccessfulCallEdge(call, tuple.Len()-1)
-	return success
+	return SuccessfulCallEdge(call, tuple.Len()-1)
 }
 
 // errorChecked reports that block runs only where call's trailing error result
-// is nil.
+// is nil: the test's block and its success successor both dominate block, so
+// every path there took the success edge. A success block that another
+// predecessor can enter without the test proves nothing, not even at itself.
 func errorChecked(call *ssa.Call, block *ssa.BasicBlock) bool {
-	success := callSuccess(call)
-	return success != nil && success.Dominates(block)
+	iff, success := callSuccess(call)
+	if iff == nil || success == nil || block == nil {
+		return false
+	}
+	return iff.Block().Dominates(block) && success.Dominates(block)
 }
 
 // sameLocation reports two addresses of one variable: the same cell, or the
@@ -590,11 +594,41 @@ func (f *nilFlow) load(load *ssa.UnOp) []string {
 	case *ssa.FreeVar:
 		// A captured variable: the closure loads its enclosing function's cell.
 		if cell, ok := freeVarBinding(addr).(*ssa.Alloc); ok {
+			// A cell that one store defines, and no other write or use can
+			// change, holds that value in every closure that captures it: the
+			// capture is where the value leaves this function, so it is judged
+			// there, with the nil tests and checked errors that hold there.
+			if stored, capture, ok := capturedCellValue(addr, cell); ok {
+				if w := f.use(stored, capture); w != nil {
+					return append(w[:len(w):len(w)], "-> captured "+addr.Name()+" of "+capture.Parent().String())
+				}
+				f.discharge("proof: immutable captured cell " + addr.Name() + " of " + capture.Parent().String())
+				return nil
+			}
 			return f.stores(cell, "captured "+addr.Name())
 		}
 	}
 	f.discharge(fmt.Sprintf("convention: unmodelled load through %T", load.X))
 	return nil
+}
+
+// capturedCellValue names the value a closure's captured cell holds, with the
+// MakeClosure that captured it, when ImmutableCellValueAt proves the cell one
+// store defines before that capture and nothing else writes or passes on. A
+// closure body runs only after the capture that created it, so every load
+// there reads that one value: the capture is the point where the value leaves
+// its function, and there the same nil tests and checked errors apply as at
+// the load itself. A mutated, escaped or opaque cell has no such value.
+func capturedCellValue(free *ssa.FreeVar, cell *ssa.Alloc) (ssa.Value, *ssa.MakeClosure, bool) {
+	closure, _ := freeVarClosure(free)
+	if closure == nil {
+		return nil, nil, false
+	}
+	stored, ok := ImmutableCellValueAt(cell, closure)
+	if !ok {
+		return nil, nil, false
+	}
+	return stored, closure, true
 }
 
 func freeVarBinding(free *ssa.FreeVar) ssa.Value {
@@ -924,7 +958,7 @@ func reachingDefinitions(load *ssa.UnOp, addr ssa.Value, field *types.Var) []def
 // success block of call (callSuccess). The success block must be entered only
 // by that edge.
 func errorCheckedBetween(call *ssa.Call, store *ssa.Store, load *ssa.UnOp) bool {
-	success := callSuccess(call)
+	_, success := callSuccess(call)
 	if success == nil || len(success.Preds) != 1 || success == store.Block() {
 		return false
 	}

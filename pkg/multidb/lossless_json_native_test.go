@@ -93,7 +93,8 @@ func TestLosslessCatalogSchemaNativeReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, node.Labels, got.Labels)
 	require.Equal(t, node.Properties, got.Properties)
-	_, found := engine.GetSchemaForNamespace("nornic").GetPropertyIndex("Label"+high, high)
+	_, found, indexErr := engine.GetSchemaForNamespace("nornic").GetPropertyIndex(t.Context(), "Label"+high, high)
+	require.NoError(t, indexErr)
 	require.True(t, found)
 	// Existing ordinary names retain standard JSON meaning alongside new units.
 	metadata, err := storage.NewNamespacedEngine(engine, "system").GetNode(metadataNodeID)

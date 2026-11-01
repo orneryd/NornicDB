@@ -201,7 +201,10 @@ func TestUniqueKeyLockEdgeBranches(t *testing.T) {
 
 // Keep the scalar regression matrix against the generalized key owner.
 func (sm *SchemaManager) scalarMergeLockKey(label, property string, value interface{}) (uniqueConstraintLockKey, bool) {
-	keys := sm.uniqueMergeKeys([]string{label}, map[string]interface{}{property: value})
+	keys, err := sm.uniqueMergeKeys(context.Background(), []string{label}, map[string]interface{}{property: value})
+	if err != nil {
+		panic(err)
+	}
 	if len(keys) == 0 {
 		return uniqueConstraintLockKey{}, false
 	}

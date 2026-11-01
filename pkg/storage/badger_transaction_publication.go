@@ -31,6 +31,13 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		return err
 	}
 	afterPublication, prepare := request.AfterPublication, request.prepare
+	// A nil publication context is the explicit detached native boundary.
+	// Preparation still requires a context: retain the engine owner while
+	// removing its stop cancellation, without changing commitCtx's nil contract.
+	preparationContext := ctx
+	if preparationContext == nil {
+		preparationContext = context.WithoutCancel(tx.engine.work.Context())
+	}
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -108,7 +115,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// Validate optimistically before invoking them, without retaining entity keys.
 	// Metadata-free commits retain the single protected validation phase.
 	if len(tx.Metadata) > 0 {
-		if err := tx.validateCommitLocked(ctx); err != nil {
+		if err := tx.validateCommitLocked(preparationContext); err != nil {
 			return err
 		}
 		// Log metadata. D-10a bracket-prefix migrated to a transaction_id slog
@@ -157,7 +164,11 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		for _, edge := range tx.pendingEdges {
 			edges = append(edges, edge)
 		}
-		valueKeys := schemaForValues.appendConstraintValueKeys(nil, nodes, edges)
+		valueKeys, keyErr := schemaForValues.appendConstraintValueKeys(preparationContext, nil, nodes, edges)
+		if keyErr != nil {
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+			return keyErr
+		}
 		releaseCommitLocks, err = schemaForValues.acquireUniqueConstraintCommitLocks(ctx, tx.ID, valueKeys)
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -167,7 +178,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 
 	defer releaseCommitLocks()
 
-	if err := tx.validateCommitLocked(ctx); err != nil {
+	if err := tx.validateCommitLocked(preparationContext); err != nil {
 		return err
 	}
 

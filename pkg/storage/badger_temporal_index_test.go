@@ -195,8 +195,10 @@ func TestBadgerEngine_PruneTemporalHistory(t *testing.T) {
 		if i < 3 {
 			end = start.Add(24 * time.Hour)
 		}
+		composite, keyErr := NewCompositeKey(t.Context(), i)
+		require.NoError(t, keyErr)
 		_, err := engine.CreateNode(&Node{
-			ID:     NodeID(prefixTestID("prune-" + constraintValueKey(i))),
+			ID:     NodeID(prefixTestID("prune-" + composite.Hash)),
 			Labels: []string{"FactVersion"},
 			Properties: map[string]interface{}{
 				"fact_key":   "prune",
@@ -242,8 +244,10 @@ func BenchmarkBadgerTemporalAsOfGhostOfVersioning(b *testing.B) {
 		if i < 999 {
 			end = start.Add(time.Hour)
 		}
+		composite, keyErr := NewCompositeKey(b.Context(), i)
+		require.NoError(b, keyErr)
 		_, err := engine.CreateNode(&Node{
-			ID:     NodeID(prefixTestID("ghost-" + constraintValueKey(i))),
+			ID:     NodeID(prefixTestID("ghost-" + composite.Hash)),
 			Labels: []string{"FactVersion"},
 			Properties: map[string]interface{}{
 				"fact_key":   "ghost",

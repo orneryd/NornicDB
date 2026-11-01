@@ -26,8 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delimiter-shaped values cannot collide before hashing and reject valid bulk
   writes. These hashes are process-local; persisted temporal keys are unchanged.
 
-- Embedded Go index candidate, ordered-read, unique-value and transaction
-  pending-merge APIs take the caller context and return errors. Migrate callers
+- Embedded Go index discovery, candidate/ordered reads, unique-value, transaction
+  pending-merge, composite-key and keyed-digest APIs take the caller context and
+  return errors. Migrate callers
   using the [index-read guide](docs/development/index-read-cancellation.md).
 
 - Storage-backed Go APOC helpers use immutable `New(backend)` instances instead
@@ -133,6 +134,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Snapshot/read-view admission observes caller cancellation while waiting for
+  the write-behind retirement lock, including completed-cache admission.
+- Sorted property-index readers retain their rebuilt key cache through an atomic
+  write-to-read lock handoff, preventing repeated rebuild starvation under writes.
 
 - Keep namespace-scoped label reads complete during index rebuilding and retain
   snapshot property names and node identities across database DROP/recreate.

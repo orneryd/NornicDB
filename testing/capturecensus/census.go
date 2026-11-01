@@ -281,7 +281,7 @@ func Analyze(i workcensus.Inventory, policy Policy) Inventory {
 			}
 		}
 	}
-	sites, violations, boundary, crossings := contextSites(i.Program, policy, &log)
+	sites, violations, boundary, crossings := contextSites(i.Program, policy, &log, i.Sources)
 	out.ContextSites, out.NilContextBoundary, out.BoundaryCrossings = sites, boundary, crossings
 	out.NilContextsElsewhere, out.NilContextsDisposed = log.keys(KindOutsideBoundary), log.keys(KindNilDisposition)
 	out.Acceptances = log.all()

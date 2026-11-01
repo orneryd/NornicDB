@@ -194,11 +194,17 @@ func recycleUniqueConstraintRequests(batch *uniqueConstraintRequestBatch, reques
 // appendConstraintValueKeys projects node and relationship VALUE keys for the
 // canonical registry. Entity and endpoint authority belongs to the earlier
 // write/prepare owner; unconstrained images append no keys.
-func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKey, nodes []*Node, edges []*Edge) []uniqueConstraintLockKey {
+func (sm *SchemaManager) appendConstraintValueKeys(ctx context.Context, keys []uniqueConstraintLockKey, nodes []*Node, edges []*Edge) ([]uniqueConstraintLockKey, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if sm == nil {
-		return keys
+		return keys, nil
 	}
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if node == nil || len(node.Properties) == 0 {
 			continue
 		}
@@ -206,7 +212,9 @@ func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKe
 			if c.EffectiveEntityType() != ConstraintEntityNode {
 				continue
 			}
-			if key, ok := nodeConstraintLockKey(c, node); ok {
+			if key, ok, err := nodeConstraintLockKey(ctx, c, node); err != nil {
+				return nil, err
+			} else if ok {
 				if keys == nil {
 					keys = make([]uniqueConstraintLockKey, 0, len(nodes))
 				}
@@ -215,6 +223,9 @@ func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKe
 		}
 	}
 	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if edge == nil || len(edge.Properties) == 0 {
 			continue
 		}
@@ -228,19 +239,29 @@ func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKe
 			}
 			var key interface{} = values[0]
 			if len(values) > 1 {
-				key = NewCompositeKey(values...).Hash
+				composite, err := NewCompositeKey(ctx, values...)
+				if err != nil {
+					return nil, err
+				}
+				key = composite.Hash
 			}
 			keys = append(keys, uniqueConstraintLockKey{label: "\x00relationship:" + edge.Type, property: relationshipPropertyKey(c.Properties), value: key})
 		}
 	}
 
-	return keys
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 // nodeConstraintLockKey is the canonical node key projection for both commit
 // and MERGE admission. Composite constraints lock one tuple, never its columns,
 // under the hash the constraint's composite index files that tuple under.
-func nodeConstraintLockKey(c Constraint, node *Node) (uniqueConstraintLockKey, bool) {
+func nodeConstraintLockKey(ctx context.Context, c Constraint, node *Node) (uniqueConstraintLockKey, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return uniqueConstraintLockKey{}, false, err
+	}
 	var properties []string
 	switch {
 	case (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey) && len(c.Properties) > 0:
@@ -248,30 +269,37 @@ func nodeConstraintLockKey(c Constraint, node *Node) (uniqueConstraintLockKey, b
 	case c.Type == ConstraintTemporal && len(c.Properties) >= 3:
 		properties = c.Properties[:len(c.Properties)-2]
 	default:
-		return uniqueConstraintLockKey{}, false
+		return uniqueConstraintLockKey{}, false, nil
 	}
 	// Preserve TEMPORAL's raw whole-key hash for composite list-bearing keys.
 	if c.Type == ConstraintTemporal && len(properties) > 1 {
 		if spec, ok := splitTemporalKeySpec(c.Properties); ok {
 			value, missing := spec.keyValue(node.Properties)
 			if missing == "" && spec.composite() && spec.listBearing(value) {
-				return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: spec.keyHash(value)}, true
+				return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: spec.keyHash(value)}, true, nil
 			}
 		}
 	}
 	if len(properties) == 1 {
 		value, ok := constraintLockValue(node, properties[0])
-		return uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value}, ok
+		return uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value}, ok, nil
 	}
 	values := make([]interface{}, len(properties))
 	for i, property := range properties {
+		if err := ctx.Err(); err != nil {
+			return uniqueConstraintLockKey{}, false, err
+		}
 		value, ok := constraintLockValue(node, property)
 		if !ok {
-			return uniqueConstraintLockKey{}, false
+			return uniqueConstraintLockKey{}, false, nil
 		}
 		values[i] = value
 	}
-	return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: constraintCompositeKey(values)}, true
+	composite, err := NewCompositeKey(ctx, values...)
+	if err != nil {
+		return uniqueConstraintLockKey{}, false, err
+	}
+	return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: composite.Hash}, true, nil
 }
 
 // constraintLockValue is node's canonical value of prop for a constraint key
@@ -660,9 +688,12 @@ type mergeAdmissionKey struct {
 	properties []string
 }
 
-func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]interface{}) []mergeAdmissionKey {
+func (sm *SchemaManager) uniqueMergeKeys(ctx context.Context, labels []string, props map[string]interface{}) ([]mergeAdmissionKey, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if sm == nil || len(props) == 0 {
-		return nil
+		return nil, nil
 	}
 	var keys []mergeAdmissionKey
 	node := &Node{Properties: props}
@@ -670,13 +701,19 @@ func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]inter
 		if c.EffectiveEntityType() != ConstraintEntityNode || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
 			continue
 		}
-		key, ok := nodeConstraintLockKey(c, node)
+		key, ok, err := nodeConstraintLockKey(ctx, c, node)
+		if err != nil {
+			return nil, err
+		}
 		if !ok || !lockableUniqueConstraintKey(key) {
 			continue
 		}
 		keys = append(keys, mergeAdmissionKey{lock: key, properties: c.Properties})
 	}
-	return keys
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 // HasUniqueValueTracking reports whether any unique constraint exists whose

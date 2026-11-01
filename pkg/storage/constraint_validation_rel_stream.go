@@ -131,7 +131,10 @@ func newRelUniquenessCheck(c Constraint) relEdgeCheck {
 		if value == nil {
 			return nil
 		}
-		if existingID, found := seen.add(string(edge.ID), []interface{}{value}); found {
+		// Constraint-creation validation is a context-free native Go API.
+		if existingID, found, err := seen.add(context.Background(), string(edge.ID), []interface{}{value}); err != nil {
+			return err
+		} else if found {
 			message := localization.StorageValidationRelationshipUniqueDuplicate(existingID, string(edge.ID), property, value)
 			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{property}, message, nil)
 		}
@@ -151,7 +154,10 @@ func newRelCompositeUniquenessCheck(c Constraint) relEdgeCheck {
 			}
 			values[i] = value
 		}
-		if existingID, found := seen.add(string(edge.ID), values); found {
+		// Constraint-creation validation is a context-free native Go API.
+		if existingID, found, err := seen.add(context.Background(), string(edge.ID), values); err != nil {
+			return err
+		} else if found {
 			parts := make([]string, len(values))
 			for i, value := range values {
 				parts[i] = fmt.Sprint(value)

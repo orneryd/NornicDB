@@ -56,6 +56,13 @@ type badgerReadView struct {
 // options makes the callback and its captures escape during context polling,
 // allocating even when a completed cache read needs no managed transaction.
 func (b *BadgerEngine) captureReadView(ctx context.Context, capture func(*WriteBehindBuffer), options ...readViewOptions) (*badgerReadView, error) {
+	// Internal detached reads may pass nil; a supplied caller context owns
+	// admission even when no buffer or transaction is needed.
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	var opts readViewOptions
 	if len(options) > 0 {
 		opts = options[0]
@@ -68,6 +75,11 @@ func (b *BadgerEngine) captureReadView(ctx context.Context, capture func(*WriteB
 		epoch, idle := w.idleReadEpoch(opts.scope)
 		if idle {
 			done, err := opts.cached(nil)
+			if ctx != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return nil, ctxErr
+				}
+			}
 			if after, stillIdle := w.idleReadEpoch(opts.scope); stillIdle && after == epoch && (done || err != nil) {
 				return nil, err
 			}
@@ -75,10 +87,18 @@ func (b *BadgerEngine) captureReadView(ctx context.Context, capture func(*WriteB
 	}
 	// Only the slow capture branch acquires a transaction and retirement lease.
 	if w != nil {
-		w.mu.RLock()
+		if err := w.mu.RLockContext(ctx); err != nil {
+			return nil, err
+		}
 		defer w.mu.RUnlock()
 		if opts.cached != nil {
-			if done, err := opts.cached(w); done || err != nil {
+			done, err := opts.cached(w)
+			if ctx != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return nil, ctxErr
+				}
+			}
+			if done || err != nil {
 				return nil, err
 			}
 		}

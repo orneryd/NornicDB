@@ -37,9 +37,9 @@ func TestNodeKeyIndex_ValidationUsesFilledIndex(t *testing.T) {
 	idx, owned := sm.ConstraintPropertyIndex(factKey.Name)
 	require.True(t, owned, "a multi-property NODE KEY owns an equality index")
 	require.Equal(t, factKey.Properties, idx.Properties)
-	require.Nil(t, sm.filledKeyIndex("Fact", factKey.Properties), "the owned index starts unfilled")
+	require.Nil(t, checkedIndexRead[*CompositeIndex](t)(sm.filledKeyIndex(t.Context(), "Fact", factKey.Properties)), "the owned index starts unfilled")
 	require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
-	require.NotNil(t, sm.filledKeyIndex("Fact", factKey.Properties))
+	require.NotNil(t, checkedIndexRead[*CompositeIndex](t)(sm.filledKeyIndex(t.Context(), "Fact", factKey.Properties)))
 
 	var nodes []*Node
 	for r := 0; r < 40; r++ {
@@ -100,9 +100,11 @@ func TestNodeKeyIndex_DropRemovesOwnedIndex(t *testing.T) {
 	_, owned := sm.ConstraintPropertyIndex(factKey.Name)
 	require.True(t, owned)
 	require.NoError(t, sm.DropConstraint(factKey.Name))
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	require.Nil(t, sm.compositeKeyIndexLocked("Fact", factKey.Properties), "dropping the constraint drops its index")
+	require.NoError(t, sm.mu.RLockContext(t.Context()))
+	droppedIndex, lookupErr := sm.compositeKeyIndexLocked(t.Context(), "Fact", factKey.Properties)
+	sm.mu.RUnlock()
+	require.NoError(t, lookupErr)
+	require.Nil(t, droppedIndex, "dropping the constraint drops its index")
 }
 
 func (n *Node) withProp(k string, v interface{}) *Node {
@@ -123,7 +125,7 @@ func TestNodeKeyIndex_FilledAfterReopen(t *testing.T) {
 	require.NoError(t, err)
 	defer reopened.Close()
 	sm = reopened.GetSchemaForNamespace("test")
-	require.NotNil(t, sm.filledKeyIndex("Fact", factKey.Properties), "the owned key index is filled on reopen")
+	require.NotNil(t, checkedIndexRead[*CompositeIndex](t)(sm.filledKeyIndex(t.Context(), "Fact", factKey.Properties)), "the owned key index is filled on reopen")
 	scans := countNodeKeyScans(t)
 	tx, err := reopened.BeginTransaction()
 	require.NoError(t, err)

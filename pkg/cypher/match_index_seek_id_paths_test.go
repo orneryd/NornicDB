@@ -231,10 +231,12 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	schema := store.GetSchema()
 	require.NotNil(t, schema)
 
-	labels := exec.indexCandidateLabels(schema, []string{"Person", "Book"}, "name")
+	labels, err := exec.indexCandidateLabels(ctx, schema, []string{"Person", "Book"}, "name")
+	require.NoError(t, err)
 	require.Equal(t, []string{"Person"}, labels)
 
-	labels = exec.indexCandidateLabels(schema, nil, "name")
+	labels, err = exec.indexCandidateLabels(ctx, schema, nil, "name")
+	require.NoError(t, err)
 	require.Empty(t, labels)
 
 	for _, nodeID := range []storage.NodeID{"p1", "p2", "m1"} {
@@ -245,9 +247,11 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	}
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_all_name_cov FOR (n:All) ON (n.name)", nil)
 	require.NoError(t, err)
-	labels = exec.indexCandidateLabels(schema, nil, "name")
+	labels, err = exec.indexCandidateLabels(ctx, schema, nil, "name")
+	require.NoError(t, err)
 	require.Equal(t, []string{"All", "Movie", "Person"}, labels)
 
-	labels = exec.indexCandidateLabels(schema, nil, "unknown")
+	labels, err = exec.indexCandidateLabels(ctx, schema, nil, "unknown")
+	require.NoError(t, err)
 	require.Empty(t, labels)
 }

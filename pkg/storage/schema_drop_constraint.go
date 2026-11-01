@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -80,13 +81,24 @@ func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 		temporalCompleteness := sm.forgetTemporalIndexCompleteLocked(c)
 
 		if constraintPropertyIndexKey(c) != "" {
-			if idx, ok := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); ok && idx.OwningConstraint == name {
+			// The drop already holds the schema write lock: its index scan belongs
+			// to that mutation's lifetime, not to a request.
+			idx, ok, err := sm.arity1PropertyIndexLocked(context.Background(), c.Label, c.Properties[0])
+			if err != nil {
+				return nil, err
+			}
+			if ok && idx.OwningConstraint == name {
 				droppedPropertyIndex = idx
 				delete(sm.compositeIndexes, idx.Name)
 			}
 		}
 		if constraintCompositeKeyIndexWanted(c) {
-			if idx := sm.compositeKeyIndexLocked(c.Label, c.Properties); idx != nil && idx.OwningConstraint == name {
+			// DropConstraint owns this write-held, context-free DDL mutation.
+			idx, err := sm.compositeKeyIndexLocked(context.Background(), c.Label, c.Properties)
+			if err != nil {
+				return nil, err
+			}
+			if idx != nil && idx.OwningConstraint == name {
 				droppedPropertyIndex = idx
 				delete(sm.compositeIndexes, idx.Name)
 			}

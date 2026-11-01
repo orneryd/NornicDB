@@ -581,7 +581,8 @@ func TestCompositeIndexEqualitySeekAndMerge(t *testing.T) {
 	// A single-property index is the same composite type at arity 1.
 	_, err = exec.Execute(ctx, `CREATE INDEX ix_a FOR (n:L) ON (n.a)`, nil)
 	require.NoError(t, err)
-	pi, ok := schema.GetPropertyIndex("L", "a")
+	pi, ok, indexErr := schema.GetPropertyIndex(ctx, "L", "a")
+	require.NoError(t, indexErr)
 	require.True(t, ok)
 	require.NotNil(t, pi)
 	_, isComposite := interface{}(pi).(*storage.CompositeIndex)

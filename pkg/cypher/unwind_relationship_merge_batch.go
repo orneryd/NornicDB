@@ -410,7 +410,15 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 				}
 			}
 		}
-		if schema != nil && schema.HasPropertyIndex(key.label, key.prop) {
+		indexed := false
+		if schema != nil {
+			var indexErr error
+			indexed, indexErr = schema.HasPropertyIndex(ctx, key.label, key.prop)
+			if indexErr != nil {
+				return nil, false, indexErr
+			}
+		}
+		if indexed {
 			unresolved := make(map[string]interface{})
 			for valueKey, value := range distinct {
 				ids, err := propertyIndexLookup(ctx, store, schema, key.label, key.prop, value)

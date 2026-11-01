@@ -1,6 +1,9 @@
 package storage
 
-import "reflect"
+import (
+	"context"
+	"reflect"
+)
 
 // constraintCreationValues is the shared duplicate owner for node and
 // relationship constraint backfills. Canonical keys select candidates; actual
@@ -13,7 +16,10 @@ type constraintCreationValue struct {
 	values []interface{}
 }
 
-func (seen constraintCreationValues) add(id string, values []interface{}) (string, bool) {
+func (seen constraintCreationValues) add(ctx context.Context, id string, values []interface{}) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	bucketValues, _ := constraintCreationBucketList(values)
 	key, ok := compositeIndexKeyOf(bucketValues)
 	if !ok {
@@ -22,6 +28,9 @@ func (seen constraintCreationValues) add(id string, values []interface{}) (strin
 		// an all-pairs scan. Unindexable forms conservatively share one bucket.
 		canonical := make([]interface{}, len(values))
 		for i, value := range bucketValues.([]interface{}) {
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
 			if part, valid := compositeIndexKeyOf(value); valid {
 				canonical[i] = part
 				continue
@@ -35,26 +44,42 @@ func (seen constraintCreationValues) add(id string, values []interface{}) (strin
 		}
 		key = ""
 		if canonical != nil {
-			key = compositeIndexKey(constraintCompositeKey(canonical))
+			composite, err := NewCompositeKey(ctx, canonical...)
+			if err != nil {
+				return "", false, err
+			}
+			key = compositeIndexKey(composite.Hash)
 		}
 	}
 	for _, prior := range seen[key] {
+		if err := ctx.Err(); err != nil {
+			return "", false, err
+		}
 		if len(prior.values) != len(values) {
 			continue
 		}
 		equal := true
 		for i, value := range values {
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
 			if !compareValues(prior.values[i], value) {
 				equal = false
 				break
 			}
 		}
 		if equal {
-			return prior.id, true
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
+			return prior.id, true, nil
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	seen[key] = append(seen[key], constraintCreationValue{id: id, values: values})
-	return "", false
+	return "", false, nil
 }
 
 // Property indexes deliberately do not index byte arrays. DDL uniqueness,

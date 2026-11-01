@@ -853,5 +853,9 @@ func (b *BadgerEngine) removeNodeRecordKeys(w kvWriter, node *Node) error {
 // lockEngineWriteKeys takes node's constraint key locks for a direct engine
 // write, under an owner of its own (a variable so tests can make it fail).
 var lockEngineWriteKeys = func(ctx context.Context, schema *SchemaManager, node *Node, owner string) (func(), error) {
-	return schema.acquireUniqueConstraintCommitLocks(ctx, owner, schema.appendConstraintValueKeys(nil, []*Node{node}, nil))
+	keys, err := schema.appendConstraintValueKeys(ctx, nil, []*Node{node}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return schema.acquireUniqueConstraintCommitLocks(ctx, owner, keys)
 }

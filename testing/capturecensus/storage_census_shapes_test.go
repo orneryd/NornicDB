@@ -72,7 +72,9 @@ func shapeDeferredRead(ctx context.Context, b *BadgerEngine) error {
 	}
 	return nil
 }
-func shapeRemoteNil(r *RemoteEngine) (int64, error) {
+// This is a native-engine root, not an unrelated remote-only free function:
+// the census discovers context readers from BadgerEngine method reachability.
+func (b *BadgerEngine) shapeRemoteNil(r *RemoteEngine) (int64, error) {
 	return r.remoteCount(nil, "MATCH (n) RETURN count(n)", nil, RemoteAccessRead)
 }
 func (tx *BadgerTransaction) shapeSubstitute(ctx context.Context, b *BadgerEngine) error {
@@ -119,12 +121,14 @@ func shapeWrapped(ctx context.Context, b *BadgerEngine) error {
 	_, err := b.OpenReadSnapshot(shapeWrap{ctx})
 	return err
 }
-var _ = []any{shapeUncheckedSuccess, shapeAfterReset, shapeLazyResetRead, shapeDeferredRead, shapeRemoteNil, (*BadgerTransaction).shapeSubstitute, (*BadgerTransaction).shapeStashTODO, shapeStashRead, shapeBound, shapeWrapped}
+var _ = []any{shapeUncheckedSuccess, shapeAfterReset, shapeLazyResetRead, shapeDeferredRead, (*BadgerEngine).shapeRemoteNil, (*BadgerTransaction).shapeSubstitute, (*BadgerTransaction).shapeStashTODO, shapeStashRead, shapeBound, shapeWrapped}
 `)}
 	facts, err := Extract(c, StoragePolicy())
 	require.NoError(t, err)
+	require.Contains(t, facts.NilContextBoundary, "(*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).QueryCypher", "the planted native owner must reach the actual remote context reader")
 	nil_ := strings.Join(nilContextFlows(facts), "\n")
 	all := strings.Join(facts.Violations, "\n")
+	require.Contains(t, nil_, "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).shapeRemoteNil -> (*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).remoteCount: a nil context can reach it: nil context.Context", "retain the actual remote nil argument, not just another finding carrying the plant's name")
 	for _, reported := range []string{"shapeUncheckedSuccess ->", "shapeAfterReset ->", "shapeLazyResetRead ->", "shapeDeferredRead", "shapeRemoteNil ->"} {
 		require.Contains(t, nil_, reported, "a planted nil shape must be reported")
 	}

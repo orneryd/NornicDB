@@ -232,7 +232,19 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 						edgeImages = append(edgeImages, op.OldEdge)
 					}
 				}
-				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
+				// RetainAcceptedAuthority(nil) is explicitly non-cancellable:
+				// detach the existing native owner only for key preparation, while
+				// preserving nil admission for the established lock owner.
+				keyContext := admission
+				if keyContext == nil {
+					keyContext = context.WithoutCancel(tx.engine.work.Context())
+				}
+				valueKeys, err := schema.appendConstraintValueKeys(keyContext, nil, nodeImages, edgeImages)
+				if err != nil {
+					releaseEntities()
+					return nil, err
+				}
+				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, valueKeys)
 				if err != nil {
 					releaseEntities()
 					return nil, err

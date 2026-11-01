@@ -40,7 +40,7 @@ func TestSchemaOrderExactIntegers(t *testing.T) {
 	t.Run("raw integer keys", func(t *testing.T) {
 		schema := NewSchemaManager()
 		require.NoError(t, schema.AddPropertyIndex("rank", "Item", []string{"rank"}))
-		index, _ := schema.GetPropertyIndex("Item", "rank")
+		index, _ := checkedIndexRange[*PropertyIndex](t)(schema.GetPropertyIndex(t.Context(), "Item", "rank"))
 		index.values[larger] = []NodeID{"a-larger"}
 		index.values[smaller] = []NodeID{"z-smaller"}
 		index.keysDirty = true

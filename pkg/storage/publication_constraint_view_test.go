@@ -58,12 +58,16 @@ func TestPublicationConstraintViewOwnsCompositeRelationshipProperties(t *testing
 	require.True(t, ok)
 	newValues, ok := relationshipConstraintValueKeys([]string{"since", "weight"}, written.Properties, true)
 	require.True(t, ok)
+	oldKey, keyErr := NewCompositeKey(t.Context(), oldValues...)
+	require.NoError(t, keyErr)
+	newKey, keyErr := NewCompositeKey(t.Context(), newValues...)
+	require.NoError(t, keyErr)
 	want := []any{old.ID,
 		AffectedFact{EdgeID: old.ID},
 		AffectedFact{EdgeID: old.ID, Type: "KNOWS", Before: true},
 		AffectedFact{EdgeID: old.ID, Type: "KNOWS"},
-		publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "\x00relationship:KNOWS", property: property, value: NewCompositeKey(oldValues...).Hash}},
-		publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "\x00relationship:KNOWS", property: property, value: NewCompositeKey(newValues...).Hash}},
+		publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "\x00relationship:KNOWS", property: property, value: oldKey.Hash}},
+		publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "\x00relationship:KNOWS", property: property, value: newKey.Hash}},
 	}
 	schema.mu.Lock()
 	schema.constraints["rel"].Properties[0] = "changed"

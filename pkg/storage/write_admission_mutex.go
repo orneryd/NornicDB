@@ -100,6 +100,20 @@ func (m *contextRWMutex) release(exclusive bool) {
 	m.mu.Unlock()
 }
 
+// downgrade turns the caller's write hold into a read hold in one step under
+// the internal mutex: no waiter can acquire the write lock in between. A caller
+// that published state under the write lock keeps that state under the returned
+// read hold, and a queued writer waits for this read hold as for any reader,
+// so writer priority and cancellation semantics stay unchanged. The caller
+// releases the downgraded hold with RUnlock.
+func (m *contextRWMutex) downgrade() {
+	m.mu.Lock()
+	m.writer = false
+	m.readers++
+	m.signalLocked()
+	m.mu.Unlock()
+}
+
 // trackedRWMutex observes the existing publication/transaction lock protocol.
 // These holds must never span listener delivery. Ordinary schema, index and
 // buffer locks share admission mechanics but are not publication-order holds.

@@ -15,6 +15,7 @@ import (
 type ReviewedNonNilResult struct {
 	Index            int
 	PackageFunctions []string
+	PackageFiles     map[string]string
 	Review           ReviewedHeldValue
 }
 
@@ -35,6 +36,10 @@ func applyNonNilResultContracts(program *workcensus.Program, policy Policy, dige
 			}
 			candidates++
 			stale := reviewedHeldStale(program, function, record.Review, nil, digests)
+			files := reviewedPackageSourceFiles(digests.sourceFiles, function.Pkg.Pkg.Path())
+			if len(files) == 0 || !equalSourceFilePins(files, record.PackageFiles) {
+				stale += "; provider package source-file population/content changed"
+			}
 			population := reviewedPackageFunctions(program, function.Pkg.Pkg.Path())
 			if strings.Join(population, "\n") != strings.Join(record.PackageFunctions, "\n") {
 				stale += "; provider package function population changed"
@@ -118,4 +123,29 @@ func reviewedPackageFunctions(program *workcensus.Program, packagePath string) [
 	}
 	sort.Strings(out)
 	return out
+}
+
+// SourceBoundary is the extraction owner's overlay-aware, physical-file
+// fingerprint. Pinning every loaded file/state also covers globals and
+// anonymous initialization bodies absent from the declared-function census.
+func reviewedPackageSourceFiles(sources []workcensus.SourceBoundary, packagePath string) map[string]string {
+	files := map[string]string{}
+	for _, source := range sources {
+		if source.Package == packagePath {
+			files[source.File+" ["+source.State+"]"] = source.Digest
+		}
+	}
+	return files
+}
+
+func equalSourceFilePins(actual, reviewed map[string]string) bool {
+	if len(actual) != len(reviewed) {
+		return false
+	}
+	for file, digest := range actual {
+		if reviewed[file] != digest {
+			return false
+		}
+	}
+	return true
 }

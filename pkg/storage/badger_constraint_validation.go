@@ -468,14 +468,6 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace st
 	return nil
 }
 
-func constraintValueKey(value interface{}) string {
-	return NewCompositeKey(value).Hash
-}
-
-func constraintCompositeKey(values []interface{}) string {
-	return NewCompositeKey(values...).Hash
-}
-
 // validateEdgeConstraintsInTxn checks all relationship constraints for an edge within a transaction.
 // The excludeEdgeID allows excluding the edge being updated from uniqueness checks.
 func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string, excludeEdgeID EdgeID) error {

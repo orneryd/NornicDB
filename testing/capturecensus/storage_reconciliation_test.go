@@ -52,9 +52,14 @@ func TestStorageReconciliationRecords(t *testing.T) {
 	require.NotEmpty(t, record.Historical.Reason)
 	require.Equal(t, 51, len(StoragePolicy().CrossUnitOwners)+len(record.RetiredOwners), "every former cross-unit entry must remain active or have a source-pinned tombstone")
 	require.Len(t, record.RetiredSources, 4)
-	program, err := workcensus.LoadProgram(storageNilContextConfig(t, "./..."))
+	configuration := storageNilContextConfig(t, "./...")
+	configuration.IncludeProgram = true
+	configuration.Selectors = []workcensus.Selector{{Node: "declaration", Kind: "declaration", Reachability: "all"}}
+	inventory, err := workcensus.Extract(configuration)
 	require.NoError(t, err)
+	program := inventory.Program
 	digests := newSourceDigests(program)
+	digests.sourceFiles = inventory.Sources
 	require.Empty(t, applyNonNilResultContracts(program, StoragePolicy(), digests), "the reviewed provider must revalidate against this complete current program")
 	provider := StoragePolicy().NonNilResults["(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Context"]
 	require.Equal(t, 0, provider.Index)
@@ -100,4 +105,19 @@ func TestStorageReconciliationRecords(t *testing.T) {
 	for symbol, proof := range record.FormerRoots {
 		check(symbol, proof)
 	}
+}
+
+// File-level pins cover declarations that have no named SSA function, including
+// anonymous package initializers. Validate this narrow source population without
+// running the whole-module context census.
+func TestReviewedProviderPackageSourceFiles(t *testing.T) {
+	configuration := storageNilContextConfig(t, "./pkg/lifecycle")
+	configuration.SourceOnly = true
+	configuration.Selectors = []workcensus.Selector{{Node: "declaration", Kind: "declaration", Reachability: "all"}}
+	inventory, err := workcensus.Extract(configuration)
+	require.NoError(t, err)
+	actual := reviewedPackageSourceFiles(inventory.Sources, "github.com/orneryd/nornicdb/pkg/lifecycle")
+	require.NotEmpty(t, actual)
+	provider := StoragePolicy().NonNilResults["(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Context"]
+	require.Equal(t, provider.PackageFiles, actual, "provider declarations and initializer bytes must match their reviewed file pins")
 }

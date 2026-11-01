@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 )
 
@@ -313,7 +314,14 @@ func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id E
 			}
 			var key interface{} = values[0]
 			if len(values) > 1 {
-				key = NewCompositeKey(values...).Hash
+				// Publication keys belong to the commit being ordered, which carries no
+				// request of its own: the digest has that commit's lifetime, which never
+				// cancels and so never yields a partial key.
+				composite, err := NewCompositeKey(context.Background(), values...)
+				if err != nil {
+					return keys
+				}
+				key = composite.Hash
 			}
 			keys = append(keys, publicationUniqueKey{namespace, uniqueConstraintLockKey{label: label, property: rule.propertyKey, value: key}})
 		}

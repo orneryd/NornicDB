@@ -6,7 +6,7 @@ label-index readiness and remaining preparation. Preserve each author's work;
 port into current owners rather than restoring obsolete implementations.
 
 - [x] Preserve original #1636, #1693 and #1667 heads and the separate #1667 prototype.
-- [x] Rebase #1636 S1–S4 onto current #1684 (ccc5337ed), preserving release APOC I/O policy.
+- [x] Rebase #1636 S1–S4 onto current #1684 (61d13cded), preserving release APOC I/O policy.
 - [x] Rebase #1693 foundation commits onto the lifetime stack without merge commits.
 - [x] Correct the remaining long-lived read-view panic release to use WorkLifetime.
 - [ ] Verify lifetime shutdown contracts and correct obsolete gate schedules without weakening completion, rollback or admission assertions.
@@ -50,8 +50,38 @@ failed with malformed tool JSON and has no accepted findings; parent review rema
 
 Both contract decisions are now approved: canonical context-first Go index APIs with error propagation, and layered public continuation plus component scoring cancellation proof. DeepSeek implementation tasks run in separate registered worktrees; parent owns storage retirement architecture, integration, verification and publication.
 
-Current index and unique API migration builds; focused50K cancellation, pending/copy/order/lock-admission controls pass. Additional metadata-discovery and composite-key/digest exported context contracts are approved; two bounded DeepSeek migration jobs are underway. Current #1684 moved toccc5337ed; restack and all final evidence must include that current prerequisite.
+Current index and unique API migration builds; focused50K cancellation, pending/copy/order/lock-admission controls pass. Additional metadata-discovery and composite-key/digest exported context contracts are approved; two bounded DeepSeek migration jobs are underway. Current #1684 is61d13cded; restack is complete and all final evidence must include that prerequisite.
 
 - [x] Reproduce composite-key delimiter ambiguity through exact lookup and native bulk node-key creation; frame separate values through the existing digest owner. Focused integrated controls pass1.671s; persisted temporal keys remain unchanged.
 - [x] Separate generic cancellable lock admission from publication-hold observation; original zero-allocation budget and observer/cancellation controls pass1.231s.
-- [ ] Integrate current storage/capture census proof changes and regenerate source-pinned artifacts; filteredJoin error-propagation control remains an explicit failure being corrected.
+- [ ] Regenerate and qualify current source-pinned census artifacts. FilteredJoin error propagation is corrected and focused controls pass; no complete census pass is claimed.
+
+## Additional approved API completion and proof corrections
+
+- [x] Maintainer approved context-first schema discovery, composite-key and keyed-digest APIs; no pending contract question remains for these operations.
+- [x] Rebase the11 preserved integration commits onto newer prerequisite61d13cded; range comparison retains all changes (one formatting-only context difference).
+- [x] Independently verify new prerequisite error tests and focused transaction metadata/logger race controls on the combined source.
+- [x] Share the complete label-read benchmark kernel; preserve ready/building completeness and namespace checks. Smoke8 named cases passes1.941s; not timing qualification.
+- [x] Fix source-less nil-call identities without merging distinct compiler wrappers or suppressing their nil witnesses; independent control passes0.578s.
+- [x] Integrate approved discovery/key/hash callers and constraint-admission propagation. Real cancellation controls pass; detached nil publication and retained-authority contracts remain supported without empty-key fallback.
+- [x] Reuse one digest scratch and length buffer, retire three auth forwarding functions, preserve framed digest bytes and context-free cache contract. Final digest cancellation/race controls pass2.740s.
+- [x] Validate provider package file pins against anonymous aggregate initializer poisoning and preserve failure sensitivity; exact integrated controls pass1.513s.
+- [x] Correct captured-cell repeated-store and success-edge dominance proof. Independent generic race controls pass51.895s; full current-source census remains pending.
+- [x] Correct remote nil-shape fixture to exercise the scoped native root and retain exact forwarding witness. Current integrated control passes15.337s.
+- [ ] Re-extract and qualify frozen current-source populations once all pending source edits converge; previous capture707 findings remain provisional, not a clean audit.
+
+## Current integrated follow-up
+
+- [x] Independently verify the behavior-preserving transaction file split:147 function declarations/bodies and12 globals preserved exactly.
+- [x] Correct sorted-index rebuild write-to-read handoff atomically; unchanged public concurrent-reader and race controls pass.
+- [x] Independently qualify safe handoff test teardown and deterministic controls under race:2.390s.
+- [x] Reproduce public snapshot cancellation blocked by buffer admission; canonical contextual admission plus safe joined regression tests pass integrated race7.029s, preserving nil-detached and zero-allocation cached paths.
+- [ ] Complete metadata-scan canonical owner review and measured cost comparison.
+- [ ] Review the key/digest preparation certificate as one family only; complete population qualification remains open.
+
+- [x] All-package compile-only retry passes after migrating the missed admin-import test caller; many package results cached, no test-suite pass implied.
+- [ ] Review key/digest52-member certificate as a proposal only; investigate supported list/map normalization cancellation before accepting affected rows.
+
+- [x] Private filled composite-index discovery retains caller context through actual schema-lock admission and metadata/property enumeration; integrated admission/validation/discovery race controls pass3.356s.
+- [x] Pure metadata relocation preserves91 function declarations/bodies/docs,19 global declarations/order and complete comments/import union; schema.go2424lines.
+- [ ] Maintainer decision pending for two remaining request-bearing exported discovery contracts: SeekableCompositeIndexesForLabel and GetConstraintsForLabels. Public PrepareMergeNode masking RED is retained, not claimed fixed by private controls.

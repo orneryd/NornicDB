@@ -144,7 +144,18 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	}
 	schema := e.getStorage(ctx).GetSchema()
 	for _, match := range plan.matches {
-		if !match.byID && (schema == nil || !schema.HasPropertyIndex(match.label, match.propName)) {
+		if match.byID {
+			continue
+		}
+		indexed := false
+		if schema != nil {
+			var indexErr error
+			indexed, indexErr = schema.HasPropertyIndex(ctx, match.label, match.propName)
+			if indexErr != nil {
+				return nil, false, indexErr
+			}
+		}
+		if !indexed {
 			return nil, false, nil
 		}
 	}

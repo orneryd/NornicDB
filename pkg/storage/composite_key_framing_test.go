@@ -12,7 +12,11 @@ func TestCompositeIndexSeparatesDelimiterShapedValues(t *testing.T) {
 	left := []interface{}{"a|string:b", "c"}
 	right := []interface{}{"a", "b|string:c"}
 	t.Run("key", func(t *testing.T) {
-		require.NotEqual(t, NewCompositeKey(left...).Hash, NewCompositeKey(right...).Hash,
+		leftKey, err := NewCompositeKey(t.Context(), left...)
+		require.NoError(t, err)
+		rightKey, err := NewCompositeKey(t.Context(), right...)
+		require.NoError(t, err)
+		require.NotEqual(t, leftKey.Hash, rightKey.Hash,
 			"distinct property tuples must not alias before HMAC")
 	})
 	schema := NewSchemaManager()

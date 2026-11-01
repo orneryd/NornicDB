@@ -33,7 +33,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	require.NoError(t, committed.AddUniqueConstraint("retained_unique", "Account", "retainedUID"))
 	require.NoError(t, committed.AddCompositeIndex("retained_composite", "Account", []string{"name", "retainedUID"}))
 	require.NoError(t, committed.AddRangeIndex("retained_range", "Account", "age"))
-	retainedProperty, _ := committed.GetPropertyIndex("Account", "name")
+	retainedProperty, _ := checkedIndexRange[*PropertyIndex](t)(committed.GetPropertyIndex(t.Context(), "Account", "name"))
 	retainedUnique := committed.uniqueConstraints["Account:retainedUID"]
 	retainedComposite := committed.compositeIndexes["retained_composite"]
 	retainedRange, _ := committed.GetRangeIndex("retained_range")
@@ -70,7 +70,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	require.True(t, found)
 	require.True(t, exists)
 	require.True(t, complete)
-	actualProperty, _ := committed.GetPropertyIndex("Account", "name")
+	actualProperty, _ := checkedIndexRange[*PropertyIndex](t)(committed.GetPropertyIndex(t.Context(), "Account", "name"))
 	require.Same(t, retainedProperty, actualProperty)
 	require.Same(t, retainedUnique, committed.uniqueConstraints["Account:retainedUID"])
 	require.Same(t, retainedComposite, committed.compositeIndexes["retained_composite"])

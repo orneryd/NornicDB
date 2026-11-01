@@ -43,11 +43,14 @@ func TestConstraintValueLocksDoNotReacquireEntityAuthority(t *testing.T) {
 				require.NoError(t, err)
 				defer releaseEntity()
 				var releaseValues func()
+				var valueKeys []uniqueConstraintLockKey
 				if edgeCase {
-					releaseValues, err = schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", schema.appendConstraintValueKeys(nil, nil, []*Edge{{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: label, Properties: map[string]any{"uid": "value"}}}))
+					valueKeys, err = schema.appendConstraintValueKeys(t.Context(), nil, nil, []*Edge{{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: label, Properties: map[string]any{"uid": "value"}}})
 				} else {
-					releaseValues, err = schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", schema.appendConstraintValueKeys(nil, []*Node{{ID: "test:n", Labels: []string{label}, Properties: map[string]any{"uid": "value"}}}, nil))
+					valueKeys, err = schema.appendConstraintValueKeys(t.Context(), nil, []*Node{{ID: "test:n", Labels: []string{label}, Properties: map[string]any{"uid": "value"}}}, nil)
 				}
+				require.NoError(t, err)
+				releaseValues, err = schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", valueKeys)
 				require.NoError(t, err)
 				defer releaseValues()
 				schema.uniqueConstraintCommitLocksMu.Lock()

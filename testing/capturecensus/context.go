@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -107,7 +106,7 @@ type ContextSource struct {
 //     counted. Any other creation fails.
 //
 // Every admission goes through the one acceptance recorder (log).
-func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog) (sites []ContextSite, violations, boundary []string, crossings []BoundaryCrossing) {
+func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog, sourceFiles []workcensus.SourceBoundary) (sites []ContextSite, violations, boundary []string, crossings []BoundaryCrossing) {
 	if p == nil || len(policy.ContextOwners) == 0 {
 		return nil, nil, nil, nil
 	}
@@ -115,6 +114,7 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog) (sit
 	usedDispositions := map[string]bool{}
 	usedUses := map[[2]string]bool{}
 	useSeen := map[string]bool{}
+	syntheticOwners := map[*ssa.Function]string{}
 	crossSeen := map[string]bool{}
 	scopeSeen := map[string]bool{}
 	reviewedSeen := map[string]bool{}
@@ -122,6 +122,7 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog) (sit
 	staleSites := map[string]bool{}
 	staleHolders := map[string]string{}
 	digests := newSourceDigests(p)
+	digests.sourceFiles = sourceFiles
 	violations = append(violations, applyNonNilResultContracts(p, policy, digests)...)
 	owners := map[string]bool{}
 	for _, owner := range policy.ContextOwners {
@@ -305,7 +306,7 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog) (sit
 						log.accept(KindCrossUnitOwner, where, fmt.Sprintf("lifetime to become %s's owner context when merge unit %s lands: %s", cross.FixingPR, cross.Unit, cross.Reason), cross.Approver, nil)
 					}
 				}
-				for _, arg := range call.Common().Args {
+				for argument, arg := range call.Common().Args {
 					if !isContext(arg.Type()) {
 						continue
 					}
@@ -331,11 +332,8 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog) (sit
 							continue
 						}
 						root := nilWitnessRoot(witness)
-						site := pos.Filename
-						if rel, err := filepath.Rel(p.Root, pos.Filename); err == nil {
-							site = filepath.ToSlash(rel)
-						}
-						use := nilWitnessUse(fmt.Sprintf("%s:%d:%d", site, pos.Line, pos.Column), caller, target, witness)
+						site := nilContextSite(p, call, argument, syntheticOwners)
+						use := nilWitnessUse(site, caller, target, witness)
 						if useSeen[use] {
 							violations = append(violations, "nil-context use key is not unique to one call site: "+use)
 						}

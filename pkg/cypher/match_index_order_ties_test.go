@@ -35,7 +35,10 @@ func TestIndexedOrderExactIntegers(t *testing.T) {
 					if indexed {
 						_, err := exec.Execute(ctx, "CREATE RANGE INDEX exact_rank FOR (n:ExactOrder) ON (n.rank)", nil)
 						require.NoError(t, err)
-						require.True(t, store.GetSchema().HasPropertyIndex("ExactOrder", "rank"))
+						hasRankIndex, indexErr := store.GetSchema().HasPropertyIndex(ctx, "ExactOrder", "rank")
+						require.NoError(t, indexErr)
+						require.True(t, hasRankIndex)
+
 					}
 					if transaction {
 						_, err := exec.Execute(ctx, "BEGIN", nil)

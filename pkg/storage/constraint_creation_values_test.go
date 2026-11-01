@@ -12,14 +12,17 @@ import (
 func TestConstraintCreationValuesPreserveUnsupportedAndNumericForms(t *testing.T) {
 	seen := make(constraintCreationValues)
 	for _, value := range []interface{}{[]byte{1, 2}, time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)} {
-		_, duplicate := seen.add("first", []interface{}{value})
+		_, duplicate, keyErr := seen.add(t.Context(), "first", []interface{}{value})
+		require.NoError(t, keyErr)
 		require.False(t, duplicate)
-		id, duplicate := seen.add("second", []interface{}{value})
+		id, duplicate, keyErr := seen.add(t.Context(), "second", []interface{}{value})
+		require.NoError(t, keyErr)
 		require.True(t, duplicate)
 		require.Equal(t, "first", id)
 	}
 	for _, value := range []interface{}{[]byte{1, 3}, time.Date(2020, 1, 3, 3, 4, 5, 0, time.UTC)} {
-		_, duplicate := seen.add("distinct", []interface{}{value})
+		_, duplicate, keyErr := seen.add(t.Context(), "distinct", []interface{}{value})
+		require.NoError(t, keyErr)
 		require.False(t, duplicate)
 	}
 	for _, pair := range [][2]interface{}{{int64(math.MaxInt64), float64(math.MaxInt64)}, {uint64(math.MaxUint64), float64(math.MaxUint64)}} {
@@ -260,9 +263,11 @@ func TestConstraintCreationByteListEquivalenceBothOrders(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/order%d", tc.name, direction), func(t *testing.T) {
 				require.Equal(t, tc.equal, compareValues(pair[0], pair[1]), "pin existing shared equality semantics")
 				seen := make(constraintCreationValues)
-				_, duplicate := seen.add("first", []interface{}{pair[0]})
+				_, duplicate, keyErr := seen.add(t.Context(), "first", []interface{}{pair[0]})
+				require.NoError(t, keyErr)
 				require.False(t, duplicate)
-				id, duplicate := seen.add("second", []interface{}{pair[1]})
+				id, duplicate, keyErr := seen.add(t.Context(), "second", []interface{}{pair[1]})
+				require.NoError(t, keyErr)
 				require.Equal(t, tc.equal, duplicate)
 				if tc.equal {
 					require.Equal(t, "first", id)
@@ -271,9 +276,11 @@ func TestConstraintCreationByteListEquivalenceBothOrders(t *testing.T) {
 				// fallback key path; it must use the same normalized bucket.
 				stamp := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 				composite := make(constraintCreationValues)
-				_, duplicate = composite.add("first", []interface{}{pair[0], stamp})
+				_, duplicate, keyErr = composite.add(t.Context(), "first", []interface{}{pair[0], stamp})
+				require.NoError(t, keyErr)
 				require.False(t, duplicate)
-				_, duplicate = composite.add("second", []interface{}{pair[1], stamp})
+				_, duplicate, keyErr = composite.add(t.Context(), "second", []interface{}{pair[1], stamp})
+				require.NoError(t, keyErr)
 				require.Equal(t, tc.equal, duplicate)
 
 			})

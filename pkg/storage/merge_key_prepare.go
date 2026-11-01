@@ -83,7 +83,11 @@ func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []stri
 	schema := engine.GetSchemaForNamespace(namespace)
 	tx.mu.Unlock()
 
-	for _, key := range schema.uniqueMergeKeys(labels, props) {
+	keys, err := schema.uniqueMergeKeys(ctx, labels, props)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
 		if err := tx.prepareMergeAdmissionKey(ctx, schema, namespace, key, props, write); err != nil {
 			return err
 		}
@@ -192,7 +196,10 @@ func (tx *BadgerTransaction) mergeAdmissionHolder(ctx context.Context, schema *S
 		nodeID, found, _, complete, err := schema.LookupUniqueConstraintValue(ctx, label, properties[0], props[properties[0]])
 		return nodeID, found, complete, err
 	}
-	idx := schema.filledKeyIndex(label, properties)
+	idx, err := schema.filledKeyIndex(ctx, label, properties)
+	if err != nil {
+		return "", false, false, err
+	}
 	if idx == nil {
 		return "", false, false, nil
 	}

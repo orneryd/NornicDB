@@ -33,18 +33,7 @@ func BenchmarkLabelRebuildReadCosts(b *testing.B) {
 				b.Run(state, func(b *testing.B) {
 					for _, mode := range []string{"slice", "projected"} {
 						b.Run(mode, func(b *testing.B) {
-							b.ReportAllocs()
-							for i := 0; i < b.N; i++ {
-								if mode == "slice" {
-									nodes, err := engine.GetNodesByLabelInScope(b.Context(), "bench:", "Record")
-									require.NoError(b, err)
-									require.Len(b, nodes, size)
-								} else {
-									count := 0
-									require.NoError(b, engine.StreamNodesByLabelProjectedInScope(b.Context(), "bench:", "Record", []string{"value"}, func(n *Node) error { count++; return nil }))
-									require.Equal(b, size, count)
-								}
-							}
+							benchmarkCompleteScopedLabelRead(b, engine, "bench:", "Record", []string{"value"}, size, mode)
 						})
 					}
 				})

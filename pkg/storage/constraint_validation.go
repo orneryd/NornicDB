@@ -239,7 +239,10 @@ func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) e
 			continue // NULL values don't violate uniqueness
 		}
 
-		if existingNodeID, found := seen.add(string(node.ID), []interface{}{value}); found {
+		// Constraint-creation validation is a context-free native Go API.
+		if existingNodeID, found, err := seen.add(context.Background(), string(node.ID), []interface{}{value}); err != nil {
+			return err
+		} else if found {
 			message := localization.StorageValidationNodeUniqueDuplicate(string(existingNodeID), string(node.ID), property, value)
 			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{property}, message, nil)
 		}
@@ -284,7 +287,10 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 			continue
 		}
 
-		if existingID, found := seen.add(string(node.ID), values); found {
+		// Constraint-creation validation is a context-free native Go API.
+		if existingID, found, err := seen.add(context.Background(), string(node.ID), values); err != nil {
+			return err
+		} else if found {
 			message := localization.StorageValidationNodeKeyDuplicateCreation(existingID, string(node.ID), c.Properties, values)
 			if c.Type == ConstraintUnique {
 				message = localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, existingID)

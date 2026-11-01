@@ -58,6 +58,18 @@
       "github.com/orneryd/nornicdb/pkg/lifecycle.nextSeq",
       "github.com/orneryd/nornicdb/pkg/lifecycle.requireContext"
     ],
+    "PackageFiles": {
+      "pkg/lifecycle/after_func.go [compiled]": "7461e996fb6e5f51d2a9f4c46a75cd72d8650f8d263e804ba3f5eafbbf34ab3b",
+      "pkg/lifecycle/component.go [compiled]": "b265bc51a8205dba8b90300bf869defce5f5602d9f275a24c290622203056a18",
+      "pkg/lifecycle/doc.go [compiled]": "57fa68a6dd97ea564f2a4139f35bd61ff5ab78df3a69cfce49931a9be37a27c5",
+      "pkg/lifecycle/once_completion.go [compiled]": "4580aa35ffadf75dc7f586d5e0604d76c98e7572d2c9cb5c3f8792072615e265",
+      "pkg/lifecycle/outcomes.go [compiled]": "b8af8a676ab519e3b7657704b16cc18f8eb72aeec197b95d7f98f712279d8e8f",
+      "pkg/lifecycle/owned_timer.go [compiled]": "620916510ab50afb326d328d616b2d0575e43eee37e4977a210f2cb986c308e9",
+      "pkg/lifecycle/shutdown.go [compiled]": "f5556f3834bc8feac54fb2e027afb44cf132f038646e605776d650b71d56a226",
+      "pkg/lifecycle/supervisor.go [compiled]": "5d30197cfcdacc012d6368dedc286843a9c7ad031fcb6001debcf70083a55f4c",
+      "pkg/lifecycle/testenv.go [compiled]": "5351a788e0f66f65711405a76f4639276985b6670b3a1e5d6253545fe1b258af",
+      "pkg/lifecycle/work_lifetime.go [compiled]": "c8f5ea102f7eb45f33b632343c924e0346f53d08257f88b0758f8fc414de9648"
+    },
     "Review": {
       "EndsEdges": null,
       "TrackedHolders": null,

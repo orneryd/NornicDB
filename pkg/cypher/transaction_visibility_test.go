@@ -197,7 +197,9 @@ func TestExplicitTransactionRejectsMixedSchemaAndData(t *testing.T) {
 			_, rollbackErr := executor.Execute(ctx, "ROLLBACK", nil)
 			require.NoError(t, rollbackErr)
 			require.ErrorContains(t, mixErr, "ForbiddenDueToTransactionType")
-			_, exists := store.GetSchema().GetPropertyIndex("Account", "accountID")
+			_, exists, indexErr := store.GetSchema().GetPropertyIndex(ctx, "Account", "accountID")
+			require.NoError(t, indexErr)
+
 			require.False(t, exists)
 			nodes, err := store.GetNodesByLabel(ctx, "Account")
 			require.NoError(t, err)

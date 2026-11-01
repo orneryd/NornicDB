@@ -20,15 +20,23 @@ func TestMergeAdmissionCanonicalTuple(t *testing.T) {
 			require.True(t, owned)
 			require.NoError(t, schema.BackfillCompositeIndex(idx.Name, nil))
 			props := map[string]interface{}{"tenant": int64(7), "id": int64(42)}
-			keys := schema.uniqueMergeKeys([]string{"Tuple"}, props)
+			keys, keyErr := schema.uniqueMergeKeys(t.Context(), []string{"Tuple"}, props)
+			require.NoError(t, keyErr)
 			require.Len(t, keys, 1)
-			canonical, ok := nodeConstraintLockKey(c, &Node{Properties: props})
+			canonical, ok, canonicalErr := nodeConstraintLockKey(t.Context(), c, &Node{Properties: props})
+			require.NoError(t, canonicalErr)
 			require.True(t, ok)
 			require.Equal(t, canonical, keys[0].lock)
 			// Numeric aliases must use commit's same tuple, in schema order.
-			require.Equal(t, canonical, schema.uniqueMergeKeys([]string{"Tuple"}, map[string]interface{}{"id": float64(42), "tenant": int(7)})[0].lock)
-			require.Empty(t, schema.uniqueMergeKeys([]string{"Tuple"}, map[string]interface{}{"tenant": int64(7)}))
-			require.Empty(t, schema.uniqueMergeKeys([]string{"Tuple"}, map[string]interface{}{"tenant": int64(7), "id": nil}))
+			aliases, aliasesErr := schema.uniqueMergeKeys(t.Context(), []string{"Tuple"}, map[string]interface{}{"id": float64(42), "tenant": int(7)})
+			require.NoError(t, aliasesErr)
+			require.Equal(t, canonical, aliases[0].lock)
+			missing, missingErr := schema.uniqueMergeKeys(t.Context(), []string{"Tuple"}, map[string]interface{}{"tenant": int64(7)})
+			require.NoError(t, missingErr)
+			require.Empty(t, missing)
+			null, nullErr := schema.uniqueMergeKeys(t.Context(), []string{"Tuple"}, map[string]interface{}{"tenant": int64(7), "id": nil})
+			require.NoError(t, nullErr)
+			require.Empty(t, null)
 
 			creator := beginMergeKeyTx(t, engine)
 			require.NoError(t, creator.PrepareMergeNode(context.Background(), []string{"Tuple"}, props))
@@ -135,7 +143,8 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 
 			// The lock hash is the index's exact key for the tuple: it lists
 			// only the odd tuple's node, not its rounded neighbour.
-			keys := schema.uniqueMergeKeys([]string{"Tuple"}, oddProps)
+			keys, keyErr := schema.uniqueMergeKeys(t.Context(), []string{"Tuple"}, oddProps)
+			require.NoError(t, keyErr)
 			require.Len(t, keys, 1)
 			hash, _ := keys[0].lock.value.(string)
 			require.Equal(t, []NodeID{oddID}, checkedIndexRead[[]NodeID](t)(idx.lookupFullHash(t.Context(), hash)))
@@ -145,7 +154,8 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 			require.True(t, found)
 			require.True(t, complete)
 			require.Equal(t, oddID, holder)
-			plain := schema.uniqueMergeKeys([]string{"Tuple"}, map[string]interface{}{"tenant": int64(7), "id": int64(42)})
+			plain, keyErr := schema.uniqueMergeKeys(t.Context(), []string{"Tuple"}, map[string]interface{}{"tenant": int64(7), "id": int64(42)})
+			require.NoError(t, keyErr)
 			require.Len(t, plain, 1)
 			plainHash, _ := plain[0].lock.value.(string)
 			require.Equal(t, checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), int64(7), int64(42))), checkedIndexRead[[]NodeID](t)(idx.lookupFullHash(t.Context(), plainHash)))

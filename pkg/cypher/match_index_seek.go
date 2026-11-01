@@ -406,7 +406,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 		return nil, false, nil
 	}
 
-	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
+	labels, anyOf, err := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
+	if err != nil {
+		return nil, false, err
+	}
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
@@ -508,7 +511,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(ctx context.Co
 	if schema == nil {
 		return nil, false, nil
 	}
-	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
+	labels, anyOf, err := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
+	if err != nil {
+		return nil, false, err
+	}
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
@@ -601,7 +607,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 	if schema == nil {
 		return nil, false, nil
 	}
-	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
+	labels, anyOf, err := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
+	if err != nil {
+		return nil, false, err
+	}
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
@@ -829,8 +838,14 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.
 		return nil, false, nil
 	}
 
-	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop)
-	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop)
+	leftLabels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, lprop)
+	if err != nil {
+		return nil, false, err
+	}
+	rightLabels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, rprop)
+	if err != nil {
+		return nil, false, err
+	}
 	if len(leftLabels) == 0 || len(rightLabels) == 0 {
 		return nil, false, nil
 	}
@@ -945,8 +960,14 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		return nil, false, nil
 	}
 
-	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop)
-	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop)
+	leftLabels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, lprop)
+	if err != nil {
+		return nil, false, err
+	}
+	rightLabels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, rprop)
+	if err != nil {
+		return nil, false, err
+	}
 	if len(leftLabels) == 0 && len(rightLabels) == 0 {
 		return nil, false, nil
 	}
@@ -1237,7 +1258,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 
 	// More than one candidate label would merge several indexes in order; that
 	// ordering is not implemented for either mode yet.
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, indexProperty)
+	labels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, indexProperty)
+	if err != nil {
+		return nil, false, err
+	}
 	if len(labels) != 1 {
 		return nil, false, nil
 	}
@@ -1295,15 +1319,19 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(ctx context.Co
 	return nodes, used, err
 }
 
-func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, queryLabels []string, property string) []string {
+func (e *StorageExecutor) indexCandidateLabels(ctx context.Context, schema *storage.SchemaManager, queryLabels []string, property string) ([]string, error) {
 	if len(queryLabels) > 0 {
 		out := make([]string, 0, len(queryLabels))
 		for _, label := range queryLabels {
-			if _, exists := schema.GetPropertyIndex(label, property); exists {
+			exists, err := schema.HasPropertyIndex(ctx, label, property)
+			if err != nil {
+				return nil, err
+			}
+			if exists {
 				out = append(out, label)
 			}
 		}
-		return out
+		return out, nil
 	}
 	labels := make(map[string]struct{})
 	for _, raw := range schema.GetIndexes() {
@@ -1347,9 +1375,9 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 	}
 	sort.Strings(out)
 	if !labellessPropertyIndexUsable(e.storage, out...) {
-		return nil
+		return nil, nil
 	}
-	return out
+	return out, nil
 }
 
 // seekCandidateLabels returns the labels whose property indexes on property
@@ -1363,20 +1391,28 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 // entries lists it, and Neo4j plans the same predicate as one index seek per
 // label. When one of them has no index, the indexes can miss a match and the
 // label-less route decides (labellessPropertyIndexUsable).
-func (e *StorageExecutor) seekCandidateLabels(schema *storage.SchemaManager, patternLabels []string, property string, anyOf []string) ([]string, []string) {
+func (e *StorageExecutor) seekCandidateLabels(ctx context.Context, schema *storage.SchemaManager, patternLabels []string, property string, anyOf []string) ([]string, []string, error) {
 	if len(patternLabels) == 0 && len(anyOf) > 0 {
 		indexed := true
 		for _, label := range anyOf {
-			if _, exists := schema.GetPropertyIndex(label, property); !exists {
+			exists, err := schema.HasPropertyIndex(ctx, label, property)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !exists {
 				indexed = false
 				break
 			}
 		}
 		if indexed {
-			return anyOf, anyOf
+			return anyOf, anyOf, nil
 		}
 	}
-	return e.indexCandidateLabels(schema, patternLabels, property), nil
+	labels, err := e.indexCandidateLabels(ctx, schema, patternLabels, property)
+	if err != nil {
+		return nil, nil, err
+	}
+	return labels, nil, nil
 }
 
 // seekCandidateHasLabels reports whether a node an index listed still carries
@@ -1976,7 +2012,10 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(ctx context.Context,
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, property)
+	labels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, property)
+	if err != nil {
+		return nil, false, err
+	}
 	if len(labels) == 0 {
 		return nil, false, nil
 	}

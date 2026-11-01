@@ -604,7 +604,10 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 
 func TestCompositeKey(t *testing.T) {
 	t.Run("CreateCompositeKey", func(t *testing.T) {
-		key := NewCompositeKey("US", "NYC", "10001")
+		key, err := NewCompositeKey(t.Context(), "US", "NYC", "10001")
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
 
 		if len(key.Values) != 3 {
 			t.Errorf("Expected 3 values, got %d", len(key.Values))
@@ -619,8 +622,14 @@ func TestCompositeKey(t *testing.T) {
 
 	t.Run("CompositeKeyDeterminism", func(t *testing.T) {
 		// Same values should produce same hash
-		key1 := NewCompositeKey("US", "NYC", 10001)
-		key2 := NewCompositeKey("US", "NYC", 10001)
+		key1, err := NewCompositeKey(t.Context(), "US", "NYC", 10001)
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
+		key2, err := NewCompositeKey(t.Context(), "US", "NYC", 10001)
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
 
 		if key1.Hash != key2.Hash {
 			t.Error("Expected identical hashes for same values")
@@ -628,8 +637,14 @@ func TestCompositeKey(t *testing.T) {
 	})
 
 	t.Run("CompositeKeyDifferentValues", func(t *testing.T) {
-		key1 := NewCompositeKey("US", "NYC")
-		key2 := NewCompositeKey("US", "LA")
+		key1, err := NewCompositeKey(t.Context(), "US", "NYC")
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
+		key2, err := NewCompositeKey(t.Context(), "US", "LA")
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
 
 		if key1.Hash == key2.Hash {
 			t.Error("Expected different hashes for different values")
@@ -638,8 +653,14 @@ func TestCompositeKey(t *testing.T) {
 
 	t.Run("CompositeKeyTypeAwareness", func(t *testing.T) {
 		// String "10" vs int 10 should produce different keys
-		key1 := NewCompositeKey("10")
-		key2 := NewCompositeKey(10)
+		key1, err := NewCompositeKey(t.Context(), "10")
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
+		key2, err := NewCompositeKey(t.Context(), 10)
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
 
 		if key1.Hash == key2.Hash {
 			t.Error("Expected different hashes for different types")
@@ -647,7 +668,11 @@ func TestCompositeKey(t *testing.T) {
 	})
 
 	t.Run("CompositeKeyString", func(t *testing.T) {
-		key := NewCompositeKey("US", "NYC", 10001)
+		key, err := NewCompositeKey(t.Context(), "US", "NYC", 10001)
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
+
 		str := key.String()
 
 		if str != "US, NYC, 10001" {

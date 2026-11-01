@@ -636,7 +636,9 @@ func tlfLockSnapshot(t *testing.T, c Constraint, values map[string]interface{}) 
 	sm := NewSchemaManager()
 	require.NoError(t, sm.AddConstraint(c))
 	node := &Node{ID: "test:lock", Labels: []string{c.Label}, Properties: values}
-	release, err := sm.acquireUniqueConstraintCommitLocks(context.Background(), "tlf-lock", sm.appendConstraintValueKeys(nil, []*Node{node}, nil))
+	keys, err := sm.appendConstraintValueKeys(t.Context(), nil, []*Node{node}, nil)
+	require.NoError(t, err)
+	release, err := sm.acquireUniqueConstraintCommitLocks(context.Background(), "tlf-lock", keys)
 	require.NoError(t, err)
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	actual := make(map[uniqueConstraintLockKey]bool)
@@ -693,7 +695,9 @@ func TestTemporalListFamilyConstraintLockPreservation(t *testing.T) {
 			expected := uniqueConstraintLockKey{label: c.Label, property: props[0], value: values[0]}
 			if len(props) > 1 {
 				expected.property = string(c.Type) + ":" + strings.Join(props, ",")
-				expected.value = constraintCompositeKey(values)
+				composite, err := NewCompositeKey(t.Context(), values...)
+				require.NoError(t, err)
+				expected.value = composite.Hash
 			}
 			require.Equal(t, map[uniqueConstraintLockKey]bool{expected: true}, actual)
 			t.Logf("TLF_PRESERVE lock type=%s properties=%v", c.Type, props)
