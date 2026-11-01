@@ -40,7 +40,10 @@ jobs:
           head=$(git rev-parse HEAD)
           [[ "$head" == "$EXPECTED_HEAD" ]]
           git cat-file -e "${BASE_SHA}^{commit}"
-          git merge-base "$BASE_SHA" "$head" >/dev/null
+          git merge-base --is-ancestor "$BASE_SHA" "$head" || {
+            echo "The main PR base is not an ancestor of the release head; sync main and request verification again." >&2
+            exit 1
+          }
           echo "base=$BASE_SHA" >> "$GITHUB_OUTPUT"
           printf 'Verified head: %s\nPR base: %s\n' "$head" "$BASE_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
 
