@@ -30,9 +30,9 @@ fix/<topic>     ──┘                                     │ pull request (
 
 | Branch | Who | How changes land | Checks on GitHub |
 |---|---|---|---|
-| `feature/*`, `fix/*` | anyone with write access | push freely; open PRs into `develop` if you want a review | none |
-| `develop` | integration branch | push or merge freely (no force-push, no deletion) | manual, admin-approved |
-| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | manual, admin-approved |
+| `feature/*`, `fix/*` | anyone with write access | push freely; target `release/vX.Y.Z` for release fixes | none |
+| `develop` | integration branch | direct integration only; pull requests targeting develop are closed (no force-push, no deletion) | manual, admin-approved |
+| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | automatic full verification on every push; manual runs require admin approval |
 | `main` | maintainers only | fast-forward from a finished release branch, or a scoped operational/documentation PR | local verification; manual, admin-approved GitHub checks |
 
 - **Experiment on `feature/<topic>` branches** cut from `develop`, iterate as fast as you like, and merge them into
@@ -69,22 +69,22 @@ changes follow `develop` and the release process. If a change mixes both scopes,
 Docs changes on `main` can publish the documentation site immediately. CI/CD changes can affect publishing too;
 inspect the relevant workflow triggers before merging.
 
-### Checks: run them locally, spend Actions minutes deliberately
+### Checks: local, release, and administrator-approved runs
 
-Pull requests do **not** start GitHub Actions automatically; opening many pull requests in a short time used to
-exhaust the Actions allowance. Instead:
+Pull requests do **not** start CI automatically. A small governance workflow closes pull requests targeting `develop` without running PR code or tests; GitHub may briefly show them open before the job runs. Instead:
 
 1. **Locally, before asking for a merge:** `make verify BASE=origin/develop` (use the actual PR base) runs every check CI runs (localization, UI build, build,
    all test groups, allocation ratchet, Cypher conformance, the Neo4j differential, docs) for the files your branch
    changes, with one summary at the end. `make verify-list` shows what would run, `make verify-help` lists the
    options, and `make verify BRANCH=<branch>` verifies another branch without touching your checkout.
-2. **On GitHub, when needed:** use *Run workflow* to select a branch/ref, then an administrator approves
+2. **On GitHub, when needed:** use *Run workflow* on a trusted workflow ref and specify the target branch or SHA as an input where supported, then an administrator approves
    the waiting jobs through the `admin-approved-actions` environment. PR events and labels, including
-   `ci:run`, never start checks. Check the exact ref before approving; approval permits that run's jobs.
-3. **Automatic develop runs are paused:** both nightly verification and weekly canary publishing are
-   manual-only until the metered Actions budget policy changes.
+   `ci:run`, never start CI checks. Check the exact ref before approving; approval permits that run's jobs.
+3. **Release branches:** each push to `release/**` (including a PR merge) runs the full `make verify ALL=1` suite and the Cypher differential ratchet without path filtering. The push checks out the exact pushed SHA and uses the previous branch tip as the allocation baseline. A new branch uses its parent (or itself for a root commit); a non-ancestor previous tip fails rather than silently selecting a different baseline. The workflow records the resolved revisions and uploads logs. Direct pushes also trigger this verification; it is not a pre-merge check.
+4. **Full manual checks:** dispatch `Release verification` on a trusted workflow ref, optionally specifying the target ref and allocation baseline. The job waits for `admin-approved-actions` before any runner starts. Review the chosen ref and baseline before approval. The default manual baseline is `origin/main`.
+5. **Automatic develop runs remain paused:** nightly verification and weekly canary publishing remain manual-only.
 
-Existing tag pushes still build/publish images and macOS releases. Existing pushes to `main` can publish
+Existing tag pushes still build/publish images and macOS releases. Release verification triggers on branch pushes only, not tags. Existing pushes to `main` can publish
 GitHub Pages and rebuild llama libraries when their path filters match. These push jobs use the
 `automatic-publishing` environment without an approval requirement. All manual runs, including runs
 selected on `main`, and reusable runs from manual callers require admin approval before runner allocation.
@@ -100,9 +100,8 @@ in YAML creates an unprotected environment if it does not exist.
 
 Repository writers can request manual runs; they cannot approve them unless named as reviewers.
 The repository's separate fork-PR approval setting is not an admin-only gate for collaborator PRs.
-Workflow editors can remove YAML gates, so protect workflow changes through repository review policy.
-Existing branches retain their old workflow definitions until updated; disable their live workflows during
-rollout and only re-enable them after merging and syncing this policy to `develop` and release branches.
+The `main` ruleset requires a code-owner approval from the administrator; administrators retain a bypass for their own PRs, which cannot be self-approved. GitHub grants that bypass by role rather than PR author, so it must be used deliberately. Workflow editors can remove YAML gates, including in a manually selected branch. Only dispatch trusted workflow definitions; check the workflow ref as well as its target before approval, and protect workflow changes through repository review policy.
+Existing branches retain their old workflow definitions until updated. Merge this policy into an active release branch before relying on its automatic verification; sync maintenance changes from `main` into `develop` as documented above.
 
 Run `python3 scripts/check-actions-policy.py` to check trigger and runner approval policy locally.
 
@@ -144,8 +143,7 @@ branch.
 
 ### Pull requests
 
-- Target `develop` for product work, `release/vX.Y.Z` for a release fix, or `main` for the scoped maintainer
-  operational/documentation path above.
+- Integrate product work directly into `develop`; pull requests targeting `develop` are not accepted. Target `release/vX.Y.Z` for a release fix, or `main` for the scoped maintainer operational/documentation path above.
 - Put release work on its release milestone; the maintainer maintenance path may omit one. Link the issues
   the PR fixes (`Fixes #123`).
 - Run `make verify` and say so in the description, with anything you skipped.
