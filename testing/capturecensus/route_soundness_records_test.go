@@ -2,8 +2,9 @@ package capturecensus
 
 // Author: storage-format-owners lane (Claude), #1693, 31 October 2026.
 
+// Pin the distinct reload, not the earlier SSA value proven nil at creation.
 func routeHeld(symbol string) []string {
-	return []string{"load of field ctx of *capture.fixture.request (+1 in " + symbol + ")"}
+	return []string{"load of field ctx of *capture.fixture.request (+5 in " + symbol + ")"}
 }
 
 // routeRecord is a record ending the route at the caller that passes its own

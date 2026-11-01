@@ -1,29 +1,11 @@
 {
   "author": "storage-format-owners lane (Claude), #1693, 30 October 2026",
-  "note": "Substitutions, owned lifetime sources, nil-context witness roots and call sites still in this tree whose lifetime a named merge unit takes over on its own owner. Key: the function creating the fresh context, the named source, the nil witness root, or a call site \"caller -> callee\". Listed and counted as cross-unit-owner (never silent, never a disposition); an entry that matches nothing fails. Each entry is approved by Nornic2. PrepareEntityCommit is removed: it matches nothing since #1548.",
+  "note": "Substitutions, owned lifetime sources, nil-context witness roots and call sites still in this tree whose lifetime a named merge unit takes over on its own owner. Key: the function creating the fresh context, the named source, the nil witness root, or a call site \"caller -> callee\". Listed and counted as cross-unit-owner (never silent, never a disposition); an entry that matches nothing fails. Each entry is approved by Nornic2. PrepareEntityCommit is removed: it matches nothing since #1548. Sixteen former exact records are retired with current source-pinned evidence in storage_reconciliation.json. This does not qualify any replacement lifetime, fresh context, or request route; those remain subject to the compiled census.",
   "owners": {
     "(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).submitEntityCommit": {
       "Unit": "U-1636",
       "FixingPR": "#1691",
       "Reason": "an accepted durable command is applied after the request by design (go handle.Submit(context.Background(), ...), present on release); its lifetime context is #1636's S2 engine WorkLifetime (b.work.Context()), which #1691 adopts at this site and its 8 Background points. #1655 moved the site from the exported SubmitEntityCommit into submitEntityCommit (wal_entity_commit.go:111); same ruled site",
-      "Approver": "Nornic2 (30 October 2026)"
-    },
-    "github.com/orneryd/nornicdb/pkg/storage.pendingIndexContext": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (S2 engine WorkLifetime)",
-      "Reason": "the buffer's shared pending value index is maintenance no request may cut short; its never-cancelled lifetime becomes the S2 engine owner context (#1636 WorkLifetime) when U-1636 lands",
-      "Approver": "Nornic2 (30 October 2026)"
-    },
-    "github.com/orneryd/nornicdb/pkg/storage.writeOrderContext": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (S2 engine WorkLifetime)",
-      "Reason": "write ordering is decided on shared buffer state no request may cut short; its never-cancelled lifetime becomes the S2 engine owner context (#1636 WorkLifetime) when U-1636 lands",
-      "Approver": "Nornic2 (30 October 2026)"
-    },
-    "github.com/orneryd/nornicdb/pkg/storage.namespaceMaintenanceContext": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (S2 engine WorkLifetime)",
-      "Reason": "decay reconciliation on a namespace's first schema use builds shared state later readers depend on; its never-cancelled lifetime becomes the S2 engine owner context (#1636 WorkLifetime) when U-1636 lands",
       "Approver": "Nornic2 (30 October 2026)"
     },
     "nil context.Context -> stored in field cleanupBase": {
@@ -80,36 +62,6 @@
       "Reason": "request held at SubmitAcceptedEntityTransaction, which begins its transaction through the context-free BeginEntityTransaction: accepted entity work survives the caller's cancellation by design, so binding the request at begin would make accepted work cancellable. Owned by #1691's accepted-entity lifetime; no product change in #1693",
       "Approver": "Nornic2 (31 October 2026)"
     },
-    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebindBufferedNumericIDs": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (engine write-behind drain lifetime)",
-      "Reason": "the write-behind replay staging transaction binds Background(): a request-bearing write may drain the shared write-behind buffer inline (orderAfterBufferedCommits -> flush -> drainOne -> replayWriteBehind), and that drain serves other requests' acknowledged commits, so the triggering request must not cancel it. Owned by the engine's write-behind drain lifetime; no owner added in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).notifyNodeMutated": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (owner lifetime: post-commit search work)",
-      "Reason": "post-commit search notification after a node is created; it must not be cancelled by the statement that triggered it. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).notifyEdgeMutated": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (owner lifetime: post-commit search work)",
-      "Reason": "post-commit search notification after a relationship is created; not cancelled by the triggering statement. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).refreshSearchAfterCommit": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (owner lifetime: post-commit search work)",
-      "Reason": "post-commit search refresh after an implicit transaction commits; not cancelled by the triggering statement. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).removeNodeFromSearch": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (owner lifetime: post-commit search work)",
-      "Reason": "post-delete search removal; not cancelled by the triggering statement. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
     "github.com/orneryd/nornicdb/pkg/cypher.NewStorageExecutor": {
       "Unit": "U-1636",
       "FixingPR": "#1636 (owner lifetime: long-lived service)",
@@ -122,22 +74,10 @@
       "Reason": "the search service's own lifetime context, created at construction. No product change in #1693",
       "Approver": "Nornic2 (31 October 2026)"
     },
-    "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).GetOrCreateSearchService": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (owner lifetime: long-lived service)",
-      "Reason": "creates a per-database search service that serves every later request. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
     "(*github.com/orneryd/nornicdb/pkg/nornicdb.EmbedWorker).Reset": {
       "Unit": "U-1636",
       "FixingPR": "#1636 (owner lifetime: worker)",
       "Reason": "resets the long-lived embedding worker; its new lifetime is the worker's, not the requesting mutation's. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/multidb.DatabaseManager).calculateStorageSizeFromEngine": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (owner lifetime: shared cache)",
-      "Reason": "fills the shared storage-size cache that serves every request. No product change in #1693",
       "Approver": "Nornic2 (31 October 2026)"
     },
     "(*github.com/orneryd/nornicdb/pkg/fabric.RemoteFragmentExecutor).Close": {
@@ -170,18 +110,6 @@
       "Reason": "loads users at startup (NewAuthenticator from runServe). No product change in #1693",
       "Approver": "Nornic2 (31 October 2026)"
     },
-    "github.com/orneryd/nornicdb/pkg/nornicdb.markStorageCleanShutdown": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (S3 DB lifetime: close)",
-      "Reason": "marks a clean shutdown while the database closes. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/multidb.DatabaseManager).cleanupLeakedSystemNodes": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (S3 DB lifetime)",
-      "Reason": "startup cleanup run by NewDatabaseManager under the database lifetime. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
     "(*github.com/orneryd/nornicdb/pkg/server.Server).ensureSearchBuildStartedForKnownDatabases": {
       "Unit": "U-1636",
       "FixingPR": "#1636 (S3 DB lifetime)",
@@ -192,12 +120,6 @@
       "Unit": "U-1636",
       "FixingPR": "#1636 (S3 DB WorkLifetime)",
       "Reason": "the database lifetime accessor (with the nornicdb.Open record). No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).runInferenceForEmbeddedNode": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (server background lifetime)",
-      "Reason": "inference after embedding, started from the server's embedder initialisation. No product change in #1693",
       "Approver": "Nornic2 (31 October 2026)"
     },
     "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).startClusteringTimer": {
@@ -222,12 +144,6 @@
       "Unit": "U-1636",
       "FixingPR": "#1691 (accepted-entity lifetime)",
       "Reason": "applies a replicated command through the storage adapter; accepted work survives the caller. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/txsession.Manager).expiredLocked": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (S4)",
-      "Reason": "the transaction-session expiry check runs under the session manager's lifetime, not the committing request's. No product change in #1693",
       "Approver": "Nornic2 (31 October 2026)"
     },
     "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).scheduleQueuedRefreshes": {
@@ -266,22 +182,10 @@
       "Reason": "the de-index cleanup job holds its maintenance worker lifetime, not a request",
       "Approver": "Nornic2 ruling (31 October 2026)"
     },
-    "(*github.com/orneryd/nornicdb/pkg/storage.DeindexCleanupJob).run": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (maintenance worker lifetime)",
-      "Reason": "the de-index cleanup job's worker loop holds its maintenance lifetime, not a request; the caller of RunOnce",
-      "Approver": "Nornic2 ruling (31 October 2026), as RunOnce"
-    },
     "(*github.com/orneryd/nornicdb/pkg/storage.DeindexCleanupJob).Start": {
       "Unit": "U-1636",
       "FixingPR": "#1636 (maintenance worker lifetime)",
       "Reason": "the de-index cleanup job's start holds its maintenance lifetime, not a request; the caller of run",
-      "Approver": "Nornic2 ruling (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/storage.changeRetentionJob).run": {
-      "Unit": "U-1636",
-      "FixingPR": "#1636 (maintenance worker lifetime)",
-      "Reason": "the change retention job holds its maintenance worker lifetime, not a request; the same class as the de-index cleanup job",
       "Approver": "Nornic2 ruling (31 October 2026)"
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.changeRetentionJob).Start": {

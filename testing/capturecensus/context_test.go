@@ -721,7 +721,7 @@ func Log(ctx context.Context, e *fixture.Engine) error { _ = ctx; _ = entrylike.
 	require.Contains(t, all, " capture.fixture/entrylike.Other creates context.Background: a request context exists up the caller chain capture.fixture/entrylike.Other <- capture.fixture/logger.Log", "only the listed entry is a boundary, not its package")
 	require.True(t, strings.HasPrefix(reasons["capture.fixture/authlike.save"], "unfulfilled-contract-a: Contract A unfulfilled: request held at capture.fixture/frontend.Login reaches it across the public API at capture.fixture/authlike.Authenticate"), "a declared public package's exported API is the deferred boundary: %s", reasons["capture.fixture/authlike.save"])
 	require.Contains(t, all, "(*capture.fixture.Engine).goneScope: a ruled contract-scope entry matches no context site")
-	require.Contains(t, all, " (*capture.fixture.Engine).admitOne creates context.Background: a request context is in scope; pass it")
+	require.Contains(t, all, "(*capture.fixture.Engine).admitOne <- (*capture.fixture.Engine).forwarder <- (*capture.fixture.Engine).forwardHolder")
 	require.NotContains(t, all, "leaves the context unset")
 	require.Contains(t, all, "capture.fixture.helperCtx <- (*capture.fixture.Engine).usesHelper <- (*capture.fixture.Engine).UsesHelperTop")
 	for _, fn := range []string{"outOfScope", "defective", "Excl"} {

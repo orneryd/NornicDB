@@ -19,7 +19,7 @@ func TestCounterexampleHolderAboveEnding(t *testing.T) {
 	field := "load of field ctx of *capture.fixture.slot"
 	record := ReviewedHeldValue{
 		EndsEdges: []RouteEdge{{Caller: "(*capture.fixture.Engine).forward", Callee: symbol, Reason: "takes no request"}},
-		Held:      []string{field + " (+1 in " + symbol + ")", field + " (+4 in " + symbol + ")"},
+		Held:      []string{field + " (+4 in " + symbol + ")"},
 		Sources:   map[string]string{symbol: routeDigest(accessor), "(*capture.fixture.Engine).forward": routeDigest("func (e *Engine) forward(l *slot) error { return e.capture(e.accessor(l)) }")},
 		Reason:    "the slot is nil on the fallback",
 		Approver:  "control",
@@ -35,7 +35,7 @@ var _ = (*Engine).requestCommit
 
 // A named caller whose body changes to drop the request fails its old record.
 func TestCounterexampleChangedBoundaryBody(t *testing.T) {
-	const fallback = "func (e *Engine) fallback(r request) error {\n\tctx := r.ctx\n\tif ctx == nil {\n\t\tctx = context.Background()\n\t}\n\treturn e.capture(ctx)\n}"
+	const fallback = "func (e *Engine) fallback(r request) error {\n\tctx := r.ctx\n\tif ctx == nil {\n\t\tctx = context.Background()\n\t}\n\treturn e.capture(context.WithValue(ctx, \"retained\", r.ctx))\n}"
 	symbol := "(*capture.fixture.Engine).fallback"
 	const changed = "\nfunc (e *Engine) passes(ctx context.Context) error { _ = ctx; return e.fallback(request{}) }\nvar _ = (*Engine).passes\n"
 	require.NotEmpty(t, routeCensus(t, fallback+changed, map[string]ReviewedHeldValue{symbol: routeRecord(fallback, symbol)}).Violations, "the named caller no longer passes its context")

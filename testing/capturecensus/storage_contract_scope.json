@@ -10,7 +10,7 @@
       "Reason": "the shutdown drain is deliberately fresh (OBS-09): it must outlive the cancelled run context.",
       "Approver": "Nornic2 ruling (31 October 2026)",
       "Occurrences": [
-        "call context.Background (+18 in github.com/orneryd/nornicdb/pkg/lifecycle.Run)"
+        "call context.Background (+26 in github.com/orneryd/nornicdb/pkg/lifecycle.Run)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistMVCCSequence": {

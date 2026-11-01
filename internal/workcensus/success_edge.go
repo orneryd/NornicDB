@@ -154,8 +154,9 @@ func NilSuccessEdge(e ssa.Value) (*ssa.If, *ssa.BasicBlock) {
 }
 
 // NilAt reports that block runs only after a nil test of the SSA value v took
-// its nil branch: some If compares v with nil and its nil successor dominates
-// block. Code there has no value in v (for a context: no request on this path).
+// its nil branch: some If dominating block compares v with nil, and its nil
+// successor dominates block. Code there has no value in v (for a context: no
+// request on this path).
 // Author: storage-format-owners lane (Claude), #1693, 30 October 2026.
 func NilAt(v ssa.Value, block *ssa.BasicBlock) bool {
 	if block == nil || v == nil || v.Referrers() == nil {
@@ -175,7 +176,7 @@ func NilAt(v ssa.Value, block *ssa.BasicBlock) bool {
 			if !ok || len(iff.Block().Succs) != 2 || iff.Block().Succs[0] == iff.Block().Succs[1] {
 				continue
 			}
-			if iff.Block().Succs[nilIndex].Dominates(block) {
+			if iff.Block().Dominates(block) && iff.Block().Succs[nilIndex].Dominates(block) {
 				return true
 			}
 		}
@@ -206,7 +207,7 @@ func NonNilAt(v ssa.Value, block *ssa.BasicBlock) bool {
 			if !ok || len(iff.Block().Succs) != 2 || iff.Block().Succs[0] == iff.Block().Succs[1] {
 				continue
 			}
-			if nonNil := iff.Block().Succs[1-nilIndex]; nonNil.Dominates(block) {
+			if nonNil := iff.Block().Succs[1-nilIndex]; iff.Block().Dominates(block) && nonNil.Dominates(block) {
 				return true
 			}
 		}

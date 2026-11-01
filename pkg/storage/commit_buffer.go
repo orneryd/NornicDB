@@ -413,7 +413,7 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 // generations. Apply is injected so the replay destination (Badger) stays a
 // detail of the caller.
 type WriteBehindBuffer struct {
-	mu                  trackedRWMutex
+	mu                  contextRWMutex
 	beginPresenceMu     sync.Mutex
 	beginPresences      *transactionBeginPresence
 	beginPresenceClosed bool

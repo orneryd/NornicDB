@@ -76,7 +76,7 @@ var _ = (*Engine).route
 // A record whose pinned value is gone authorizes nothing, even when the
 // function no longer holds any context.
 func TestCounterexampleUnvalidatedRouteEnding(t *testing.T) {
-	const fallback = "func (e *Engine) fallback(r request) error {\n\tctx := r.ctx\n\tif ctx == nil {\n\t\tctx = context.Background()\n\t}\n\treturn e.capture(ctx)\n}"
+	const fallback = "func (e *Engine) fallback(r request) error {\n\tctx := r.ctx\n\tif ctx == nil {\n\t\tctx = context.Background()\n\t}\n\treturn e.capture(context.WithValue(ctx, \"retained\", r.ctx))\n}"
 	const edited = "func (e *Engine) fallback(r request) error {\n\tctx := context.Background()\n\t_ = r\n\treturn e.capture(ctx)\n}"
 	const named = "\nfunc (e *Engine) passes(ctx context.Context) error { return e.fallback(request{ctx: ctx}) }\nvar _ = (*Engine).passes\n"
 	symbol := "(*capture.fixture.Engine).fallback"
@@ -90,7 +90,7 @@ func TestCounterexampleUnvalidatedRouteEnding(t *testing.T) {
 // An ending does not hide a route into the functions above it that nothing
 // establishes: the holder above an unnamed route is reported.
 func TestCounterexampleEndingBeyondItsEvidence(t *testing.T) {
-	const fallback = "func (e *Engine) fallback(r request) error {\n\tctx := r.ctx\n\tif ctx == nil {\n\t\tctx = context.Background()\n\t}\n\treturn e.capture(ctx)\n}"
+	const fallback = "func (e *Engine) fallback(r request) error {\n\tctx := r.ctx\n\tif ctx == nil {\n\t\tctx = context.Background()\n\t}\n\treturn e.capture(context.WithValue(ctx, \"retained\", r.ctx))\n}"
 	const route = `
 func (e *Engine) inner() error { return e.fallback(request{}) }
 func (e *Engine) middle() error { return e.inner() }

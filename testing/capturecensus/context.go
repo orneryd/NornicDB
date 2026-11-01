@@ -122,6 +122,7 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog) (sit
 	staleSites := map[string]bool{}
 	staleHolders := map[string]string{}
 	digests := newSourceDigests(p)
+	violations = append(violations, applyNonNilResultContracts(p, policy, digests)...)
 	owners := map[string]bool{}
 	for _, owner := range policy.ContextOwners {
 		owners[owner] = true
@@ -251,7 +252,7 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog) (sit
 				log.accept(KindUnfulfilled, where, unfulfilledReason(public, policy), policy.DeferredPublicAPI.Approver, &site)
 			case chain == nil && allocated:
 				// Listed and counted at each allocated holder; never cleared.
-				site.Reason = KindCrossUnitOwner + ": a request is held up its caller chains only at holders another merge unit owns"
+				log.accept(KindCrossUnitOwner, where, "a request is held up its caller chains only at holders another merge unit owns", "census (recorded caller allocations)", &site)
 			case chain == nil && exported(top):
 				log.accept(KindAPIBoundary, where, "exported API without a request context parameter, which no caller holding one in the module reaches", "census", &site)
 			case chain == nil:

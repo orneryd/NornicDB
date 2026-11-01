@@ -15,8 +15,10 @@ import (
 
 // snapshotHoldEngine holds a snapshot's node stream until the snapshot's
 // context ends, so a test can close the owner while a snapshot is running.
+// Preserve the concrete StreamingEngine capability required by WriteSnapshot;
+// embedding only Engine would hide it and never enter the controlled stream.
 type snapshotHoldEngine struct {
-	Engine
+	*MemoryEngine
 	entered chan struct{}
 	once    sync.Once
 }
@@ -36,7 +38,7 @@ func TestAutoCompactionSnapshotStopsWithOwner(t *testing.T) {
 	dir := filepath.Join(root, "snapshots")
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate", SnapshotInterval: 10 * time.Millisecond})
 	require.NoError(t, err)
-	inner := &snapshotHoldEngine{Engine: newTestMemoryEngine(t), entered: make(chan struct{})}
+	inner := &snapshotHoldEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{})}
 	engine := NewWALEngine(inner, wal)
 	_, err = engine.CreateNode(&Node{ID: "nornic:snapshot-owner", Properties: map[string]any{"name": "held"}})
 	require.NoError(t, err)

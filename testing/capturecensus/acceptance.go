@@ -65,6 +65,8 @@ const (
 	KindDistinctDecision = "distinct-decision"
 	// KindProof is a rule of the nil analysis that proved a value non-nil.
 	KindProof = "proof"
+	// KindReviewedResult is a source-validated reviewed result contract, not an inferred proof.
+	KindReviewedResult = "reviewed-result-contract"
 	// KindConvention is a model convention the nil analysis trusted.
 	KindConvention = "model-convention"
 )
@@ -101,7 +103,9 @@ func (a *acceptanceLog) all() []Acceptance {
 	out := append([]Acceptance(nil), a.list...)
 	for rule, n := range a.rules {
 		kind := KindProof
-		if strings.HasPrefix(rule, "convention:") {
+		if strings.HasPrefix(rule, "reviewed-result-contract:") {
+			kind = KindReviewedResult
+		} else if strings.HasPrefix(rule, "convention:") {
 			kind = KindConvention
 		}
 		out = append(out, Acceptance{Kind: kind, Key: rule, Reason: "explained a non-nil verdict", Approver: "nil analysis", Count: n})

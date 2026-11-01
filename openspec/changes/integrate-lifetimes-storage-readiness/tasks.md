@@ -6,7 +6,7 @@ label-index readiness and remaining preparation. Preserve each author's work;
 port into current owners rather than restoring obsolete implementations.
 
 - [x] Preserve original #1636, #1693 and #1667 heads and the separate #1667 prototype.
-- [x] Rebase #1636 S1–S4 onto current #1684 (258b9bf17), preserving release APOC I/O policy.
+- [x] Rebase #1636 S1–S4 onto current #1684 (ccc5337ed), preserving release APOC I/O policy.
 - [x] Rebase #1693 foundation commits onto the lifetime stack without merge commits.
 - [x] Correct the remaining long-lived read-view panic release to use WorkLifetime.
 - [ ] Verify lifetime shutdown contracts and correct obsolete gate schedules without weakening completion, rollback or admission assertions.
@@ -35,7 +35,7 @@ source is authoritative. No release tag, remote merge or storage migration is cl
 - [x] Reproduce ready-ID streaming returning success after real cancellation; carry context into private cursor and verify first/final-delivery cancellation with focused race controls (3.821s).
 - [x] Correct lifetime fixtures to join actual accepted work, use constructor/enrollment paths, and retain repeated error outcomes; canonical plugin/gRPC controls pass13.761s.
 - [x] Correct the HTTP MERGE fault fixture to take native commit ownership before rejection; no publication and exactly-one-node healthy retry pass2.087s; direct classifier controls pass1.452s.
-- [ ] Migrate exported index/pending-merge context/error APIs (explicitly approved by maintainer). Fresh combined50k public regression remains RED: all50k candidates read,229ms post-cancel against100ms budget.
+- [x] Migrate exported index/pending-merge context/error APIs (explicitly approved). Preserve original50k failure (all candidates read,229ms after cancellation); focused corrected run stops in14.708µs with0 candidate reads. Final frozen suite remains pending.
 - [x] Integrate and independently run layered public continuation/retry plus scoring/reader-release component controls; final frozen full suite remains pending. No old unreachable probe is claimed as a successful injection.
 - [ ] Complete namespace-retirement/body/property binding correction and census/cost qualification.
 
@@ -50,4 +50,8 @@ failed with malformed tool JSON and has no accepted findings; parent review rema
 
 Both contract decisions are now approved: canonical context-first Go index APIs with error propagation, and layered public continuation plus component scoring cancellation proof. DeepSeek implementation tasks run in separate registered worktrees; parent owns storage retirement architecture, integration, verification and publication.
 
-Current index and unique API migration builds; focused50K cancellation, pending/copy/order/lock-admission controls pass. Additional metadata-discovery and composite-key/digest exported context contracts await maintainer answer; no dependent changes made. Current #1684 moved toccc5337ed; restack and all final evidence must include that current prerequisite.
+Current index and unique API migration builds; focused50K cancellation, pending/copy/order/lock-admission controls pass. Additional metadata-discovery and composite-key/digest exported context contracts are approved; two bounded DeepSeek migration jobs are underway. Current #1684 moved toccc5337ed; restack and all final evidence must include that current prerequisite.
+
+- [x] Reproduce composite-key delimiter ambiguity through exact lookup and native bulk node-key creation; frame separate values through the existing digest owner. Focused integrated controls pass1.671s; persisted temporal keys remain unchanged.
+- [x] Separate generic cancellable lock admission from publication-hold observation; original zero-allocation budget and observer/cancellation controls pass1.231s.
+- [ ] Integrate current storage/capture census proof changes and regenerate source-pinned artifacts; filteredJoin error-propagation control remains an explicit failure being corrected.

@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Composite index and node-key tuple hashes frame each property separately, so
+  delimiter-shaped values cannot collide before hashing and reject valid bulk
+  writes. These hashes are process-local; persisted temporal keys are unchanged.
+
+- Embedded Go index candidate, ordered-read, unique-value and transaction
+  pending-merge APIs take the caller context and return errors. Migrate callers
+  using the [index-read guide](docs/development/index-read-cancellation.md).
+
 - Storage-backed Go APOC helpers use immutable `New(backend)` instances instead
   of module storage globals. Backend replacement publishes a new registry for
   future lookups; retained handlers and warmup caches stay bound to their
@@ -125,6 +133,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Keep namespace-scoped label reads complete during index rebuilding and retain
+  snapshot property names and node identities across database DROP/recreate.
+  Low-memory backfills reduce their transaction batch after a size rejection.
+- Stop indexed statement preparation on caller cancellation, retain accepted
+  work until shutdown completion, and preserve terminal cleanup errors across
+  repeated Close calls. Stored keys, payloads and storage version are unchanged.
 
 - Escape CSV export identifiers, relationship types and headers containing
   commas, quotes or line breaks while preserving ordinary export bytes.

@@ -54,7 +54,10 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 	if node == nil || schema == nil {
 		return nil
 	}
-	return (nodeConstraintValidation{engine: b, native: txn, schema: schema, namespace: namespace, exclude: excludeNodeID}).validate(node)
+	// Native callbacks are already inside an accepted engine write. Integrity
+	// validation retains that write lifetime; statement transaction validation
+	// enters through validateNodeConstraints with its actual request context.
+	return (nodeConstraintValidation{ctx: context.Background(), engine: b, native: txn, schema: schema, namespace: namespace, exclude: excludeNodeID}).validate(node)
 }
 
 // nodeConstraintValidation owns schema iteration, first-error ordering, DOMAIN

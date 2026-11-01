@@ -26,9 +26,10 @@ import (
 //
 //	E1 a context.Background or context.TODO result: no request, by definition;
 //	E2 a nil constant;
-//	E3 a context parameter of the creating function that a nil test proves nil
-//	   there (workcensus.ParameterNilAt): parameters never change, so it is nil
-//	   on every execution that reaches the creation;
+//	E3 an immutable context SSA value that the existing typed nil-branch
+//	   fact proves nil at creation (workcensus.NilAt), or a context parameter
+//	   proven nil there through its captured cell (ParameterNilAt). A tested
+//	   field load proves only that value nil, never a later load of the field;
 //	E4 a phi or interface conversion of excluded values: it is one of them;
 //	E5 a context package derivation (context.WithValue, WithCancel, ...) of an
 //	   excluded parent: by the package's contract it carries the parent's
@@ -474,8 +475,8 @@ func ownContextNilAt(fn *ssa.Function, block *ssa.BasicBlock) bool {
 }
 
 // creationRoots are the roots of E3 for a fresh context created at origin:
-// origin itself and the creating function's context parameters proven nil
-// there.
+// origin itself, the creating function's context parameters proven nil
+// there, and immutable SSA values whose nil branch dominates creation.
 func creationRoots(origin ssa.Value, fn *ssa.Function) func(ssa.Value) bool {
 	roots := map[ssa.Value]bool{origin: true}
 	if instr, ok := origin.(ssa.Instruction); ok {
@@ -485,7 +486,15 @@ func creationRoots(origin ssa.Value, fn *ssa.Function) func(ssa.Value) bool {
 			}
 		}
 	}
-	return func(v ssa.Value) bool { return roots[v] }
+	return func(v ssa.Value) bool {
+		if roots[v] {
+			return true
+		}
+		// NilAt is the shared typed-SSA dominance fact, not a source-text
+		// pattern or a conclusion about a mutable field's other loads.
+		instr, ok := origin.(ssa.Instruction)
+		return ok && workcensus.NilAt(v, instr.Block())
+	}
 }
 
 // ReviewedHeldValue is a reviewed record for one function whose held contexts,

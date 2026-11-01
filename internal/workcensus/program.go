@@ -29,10 +29,11 @@ type Program struct {
 	Functions []*ssa.Function
 	CallGraph *callgraph.Graph
 
-	nilFlow *nilFlow        // MayBeNil's memo; a Program is queried by one goroutine
+	nonNilResults map[*ssa.Function]map[int]string // validated client-reviewed result contracts; nil flow only
+	nilFlow       *nilFlow                         // MayBeNil's memo; a Program is queried by one goroutine
 	// dynamicTargets is CallTargets' memo of DynamicCallTargets.
 	dynamicTargets map[ssa.CallInstruction][]*ssa.Function
-	load    packages.Config // the load settings, reused to read a dependency's bodies on demand
+	load           packages.Config // the load settings, reused to read a dependency's bodies on demand
 }
 
 // LoadProgram owns generic package loading, SSA construction and VTA/CHA. It

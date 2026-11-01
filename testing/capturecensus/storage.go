@@ -5,8 +5,6 @@ package capturecensus
 import (
 	_ "embed"
 	"encoding/json"
-
-	"github.com/orneryd/nornicdb/internal/workcensus"
 )
 
 //go:embed storage_distinct.json
@@ -17,6 +15,9 @@ var storageCrossUnitOwners []byte
 
 //go:embed storage_nil_dispositions.json
 var storageNilDispositions []byte
+
+//go:embed storage_non_nil_results.json
+var storageNonNilResults []byte
 
 //go:embed storage_contract_scope.json
 var storageContractScope []byte
@@ -53,6 +54,10 @@ func StoragePolicy() Policy {
 	if err := json.Unmarshal(storageContractScope, &scope); err != nil {
 		panic(err)
 	}
+	var nonNilResults map[string]ReviewedNonNilResult
+	if err := json.Unmarshal(storageNonNilResults, &nonNilResults); err != nil {
+		panic(err)
+	}
 	var nilDispositions struct {
 		Dispositions map[string]NilDisposition `json:"dispositions"`
 		Detached     map[string]NilDisposition `json:"detached"`
@@ -77,21 +82,13 @@ func StoragePolicy() Policy {
 		PublicPackages:         scope.PublicPackages,
 		PublicEntries:          scope.PublicEntries,
 		ReviewedHeldValues:     scope.ReviewedHeld,
+		NonNilResults:          nonNilResults,
 		NilDetached:            nilDispositions.Detached,
 		NilContextDispositions: nilDispositions.Dispositions,
-		ContextSources: []ContextSource{{
-			Source: pkg + ".commitNotificationContext", Root: workcensus.Root{Package: pkg, Name: "drainCommitNotifications", Receiver: "BadgerEngine", Required: true}, Disposition: "drainer-owned",
-			Reason: "the ordered drainer publishes queued notifications of any commit, not only its caller's; publication is not cancellable by contract",
-		}, {
-			Source: pkg + ".pendingIndexContext", Root: workcensus.Root{Package: pkg, Name: "trackPendingValues", Receiver: "WriteBehindBuffer", Required: true}, Disposition: "maintenance-owned",
-			Reason: "the buffer's shared pending value index serves every request; a request's cancellation would leave it partial for later readers",
-		}, {
-			Source: pkg + ".writeOrderContext", Root: workcensus.Root{Package: pkg, Name: "holdsEntities", Receiver: "WriteBehindBuffer", Required: true}, Disposition: "write-order-owned",
-			Reason: "write ordering is decided on shared buffer state; a request's cancellation would report the entities as not held and misorder the write",
-		}, {
-			Source: pkg + ".namespaceMaintenanceContext", Root: workcensus.Root{Package: pkg, Name: "ReconcileDecaySuppression", Receiver: "BadgerEngine", Required: true}, Disposition: "namespace-maintenance-owned",
-			Reason: "a namespace's first schema use reconciles decay suppression, shared state later readers depend on; a request's cancellation would leave it half done",
-		}},
+		// The four former helper sources no longer exist. Their source-pinned
+		// tombstones are in storage_reconciliation.json. Fresh contexts in
+		// their former roots remain subject to the ordinary request census;
+		// retirement grants no owner-lifetime exception.
 		ContextOwners: []string{method("captureReadView"), method("pendingReadConflict"), method("readBufferedEntities"), "(*" + pkg + ".WriteBehindBuffer).visitEntityOverlayLocked"},
 		ExtraResults:  []TypeName{{"github.com/orneryd/nornicdb/pkg/knowledgepolicy", "EntityMeta"}},
 		Distinct:      reviewed.Decisions,

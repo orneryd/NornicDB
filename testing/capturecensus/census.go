@@ -37,6 +37,7 @@ type Policy struct {
 	// the same deferred boundary (by symbol).
 	PublicEntries          []string
 	ContextSources         []ContextSource
+	NonNilResults          map[string]ReviewedNonNilResult
 	NilContextDispositions map[string]NilDisposition
 	// NilDetached are the nil flows of a merged detached-path convention, by
 	// witness root, each at its exact uses (KindNilDetached).

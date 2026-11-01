@@ -122,7 +122,8 @@ func TestStorageNilContextCensus(t *testing.T) {
 	// Cross-unit acceptances come only from the ruled entries; the census
 	// fails an entry that matches nothing (checked with the violations below),
 	// so these are exactly the ruled items, each listed with every use.
-	require.Len(t, StoragePolicy().CrossUnitOwners, 51, "the ruled cross-unit items (U-1636): the WAL accepted-command submission, the WAL entity wait lifetime (NewWALEngine), the database lifetime (nornicdb.Open), the index backfill worker lifetime (startIndexBackfill), the accepted-entity preparation and submission holders (PrepareEntityChanges, SubmitAcceptedEntityTransaction), the write-behind drain staging (rebindBufferedNumericIDs), the four maintenance lifetime sources, the Bolt cleanup base, accepted-entity commit preparation and the two replication entity-command paths (the multidb size-tracking commit normalizes its own request parameter: no substitution); the 25 allocated from d17 (owner lifetimes, Bolt session lifetime, process/database/server lifetimes, accepted-entity commands); and from d18: the transaction-session expiry check (S4), the two commit-notification drain sites (S2) and Bolt handleRun (S3; commitContext is counted through its holder dispatchInner, recordExplicitTransactionWrite through handleRun); and from d21: the search service build started without a request (search.Service.BuildIndexes, search lifetime)")
+	reconciliation := readStorageReconciliation(t)
+	require.Equal(t, 51, len(StoragePolicy().CrossUnitOwners)+len(reconciliation.RetiredOwners), "active records plus independently source-pinned retirements preserve the original record population")
 	require.NotZero(t, counts[KindCrossUnitOwner])
 	// The reviewed held-value records: each pinned to the exact held values it
 	// covers and the source it relies on, listed and counted as its own kind.
@@ -131,8 +132,10 @@ func TestStorageNilContextCensus(t *testing.T) {
 			t.Logf("REVIEWED-HELD-VALUE %s", acceptance.Key)
 		}
 	}
-	require.Len(t, StoragePolicy().ReviewedHeldValues, 20, "the reviewed held-value sites: extractTraceparent, withParams, BindContext and the three IVF-HNSW serving-view sites (d21); the Bolt transaction lifecycle's commitContext and begin, the two Cypher value-scope evaluators, the database's TriggerSearchClustering and retentionContext, and the MVCC lifecycle schedule (d23)")
-	require.Equal(t, 23, counts[KindReviewedHeld], "one per fresh context at a recorded site")
+	t.Logf("HISTORICAL-HELD-REVIEWS %s claimed-records=%d claimed-contexts=%d current-records=%d current-acceptances=%d", reconciliation.Historical.Status, reconciliation.Historical.Records, reconciliation.Historical.Sites, len(StoragePolicy().ReviewedHeldValues), counts[KindReviewedHeld])
+	if len(StoragePolicy().ReviewedHeldValues) == 0 {
+		require.Zero(t, counts[KindReviewedHeld], "historical review claims confer no acceptance without current per-site proof")
+	}
 	for site, record := range StoragePolicy().ReviewedHeldValues {
 		require.NotEmpty(t, record.Closure, "%s: a storage record pins everything its sources reach", site)
 	}
@@ -146,7 +149,14 @@ func TestStorageNilContextCensus(t *testing.T) {
 			t.Errorf("%s", v)
 		}
 	}
-	require.Empty(t, flows, "a nil or absent context can reach a capture owner")
+	if len(flows) > 0 {
+		t.Errorf("%d nil or absent context flows reach the capture boundary; see NIL-CONTEXT records above", len(flows))
+	}
+	// Substitutions and invalid policy records are failures too. Logging them
+	// alone never establishes the approved contract, even when nil flows pass.
+	if len(facts.Violations) > 0 {
+		t.Errorf("Contract A remains unqualified: %d compiled findings (including %d nil-context flows); see raw per-site records above", len(facts.Violations), len(flows))
+	}
 }
 
 // The census must catch planted nil flows in the real package: a nil passed

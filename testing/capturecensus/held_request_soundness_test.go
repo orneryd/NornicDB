@@ -249,7 +249,6 @@ var _ = []any{(*Engine).hiddenThroughClosure, (*slotTx).hiddenAfterReload, (*Eng
 		"(*capture.fixture.Engine).hiddenByHelper":           "a helper's result is not its argument",
 		"(*capture.fixture.Engine).normalizeWithHeldRequest": "a nil parameter proves no other request absent",
 		"(*capture.fixture.Engine).Pick":                     "one nil source of a variable proves nothing of the others",
-		"(*capture.fixture.Engine).admitPlan":                "a fallback for an argument field holds the field: no caller is credited, so late writes and dynamic calls supply nothing",
 		"(*capture.fixture.Engine).inClosureParam":           "a literal's request parameter",
 		"(*capture.fixture.Engine).ignored":                  "an ignored blank request parameter",
 		"(*capture.fixture.slotTx).addressHeld":              "an address handed to a reader",
@@ -257,6 +256,12 @@ var _ = []any{(*Engine).hiddenThroughClosure, (*slotTx).hiddenAfterReload, (*Eng
 	} {
 		require.Contains(t, all, inScope(fn), why)
 	}
+	// The tested immutable field load is nil at creation. This does not
+	// credit callers: the late write and dynamic request holders still fail
+	// on their complete caller routes.
+	require.Contains(t, all, "(*capture.fixture.Engine).admitPlan <- (*capture.fixture.Engine).late")
+	require.Contains(t, all, "(*capture.fixture.Engine).admitPlan <- capture.fixture.invoke")
+	require.Contains(t, all, "capture.fixture.invoke <- (*capture.fixture.Engine).Dynamic")
 	require.Contains(t, all, "capture.fixture.heldFallback <- (*capture.fixture.Engine).normalizeViaHeld", "a walk passes no nil normalizer holding another request")
 	require.Contains(t, all, "capture.fixture.fallbackForNil <- (*capture.fixture.Engine).normalizeForNil <- (*capture.fixture.Engine).passesNil", "a nil normalizer is walked through, never pruned: its caller holding a request and passing nil substitutes it")
 	require.Contains(t, all, "(*capture.fixture.Engine).unthreadedInClosure <- (*capture.fixture.Engine).viaClosureParam", "a literal's request parameter around the walked call")
@@ -315,7 +320,7 @@ func TestCompiledWalkSoundnessControls(t *testing.T) {
 		symbol := "(*capture.fixture.lifecycle)." + name
 		field := "load of field ctx of *capture.fixture.lifecycle"
 		return ReviewedHeldValue{
-			Held:     []string{field + " (+1 in " + symbol + ")", field + " (+4 in " + symbol + ")"},
+			Held:     []string{field + " (+4 in " + symbol + ")"},
 			Sources:  map[string]string{symbol: digest(src)},
 			Reason:   "the slot is nil on the fallback",
 			Approver: "control",
@@ -384,9 +389,9 @@ var _ = []any{(*Engine).holdsMixed, (*Engine).holdsPasses}
 	require.Contains(t, strings.Join(run(holderSrc+"\n"+leafReviewed+"var _ = (*Engine).reviewed\n", map[string]ReviewedHeldValue{"(*capture.fixture.Engine).reviewed": staleHolder}, nil).Violations, "\n"), "(*capture.fixture.Engine).leafReviewed <- (*capture.fixture.Engine).reviewed", "a stale record does not clear its holder")
 
 	// A caller the record names ends its route; any other caller is walked.
-	ended := "func (e *Engine) fallback(r request) error {\n\tctx := r.ctx\n\tif ctx == nil {\n\t\tctx = context.Background()\n\t}\n\treturn e.capture(ctx)\n}"
+	ended := "func (e *Engine) fallback(r request) error {\n\tctx := r.ctx\n\tif ctx == nil {\n\t\tctx = context.Background()\n\t}\n\treturn e.capture(context.WithValue(ctx, \"retained\", r.ctx))\n}"
 	endedBody := "type request struct{ ctx context.Context }\n" + ended + "\nfunc (e *Engine) passes(ctx context.Context) error { return e.fallback(request{ctx: ctx}) }\nfunc (e *Engine) drops(ctx context.Context) error { _ = ctx; return e.fallback(request{}) }\nvar _ = []any{(*Engine).passes, (*Engine).drops}\n"
-	field := "load of field ctx of *capture.fixture.request (+1 in (*capture.fixture.Engine).fallback)"
+	field := "load of field ctx of *capture.fixture.request (+5 in (*capture.fixture.Engine).fallback)"
 	endRecord := ReviewedHeldValue{EndsEdges: []RouteEdge{{Caller: "(*capture.fixture.Engine).passes", Callee: "(*capture.fixture.Engine).fallback", Reason: "passes its own context"}}, Held: []string{field}, Sources: map[string]string{"(*capture.fixture.Engine).fallback": digest(ended), "(*capture.fixture.Engine).passes": digest("func (e *Engine) passes(ctx context.Context) error { return e.fallback(request{ctx: ctx}) }")}, Reason: "named", Approver: "control"}
 	endRun := strings.Join(run(endedBody, map[string]ReviewedHeldValue{"(*capture.fixture.Engine).fallback": endRecord}, nil).Violations, "\n")
 	require.Contains(t, endRun, "(*capture.fixture.Engine).fallback <- (*capture.fixture.Engine).drops", "a caller the record does not name is reported")
@@ -429,7 +434,15 @@ var _ = []any{(*Engine).holdsMixed, (*Engine).holdsPasses}
 	require.Contains(t, strings.Join(above.Violations, "\n"), "(*capture.fixture.Engine).leaf <- (*capture.fixture.Engine).allocated <- (*capture.fixture.Engine).outer", "the unallocated holder above is reported")
 	only := run(leaf+"var _ = (*Engine).allocated\n", nil, owners)
 	require.Empty(t, only.Violations)
-	require.Equal(t, 1, AcceptanceCounts(only.Acceptances)[KindCrossUnitOwner])
+	require.Equal(t, 2, AcceptanceCounts(only.Acceptances)[KindCrossUnitOwner], "the ruled holder and the allocated context site must both pass through the recorder")
+	var allocations []string
+	for _, acceptance := range only.Acceptances {
+		if acceptance.Kind == KindCrossUnitOwner {
+			allocations = append(allocations, acceptance.Reason)
+		}
+	}
+	require.Contains(t, strings.Join(allocations, "\n"), "request held at (*capture.fixture.Engine).allocated")
+	require.Contains(t, allocations, "a request is held up its caller chains only at holders another merge unit owns")
 	for _, site := range only.ContextSites {
 		if site.Function == "(*capture.fixture.Engine).leaf" {
 			require.Contains(t, site.Reason, KindCrossUnitOwner+": ", "never reported as having no request")

@@ -450,6 +450,25 @@ func (f *nilFlow) result(call ssa.CallInstruction, index int) []string {
 // whose trailing error result is not the nil constant (an error return).
 func (f *nilFlow) resultOf(call ssa.CallInstruction, index int, successOnly bool) []string {
 	targets := f.p.CallTargets(call)
+	resultIndex := index
+	if resultIndex < 0 {
+		resultIndex = 0
+	}
+	// A reviewed result boundary is exact in function identity and tuple
+	// index. A dynamic call uses it only when every candidate is covered.
+	covered := len(targets) > 0
+	for _, target := range targets {
+		if f.p.nonNilResults[target][resultIndex] == "" {
+			covered = false
+			break
+		}
+	}
+	if covered {
+		for _, target := range targets {
+			f.discharge(fmt.Sprintf("reviewed-result-contract: %s result #%d: %s", target.String(), resultIndex, f.p.nonNilResults[target][resultIndex]))
+		}
+		return nil
+	}
 	if len(targets) == 0 {
 		f.discharge("convention: unresolved call target at " + f.position(call.Parent(), call.Pos()))
 	}
