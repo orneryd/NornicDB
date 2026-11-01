@@ -73,7 +73,8 @@ func TestBadgerQueries_EdgeFromTxn_ErrorBranches(t *testing.T) {
 		return nil
 	}))
 
-	require.NoError(t, engine.selfHealEdgeBetweenIndexes([]*Edge{
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	require.NoError(t, engine.selfHealEdgeBetweenIndexes(t.Context(), []*Edge{
 		nil,
 		{ID: "test:e-no-op", StartNode: "test:a", EndNode: "test:b", Type: "R"},
 	}))

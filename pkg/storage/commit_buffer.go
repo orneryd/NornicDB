@@ -1363,107 +1363,31 @@ func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked(ctx context.Context, pre
 // applies the same deltas to the persisted counters when it lands the
 // generation, so reads see committed counts + this delta.
 func (w *WriteBehindBuffer) LabelCountDelta(label string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			for key, delta := range c.labelDeltas {
-				if key.label == label {
-					total += delta
-				}
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindLabel, "", label, false)
 	return total
 }
 
 // LabelCountDeltaInNamespace is LabelCountDelta restricted to namespace.
 func (w *WriteBehindBuffer) LabelCountDeltaInNamespace(namespace, label string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if delta, ok := c.labelDeltas[namespaceLabel{namespace: namespace, label: label}]; ok {
-				total += delta
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindLabel, namespace, label, true)
 	return total
 }
 
 // EdgeTypeCountDelta sums the derived edge-type count deltas of every
 // buffered commit that has not been replayed yet, across all namespaces.
 func (w *WriteBehindBuffer) EdgeTypeCountDelta(edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			for key, delta := range c.edgeTypeDeltas {
-				if key.edgeType == edgeType {
-					total += delta
-				}
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindEdgeType, "", edgeType, false)
 	return total
 }
 
 // EdgeTypeCountDeltaInNamespace is EdgeTypeCountDelta restricted to
 // namespace.
 func (w *WriteBehindBuffer) EdgeTypeCountDeltaInNamespace(namespace, edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if delta, ok := c.edgeTypeDeltas[namespaceEdgeType{namespace: namespace, edgeType: edgeType}]; ok {
-				total += delta
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindEdgeType, namespace, edgeType, true)
 	return total
 }
 
@@ -1580,7 +1504,8 @@ func (w *WriteBehindBuffer) edgesBetweenOverlayLocked(ctx context.Context, sourc
 // EdgeCountDelta is the buffered total edge-count delta: creates minus
 // deletes across every generation that has not been replayed yet.
 func (w *WriteBehindBuffer) EdgeCountDelta() int64 {
-	return w.totalCountDeltaForPrefix("", true)
+	delta, _ := w.totalCountDeltaForPrefix(context.Background(), "", true)
+	return delta
 }
 
 // EdgeTypeLabelCountDeltaInNamespace sums the buffered positional
@@ -1642,14 +1567,16 @@ func (w *WriteBehindBuffer) EdgeTypeLabelCountDelta(sub byte, label, edgeType st
 // edges whose ID starts with prefix: live buffered edge IDs minus buffered
 // deleted edge IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) EdgeCountDeltaForPrefix(prefix string) int64 {
-	return w.totalCountDeltaForPrefix(prefix, true)
+	delta, _ := w.totalCountDeltaForPrefix(context.Background(), prefix, true)
+	return delta
 }
 
 // NodeCountDeltaForPrefix is the buffered total node-count delta restricted to
 // nodes whose ID starts with prefix: live buffered node IDs minus buffered
 // deleted node IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) NodeCountDeltaForPrefix(prefix string) int64 {
-	return w.totalCountDeltaForPrefix(prefix, false)
+	delta, _ := w.totalCountDeltaForPrefix(context.Background(), prefix, false)
+	return delta
 }
 
 // PendingOps reports how many mutations are buffered but not yet applied.

@@ -433,7 +433,11 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			}
 
 			if !coversDecided && lookups >= labelScanPointLookups {
-				covers = b.labelCoversScope(scope, label)
+				var err error
+				covers, err = b.labelCoversScope(ctx, scope, label)
+				if err != nil {
+					return err
+				}
 				coversDecided = true
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
@@ -471,7 +475,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			ids = append(ids, entry.id)
 			positions[entry.id] = index
 		}
-		if err := readNodeRecordsInOnePass(txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
+		if err := readNodeRecordsInOnePass(ctx, txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
 			index := positions[nodeID]
 			pending[index].node, pending[index].err = readItem(nodeID, item)
 			// Report record errors in visit order, so an early stop does not
@@ -935,11 +939,17 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 		copyForRead = copyNode
 	}
 	now := DecayScoringTime()
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	// One bounded poll follows the batch through selection and caller copying.
+	var cancel bulkReadCancellation
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		clear(result)
 		b.nodeCacheMu.RLock()
 		defer b.nodeCacheMu.RUnlock()
 		for _, id := range ids {
+			if err := cancel.check(ctx); err != nil {
+				return false, err
+			}
 			if id == "" {
 				continue
 			}
@@ -967,8 +977,13 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 	gen := b.nodeCacheGen.current()
 	var loaded []*Node
 	var current bool
+	var captureErr error
 	err := b.withReadView(func(w *WriteBehindBuffer) {
 		for _, id := range ids {
+			if err := cancel.check(ctx); err != nil {
+				captureErr = err
+				return
+			}
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: visibleRead}); state.found {
 				if states == nil {
 					states = make(map[NodeID]bufferedEntityState)
@@ -977,10 +992,16 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 			}
 		}
 	}, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr
+		}
 		sourceTs = txn.ReadTs()
 		clear(result)
 		loaded = nil
 		for _, id := range ids {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			if id == "" {
 				continue
 			}
@@ -1019,14 +1040,20 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 			}
 		}
 		return nil
-	}, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids, cached: cached, current: &current})
+	}, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids, nodeReadCtx: ctx, cached: cached, current: &current})
 	if err != nil {
 		return nil, err
 	}
 	// Selection completes at the captured view. Copy its immutable bodies
 	// afterwards, once, outside the buffer and cache locks.
 	for id, node := range result {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		result[id] = copyForRead(node)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	for _, node := range loaded {
 		b.cacheFillNode(gen, node, nodeReadCacheFull, sourceTs)
@@ -1078,7 +1105,7 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 			return err
 		}
 		return nil
-	}, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids})
+	}, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids, nodeReadCtx: context.Background()})
 	if err != nil {
 		return nil, err
 	}
@@ -1541,7 +1568,10 @@ func (b *BadgerEngine) committedEdgesBetween(ctx context.Context, startID, endID
 		return nil, err
 	}
 	if len(result) > 0 {
-		_ = b.selfHealEdgeBetweenIndexes(result)
+		_ = b.selfHealEdgeBetweenIndexes(ctx, result)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 
 	return result, nil
@@ -1628,13 +1658,13 @@ func (b *BadgerEngine) committedEdgeBetween(source, target NodeID, edgeType stri
 	// is the true lifetime at this context-free entry point.
 	indexed, err := b.edgesBetweenFromSetIndex(context.Background(), source, target, edgeType, withView)
 	if err == nil && len(indexed) > 0 {
-		_ = b.selfHealEdgeBetweenIndexes(indexed[:1])
+		_ = b.selfHealEdgeBetweenIndexes(context.Background(), indexed[:1])
 		return indexed[0]
 	}
 
 	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(context.Background(), source, target, edgeType, withView)
 	if err == nil && len(legacy) > 0 {
-		_ = b.selfHealEdgeBetweenIndexes(legacy)
+		_ = b.selfHealEdgeBetweenIndexes(context.Background(), legacy)
 		return legacy[0]
 	}
 
@@ -1858,7 +1888,9 @@ func setBetweenSelfHealHook(hook func()) (restore func()) {
 	}
 }
 
-func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+// The synchronous repair belongs to its discovering read, through write admission.
+func (b *BadgerEngine) selfHealEdgeBetweenIndexes(ctx context.Context, edges []*Edge) error {
 	if len(edges) > edgeBetweenSelfHealMaxEdges {
 		edges = edges[:edgeBetweenSelfHealMaxEdges]
 	}
@@ -1876,7 +1908,7 @@ func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
 	for _, edge := range edges {
 		e.edge(edge)
 	}
-	err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	err := b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for _, edge := range edges {
 			if edge == nil {
 				continue

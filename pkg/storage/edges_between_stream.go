@@ -1,5 +1,7 @@
 package storage
 
+// Repair context adoption: storage-format-owners lane (Codex), 1 November 2026.
+
 import (
 	"context"
 	"errors"
@@ -223,7 +225,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 		return nil, err
 	}
 	if len(legacy) > 0 {
-		_ = b.selfHealEdgeBetweenIndexes(legacy)
+		_ = b.selfHealEdgeBetweenIndexes(context.Background(), legacy)
 	}
 	return filterEdgesBetween(legacy, startID, endID, edgeType, properties, match), nil
 }

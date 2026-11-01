@@ -319,7 +319,9 @@ type BadgerEngine struct {
 	// Eliminates expensive full table scans for node/edge counts
 	// totalCountWriteMu publishes cached totals and retires their buffered delta
 	// together. It is released before any storage callbacks.
-	totalCountWriteMu sync.RWMutex
+	// Request-owned count reads use the existing cancellable admission owner.
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	totalCountWriteMu trackedRWMutex
 	nodeCount         atomic.Int64
 	edgeCount         atomic.Int64
 
@@ -431,7 +433,7 @@ type BadgerEngine struct {
 	// against each other and keeps backup's count snapshot exclusive. Commit
 	// paths do not take it: every commit appends a unique delta key instead
 	// of a read-modify-write on the shared base key (PR #1043 item #2).
-	labelCountWriteMu sync.RWMutex
+	labelCountWriteMu trackedRWMutex
 
 	// edgeTypeCountWriteMu is the edge-type analogue of labelCountWriteMu:
 	// it orders folds/rebuilds of the derived per-type counts (issue #638).

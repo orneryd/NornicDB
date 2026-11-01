@@ -112,7 +112,11 @@ type adjacencyCountRequest struct {
 // it neither consults namespace caches nor changes
 // the degree API convention of returning the count while discarding view errors
 // (HARD_CONVERGENCE.md item 5: node/edge twin consolidation).
-func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[string]int64, adjacency ...adjacencyCountRequest) (int64, error) {
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+func (b *BadgerEngine) countByPrefix(ctx context.Context, prefix string, keyType byte, cache map[string]int64, adjacency ...adjacencyCountRequest) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	readPrefix := prefix
 	if len(adjacency) > 0 {
 		readPrefix = string(adjacency[0].nodeID)
@@ -161,7 +165,11 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 
 		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 		defer it.Close()
+		var cancel bulkReadCancellation
 		for it.Rewind(); it.Valid(); it.Next() {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			count++
 		}
 		return nil
@@ -181,7 +189,7 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 // This is an optional fast-path used by NamespacedEngine to provide accurate
 // per-database counts without decoding values.
 func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	return b.entityCountByPrefix(prefix, prefixNode)
+	return b.entityCountByPrefix(context.Background(), prefix, prefixNode)
 }
 
 // EdgeCount returns the total number of valid, decodable edges.
@@ -210,7 +218,7 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 // EdgeCountByPrefix counts edges whose EdgeID begins with the provided prefix.
 // The prefix refers to the EdgeID string prefix (e.g., database namespace "nornic:").
 func (b *BadgerEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	return b.entityCountByPrefix(prefix, prefixEdge)
+	return b.entityCountByPrefix(context.Background(), prefix, prefixEdge)
 }
 
 // GetSchema returns the schema manager.
@@ -1213,8 +1221,10 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 
 // entityCountByPrefix keeps namespace-cache and committed-buffer visibility in
 // one owner; total-count synchronization precedes lifecycle admission as before.
-func (b *BadgerEngine) entityCountByPrefix(prefix string, keyType byte) (int64, error) {
-	b.totalCountWriteMu.RLock()
+func (b *BadgerEngine) entityCountByPrefix(ctx context.Context, prefix string, keyType byte) (int64, error) {
+	if err := b.totalCountWriteMu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
@@ -1223,16 +1233,16 @@ func (b *BadgerEngine) entityCountByPrefix(prefix string, keyType byte) (int64, 
 	if keyType == prefixEdge {
 		cache = b.namespaceEdgeCounts
 	}
-	count, err := b.countByPrefix(prefix, keyType, cache)
+	count, err := b.countByPrefix(ctx, prefix, keyType, cache)
 	if err != nil {
 		return 0, err
 	}
 	if b.writeBehind != nil {
-		if keyType == prefixEdge {
-			count += b.writeBehind.EdgeCountDeltaForPrefix(prefix)
-		} else {
-			count += b.writeBehind.NodeCountDeltaForPrefix(prefix)
+		delta, err := b.writeBehind.totalCountDeltaForPrefix(ctx, prefix, keyType == prefixEdge)
+		if err != nil {
+			return 0, err
 		}
+		count += delta
 	}
 	return count, nil
 }

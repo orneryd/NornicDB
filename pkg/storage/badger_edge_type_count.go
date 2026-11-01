@@ -3,6 +3,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -56,12 +57,13 @@ type namespaceEdgeType struct {
 
 // readEdgeTypeCountInTxn reads one persisted edge-type count as base plus
 // the committed deltas visible in txn.
-func (b *BadgerEngine) readEdgeTypeCountInTxn(txn *badger.Txn, namespace, edgeType string) (int64, int, error) {
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+func (b *BadgerEngine) readEdgeTypeCountInTxn(ctx context.Context, txn *badger.Txn, namespace, edgeType string) (int64, int, error) {
 	base, err := readDerivedCountInTxn(txn, edgeTypeCountKey(namespace, edgeType))
 	if err != nil {
 		return 0, 0, err
 	}
-	deltaSum, seen, err := sumCountDeltasInTxn(txn, countDeltaKindEdgeType, namespace, edgeType)
+	deltaSum, seen, err := sumCountDeltasInTxn(ctx, txn, countDeltaKindEdgeType, namespace, edgeType)
 	if err != nil {
 		return 0, seen, err
 	}
@@ -91,14 +93,14 @@ func (b *BadgerEngine) adjustEdgeTypeCountInTxn(txn *badger.Txn, namespace, edge
 // EdgeCountByTypeInNamespace returns the persisted count of edges of the given
 // type in one namespace (0 when absent).
 func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (int64, error) {
-	return b.namedCountInNamespace(countDeltaKindEdgeType, namespace, edgeType)
+	return b.namedCountInNamespace(context.Background(), countDeltaKindEdgeType, namespace, edgeType)
 }
 
 // EdgeCountByType returns the total count of edges of the given type across
 // all namespaces. This is the O(#namespaces) point-read fast path behind
 // MATCH ()-[r:T]->() RETURN count(r).
 func (b *BadgerEngine) EdgeCountByType(edgeType string) (int64, error) {
-	return b.namedCount(countDeltaKindEdgeType, edgeType)
+	return b.namedCount(context.Background(), countDeltaKindEdgeType, edgeType)
 }
 
 func (b *BadgerEngine) edgeTypeCountReady() (bool, error) {

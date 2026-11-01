@@ -1181,16 +1181,24 @@ func (b *BadgerEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID Nod
 }
 
 func (b *BadgerEngine) BatchGetNodesLatestVisible(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
-	if err := b.pendingReadConflict(readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids}); err != nil {
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	if err := b.pendingReadConflict(readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids, nodeReadCtx: ctx}); err != nil {
 		return nil, err
 	}
 
 	result := make(map[NodeID]*Node, len(ids))
+	var cancel bulkReadCancellation
 	for _, id := range ids {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		node, err := b.GetNodeLatestVisible(id)
 		if err == nil && node != nil {
 			result[id] = node
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
