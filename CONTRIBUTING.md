@@ -32,7 +32,7 @@ fix/<topic>     ──┘                                     │ pull request (
 |---|---|---|---|
 | `feature/*`, `fix/*` | anyone with write access | push freely; target `release/vX.Y.Z` for release fixes | none |
 | `develop` | integration branch | direct integration only; pull requests targeting develop are closed (no force-push, no deletion) | manual, admin-approved |
-| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | no automatic CI on release pushes; manual runs require admin approval |
+| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | run `make test` locally for each PR push; no automatic CI on release pushes |
 | `main` | maintainers only | fast-forward from a finished release branch, or a scoped operational/documentation PR | local verification; manual, admin-approved GitHub checks |
 
 - **Experiment on `feature/<topic>` branches** cut from `develop`, iterate as fast as you like, and merge them into
@@ -71,7 +71,7 @@ inspect the relevant workflow triggers before merging.
 
 ### Checks: local, release, and administrator-approved runs
 
-Full CI is requested automatically only for a PR from a `release/**` branch in this repository targeting `main`. Opening, reopening, updating, or retargeting such a PR to `main` requests the full `make verify ALL=1` suite and the Cypher differential ratchet. The job waits for `admin-approved-actions` before allocating a runner. It checks out the event's exact release head and uses the event's base SHA as the allocation baseline; approval must be renewed for new runs. Release branch pushes alone do not run CI.
+Full CI is requested automatically only for a PR from a `release/**` branch in this repository targeting `main`. Opening, reopening, updating, or retargeting such a PR to `main` requests the full `make verify ALL=1` suite and the Cypher differential ratchet. The job waits for `admin-approved-actions` before allocating a runner. It checks out the event's exact release head and uses the event's base SHA as the allocation baseline; approval must be renewed for new runs. Release branch pushes alone do not run CI. Direct updates to release branches are blocked; all changes must be merged through PRs. Run `make test` locally against each PR head before pushing and report the result; this local requirement is not a GitHub-enforced status check.
 
 PRs targeting `develop` are closed by a governance-only workflow without executing PR code or tests; GitHub may briefly show them open before that workflow runs. Other PRs do not automatically run CI. When needed, dispatch existing CI workflows from a trusted workflow ref, specify the intended target SHA, and have an administrator approve the waiting job. Check the workflow definition and target before approval. Workflow editors can remove YAML gates in their own branches; do not dispatch untrusted workflow definitions.
 
@@ -134,7 +134,7 @@ branch.
 - Integrate product work directly into `develop`; pull requests targeting `develop` are not accepted. Target `release/vX.Y.Z` for a release fix, or `main` for the scoped maintainer operational/documentation path above.
 - Put release work on its release milestone; the maintainer maintenance path may omit one. Link the issues
   the PR fixes (`Fixes #123`).
-- Run `make verify` and say so in the description, with anything you skipped.
+- For each PR push targeting a release branch, run `make test` locally on that head and report the result. For maintainer PRs to `main`, run `make verify` and report all skips.
 
 ## Need Help?
 

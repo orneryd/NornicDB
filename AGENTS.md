@@ -498,7 +498,7 @@ release ownership, milestones, and verification. Read it before choosing a branc
 
 - **Product work:** branch from `develop` into `feature/<topic>` or `fix/<topic>` and integrate into `develop`.
   Maintainers can push or merge into `develop` for rapid iteration; do not force-push or delete it.
-- **Releases:** integrate into `release/vX.Y.Z` through PRs on milestone `vX.Y.Z`. Maintainers own release
+- **Releases:** integrate into `release/vX.Y.Z` only through PRs on milestone `vX.Y.Z`; run `make test` locally for each PR head before pushing. Direct release branch updates are blocked. Maintainers own release
   branch creation, merges, tags, and the final fast-forward of `main`. Use the documented `make release-*` helpers.
 - **Maintainer maintenance:** scoped documentation, agent/contributor instructions, repository administration,
   and CI/CD or operational changes may use a short-lived branch from `main` and a PR targeting `main`.
