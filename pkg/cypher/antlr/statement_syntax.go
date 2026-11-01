@@ -176,6 +176,7 @@ func ParseSyntax(ctx context.Context, source string, entry SyntaxEntry, cypher25
 		}
 	}
 	statementSyntaxCache.RUnlock()
+	if data == nil { r17DiagnosticRecord("miss",source,entry,stage) } else { r17DiagnosticRecord("hit",source,entry,stage) }
 	if data != nil {
 		syntax := StatementSyntax{data}
 		syntax.recordCredentials(ctx)
@@ -196,6 +197,7 @@ func ParseSyntax(ctx context.Context, source string, entry SyntaxEntry, cypher25
 		data = prior
 	} else {
 		if len(statementSyntaxCache.entries) >= statementSyntaxCacheLimit {
+			r17DiagnosticRecord("eviction",source,entry,stage)
 			clear(statementSyntaxCache.entries)
 		}
 		statementSyntaxCache.entries[key] = data
@@ -214,6 +216,7 @@ func ParseSyntax(ctx context.Context, source string, entry SyntaxEntry, cypher25
 // Token filling uses that same lexer; retaining trivia does not lex again.
 func parseStatementSyntax(ctx context.Context, projection *cyphertext.Source, entry SyntaxEntry, observe func(antlr4.Tree)) (data *statementSyntaxData, err error) {
 	defer recoverPredictionCancellation(&err)
+	r17DiagnosticRecord("parse",projection.Text,entry,RawSource)
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
