@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -57,7 +58,7 @@ func TestCanceledRuntimeReaderCachesDoNotPoisonPublicExecute(t *testing.T) {
 			cancel()
 			switch owner {
 			case "return plan":
-				plan := returnProjectionPlanFor(canceled, query)
+				plan := returnPlanForTest(canceled, query)
 				require.False(t, plan.valid)
 				returnProjectionPlans.RLock()
 				_, found := returnProjectionPlans.plans[query]
@@ -149,7 +150,7 @@ func requireRuntimeReaderGrammarDiagnostic(t *testing.T, query string, err error
 		source, rewrite, normalizeErr = normalizeQueryText(t.Context(), source)
 		require.NoError(t, normalizeErr)
 	}
-	grammarErr := cypherantlr.ValidateContext(t.Context(), source, cyphertext.RawSource)
+	grammarErr := cypherantlr.ValidateContext(t.Context(), cypherantlr.ReadStatement(source), cyphertext.RawSource)
 	require.Error(t, grammarErr)
 	_, want := (resultRestoration{source: rewrite}).restore(nil, syntaxAdmissionError(t.Context(), source, AcceptedSource, grammarErr), nil)
 	require.EqualError(t, err, want.Error())
@@ -229,8 +230,8 @@ func TestQueryBodyOutputPresencePolicies(t *testing.T) {
 		{"CALL db.labels()", false, true},
 		{"RETURN 1 AS value FINISH", false, false},
 	} {
-		body := readQueryBody(t.Context(), test.query, 0, len(test.query))
-		require.Equal(t, test.direct, queryBodyProducesColumns(t.Context(), test.query, body, true), test.query)
-		require.Equal(t, test.declared, queryBodyProducesColumns(t.Context(), test.query, body, false), test.query)
+		body := readQueryBodyText(t.Context(), test.query, 0, len(test.query))
+		require.Equal(t, test.direct, queryBodyProducesColumns(t.Context(), body, true), test.query)
+		require.Equal(t, test.declared, queryBodyProducesColumns(t.Context(), body, false), test.query)
 	}
 }

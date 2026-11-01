@@ -1,9 +1,12 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 func cypherGrammarVersion(query string) string {
@@ -42,7 +45,7 @@ func usesSharedGrammarClauses(ctx context.Context, query string) bool {
 	if isSchemaCommandStatement(query) {
 		return false
 	}
-	clauses, ok := pipelineClausesFor(ctx, query)
+	clauses, ok := pipelineTextClausesFor(ctx, query)
 	if !ok {
 		return false
 	}
@@ -61,22 +64,37 @@ func usesSharedGrammarClauses(ctx context.Context, query string) bool {
 	return false
 }
 
-func parsePipelineIteration(clause string) (expression, alias string, ok bool) {
-	if !startsWithKeywordFold(strings.TrimSpace(clause), "FOR") {
-		product, found := splitUnwindBody(clause)
-		return product.expression, product.aliasTail, found
-	}
-	body := pipelineClauseBody(clause, "FOR")
-	name, end, found := scanSymbolicName(body, 0)
-	if !found {
+// parsePipelineIteration reads UNWIND expression AS variable or FOR variable
+// IN expression from the clause's retained occurrence: the expression's code
+// and the variable as written. ok is false for any other clause.
+// Author of the retained form: Claude R17 implementation agent, 30 October 2026.
+func parsePipelineIteration(clause pipelineClause) (expression, alias string, ok bool) {
+	node := clause.syntax
+	if !node.Valid() || (node.Rule() != cypherantlr.CypherParserRULE_unwindSt && node.Rule() != cypherantlr.CypherParserRULE_forSt) {
 		return "", "", false
 	}
-	rest := strings.TrimSpace(body[end:])
-	if !startsWithKeywordFold(rest, "IN") {
+	value, variable := node.ChildRule(cypherantlr.CypherParserRULE_expression), node.ChildRule(cypherantlr.CypherParserRULE_symbol)
+	if !value.Valid() || !variable.Valid() {
 		return "", "", false
 	}
-	expression = strings.TrimSpace(rest[len("IN"):])
-	return expression, name, expression != ""
+	return value.Code(), variable.Text(), true
+}
+
+// unwindTrailingWhere is the WHERE an UNWIND clause carries, which Cypher
+// rejects (UNWIND takes no WHERE): its keyword as written, when present.
+func unwindTrailingWhere(clause pipelineClause) (string, bool) {
+	node := clause.syntax
+	if !node.Valid() || node.Rule() != cypherantlr.CypherParserRULE_unwindSt {
+		return "", false
+	}
+	where := node.ChildRule(cypherantlr.CypherParserRULE_where)
+	if !where.Valid() {
+		return "", false
+	}
+	if token, found := where.DirectToken(cypherantlr.CypherLexerWHERE); found {
+		return token.Text(), true
+	}
+	return "WHERE", true
 }
 
 func parsePipelineLet(clause string) ([]pipelineRowProjection, error) {

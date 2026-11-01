@@ -1,3 +1,4 @@
+// Author of retained effect-inspection consumption: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -10,6 +11,8 @@ import (
 // pipelineClauseEffects is the chain planner's entire operator contract.
 // Its observer consumes the canonical syntax product alongside scope binding.
 type pipelineClauseEffects struct {
+	nodeWrites       mergeNodeWrites
+	renames          bool
 	reads, writes    stretchTokens
 	chainWrites      stretchTokens
 	batch            *transactionBatchSpec
@@ -23,26 +26,21 @@ type pipelineClauseEffects struct {
 
 var pipelineClauseEffectCache = newBoundedCache[string, pipelineClauseEffects](4096, boundedCacheStringShardIndex)
 
-func pipelineClauseEffectsFor(ctx context.Context, text string) (pipelineClauseEffects, error) {
-	return pipelineSyntaxEffects(ctx, text, false)
-}
-
+// pipelineStatementEffectsFor reads a statement's effects through the query
+// owner; the former clause-entry text path is gone (Claude R17 agent).
 func pipelineStatementEffectsFor(ctx context.Context, text string) (pipelineClauseEffects, error) {
-	return pipelineSyntaxEffects(ctx, text, true)
+	return pipelineSyntaxEffects(ctx, text)
 }
 
 // pipelineSyntaxEffects is an effect-only compatibility consumer. The bound
 // statement compiler composes its own binding observer with this same observer;
 // an effect-cache hit can never stand in for scope completeness.
-func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pipelineClauseEffects, error) {
-	entry, key := cypherantlr.ClauseEntry, text
-	if statement {
-		entry, key = cypherantlr.StatementEntry, "\x00"+text
-	}
+func pipelineSyntaxEffects(ctx context.Context, text string) (pipelineClauseEffects, error) {
+	key := "\x00" + text
 	if effects, found := pipelineClauseEffectCache.get(key); found {
 		return effects, ctx.Err()
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, text, entry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	syntax, err := cypherantlr.QuerySyntax(ctx, cypherantlr.ReadStatement(text), cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return pipelineClauseEffects{}, err
 	}
@@ -60,6 +58,7 @@ func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pi
 func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVisitor {
 	depth := 0
 	reading, writing, creating := true, false, false
+	var mergeOwn, except map[string]struct{}
 	recordPattern := func(pattern string) {
 		if reading {
 			addStretchPattern(pattern, &effects.reads, false)
@@ -76,13 +75,31 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 	}
 	return func(node cypherantlr.SyntaxNode) func() {
 		oldDepth, oldRead, oldWrite, oldCreate := depth, reading, writing, creating
-		restore := func() { depth, reading, writing, creating = oldDepth, oldRead, oldWrite, oldCreate }
+		oldOwn, oldExcept := mergeOwn, except
+		restore := func() {
+			depth, reading, writing, creating = oldDepth, oldRead, oldWrite, oldCreate
+			mergeOwn, except = oldOwn, oldExcept
+		}
 		switch node.Rule() {
-		case cypherantlr.CypherParserRULE_useClause, cypherantlr.CypherParserRULE_withSt, cypherantlr.CypherParserRULE_letSt:
-			// These operators inherit the effects of their children.
+		case cypherantlr.CypherParserRULE_useClause:
+		case cypherantlr.CypherParserRULE_withSt:
+			for _, projection := range projectionPlanOfNode(node).projections {
+				if !projection.direct || projection.variable != projection.alias {
+					effects.renames = true
+				}
+			}
+		case cypherantlr.CypherParserRULE_letSt:
+			effects.renames = true
+		case cypherantlr.CypherParserRULE_mergeAction:
+			if _, onCreate := node.DirectToken(cypherantlr.CypherLexerCREATE); onCreate {
+				except = mergeOwn
+			} else {
+				except = nil
+			}
 		case cypherantlr.CypherParserRULE_expression:
 			reading, writing, creating = true, false, false
 		case cypherantlr.CypherParserRULE_callSubquery:
+			effects.nodeWrites.all = true
 			if depth == 0 {
 				call := cypherantlr.DescribeCall(node)
 				effects.batch = call.Batch
@@ -100,6 +117,13 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 				effects.barrier = true
 			}
 		case cypherantlr.CypherParserRULE_mergeSt:
+			mergeOwn = make(map[string]struct{})
+			syntaxPatternDefinitions(node.ChildRule(cypherantlr.CypherParserRULE_patternPart), func(rule int, symbol cypherantlr.SyntaxNode) {
+				if rule == cypherantlr.CypherParserRULE_nodePattern {
+					name, _ := symbol.Name()
+					mergeOwn[name] = struct{}{}
+				}
+			})
 			reading, writing, creating = true, true, false
 			if depth == 0 {
 				effects.barrier = true
@@ -183,23 +207,42 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 		case cypherantlr.CypherParserRULE_setSt, cypherantlr.CypherParserRULE_removeSt:
 			reading, writing, creating = false, false, false
 			var changed stretchTokens
-			if node.Rule() == cypherantlr.CypherParserRULE_setSt {
-				addStretchSetWrites(pipelineClauseBody(node.Code(), "SET"), &changed)
-			} else {
-				addStretchRemoveWrites(pipelineClauseBody(node.Code(), "REMOVE"), &changed)
+			for i := 0; i < node.ChildCount(); i++ {
+				item := node.Child(i)
+				if item.Rule() != cypherantlr.CypherParserRULE_setItem && item.Rule() != cypherantlr.CypherParserRULE_removeItem {
+					continue
+				}
+				variable := mutationItemTarget(item)
+				if _, own := except[variable]; !own || variable == "" {
+					effects.nodeWrites.add(variable, false)
+				}
+				mutationItemWrites(item, &changed)
 			}
+
 			effects.writes.include(&changed)
 			effects.chainWrites.include(&changed)
 			if depth == 0 {
 				effects.barrier = true
 			}
 		case cypherantlr.CypherParserRULE_deleteSt:
+			chain := node.ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+			for i := 0; i < chain.ChildCount(); i++ {
+				item := chain.Child(i)
+				if item.Rule() == cypherantlr.CypherParserRULE_expression {
+					name, variable := projectionVariableFromSyntax(item)
+					if !variable {
+						name = ""
+					}
+					effects.nodeWrites.add(name, false)
+				}
+			}
 			effects.writes.everything = true
 			effects.chainWrites.everything = true
 			if depth == 0 {
 				effects.barrier = true
 			}
 		case cypherantlr.CypherParserRULE_foreachSt:
+			effects.nodeWrites.all = true
 			if depth == 0 {
 				effects.barrier = true
 			}
@@ -208,6 +251,10 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 				effects.barrier, effects.expands = true, true
 			}
 		case cypherantlr.CypherParserRULE_queryCallSt, cypherantlr.CypherParserRULE_standaloneCall:
+			invoked := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
+			if procedure, found := globalProcedureRegistry.Get(invoked); !found || procedure.Spec.writes() {
+				effects.nodeWrites.all = true
+			}
 			effects.opaqueReads = true
 			if depth == 0 {
 				effects.expands = true
@@ -303,4 +350,78 @@ func (e *StorageExecutor) pipelineClauseBoundary(ctx context.Context, effects pi
 		}
 	}
 	return boundary, maximumRows
+}
+
+// mutationItemTarget is the variable a SET or REMOVE item writes, read from
+// the item's retained node: n = …, n += …, n:L, n.p = …, n[k] = … write n.
+// "" when the target is not a variable, or a REMOVE item names no property
+// or label (REMOVE n): such an item writes everything.
+// Author of the retained reader: Claude R17 implementation agent, 30 October 2026.
+func mutationItemTarget(item cypherantlr.SyntaxNode) string {
+	if symbol := item.ChildRule(cypherantlr.CypherParserRULE_symbol); symbol.Valid() {
+		name, _ := symbol.Name()
+		return name
+	}
+	property := item.ChildRule(cypherantlr.CypherParserRULE_propertyExpression)
+	if dynamic := item.ChildRule(cypherantlr.CypherParserRULE_dynamicPropertyExpression); dynamic.Valid() {
+		property = dynamic.ChildRule(cypherantlr.CypherParserRULE_propertyExpression)
+	} else if !property.ChildRule(cypherantlr.CypherParserRULE_name).Valid() {
+		return "" // REMOVE n: no property named
+	}
+	name, variable := projectionVariableFromSyntax(property.ChildRule(cypherantlr.CypherParserRULE_atom))
+	if !variable {
+		return ""
+	}
+	return name
+}
+
+// mutationItemWrites projects one admitted mutation item into graph effects.
+// Target identities and graph-key/label effects share this grammar observation.
+func mutationItemWrites(item cypherantlr.SyntaxNode, writes *stretchTokens) {
+	if labels := item.ChildRule(cypherantlr.CypherParserRULE_nodeLabels); labels.Valid() {
+		labels.Walk(func(node cypherantlr.SyntaxNode) func() {
+			if name, ok := node.Name(); ok {
+				writes.add(&writes.labels, name)
+			}
+			if node.Rule() == cypherantlr.CypherParserRULE_dynamicLabel || node.IsToken(cypherantlr.CypherLexerBANG) || node.IsToken(cypherantlr.CypherLexerAMPERSAND) || node.IsToken(cypherantlr.CypherLexerSTICK) || node.IsToken(cypherantlr.CypherLexerMOD) || node.IsToken(cypherantlr.CypherLexerLPAREN) {
+				writes.anyNode = true
+			}
+			return nil
+		})
+		return
+	}
+	if item.ChildRule(cypherantlr.CypherParserRULE_dynamicPropertyExpression).Valid() {
+		writes.anyKey = true
+		return
+	}
+	// The symbol alternative is a whole-entity assignment (n = value or
+	// n += value), not a propertyExpression. Its target identity is retained
+	// by mutationItemTarget; its graph effect can change any property key.
+	if item.ChildRule(cypherantlr.CypherParserRULE_symbol).Valid() {
+		writes.anyKey = true
+		return
+	}
+	property := item.ChildRule(cypherantlr.CypherParserRULE_propertyExpression)
+	if !property.Valid() {
+		writes.everything = true
+		return
+	}
+	names := 0
+	key := ""
+	for i := 0; i < property.ChildCount(); i++ {
+		child := property.Child(i)
+		if child.Rule() == cypherantlr.CypherParserRULE_name {
+			names++
+			key = symbolicNameValue(child.Code())
+		}
+	}
+	if names == 1 {
+		writes.add(&writes.keys, key)
+		return
+	}
+	if item.Rule() == cypherantlr.CypherParserRULE_removeItem && names == 0 {
+		writes.everything = true
+		return
+	}
+	writes.anyKey = true
 }

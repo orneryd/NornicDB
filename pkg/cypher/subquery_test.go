@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -5,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -2381,39 +2381,6 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	// addLimitSkipToSubquery branches
-	s1 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n) SET n.x = 1 RETURN n", 10, 0)
-	assert.Contains(t, s1, "WITH n LIMIT 10")
-	assert.Contains(t, s1, "SET n.x = 1")
-
-	s2 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n) CREATE (m) RETURN n", 5, 2)
-	assert.Contains(t, s2, "WITH n SKIP 2 LIMIT 5")
-	assert.Contains(t, s2, "CREATE (m)")
-
-	s3 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n) RETURN n", 3, 1)
-	assert.Contains(t, s3, "SKIP 1 LIMIT 3")
-	assert.Contains(t, s3, "RETURN n")
-
-	s4 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n)", 7, 0)
-	assert.Contains(t, s4, "LIMIT 7")
-
-	s5 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n) RETURN n LIMIT 1", 2, 0)
-	assert.Contains(t, s5, "LIMIT 1")
-	assert.Contains(t, s5, "LIMIT 2")
-
-	// convertWriteSubqueryToRead branches
-	// The count query returns one row per matched row; the subquery's
-	// RETURN may read variables only the write clause binds.
-	assert.Equal(t,
-		"MATCH (n) RETURN 1",
-		exec.makeSubqueryReadOnly("MATCH (n) SET n.x = 1 RETURN n"),
-	)
-	assert.Equal(t,
-		"MATCH (n) RETURN 1",
-		exec.makeSubqueryReadOnly("MATCH (n) CREATE (m) RETURN m.x"),
-	)
-	assert.Equal(t, "", exec.makeSubqueryReadOnly("CALL db.labels()"))
-
 	inner := &ExecuteResult{
 		Columns: []string{"name", "score"},
 		Rows: [][]interface{}{
@@ -2579,15 +2546,6 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 
 	_, err = exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) SET n.bad = true RETURN", 1)
 	require.Error(t, err)
-
-	withLimit := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n:Person) SET n.flag = true RETURN n.name AS name", 2, 1)
-	assert.Contains(t, withLimit, "WITH n SKIP 1 LIMIT 2")
-	withOnlyLimit := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n:Person) SET n.flag = true RETURN n.name AS name", 2, 0)
-	assert.Contains(t, withOnlyLimit, "WITH n LIMIT 2")
-	fallbackNoReturn := exec.addLimitSkipToSubquery(t.Context(), "CREATE (n:Tmp)", 2, 1)
-	assert.Equal(t, "CREATE (n:Tmp) SKIP 1 LIMIT 2", fallbackNoReturn)
-	fallbackExistingLimit := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n:Person) RETURN n.name LIMIT 1", 2, 0)
-	assert.Contains(t, fallbackExistingLimit, "LIMIT 2")
 
 	inner := &ExecuteResult{
 		Columns: []string{"name", "age"},
@@ -3206,28 +3164,6 @@ RETURN promptId, systemPrompt
 	require.Equal(t, "one", result.Rows[0][1])
 }
 
-func TestSeedNodesFromOuterMatch_WithPipelineReturnProjection(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	eng := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(eng)
-	ctx := context.Background()
-
-	_, err := exec.Execute(ctx, `
-		CREATE (p1:SystemPrompt {promptId: 'p1', text: 'one'}),
-		       (p2:SystemPrompt {promptId: 'p2', text: 'two'})
-	`, nil)
-	require.NoError(t, err)
-
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, `
-MATCH (p:SystemPrompt)
-WITH p
-LIMIT 1
-`, "p")
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.NotNil(t, nodes[0])
-}
-
 func TestSubqueryUnionBranchClassification_ReturnThenCall(t *testing.T) {
 	body := `
 WITH p
@@ -3257,35 +3193,12 @@ RETURN
   t.translatedText AS translatedText
 `
 
-	branches, all, mixed, ok := parseTopLevelUnionBranches(t.Context(), body)
+	branches, all, mixed, ok := parseTopLevelUnionTextBranches(t.Context(), body)
 	require.True(t, ok)
 	require.False(t, mixed)
 	require.True(t, all)
 	require.Len(t, branches, 2)
 
-	withVars0, inner0, hasWith0, err := parseLeadingWithImports(branches[0])
-	require.NoError(t, err)
-	require.True(t, hasWith0)
-	require.Equal(t, []string{"p"}, withVars0)
-	assert.True(t, isCallSubqueryPureReturn(inner0), "first UNION branch should be pure RETURN projection")
-
-	withVars1, inner1, hasWith1, err := parseLeadingWithImports(branches[1])
-	require.NoError(t, err)
-	require.True(t, hasWith1)
-	require.Equal(t, []string{"p"}, withVars1)
-	assert.False(t, isCallSubqueryPureReturn(inner1), "second UNION branch should not be pure RETURN")
-}
-
-func TestParseLeadingWithImports_WithWherePredicate(t *testing.T) {
-	withVars, inner, hasWith, err := parseLeadingWithImports(`
-WITH o, t
-WHERE t IS NULL
-CREATE (n:Tmp)
-RETURN n`)
-	require.NoError(t, err)
-	require.True(t, hasWith)
-	require.Equal(t, []string{"o", "t"}, withVars)
-	require.True(t, strings.HasPrefix(strings.TrimSpace(inner), "WITH o, t WHERE t IS NULL CREATE"), "inner body should preserve WITH ... WHERE clause semantics")
 }
 
 func TestSubqueryHelpers_IterativeCallInTransactionsBranch(t *testing.T) {
@@ -3388,37 +3301,6 @@ func TestSubqueryHelpers_CallInTransactions_IterativeBatchingWithMatchMerge(t *t
 	assert.Equal(t, int64(3), verify.Rows[0][0])
 }
 
-func TestSubqueryHelpers_ParseCallSubquery_EdgeBranches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-
-	body, after, inTx, batch := exec.parseCallSubquery(t.Context(), "CALL db.info()")
-	assert.Empty(t, body)
-	assert.Empty(t, after)
-	assert.False(t, inTx)
-	assert.Nil(t, batch)
-
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 ")
-	assert.Empty(t, body)
-	assert.Empty(t, after)
-	assert.False(t, inTx)
-	assert.Nil(t, batch)
-
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF nope ROWS RETURN x")
-	assert.Equal(t, "RETURN 1 AS x", body)
-	assert.Equal(t, "RETURN x", after)
-	assert.True(t, inTx)
-	// Parsing preserves explicit text; execution validates it before writes.
-	require.NotNil(t, batch)
-	assert.Equal(t, "nope", batch.Expression)
-
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF 7 ROWS RETURN x")
-	assert.Equal(t, "RETURN 1 AS x", body)
-	assert.Equal(t, "RETURN x", after)
-	assert.True(t, inTx)
-	require.NotNil(t, batch)
-	assert.Equal(t, "7", batch.Expression)
-}
-
 func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_ParamAndWhereBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
@@ -3440,102 +3322,6 @@ func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_ParamAndWhereBranches(t *
 	require.Equal(t, []string{"name"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, "test", res.Rows[0][0])
-}
-
-func TestSubqueryHelpers_AddLimitSkipToSubquery_OperationBranches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-
-	tests := []struct {
-		name   string
-		query  string
-		limit  int
-		skip   int
-		assert func(t *testing.T, got string)
-	}{
-		{name: "where_before_set", query: "MATCH (p:Person) WHERE p.age > 10 SET p.active = true RETURN p.name", limit: 5, skip: 2,
-			assert: func(t *testing.T, got string) {
-				assert.Contains(t, got, "WITH p SKIP 2 LIMIT 5")
-				assert.Contains(t, got, "SET p.active = true")
-			}},
-		{name: "anonymous_pattern_variable", query: "MATCH (:Person) RETURN 1 AS one", limit: 3, skip: 0,
-			assert: func(t *testing.T, got string) {
-				assert.Contains(t, got, "WITH n LIMIT 3")
-				assert.Contains(t, got, "RETURN 1 AS one")
-			}},
-		{
-			name:  "match_delete_branch",
-			query: "MATCH (n:Person) DELETE n RETURN count(*)",
-			limit: 4,
-			skip:  1,
-			assert: func(t *testing.T, got string) {
-				assert.Contains(t, got, "WITH n SKIP 1 LIMIT 4")
-				assert.Contains(t, got, "DELETE n")
-			},
-		},
-		{
-			name:  "match_merge_branch",
-			query: "MATCH (n:Person) MERGE (m:Person {name:'x'}) RETURN m",
-			limit: 2,
-			skip:  0,
-			assert: func(t *testing.T, got string) {
-				assert.Contains(t, got, "WITH n LIMIT 2")
-				assert.Contains(t, got, "MERGE (m:Person")
-			},
-		},
-		{
-			name:  "match_return_branch",
-			query: "MATCH (n:Person) RETURN n.name",
-			limit: 3,
-			skip:  1,
-			assert: func(t *testing.T, got string) {
-				assert.Contains(t, got, "WITH n SKIP 1 LIMIT 3")
-				assert.Contains(t, got, "RETURN n.name")
-			},
-		},
-		{
-			name:  "fallback_before_return_without_match",
-			query: "WITH 1 AS x RETURN x",
-			limit: 9,
-			skip:  2,
-			assert: func(t *testing.T, got string) {
-				assert.Contains(t, got, "SKIP 2 LIMIT 9 RETURN x")
-			},
-		},
-		{
-			name:  "fallback_existing_limit_skip",
-			query: "WITH 1 AS x RETURN x LIMIT 1",
-			limit: 6,
-			skip:  0,
-			assert: func(t *testing.T, got string) {
-				assert.Contains(t, got, "RETURN x LIMIT 1 LIMIT 6")
-			},
-		},
-		{
-			name:  "fallback_no_return",
-			query: "WITH 1 AS x",
-			limit: 5,
-			skip:  0,
-			assert: func(t *testing.T, got string) {
-				assert.Equal(t, "WITH 1 AS x LIMIT 5", got)
-			},
-		},
-		{
-			name:  "match_no_operation_then_no_return_fallback",
-			query: "MATCH (n:Person)",
-			limit: 7,
-			skip:  1,
-			assert: func(t *testing.T, got string) {
-				assert.Equal(t, "MATCH (n:Person) SKIP 1 LIMIT 7", got)
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := exec.addLimitSkipToSubquery(t.Context(), tc.query, tc.limit, tc.skip)
-			tc.assert(t, got)
-		})
-	}
 }
 
 func TestExistsSubqueryHelpers_DirectBranches(t *testing.T) {

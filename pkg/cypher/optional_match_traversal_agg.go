@@ -126,11 +126,12 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 	for index, row := range rows {
 		bindings[index] = pipelineRowFromTraversalOptionalRow(row)
 	}
-	plan := &returnProjectionPlan{}
-	for _, item := range items {
-		plan.addProjection(item.expr, item.column())
+	// The items' own retained projection; physical binding items carry none
+	// and never aggregate (the pipeline's RETURN aggregates them).
+	if len(items) == 0 || items[0].plan == nil {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "could not parse aggregate projection")
 	}
-	plan.valid = len(plan.projections) > 0
+	plan := items[0].plan
 	if result, ok := e.pipelineApplyReturnPlan(ctx, bindings, plan, pipelineRowsSource(bindings), false); ok {
 		return result.Rows, nil
 	}

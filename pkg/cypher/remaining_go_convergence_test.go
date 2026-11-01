@@ -13,7 +13,7 @@ func TestStretchMapKeysUseCanonicalReader(t *testing.T) {
 	addStretchMapKeys("{`odd``key`: source.read, outer: {nested: 1}, plain: 'x.y'}", &keys)
 	require.Equal(t, map[string]struct{}{"odd`key": {}, "outer": {}, "plain": {}}, keys.keys)
 	require.False(t, keys.anyKey)
-	effects, err := pipelineClauseEffectsFor(t.Context(), "CREATE (n:CanonicalMapKeys {`odd``key`: source.read, outer: {nested: 1}})")
+	effects, err := clauseEffectsForTest(t.Context(), "CREATE (n:CanonicalMapKeys {`odd``key`: source.read, outer: {nested: 1}})")
 	require.NoError(t, err)
 	require.Equal(t, map[string]struct{}{"odd`key": {}, "outer": {}}, effects.writes.keys)
 	require.Contains(t, effects.reads.keys, "read")
@@ -50,7 +50,7 @@ func TestPatternBindingPlanRemainsSyntaxOnly(t *testing.T) {
 // CST Code removes comment tokens while preserving comment-looking string values.
 func TestStretchMapCodeCommentsPreserveQuotedValues(t *testing.T) {
 	clause := "CREATE (n:MapCodeComments { /* key */ written: 'source.read /* quoted */', copied: source.read /* tail */})"
-	effects, err := pipelineClauseEffectsFor(t.Context(), clause)
+	effects, err := clauseEffectsForTest(t.Context(), clause)
 	require.NoError(t, err)
 	require.Equal(t, map[string]struct{}{"written": {}, "copied": {}}, effects.writes.keys)
 	require.Contains(t, effects.reads.keys, "read")

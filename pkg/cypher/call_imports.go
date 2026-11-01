@@ -1,9 +1,10 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
 	"context"
-	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -30,24 +31,27 @@ func callSubqueryImportedVariables(ctx context.Context, scope string, scoped boo
 // the one statement validation reports too. A word such as null or true is
 // a variable's name here, as in Neo4j, and is an error only where no such
 // variable is defined.
+//
+// The list is read by callSubquery's own scopeList production (ScopeListEntry)
+// and scopeListNames, the reader of every CALL tree's scope; the list is a
+// window of the statement, and no CALL statement is composed around it.
+// Author of the grammar-owned form: Claude R17 implementation agent, 30 October 2026.
 func callScopeClauseVariables(ctx context.Context, list string) ([]string, error) {
-	const prefix = "CALL ("
-	syntax, err := cypherantlr.ParseSyntax(ctx, prefix+list+") { RETURN 0 }", cypherantlr.CallEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	names, err := cypherantlr.ReadScopeNames(ctx, cypherantlr.ReadStatement(list), cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
 	}
 	if err != nil {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", localization.CypherResultMetadataImportVariablesRequired())
 	}
-	scope := scopeClauseFromSyntax(syntax.Root())
-	if scope.names == nil {
+	if names == nil {
 		return []string{"*"}, nil
 	}
-	return scope.names, nil
+	return names, nil
 }
 
 func importingWithVariables(ctx context.Context, source string) []string {
-	body := readQueryBody(ctx, source, 0, len(source))
+	body := readQueryBodyText(ctx, source, 0, len(source))
 	if len(body.branches) == 0 {
 		return nil
 	}
@@ -62,7 +66,7 @@ func importingWithSyntax(branch queryBodyBranch) []string {
 }
 
 func importingWithNode(node cypherantlr.SyntaxNode) []string {
-	plan := projectionPlanFromSyntax(node)
+	plan := projectionPlanOfNode(node)
 	var names []string
 	if plan.star {
 		names = append(names, "*")

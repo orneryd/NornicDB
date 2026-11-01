@@ -31,7 +31,7 @@ func ReadUseReference(ctx context.Context, source *cyphertext.Source) (UseRefere
 	if source.Err != nil {
 		return UseReference{}, source.Err
 	}
-	syntax, err := ParseSyntax(ctx, source.Text, UseEntry, false, AcceptedSource)
+	syntax, err := ParseSyntax(ctx, ReadStatement(source.Text), UseEntry, false, AcceptedSource)
 	if err != nil {
 		if syntax.Valid() && syntax.data.useError != nil {
 			return UseReference{}, syntax.data.useError
@@ -43,7 +43,9 @@ func ReadUseReference(ctx context.Context, source *cyphertext.Source) (UseRefere
 
 func (node SyntaxNode) UseReference(source *cyphertext.Source) UseReference {
 	_, end := node.Span()
-	reference := UseReference{End: end, AcceptedEnd: node.data.nodes[node.id].end}
+	// ReadUseReference supplies an accepted-source view. Its cursor belongs
+	// to that caller's window, not the enclosing statement's arena offsets.
+	reference := UseReference{End: end, AcceptedEnd: end}
 	if source != nil {
 		span, _ := source.OriginalSpan(cyphertext.Span{Start: 0, End: reference.AcceptedEnd}, cyphertext.SourceExtent)
 		reference.End = span.End

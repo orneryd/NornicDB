@@ -21,7 +21,7 @@ func TestStatementEffectsRetainGrammarScope(t *testing.T) {
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			for _, dialect := range []bool{false, true} {
-				syntax, err := ParseSyntax(t.Context(), tc.source, StatementEntry, dialect, RawSource)
+				syntax, err := ParseSyntax(t.Context(), ReadStatement(tc.source), StatementEntry, dialect, RawSource)
 				require.NoError(t, err)
 				effects := syntax.Effects()
 				require.Equal(t, tc.writes, effects.Writes())
@@ -31,7 +31,7 @@ func TestStatementEffectsRetainGrammarScope(t *testing.T) {
 					require.Equal(t, name, effects.Call(i).Name())
 					require.NotEmpty(t, effects.Call(i).Text())
 				}
-				cached, err := ParseSyntax(t.Context(), tc.source, StatementEntry, dialect, RawSource)
+				cached, err := ParseSyntax(t.Context(), ReadStatement(tc.source), StatementEntry, dialect, RawSource)
 				require.NoError(t, err)
 				require.Same(t, syntax.data, cached.data, "effects reuse the existing dialect/entry syntax cache")
 			}
@@ -40,7 +40,7 @@ func TestStatementEffectsRetainGrammarScope(t *testing.T) {
 }
 
 func TestReadOnlyEffectsUseLiveCallbacksAndRetainedScope(t *testing.T) {
-	syntax, err := ParseSyntax(t.Context(), "EXPLAIN CALL ignored.opaque(); CALL retained.read()", StatementEntry, false, RawSource)
+	syntax, err := ParseSyntax(t.Context(), ReadStatement("EXPLAIN CALL ignored.opaque(); CALL retained.read()"), StatementEntry, false, RawSource)
 	require.NoError(t, err)
 	effects := syntax.Effects()
 	for _, allow := range []bool{true, false, true} {

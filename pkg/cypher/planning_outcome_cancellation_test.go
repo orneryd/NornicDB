@@ -1,4 +1,5 @@
 // Author: #1615 implementation lane (Codex).
+// Author of retained-input integration: Codex R17 implementation agent, 30 October 2026.
 package cypher
 
 import (
@@ -56,7 +57,7 @@ func TestPlanningCancellationDispatchOutcome(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				query := "MATCH (n:`planning-" + name + "`) RETURN count(n) AS c"
 				if warm {
-					require.True(t, cachedPipelineClauses(context.Background(), query, true).ok)
+					require.True(t, cachedPipelineTextClauses(context.Background(), query, true).ok)
 				}
 				parent, cancel := context.WithCancel(context.Background())
 				action := cancel
@@ -87,9 +88,9 @@ func TestPlanningCancellationDispatchOutcome(t *testing.T) {
 
 func TestUnsupportedPlanningRetainsFirstReturn(t *testing.T) {
 	const query = "USE system RETURN 1 AS retained"
-	split := cachedPipelineClauses(context.Background(), query, true)
+	split := cachedPipelineTextClauses(context.Background(), query, true)
 	require.False(t, split.ok)
-	require.Equal(t, "RETURN 1 AS retained", split.firstReturn)
+	require.Equal(t, "RETURN 1 AS retained", split.firstReturn.text)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "planning-outcome"))
 	result, err := exec.executeRequiredPipeline(context.Background(), query)
 	require.Nil(t, result)

@@ -132,7 +132,7 @@ func TestIssue883StarWithItems(t *testing.T) {
 }
 
 func TestIssue883ReturnColumnHelpers(t *testing.T) {
-	clauses := []pipelineClause{{kind: pipelineClauseWith, text: "WITH 1 AS a"}, {kind: pipelineClauseReturn, text: "RETURN a"}}
+	clauses := []pipelineClause{retainedClauseForTest(t.Context(), "WITH 1 AS a"), retainedClauseForTest(t.Context(), "RETURN a")}
 	require.Equal(t, "", pipelineOriginalReturnText(clauses, 0))
 	require.Equal(t, "", pipelineOriginalReturnText(clauses, 2))
 	require.Equal(t, "RETURN a", pipelineOriginalReturnText(clauses, 1))

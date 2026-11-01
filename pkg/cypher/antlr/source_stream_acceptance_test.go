@@ -27,13 +27,13 @@ func TestSourceStreamPublicStagesAndCancellation(t *testing.T) {
 				accepted.WriteString(token.GetText())
 			}
 			require.Equal(t, projected.Text, accepted.String())
-			require.NoError(t, ValidateContext(live, source, stage))
+			require.NoError(t, ValidateContext(live, ReadStatement(source), stage))
 			require.NoError(t, live.Err())
 			cancel()
 			tokens, err = LexContext(live, source, stage)
 			require.ErrorIs(t, err, context.Canceled)
 			require.Nil(t, tokens)
-			require.ErrorIs(t, ValidateContext(live, source, stage), context.Canceled)
+			require.ErrorIs(t, ValidateContext(live, ReadStatement(source), stage), context.Canceled)
 		}
 	}
 }

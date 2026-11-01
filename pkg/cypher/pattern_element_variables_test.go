@@ -8,36 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The pattern reader declares the symbolic name each node element opens with.
-// Parentheses nested in the element (a dynamic label's $any(...), a call in
-// its property map or element WHERE) and quoted text don't end it; a call,
-// a parenthesized or quantified path, and a path selector are not elements.
-func TestExtractVariableNamesFromPatternElements(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "pattern-elements"))
-	for _, tc := range []struct {
-		pattern string
-		want    []string
-	}{
-		{"(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)", []string{"p", "poc", "a"}},
-		{"(n:$any(ls))", []string{"n"}},
-		{"(n:$all(['A', 'B']))-[r]->(m:$any($labels))", []string{"n", "m"}},
-		{"(n {name: ')'})", []string{"n"}},
-		{"(n {v: toUpper('x')})-[:R]->(m)", []string{"n", "m"}},
-		{"p = shortestPath((a)-[*]-(b))", []string{"a", "b"}},
-		{"(a)-[r WHERE r.w IN coalesce($ws, [])]->(b)", []string{"a", "b"}},
-		{"(:Label)", nil},
-		{"(a)((x)-[r:T]->(y)){1,3}(b)", []string{"a", "x", "y", "b"}},
-		{"((a)-[r]->(b) WHERE a.v > coalesce(z, 1))", []string{"a", "b"}},
-		{"p = SHORTEST 1 (a)(()-[r:R]-()){1,6}(t:G)", []string{"a", "t"}},
-		{"p = ANY SHORTEST (a:G {id: 'a'})(()-[r:R]-()){1,6}(t:G)", []string{"a", "t"}},
-		{"(n WHERE size($xs) > 0)", []string{"n"}},
-		{"(a WHERE a.id = 1)-[r:R]->(b)", []string{"a", "b"}},
-		{"(`my node`:L)", []string{"`my node`"}},
-	} {
-		require.Equal(t, tc.want, exec.extractVariableNamesFromPattern(t.Context(), tc.pattern), tc.pattern)
-	}
-}
-
 // The statement owner binds a MATCH element's variable even when the element
 // holds nested parentheses, so the projections after it read a declared name.
 func TestStatementFactsBindNestedPatternElements(t *testing.T) {

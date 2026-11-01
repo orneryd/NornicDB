@@ -374,14 +374,14 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 			{int64(7), nodes["n"]},
 		},
 	}
-	out, err := exec.projectTransactionReturn(ctx, input, "x AS val, n.name AS name")
+	out, err := exec.projectTransactionReturnForTest(ctx, input, "x AS val, n.name AS name")
 	require.NoError(t, err)
 	require.Equal(t, []string{"val", "name"}, out.Columns)
 	require.Len(t, out.Rows, 1)
 	require.Equal(t, int64(7), out.Rows[0][0])
 	require.Equal(t, "alice", out.Rows[0][1])
 
-	empty, err := exec.projectTransactionReturn(ctx, input, "")
+	empty, err := exec.projectTransactionReturnForTest(ctx, input, "")
 	require.NoError(t, err)
 	require.Equal(t, []string{"n", "x"}, empty.Columns)
 	require.Len(t, empty.Rows, 1)
@@ -1519,22 +1519,22 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	assert.Equal(t, "", extractRelationshipType("(a)-->(b)"))
 
 	// isReturnEdgePropertyAggNameShape strictness.
-	assert.True(t, isReturnEdgePropertyAggNameShape(
+	assert.True(t, isReturnEdgePropertyAggNameShape(t.Context(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.rating) AS score, count(r) AS cnt",
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(
+	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.id AS id, avg(r.rating) AS score",
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(
+	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.other) AS score",
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape("RETURN p.name", "r", "rating"))
+	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(), "RETURN p.name", "r", "rating"))
 }
 
 func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *testing.T) {
@@ -2658,11 +2658,8 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 
 	// The WHERE sees the aliases, then ORDER BY / SKIP / LIMIT apply.
 	yield := &yieldClause{
-		items:   []yieldItem{{name: "node", alias: "n"}, {name: "score", alias: "s"}},
-		where:   "s > 0.3",
-		orderBy: "s DESC",
-		skip:    "1",
-		limit:   "1",
+		items:               []yieldItem{{name: "node", alias: "n"}, {name: "score", alias: "s"}},
+		projectionModifiers: projectionModifiers{where: "s > 0.3", orderBy: "s DESC", skip: "1", limit: "1"},
 	}
 	ctx := context.Background()
 	filtered, err := exec.applyYieldFilter(ctx, baseResult, yield)
@@ -2681,8 +2678,8 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 		},
 	}
 	yieldWhere := &yieldClause{
-		items: []yieldItem{{name: "score"}},
-		where: "score.value > 0.5",
+		items:               []yieldItem{{name: "score"}},
+		projectionModifiers: projectionModifiers{where: "score.value > 0.5"},
 	}
 	whereFiltered, err := exec.applyYieldFilter(ctx, whereResult, yieldWhere)
 	require.NoError(t, err)
@@ -2747,11 +2744,6 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
-
-	// extractVariableNamesFromPattern basic behavior.
-	vars := exec.extractVariableNamesFromPattern(t.Context(), "(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)")
-	assert.ElementsMatch(t, []string{"p", "poc", "a"}, vars)
-	assert.Empty(t, exec.extractVariableNamesFromPattern(t.Context(), "()-[:REL]->()"))
 
 	// No variable names branch.
 	matches, handled, err := exec.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH ()-[:REL]->()")

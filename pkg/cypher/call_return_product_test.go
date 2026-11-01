@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -23,9 +24,9 @@ func TestCallReturnClauseSurvivesUnknownTypes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewStorageExecutor(newTestMemoryEngine(t))
-			types, clause, err := e.callSubqueryReturnTypes(t.Context(), tc.call, tc.branches, typeScope{}, false)
+			types, clause, err := e.callSubqueryReturnTypes(t.Context(), retainedClauseForTest(t.Context(), tc.call), queryBodiesForTest(t.Context(), tc.branches), typeScope{}, false)
 			require.NoError(t, err)
-			require.Equal(t, tc.want, clause)
+			require.Equal(t, tc.want, clause.text)
 			if tc.unknown {
 				require.Nil(t, types)
 			} else {
@@ -44,26 +45,26 @@ func TestCallReturnClauseSurvivesUnknownTypes(t *testing.T) {
 func TestPipelineClauseProductCacheIsolation(t *testing.T) {
 	ctx := t.Context()
 	opaque := "USE g RETURN abs(-1) AS x"
-	first := cachedPipelineClauses(ctx, opaque, true)
+	first := cachedPipelineTextClauses(ctx, opaque, true)
 	require.False(t, first.ok)
 	require.Nil(t, first.clauses)
-	require.Equal(t, "RETURN abs(-1) AS x", first.firstReturn)
-	first.firstReturn = "mutated"
-	require.Equal(t, "RETURN abs(-1) AS x", cachedPipelineClauses(ctx, opaque, true).firstReturn)
-	clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, opaque)
+	require.Equal(t, "RETURN abs(-1) AS x", first.firstReturn.text)
+	first.firstReturn.text = "mutated"
+	require.Equal(t, "RETURN abs(-1) AS x", cachedPipelineTextClauses(ctx, opaque, true).firstReturn.text)
+	clauses, ok := splitPipelineTextClausesAllowingProcedureCalls(ctx, opaque)
 	require.False(t, ok)
 	require.Nil(t, clauses)
 	source := "RETURN 1 AS x"
-	returned := cachedPipelineClauses(ctx, source, true)
+	returned := cachedPipelineTextClauses(ctx, source, true)
 	require.True(t, returned.ok)
 	returned.clauses[0].text = "mutated"
-	require.Equal(t, source, cachedPipelineClauses(ctx, source, true).clauses[0].text)
+	require.Equal(t, source, cachedPipelineTextClauses(ctx, source, true).clauses[0].text)
 	procedure := "CALL db.labels() YIELD label RETURN label"
-	allowed := cachedPipelineClauses(ctx, procedure, true)
+	allowed := cachedPipelineTextClauses(ctx, procedure, true)
 	require.True(t, allowed.ok)
 	require.True(t, allowed.topLevelCall)
-	denied, ok := splitPipelineClauses(ctx, procedure)
+	denied, ok := splitPipelineTextClauses(ctx, procedure)
 	require.False(t, ok)
 	require.Nil(t, denied)
-	require.Equal(t, "RETURN label", cachedPipelineClauses(ctx, procedure, true).firstReturn)
+	require.Equal(t, "RETURN label", cachedPipelineTextClauses(ctx, procedure, true).firstReturn.text)
 }

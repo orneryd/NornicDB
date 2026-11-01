@@ -287,7 +287,9 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 // scanQuotedTokens classifies quoted names and non-plain variable identities
 // in a quoted query using the same retained syntax walk.
 func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	// Author: Codex R17 implementer. Names consume the existing inspection
+	// product; statement admission retains its own error contract.
+	syntax, err := cypherantlr.InspectSyntax(ctx, cypherantlr.ReadStatement(source), cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return nil
 	} // Syntax admission owns this statement's error.
@@ -298,7 +300,7 @@ func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
 		if !symbol {
 			return nil
 		}
-		scopeName := hasParent && parent.Rule() == cypherantlr.CypherParserRULE_callSubquery
+		scopeName := hasParent && parent.Rule() == cypherantlr.CypherParserRULE_scopeList
 		quoted := strings.HasPrefix(node.Text(), "`")
 		start, end := node.Span()
 		token := quotedToken{start: start, end: end, written: node.Text(), name: name}
@@ -307,7 +309,7 @@ func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
 			return nil
 		}
 		switch parent.Rule() {
-		case cypherantlr.CypherParserRULE_atom, cypherantlr.CypherParserRULE_setItem, cypherantlr.CypherParserRULE_removeItem, cypherantlr.CypherParserRULE_callSubquery, cypherantlr.CypherParserRULE_mapProjection:
+		case cypherantlr.CypherParserRULE_atom, cypherantlr.CypherParserRULE_setItem, cypherantlr.CypherParserRULE_removeItem, cypherantlr.CypherParserRULE_scopeList, cypherantlr.CypherParserRULE_mapProjection:
 			token.variable = true
 		case cypherantlr.CypherParserRULE_mapProjectionItem:
 			token.variable, token.selector = true, true

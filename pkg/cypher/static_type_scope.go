@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -98,18 +99,16 @@ func (types typeScope) adoptKinds(kinds matchSemanticScope) {
 
 // projectTypeScope is the typeScope a WITH clause projects from types: each
 // item's operand by its alias, every variable for WITH *.
-func projectTypeScope(ctx context.Context, types typeScope, cypher25 bool, clause string) typeScope {
+func projectTypeScope(ctx context.Context, types typeScope, cypher25 bool, clause pipelineClause) typeScope {
 	return projectTypeScopeIn(ctx, types, types.static(cypher25), clause)
 }
 
 // projectTypeScopeIn is projectTypeScope for a caller that holds types'
 // static view (input) already.
-func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeScope, clause string) typeScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeScope, clause pipelineClause) typeScope {
 	input.complete = false
 	projected := make(typeScope)
-	for _, raw := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+	for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
 		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "*" {
 			for name, operand := range types {
@@ -165,7 +164,7 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string)
 // a list's element type (a node of a List<Node>, an Integer of a
 // List<Integer>), a known non-list value itself (UNWIND 5), unknown for a
 // list of unknown elements.
-func unwoundOperand(types typeScope, input staticTypeScope, clause string) staticOperand {
+func unwoundOperand(types typeScope, input staticTypeScope, clause pipelineClause) staticOperand {
 	return listElementOperand(types, input, unwindSourceExpression(clause))
 }
 
@@ -186,20 +185,20 @@ func listElementOperand(types typeScope, input staticTypeScope, list string) sta
 
 // projectMatchSemanticScope is the binding-kind view of the variables a WITH
 // clause projects (projectTypeScope).
-func projectMatchSemanticScope(ctx context.Context, input matchSemanticScope, clause string) matchSemanticScope {
+func projectMatchSemanticScope(ctx context.Context, input matchSemanticScope, clause pipelineClause) matchSemanticScope {
 	scope := staticTypeScope{kinds: input}
 	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, clause).kinds()
 }
 
 // projectStaticValueTypes is the value-type view of the variables a WITH
 // clause projects (projectTypeScope).
-func projectStaticValueTypes(ctx context.Context, scope staticTypeScope, clause string) map[string]string {
+func projectStaticValueTypes(ctx context.Context, scope staticTypeScope, clause pipelineClause) map[string]string {
 	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, clause).static(scope.cypher25).values
 }
 
 // projectStaticValueMembers is, in a Cypher 25 statement, the member-type
 // view of the variables a WITH clause projects (projectTypeScope).
-func projectStaticValueMembers(ctx context.Context, scope staticTypeScope, clause string) map[string]map[string]staticOperand {
+func projectStaticValueMembers(ctx context.Context, scope staticTypeScope, clause pipelineClause) map[string]map[string]staticOperand {
 	if !scope.cypher25 {
 		return nil
 	}
@@ -213,12 +212,12 @@ func projectStaticValueMembers(ctx context.Context, scope staticTypeScope, claus
 // scope clause names that outer doesn't bind is Neo4j's compile-time
 // "Variable `x` not defined", reported here, where every statement is
 // checked before it plans or runs, on every route alike.
-func callSubqueryImports(ctx context.Context, callText string, outer typeScope) (typeScope, bool, bool, error) {
-	scope := readCallSubqueryScope(ctx, callText)
+func callSubqueryImports(ctx context.Context, clause pipelineClause, outer typeScope) (typeScope, bool, bool, error) {
+	scope := readCallSubqueryScope(clause)
 	if scope.invalid {
 		return nil, false, false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
 	}
-	if scope.bodyOffset == 0 || scope.bodyOffset >= len(callText) || callText[scope.bodyOffset] != '{' {
+	if clause.kind != pipelineClauseCallSubquery {
 		return nil, false, false, nil
 	}
 	initial := make(typeScope)
@@ -247,13 +246,14 @@ func callSubqueryImports(ctx context.Context, callText string, outer typeScope) 
 // declare them again (subqueryScope). A body whose walk stops early, or that
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
-func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, string, error) {
-	initial, scoped, ok, err := callSubqueryImports(ctx, callText, outer)
+func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pipelineClause, branches []queryBody, outer typeScope, cypher25 bool) (typeScope, pipelineClause, error) {
+	initial, scoped, ok, err := callSubqueryImports(ctx, clause, outer)
 	if err != nil || !ok {
-		return nil, "", err
+		var absent pipelineClause
+		return nil, absent, err
 	}
 	var returned typeScope
-	firstReturn := ""
+	var firstReturn pipelineClause
 	typedBranches := 0
 	for branchIndex, branch := range branches {
 		split := cachedPipelineClauses(ctx, branch, true)
@@ -275,7 +275,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText 
 			retained = maps.Clone(initial)
 			_, importing, _ = branchLeadingWithImport(ctx, branch, func(name string) bool { _, exists := initial[name]; return exists }, false)
 			if importing {
-				for name := range projectTypeScope(ctx, initial, cypher25, clauses[0].text) {
+				for name := range projectTypeScope(ctx, initial, cypher25, clauses[0]) {
 					delete(retained, name)
 				}
 			}
@@ -301,8 +301,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText 
 		if !complete || last.kind != pipelineClauseReturn {
 			return nil, firstReturn, nil
 		}
-		returnClause := strings.TrimSpace(last.text)
-		branchTypes := projectTypeScope(ctx, final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+		branchTypes := projectTypeScope(ctx, final, cypher25, last)
 		if typedBranches == 0 {
 			returned = branchTypes
 		} else {

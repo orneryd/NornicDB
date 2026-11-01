@@ -8,9 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestReturnShapeItems pins the single shared owner of RETURN-clause location,
-// trailing ORDER BY / SKIP / LIMIT trimming and comma splitting reused by
-// isReturnNameCountShape and isReturnEdgePropertyAggNameShape.
+// TestReturnShapeItems pins that pattern detection reads the statement's own
+// retained RETURN items (the one projection reader): modifiers are not items,
+// aliases are not part of an item's expression, commas inside calls stay in
+// one item. Rewritten for the retained reader: Claude R17 implementation agent.
 func TestReturnShapeItems(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -33,9 +34,9 @@ func TestReturnShapeItems(t *testing.T) {
 			want:  []string{"p.name", "count(f)"},
 		},
 		{
-			name:  "aliases kept here, stripped by trimReturnItemAlias",
+			name:  "aliases are not part of the expression",
 			query: "MATCH (p)<-[:FOLLOWS]-(f) RETURN p.name AS name, count(f) AS followers",
-			want:  []string{"p.name AS name", "count(f) AS followers"},
+			want:  []string{"p.name", "count(f)"},
 		},
 		{
 			name:  "comma inside call stays in one item",
@@ -61,22 +62,28 @@ func TestReturnShapeItems(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, returnShapeItems(tt.query))
+			var got []string
+			for _, item := range returnShapeItemsOf(t.Context(), tt.query) {
+				got = append(got, item.expr)
+			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-func TestTrimReturnItemAlias(t *testing.T) {
-	assert.Equal(t, "p.name", trimReturnItemAlias("  p.name  "))
-	assert.Equal(t, "p.name", trimReturnItemAlias("p.name AS name"))
-	assert.Equal(t, "p.name", trimReturnItemAlias("p.name as displayName"))
-	assert.Equal(t, "count(f)", trimReturnItemAlias("count(f) AS   followers"))
-	// Alias detection is case-insensitive but requires literal space separators,
-	// exactly as the original per-owner inline code behaved.
-	assert.Equal(t, "p.name\tAs\tn", trimReturnItemAlias("p.name\tAs\tn"))
-	// No alias marker: unchanged apart from surrounding trim.
-	assert.Equal(t, "p.name", trimReturnItemAlias("p.name"))
-	assert.Equal(t, "", trimReturnItemAlias("   "))
+func TestReturnShapeItemAliasesAreGrammarOwned(t *testing.T) {
+	// The grammar owns AS: any whitespace separates it, and an alias never
+	// becomes part of the item expression.
+	for query, want := range map[string]string{
+		"MATCH (p) RETURN p.name AS name":        "p.name",
+		"MATCH (p) RETURN p.name as displayName": "p.name",
+		"MATCH (p) RETURN p.name	As	n":           "p.name",
+		"MATCH (p) RETURN p.name":                "p.name",
+	} {
+		items := returnShapeItemsOf(t.Context(), query)
+		require.Len(t, items, 1, query)
+		assert.Equal(t, want, items[0].expr, query)
+	}
 }
 
 // TestIsReturnNameCountShape covers the accepted grammar of the incoming /
@@ -171,7 +178,7 @@ func TestIsReturnNameCountShape(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isReturnNameCountShape(tt.query, "p", "f"))
+			assert.Equal(t, tt.want, isReturnNameCountShape(t.Context(), tt.query, "p", "f"))
 		})
 	}
 }
@@ -244,7 +251,7 @@ func TestIsReturnEdgePropertyAggNameShape_ClearCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isReturnEdgePropertyAggNameShape(tt.query, "r", "rating"))
+			assert.Equal(t, tt.want, isReturnEdgePropertyAggNameShape(t.Context(), tt.query, "r", "rating"))
 		})
 	}
 }

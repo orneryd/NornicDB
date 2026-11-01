@@ -67,15 +67,17 @@ func TestSeedNodesFromOuterMatch_ErrorAndNilBranches(t *testing.T) {
 	_, err = store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"NilSeed"}, Properties: map[string]interface{}{"id": "n1", "team": "red"}})
 	require.NoError(t, err)
 
-	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:ErrSeed)", "n")
+	_, err = exec.Execute(ctx, "MATCH (n:ErrSeed) CALL (n) { RETURN n AS selected } RETURN selected", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "forced label error")
 
 	// Property-matching loop should skip nil nodes in the candidate list.
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (n:NilSeed {team:'red'})", "n")
+	result, err := exec.Execute(ctx, "MATCH (n:NilSeed {team:'red'}) CALL (n) { RETURN n AS selected } RETURN selected", nil)
 	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
+	require.Len(t, result.Rows, 1)
+	node, ok := result.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	require.Equal(t, storage.NodeID("n1"), node.ID)
 }
 
 func TestSeedNodesFromOuterMatch_PropertyAndWhereFallbackBranch(t *testing.T) {
@@ -87,10 +89,9 @@ func TestSeedNodesFromOuterMatch_PropertyAndWhereFallbackBranch(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:Seed {id:'s1', team:'red'}), (:Seed {id:'s2', team:'blue'})", nil)
 	require.NoError(t, err)
 
-	// Hits the branch where pattern properties are present and a non-empty WHERE
-	// forces fallback execution to preserve full semantics.
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Seed {team:'red'}) WHERE n.id = 's1'", "n")
+	// Property and WHERE selection feed the same retained correlated CALL.
+	result, err := exec.Execute(ctx, "MATCH (n:Seed {team:'red'}) WHERE n.id = 's1' CALL (n) { RETURN n AS selected } RETURN selected.id AS id", nil)
 	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.Equal(t, "s1", nodes[0].Properties["id"])
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "s1", result.Rows[0][0])
 }

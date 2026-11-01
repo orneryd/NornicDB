@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // Package cypher provides Neo4j-compatible Cypher query execution for NornicDB.
 //
 // This package implements a Cypher query parser and executor that supports
@@ -113,6 +114,7 @@ import (
 	"context"
 	"errors"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"io"
 	"log/slog"
 	"maps"
@@ -173,6 +175,32 @@ func hasCallSubqueryPattern(ctx context.Context, query string) bool {
 // brackets, so a CALL inside an EXISTS / COUNT / COLLECT subquery or another
 // CALL body is not the statement's (#652). -1 when there is none.
 func firstTopLevelCallSubquery(ctx context.Context, query string) int {
+	if !containsFold(query, "CALL") {
+		return -1
+	}
+	if !isNornicExtensionStatement(query) {
+		body := readQueryBodyText(ctx, query, 0, len(query))
+		if body.status != queryBodyDeclined {
+			for _, branch := range body.branches {
+				for _, clause := range branch.clauses {
+					if clause.kind == pipelineClauseCallSubquery {
+						for i := 0; i < clause.syntax.ChildCount(); i++ {
+							child := clause.syntax.Child(i)
+							if child.IsToken(cypherantlr.CypherLexerCALL) {
+								start, _ := child.Span()
+								return start
+							}
+						}
+					}
+				}
+			}
+			return -1
+		}
+	}
+	return firstTopLevelCallSubqueryText(ctx, query)
+}
+
+func firstTopLevelCallSubqueryText(ctx context.Context, query string) int {
 	depth := 0
 	for i := 0; i < len(query); i++ {
 		switch cypherLexicalByte(query[i]) {
@@ -205,7 +233,29 @@ func callSubqueryAt(ctx context.Context, query string, i int) bool {
 	}
 	// Classification consumes the same CALL frame as scope and execution.
 	// In particular, comments before or after imports are query trivia.
-	body := i + readCallSubqueryScope(ctx, query[i:]).bodyOffset
+	if !isNornicExtensionStatement(query) {
+		body := readQueryBodyText(ctx, query, 0, len(query))
+		if body.status != queryBodyDeclined {
+			for _, branch := range body.branches {
+				for _, clause := range branch.clauses {
+					if clause.kind != pipelineClauseCallSubquery {
+						continue
+					}
+					for n := 0; n < clause.syntax.ChildCount(); n++ {
+						child := clause.syntax.Child(n)
+						if child.IsToken(cypherantlr.CypherLexerCALL) {
+							start, _ := child.Span()
+							if start == i {
+								return true
+							}
+						}
+					}
+				}
+			}
+			return false
+		}
+	}
+	body := i + readCallSubqueryScopeText(ctx, query[i:]).bodyOffset
 	return body < len(query) && query[body] == '{'
 }
 
@@ -1509,12 +1559,30 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	})
 }
 
-func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
+func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, _ string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
-		upperQuery = upperASCII(cypher)
 	}
+	publishes := func() bool {
+		permissions := QueryPermissionRequirements(context.Background(), cypher, AcceptedSource)
+		return permissions.Write || permissions.Schema
+	}
+	return e.executeImplicitTransaction(ctx, cypher, inlineEmbeddingEnabled, publishes, execute)
+}
+
+// executeWithImplicitTransactionOperation runs an engine operation (a periodic
+// procedure's batch) in its own implicit transaction. The operation is no
+// client statement: whether its success publishes a commit is its typed
+// fact, and it has no statement text to analyze.
+// Author: Claude R17 implementation agent, 30 October 2026.
+func (e *StorageExecutor) executeWithImplicitTransactionOperation(ctx context.Context, publishes bool, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	return e.executeImplicitTransaction(ctx, "", false, func() bool { return publishes }, execute)
+}
+
+// executeImplicitTransaction is the one implicit-transaction owner. cypher is
+// the client statement, "" for an engine operation.
+func (e *StorageExecutor) executeImplicitTransaction(ctx context.Context, cypher string, inlineEmbeddingEnabled bool, publishes func() bool, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
 
 	if member := e.membership(ctx); member.owned() {
 		target := e
@@ -1550,7 +1618,9 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		if err == nil {
 			// Legacy engines apply writes directly; successful execution is
 			// their publication boundary, with no pending transaction.
-			e.publishDirectStatementCommit(ctx, cypher)
+			if publishes() {
+				publishStatementCommit(ctx)
+			}
 		}
 		return result, err
 	}
@@ -1724,7 +1794,9 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: err.Error()}, dbName)
 		}
-		if info := e.analyzer.Analyze(ctx, cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
+		if cypher == "" {
+			// An engine operation is no MERGE statement to retry.
+		} else if info := e.analyzer.Analyze(ctx, cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
 			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 		}
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.

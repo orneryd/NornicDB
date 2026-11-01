@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
@@ -172,24 +171,9 @@ func deleteExpressionRootIdentifier(expression string) string {
 	return name.Value
 }
 
-func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
-	pattern := pipelineClauseBody(clause, keyword)
-	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
-		pattern = strings.TrimSpace(pattern[:where])
-	}
-	for _, variable := range executor.extractVariableNamesFromPattern(ctx, pattern) {
-		if variable != "" {
-			scope[variable] = struct{}{}
-		}
-	}
-	for _, variable := range extractRelationshipVariables(pattern) {
-		if variable != "" {
-			scope[variable] = struct{}{}
-		}
-	}
-	if variable := extractPathAssignmentVariable(pattern); variable != "" {
-		scope[variable] = struct{}{}
-	}
+// Author of retained pattern binding input: Codex R17 implementation agent.
+func addPipelinePatternBindings(scope map[string]struct{}, clause pipelineClause) {
+	addSyntaxPatternBindings(scope, clause.syntax)
 }
 
 func extractPathAssignmentVariable(pattern string) string {
@@ -214,12 +198,9 @@ func appendUniquePipelineBinding(bindings []string, binding string) []string {
 	return append(bindings, binding)
 }
 
-func pipelineUnwindAlias(clause string) string {
+func pipelineUnwindAlias(clause pipelineClause) string {
 	if _, alias, ok := parsePipelineIteration(clause); ok {
 		return normalizeProjectionColumnName(alias)
-	}
-	if index := findKeywordIndexInContext(clause, "AS"); index >= 0 {
-		return strings.TrimSpace(clause[index+len("AS"):])
 	}
 	return ""
 }

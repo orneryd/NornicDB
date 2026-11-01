@@ -404,7 +404,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 	for name, path := range out.paths {
 		row[name] = e.pathToMap(path)
 	}
-	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
+	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher, out.returnIdx)
 	if err != nil {
 		return err
 	}
@@ -437,7 +437,7 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	}
 	head, propertyText := splitNodePatternProperties(pattern)
 	variable, labels, labelErr := parseNodeHead(head)
-	properties, err := e.materializePropertyMap(ctx, propertyText, entityRow(ctx, nodes, relationships), false, false)
+	properties, err := e.createPropertyValues(ctx, propertyText, entityRow(ctx, nodes, relationships))
 	if err != nil {
 		return nodePatternInfo{}, err
 	}
@@ -764,7 +764,7 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 	if declaration.properties != "" {
 		if propsEnd := cyphertext.FindMatchingDelimiter(declaration.properties, 0, '{', '}', cyphertext.OpeningDelimiter); propsEnd > 0 {
 			var err error
-			relProps, err = e.materializePropertyMap(ctx, declaration.properties[:propsEnd+1], row, false, false)
+			relProps, err = e.createPropertyValues(ctx, declaration.properties[:propsEnd+1], row)
 			if err != nil {
 				return "", nil, err
 			}
@@ -1440,4 +1440,31 @@ func validateCreatePropertyKeys(text string, properties map[string]interface{}) 
 		return localizedError(localization.CypherMutationsInvalidPropertyKey(key), nil)
 	}
 	return nil
+}
+
+// createPropertyMaps holds each CREATE property map read once per map text:
+// the one CREATE planner (planCreatePatterns) evaluates the parsed
+// expressions for every row instead of reading the text again.
+var createPropertyMaps = newBoundedCache[string, createPropertyMapParse](512, boundedCacheStringShardIndex)
+
+type createPropertyMapParse struct {
+	expressions []pipelinePropertyExpression
+	ok          bool
+}
+
+// createPropertyValues is a CREATE property map's values for one row, as
+// materializePropertyMap reads them; a map the reader rejects is read again
+// by it for that row's own error.
+// Author: Claude R17 implementation agent, 30 October 2026.
+func (e *StorageExecutor) createPropertyValues(ctx context.Context, text string, row pipelineRow) (map[string]interface{}, error) {
+	parsed, cached := createPropertyMaps.get(text)
+	if !cached {
+		expressions, err := parsePropertyExpressions(text)
+		parsed = createPropertyMapParse{expressions: expressions, ok: err == nil}
+		createPropertyMaps.put(text, parsed)
+	}
+	if !parsed.ok {
+		return e.materializePropertyMap(ctx, text, row, false, false)
+	}
+	return e.materializePropertyExpressions(ctx, parsed.expressions, row, false, false)
 }

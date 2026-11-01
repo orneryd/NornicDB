@@ -118,7 +118,7 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 			continue
 		}
 		if !isCypherBacktickByte(expression[index]) && isUseKeyword(name.Value) {
-			syntax, err := cypherantlr.ParseSyntax(context.Background(), expression[index:], cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
+			syntax, err := cypherantlr.ParseSyntax(context.Background(), cypherantlr.ReadStatement(expression[index:]), cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
 			if err != nil {
 				// USE may also be an identifier in a fragment. Syntax validation
 				// owns invalid clauses; this scanner never guesses their extent.

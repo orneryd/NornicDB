@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // Package cypher - AST builder for structured query representation.
 package cypher
 
@@ -692,23 +693,34 @@ func (b *ASTBuilder) parseProjection(ctx context.Context, source *cyphertext.Sou
 	// Check for DISTINCT
 	itemsText, distinct = cutDistinct(itemsText)
 
+	// Aliases come from this clause's retained occurrence in the statement
+	// the source window belongs to; no item is reframed as RETURN text.
+	// Author of the occurrence form: Claude R17 implementation agent.
+	var retained []projectionItemSource
+	if at, mapped := source.OriginalOffset(0, true, cyphertext.SourceExtent); mapped {
+		if clause, found := projectionClauseAt(ctx, source.Original, at); found {
+			retained = projectionItemsFromSyntax(clause)
+		}
+	}
+
 	// Parse items
 	parts := astCommaViews(source.Window(len(text)-len(itemsText), len(text)))
+	written := 0
 	for _, partSource := range parts {
 		partSource = astTrim(partSource)
 		part := partSource.Text
 		if part == "" {
 			continue
 		}
+		index := written
+		written++
 
 		item := ASTReturnItem{RawText: astRaw(partSource)}
 
 		// Check for AS alias
-		projectionSource := cyphertext.NewSource(ctx, "RETURN "+part, cyphertext.AcceptedSource)
-		itemSource := readProjectionItemSource(cyphertext.WithSourceView(ctx, projectionSource), part, projectionAdmitted)
-		if itemSource.as > 0 {
-			item.Alias = itemSource.alias
-			partSource = astTrim(partSource.Window(0, itemSource.as))
+		if index < len(retained) && retained[index].as > 0 && retained[index].as < len(part) {
+			item.Alias = retained[index].alias
+			partSource = astTrim(partSource.Window(0, retained[index].as))
 			part = partSource.Text
 		}
 

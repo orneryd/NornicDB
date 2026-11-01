@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // Package cypher implements EXPLAIN and PROFILE query execution modes.
 //
 // EXPLAIN shows the query execution plan without executing the query.
@@ -98,7 +99,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	// Catalog commands are validated by their typed command preparation; graph
 	// body composition has no clauses to validate in their native DDL syntax.
 	if !isMetadataCommand(query, metadataCatalogExecution) {
-		if err := validateQueryBodyComposition(ctx, query); err != nil {
+		if err := validateQueryBodyTextComposition(ctx, query); err != nil {
 			return nil, err
 		}
 	}

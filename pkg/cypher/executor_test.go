@@ -712,24 +712,24 @@ func TestParseYieldClause(t *testing.T) {
 					{name: "node", alias: ""},
 					{name: "score", alias: ""},
 				},
-				where: "score > 0.5",
+				projectionModifiers: projectionModifiers{where: "score > 0.5"},
 			},
 		},
 		{
 			name:   "yield star with WHERE",
 			cypher: "CALL db.index.fulltext.queryNodes('idx', 'search') YIELD * WHERE score > 0.8",
 			expected: &yieldClause{
-				yieldAll: true,
-				items:    []yieldItem{},
-				where:    "score > 0.8",
+				yieldAll:            true,
+				items:               []yieldItem{},
+				projectionModifiers: projectionModifiers{where: "score > 0.8"},
 			},
 		},
 		{
 			name:   "yield with WHERE and RETURN",
 			cypher: "CALL db.labels() YIELD label WHERE label = 'Memory' RETURN label",
 			expected: &yieldClause{
-				items: []yieldItem{{name: "label", alias: ""}},
-				where: "label = 'Memory'",
+				items:               []yieldItem{{name: "label", alias: ""}},
+				projectionModifiers: projectionModifiers{where: "label = 'Memory'"},
 			},
 		},
 		{

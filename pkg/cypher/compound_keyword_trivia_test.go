@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -91,7 +92,6 @@ func TestCompoundKeywordOperatorCasePolicy(t *testing.T) {
 }
 
 func TestPipelineCompoundKeywordBodyBindings(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, tc := range []struct{ clause, keyword string }{
 		{"MATCH (n)-[r]->(m)", "MATCH"},
 		{"CREATE (n)-[r]->(m)", "CREATE"},
@@ -101,7 +101,7 @@ func TestPipelineCompoundKeywordBodyBindings(t *testing.T) {
 	} {
 		require.Equal(t, "(n)-[r]->(m)", pipelineClauseBody(tc.clause, tc.keyword), tc.clause)
 		scope := make(map[string]struct{})
-		addPipelinePatternBindings(t.Context(), exec, scope, tc.clause, tc.keyword)
+		addPipelinePatternBindings(scope, retainedClauseForTest(t.Context(), tc.clause))
 		require.Equal(t, map[string]struct{}{"n": {}, "r": {}, "m": {}}, scope, tc.clause)
 	}
 }
@@ -117,18 +117,6 @@ func TestCorrelatedOptionalImportTrivia(t *testing.T) {
 		_, err = store.CreateNode(&storage.Node{ID: "t-1", Labels: []string{"Target"}, Properties: map[string]interface{}{"name": "T1"}})
 		require.NoError(t, err)
 		require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-1", Type: "REL", StartNode: "seed-1", EndNode: "t-1"}))
-		outer := "MATCH (seed:Seed) WHERE seed.name = 'none' OPTIONAL" + gap + "MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
-		value, found, err := exec.resolveCorrelatedImportValue(t.Context(), outer, "seed", "seed-1", "t", map[string]map[string]interface{}{})
-		require.NoError(t, err, gap)
-		require.True(t, found, gap)
-		switch target := value.(type) {
-		case *storage.Node:
-			require.Equal(t, storage.NodeID("t-1"), target.ID, gap)
-		case map[string]interface{}:
-			require.Equal(t, "t-1", target["_nodeId"], gap)
-		default:
-			t.Fatalf("unexpected import value type: %T", value)
-		}
 		query := "MATCH (seed:Seed) OPTIONAL" + gap + "MATCH (seed)-[:REL]->(t:Target) WITH seed, t CALL (t) { RETURN t.name AS j } RETURN j"
 		result, err := exec.Execute(t.Context(), query, nil)
 		require.NoError(t, err, gap)

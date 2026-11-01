@@ -55,7 +55,7 @@ func BenchmarkANTLRSourceStreamPublic(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
 						cold := query + " /* cold " + strconv.Itoa(i) + " */"
-						if err := ValidateContext(ctx, cold, stage); err != nil {
+						if err := ValidateContext(ctx, ReadStatement(cold), stage); err != nil {
 							b.Fatal(err)
 						}
 					}
@@ -63,7 +63,7 @@ func BenchmarkANTLRSourceStreamPublic(b *testing.B) {
 				b.Run(name+"/ValidateWarm", func(b *testing.B) {
 					b.ReportAllocs()
 					for i := 0; i < b.N; i++ {
-						if err := ValidateContext(ctx, query, stage); err != nil {
+						if err := ValidateContext(ctx, ReadStatement(query), stage); err != nil {
 							b.Fatal(err)
 						}
 					}

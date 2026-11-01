@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -96,18 +97,18 @@ func TestExecuteChainedMatchWithAggregations_Branches(t *testing.T) {
 }
 
 func TestProjectionAndCountHelpers_Branches(t *testing.T) {
-	itemSource := readProjectionItemSource(t.Context(), " n.name AS nn ", projectionAdmitted)
+	itemSource := projectionItemForTest(t.Context(), " n.name AS nn ")
 	expr, alias := itemSource.expression, itemSource.alias
 	require.Equal(t, "n.name", expr)
 	require.Equal(t, "nn", alias)
 
-	itemSource = readProjectionItemSource(t.Context(), "n", projectionAdmitted)
+	itemSource = projectionItemForTest(t.Context(), "n")
 
 	expr, alias = itemSource.expression, itemSource.alias
 	require.Equal(t, "n", expr)
 	require.Equal(t, "n", alias)
 
-	itemSource = readProjectionItemSource(t.Context(), " ", projectionAdmitted)
+	itemSource = projectionItemForTest(t.Context(), " ")
 
 	expr, alias = itemSource.expression, itemSource.alias
 	require.Empty(t, expr)

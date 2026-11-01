@@ -22,9 +22,9 @@ func TestStatementNormalizationKeepsAnonymousColumnIdentity(t *testing.T) {
 				require.NotContains(t, canonical, "leading")
 				require.NotContains(t, canonical, "trailing")
 				require.Contains(t, canonical, "column")
-				original, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.StatementEntry, false, cypherantlr.RawSource)
+				original, err := cypherantlr.ParseSyntax(context.Background(), cypherantlr.ReadStatement(source), cypherantlr.StatementEntry, false, cypherantlr.RawSource)
 				require.NoError(t, err)
-				normalized, err := cypherantlr.ParseSyntax(context.Background(), canonical, cypherantlr.StatementEntry, false, cypherantlr.AcceptedSource)
+				normalized, err := cypherantlr.ParseSyntax(context.Background(), cypherantlr.ReadStatement(canonical), cypherantlr.StatementEntry, false, cypherantlr.AcceptedSource)
 				require.NoError(t, err)
 				var originalName, normalizedName string
 				for index, syntax := range []cypherantlr.StatementSyntax{original, normalized} {

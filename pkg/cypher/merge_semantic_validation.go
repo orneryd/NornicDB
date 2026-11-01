@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -68,7 +69,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 	// canonical form (PR #1043 #6), looked up only when the exact text
 	// misses; failures are never cached, so a bad statement still reports
 	// its own error. Both keys carry the language version (semanticCacheKey).
-	key := semanticCacheKey(cypher, cypher25)
+	key := semanticIncomingCacheKey(ctx, semanticCacheKey(cypher, cypher25))
 	cached := e.mergeSemanticValidationCache.contains(key)
 	var canonicalKey string
 	var normalized bool
@@ -76,19 +77,19 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 		var canonical string
 		canonical, normalized = normalizeLiteralText(cypher)
 		if normalized {
-			canonicalKey = semanticCacheKey(canonical, cypher25)
+			canonicalKey = semanticIncomingCacheKey(ctx, semanticCacheKey(canonical, cypher25))
 			cached = e.mergeSemanticValidationCache.contains(canonicalKey)
 		}
 	}
 	if cached {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(ctx, cypher)
+	clauses, ok := splitPipelineTextClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
 
-	scope := newSemanticBindingScope()
+	scope := newIncomingSemanticBindingScope(ctx)
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
@@ -96,13 +97,13 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 		case pipelineClauseCreate:
 			addMergePatternBindings(scope, clause.text)
 		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause)
 		case pipelineClauseLet:
 			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(clause); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:

@@ -96,24 +96,6 @@ func TestExecuteChainedCallSubquery_ImplicitScalarCorrelationOptionalAggregate(t
 	require.EqualValues(t, 0, rowByID["a2"][3])
 }
 
-func TestSeedNodesFromOuterMatch_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "seed_outer")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	_, err := store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "A"}})
-	require.NoError(t, err)
-
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed {name:'A'})", "seed")
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.Equal(t, storage.NodeID("s1"), nodes[0].ID)
-
-	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed) RETURN 1", "missing")
-	require.Error(t, err)
-}
-
 func TestCallSubqueryScannerPopulations(t *testing.T) {
 	type equalityCase struct {
 		source, lhs, rhs string

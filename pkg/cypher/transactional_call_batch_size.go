@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -30,22 +31,15 @@ func readTransactionalStatement(ctx context.Context, query string) ([]cypherantl
 	if calls, ok := transactionalStatementReads.get(query); ok {
 		return calls, ctx.Err()
 	}
-	calls, err := cypherantlr.ReadTransactionalCalls(ctx, query, cypherantlr.AcceptedSource)
+	calls, err := cypherantlr.ReadTransactionalCalls(ctx, cypherantlr.ReadStatement(query), cypherantlr.AcceptedSource)
 	if err == nil {
 		transactionalStatementReads.put(query, calls)
 	}
 	return calls, err
 }
 
-func readCallClause(ctx context.Context, clause string) (cypherantlr.CallClause, error) {
-	if call, ok := callClauseReads.get(clause); ok {
-		return call, ctx.Err()
-	}
-	call, err := cypherantlr.ReadCallClause(ctx, clause, cypherantlr.AcceptedSource)
-	if err == nil {
-		callClauseReads.put(clause, call)
-	}
-	return call, err
+func readCallClause(clause pipelineClause) cypherantlr.CallClause {
+	return cypherantlr.DescribeCall(clause.syntax.Window().Root())
 }
 
 // validateTransactionalCalls belongs to statement semantics, before EXPLAIN

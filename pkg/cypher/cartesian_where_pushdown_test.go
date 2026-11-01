@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -105,7 +106,7 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 		"RETURN a.key AS key, count(*) AS total", "RETURN a.key AS key, count(*) AS total LIMIT 0",
 	} {
 		t.Run(clause, func(t *testing.T) {
-			plan := returnProjectionPlanFor(t.Context(), clause)
+			plan := returnPlanForTest(t.Context(), clause)
 			var rows []pipelineRow
 			for _, combination := range cartesianCombinations(patterns) {
 				values := make(pipelineRow, len(combination))
@@ -118,7 +119,7 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 				}
 				rows = append(rows, values)
 			}
-			expected, err := exec.projectMergeReturnSource(withExpressionFailureSlot(context.Background()), nil, clause, pipelineRowsSource(rows))
+			expected, err := exec.projectMergeReturnSource(withExpressionFailureSlot(context.Background()), nil, clause, queryGapEnd(clause, 0), pipelineRowsSource(rows))
 			require.NoError(t, err)
 			if clause == "RETURN sum(a.value) AS total" {
 				require.Equal(t, [][]interface{}{{int64(18014398509481990)}}, expected.Rows)
@@ -128,7 +129,7 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 				groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, plan, workers)
 				require.True(t, handled)
 				require.NoError(t, err)
-				result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
+				result, err := exec.projectMergeReturnSource(ctx, nil, clause, queryGapEnd(clause, 0), nil, groups)
 				require.NoError(t, err)
 				require.Equal(t, expected.Columns, result.Columns)
 				require.Equal(t, expected.Rows, result.Rows)
@@ -136,14 +137,14 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 		})
 	}
 	for _, clause := range []string{"RETURN sum(0.5)", "RETURN avg(a.value)", "RETURN collect(a.value)", "RETURN count(DISTINCT a.key)", "RETURN sum(a.value + 1)", "RETURN labels(a), count(*)"} {
-		groups, handled, err := exec.tryCartesianAggregatePartitions(context.Background(), patterns, returnProjectionPlanFor(t.Context(), clause), 4)
+		groups, handled, err := exec.tryCartesianAggregatePartitions(context.Background(), patterns, returnPlanForTest(t.Context(), clause), 4)
 		require.False(t, handled, clause)
 		require.NoError(t, err)
 		require.Nil(t, groups)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(t.Context(), "RETURN count(*)"), 4)
+	_, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnPlanForTest(t.Context(), "RETURN count(*)"), 4)
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -173,10 +174,10 @@ func TestGh713CartesianPartitionNullAndCancellation(t *testing.T) {
 	for _, clause := range []string{"RETURN count(a.value) AS total", "RETURN sum(a.value) AS total", "RETURN a.key AS key, count(*) AS total"} {
 		for _, workers := range []int{1, 2, 8} {
 			ctx := withExpressionFailureSlot(context.Background())
-			groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(t.Context(), clause), workers)
+			groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnPlanForTest(t.Context(), clause), workers)
 			require.True(t, handled)
 			require.NoError(t, err)
-			result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
+			result, err := exec.projectMergeReturnSource(ctx, nil, clause, queryGapEnd(clause, 0), nil, groups)
 			require.NoError(t, err)
 			switch clause {
 			case "RETURN count(a.value) AS total":
@@ -189,7 +190,7 @@ func TestGh713CartesianPartitionNullAndCancellation(t *testing.T) {
 		}
 	}
 	patterns[0].nodes = append(patterns[0].nodes, patterns[0].nodes...)
-	_, handled, err := exec.tryCartesianAggregatePartitions(&cartesianCancelContext{Context: context.Background()}, patterns, returnProjectionPlanFor(t.Context(), "RETURN count(*)"), 4)
+	_, handled, err := exec.tryCartesianAggregatePartitions(&cartesianCancelContext{Context: context.Background()}, patterns, returnPlanForTest(t.Context(), "RETURN count(*)"), 4)
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -212,7 +213,7 @@ func BenchmarkGh713CartesianPartitionWorkers(b *testing.B) {
 				if mode == "serial" {
 					workers = 1
 				}
-				plan := returnProjectionPlanFor(b.Context(), clause)
+				plan := returnPlanForTest(b.Context(), clause)
 				ctx := withExpressionFailureSlot(context.Background())
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -435,7 +436,7 @@ func TestGh713SharedReturnBorrowedSourceOwnership(t *testing.T) {
 				values["value"] = int64(99)
 				return true
 			}
-			result, err := exec.projectMergeReturnSource(ctx, nil, test.clause, source)
+			result, err := exec.projectMergeReturnSource(ctx, nil, test.clause, queryGapEnd(test.clause, 0), source)
 			if test.code != "" {
 				require.Error(t, err)
 				require.True(t, strings.HasPrefix(statusText(err), test.code), statusText(err))
@@ -455,7 +456,7 @@ func TestGh713SharedReturnBorrowedSourceOwnership(t *testing.T) {
 	}
 	for _, clause := range []string{"RETURN value", "RETURN *"} {
 		ctx := withExpressionFailureSlot(context.Background())
-		result, handled := exec.pipelineApplyReturnSource(ctx, nil, clause, func(func(pipelineRow) bool) bool { return false }, false)
+		result, handled := exec.pipelineApplyReturnTextSourceForTest(ctx, nil, clause, func(func(pipelineRow) bool) bool { return false }, false)
 		require.False(t, handled)
 		require.Nil(t, result)
 	}

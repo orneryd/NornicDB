@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -7,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -17,9 +17,9 @@ type pipelineCallMetadata struct {
 	batch   *boundTransactionBatch
 }
 
-func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
+func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause pipelineClause, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
 	body, afterCall, inTransactions, batchExpression := e.parseCallSubquery(ctx, clause)
-	if err := validateCallSubqueryBody(body); err != nil {
+	if err := validateCallSubqueryBody(body.executionText); err != nil {
 		return nil, nil, true, err
 	}
 	if strings.TrimSpace(afterCall) != "" {
@@ -40,7 +40,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	// An unscoped body imports through its branches' leading WITHs
 	// (unscopedCallImports, #907).
-	callScope := readCallSubqueryScope(ctx, clause)
+	callScope := readCallSubqueryScope(clause)
 	scopedImports, scoped := callScope.names, callScope.scoped
 	if metadata != nil {
 		declared := scopedImports
@@ -61,7 +61,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		}
 	}
 	targetExec := e
-	if use, remaining, hasUse, err := parseUseClause(ctx, body, true, cyphertext.AcceptedSource); hasUse || err != nil {
+	if use, remaining, hasUse, err := parseUseClause(ctx, body.executionText, true, cyphertext.AcceptedSource); hasUse || err != nil {
 		if err != nil {
 			return nil, nil, true, err
 		}
@@ -74,12 +74,18 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		}
 		targetExec = scoped
 		ctx = scopedCtx
-		body = remaining
+		body.executionText = remaining
+		if len(body.branches) > 0 {
+			body.branches[0].useStart = -1
+			body.branches[0].useEnd = -1
+			body.branches[0].useSyntax = cypherantlr.SyntaxNode{}
+			body.branches[0].executionText = remaining
+		}
 	}
 
 	if len(rows) == 0 {
 		if metadata != nil {
-			columns, err := e.ResultColumns(ctx, clause, resultmetadata.KnownScope(pipelineScopeColumns(metadata.scope)), cypherVersionFromContext(ctx) == "25", AcceptedSource)
+			columns, err := e.retainedClauseColumns(ctx, clause, metadata.scope)
 			if err != nil {
 				return nil, nil, true, err
 			}
@@ -111,19 +117,19 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	imports := scopedImports
 	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
 		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(body, name)) {
+			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(body.executionText, name)) {
 				imports = append(imports, name)
 			}
 		}
 	}
-	write := callSubqueryQueryIsWrite(body)
+	write := callSubqueryQueryIsWrite(body.executionText)
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
 	_, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, body)
 
 	// A branch of an unscoped body that declares an outer variable's name
 	// itself (MATCH (n)-->(m)) gets a new variable, as in Cypher, not the
 	// implicitly imported outer value (unscopedBranchLocals, #907).
-	var branchLocals map[string][]string
+	var branchLocals map[int][]string
 	if !scoped && len(rows) > 0 {
 		var outerNames []string
 		for name := range rows[0] {
@@ -131,14 +137,14 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				outerNames = append(outerNames, name)
 			}
 		}
-		branchLocals = map[string][]string{}
-		branches := []string{body}
+		branchLocals = map[int][]string{}
+		branches := []queryBody{body}
 		if unionBranches, _, _, union := parseTopLevelUnionBranches(ctx, body); union {
 			branches = unionBranches
 		}
 		for _, branch := range branches {
 			if locals := unscopedBranchLocals(ctx, branch, outerNames); len(locals) > 0 {
-				branchLocals[strings.TrimSpace(branch)] = locals
+				branchLocals[branch.syntax.ID()] = locals
 			}
 		}
 	}
@@ -174,7 +180,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					input[name] = value
 				}
 			}
-			runBranch := func(query string) (*ExecuteResult, error) {
+			runBranch := func(query queryBody) (*ExecuteResult, error) {
 				branchClauses := clauses
 				if isUnion {
 					var planned bool
@@ -191,7 +197,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 						scope[name] = struct{}{}
 					}
 				}
-				for _, name := range branchLocals[strings.TrimSpace(query)] {
+				for _, name := range branchLocals[query.syntax.ID()] {
 					delete(branchInput, name)
 					delete(scope, name)
 				}
@@ -230,7 +236,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			var inner *ExecuteResult
 			var execErr error
 			if isUnion {
-				inner, execErr = runExec.executeUnion(runCtx, body, unionAll, runBranch)
+				inner, execErr = runExec.executeRetainedUnion(runCtx, body, unionAll, runBranch)
 			} else {
 				inner, execErr = runBranch(body)
 			}
@@ -305,7 +311,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		batch := rows[start:end]
 		var batchRows []pipelineRow
 		var batchStats *QueryStats
-		_, err := targetExec.executeTransactionBatch(ctx, clause, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+		_, err := targetExec.executeTransactionBatch(ctx, clause.text, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
 			var handled bool
 			var runErr error
 			batchRows, batchStats, handled, runErr = run(txExec, txCtx, batch)

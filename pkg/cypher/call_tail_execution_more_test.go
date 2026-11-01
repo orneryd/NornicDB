@@ -113,17 +113,19 @@ func TestExecuteCallTailSingleRow_NodeAndScalarBindings(t *testing.T) {
 
 func TestSplitCallAndTail_AndExpectedReturnColumns(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "headers"))
-	split := splitCallAndTail(t.Context(), "MATCH (n) RETURN n")
-	require.Equal(t, "MATCH (n) RETURN n", split.callOnly)
-	require.Empty(t, split.tail)
+	// A statement without a leading CALL has no split; none is fabricated.
+	_, split := splitCallAndTail(t.Context(), "MATCH (n) RETURN n")
+	require.False(t, split)
 
-	split = splitCallAndTail(t.Context(), "CALL db.labels() YIELD label CREATE (:Seen {name:label})")
-	require.Equal(t, "CALL db.labels() YIELD label", split.callOnly)
-	require.Equal(t, "CREATE (:Seen {name:label})", split.tail)
+	parts, split := splitCallAndTail(t.Context(), "CALL db.labels() YIELD label CREATE (:Seen {name:label})")
+	require.True(t, split)
+	require.Equal(t, "CALL db.labels() YIELD label", parts.callOnly)
+	require.Equal(t, "CREATE (:Seen {name:label})", parts.tail)
 
-	split = splitCallAndTail(t.Context(), "CALL db.labels() YIELD label ORDER BY label")
-	require.Equal(t, "CALL db.labels() YIELD label ORDER BY label", split.callOnly)
-	require.Empty(t, split.tail)
+	parts, split = splitCallAndTail(t.Context(), "CALL db.labels() YIELD label ORDER BY label")
+	require.True(t, split)
+	require.Equal(t, "CALL db.labels() YIELD label ORDER BY label", parts.callOnly)
+	require.Empty(t, parts.tail)
 
 	cols := exec.StatementColumns("MATCH (n) WITH n RETURN n AS node, count(*) AS c ORDER BY c DESC SKIP 1 LIMIT 2")
 	require.Equal(t, []string{"node", "c"}, cols)

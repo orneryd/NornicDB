@@ -5,7 +5,6 @@ import (
 
 	"context"
 	"fmt"
-	"regexp"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -101,26 +100,6 @@ RETURN count(*) AS c
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, int64(1), res.Rows[0][0])
-}
-
-func TestNormalizeMultiMatchWhereClauses(t *testing.T) {
-	in := "MATCH (o:OriginalText) WHERE o.joinKey = joinKey MATCH (t:TranslatedText) WHERE t.joinKey = joinKey RETURN count(*) AS c"
-	got := normalizeMultiMatchWhereClauses(in)
-	require.Equal(
-		t,
-		"MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey AND t.joinKey = joinKey RETURN count(*) AS c",
-		got,
-	)
-}
-
-func TestNormalizeMultiMatchWhereClauses_SingleWhereBetweenMatches(t *testing.T) {
-	in := "MATCH (o:OriginalText) WHERE o.joinKey = joinKey MATCH (t:TranslatedText) RETURN count(*) AS c"
-	got := normalizeMultiMatchWhereClauses(in)
-	require.Equal(
-		t,
-		"MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey RETURN count(*) AS c",
-		got,
-	)
 }
 
 func TestBug_MatchWhereMatchSetReturn_Executes(t *testing.T) {
@@ -334,24 +313,6 @@ RETURN count(*) AS c
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, int64(1), res.Rows[0][0], "second OR arm must not match when textKey is null")
-}
-
-func TestRewriteUnwindCorrelationToIn(t *testing.T) {
-	in := "MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey AND t.joinKey = joinKey CREATE (o)-[:TRANSLATES_TO]->(t) RETURN count(*) AS c"
-	got, ok := rewriteUnwindCorrelationToIn(in, "joinKey", "__unwind_items")
-	require.True(t, ok)
-	require.True(t, regexp.MustCompile(`o\.joinKey\s+IN\s+\$__unwind_items`).MatchString(got))
-	require.True(t, regexp.MustCompile(`t\.joinKey\s*=\s*o\.joinKey`).MatchString(got))
-}
-
-func TestRewriteTopLevelMultiMatchToCartesianMatch(t *testing.T) {
-	in := "MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey IN $__unwind_items AND t.joinKey = o.joinKey RETURN count(*) AS c"
-	got := rewriteTopLevelMultiMatchToCartesianMatch(in)
-	require.Equal(
-		t,
-		"MATCH (o:OriginalText), (t:TranslatedText) WHERE o.joinKey IN $__unwind_items AND t.joinKey = o.joinKey RETURN count(*) AS c",
-		got,
-	)
 }
 
 func TestBug_UnwindMatchCount_RewriteAvoidsPerItemLabelScans(t *testing.T) {

@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -265,33 +266,25 @@ func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern s
 func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pipelineClause) pipelineMatchPhysicalHint {
 	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: pipelineReadOnlyTail(remaining)}
 	if len(remaining) > 0 && remaining[0].kind == pipelineClauseWith {
-		clause := remaining[0].text
-		if topLevelKeywordIndex(clause, "WHERE") >= 0 {
+		// The WITH's one modifier reading (parsePipelineRowWithProjection).
+		plan, projectable := parsePipelineRowWithProjection(ctx, remaining[0])
+		if !projectable || plan.modifiers.where != "" || plan.modifiers.orderBy != "" {
 			return hint
 		}
-		end := len(clause)
-		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
-				end = index
-			}
-		}
-		if _, local := parsePipelineRowWith(ctx, clause[:end]); !local {
-			return hint
-		}
-		limit, hasLimit := e.parseIntModifier(ctx, clause, "LIMIT")
-		skip, _ := e.parseIntModifier(ctx, clause, "SKIP")
-		if !hasLimit || limit <= 0 || skip < 0 || skip > int(^uint(0)>>1)-limit {
+		skip, limit, ok := e.evaluateProjectionWindow(ctx, plan.modifiers, nil)
+		if !ok || limit <= 0 || skip > int(^uint(0)>>1)-limit {
 			return hint
 		}
 		hint.limit, hint.earlyLimit = skip+limit, skip+limit
 		return hint
 	}
 	var terminalReturn string
+	var terminal pipelineClause
 	for index, clause := range remaining {
 		if clause.kind != pipelineClauseReturn || index != len(remaining)-1 {
 			return hint
 		}
-		terminalReturn = clause.text
+		terminalReturn, terminal = clause.text, clause
 	}
 	if terminalReturn == "" {
 		return hint
@@ -300,7 +293,7 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 	if _, distinct := cutDistinct(body); distinct {
 		return hint
 	}
-	for _, item := range e.parseReturnItems(ctx, body) {
+	for _, item := range returnItemsOfPlan(projectionPlanOf(ctx, terminal.syntax)) {
 		if pipelineExpressionContainsAggregate(item.expr) {
 			return hint
 		}

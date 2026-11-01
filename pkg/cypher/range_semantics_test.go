@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -378,7 +379,7 @@ func TestUnwindRangeReportedWorkload(t *testing.T) {
 
 func TestPipelineAggregateSourceFailureDoesNotReturnPartialGroups(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	projections := returnProjectionPlanFor(t.Context(), "RETURN count(*) AS total").projections
+	projections := returnPlanForTest(t.Context(), "RETURN count(*) AS total").projections
 	for _, canceled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))

@@ -11,7 +11,7 @@ import (
 // its original context to the normal execution and authorization boundary.
 // For example, a read-only diagnostic tool can call this before Execute.
 func AuthorizeReadOnlyQuery(ctx context.Context, query string) error {
-	syntax, err := cypherantlr.ParseSyntax(ctx, query, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.RawSource)
+	syntax, err := cypherantlr.ParseSyntax(ctx, cypherantlr.ReadStatement(query), cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.RawSource)
 	if canceled := ctx.Err(); canceled != nil {
 		return canceled
 	}

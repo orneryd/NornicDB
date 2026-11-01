@@ -40,6 +40,9 @@ type CypherParserListener interface {
 	// EnterShowCommand is called when entering the showCommand production.
 	EnterShowCommand(c *ShowCommandContext)
 
+	// EnterShowExtensionCommand is called when entering the showExtensionCommand production.
+	EnterShowExtensionCommand(c *ShowExtensionCommandContext)
+
 	// EnterShowConstraintKind is called when entering the showConstraintKind production.
 	EnterShowConstraintKind(c *ShowConstraintKindContext)
 
@@ -123,6 +126,9 @@ type CypherParserListener interface {
 
 	// EnterCallSubquery is called when entering the callSubquery production.
 	EnterCallSubquery(c *CallSubqueryContext)
+
+	// EnterScopeList is called when entering the scopeList production.
+	EnterScopeList(c *ScopeListContext)
 
 	// EnterTransactionBatch is called when entering the transactionBatch production.
 	EnterTransactionBatch(c *TransactionBatchContext)
@@ -523,6 +529,9 @@ type CypherParserListener interface {
 	// ExitShowCommand is called when exiting the showCommand production.
 	ExitShowCommand(c *ShowCommandContext)
 
+	// ExitShowExtensionCommand is called when exiting the showExtensionCommand production.
+	ExitShowExtensionCommand(c *ShowExtensionCommandContext)
+
 	// ExitShowConstraintKind is called when exiting the showConstraintKind production.
 	ExitShowConstraintKind(c *ShowConstraintKindContext)
 
@@ -606,6 +615,9 @@ type CypherParserListener interface {
 
 	// ExitCallSubquery is called when exiting the callSubquery production.
 	ExitCallSubquery(c *CallSubqueryContext)
+
+	// ExitScopeList is called when exiting the scopeList production.
+	ExitScopeList(c *ScopeListContext)
 
 	// ExitTransactionBatch is called when exiting the transactionBatch production.
 	ExitTransactionBatch(c *TransactionBatchContext)

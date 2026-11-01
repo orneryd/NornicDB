@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -30,7 +31,7 @@ func (e *recordingLabelScanEngine) StreamNodesByLabelProjectedInScope(ctx contex
 
 func TestPipelineReadOnlyTail(t *testing.T) {
 	clauses := func(query string) []pipelineClause {
-		parsed, ok := pipelineClausesFor(t.Context(), query)
+		parsed, ok := pipelineTextClausesFor(t.Context(), query)
 		require.True(t, ok, query)
 		return parsed[1:]
 	}

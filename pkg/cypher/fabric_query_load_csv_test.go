@@ -191,7 +191,7 @@ func newLoadCSVParticipantExecutor(t *testing.T, accessMode string) (*StorageExe
 // loadCSVStatementEffects reads the retained grammar effects of one statement.
 func loadCSVStatementEffects(t *testing.T, query string) cypherantlr.StatementEffects {
 	t.Helper()
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), query, cypherantlr.StatementEntry, false, cypherantlr.AcceptedSource)
+	syntax, err := cypherantlr.ParseSyntax(context.Background(), cypherantlr.ReadStatement(query), cypherantlr.StatementEntry, false, cypherantlr.AcceptedSource)
 	require.NoError(t, err, "the shared grammar must read the LOAD CSV statement: %s", query)
 	require.True(t, syntax.Valid())
 	return syntax.Effects()

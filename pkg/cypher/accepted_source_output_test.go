@@ -57,7 +57,7 @@ func acceptedSourceOutputObserver(t *testing.T) func(*testing.T, string, []strin
 		contextslot.Get[cyphertext.CredentialSet](ctx).Source = cyphertext.SourceFor(ctx, query)
 		_, nativeErr := exec.executeCompositeCommand(ctx, source.Text, compositeCreateCommand)
 		appendError(nativeErr)
-		_, grammarErr := cantlr.ParseSyntax(ctx, source.Text, cantlr.StatementEntry, false, cantlr.AcceptedSource)
+		_, grammarErr := cantlr.ParseSyntax(ctx, cantlr.ReadStatement(source.Text), cantlr.StatementEntry, false, cantlr.AcceptedSource)
 		redactAdminCommandError(query, &grammarErr, contextslot.Get[cyphertext.CredentialSet](ctx))
 		appendError(grammarErr)
 		exec.emitSlowQueryLog(t.Context(), query, nil, time.Second)

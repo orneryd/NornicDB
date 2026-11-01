@@ -46,6 +46,14 @@ func TestSplitUnwindCompoundMutationStages_AdditionalRejections(t *testing.T) {
 			query: "WITH $rows AS rows UNWIND rows AS row MERGE (b:Node {id: row.id})",
 		},
 		{
+			name:  "separator_with_where",
+			query: "MERGE (a:Node {id: row.id}) WITH $rows AS rows WHERE rows IS NOT NULL UNWIND rows AS row MERGE (b:Node {id: row.id})",
+		},
+		{
+			name:  "separator_with_two_items",
+			query: "MERGE (a:Node {id: row.id}) WITH $rows AS rows, 1 AS one UNWIND rows AS row MERGE (b:Node {id: row.id})",
+		},
+		{
 			name:  "empty_last_stage",
 			query: "MERGE (a:Node {id: row.id}) WITH $rows AS rows UNWIND rows AS row",
 		},
@@ -53,7 +61,7 @@ func TestSplitUnwindCompoundMutationStages_AdditionalRejections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stages, ok := splitUnwindCompoundMutationStages(tt.query, "rows", "row")
+			stages, ok := unwindCompoundStageBodies(t.Context(), queryBodyForTest(t.Context(), tt.query), "rows", "row")
 			require.False(t, ok)
 			require.Nil(t, stages)
 		})

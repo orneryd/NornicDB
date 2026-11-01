@@ -2,8 +2,6 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"strings"
 )
 
 // mergeNodeWrites is what a statement writes to the nodes its MERGE clauses
@@ -48,72 +46,26 @@ func (w *mergeNodeWrites) add(variable string, renamed bool) {
 	w.variables[variable] = struct{}{}
 }
 
-func (w *mergeNodeWrites) addSetItems(items []string, renamed bool, except map[string]struct{}) {
-	for _, item := range items {
-		if strings.TrimSpace(item) == "" {
-			continue
-		}
-		target, _, operator, _ := splitSetAssignment(item)
-		if _, own := except[target]; own && target != "" {
-			continue
-		}
-		if operator == "" {
-			target = ""
-		}
-		w.add(target, renamed)
-	}
-}
-
 // withMergeNodeWrites returns ctx carrying what clauses write
 // merged with what the enclosing statement writes, so a
 // MERGE in a subquery or FOREACH body sees the writes around it too.
+// Every write target is read from the clauses' retained nodes.
 func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.Context {
 	writes := &mergeNodeWrites{}
 	renamed := false
 	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseSet:
-			writes.addSetItems(splitSetAssignments(pipelineClauseBody(clause.text, "SET")), renamed, nil)
-		case pipelineClauseRemove:
-			items, err := parseRemoveItems(pipelineClauseBody(clause.text, "REMOVE"))
-			if err != nil {
-				writes.all = true
-				continue
-			}
-			for _, item := range items {
-				writes.add(item.variable, renamed)
-			}
-		case pipelineClauseMerge:
-			actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
-			bound := make(map[string]struct{})
-			eachPatternElement(actions.pattern, func(opener byte, element string) {
-				if opener == '(' {
-					bound[nodePatternStructure(element[1:len(element)-1]).variable] = struct{}{}
-				}
-			})
-			writes.addSetItems(mergeActionAssignments(actions.onMatch), renamed, nil)
-			// The MERGE that creates a node holds its key already.
-			writes.addSetItems(mergeActionAssignments(actions.onCreate), renamed, bound)
-		case pipelineClauseDelete:
-			body := pipelineClauseBody(pipelineClauseBody(clause.text, "DETACH"), "DELETE")
-			for _, item := range splitTopLevelComma(body) {
-				if item = strings.TrimSpace(item); !cyphertext.IsIdentifier(item) {
-					item = ""
-				}
-				writes.add(item, renamed)
-			}
-		case pipelineClauseWith:
-			renamed = renamed || containsKeywordOutsideStrings(clause.text, "AS")
-		case pipelineClauseLet:
-			renamed = true
-		case pipelineClauseForeach, pipelineClauseCallSubquery:
-			writes.all = true
-		case pipelineClauseCall:
-			if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); !found || procedure.Spec.writes() {
-				writes.all = true
-			}
+		effects, err := executionClauseEffects(ctx, clause)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return ctx
+		}
+		renamed = renamed || effects.renames
+		writes.all = writes.all || effects.nodeWrites.all
+		for variable := range effects.nodeWrites.variables {
+			writes.add(variable, renamed)
 		}
 	}
+
 	if outer := mergeNodeWritesFromContext(ctx); outer != nil {
 		writes.all = writes.all || outer.all
 		for variable := range outer.variables {

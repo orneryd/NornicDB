@@ -34,8 +34,6 @@ func TestSubqueryValueRemainingBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(3), int64(1)}, {int64(2), int64(1)}}, result.Rows)
 
-	require.False(t, containsIdentifierWord("xn", "n"))
-	require.True(t, containsIdentifierWord("x n", "n"))
 	require.False(t, patternHasRelationship("(a {s: 'x->y', t: \"<-\"})"))
 	require.True(t, patternHasRelationship("(a {s: 'x'})-->(b)"))
 }

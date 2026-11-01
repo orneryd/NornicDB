@@ -1,3 +1,4 @@
+// Author of private inspection entry migration: Codex R17 implementation agent.
 package antlr
 
 import (
@@ -11,7 +12,7 @@ import (
 
 func TestStatementSyntaxOriginalSpansDecodedNamesAndTrivia(t *testing.T) {
 	query := "/* é UNION RETURN wrong */ WITH 1 AS `é` CALL db.labels() YIELD label AS /* UNION */ `a,b` RETURN `a,b`, `é`"
-	syntax, err := ParseSyntax(context.Background(), query, StatementEntry, false, RawSource)
+	syntax, err := ParseSyntax(context.Background(), ReadStatement(query), StatementEntry, false, RawSource)
 	require.NoError(t, err)
 	require.Equal(t, query, syntax.Source())
 	var names []string
@@ -56,7 +57,7 @@ func TestStatementSyntaxOriginalSpansDecodedNamesAndTrivia(t *testing.T) {
 }
 
 func TestStatementSyntaxTraversalVisitsEveryChildAndRestoresInReverse(t *testing.T) {
-	syntax, err := ParseSyntax(context.Background(), "RETURN coalesce(COUNT { MATCH (n) }, 1) AS value", StatementEntry, true, RawSource)
+	syntax, err := ParseSyntax(context.Background(), ReadStatement("RETURN coalesce(COUNT { MATCH (n) }, 1) AS value"), StatementEntry, true, RawSource)
 	require.NoError(t, err)
 	var events []string
 	var first, second, depth int
@@ -93,7 +94,7 @@ func TestStatementSyntaxTraversalVisitsEveryChildAndRestoresInReverse(t *testing
 
 func TestStatementSyntaxCacheViewsAreImmutableAndCancellationIsObserved(t *testing.T) {
 	query := "CALL db.labels() YIELD label AS `a``b` RETURN `a``b`"
-	first, err := ParseSyntax(context.Background(), query, StatementEntry, false, RawSource)
+	first, err := ParseSyntax(context.Background(), ReadStatement(query), StatementEntry, false, RawSource)
 	require.NoError(t, err)
 	var workers sync.WaitGroup
 	failures := make(chan string, 8)
@@ -101,7 +102,7 @@ func TestStatementSyntaxCacheViewsAreImmutableAndCancellationIsObserved(t *testi
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			syntax, err := ParseSyntax(context.Background(), query, StatementEntry, false, RawSource)
+			syntax, err := ParseSyntax(context.Background(), ReadStatement(query), StatementEntry, false, RawSource)
 			if err != nil {
 				failures <- err.Error()
 				return
@@ -131,9 +132,9 @@ func TestStatementSyntaxCacheViewsAreImmutableAndCancellationIsObserved(t *testi
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = ParseSyntax(ctx, query, StatementEntry, false, RawSource)
+	_, err = ParseSyntax(ctx, ReadStatement(query), StatementEntry, false, RawSource)
 	require.ErrorIs(t, err, context.Canceled)
-	_, err = ParseSyntax(context.Background(), "1 ROWS", ExpressionEntry, false, RawSource)
+	_, err = ParseSyntax(context.Background(), ReadStatement("1 ROWS"), ExpressionEntry, false, RawSource)
 	require.Error(t, err)
 }
 
@@ -147,7 +148,7 @@ func TestStatementSyntaxScopeSelectionWindows(t *testing.T) {
 		"CALL /* scope */ (x) { WITH 1 AS y USE comp.remote RETURN x + y AS z } RETURN z",
 	} {
 		t.Run(query, func(t *testing.T) {
-			syntax, err := ParseSyntax(context.Background(), query, StatementEntry, true, RawSource)
+			syntax, err := ParseSyntax(context.Background(), ReadStatement(query), StatementEntry, true, RawSource)
 			require.NoError(t, err)
 			uses := 0
 			syntax.Walk(func(node SyntaxNode) func() {
@@ -165,16 +166,21 @@ func TestStatementSyntaxScopeSelectionWindows(t *testing.T) {
 }
 func TestStatementSyntaxWholeSourceIdentityAcrossAdapters(t *testing.T) {
 	source := "WITH 1 AS uniqueCanonicalIdentity CALL { WITH uniqueCanonicalIdentity RETURN uniqueCanonicalIdentity AS value } RETURN value"
-	fragment, err := ParseSyntax(context.Background(), source, FragmentEntry, false, RawSource)
+	fragment, err := ParseSyntax(context.Background(), ReadStatement(source), fragmentEntry, false, RawSource)
 	require.NoError(t, err)
-	statement, err := ParseSyntax(context.Background(), source, StatementEntry, false, RawSource)
+	statement, err := ParseSyntax(context.Background(), ReadStatement(source), StatementEntry, false, RawSource)
 	require.NoError(t, err)
 	require.Equal(t, CypherParserRULE_script, fragment.Root().Rule())
-	require.Same(t, fragment.data, statement.data, "a fragment adapter must retain the whole statement's node identities")
-	prior, err := ParseSyntax(context.Background(), "RETURN 92741 AS adapterWarmup", ClauseEntry, false, RawSource)
+	require.Equal(t, CypherParserRULE_script, statement.Root().Rule())
+	require.Same(t, fragment.data, statement.data, "inspection and admission share the canonical statement product")
+	require.Equal(t, fragment.Origin(), statement.Origin())
+	promoted, err := ParseSyntax(context.Background(), ReadStatement(source), fragmentEntry, false, RawSource)
+	require.NoError(t, err)
+	require.Same(t, statement.data, promoted.data, "a validated Script becomes the shared product for its source")
+	prior, err := ParseSyntax(context.Background(), ReadStatement("RETURN 92741 AS adapterWarmup"), ClauseEntry, false, RawSource)
 	require.NoError(t, err)
 	require.Equal(t, CypherParserRULE_subqueryBody, prior.Root().Rule())
-	full, err := ParseSyntax(context.Background(), "RETURN 92741 AS adapterWarmup", FragmentEntry, false, RawSource)
+	full, err := ParseSyntax(context.Background(), ReadStatement("RETURN 92741 AS adapterWarmup"), StatementEntry, false, RawSource)
 	require.NoError(t, err)
 	require.Equal(t, CypherParserRULE_script, full.Root().Rule(), "a scope-independent adapter cannot replace a statement with a different entry's tree")
 }

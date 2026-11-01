@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -25,7 +26,7 @@ func TestResultHeaderSemanticProjectionCompatibility(t *testing.T) {
 		{"RETURN DISTINCT $age + avg(person.age) - 1000 ORDER BY person.age SKIP 1 LIMIT 2", []string{"$age + avg(person.age) - 1000"}},
 	} {
 		t.Run(tc.clause, func(t *testing.T) {
-			columns := pipelineReturnSourceColumns(t.Context(), tc.clause)
+			columns := pipelineReturnSourceColumns(t.Context(), retainedClauseForTest(t.Context(), tc.clause))
 			if tc.names == nil {
 				require.Nil(t, columns)
 				return

@@ -19,7 +19,7 @@ func TestParseEntrypointNestedDiagnosticsUseBoundaryLocale(t *testing.T) {
 	require.NoError(t, err)
 	for _, query := range []string{"MATCH (", "RETURN 1 'private-diagnostic-literal' @"} {
 		_, parseErr := Parse(query)
-		for _, err := range []error{parseErr, Validate(query), ValidateContext(context.Background(), query, cyphertext.RawSource)} {
+		for _, err := range []error{parseErr, Validate(query), ValidateContext(context.Background(), ReadStatement(query), cyphertext.RawSource)} {
 			var typed *localization.LocalizedError
 			require.ErrorAs(t, err, &typed)
 			for locale, prefix := range map[string]string{"en-US": "syntax error: line ", "es-ES": "error de sintaxis: línea ", "en-XA": "[!! syntax error: [!! line "} {

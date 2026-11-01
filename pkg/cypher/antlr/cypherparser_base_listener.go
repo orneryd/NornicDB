@@ -86,6 +86,12 @@ func (s *BaseCypherParserListener) EnterShowCommand(ctx *ShowCommandContext) {}
 // ExitShowCommand is called when production showCommand is exited.
 func (s *BaseCypherParserListener) ExitShowCommand(ctx *ShowCommandContext) {}
 
+// EnterShowExtensionCommand is called when production showExtensionCommand is entered.
+func (s *BaseCypherParserListener) EnterShowExtensionCommand(ctx *ShowExtensionCommandContext) {}
+
+// ExitShowExtensionCommand is called when production showExtensionCommand is exited.
+func (s *BaseCypherParserListener) ExitShowExtensionCommand(ctx *ShowExtensionCommandContext) {}
+
 // EnterShowConstraintKind is called when production showConstraintKind is entered.
 func (s *BaseCypherParserListener) EnterShowConstraintKind(ctx *ShowConstraintKindContext) {}
 
@@ -255,6 +261,12 @@ func (s *BaseCypherParserListener) EnterCallSubquery(ctx *CallSubqueryContext) {
 
 // ExitCallSubquery is called when production callSubquery is exited.
 func (s *BaseCypherParserListener) ExitCallSubquery(ctx *CallSubqueryContext) {}
+
+// EnterScopeList is called when production scopeList is entered.
+func (s *BaseCypherParserListener) EnterScopeList(ctx *ScopeListContext) {}
+
+// ExitScopeList is called when production scopeList is exited.
+func (s *BaseCypherParserListener) ExitScopeList(ctx *ScopeListContext) {}
 
 // EnterTransactionBatch is called when production transactionBatch is entered.
 func (s *BaseCypherParserListener) EnterTransactionBatch(ctx *TransactionBatchContext) {}

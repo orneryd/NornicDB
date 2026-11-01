@@ -295,7 +295,8 @@ func isShowPrivilegesCommand(cypher string) bool {
 		return true
 	}
 	if startsWithKeywords(cypher, "SHOW", "ROLES") || startsWithKeywords(cypher, "SHOW", "ROLE") {
-		return findKeywordIndex(showCommandHead(cypher), "PRIVILEGES") > 0 || findKeywordIndex(showCommandHead(cypher), "PRIVILEGE") > 0
+		head := showCommandHead(context.Background(), cypher)
+		return findKeywordIndex(head, "PRIVILEGES") > 0 || findKeywordIndex(head, "PRIVILEGE") > 0
 	}
 	return false
 }

@@ -12,7 +12,7 @@ import (
 // the same bounded cache used by local admission; no transport parses source.
 func readRemoteStatementPolicy(ctx context.Context, source string) (fabric.RemoteStatementPolicy, error) {
 	policy := fabric.RemoteStatementPolicy{AccessMode: storage.RemoteAccessWrite, Uncertain: true}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.RawSource)
+	syntax, err := cypherantlr.ParseSyntax(ctx, cypherantlr.ReadStatement(source), cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.RawSource)
 	if canceled := ctx.Err(); canceled != nil {
 		return policy, canceled
 	}

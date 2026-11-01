@@ -11,7 +11,7 @@ func TestStatementEffectsResolveLiveProcedureModes(t *testing.T) {
 	registry := NewProcedureRegistry()
 	replaceProcedureRegistryForTest(t, registry)
 	const query = "CALL mode_fixture.live()"
-	syntax, err := cypherantlr.ParseSyntax(t.Context(), query, cypherantlr.FragmentEntry, false, cypherantlr.RawSource)
+	syntax, err := cypherantlr.ParseSyntax(t.Context(), cypherantlr.ReadStatement(query), cypherantlr.FragmentEntry, false, cypherantlr.RawSource)
 	require.NoError(t, err)
 	require.Equal(t, "mode_fixture.live", syntax.Effects().Call(0).Name())
 	handler := func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {

@@ -114,10 +114,12 @@ func TestGh713SimpleMatchLimitUsesSharedProjectionAndPagination(t *testing.T) {
 func TestGh713SimpleNodeCompilerDeclinesUnsupportedPlans(t *testing.T) {
 	for _, projection := range []string{
 		"", "*", "DISTINCT n", "count(n)", "n, n AS other",
-		"n LIMIT 1", "n AS", "n.id", "N", "m AS node",
+		"n ORDER BY n", "n SKIP 1", "n AS", "n.id", "N", "m AS node",
 	} {
 		t.Run(projection, func(t *testing.T) {
-			column, handled := parseSimpleReturnVariable(t.Context(), projection, "n")
+			// The statement's own LIMIT belongs to the fast path; ORDER BY and
+			// SKIP decline it (Claude R17 implementation agent).
+			column, handled := parseSimpleReturnVariable(t.Context(), "RETURN "+projection, 0, "n")
 			require.False(t, handled)
 			require.Empty(t, column)
 		})

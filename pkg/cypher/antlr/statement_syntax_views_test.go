@@ -1,3 +1,4 @@
+// Author of private inspection entry migration: Codex R17 implementation agent.
 package antlr
 
 import (
@@ -12,7 +13,7 @@ import (
 func TestStatementSyntaxConsumerWindowsAndNames(t *testing.T) {
 	ctx := context.Background()
 	source := "/* é prefix */ CYPHER 25 EXPLAIN CALL (`a,b`) { RETURN `a,b` AS value } RETURN value;"
-	syntax, err := ParseSyntax(ctx, source, StatementEntry, true, RawSource)
+	syntax, err := ParseSyntax(ctx, ReadStatement(source), StatementEntry, true, RawSource)
 	require.NoError(t, err)
 	start, end := strings.Index(source, "CALL"), strings.LastIndex(source, ";")
 	query, found := syntax.Window(start, end, CypherParserRULE_query)
@@ -58,7 +59,7 @@ func TestStatementSyntaxConsumerWindowsAndNames(t *testing.T) {
 	_, found = syntax.Window(from+1, to, CypherParserRULE_callSubquery)
 	require.False(t, found, "a partial token window cannot supply a CALL frame")
 
-	procedure, err := ParseSyntax(ctx, "/* é */ CALL `db`.`la``bels`() YIELD label RETURN label", StatementEntry, false, RawSource)
+	procedure, err := ParseSyntax(ctx, ReadStatement("/* é */ CALL `db`.`la``bels`() YIELD label RETURN label"), StatementEntry, false, RawSource)
 	require.NoError(t, err)
 	leading, found := procedure.LeadingCall()
 	require.True(t, found)
@@ -66,7 +67,7 @@ func TestStatementSyntaxConsumerWindowsAndNames(t *testing.T) {
 	_, found = leading.DirectToken(CypherLexerLBRACE)
 	require.False(t, found)
 
-	empty, err := ParseSyntax(ctx, "CALL () { /* empty body */ }", StatementEntry, false, RawSource)
+	empty, err := ParseSyntax(ctx, ReadStatement("CALL () { /* empty body */ }"), StatementEntry, false, RawSource)
 	require.NoError(t, err, "structure remains readable before semantic conclusion validation")
 	emptyCall, found := empty.LeadingCall()
 	require.True(t, found)
@@ -93,23 +94,23 @@ func TestStatementSyntaxEntryViewsAndCacheIdentity(t *testing.T) {
 	}{
 		{"CALL (x) { RETURN x AS value } IN TRANSACTIONS OF 2 ROWS", CallEntry, CypherParserRULE_callSubquery},
 		{"WITH $row AS x RETURN x", ClauseEntry, CypherParserRULE_subqueryBody},
-		{"coalesce(/* é */ 1, 2)", FragmentEntry, CypherParserRULE_expression},
+		{"coalesce(/* é */ 1, 2)", fragmentEntry, CypherParserRULE_expression},
 		{"(n:$any(labels))-[r:T]->(m)", PatternEntry, CypherParserRULE_pattern},
 	} {
-		syntax, err := ParseSyntax(ctx, sample.source, sample.entry, false, RawSource)
+		syntax, err := ParseSyntax(ctx, ReadStatement(sample.source), sample.entry, false, RawSource)
 		require.NoError(t, err, sample.source)
 		require.Equal(t, sample.rule, syntax.Root().Rule())
 		require.Equal(t, sample.source, syntax.Source())
-		if sample.entry == FragmentEntry {
+		if sample.entry == fragmentEntry {
 			require.NotContains(t, syntax.Root().Code(), "é")
-			_, err = ParseSyntax(ctx, sample.source, StatementEntry, false, RawSource)
+			_, err = ParseSyntax(ctx, ReadStatement(sample.source), StatementEntry, false, RawSource)
 			require.Error(t, err, "an expression cache entry cannot authorize a statement")
 		}
 	}
 	source := "RETURN 537 AS canonicalStatementWarmup"
-	statement, err := ParseSyntax(ctx, source, StatementEntry, false, RawSource)
+	statement, err := ParseSyntax(ctx, ReadStatement(source), StatementEntry, false, RawSource)
 	require.NoError(t, err)
-	fragment, err := ParseSyntax(ctx, source, FragmentEntry, false, RawSource)
+	fragment, err := ParseSyntax(ctx, ReadStatement(source), fragmentEntry, false, RawSource)
 	require.NoError(t, err)
 	require.Same(t, statement.data, fragment.data)
 }
@@ -117,10 +118,10 @@ func TestStatementSyntaxEntryViewsAndCacheIdentity(t *testing.T) {
 func TestStatementSyntaxRetainedViewsSurviveCacheCapacity(t *testing.T) {
 	ctx := context.Background()
 	source := "RETURN 74019 AS retainedViewAcrossCapacity"
-	retained, err := ParseSyntax(ctx, source, StatementEntry, false, RawSource)
+	retained, err := ParseSyntax(ctx, ReadStatement(source), StatementEntry, false, RawSource)
 	require.NoError(t, err)
 	for index := 0; index <= statementSyntaxCacheLimit; index++ {
-		_, err = ParseSyntax(ctx, "RETURN "+strconv.Itoa(index)+" AS capacityContract", StatementEntry, false, RawSource)
+		_, err = ParseSyntax(ctx, ReadStatement("RETURN "+strconv.Itoa(index)+" AS capacityContract"), StatementEntry, false, RawSource)
 		require.NoError(t, err)
 	}
 	statementSyntaxCache.RLock()

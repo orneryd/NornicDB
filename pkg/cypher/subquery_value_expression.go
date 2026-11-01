@@ -1,14 +1,14 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
 	"context"
-	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -389,67 +389,19 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	}
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnion) joins them, as for a top-level UNION.
-	if _, unionAll, _, union := parseTopLevelUnionBranches(ctx, query); union {
+	if _, unionAll, _, union := parseTopLevelUnionTextBranches(ctx, query); union {
 		return e.executeUnion(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
 			return e.runCorrelatedSubquery(ctx, branch, values)
 		})
 	}
+	// The body runs as the seeded pipeline over the row's values, the one
+	// contract of a correlated body (as a CALL subquery branch runs); no
+	// binding clauses are composed in front of it.
 	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
 	if outcome.terminal() {
 		return outcome.result, outcome.err
 	}
-	return e.executeCorrelatedSubqueryBody(ctx, query, values)
-}
-
-// executeCorrelatedSubqueryBody runs a subquery body through the full
-// executor with the row's values it uses bound the way MATCH … CALL binds a
-// correlated subquery's imports: a node as MATCH (v) WHERE id(v) = $p, a
-// relationship as MATCH ()-[v]->() WHERE id(v) = $p, any other value as
-// WITH $p AS v. Row parameters stay available.
-func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
-	params := make(map[string]interface{}, len(values))
-	for name, value := range getParamsFromContext(ctx) {
-		params[name] = value
-	}
-	names := make([]string, 0, len(values))
-	for name := range values {
-		if !strings.HasPrefix(name, "$") && containsIdentifierWord(query, name) {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	var prefix strings.Builder
-	carried := make([]string, 0, len(names))
-	for index, name := range names {
-		param := fmt.Sprintf("__subquery_row_%d", index)
-		switch value := values[name].(type) {
-		case *storage.Node:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH (%s) WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		case *storage.Edge:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH ()-[%s]->() WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		default:
-			params[param] = value
-			carried = append(carried, "$"+param+" AS "+name)
-		}
-	}
-	if len(carried) > 0 {
-		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
-	}
-	return e.executeInternal(ctx, prefix.String()+query, params)
+	return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "subquery body could not be executed as a clause pipeline")
 }
 
 // boundNodeLookupCount counts the rows of a body that is one labelled node
@@ -553,12 +505,34 @@ type boundNodeShape struct {
 	ok       bool
 }
 
+// singleMatchBody reports whether an EXISTS / COUNT body is one MATCH clause,
+// or the grammar's bare pattern [WHERE …] form, from the body's own text: a
+// MATCH-led body through the clause owner, a bare pattern through the pattern
+// entry. No MATCH clause is composed around a bare pattern.
+// Author: Claude R17 implementation agent, 30 October 2026.
+func singleMatchBody(ctx context.Context, body string) bool {
+	trimmed := strings.TrimSpace(body)
+	if hasPrefixFold(trimmed, "MATCH ") {
+		clauses, ok := splitPipelineTextClauses(ctx, trimmed)
+		return ok && len(clauses) == 1 && clauses[0].kind == pipelineClauseMatch
+	}
+	pattern := trimmed
+	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+		pattern = strings.TrimSpace(pattern[:index])
+	}
+	if pattern == "" {
+		return false
+	}
+	_, err := cypherantlr.ParseSyntax(ctx, cypherantlr.ReadStatement(pattern), cypherantlr.PatternEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	return err == nil
+}
+
 func parseBoundNodeShape(ctx context.Context, body string) boundNodeShape {
 	pattern := strings.TrimSpace(body)
 	if hasPrefixFold(pattern, "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH"):])
 	}
-	if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	if !singleMatchBody(ctx, body) {
 		return boundNodeShape{}
 	}
 	where := ""
@@ -618,7 +592,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	}
 	// One MATCH clause, its WHERE included: a RETURN or any other clause is
 	// the kernel's or the pipeline's.
-	if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	if !singleMatchBody(ctx, body) {
 		return 0, false
 	}
 	where := ""
@@ -856,26 +830,6 @@ func entityBindings(values map[string]interface{}) (map[string]*storage.Node, ma
 		}
 	}
 	return nodes, rels
-}
-
-// containsIdentifierWord reports whether name occurs in text as a whole word.
-func containsIdentifierWord(text, name string) bool {
-	if name == "" {
-		return false
-	}
-	for from := 0; from < len(text); {
-		index := strings.Index(text[from:], name)
-		if index < 0 {
-			return false
-		}
-		start := from + index
-		end := start + len(name)
-		if (start == 0 || !cyphertext.NamePartAt(text, start-1)) && (end == len(text) || !cyphertext.NamePartAt(text, end)) {
-			return true
-		}
-		from = start + 1
-	}
-	return false
 }
 
 // boundDegreePattern is a COUNT body that is one directed hop from a bound

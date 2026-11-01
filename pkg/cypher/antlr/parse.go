@@ -48,13 +48,14 @@ func Parse(query string) (*ParseResult, error) {
 // Context-free convenience API; execution and logging use ValidateContext.
 // It is optimized for throughput and reduced allocations and does not return a parse tree.
 func Validate(query string) error {
-	return ValidateContext(context.Background(), query, cyphertext.RawSource)
+	return ValidateContext(context.Background(), ReadStatement(query), cyphertext.RawSource)
 }
 
 // ValidateContext validates syntax while observing cancellation during lexer
 // and parser lookahead, including cold prediction. Cancellation returns only
 // after the parser has unwound and its prediction lease is released.
-func ValidateContext(ctx context.Context, query string, stage cyphertext.SourceStage) error {
+func ValidateContext(ctx context.Context, statement Statement, stage cyphertext.SourceStage) error {
+	query := statement.text
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -67,7 +68,7 @@ func ValidateContext(ctx context.Context, query string, stage cyphertext.SourceS
 		return localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 
-	syntax, err := ParseSyntax(ctx, query, StatementEntry, false, stage)
+	syntax, err := ParseSyntax(ctx, statement, StatementEntry, false, stage)
 	if err != nil && syntax.Valid() && len(syntax.data.diagnostics) != 0 {
 		message := localization.CypherANTLRValidateSyntaxError(strings.Join(diagnosticFallbacks(syntax.data.diagnostics), "; "), syntax.data.diagnostics...)
 		return localization.NewLocalizedError(string(message.ID), message, nil)

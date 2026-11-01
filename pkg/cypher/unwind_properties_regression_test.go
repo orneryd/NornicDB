@@ -25,7 +25,7 @@ func TestPipelineCreateSkipsUnusedRowLiteral(t *testing.T) {
 	called := 0
 	_, _, handled, err := exec.pipelineApplyCreateClauses(context.Background(), []pipelineRow{
 		{"unused": countedLiteralStringer{calls: &called}},
-	}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (n:MongoRecord)"}})
+	}, []pipelineClause{retainedClauseForTest(t.Context(), "CREATE (n:MongoRecord)")})
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Zero(t, called)
@@ -37,7 +37,7 @@ func TestPipelineCreateSkipsUnusedMapPropertyLiteral(t *testing.T) {
 	called := 0
 	_, _, handled, err := exec.pipelineApplyCreateClauses(context.Background(), []pipelineRow{
 		{"row": map[string]interface{}{"id": "found", "unused": countedLiteralStringer{calls: &called}}},
-	}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (n:MongoRecord {id: row.id})"}})
+	}, []pipelineClause{retainedClauseForTest(t.Context(), "CREATE (n:MongoRecord {id: row.id})")})
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Zero(t, called)

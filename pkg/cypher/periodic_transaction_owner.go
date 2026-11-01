@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -61,7 +62,9 @@ func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure st
 	ctx = periodicBatchContext{Context: ctx}
 	ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
 	ctx = context.WithValue(ctx, expressionOperandFailureKey{}, &expressionFailure{})
-	result, err := batch.executeWithImplicitTransactionCallback(ctx, "CALL "+procedure, "CALL "+procedure, run)
+	// The batch is the procedure's operation: it publishes a commit as the
+	// procedure's mode says, with no CALL statement composed for it.
+	result, err := batch.executeWithImplicitTransactionOperation(ctx, periodicProcedurePublishes(procedure), run)
 	if err != nil {
 		// A fatal expression error belongs to the enclosing statement too.
 		// Independent batch isolation must not turn arithmetic/type failures
@@ -96,4 +99,21 @@ func (ctx periodicBatchContext) Value(key interface{}) interface{} {
 		return nil
 	}
 	return ctx.Context.Value(key)
+}
+
+// periodicProcedurePublishes reports whether a periodic procedure's batch
+// publishes a commit, by the registered procedure's mode (the fact the
+// permission reader takes from it); an unregistered name has no write mode.
+// Author: Claude R17 implementation agent, 30 October 2026.
+func periodicProcedurePublishes(procedure string) bool {
+	ensureBuiltInProceduresRegistered()
+	if proc, found := globalProcedureRegistry.Get(procedure); found {
+		return proc.Spec.writes()
+	}
+	for _, spec := range globalProcedureRegistry.List() {
+		if cyphertext.NameEqualFold(procedure, spec.Name) {
+			return spec.writes()
+		}
+	}
+	return false
 }

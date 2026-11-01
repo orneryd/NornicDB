@@ -1,7 +1,7 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
-	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
@@ -147,6 +147,32 @@ type groupByItem struct {
 	aggregates        bool
 }
 
+// rewriteStageProjectionItem splits one projection item of text that is not yet
+// grammar input (GROUP BY and Cypher 5 import grouping run before their
+// rewritten statement exists). It is a lexical split with the established
+// last-top-level-AS policy, not a projection occurrence: the rewritten
+// statement's own projections are read from its retained syntax.
+// Author: Claude R17 implementation agent, 30 October 2026 (relocated from the
+// pre-rewrite stage of the former projection text reader).
+func rewriteStageProjectionItem(item string) (expression, alias string) {
+	as := -1
+	trimmed := strings.TrimSpace(item)
+	leading := len(item) - len(strings.TrimLeftFunc(item, cyphertext.IsWhitespace))
+	for _, word := range projectionWords(trimmed) {
+		if word.depth == 0 && word.upper == "AS" {
+			as = leading + word.start
+		}
+	}
+	if as < 0 {
+		return trimmed, trimmed
+	}
+	expression, alias = strings.TrimSpace(item[:as]), strings.TrimSpace(item[as+len("AS"):])
+	if name, ok := cyphertext.ScanIdentifier(alias, 0); ok && name.End == len(alias) {
+		alias = name.Value
+	}
+	return expression, alias
+}
+
 // groupByEdit rewrites the projection whose keyword is clause, with GROUP
 // at groupStart and its keys at query[keysStart:keysEnd].
 func groupByEdit(query string, clause projectionWord, groupStart, keysStart, keysEnd int) (labelRewriteEdit, error) {
@@ -157,8 +183,7 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 	}
 	var items []groupByItem
 	for _, text := range splitTopLevelComma(query[itemsStart:groupStart]) {
-		itemSource := readProjectionItemSource(context.Background(), text, projectionBeforeRewrite)
-		expression, alias := itemSource.expression, itemSource.alias
+		expression, alias := rewriteStageProjectionItem(text)
 		items = append(items, groupByItem{expression: expression, alias: alias, aggregates: containsAggregateFunc(expression)})
 	}
 	var keys []string

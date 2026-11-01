@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -31,7 +32,7 @@ func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher s
 	if findKeywordIndex(cypher, "UNION") < 0 || findKeywordIndex(cypher, "FINISH") < 0 {
 		return nil
 	}
-	if branches, _, _, ok := parseTopLevelUnionBranches(ctx, cypher); ok && len(branches) > 1 {
+	if branches, _, _, ok := parseTopLevelUnionTextBranches(ctx, cypher); ok && len(branches) > 1 {
 		hasFinish, hasColumns := false, false
 		for _, branch := range branches {
 			_, finishes := readTrailingFinish(branch, stripPermittedFinish)
@@ -366,7 +367,7 @@ func stripUnionBranchFinishes(ctx context.Context, cypher string) (string, bool)
 		return cypher, false
 	}
 	if leftStripped && rightStripped && left == "" && right == "" {
-		if _, _, mixed, _ := parseTopLevelUnionBranches(ctx, cypher); !mixed {
+		if _, _, mixed, _ := parseTopLevelUnionTextBranches(ctx, cypher); !mixed {
 			return "", true
 		}
 		return cypher, false

@@ -17,13 +17,13 @@ func TestValidateContextCancellationAndReuse(t *testing.T) {
 	query := strings.Repeat("WITH 1 AS x ", 10000) + "RETURN x"
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
-	if err := ValidateContext(ctx, query, cyphertext.RawSource); !errors.Is(err, context.DeadlineExceeded) {
+	if err := ValidateContext(ctx, ReadStatement(query), cyphertext.RawSource); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("canceled native validation: %v", err)
 	}
-	if err := ValidateContext(context.Background(), "RETURN 7 AS k", cyphertext.RawSource); err != nil {
+	if err := ValidateContext(context.Background(), ReadStatement("RETURN 7 AS k"), cyphertext.RawSource); err != nil {
 		t.Fatalf("pooled validator after cancellation: %v", err)
 	}
-	if err := ValidateContext(context.Background(), "RETURN (", cyphertext.RawSource); err == nil {
+	if err := ValidateContext(context.Background(), ReadStatement("RETURN ("), cyphertext.RawSource); err == nil {
 		t.Fatal("pooled validator must still report syntax errors")
 	}
 }

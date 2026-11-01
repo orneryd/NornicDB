@@ -132,7 +132,7 @@ func pipelineWriteStretchConflicts(ctx context.Context, stretch, after []pipelin
 // analyzeStretchClause is the write-stretch consumer of the shared effect
 // owner. It has no clause or expression scanner of its own.
 func analyzeStretchClause(ctx context.Context, clause pipelineClause, reads, writes *stretchTokens) {
-	effects, err := pipelineClauseEffectsFor(ctx, clause.text)
+	effects, err := executionClauseEffects(ctx, clause)
 	if err != nil {
 		reads.everything = true
 		writes.everything = true
@@ -224,46 +224,4 @@ func addStretchMapKeys(text string, tokens *stretchTokens) {
 	_ = forEachMapEntry(text[:end+1], mapCodeText, func(key, _ string) {
 		tokens.add(&tokens.keys, key)
 	})
-}
-
-// addStretchSetWrites projects the existing mutation item reader onto writes.
-// Expression reads are supplied exclusively by the shared grammar-tree walk.
-func addStretchSetWrites(list string, writes *stretchTokens) {
-	for _, item := range splitSetAssignments(list) {
-		_, property, operator, right := splitSetAssignment(item)
-		switch {
-		case operator == ":":
-			addStretchLabelChain(":"+right, writes)
-		case operator == "[]=":
-			writes.anyKey = true
-		case property != "":
-			writes.add(&writes.keys, property)
-		default:
-			writes.anyKey = true
-		}
-	}
-}
-
-func addStretchRemoveWrites(list string, writes *stretchTokens) {
-	items, err := parseRemoveItems(list)
-	if err != nil {
-		writes.everything = true
-		return
-	}
-	for _, item := range items {
-		switch {
-		case len(item.labels) > 0:
-			for _, label := range item.labels {
-				if label.expression != "" {
-					writes.anyNode = true
-				} else {
-					writes.add(&writes.labels, label.name)
-				}
-			}
-		case item.key != "":
-			writes.anyKey = true
-		default:
-			writes.add(&writes.keys, item.property)
-		}
-	}
 }

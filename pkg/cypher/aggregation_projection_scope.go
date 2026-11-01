@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -19,7 +20,7 @@ import (
 // RETURN x + 1 AS y, count(*); ORDER BY sum(x) after RETURN count(*)) is a
 // SyntaxError. A projection with * carries every variable.
 func validateProjectionSemantics(ctx context.Context, cypher string) error {
-	clauses, ok := splitPipelineClauses(ctx, cypher)
+	clauses, ok := splitPipelineTextClauses(ctx, cypher)
 	if !ok {
 		return ctx.Err()
 	}
@@ -29,17 +30,15 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 		if clause.kind != pipelineClauseWith {
 			continue
 		}
-		body := projectionSemanticBody(clause.text, "WITH")
-		if err := validateReturnAggregationSemantics(ctx, body); err != nil {
+		if err := validateReturnAggregationSemantics(ctx, clause); err != nil {
 			return err
 		}
 		seen := make(map[string]struct{})
-		for _, raw := range splitTopLevelComma(body) {
-			item := strings.TrimSpace(raw)
+		for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
+			item := itemSource.syntax.Text()
 			if item == "" || item == "{}" {
 				continue
 			}
-			itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
 			expression, alias := itemSource.expression, itemSource.alias
 			if err := validateExpressionOperandCompleteness(expression); err != nil {
 				return err
@@ -81,7 +80,7 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 		default:
 			continue
 		}
-		if err := aggregatingProjectionScopeError(ctx, strings.TrimSpace(clause.text), keyword); err != nil {
+		if err := aggregatingProjectionScopeError(ctx, clause, keyword); err != nil {
 			return err
 		}
 	}
@@ -90,20 +89,19 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 
 // aggregatingProjectionScopeError checks one WITH or RETURN clause
 // (validateProjectionSemantics).
-func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string) error {
-	body, tail := projectionSemanticBodyAndTail(clause, keyword)
-	_, distinct := cutDistinct(clause[len(keyword):])
+func aggregatingProjectionScopeError(ctx context.Context, clause pipelineClause, keyword string) error {
+	_, tail := projectionSemanticBodyAndTail(clause.text, keyword)
+	_, distinct := cutDistinct(clause.text[len(keyword):])
 	tail = strings.TrimSpace(tail)
 	if tail == "" {
 		return nil
 	}
-	items := splitTopLevelComma(body)
+	items := projectionItemsFromSyntax(clause.syntax)
 	aliases := make(map[string]struct{}, len(items)+1)
 	aliases[projectedExpressionPlaceholder] = struct{}{}
 	expressions := make([]string, 0, len(items))
 	aggregates := false
-	for _, item := range items {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
+	for _, itemSource := range items {
 		expression, alias := itemSource.expression, itemSource.alias
 		expression = strings.TrimSpace(expression)
 		if expression == "*" {

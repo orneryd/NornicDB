@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -30,7 +31,7 @@ func TestResultHeaderProcedureFactsStayReadOnly(t *testing.T) {
 		return &ExecuteResult{Columns: []string{"z", "a"}, Rows: [][]interface{}{{int64(1), "value"}}}, nil
 	}))
 	for _, query := range []string{"CALL " + name + "()", "CALL " + name + "() YIELD *"} {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
+		clauses, ok := splitPipelineTextClausesAllowingProcedureCalls(t.Context(), query)
 		require.True(t, ok)
 		original := clauses[0].text
 		plan, err := exec.buildExecutionPlan(query)
@@ -43,7 +44,7 @@ func TestResultHeaderProcedureFactsStayReadOnly(t *testing.T) {
 			require.Equal(t, []string{"z", "a"}, result.Columns)
 		}
 		require.Len(t, calls, before, "header analysis and EXPLAIN must not call the procedure")
-		after, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
+		after, ok := splitPipelineTextClausesAllowingProcedureCalls(t.Context(), query)
 		require.True(t, ok)
 		require.Equal(t, original, after[0].text, "cached clauses must remain the client's clauses")
 		afterPlan, err := exec.buildExecutionPlan(query)

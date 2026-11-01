@@ -195,7 +195,7 @@ func unsupportedAdministrationCommandError(cypher string) error {
 		code = "Neo.ClientError.Statement.NotSystemDatabaseError"
 	}
 	return localizedStatusError(code, "UnsupportedAdministrationCommand",
-		localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(showCommandHead(cypher))))
+		localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(showCommandHead(context.Background(), cypher))))
 }
 
 // runningTransaction is one SHOW TRANSACTIONS row: an explicit transaction

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -315,7 +316,7 @@ func systemDatabaseStatementError(ctx context.Context, query string) error {
 	// A SHOW command runs, and its tail is held to Neo4j's rules for it
 	// (systemShowTailError).
 	if startsWithKeywordFold(query, "SHOW") {
-		return systemShowTailError(query)
+		return systemShowTailError(ctx, query)
 	}
 	// Transaction control (BEGIN, COMMIT, ROLLBACK) is no statement on a
 	// graph; a BEGIN … COMMIT script is its statement.
@@ -366,24 +367,23 @@ func systemDatabaseStatementError(ctx context.Context, query string) error {
 // user database a SHOW tail is not limited this way (the Cypher 25 clauses
 // after YIELD and graph-reading expressions run there, as Neo4j runs the
 // expressions).
-func systemShowTailError(query string) error {
+//
+// The tail and the query after its YIELD are the statement's retained
+// showTail (showSyntax), the reader applyShowTail runs.
+func systemShowTailError(ctx context.Context, query string) error {
 	query = strings.TrimSpace(strings.TrimSuffix(query, ";"))
-	tail := strings.TrimSpace(query[len(showCommandHead(query)):])
-	if tail == "" {
+	_, tail, _ := showSyntax(ctx, query)
+	if !tail.Valid() {
 		return nil
 	}
-	body := tail
-	if startsWithKeywordFold(body, "YIELD") {
-		body = body[len("YIELD"):]
+	if continuation := tail.ChildRule(cypherantlr.CypherParserRULE_regularQuery); continuation.Valid() {
+		if clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, readQueryBody(continuation).branch(0)); ok && len(clauses) > 0 && clauses[0].kind != pipelineClauseReturn {
+			clause := strings.TrimSpace(clauses[0].text)
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				localization.CypherAdminShowClauseUnexpected(clause[:cyphertext.NamePartEnd(clause, 0)]))
+		}
 	}
-	if start := showContinuationStart(body); start >= 0 {
-		clause := body[start:]
-		end := 0
-		end = cyphertext.NamePartEnd(clause, end)
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			localization.CypherAdminShowClauseUnexpected(clause[:end]))
-	}
-	switch kind := graphReadingExpression(tail); kind {
+	switch kind := graphReadingExpression(tail.Text()); kind {
 	case "":
 		return nil
 	case "COUNT", "EXISTS", "COLLECT":
@@ -469,12 +469,9 @@ func useKeywordIndexFrom(query string, from int, opts keywordScanOpts) int {
 // USE owns graph-name boundaries, including the optional GRAPH keyword.
 // Reuse that owner when a graph is spelled like a clause keyword.
 func useGraphNameAt(s string, pos int) bool {
-	// A graph name directly follows USE or USE GRAPH. Unless a comment can
-	// sit between them, the raw preceding word decides without a full scan.
-	if word := rawWordBefore(s, pos); !strings.EqualFold(word, "USE") && !strings.EqualFold(word, "GRAPH") &&
-		!strings.Contains(s[:pos], "//") && !strings.Contains(s[:pos], "*/") {
-		return false
-	}
+	// The source navigation owner already excludes comments. Reading its
+	// predecessor avoids rescanning every prefix to decide whether a comment
+	// might occur before this word.
 	end := lastLiveByte(s, pos) + 1
 	start := end
 	for start > 0 && cyphertext.NamePartAt(s, start-1) {

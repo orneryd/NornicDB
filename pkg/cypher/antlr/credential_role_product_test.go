@@ -15,11 +15,11 @@ import (
 func TestANTLRCredentialRoleProduct(t *testing.T) {
 	for _, raw := range []string{"'probe741928'", `"probe741928"`, "`probe741928`", "probe741928", `'probe74\u0031928'`} {
 		query := "CREATE COMPOSITE DATABASE grammar_product ALIAS r FOR DATABASE nornic AT 'http://fixture:probe741928@example.invalid' USER u PASSWORD " + raw
-		_, err := ParseSyntax(context.Background(), query, StatementEntry, false, RawSource)
+		_, err := ParseSyntax(context.Background(), ReadStatement(query), StatementEntry, false, RawSource)
 		require.NoError(t, err)
 		// Replay the retained product into this statement's set on a cache hit too.
 		ctx := contextslot.Ensure[cyphertext.CredentialSet](t.Context())
-		_, err = ParseSyntax(ctx, query, StatementEntry, false, RawSource)
+		_, err = ParseSyntax(ctx, ReadStatement(query), StatementEntry, false, RawSource)
 		require.NoError(t, err)
 		foundPassword, foundURL := false, false
 		for _, span := range contextslot.Get[cyphertext.CredentialSet](ctx).Spans {
@@ -47,10 +47,10 @@ func TestANTLRCredentialSourceMapReplayPopulation(t *testing.T) {
 			ctx, source := cyphertext.WithSource(t.Context(), original)
 			// Warm the exact accepted product without this request's original
 			// association. Replay must use the new request's source map.
-			warm, err := ParseSyntax(t.Context(), source.Text, StatementEntry, false, AcceptedSource)
+			warm, err := ParseSyntax(t.Context(), ReadStatement(source.Text), StatementEntry, false, AcceptedSource)
 			require.NoError(t, err)
 			ctx = contextslot.Ensure[cyphertext.CredentialSet](ctx)
-			replay, err := ParseSyntax(ctx, source.Text, StatementEntry, false, AcceptedSource)
+			replay, err := ParseSyntax(ctx, ReadStatement(source.Text), StatementEntry, false, AcceptedSource)
 			require.NoError(t, err)
 			require.Same(t, warm.data, replay.data)
 			foundPassword, foundURL := false, false

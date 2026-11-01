@@ -21,7 +21,7 @@ func TestClauseInfoDecodedSymbolIdentity(t *testing.T) {
 			require.Equal(t, tc.identity, info.UnwindAs)
 			require.Equal(t, []string{tc.identity}, info.Variables)
 			require.Equal(t, tc.written, info.ReturnItems, "expression text remains source spelling")
-			syntax, err := ParseSyntax(t.Context(), query, StatementEntry, false, RawSource)
+			syntax, err := ParseSyntax(t.Context(), ReadStatement(query), StatementEntry, false, RawSource)
 			require.NoError(t, err)
 			var names []string
 			var sources []string

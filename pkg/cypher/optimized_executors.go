@@ -16,7 +16,6 @@ import (
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -319,8 +318,7 @@ func (e *StorageExecutor) extractReturnItemsFromQuery(ctx context.Context, query
 		return nil
 	}
 
-	returnPart := strings.TrimSpace(query[returnIdx+6:])
-	return e.parseReturnItems(ctx, returnPart)
+	return e.parseReturnItems(ctx, query, returnIdx)
 }
 
 // getNodeCached retrieves a node, using cache to avoid repeated lookups

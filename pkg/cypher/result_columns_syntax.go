@@ -1,28 +1,19 @@
+// Author of retained syntax inspection: Codex R17 implementation agent.
 package cypher
 
 import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
-// canonicalQueryClause adapts standalone execution helpers to the same grammar
-// product. The bound compiler supplies the retained clause node directly.
-func canonicalQueryClause(ctx context.Context, source string) (cypherantlr.SyntaxNode, bool) {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
-	if err != nil {
-		return cypherantlr.SyntaxNode{}, false
-	}
-	root := statementSyntaxQuery(syntax)
-	if !root.Valid() {
-		root, _ = syntax.Window(0, len(source), cypherantlr.CypherParserRULE_subqueryBody)
-	}
-	body := queryBodyFromSyntax(root)
-	if len(body.branches) == 0 || len(body.branches[0].clauses) == 0 {
-		return cypherantlr.SyntaxNode{}, false
-	}
-	return body.branches[0].clauses[0].syntax, true
+// leadingCallClause is the leading procedure CALL occurrence of source
+// (retainedClauseAt); it replaces the former first-clause fragment adapter.
+// Author: Claude R17 implementation agent, 30 October 2026.
+func leadingCallClause(ctx context.Context, source string) (cypherantlr.SyntaxNode, bool) {
+	return retainedClauseAt(ctx, source, queryGapEnd(source, 0), cypherantlr.CypherParserRULE_queryCallSt, cypherantlr.CypherParserRULE_standaloneCall)
 }
 
 func syntaxSymbolName(node cypherantlr.SyntaxNode) string {
@@ -53,26 +44,22 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 	if !items.Valid() {
 		return plan
 	}
-	_, plan.star = items.DirectToken(cypherantlr.CypherLexerMULT)
-	for i := 0; i < items.ChildCount(); i++ {
-		item := items.Child(i)
-		if item.Rule() != cypherantlr.CypherParserRULE_projectionItem {
+	for _, itemSource := range projectionItemsFromSyntax(clause) {
+		if itemSource.star {
+			plan.star = true
 			continue
 		}
+		item := itemSource.syntax
 		expression := item.ChildRule(cypherantlr.CypherParserRULE_expression)
 		if !expression.Valid() {
 			return &returnProjectionPlan{}
 		}
 		definition := item.ChildRule(cypherantlr.CypherParserRULE_symbol)
-		alias := syntaxSymbolName(definition)
-		if !definition.Valid() {
-			alias = projectionNameFromSyntax(expression)
-		}
 		target := plan
 		if plan.star {
 			target = &returnProjectionPlan{}
 		}
-		target.addProjection(expression.Code(), alias)
+		target.addProjection(itemSource.expression, itemSource.alias)
 		projection := &target.projections[len(target.projections)-1]
 		projection.variable, projection.direct = projectionVariableFromSyntax(expression)
 		for _, visit := range expressions {
@@ -95,7 +82,22 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 // retain their original expression text, including internal comments. Code is
 // the separate evaluation view; using it as a label loses source information.
 func projectionNameFromSyntax(expression cypherantlr.SyntaxNode) string {
+	return projectionNameOnSource(expression, nil)
+}
+
+// projectionNameOnSource uses an occurrence's accepted interval to retain the
+// written expression name through identifier rewriting. Equal canonical text
+// cannot identify which original quoted occurrence supplied an output name.
+func projectionNameOnSource(expression cypherantlr.SyntaxNode, source *cyphertext.Source) string {
 	if name, variable := projectionVariableFromSyntax(expression); variable {
+		return name
+	}
+	if source != nil {
+		start, end := expression.InputSpan()
+		name, mapped := source.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExactBoundaries, nil)
+		if !mapped {
+			panic("projection occurrence is outside its carried source")
+		}
 		return name
 	}
 	return expression.Text()
@@ -156,31 +158,18 @@ func yieldFromSyntax(clause cypherantlr.SyntaxNode) *yieldClause {
 			}
 			yield.items = append(yield.items, output)
 		}
-		where := items.ChildRule(cypherantlr.CypherParserRULE_where)
-		if where.Valid() {
-			yield.where = where.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
-		}
 	}
+	where := items.ChildRule(cypherantlr.CypherParserRULE_where)
+	modified := false
 	for i := 0; i < clause.ChildCount(); i++ {
-		part := clause.Child(i)
-		switch part.Rule() {
+		switch part := clause.Child(i); part.Rule() {
 		case cypherantlr.CypherParserRULE_where:
-			yield.where = part.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
-			yield.misplacedWhere = yield.orderBy != "" || yield.skip != "" || yield.limit != ""
-		case cypherantlr.CypherParserRULE_orderSt:
-			var terms []string
-			for j := 0; j < part.ChildCount(); j++ {
-				item := part.Child(j)
-				if item.Rule() == cypherantlr.CypherParserRULE_orderItem {
-					terms = append(terms, item.Code())
-				}
-			}
-			yield.orderBy = strings.Join(terms, ", ")
-		case cypherantlr.CypherParserRULE_skipSt:
-			yield.skip = part.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
-		case cypherantlr.CypherParserRULE_limitSt:
-			yield.limit = part.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+			where = part
+			yield.misplacedWhere = modified
+		case cypherantlr.CypherParserRULE_orderSt, cypherantlr.CypherParserRULE_skipSt, cypherantlr.CypherParserRULE_limitSt:
+			modified = true
 		}
 	}
+	yield.projectionModifiers = projectionModifiersFromSyntax(clause, where, false)
 	return yield
 }

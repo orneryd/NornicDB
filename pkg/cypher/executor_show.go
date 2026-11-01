@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -11,7 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -356,20 +357,34 @@ func showStringList(value interface{}) []string {
 	return nil
 }
 
-// showTailKeywords start the part of a SHOW command after the command itself.
-var showTailKeywords = []string{"YIELD", "WHERE", "RETURN", "ORDER BY", "SKIP", "LIMIT"}
+// showSyntax is a SHOW statement's retained showCommand and its showTail
+// (absent when the command has none). rejected reports the grammar's
+// rejection; the nodes are then the parser's recovered ones, or absent.
+// Author of the retained SHOW reader: Claude R17 implementation agent, 30 October 2026.
+func showSyntax(ctx context.Context, query string) (command, tail cypherantlr.SyntaxNode, rejected bool) {
+	syntax, err := cypherantlr.InspectSyntax(ctx, cypherantlr.ReadStatement(query), cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	if !syntax.Valid() {
+		return cypherantlr.SyntaxNode{}, cypherantlr.SyntaxNode{}, true
+	}
+	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+		if !command.Valid() && node.Rule() == cypherantlr.CypherParserRULE_showCommand {
+			command = node
+		}
+		return nil
+	})
+	return command, command.ChildRule(cypherantlr.CypherParserRULE_showTail), err != nil
+}
 
 // showCommandHead returns the SHOW command without its YIELD / WHERE /
-// RETURN / ORDER BY / SKIP / LIMIT tail, which applyShowTail handles.
-func showCommandHead(cypher string) string {
+// RETURN tail (the grammar's showTail), which applyShowTail handles.
+func showCommandHead(ctx context.Context, cypher string) string {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
-	end := len(query)
-	for _, keyword := range showTailKeywords {
-		if index := findKeywordIndexInContext(query, keyword); index >= 0 && index < end {
-			end = index
-		}
+	_, tail, _ := showSyntax(ctx, query)
+	if !tail.Valid() {
+		return query
 	}
-	return strings.TrimSpace(query[:end])
+	start, _ := tail.Span()
+	return strings.TrimSpace(query[:start])
 }
 
 // executeShowWithTail runs a SHOW command: run lists every row of the command
@@ -377,7 +392,7 @@ func showCommandHead(cypher string) string {
 // Every SHOW command goes through it, so YIELD, WHERE, RETURN, aggregation,
 // ORDER BY and SKIP / LIMIT behave the same for all of them.
 func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	result, err := run(ctx, showCommandHead(cypher))
+	result, err := run(ctx, showCommandHead(ctx, cypher))
 	if err != nil {
 		return nil, err
 	}
@@ -497,95 +512,57 @@ func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult 
 // ORDER BY and SKIP / LIMIT expressions) runs over all remaining rows. As in
 // Cypher 25 (Neo4j 2026.09), any other clause may follow YIELD's items and
 // segments instead (WITH, UNWIND, MATCH, CALL, FILTER, a write, …): the
-// query continues over the yielded columns, and YIELD * isn't allowed. The
-// paging, filter and the rest run as one pipeline (runPipelineClauses), the
-// same row operators as every other clause. Any other form (RETURN after a
-// WHERE without YIELD, a WHERE before YIELD's ORDER BY, a non-literal YIELD
-// SKIP / LIMIT) is a SyntaxError, as in Neo4j.
+// query continues over the yielded columns, and YIELD * isn't allowed.
+// Every part is read from the statement's retained showTail: the YIELD list
+// and modifiers by yieldFromSyntax (the one modifier owner), and the query
+// that follows runs as its own retained clauses over the yielded rows
+// (runPipelineClauseRows), with the yielded columns as its incoming scope.
+// Any other form (RETURN after a WHERE without YIELD, a WHERE before YIELD's
+// ORDER BY, a non-literal YIELD SKIP / LIMIT) is a SyntaxError, as in Neo4j.
+// Author of the retained form: Claude R17 implementation agent, 30 October 2026.
 func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
-	head := showCommandHead(query)
-	if len(head) == len(query) {
+	invalid := func() error {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause",
+			localization.CypherAdminShowClauseInvalid())
+	}
+	_, tail, rejected := showSyntax(ctx, query)
+	if rejected {
+		return nil, invalid()
+	}
+	if !tail.Valid() {
 		if defaults != nil {
 			return projectShowColumns(result, defaults), nil
 		}
 		return result, nil
 	}
-	tail := strings.TrimSpace(query[len(head):])
-	invalid := func() error {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause",
-			localization.CypherAdminShowClauseInvalid())
-	}
-	if !startsWithKeywordFold(tail, "YIELD") {
-		if !startsWithKeywordFold(tail, "WHERE") {
-			return nil, invalid()
-		}
-		where := strings.TrimSpace(tail[len("WHERE"):])
-		for _, keyword := range []string{"RETURN", "ORDER BY", "SKIP", "LIMIT", "WITH", "YIELD"} {
-			if topLevelKeywordIndex(where, keyword) >= 0 {
-				return nil, invalid()
-			}
-		}
-		tail = "YIELD * WHERE " + where
+	var yield *yieldClause
+	if _, yielded := tail.DirectToken(cypherantlr.CypherLexerYIELD); !yielded {
+		// SHOW … WHERE p filters the default columns.
 		if defaults != nil {
 			result = projectShowColumns(result, defaults)
 		}
-	}
-	body := strings.TrimSpace(tail[len("YIELD"):])
-	// A clause after YIELD's items and segments continues the query over the
-	// yielded columns (Cypher 25 composition).
-	continuation := ""
-	if start := showContinuationStart(body); start >= 0 {
-		continuation = strings.TrimSpace(body[start:])
-		body = strings.TrimSpace(body[:start])
-	}
-
-	// Segment boundaries, in the only order Neo4j accepts.
-	segments := []string{"ORDER BY", "SKIP", "LIMIT", "WHERE", "RETURN"}
-	positions := make([]int, len(segments))
-	itemsEnd := len(body)
-	for i, keyword := range segments {
-		positions[i] = topLevelKeywordIndex(body, keyword)
-		if positions[i] >= 0 && positions[i] < itemsEnd {
-			itemsEnd = positions[i]
+		yield = &yieldClause{items: []yieldItem{}, yieldAll: true}
+		yield.projectionModifiers = projectionModifiersFromSyntax(cypherantlr.SyntaxNode{}, tail.ChildRule(cypherantlr.CypherParserRULE_where), false)
+	} else {
+		yield = yieldFromSyntax(tail)
+		wheres := 0
+		if tail.ChildRule(cypherantlr.CypherParserRULE_yieldItems).ChildRule(cypherantlr.CypherParserRULE_where).Valid() {
+			wheres++
 		}
-	}
-	returnIndex := positions[4]
-	head4 := body
-	if returnIndex >= 0 {
-		head4 = body[:returnIndex]
-	}
-	for _, keyword := range []string{"WITH", "MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"} {
-		if topLevelKeywordIndex(head4, keyword) >= 0 {
-			return nil, invalid()
-		}
-	}
-	last := -1
-	for i := 0; i < 4; i++ {
-		position := topLevelKeywordIndex(head4, segments[i])
-		if position < 0 {
-			continue
-		}
-		if position < last {
-			return nil, invalid()
-		}
-		last = position
-	}
-	segmentText := func(i int) string {
-		start := topLevelKeywordIndex(head4, segments[i])
-		if start < 0 {
-			return ""
-		}
-		end := len(head4)
-		for j := 0; j < 4; j++ {
-			if position := topLevelKeywordIndex(head4, segments[j]); position > start && position < end {
-				end = position
+		for i := 0; i < tail.ChildCount(); i++ {
+			if tail.Child(i).Rule() == cypherantlr.CypherParserRULE_where {
+				wheres++
 			}
 		}
-		return strings.TrimSpace(head4[start+len(segments[i]) : end])
+		// SHOW's WHERE follows the paging; one before it is out of order.
+		if wheres > 1 || yield.where != "" && (yield.orderBy != "" || yield.windowed()) && !yield.misplacedWhere {
+			return nil, invalid()
+		}
+		yield.whereAfterWindow = true
 	}
-	for _, i := range []int{1, 2} {
-		if value := segmentText(i); value != "" && !strings.HasPrefix(value, "$") {
+	for _, value := range []string{yield.skip, yield.limit} {
+		if value != "" && !strings.HasPrefix(value, "$") {
 			if integer, literal := parseLiteralValueFromComputedRow(value); !literal {
 				return nil, invalid()
 			} else if _, isInteger := integer.(int64); !isInteger {
@@ -593,12 +570,21 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 			}
 		}
 	}
-
-	items := strings.TrimSpace(body[:itemsEnd])
-	yield := parseYieldClause(ctx, "CALL show() YIELD "+items)
-	if yield == nil || items == "" || continuation != "" && yield.yieldAll {
-		return nil, invalid()
+	continuation := tail.ChildRule(cypherantlr.CypherParserRULE_regularQuery)
+	var body queryBody
+	var clauses []pipelineClause
+	if continuation.Valid() {
+		body = readQueryBody(continuation)
+		var ok bool
+		if clauses, ok = splitPipelineClausesAllowingProcedureCalls(ctx, body.branch(0)); !ok || len(clauses) == 0 {
+			return nil, invalid()
+		}
+		// Only RETURN may follow YIELD *.
+		if yield.yieldAll && clauses[0].kind != pipelineClauseReturn {
+			return nil, invalid()
+		}
 	}
+
 	// The yielded columns keep their original names too: YIELD's ORDER BY and
 	// WHERE may use either (YIELD name AS indexName WHERE name = 'x'), as in
 	// Neo4j. Without RETURN, the YIELD items are the result.
@@ -635,108 +621,126 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 			}
 		}
 	}
-
-	var clauses strings.Builder
-	paging := ""
-	for i, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if value := segmentText(i); value != "" {
-			paging += " " + keyword + " " + value
-		}
-	}
-	if paging != "" {
-		clauses.WriteString("WITH *" + paging + " ")
-	}
-	if where := segmentText(3); where != "" {
+	if yield.where != "" {
 		types := map[string]string{"name": "String"}
 		for _, item := range yield.items {
 			if types[item.name] != "" {
 				types[item.column()] = types[item.name]
 			}
 		}
-		clause := pipelineClause{kind: pipelineClauseWith, text: "WITH * WHERE " + where}
-		if err := e.validateStaticOperatorTypes(ctx, clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx)); err != nil {
+		if err := validateStaticPredicateOperatorTypes(yield.where, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, getParamsFromContext(ctx)); err != nil {
 			return nil, nornicerrors.MarkCompileTime(err)
 		}
-		clauses.WriteString("WITH * WHERE " + where + " ")
 	}
-	quoted := make([]string, len(outputs))
-	for i, column := range outputs {
-		quoted[i] = column
-		if name, ok := cyphertext.ScanIdentifier(column, 0); !ok || name.Value != column || name.End != len(column) {
-			quoted[i] = cyphertext.PrintIdentifier(column, nil, cyphertext.AcceptedSource) + " AS " + cyphertext.PrintIdentifier(column, nil, cyphertext.AcceptedSource)
-		}
-	}
-	// The RETURN, or the clauses that continue the query, see only the
-	// yielded columns, as in Neo4j.
-	after := continuation
-	if after == "" && returnIndex >= 0 {
-		after = showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", "))
-	}
-	if after != "" {
-		if err := e.validateSemanticScopes(ctx, showYieldedScopeStatement(outputs)+" "+after); err != nil {
+	// The query after YIELD sees only the yielded columns, as in Neo4j.
+	if continuation.Valid() {
+		if err := e.validateSemanticScopes(withSemanticIncomingScope(ctx, outputs), continuation.Text()); err != nil {
 			return nil, err
 		}
 	}
-	switch {
-	case continuation != "":
-		clauses.WriteString("WITH " + strings.Join(quoted, ", ") + " " + continuation)
-	case returnIndex >= 0:
-		clauses.WriteString(showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", ")))
-	default:
-		clauses.WriteString("RETURN " + strings.Join(quoted, ", "))
+	rows := make([]pipelineRow, 0, len(projected.Rows))
+	for _, row := range projected.Rows {
+		rows = append(rows, callTailRow(ctx, projected, row))
 	}
-	return e.executeCallTail(ctx, projected, clauses.String())
-}
-
-// showYieldedScopeStatement binds a SHOW command's yielded columns, for
-// validating what follows its YIELD as a query over them; parameters stand
-// for the values, so no type is assumed.
-func showYieldedScopeStatement(columns []string) string {
-	items := make([]string, len(columns))
-	for i, column := range columns {
-		items[i] = "$" + generatedVariablePrefix + "show" + strconv.Itoa(i) + " AS " + labelExpressionNameText(column)
+	rows, ok := e.applyProjectionModifiers(ctx, rows, yield.projectionModifiers)
+	if !ok {
+		return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentType",
+			localization.CypherCoreYieldPaginationInvalid())
 	}
-	return "WITH " + strings.Join(items, ", ")
-}
-
-// showContinuationStart is the index of the first clause after a SHOW
-// command's YIELD items and segments that continues the query (anything but
-// ORDER BY, SKIP, LIMIT, WHERE and RETURN), or -1.
-func showContinuationStart(body string) int {
-	for _, word := range projectionWords(body) {
-		if word.depth != 0 {
-			continue
-		}
-		switch word.upper {
-		case "WITH":
-			if precededByWord(body, word.start, "STARTS", "ENDS") {
-				continue
+	if !continuation.Valid() {
+		out := &ExecuteResult{Columns: append([]string(nil), outputs...), Rows: make([][]interface{}, 0, len(rows))}
+		for _, row := range rows {
+			values := make([]interface{}, len(outputs))
+			for i, column := range outputs {
+				values[i] = row[column]
 			}
-			return word.start
-		case "MATCH", "OPTIONAL", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "DETACH", "REMOVE", "FOREACH",
-			"FILTER", "LET", "FINISH", "LOAD", "INSERT", "FOR":
-			return word.start
+			out.Rows = append(out.Rows, values)
 		}
+		return out, nil
 	}
-	return -1
+	scope := make(map[string]struct{}, len(outputs))
+	for _, column := range outputs {
+		scope[column] = struct{}{}
+	}
+	for i, row := range rows {
+		yielded := make(pipelineRow, len(outputs))
+		for name, value := range row {
+			if _, kept := scope[name]; kept || strings.HasPrefix(name, "$") {
+				yielded[name] = value
+			}
+		}
+		rows[i] = yielded
+	}
+	runBranch := func(branch queryBody, input []pipelineRow, scope map[string]struct{}) (*ExecuteResult, error) {
+		branchClauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, branch)
+		if !ok {
+			return nil, invalid()
+		}
+		out, handled, err := e.runPipelineClauseRows(ctx, input, scope, branchClauses, branchClauses, nil)
+		if err == nil && !handled {
+			err = newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "the query after a SHOW command's YIELD could not be executed as a clause pipeline")
+		}
+		return out, err
+	}
+	if len(body.branches) > 1 {
+		_, unionAll, _, _ := parseTopLevelUnionBranches(ctx, body)
+		first := true
+		return e.executeRetainedUnion(ctx, body, unionAll, func(branch queryBody) (*ExecuteResult, error) {
+			if first {
+				first = false
+				return runBranch(branch, rows, scope)
+			}
+			return runBranch(branch, []pipelineRow{{}}, map[string]struct{}{})
+		})
+	}
+	out, err := runBranch(body.branch(0), rows, scope)
+	if err == nil && len(clauses) == 1 && clauses[0].kind == pipelineClauseReturn && projectionPlanOf(ctx, clauses[0].syntax).star {
+		// RETURN * right after YIELD means the yielded columns, in YIELD order.
+		out = columnsInOrder(out, outputs)
+	}
+	return out, err
 }
 
-// showReturnStarAsYielded replaces the * of a SHOW command's RETURN (RETURN
-// *, RETURN DISTINCT *, RETURN *, x) with the YIELD's columns in YIELD
-// order. The SHOW's rows also carry the columns it didn't yield, for its
-// WHERE and ORDER BY, but RETURN * means the yielded ones, in the order
-// they were yielded, as in Neo4j.
-func showReturnStarAsYielded(returnClause, yielded string) string {
-	rest := strings.TrimSpace(returnClause[len("RETURN"):])
-	prefix := "RETURN "
-	if body, distinct := cutDistinct(rest); distinct {
-		rest = body
-		prefix = "RETURN DISTINCT "
+// columnsInOrder moves result's columns named in leading to the front, in
+// that order; the other columns follow in their own order.
+func columnsInOrder(result *ExecuteResult, leading []string) *ExecuteResult {
+	if result == nil {
+		return nil
 	}
-	if !strings.HasPrefix(rest, "*") {
-		return returnClause
+	position := make(map[string]int, len(result.Columns))
+	for i, column := range result.Columns {
+		position[column] = i
 	}
-	return prefix + yielded + rest[1:]
+	order := make([]int, 0, len(result.Columns))
+	taken := make(map[int]bool, len(leading))
+	for _, column := range leading {
+		if i, found := position[column]; found && !taken[i] {
+			order = append(order, i)
+			taken[i] = true
+		}
+	}
+	for i := range result.Columns {
+		if !taken[i] {
+			order = append(order, i)
+		}
+	}
+	columns := make([]string, len(order))
+	for target, source := range order {
+		columns[target] = result.Columns[source]
+	}
+	rows := make([][]interface{}, len(result.Rows))
+	for r, row := range result.Rows {
+		values := make([]interface{}, len(order))
+		for target, source := range order {
+			if source < len(row) {
+				values[target] = row[source]
+			}
+		}
+		rows[r] = values
+	}
+	reordered := *result
+	reordered.Columns, reordered.Rows = columns, rows
+	return &reordered
 }
 
 func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*ExecuteResult, error) {

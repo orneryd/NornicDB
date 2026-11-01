@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -24,17 +25,12 @@ func TestSubqueryValueHelperBranches(t *testing.T) {
 	require.True(t, patternHasRelationship("(a)-->(b)"))
 
 	// Admitted source without a complete AS definition has no alias offset.
-	require.Equal(t, -1, readProjectionItemSource(t.Context(), "AS x", projectionAdmitted).as)
-	require.Equal(t, -1, readProjectionItemSource(t.Context(), "x AS", projectionAdmitted).as)
-	require.Equal(t, -1, readProjectionItemSource(t.Context(), "n.alias", projectionAdmitted).as)
+	require.Equal(t, -1, projectionItemForTest(t.Context(), "AS x").as)
+	require.Equal(t, -1, projectionItemForTest(t.Context(), "x AS").as)
+	require.Equal(t, -1, projectionItemForTest(t.Context(), "n.alias").as)
 
 	// findSubqueryExpressions stops at an unterminated backtick.
 	require.Empty(t, findSubqueryExpressions("`abc COUNT { (a) }"))
-
-	// containsIdentifierWord needs a whole word.
-	require.False(t, containsIdentifierWord("anything", ""))
-	require.True(t, containsIdentifierWord("xab ab", "ab"))
-	require.False(t, containsIdentifierWord("abc", "b"))
 
 	// The evaluation row preserves explicit NULL bindings; writer entity scopes
 	// contain only real entities.
@@ -113,7 +109,7 @@ func TestSubqueryBodiesWithCallSubqueries(t *testing.T) {
 	matched, err := exec.Execute(ctx, "MATCH (a:SC {v: 1})-[r:R]->(b:SC) RETURN a, r", nil)
 	require.NoError(t, err)
 	a, r := matched.Rows[0][0].(*storage.Node), matched.Rows[0][1].(*storage.Edge)
-	result, err := exec.executeCorrelatedSubqueryBody(ctx, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e", map[string]interface{}{
+	result, err := exec.runCorrelatedSubquery(ctx, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e", map[string]interface{}{
 		"a": a, "r": r, "k": int64(10), "m": (*storage.Node)(nil), "e": (*storage.Edge)(nil), "$ignored": 1,
 	})
 	require.NoError(t, err)

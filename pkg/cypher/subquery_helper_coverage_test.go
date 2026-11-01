@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -5,69 +6,10 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCallSubqueryHelpers_SeedLookupAndRowMatching(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Seed"}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "tail", Labels: []string{"Seed"}})
-	require.NoError(t, err)
-
-	exec := NewStorageExecutor(store)
-
-	seed := exec.seedNodeFromIDString(" n1 ")
-	require.NotNil(t, seed)
-	require.Equal(t, storage.NodeID("n1"), seed.ID)
-
-	seed = exec.seedNodeFromIDString("bolt:db:tail")
-	require.NotNil(t, seed)
-	require.Equal(t, storage.NodeID("tail"), seed.ID)
-
-	require.Nil(t, exec.seedNodeFromIDString("   "))
-	require.Nil(t, exec.seedNodeFromMap(map[string]interface{}{"id": "missing"}))
-
-	seed = exec.seedNodeFromMap(map[string]interface{}{"_nodeId": "n1"})
-	require.NotNil(t, seed)
-	require.Equal(t, storage.NodeID("n1"), seed.ID)
-
-	require.True(t, rowMatchesSeedID(&storage.Node{ID: "n1"}, "n1"))
-	require.True(t, rowMatchesSeedID(storage.Node{ID: "n1"}, "n1"))
-	require.True(t, rowMatchesSeedID(map[string]interface{}{"elementId": "bolt:db:tail"}, "tail"))
-	require.True(t, rowMatchesSeedID("bolt:db:tail", "tail"))
-	require.False(t, rowMatchesSeedID((*storage.Node)(nil), "n1"))
-	require.False(t, rowMatchesSeedID(map[string]interface{}{"id": 42}, "42"))
-	require.False(t, rowMatchesSeedID("other", "n1"))
-}
-
 func TestCallSubqueryHelpers_WithParsingAndNullGuards(t *testing.T) {
-	vars, inner, hasWith, err := parseLeadingWithImports(" RETURN 1 AS one ")
-	require.NoError(t, err)
-	require.False(t, hasWith)
-	require.Nil(t, vars)
-	require.Equal(t, "RETURN 1 AS one", inner)
-
-	vars, inner, hasWith, err = parseLeadingWithImports("WITH a, b AS bee RETURN a, bee")
-	require.NoError(t, err)
-	require.True(t, hasWith)
-	require.Equal(t, []string{"a", "bee"}, vars)
-	require.Equal(t, "RETURN a, bee", inner)
-
-	vars, inner, hasWith, err = parseLeadingWithImports("WITH a WHERE a IS NOT NULL CREATE (n)")
-	require.NoError(t, err)
-	require.True(t, hasWith)
-	require.Equal(t, []string{"a"}, vars)
-	require.Equal(t, "WITH a WHERE a IS NOT NULL CREATE (n)", inner)
-
-	_, _, hasWith, err = parseLeadingWithImports("WITH a")
-	require.True(t, hasWith)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "must be followed by a query clause")
-
 	whereExpr, rest, ok := splitLeadingWhereNullGuard("WITH a WHERE a IS NOT NULL CREATE (n)")
 	require.True(t, ok)
 	require.Equal(t, "a IS NOT NULL", whereExpr)
@@ -144,13 +86,13 @@ func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
 }
 
 func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(t.Context(), "RETURN 'UNION' AS v UNION ALL RETURN 2 AS v")
+	branches, unionAll, mixed, ok := parseTopLevelUnionTextBranches(t.Context(), "RETURN 'UNION' AS v UNION ALL RETURN 2 AS v")
 	require.True(t, ok)
 	require.False(t, mixed)
 	require.True(t, unionAll)
 	require.Equal(t, []string{"RETURN 'UNION' AS v", "RETURN 2 AS v"}, branches)
 
-	branches, unionAll, mixed, ok = parseTopLevelUnionBranches(t.Context(), "RETURN 1 AS v UNION RETURN 2 AS v")
+	branches, unionAll, mixed, ok = parseTopLevelUnionTextBranches(t.Context(), "RETURN 1 AS v UNION RETURN 2 AS v")
 	require.True(t, ok)
 	require.False(t, mixed)
 	require.False(t, unionAll)

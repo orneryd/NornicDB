@@ -1,3 +1,4 @@
+// Author of retained syntax cache key adaptation: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -35,17 +36,27 @@ func TestQueryReaderCancellationDoesNotPoisonCompilation(t *testing.T) {
 				query := fmt.Sprintf("MATCH (n:ReaderCanceled%sVersion%sRun%d) RETURN count(n) AS count", parser.name, version, run)
 				key := semanticCacheKey(query, version == "25")
 				pipelineClauseSplits.Lock()
-				delete(pipelineClauseSplits.splits, key)
+				for cachedKey := range pipelineClauseSplits.splits {
+					if cachedKey.source == query && cachedKey.cypher25 == (version == "25") {
+						delete(pipelineClauseSplits.splits, cachedKey)
+					}
+				}
 				pipelineClauseSplits.Unlock()
 				checkpoint := fixtureowner.NewCheckpointContext(32, nil)
 				defer checkpoint.Cancel()
 				ctx := withCypherVersion(checkpoint, "CYPHER "+version+" "+query)
-				clauses, ok := splitPipelineClauses(ctx, query)
+				clauses, ok := splitPipelineTextClauses(ctx, query)
 				require.ErrorIs(t, checkpoint.Context.Err(), context.Canceled)
 				require.False(t, ok)
 				require.Nil(t, clauses)
 				pipelineClauseSplits.RLock()
-				_, cached := pipelineClauseSplits.splits[key]
+				cached := false
+				for cachedKey := range pipelineClauseSplits.splits {
+					if cachedKey.source == query && cachedKey.cypher25 == (version == "25") {
+						cached = true
+						break
+					}
+				}
 				pipelineClauseSplits.RUnlock()
 				require.False(t, cached, "canceled syntax must not publish a declined split")
 
@@ -68,7 +79,7 @@ func TestQueryReaderCancellationDoesNotPoisonCompilation(t *testing.T) {
 				require.False(t, cached, "a canceled bound program must not replace later live compilation")
 
 				live := withCypherVersion(t.Context(), "CYPHER "+version+" "+query)
-				clauses, ok = splitPipelineClauses(live, query)
+				clauses, ok = splitPipelineTextClauses(live, query)
 				require.True(t, ok, "a live attempt must compile the same query after cancellation")
 				require.Len(t, clauses, 2)
 				require.NoError(t, executor.validateSemanticScopes(live, query))

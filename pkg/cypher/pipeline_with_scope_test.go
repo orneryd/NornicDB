@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -10,7 +11,7 @@ import (
 func TestPipelineWithProjectionDoesNotAllocatePredicateScope(t *testing.T) {
 	executor := &StorageExecutor{}
 	ctx := context.Background()
-	plan, ok := parsePipelineRowWith(t.Context(), "WITH a AS b")
+	plan, ok := parsePipelineRowWith(t.Context(), retainedClauseForTest(t.Context(), "WITH a AS b"))
 	if !ok {
 		t.Fatal("projection must use the shared row operator")
 	}

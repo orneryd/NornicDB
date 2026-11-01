@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -72,7 +73,7 @@ func TestWriteStretchSeesEveryReadForm(t *testing.T) {
 }
 
 func TestStretchReadAnalysis(t *testing.T) {
-	effects, err := pipelineClauseEffectsFor(context.Background(), "WITH 1 AS anchor WHERE a:B:`C D` AND x.k = 1 AND m {k: 1}.k = 1 AND 'n:Q' = s")
+	effects, err := clauseEffectsForTest(context.Background(), "WITH 1 AS anchor WHERE a:B:`C D` AND x.k = 1 AND m {k: 1}.k = 1 AND 'n:Q' = s")
 	require.NoError(t, err)
 	tokens := effects.reads
 	require.Contains(t, tokens.labels, "B")
@@ -82,21 +83,21 @@ func TestStretchReadAnalysis(t *testing.T) {
 	require.False(t, tokens.anyNode)
 
 	for _, text := range []string{"labels(a) = []", "(a)-[:R]->()", "a:A|B", "a:$(x)", "COUNT { (a) } > 0"} {
-		effects, err := pipelineClauseEffectsFor(context.Background(), "WITH 1 AS anchor WHERE "+text)
+		effects, err := clauseEffectsForTest(context.Background(), "WITH 1 AS anchor WHERE "+text)
 		require.NoError(t, err)
 		require.True(t, effects.reads.anyNode, text)
 	}
 	for _, text := range []string{"x.`k`", "x . k", "x. k", "x /* comment */ .k", "x['k']", "x[$p]", "x {.k}", "keys(x)"} {
-		effects, err := pipelineClauseEffectsFor(context.Background(), "RETURN "+text)
+		effects, err := clauseEffectsForTest(context.Background(), "RETURN "+text)
 		require.NoError(t, err, text)
 		require.True(t, effects.reads.anyKey, text)
 	}
-	numbers, err := pipelineClauseEffectsFor(context.Background(), "RETURN 1.5 + x.k, range(1,2)")
+	numbers, err := clauseEffectsForTest(context.Background(), "RETURN 1.5 + x.k, range(1,2)")
 	require.NoError(t, err)
 	require.False(t, numbers.reads.anyKey)
 	require.Equal(t, map[string]struct{}{"k": {}}, numbers.reads.keys)
 	for _, invalid := range []string{"RETURN x.*", "RETURN 1.5 + x.k + [1..2]"} {
-		_, err = pipelineClauseEffectsFor(context.Background(), invalid)
+		_, err = clauseEffectsForTest(context.Background(), invalid)
 		require.Error(t, err, invalid)
 	}
 
@@ -110,24 +111,24 @@ func TestStretchReadAnalysis(t *testing.T) {
 
 	// A read-only procedure only reads; an unknown one may write.
 	var reads, writes stretchTokens
-	analyzeStretchClause(context.Background(), pipelineClause{kind: pipelineClauseCall, text: "CALL db.labels() YIELD label"}, &reads, &writes)
+	analyzeStretchClause(context.Background(), retainedClauseForTest(t.Context(), "CALL db.labels() YIELD label"), &reads, &writes)
 	require.True(t, reads.everything)
 	require.False(t, writes.everything)
 	reads, writes = stretchTokens{}, stretchTokens{}
-	analyzeStretchClause(context.Background(), pipelineClause{kind: pipelineClauseCall, text: "CALL no.such() YIELD x"}, &reads, &writes)
+	analyzeStretchClause(context.Background(), retainedClauseForTest(t.Context(), "CALL no.such() YIELD x"), &reads, &writes)
 	require.True(t, writes.everything)
 
 	// A RETURN after the stretch that reads what it writes.
-	split := parsePipelineClauses(t.Context(), "MATCH (d:Done) SET d.flag = true RETURN d.flag")
+	split := parsePipelineClauses(t.Context(), queryBodyForTest(t.Context(), "MATCH (d:Done) SET d.flag = true RETURN d.flag"))
 	clauses, ok := split.clauses, split.ok
 	require.True(t, ok)
 	require.True(t, pipelineWriteStretchConflicts(context.Background(), clauses[:2], clauses[2:]))
-	require.False(t, pipelineWriteStretchConflicts(context.Background(), clauses[:2], []pipelineClause{{kind: pipelineClauseReturn, text: "RETURN count(*)"}}))
+	require.False(t, pipelineWriteStretchConflicts(context.Background(), clauses[:2], []pipelineClause{retainedClauseForTest(t.Context(), "RETURN count(*)")}))
 }
 
 func TestPipelineWriteStretchConflicts(t *testing.T) {
 	conflicts := func(query string) bool {
-		split := parsePipelineClauses(t.Context(), query)
+		split := parsePipelineClauses(t.Context(), queryBodyForTest(t.Context(), query))
 		clauses, ok := split.clauses, split.ok
 		require.True(t, ok, query)
 		return pipelineWriteStretchConflicts(context.Background(), clauses, nil)
@@ -166,9 +167,10 @@ func TestStretchAnalysisEdgeBranches(t *testing.T) {
 	tokens.add(&tokens.labels, "")
 	require.Nil(t, tokens.labels)
 
-	// A REMOVE item that is neither a property nor a label stands for any write.
+	// A REMOVE item that is neither a property nor a label stands for any
+	// write. REMOVE n is valid grammar (removeItem's propertyExpression).
 	var reads, writes stretchTokens
-	analyzeStretchClause(context.Background(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n"}, &reads, &writes)
+	analyzeStretchClause(context.Background(), retainedClauseForTest(t.Context(), "REMOVE n"), &reads, &writes)
 	require.True(t, writes.everything)
 
 	// A variable-length relationship reads its types without the length.

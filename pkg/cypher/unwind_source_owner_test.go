@@ -7,33 +7,33 @@ import (
 	"testing"
 )
 
+// TestUnwindOriginalSourceViews reads UNWIND's list and variable from the
+// clause's retained occurrence (parsePipelineIteration). The rewrite-stage
+// predicate keeps its zero-allocation lexical form (startsUnwindBinding).
+// Rewritten for the retained reader: Claude R17 implementation agent.
 func TestUnwindOriginalSourceViews(t *testing.T) {
-	for _, tc := range []struct{ q, expr, tail, variable, rest string }{
-		{"UNWIND as AS x RETURN x", "as", "x RETURN x", "x", "RETURN x"},
-		{"UNWIND as AS as RETURN as", "as", "as RETURN as", "as", "RETURN as"},
-		{"UNWIND n.as AS x", "n.as", "x", "x", ""},
-		{"UNWIND as + [1] AS x", "as + [1]", "x", "x", ""},
-		{"UNWIND [{AS:1},['AS']] AS x", "[{AS:1},['AS']]", "x", "x", ""},
-		{"UNWIND fn(as) AS x", "fn(as)", "x", "x", ""},
-		{"UNWIND [7] AS `a b` RETURN `a b`", "[7]", "`a b` RETURN `a b`", "`a b`", "RETURN `a b`"},
-		{"UNWIND [7] AS `a``b` RETURN `a``b`", "[7]", "`a``b` RETURN `a``b`", "`a``b`", "RETURN `a``b`"},
-		{"UNWIND/*list*/ as AS/*alias*/ x RETURN x", "as", "x RETURN x", "x", "RETURN x"},
+	for _, tc := range []struct{ q, expr, variable string }{
+		{"UNWIND as AS x RETURN x", "as", "x"},
+		{"UNWIND as AS as RETURN as", "as", "as"},
+		{"UNWIND n.as AS x", "n.as", "x"},
+		{"UNWIND as + [1] AS x", "as + [1]", "x"},
+		{"UNWIND [{AS:1},['AS']] AS x", "[{AS:1},['AS']]", "x"},
+		{"UNWIND fn(as) AS x", "fn(as)", "x"},
+		{"UNWIND [7] AS `a b` RETURN `a b`", "[7]", "`a b`"},
+		{"UNWIND [7] AS `a``b` RETURN `a``b`", "[7]", "`a``b`"},
+		{"UNWIND/*list*/ as AS/*alias*/ x RETURN x", "as", "x"},
 	} {
 		t.Run(tc.q, func(t *testing.T) {
-			p, ok := splitUnwindBody(tc.q)
+			expression, variable, ok := parsePipelineIteration(retainedClauseForTest(t.Context(), tc.q))
 			require.True(t, ok)
-			require.Equal(t, tc.expr, p.expression)
-			require.Equal(t, tc.tail, p.aliasTail)
-			require.Equal(t, tc.variable, p.variableWritten)
-			require.Equal(t, tc.rest, p.remainder)
+			require.Equal(t, tc.expr, expression)
+			require.Equal(t, tc.variable, variable)
 		})
 	}
 	for _, q := range []string{"UNWIND as AS x RETURN x", "UNWIND [7] AS x RETURN x", "UNWIND [7] AS `a``b` RETURN 1", "UNWIND [7] AS `日本` RETURN 1", "UNWIND CASE WHEN true THEN as ELSE [] END AS x RETURN x"} {
-		var p unwindBodySource
 		var ok bool
-		require.Zero(t, testing.AllocsPerRun(100, func() { p, ok = splitUnwindBody(q) }))
+		require.Zero(t, testing.AllocsPerRun(100, func() { ok = startsUnwindBinding(q) }))
 		require.True(t, ok)
-		require.NotEmpty(t, p.variableWritten)
 	}
 }
 func TestUnwindASBindingPublicForms(t *testing.T) {

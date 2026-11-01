@@ -74,7 +74,7 @@ func TestFoundationUseArgumentSourceProducts(t *testing.T) {
 					name, full = "nested_statement", "/* original é */ CALL { /* outer */ "+query+" } RETURN out"
 				}
 				t.Run(name, func(t *testing.T) {
-					syntax, err := cypherantlr.ParseSyntax(context.Background(), full, cypherantlr.StatementEntry, false, cypherantlr.RawSource)
+					syntax, err := cypherantlr.ParseSyntax(context.Background(), cypherantlr.ReadStatement(full), cypherantlr.StatementEntry, false, cypherantlr.RawSource)
 					require.NoError(t, err)
 					count := 0
 					syntax.Walk(func(node cypherantlr.SyntaxNode) func() {

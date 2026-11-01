@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -11,7 +12,7 @@ import (
 func queryBodyWindows(t *testing.T, source string) [][2]int {
 	t.Helper()
 	var windows [][2]int
-	require.NoError(t, forEachQueryBody(t.Context(), source, queryBodyContainerKeywords[:], func(_ string, start, end int) error {
+	require.NoError(t, forEachQueryBodyText(t.Context(), source, queryBodyContainerKeywords[:], func(_ string, start, end int) error {
 		windows = append(windows, [2]int{start, end})
 		return nil
 	}))
@@ -35,17 +36,17 @@ func TestReadQueryBodySpans(t *testing.T) {
 	require.Equal(t, ModeExplain, decoyMode)
 	require.Equal(t, "USE comp CALL () { RETURN 1 AS a } RETURN *", decoy[decoyStart:decoyEnd])
 
-	statement := readQueryBody(t.Context(), source, start, end)
+	statement := readQueryBodyText(t.Context(), source, start, end)
 	require.Equal(t, queryBodyRead, statement.status)
 	require.Len(t, statement.branches, 1)
 	call := statement.branches[0].clauses[0]
-	from, to, ok := callClauseBody(t.Context(), call)
+	from, to, ok := callClauseBodySpanForTest(t.Context(), call)
 	require.True(t, ok)
 	require.Equal(t, [][2]int{{from, to}}, queryBodyWindows(t, source))
-	_, _, ok = callClauseBody(t.Context(), statement.branches[0].clauses[1])
+	_, _, ok = callClauseBodySpanForTest(t.Context(), statement.branches[0].clauses[1])
 	require.False(t, ok, "RETURN has no body")
 
-	body := readQueryBody(t.Context(), source, from, to)
+	body := readQueryBodyText(t.Context(), source, from, to)
 	require.Len(t, body.branches, 2)
 	first, second := body.branches[0], body.branches[1]
 	require.Equal(t, "USE g MATCH (n) RETURN n", source[first.start:first.end])
@@ -75,7 +76,7 @@ func TestReadQueryBodyUseFinishOptionalAndDecline(t *testing.T) {
 	source := "CALL { WITH outer USE comp.remote MATCH (n) WITH n FINISH } RETURN 1 AS a"
 	windows := queryBodyWindows(t, source)
 	require.Len(t, windows, 1)
-	body := readQueryBody(t.Context(), source, windows[0][0], windows[0][1])
+	body := readQueryBodyText(t.Context(), source, windows[0][0], windows[0][1])
 	require.Equal(t, queryBodyRead, body.status)
 	branch := body.branches[0]
 	require.Equal(t, "USE comp.remote", source[branch.useStart:branch.useEnd])
@@ -87,28 +88,28 @@ func TestReadQueryBodyUseFinishOptionalAndDecline(t *testing.T) {
 	require.Equal(t, "FINISH", source[branch.finishStart:branch.finishEnd])
 
 	source = "UNWIND [] AS s OPTIONAL CALL { RETURN 1 AS b } RETURN b"
-	statement := readQueryBody(t.Context(), source, 0, len(source))
+	statement := readQueryBodyText(t.Context(), source, 0, len(source))
 	require.Equal(t, queryBodyRead, statement.status)
 	optional := statement.branches[0].clauses[1]
 	require.True(t, optional.optional)
 	require.Equal(t, optional.text, source[optional.start:optional.end])
-	from, to, ok := callClauseBody(t.Context(), optional)
+	from, to, ok := callClauseBodySpanForTest(t.Context(), optional)
 	require.True(t, ok)
 	require.Equal(t, " RETURN 1 AS b ", source[from:to])
 
 	// A body of FINISH alone (CALL { FINISH }) reads as finished with no
 	// clauses.
 	source = "FINISH"
-	empty := readQueryBody(t.Context(), source, 0, len(source))
+	empty := readQueryBodyText(t.Context(), source, 0, len(source))
 	require.Equal(t, queryBodyRead, empty.status)
 	require.True(t, empty.branches[0].finished)
 	require.Empty(t, empty.branches[0].clauses)
 
 	source = "RETURN 1 AS a UNION RETURN 2 AS a UNION ALL RETURN 3 AS a"
-	require.Equal(t, queryBodyMixedUnion, readQueryBody(t.Context(), source, 0, len(source)).status)
+	require.Equal(t, queryBodyMixedUnion, readQueryBodyText(t.Context(), source, 0, len(source)).status)
 
 	source = "USE 1 RETURN 1 AS a"
-	declined := readQueryBody(t.Context(), source, 0, len(source))
+	declined := readQueryBodyText(t.Context(), source, 0, len(source))
 	require.Equal(t, queryBodyDeclined, declined.status)
 	require.True(t, declined.branches[0].declined)
 	require.Nil(t, declined.branches[0].clauses)
@@ -122,7 +123,7 @@ func TestReadQueryBodyCallFrame(t *testing.T) {
 		"CALL custom.proc({value: 1}) YIELD value RETURN value",
 		"CALL /* decoy { } */ db.labels() YIELD label RETURN label",
 	} {
-		frame := readCallSubqueryScope(t.Context(), query)
+		frame := readCallSubqueryScopeText(t.Context(), query)
 		require.True(t, strings.HasPrefix(query[frame.bodyOffset:], "db.") || strings.HasPrefix(query[frame.bodyOffset:], "custom."))
 		_, _, body := callSubqueryBraces(t.Context(), query)
 		require.False(t, body, query)
@@ -132,7 +133,7 @@ func TestReadQueryBodyCallFrame(t *testing.T) {
 		"CALL () /* decoy { } */ { RETURN 1 AS value }",
 		"CALL (`name { decoy`) { RETURN 1 AS value }",
 	} {
-		frame := readCallSubqueryScope(t.Context(), query)
+		frame := readCallSubqueryScopeText(t.Context(), query)
 		open, close, ok := callSubqueryBraces(t.Context(), query)
 		require.True(t, ok, query)
 		require.Equal(t, frame.bodyOffset, open)

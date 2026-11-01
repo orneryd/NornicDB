@@ -319,18 +319,21 @@ func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExp
 			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryInvalid(pair), nil)
 		}
 
-		result, err := e.executeInternal(ctx, "RETURN "+valueExpr+" AS value", params)
-		if err != nil {
+		// The value is evaluated by the expression owner with the session's
+		// parameters; no RETURN statement is composed around it.
+		// Author of the expression form: Claude R17 implementation agent, 30 October 2026.
+		valueCtx := withExpressionFailureSlot(withQueryParams(ctx, params))
+		value, evaluated := e.evaluateRowExpressionWithContext(valueCtx, valueExpr, pipelineRow{})
+		if err := getExpressionFailure(valueCtx); err != nil || !evaluated {
 			if cyphertext.IsIdentifier(valueExpr) {
 				return nil, localizedError(localization.CypherCommandRoutingParameterExpressionUnresolved(key, valueExpr), nerrors.ErrExpressionEvaluationFailed)
+			}
+			if err == nil {
+				return nil, localizedError(localization.CypherCommandRoutingParameterProducedNoValue(key), nerrors.ErrExpressionEvaluationFailed)
 			}
 			cause := fmt.Errorf("%w: parameter %s: %w", nerrors.ErrExpressionEvaluationFailed, key, err)
 			return nil, localizedError(localization.CypherCommandRoutingParameterEvaluationFailed(key, err), cause)
 		}
-		if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
-			return nil, localizedError(localization.CypherCommandRoutingParameterProducedNoValue(key), nerrors.ErrExpressionEvaluationFailed)
-		}
-		value := result.Rows[0][0]
 		if isUnevaluatedParameterExpression(valueExpr, value) {
 			return nil, localizedError(localization.CypherCommandRoutingParameterExpressionUnresolved(key, strings.TrimSpace(valueExpr)), nerrors.ErrExpressionEvaluationFailed)
 		}

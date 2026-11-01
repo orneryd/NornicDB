@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 // Pipeline projection owns WITH/RETURN plans, aggregation, ordering and result windows.
@@ -27,7 +28,15 @@ import (
 //
 // A nil source means the rows are already materialized, so the row source is
 // derived from them; a caller with a replayable source passes it explicitly.
-func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
+func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause pipelineClause, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
+	plan := returnProjectionPlanFor(ctx, clause)
+	if plan == nil {
+		return nil, false
+	}
+	return e.pipelineApplyWithPlan(ctx, rows, clause, plan, source, rowsValidated)
+}
+
+func (e *StorageExecutor) pipelineApplyWithPlan(ctx context.Context, rows []pipelineRow, clause pipelineClause, parsed *returnProjectionPlan, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
 	if source == nil {
 		source = pipelineRowsSource(rows)
 	}
@@ -43,46 +52,11 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 
 		return out, true
 	}
-	// The clause is scanned with its keyword, which tells a keyword-named
-	// first item from a clause (WITH with WHERE with = 3, #894).
-	body := strings.TrimSpace(clause)
-	orderTerms := parseOrderByTerms(body)
-	withSkip, withLimit := 0, -1
-	if skipIndex := topLevelKeywordIndex(body, "SKIP"); skipIndex >= 0 {
-		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "SKIP"), rows)
-		if !ok {
-			return nil, false
-		}
-		withSkip = value
-	}
-	if limitIndex := topLevelKeywordIndex(body, "LIMIT"); limitIndex >= 0 {
-		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "LIMIT"), rows)
-		if !ok {
-			return nil, false
-		}
-		withLimit = value
-	}
-	postWithWhere := ""
-	if whereIdx := topLevelKeywordIndex(body, "WHERE"); whereIdx >= 0 {
-		postWithWhere = strings.TrimSpace(body[whereIdx+len("WHERE"):])
-		body = strings.TrimSpace(body[:whereIdx])
-	}
-	// WITH … [ORDER BY …] SKIP / LIMIT n WHERE p filters the rows SKIP /
-	// LIMIT keep, as Neo4j does ("take the first n, then filter"). Without
-	// SKIP / LIMIT the filter can run per row, before ordering: the result is
-	// the same.
-	windowedWhere := ""
-	if postWithWhere != "" && (withSkip > 0 || withLimit >= 0) {
-		windowedWhere, postWithWhere = postWithWhere, ""
-	}
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
-			body = strings.TrimSpace(body[:index])
-		}
-	}
-	withDistinct := false
-	body, withDistinct = cutDistinct(pipelineClauseBody(body, "WITH"))
-	if strings.TrimSpace(body) == "*" {
+	// ORDER BY, SKIP, LIMIT and WHERE come from the one modifier owner, read
+	// from the retained WITH (Claude R17 implementation agent).
+	modifiers := withModifiers(clause)
+	withDistinct := parsed.distinct
+	if parsed.star && len(parsed.starItems) == 0 {
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
 			projected := make(pipelineRow, len(row))
@@ -96,62 +70,52 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			// variables in scope (#883).
 			out = deduplicatePipelineRows(memoryScopeFromContext(ctx), out, pipelineWildcardColumns(out))
 		}
-		out = e.filterPipelineRows(ctx, out, postWithWhere)
-		if !e.orderPipelineRows(ctx, out, orderTerms) {
-			return nil, false
-		}
-		return e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), true
+		return e.applyProjectionModifiers(ctx, out, modifiers)
 	}
-	items := splitTopLevelComma(body)
+	withSkip, withLimit, ok := e.evaluateProjectionWindow(ctx, modifiers, rows)
+	if !ok {
+		return nil, false
+	}
+	postWithWhere, windowedWhere := modifiers.whereSplit()
+	orderTerms := modifiers.orderTerms()
+	items := projectionItemsFromSyntax(clause.syntax)
 	if len(items) == 0 {
 		return rows, true
 	}
-	if strings.TrimSpace(items[0]) == "*" {
-		// WITH *, items: the * is every variable in scope (#883).
-		items = starProjectionItems(ctx, pipelineWildcardColumns(rows), items[1:])
+	if parsed.star {
+		parsed = parsed.withStarExpanded(pipelineWildcardColumns(rows))
 	}
-
 	type withProjection struct {
-		expr          string
-		alias         string
-		aggregate     bool
-		aggregateName string
-		aggregateExpr string
-		distinct      bool
+		expr, alias                  string
+		aggregate                    bool
+		aggregateName, aggregateExpr string
+		distinct                     bool
 	}
-	projections := make([]withProjection, 0, len(items))
-	projectionAliases := make([]string, 0, len(items))
+	projections := make([]withProjection, 0, len(parsed.projections))
+	projectionAliases := make([]string, 0, len(parsed.projections))
 	hasAggregate := false
-	for _, rawItem := range items {
-		item := strings.TrimSpace(rawItem)
-		if item == "" || item == "{}" {
-			continue
+	explicitItems := items
+	if len(explicitItems) > 0 && explicitItems[0].star {
+		explicitItems = explicitItems[1:]
+	}
+	explicitStart := len(parsed.projections) - len(explicitItems)
+	for index, item := range parsed.projections {
+		var raw string
+		if index >= explicitStart {
+			raw = strings.TrimSpace(explicitItems[index-explicitStart].syntax.Text())
+			if raw == "" || raw == "{}" {
+				continue
+			}
 		}
-		itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
-		expr, alias := itemSource.expression, itemSource.alias
-		if expr == "" {
+		if item.expr == "" {
 			return nil, false
 		}
-		projection := withProjection{expr: expr, alias: alias}
-		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregate(expr); aggregate {
-			if !strings.Contains(upperASCII(item), " AS ") {
-				return nil, false
-			}
-			projection.aggregate = true
-			projection.aggregateName = aggregateName
-			projection.aggregateExpr = aggregateExpr
-			projection.distinct = distinct
-			hasAggregate = true
-		} else if pipelineExpressionContainsAggregate(expr) {
-			if !strings.Contains(upperASCII(item), " AS ") {
-				return nil, false
-			}
-			projection.aggregate = true
-			projection.aggregateExpr = expr
-			hasAggregate = true
+		if item.isAggr && !strings.Contains(upperASCII(raw), " AS ") {
+			return nil, false
 		}
-		projections = append(projections, projection)
-		projectionAliases = append(projectionAliases, alias)
+		projections = append(projections, withProjection{item.expr, item.alias, item.isAggr, item.aggregateName, item.aggregateExpr, item.distinct})
+		projectionAliases = append(projectionAliases, item.alias)
+		hasAggregate = hasAggregate || item.isAggr
 	}
 	if hasAggregate {
 		aggregates := make([]returnProjection, len(projections))
@@ -806,11 +770,11 @@ func pipelineOriginalReturnText(originalClauses []pipelineClause, idx int) strin
 //
 // Returns (nil, false) if any item can't be projected, so the caller falls
 // back to the established RETURN projection.
-func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
+func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause pipelineClause) (*ExecuteResult, bool) {
 	return e.pipelineApplyReturnSource(ctx, rows, clause, pipelineRowsSource(rows), false)
 }
 
-func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
+func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause pipelineClause, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
 	return e.pipelineApplyReturnPlan(ctx, rows, returnProjectionPlanFor(ctx, clause), source, rowsValidated, preparedGroups...)
 }
 
@@ -1076,11 +1040,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 // client already has rows and no other route may run the statement again.
 func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *ResultStream, rows []pipelineRow, source pipelineRowSource, clauses, originalClauses []pipelineClause, idx int, scope map[string]struct{}, wrote bool) (columns []string, out [][]interface{}, handled bool, err error) {
 	clause := clauses[idx]
-	original := clause
-	if idx < len(originalClauses) {
-		original = originalClauses[idx]
-	}
-	plan := returnProjectionPlanFor(ctx, original.text, original)
+	plan := returnProjectionPlanFor(ctx, clause)
 	if plan == nil {
 		return nil, nil, true, unresolvedStatementError()
 	}
@@ -1089,7 +1049,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	// (validatePipelinePercentileArguments). The argument checks run on each
 	// row as it arrives, as WITH's do: a row that fails them fails the
 	// statement where the row is, as in Neo4j.
-	if err := e.validatePipelineProjectionValues(ctx, rows, clause.text, "RETURN"); err != nil {
+	if err := e.validatePipelineProjectionValues(ctx, rows, clause, "RETURN"); err != nil {
 		return nil, nil, true, err
 	}
 	var validationErr error
@@ -1097,7 +1057,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		input := source
 		source = func(yield func(pipelineRow) bool) bool {
 			return input(func(row pipelineRow) bool {
-				if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause.text, "RETURN"); err != nil {
+				if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause, "RETURN"); err != nil {
 					validationErr = err
 					return false
 				}

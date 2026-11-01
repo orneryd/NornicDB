@@ -50,25 +50,6 @@ func TestPipelineEvaluatesEveryProjectionItem(t *testing.T) {
 	}
 }
 
-// TestNormalizeMultiMatchWhereClausesMovesEveryWhere: the WHEREs of every
-// required MATCH but the last move to one WHERE after the last MATCH, and a
-// predicate with a top-level OR keeps its grouping.
-func TestNormalizeMultiMatchWhereClausesMovesEveryWhere(t *testing.T) {
-	require.Equal(t,
-		"MATCH (a) MATCH (b) MATCH (a)-->(x), (b)-->(x) WHERE a.name = 'A' AND b.name = 'B' RETURN x",
-		normalizeMultiMatchWhereClauses("MATCH (a) WHERE a.name = 'A' MATCH (b) WHERE b.name = 'B' MATCH (a)-->(x), (b)-->(x) RETURN x"))
-	require.Equal(t,
-		"MATCH (a) MATCH (a)-->(x) WHERE (a.v = 1 OR a.v = 2) AND x.v = 3 RETURN x",
-		normalizeMultiMatchWhereClauses("MATCH (a) WHERE a.v = 1 OR a.v = 2 MATCH (a)-->(x) WHERE x.v = 3 RETURN x"))
-	for _, unchanged := range []string{
-		"MATCH (a) MATCH (b) WHERE b.v = 1 RETURN a",
-		"MATCH (a) WHERE a.v = 1 OPTIONAL MATCH (a)-->(x) RETURN x",
-		"MATCH (a) WHERE a.v = 1 WITH a MATCH (a)-->(x) RETURN x",
-	} {
-		require.Equal(t, unchanged, normalizeMultiMatchWhereClauses(unchanged))
-	}
-}
-
 // TestReturnOfUndefinedVariableProperty: RETURN m.val with m unbound is
 // Neo4j's "Variable `m` not defined" SyntaxError.
 func TestReturnOfUndefinedVariableProperty(t *testing.T) {

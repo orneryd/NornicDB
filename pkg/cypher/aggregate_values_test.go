@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -107,10 +108,10 @@ func TestParallelAggregateSumMergesPartials(t *testing.T) {
 	clause := "RETURN a.key AS key, sum(a.value) AS total ORDER BY key"
 	for _, workers := range []int{1, 4} {
 		ctx := withExpressionFailureSlot(context.Background())
-		groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(t.Context(), clause), workers)
+		groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnPlanForTest(t.Context(), clause), workers)
 		require.True(t, handled)
 		require.NoError(t, err)
-		result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
+		result, err := exec.projectMergeReturnSource(ctx, nil, clause, queryGapEnd(clause, 0), nil, groups)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{"j", int64(80000)}, {"k", int64(120000)}}, result.Rows, workers)
 	}

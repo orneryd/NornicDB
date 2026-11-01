@@ -476,7 +476,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 	if err == nil {
 		err = e.validateSemanticScopes(ctx, desugared)
 	}
-	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
+	parseItems := func(statement string, at int) []returnItem { return e.parseReturnItems(ctx, statement, at) }
 	_, err = (resultRestoration{names: names}).restore(nil, err, parseItems)
 	return err
 }
@@ -857,7 +857,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	previousBindings := exec.fabricRecordBindings
 	exec.fabricRecordBindings = recordBindings
 	defer func() { exec.fabricRecordBindings = previousBindings }()
-	parseReturnItems := func(text string) []returnItem { return exec.parseReturnItems(ctx, text) }
+	parseReturnItems := func(statement string, at int) []returnItem { return exec.parseReturnItems(ctx, statement, at) }
 	// Fragment imports are installed before the engine's shared compile-time
 	// scope/type owner runs. As at the composite entry, this validation copy
 	// must desugar label expressions first. executeInternal owns rewriting the
@@ -1047,17 +1047,19 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		query, names := canonicalizeQuotedVariablesWithBindings(ctx, "RETURN "+expression, values)
+		// The argument's own occurrence names its quoted variables; no RETURN
+		// statement is composed around it (Claude R17 implementation agent).
+		argument, names := canonicalizeQuotedVariablesWithBindings(ctx, expression, values)
 		bindings, params := values, values
 		if names != nil {
 			bindings, params = names.bindingValues(values), names.parameterValues(values)
 		}
-		projected := strings.TrimSpace(query)
-		if len(projected) <= len("RETURN") || !strings.EqualFold(projected[:len("RETURN")], "RETURN") {
+		argument = strings.TrimSpace(argument)
+		if argument == "" {
 			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
 		}
-		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), strings.TrimSpace(projected[len("RETURN"):]), pipelineRow(bindings))
+		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), argument, pipelineRow(bindings))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err

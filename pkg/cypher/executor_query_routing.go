@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -69,7 +70,7 @@ func topLevelUnion(ctx context.Context, cypher, upperQuery string) (unionAll, un
 	if !strings.Contains(upperQuery, "UNION") {
 		return false, false
 	}
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(ctx, cypher)
+	branches, unionAll, mixed, ok := parseTopLevelUnionTextBranches(ctx, cypher)
 	if !ok {
 		return false, false
 	}
@@ -375,18 +376,16 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	}
 
 	body := strings.TrimSpace(cypher[returnIdx+len("RETURN"):])
-	// Validation and execution consume the same immutable clause plan. Parsing
-	// each item again duplicates grammar work and discards its retained products.
-	plan := returnProjectionPlanFor(ctx, cypher[returnIdx:])
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	// The statement's own retained RETURN occurrence supplies every item and
+	// the plan; no item or body is reframed as RETURN text (Claude R17 agent).
+	returned, found := returnClauseAt(ctx, cypher, returnIdx)
+	var parts []string
+	if found {
+		for _, item := range projectionItemsFromSyntax(returned.syntax) {
+			parts = append(parts, item.expression)
+		}
 	}
-	projections := plan.projections
-	if plan.star {
-		projections = plan.starProjections
-	}
-	for _, projection := range projections {
-		part := projection.expr
+	for _, part := range parts {
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
 		}
@@ -406,38 +405,22 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		}
 	}
 
-	rows := []pipelineRow{row}
-	if result, ok := e.pipelineApplyReturnPlan(ctx, rows, plan, pipelineRowsSource(rows), false); ok {
-		return result, nil
+	if found {
+		if result, ok := e.pipelineApplyReturnPlan(ctx, []pipelineRow{row}, projectionPlanOf(ctx, returned.syntax), pipelineRowsSource([]pipelineRow{row}), false); ok {
+			return result, nil
+		}
 	}
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return nil, failure
 	}
 	unparsed := body
-	for _, projection := range projections {
-		if _, defined := e.evaluateRowExpressionWithContext(ctx, projection.expr, row); !defined {
-			unparsed = projection.expr
+	for _, part := range parts {
+		if _, defined := e.evaluateRowExpressionWithContext(ctx, part, row); !defined {
+			unparsed = part
 			break
 		}
 	}
 	return nil, unresolvedReturnItemError(ctx, unparsed)
-}
-
-// firstTopLevelModifierIndex is the position of a projection's first
-// top-level ORDER BY, SKIP or LIMIT, or -1. The shared RETURN projection and
-// standalone RETURN both use it.
-func firstTopLevelModifierIndex(clause string) int {
-	cut := -1
-	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		// The keyword scan is costly; most projections have no modifier.
-		if !containsFold(clause, kw[:4]) {
-			continue
-		}
-		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && (cut == -1 || idx < cut) {
-			cut = idx
-		}
-	}
-	return cut
 }
 
 // splitReturnExpressions splits RETURN expressions by comma while preserving
@@ -501,9 +484,9 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 			// Execution admits the canonical statement product, just as the
 			// native readers do. ValidateContext's API-specific diagnostic
 			// wrapper belongs only to isolated validator consumers.
-			_, parserError = antlr.ParseSyntax(ctx, cypher, antlr.StatementEntry, false, cyphertext.AcceptedSource)
+			_, parserError = antlr.ParseSyntax(ctx, antlr.ReadStatement(cypher), antlr.StatementEntry, false, cyphertext.AcceptedSource)
 		} else {
-			parserError = antlr.ValidateContext(ctx, cypher, cyphertext.AcceptedSource)
+			parserError = antlr.ValidateContext(ctx, antlr.ReadStatement(cypher), cyphertext.AcceptedSource)
 		}
 		if parserError == context.Canceled || parserError == context.DeadlineExceeded {
 			return parserError

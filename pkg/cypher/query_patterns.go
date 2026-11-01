@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // Package cypher provides query pattern detection for optimization routing.
 //
 // This file identifies query patterns that can be executed more efficiently
@@ -228,7 +229,7 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 	countStarPattern := "COUNT(*)"
 
 	if (strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern)) &&
-		isReturnNameCountShape(query, startVar, endVar) {
+		isReturnNameCountShape(ctx, query, startVar, endVar) {
 		info.Pattern = PatternIncomingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -253,7 +254,7 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 	upperQuery := upperASCII(query)
 	countPattern := "COUNT(" + upperASCII(endVar)
 
-	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(query, startVar, endVar) {
+	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(ctx, query, startVar, endVar) {
 		info.Pattern = PatternOutgoingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -266,14 +267,25 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 	return false
 }
 
-func isReturnNameCountShape(query string, startVar string, endVar string) bool {
-	parts := returnShapeItems(query)
+// returnShapeItemsOf is the statement's RETURN items, read from its retained
+// RETURN occurrence (the one projection reader); nil without RETURN.
+// Author: Claude R17 implementation agent, 30 October 2026.
+func returnShapeItemsOf(ctx context.Context, query string) []returnItem {
+	returnIdx := findKeywordIndex(query, "RETURN")
+	if returnIdx < 0 {
+		return nil
+	}
+	return returnItemsOfPlan(projectionPlanAt(ctx, query, returnIdx))
+}
+
+func isReturnNameCountShape(ctx context.Context, query string, startVar string, endVar string) bool {
+	parts := returnShapeItemsOf(ctx, query)
 	if len(parts) != 2 {
 		return false
 	}
 
-	left := trimReturnItemAlias(parts[0])
-	right := trimReturnItemAlias(parts[1])
+	left := parts[0].expr
+	right := parts[1].expr
 
 	// Require "startVar.name" (the optimized executor currently uses the "name" property).
 	if !strings.EqualFold(left, startVar+".name") {
@@ -363,13 +375,13 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	if returnIdx < 0 {
 		return false
 	}
-	returnItems := exec.parseReturnItems(ctx, strings.TrimSpace(query[returnIdx+len("RETURN"):]))
+	returnItems := exec.parseReturnItems(ctx, query, returnIdx)
 	if len(returnItems) < 2 {
 		return false
 	}
 
 	for _, item := range returnItems[1:] {
-		expr := readProjectionItemSource(ctx, item.expr, projectionAdmitted).expression
+		expr := item.expr
 		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
 		aggFunc, inner, ok := splitEdgeAggregationCall(u)
 		if !ok {
@@ -397,7 +409,7 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	if info.AggProperty == "" {
 		return false
 	}
-	if !isReturnEdgePropertyAggNameShape(query, relVar, info.AggProperty) {
+	if !isReturnEdgePropertyAggNameShape(ctx, query, relVar, info.AggProperty) {
 		return false
 	}
 	info.Pattern = PatternEdgePropertyAgg
@@ -406,13 +418,13 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	return true
 }
 
-func isReturnEdgePropertyAggNameShape(query string, relVar string, propName string) bool {
-	items := returnShapeItems(query)
+func isReturnEdgePropertyAggNameShape(ctx context.Context, query string, relVar string, propName string) bool {
+	items := returnShapeItemsOf(ctx, query)
 	if len(items) < 2 {
 		return false
 	}
 
-	first := trimReturnItemAlias(items[0])
+	first := items[0].expr
 	// Require "<var>.name" in first return position.
 	dot := strings.LastIndex(first, ".")
 	if dot < 0 || !strings.EqualFold(first[dot+1:], "name") {
@@ -423,7 +435,7 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 
 	// Remaining items must be aggregations over relVar.prop (optionally plus count(r)).
 	for i := 1; i < len(items); i++ {
-		item := trimReturnItemAlias(items[i])
+		item := items[i].expr
 
 		u := upperASCII(strings.ReplaceAll(item, " ", ""))
 		switch {

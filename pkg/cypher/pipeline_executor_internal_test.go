@@ -62,13 +62,14 @@ func TestCanExecuteAsPipeline_QueryShapes(t *testing.T) {
 }
 
 func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
+	// The retained UNWIND pipeline reports the body's execution error and
+	// writes nothing, for reads and for writes after a correlated MATCH.
 	for _, fixture := range []struct {
 		name      string
 		remainder string
-		create    bool
 	}{
 		{name: "read", remainder: "MATCH (n:UnwindError) WHERE n.id = row AND 1 / 0 = 0 RETURN count(n)"},
-		{name: "create", remainder: "MATCH (n:UnwindError) WHERE n.id = row CREATE (m:UnwindErrorCopy {value: 1 / 0}) RETURN count(m)", create: true},
+		{name: "create", remainder: "MATCH (n:UnwindError) WHERE n.id = row CREATE (m:UnwindErrorCopy {value: 1 / 0}) RETURN count(m)"},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
@@ -76,26 +77,8 @@ func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
 			ctx := context.Background()
 			_, err := exec.Execute(ctx, "CREATE (:UnwindError {id: 1})", nil)
 			require.NoError(t, err)
-			plan := topLevelUnwindPlan{variable: "row", items: []interface{}{int64(1)}, remainder: fixture.remainder}
-			rewritten, ok := rewriteUnwindCorrelationToIn(plan.remainder, plan.variable, "__unwind_items")
-			require.True(t, ok)
-			_, expectedErr := exec.Execute(ctx, rewritten, map[string]interface{}{"__unwind_items": plan.items})
-			require.Error(t, expectedErr)
-			outcome := exec.executePipeline(withQueryParams(ctx, map[string]interface{}{"__unwind_items": plan.items}), rewritten)
-			require.Error(t, outcome.err)
-			require.Equal(t, expectedErr.Error(), outcome.err.Error())
-			require.True(t, outcome.terminal())
-			require.Nil(t, outcome.result)
-			var result *ExecuteResult
-			var handled bool
-			if fixture.create {
-				result, handled, err = exec.executeSetBasedUnwindCreateOperator(ctx, plan)
-			} else {
-				result, handled, err = exec.executeUnwindBatchOperator(ctx, plan)
-			}
+			result, err := exec.Execute(ctx, "UNWIND [1, 2] AS row "+fixture.remainder, nil)
 			require.Error(t, err)
-			require.Equal(t, expectedErr.Error(), err.Error())
-			require.True(t, handled)
 			require.Nil(t, result)
 			persisted, err := exec.Execute(ctx, "MATCH (m:UnwindErrorCopy) RETURN count(m)", nil)
 			require.NoError(t, err)

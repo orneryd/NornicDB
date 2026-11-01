@@ -57,6 +57,10 @@ type nodePatternInfo struct {
 type returnItem struct {
 	expr  string
 	alias string
+	// plan is the retained projection the item was read from
+	// (returnItemsOfPlan); nil for a physical binding item. An operator that
+	// needs the whole projection uses it instead of rebuilding one.
+	plan *returnProjectionPlan
 }
 
 // column is the item's result column: its alias. Every returnItem builder

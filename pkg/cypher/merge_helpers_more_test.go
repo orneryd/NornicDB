@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -10,7 +11,7 @@ import (
 
 func TestMergeSharedScannerQuotedKeywordsAndModifiers(t *testing.T) {
 	query := "MERGE (n:Node {name:'MATCH in string'}) ON MATCH SET n.a = 1 WITH n OPTIONAL MATCH (m:Node) RETURN n"
-	clauses, ok := splitPipelineClauses(t.Context(), query)
+	clauses, ok := splitPipelineTextClauses(t.Context(), query)
 	require.True(t, ok)
 	require.Len(t, clauses, 4)
 	require.Equal(t, pipelineClauseMerge, clauses[0].kind)
@@ -30,10 +31,10 @@ func TestMergeContextHelpers_MoreBranches(t *testing.T) {
 	_, err := exec.Execute(ctx, "WITH RETURN 1", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *", nil, false)
+	projected, ok := exec.pipelineApplyWithTextForTest(ctx, input, "WITH *", nil, false)
 	require.True(t, ok)
 	require.Equal(t, input, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n AS nn, r AS rr, s AS ss", nil, false)
+	projected, ok = exec.pipelineApplyWithTextForTest(ctx, input, "WITH n AS nn, r AS rr, s AS ss", nil, false)
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{"nn": node, "rr": rel, "ss": int64(7)}}, projected)
 	_, err = exec.Execute(ctx, "WITH 7 AS s WITH s AS ss, ghost AS gg RETURN ss", nil)

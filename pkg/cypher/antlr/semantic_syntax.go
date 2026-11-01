@@ -20,7 +20,7 @@ func ReadStatementSyntax(ctx context.Context, query string, consume func(Stateme
 }
 
 func readSyntax(ctx context.Context, query string, entry SyntaxEntry, consume func(StatementSyntax)) error {
-	syntax, err := ParseSyntax(ctx, query, entry, false, RawSource)
+	syntax, err := ParseSyntax(ctx, ReadStatement(query), entry, false, RawSource)
 	if err == nil {
 		consume(syntax)
 	}

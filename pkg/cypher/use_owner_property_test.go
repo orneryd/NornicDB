@@ -246,7 +246,7 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 	// Check every grammar-owned selector in the complete statement too, including
 	// nested CALL and both UNION branches. This catches missing generator slots.
 	normalized, _ := desugarStandaloneOrderClauses(statement.query)
-	syntax, err := cypherantlr.ParseSyntax(ctx, normalized, cypherantlr.FragmentEntry, false, cypherantlr.RawSource)
+	syntax, err := cypherantlr.ParseSyntax(ctx, cypherantlr.ReadStatement(normalized), cypherantlr.FragmentEntry, false, cypherantlr.RawSource)
 	if err != nil {
 		issues["owner"] = err
 		return issues

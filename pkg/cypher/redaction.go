@@ -113,7 +113,7 @@ const redactGrammarCheckMaxBytes = 8 << 10
 // redactGrammarValidate is cantlr.ValidateContext; tests replace it to count the
 // grammar parses the redactor runs.
 var redactGrammarValidate = func(ctx context.Context, query string) error {
-	return cantlr.ValidateContext(ctx, query, cyphertext.AcceptedSource)
+	return cantlr.ValidateContext(ctx, cantlr.ReadStatement(query), cyphertext.AcceptedSource)
 }
 
 // redactGrammarAccepts is the uncached grammar verdict RedactLiterals uses.
@@ -200,7 +200,7 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 		if !grammarValid {
 			return RedactedPlaceholder
 		}
-		syntax, err := cantlr.ParseSyntax(ctx, source.Text, cantlr.StatementEntry, false, cyphertext.AcceptedSource)
+		syntax, err := cantlr.ParseSyntax(ctx, cantlr.ReadStatement(source.Text), cantlr.StatementEntry, false, cyphertext.AcceptedSource)
 		if err != nil {
 			return RedactedPlaceholder
 		}

@@ -29,7 +29,7 @@ func TestValidateContextCancellationReleasesValidator(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	during := &cancelDuringLookahead{Context: ctx, cancel: cancel}
-	require.ErrorIs(t, ValidateContext(during, "MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n", cyphertext.RawSource), context.Canceled)
+	require.ErrorIs(t, ValidateContext(during, ReadStatement("MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n"), cyphertext.RawSource), context.Canceled)
 	require.GreaterOrEqual(t, during.checks, 6, "cancellation must occur inside lookahead")
 	require.NoError(t, Validate("RETURN 1"), "a canceled product must not contaminate later validation")
 	require.Error(t, Validate("MATCH ("), "cancellation must not leave the next validation accepted")
@@ -38,7 +38,7 @@ func TestValidateContextCancellationReleasesValidator(t *testing.T) {
 func TestValidateContextAlreadyCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(t, ValidateContext(ctx, "RETURN 1", cyphertext.RawSource), context.Canceled)
+	require.ErrorIs(t, ValidateContext(ctx, ReadStatement("RETURN 1"), cyphertext.RawSource), context.Canceled)
 }
 
 type panicDuringLookahead struct {
@@ -59,7 +59,7 @@ func TestValidateContextUnrelatedPanicPropagates(t *testing.T) {
 	defer cancel()
 	during := &panicDuringLookahead{Context: ctx}
 	require.PanicsWithValue(t, "unrelated prediction panic", func() {
-		_ = ValidateContext(during, "MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n", cyphertext.RawSource)
+		_ = ValidateContext(during, ReadStatement("MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n"), cyphertext.RawSource)
 	})
 	require.NoError(t, Validate("RETURN 1"), "panic unwind releases the validator")
 }
@@ -101,7 +101,7 @@ func TestContextCancellationProtocols(t *testing.T) {
 		run  func(context.Context, string, SourceStage) ([]antlr.Token, error)
 	}{
 		{"validate", false, func(ctx context.Context, query string, stage SourceStage) ([]antlr.Token, error) {
-			return nil, ValidateContext(ctx, query, stage)
+			return nil, ValidateContext(ctx, ReadStatement(query), stage)
 		}},
 		{"lex", true, LexContext},
 	}

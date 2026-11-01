@@ -543,27 +543,7 @@ func labelWildcardAt(s string, i int) bool {
 }
 
 func lastLiveByte(text string, position int) int {
-	last := -1
-	for index := 0; index < position && index < len(text); {
-		if end := cyphertext.CommentEnd(text, index); end >= 0 {
-			index = end
-			continue
-		}
-		if cyphertext.IsQuote(text[index]) {
-			end, closed := cyphertext.ScanQuotedText(text, index)
-			last = index
-			if closed && end <= position {
-				last = end - 1
-			}
-			index = end
-			continue
-		}
-		if !cyphertext.IsWhitespaceAt(text, index) {
-			last = index
-		}
-		index++
-	}
-	return last
+	return cyphertext.PreviousLiveByte(text, position)
 }
 
 // isExpressionBoundaryWord reports whether word is a keyword after which an

@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // Package cypher - Query analysis and AST capture.
 package cypher
 
@@ -368,7 +369,7 @@ func mergeOnlyClauses(ctx context.Context, query string) bool {
 	if topLevelUnionCut(query) >= 0 {
 		return false
 	}
-	clauses, ok := splitPipelineClauses(ctx, query)
+	clauses, ok := splitPipelineTextClauses(ctx, query)
 	if !ok {
 		return false
 	}
@@ -449,7 +450,7 @@ type mergeSetItem struct {
 // expressions its MERGE patterns key on for label. ok is false when the
 // statement can't be split into clauses.
 func mergeStatementSetItems(ctx context.Context, statement, label string) (items []mergeSetItem, mergeKeys map[string][]string, ok bool) {
-	clauses, ok := splitPipelineClauses(ctx, statement)
+	clauses, ok := splitPipelineTextClauses(ctx, statement)
 	if !ok {
 		return nil, nil, false
 	}

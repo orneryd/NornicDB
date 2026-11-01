@@ -97,8 +97,20 @@ showCommand
             | (TRANSACTION | TRANSACTIONS) (expression (COMMA expression)*)?
             | (SETTING | SETTINGS) (expression (COMMA expression)*)?
             | (DEFAULT | HOME) DATABASE
-            | ROLES | PRIVILEGES | USER name PRIVILEGES | SERVERS)
+            | ROLES | PRIVILEGES | USER name PRIVILEGES | SERVERS | showExtensionCommand)
             showTail?
+    ;
+
+// NornicDB's own SHOW commands. Their words stay identifiers (soft keywords,
+// as compositeConstituents), so no name becomes reserved; every SHOW command
+// then carries its YIELD/WHERE/RETURN tail in the one showTail.
+showExtensionCommand
+    : {p.compositeKeyword("DECAY")}? ID {p.compositeKeyword("PROFILES")}? ID
+    | {p.compositeKeyword("PROMOTION")}? ID ({p.compositeKeyword("PROFILES")}? ID | {p.compositeKeyword("POLICIES")}? ID)
+    | ({p.compositeKeyword("ROLE")}? ID | ROLES) name (COMMA name)* (PRIVILEGES | {p.compositeKeyword("PRIVILEGE")}? ID)
+    | {p.compositeKeyword("PRIVILEGE")}? ID
+    | {p.compositeKeyword("SERVER")}? ID
+    | {p.compositeKeyword("LIMITS")}? ID
     ;
 
 // The kind SHOW … CONSTRAINTS lists. PROPERTY UNIQUE[NESS] is Cypher 25's;
@@ -108,11 +120,13 @@ showConstraintKind
     | (NODE | RELATIONSHIP | REL)? (UNIQUE | UNIQUENESS | KEY | PROPERTY? (EXIST | EXISTENCE | UNIQUE | UNIQUENESS) | PROPERTY TYPE)
     ;
 
-// SHOW … WHERE …, or SHOW … YIELD … [WHERE …] [ORDER BY …] [SKIP …] [LIMIT …]
+// SHOW … WHERE …, or SHOW … YIELD … [ORDER BY …] [SKIP …] [LIMIT …] [WHERE …]
 // then RETURN …, or (Cypher 25 composition) any query over the yielded columns.
+// Neo4j's SHOW places WHERE after the paging; a WHERE right after the items
+// (yieldItems' own) is read the same way only when no paging follows it.
 showTail
     : where
-    | YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? regularQuery?
+    | YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? where? regularQuery?
     ;
 
 // TERMINATE TRANSACTION[S] id[, id …] [YIELD …]
@@ -228,7 +242,14 @@ collectSubquery
     ;
 
 callSubquery
-    : OPTIONAL? CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE transactionBatch?
+    : OPTIONAL? CALL (LPAREN scopeList RPAREN)? LBRACE subqueryBody RBRACE transactionBatch?
+    ;
+
+// A CALL scope clause's list, the one production every scope reader uses:
+// the CALL tree, Fabric's import list and the malformed-scope diagnostic read
+// it through ScopeListEntry. Author: Claude R17 implementation agent.
+scopeList
+    : (MULT | symbol (COMMA symbol)*)?
     ;
 
 // Both executor parser modes read this production. Options are represented
@@ -999,6 +1020,8 @@ useGraphPrefix
     : {p.useGraphKeyword()}? ID
     | {!p.useGraphKeyword()}?
     ;
+// Author of the R17 first-follower correction: Codex, 27 October 2026.
+// A complete reference cannot end before DOT; later follower tokens stay opaque.
 useReferencePrefix
-    : useClause .* EOF
+    : useClause (~DOT .*)? EOF
     ;

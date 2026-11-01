@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -32,7 +33,7 @@ func TestMergeBodyTriviaSharedProducts(t *testing.T) {
 		require.Equal(t, "n.v=n.v+1", items[1].text)
 		require.Equal(t, "n:Seen", items[2].text)
 		require.Equal(t, map[string][]string{"id": {"1"}}, keys)
-		clauses, ok := splitPipelineClauses(ctx, query)
+		clauses, ok := splitPipelineTextClauses(ctx, query)
 		require.True(t, ok)
 		labels, dynamic := statementSetLabels(clauses)
 		require.Equal(t, []string{"Seen"}, labels["n"])
