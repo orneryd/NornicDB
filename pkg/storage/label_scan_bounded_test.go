@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -22,7 +23,7 @@ func labelTailScan(t *testing.T, eng *BadgerEngine, properties []string, snapsho
 	t.Helper()
 	if !snapshot {
 		return func(visit func(*Node) error) error {
-			return eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, visit)
+			return eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, visit)
 		}
 	}
 	tx, err := eng.BeginTransaction()
@@ -30,7 +31,7 @@ func labelTailScan(t *testing.T, eng *BadgerEngine, properties []string, snapsho
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return func(visit func(*Node) error) error {
-		return tx.StreamNodesByLabelProjected("Common", properties, visit)
+		return tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, visit)
 	}
 }
 
@@ -139,7 +140,7 @@ func BenchmarkLabelScanStreaming(b *testing.B) {
 						properties = []string{"i"}
 					}
 					scan := func(visit func(*Node) error) error {
-						return eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, visit)
+						return eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, visit)
 					}
 					b.ReportAllocs()
 					b.ResetTimer()
@@ -159,7 +160,7 @@ func BenchmarkLabelScanStreaming(b *testing.B) {
 							require.NoError(b, err)
 							require.NoError(b, tx.SetNamespace("test"))
 							scan = func(visit func(*Node) error) error {
-								return tx.StreamNodesByLabelProjected("Common", properties, visit)
+								return tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, visit)
 							}
 						}
 						b.StartTimer()

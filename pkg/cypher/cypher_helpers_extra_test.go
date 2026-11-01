@@ -707,7 +707,7 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	ctx := context.Background()
 	match := exec.parseTraversalPattern(ctx, "(a:A)-[r:KNOWS]->(b:B)")
 	require.NotNil(t, match)
-	startNodes, err := eng.GetNodesByLabel("A")
+	startNodes, err := eng.GetNodesByLabel(ctx, "A")
 	require.NoError(t, err)
 	paths := exec.traverseGraphParallel(context.Background(), match, startNodes, ParallelConfig{
 		Enabled:      true,
@@ -933,37 +933,33 @@ func TestCypherHelpers_CallCompatRelationshipQueries(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAP")
 
-	// Vector relationship query: parse error.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2)")
-	require.Error(t, err)
+	// Vector relationship query: the third argument is required.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2)", nil)
+	require.ErrorContains(t, err, "procedure db.index.vector.queryRelationships requires at least 3 arguments, got 2")
 
 	// Vector relationship query: string input without embedder.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 'hello')")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 'hello')", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no embedder configured")
 
-	// Vector relationship query: parameter without params context => empty rows.
-	res, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)")
-	require.NoError(t, err)
-	require.Empty(t, res.Rows)
+	// Vector relationship query: a parameter the statement never supplied is
+	// Neo4j's ParameterMissing; the call does not run.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)", nil)
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): q")
 
-	// Vector relationship query: missing parameter.
-	ctxMissing := context.WithValue(ctx, paramsKey, map[string]interface{}{"x": []float32{0.1, 0.2}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxMissing, "CALL db.index.vector.queryRelationships('idx', 2, $q)")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "parameter $q not provided")
+	// Vector relationship query: missing parameter among other parameters.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)", map[string]interface{}{"x": []float32{0.1, 0.2}})
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): q")
 
 	// Vector relationship query: unsupported parameter element type.
-	ctxBadElem := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []interface{}{1, "bad"}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxBadElem, "CALL db.index.vector.queryRelationships('idx', 2, $q)")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "non-numeric value")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)", map[string]interface{}{"q": []interface{}{1, "bad"}})
+	require.ErrorContains(t, err, "argument query must be numeric coordinates, not String")
+	require.NotContains(t, err.Error(), "parameter $")
 
-	// Vector relationship query: unsupported parameter type and missing query vector branch.
-	ctxBadType := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": true})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxBadType, "CALL db.index.vector.queryRelationships('idx', 2, $q)")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported type")
+	// Vector relationship query: unsupported parameter type.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)", map[string]interface{}{"q": true})
+	require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Boolean")
+	require.NotContains(t, err.Error(), "parameter $")
 }
 
 func TestCypherHelpers_ComparisonConversionAndTemporalHelpers(t *testing.T) {
@@ -1849,64 +1845,78 @@ func TestCypherHelpers_TypedResultDecodeAndAssignBranches(t *testing.T) {
 }
 
 func TestCypherHelpers_VectorParsingAndQueryBranches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	// The vector procedures take their third argument from the statement's own
+	// argument evaluation: an inline numeric list, search text or a named
+	// parameter. These are the public equivalents of the retired inline parser's
+	// branches, asserted through Execute.
+	exec := newVectorInputExecutor(t, 2)
 	ctx := context.Background()
+	embedder := &mockQueryEmbedder{embedding: []float32{1, 0}}
+	exec.SetEmbedder(embedder)
 
-	_, _, _, err := exec.parseVectorQueryParams("CALL db.labels()")
-	require.Error(t, err)
-	_, _, _, err = exec.parseVectorQueryParams("CALL db.index.vector.queryNodes")
-	require.Error(t, err)
-	_, _, _, err = exec.parseVectorQueryParams("CALL db.index.vector.queryNodes('idx', 2, [1,2]")
-	require.Error(t, err)
+	// A CALL with no argument list is an implicit-parameter call, and a
+	// malformed or unbalanced list is a syntax error: none of them reaches the
+	// procedure.
+	_, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes", nil)
+	require.EqualError(t, err, "Neo.ClientError.Statement.ParameterMissing: missing implicit procedure parameter indexName")
 
-	indexName, k, input, err := exec.parseVectorQueryParams("CALL db.index.vector.queryNodes('idx', 5, [1.0, 2.5])")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes 'idx', 2, [1,2]", nil)
+	require.Error(t, err)
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 2, [1,2]", nil)
+	require.ErrorContains(t, err, "unbalanced parentheses")
+
+	// An inline numeric list is searched as written, highest score first.
+	res, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 5, [1.0, 0.0])", nil)
 	require.NoError(t, err)
-	assert.Equal(t, "idx", indexName)
-	assert.Equal(t, 5, k)
-	assert.Equal(t, []float32{1.0, 2.5}, input.vector)
+	require.Equal(t, []string{"node", "score"}, res.Columns)
+	require.Len(t, res.Rows, 2)
+	top, ok := res.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	assert.Equal(t, storage.NodeID("n1"), top.ID)
+	score, ok := res.Rows[0][1].(float64)
+	require.True(t, ok)
+	assert.InDelta(t, 1.0, score, 1e-9)
 
-	_, _, input, err = exec.parseVectorQueryParams("CALL db.index.vector.queryNodes('idx', 3, 'hello')")
+	// A quoted search text is embedded as written.
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 3, 'hello')", nil)
 	require.NoError(t, err)
-	assert.Equal(t, "hello", input.stringQuery)
+	require.NotEmpty(t, res.Rows)
+	assert.Equal(t, "hello", embedder.lastQuery)
 
-	_, _, input, err = exec.parseVectorQueryParams("CALL db.index.vector.queryRelationships('idx', 4, $q)")
+	// A named parameter binds its actual value.
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 4, $q)", map[string]interface{}{"q": []float64{1, 0}})
 	require.NoError(t, err)
-	assert.Equal(t, "q", input.paramName)
+	require.Len(t, res.Rows, 2)
 
-	parts := splitTopLevelComma(`'idx', 5, "a,b", [1,2,{x:3}]`)
-	require.Len(t, parts, 4)
-	assert.Equal(t, "\"a,b\"", strings.TrimSpace(parts[2]))
-	assert.Equal(t, []float32{1.5, 2}, parseInlineVector("[1.5, bad, 2]"))
-
-	// String query branch without embedder should error.
-	_, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 2, 'search text')")
-	require.Error(t, err)
-
-	// Parameter branch with no params should return empty result.
-	res, err := exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 2, $query)")
+	// A comma inside an argument does not split it into further arguments.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx,name', 2, [1,0])", nil)
+	require.ErrorContains(t, err, "There is no such vector schema index: idx,name")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, 'hello, world')", nil)
 	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Empty(t, res.Rows)
+	assert.Equal(t, "hello, world", embedder.lastQuery)
 
-	// Parameter missing in map should error.
-	ctxMissing := context.WithValue(ctx, paramsKey, map[string]interface{}{"other": []float64{1, 2}})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxMissing, "CALL db.index.vector.queryNodes('idx', 2, $query)")
-	require.Error(t, err)
+	// A coordinate list with a non-numeric element names the element's type
+	// instead of dropping it (the retired inline parser skipped it silently).
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, [1.5, 'bad', 2])", nil)
+	require.ErrorContains(t, err, "argument query must be numeric coordinates, not String")
 
-	// Unsupported parameter type should error.
-	ctxBadType := context.WithValue(ctx, paramsKey, map[string]interface{}{"query": true})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxBadType, "CALL db.index.vector.queryNodes('idx', 2, $query)")
-	require.Error(t, err)
+	// Search text without an embedder is refused before any index lookup.
+	freshExec := newVectorInputExecutor(t, 2)
+	_, err = freshExec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, 'search text')", nil)
+	require.ErrorContains(t, err, "string query provided but no embedder configured")
 
-	// []interface{} with non-numeric value should error.
-	ctxNonNumeric := context.WithValue(ctx, paramsKey, map[string]interface{}{"query": []interface{}{1, "x"}})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxNonNumeric, "CALL db.index.vector.queryNodes('idx', 2, $query)")
-	require.Error(t, err)
+	// A parameter the statement never supplied is ParameterMissing.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, $query)", map[string]interface{}{"other": []float64{1, 2}})
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): query")
 
-	// No recognized input plus unsupported params path.
-	ctxUnsupported := context.WithValue(ctx, paramsKey, map[string]interface{}{"bad": true})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxUnsupported, "CALL db.index.vector.queryNodes('idx', 2, 123)")
-	require.Error(t, err)
+	// A parameter of an unusable type or content names the actual value.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, $query)", map[string]interface{}{"query": []interface{}{1, "x"}})
+	require.ErrorContains(t, err, "argument query must be numeric coordinates, not String")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, 123)", map[string]interface{}{"bad": true})
+	require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Integer")
+	require.NotContains(t, err.Error(), "parameter $")
 }
 
 func TestCypherHelpers_VectorAndFulltextRelationshipQueryBranches(t *testing.T) {
@@ -1937,29 +1947,26 @@ func TestCypherHelpers_VectorAndFulltextRelationshipQueryBranches(t *testing.T) 
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
-	// Vector relationships: same error/param branches as node vector query.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 'search text')")
-	require.Error(t, err)
+	// Vector relationships: search text needs an embedder.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 'search text')", nil)
+	require.ErrorContains(t, err, "string query provided but no embedder configured")
 
-	res, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $query)")
-	require.NoError(t, err)
-	assert.Empty(t, res.Rows)
+	// A parameter the statement never supplied is ParameterMissing.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $query)", map[string]interface{}{"other": []float64{1, 2}})
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): query")
 
-	ctxMissing := context.WithValue(ctx, paramsKey, map[string]interface{}{"other": []float64{1, 2}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxMissing, "CALL db.index.vector.queryRelationships('idx', 2, $query)")
-	require.Error(t, err)
+	// A parameter of another type is the query argument's own error.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $query)", map[string]interface{}{"query": true})
+	require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Boolean")
 
-	ctxBadType := context.WithValue(ctx, paramsKey, map[string]interface{}{"query": true})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxBadType, "CALL db.index.vector.queryRelationships('idx', 2, $query)")
-	require.Error(t, err)
+	// A non-numeric element is named by its type, not as an unnamed parameter.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $query)", map[string]interface{}{"query": []interface{}{1, "x"}})
+	require.ErrorContains(t, err, "argument query must be numeric coordinates, not String")
 
-	ctxNonNumeric := context.WithValue(ctx, paramsKey, map[string]interface{}{"query": []interface{}{1, "x"}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxNonNumeric, "CALL db.index.vector.queryRelationships('idx', 2, $query)")
-	require.Error(t, err)
-
-	ctxUnsupported := context.WithValue(ctx, paramsKey, map[string]interface{}{"bad": true})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxUnsupported, "CALL db.index.vector.queryRelationships('idx', 2, 123)")
-	require.Error(t, err)
+	// A literal third argument of an unsupported type names its type too.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 123)", nil)
+	require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Integer")
+	require.NotContains(t, err.Error(), "parameter $")
 }
 
 func TestCypherHelpers_VectorRelationshipQuery_AdditionalBranches(t *testing.T) {
@@ -2017,71 +2024,68 @@ func TestCypherHelpers_VectorRelationshipQuery_AdditionalBranches(t *testing.T) 
 	require.NoError(t, schema.AddVectorIndex("idx_dot", "LINKS", "emb", 2, "dot", storage.ConstraintEntityNode))
 
 	// Euclidean branch + k limiting branch.
-	res, err := exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_euclid', 1, [1,0])")
+	res, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_euclid', 1, [1,0])", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, []string{"relationship", "score"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 
 	// Dot branch.
-	res, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, [1,0])")
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, [1,0])", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 2)
 
 	// Parameter []float64 branch.
 	ctxF64 := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float64{1, 0}})
-	res, err = exec.callDbIndexVectorQueryRelationships(ctxF64, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
+	res, err = exec.Execute(ctxF64, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxF64))
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
 	// String parameter with embedder branch.
 	exec.SetEmbedder(&mockQueryEmbedder{embedding: []float32{1, 0}})
 	ctxString := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": "hello"})
-	res, err = exec.callDbIndexVectorQueryRelationships(ctxString, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
+	res, err = exec.Execute(ctxString, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxString))
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
-	// No-input + params provided but all values have supported types => generic no-input error branch.
-	ctxSupported := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float32{1, 0}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxSupported, "CALL db.index.vector.queryRelationships('idx_dot', 5, 123)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no query vector or search text provided")
-
-	// Missing vector/text with no params branch.
-	_, err = exec.callDbIndexVectorQueryRelationships(context.Background(), "CALL db.index.vector.queryRelationships('idx_dot', 5, 123)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no query vector or search text provided")
+	// An integer third argument names the query argument's type, whether or not
+	// the statement also supplied parameters.
+	for _, params := range []map[string]interface{}{nil, {"q": []float32{1, 0}}} {
+		_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, 123)", params)
+		require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Integer")
+		require.NotContains(t, err.Error(), "parameter $")
+	}
 
 	// []float32 parameter branch.
 	ctxF32 := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float32{1, 0}})
-	res, err = exec.callDbIndexVectorQueryRelationships(ctxF32, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
+	res, err = exec.Execute(ctxF32, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxF32))
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
 	// []interface{} numeric branch.
 	ctxIface := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []interface{}{1, float64(0)}})
-	res, err = exec.callDbIndexVectorQueryRelationships(ctxIface, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
+	res, err = exec.Execute(ctxIface, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxIface))
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
 	// String parameter with failing embedder branch.
 	exec.SetEmbedder(&failingEmbedder{err: fmt.Errorf("forced embed error")})
 	ctxStringFail := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": "hello"})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxStringFail, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to embed parameter")
+	_, err = exec.Execute(ctxStringFail, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxStringFail))
+	require.ErrorContains(t, err, "failed to embed query 'hello': forced embed error")
 
 	// Direct string query with failing embedder branch.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, 'hello')")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, 'hello')", getParamsFromContext(ctx))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to embed query")
 
-	// Parse error branch.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vector query parse error")
+	// An unbalanced call is the statement's own syntax error, before any
+	// procedure argument is resolved.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5", nil)
+	require.ErrorContains(t, err, "unbalanced parentheses")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// No such index: Neo4j's ProcedureCallFailed, as for queryNodes.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_missing', 5, [1,0])")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_missing', 5, [1,0])", getParamsFromContext(ctx))
 	require.ErrorContains(t, err, "There is no such vector schema index: idx_missing")
 }
 
@@ -2278,15 +2282,15 @@ func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
 	n3, err := eng.GetNode("n3")
 	require.NoError(t, err)
 
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(x)-[:KNOWS]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:LIKES]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)<-[:KNOWS]-()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)-[:ANY]-()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(x)-[:KNOWS]->()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(n)-[:KNOWS]->()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(n)-[:LIKES]->()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n2, "n", "(n)<-[:KNOWS]-()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n2, "n", "(n)-[:ANY]-()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
 
-	assert.False(t, exec.checkChainedPattern(n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
-	assert.True(t, exec.checkChainedPattern(n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
+	assert.False(t, exec.checkChainedPattern(context.Background(), n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
+	assert.True(t, exec.checkChainedPattern(context.Background(), n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
 
 	hops := exec.parseRelationshipHops("(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()", "n")
 	require.Len(t, hops, 2)
@@ -2303,26 +2307,26 @@ func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
 	assert.Empty(t, incomingHops[1].relTypes)
 	assert.Empty(t, exec.parseRelationshipHops("(n)<-[:BROKEN-()", "n"))
 
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
+	assert.True(t, exec.traverseChain(context.Background(), n1, []relationshipHop{
 		{relTypes: []string{"KNOWS"}, outgoing: true},
 		{relTypes: []string{"LIKES"}, outgoing: true},
 	}, 0))
-	assert.False(t, exec.traverseChain(n1, []relationshipHop{
+	assert.False(t, exec.traverseChain(context.Background(), n1, []relationshipHop{
 		{relTypes: []string{"KNOWS"}, outgoing: true},
 		{relTypes: []string{"MISSING"}, outgoing: true},
 	}, 0))
 
 	// Incoming traversal branch.
-	assert.True(t, exec.traverseChain(n3, []relationshipHop{
+	assert.True(t, exec.traverseChain(context.Background(), n3, []relationshipHop{
 		{relTypes: []string{"LIKES"}, outgoing: false},
 		{relTypes: []string{"KNOWS"}, outgoing: false},
 	}, 0))
-	assert.False(t, exec.traverseChain(n3, []relationshipHop{
+	assert.False(t, exec.traverseChain(context.Background(), n3, []relationshipHop{
 		{relTypes: []string{"MISSING"}, outgoing: false},
 	}, 0))
 
 	// No type filter branch.
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
+	assert.True(t, exec.traverseChain(context.Background(), n1, []relationshipHop{
 		{relTypes: nil, outgoing: true},
 	}, 0))
 }

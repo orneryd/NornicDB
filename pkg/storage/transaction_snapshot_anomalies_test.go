@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -102,92 +103,48 @@ func TestTransaction_ReadYourWritesDoesNotBreakAnchoredSnapshot(t *testing.T) {
 	require.NoError(t, tx2.Rollback())
 }
 
-func TestTransaction_LabelScanRepeatabilityWithinSnapshot(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	defer engine.Close()
-
-	for i := 0; i < 3; i++ {
-		_, err := engine.CreateNode(&Node{
-			ID:         NodeID(prefixTestID(fmt.Sprintf("user-%d", i))),
-			Labels:     []string{"User"},
-			Properties: map[string]interface{}{"index": i},
+func TestTransaction_ScanRepeatabilityWithinSnapshot(t *testing.T) {
+	for _, test := range []struct {
+		name, label, idPrefix string
+		read                  func(context.Context, *BadgerTransaction) ([]*Node, error)
+	}{
+		{"TestTransaction_LabelScanRepeatabilityWithinSnapshot", "User", "user", func(ctx context.Context, tx *BadgerTransaction) ([]*Node, error) {
+			return tx.getNodesByLabelLocked(ctx, "User")
+		}},
+		{"TestTransaction_AllNodesRepeatabilityWithinSnapshot", "Node", "all-node", func(ctx context.Context, tx *BadgerTransaction) ([]*Node, error) { return tx.AllNodes(ctx) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newTestMemoryEngine(t)
+			defer engine.Close()
+			for i := 0; i < 3; i++ {
+				_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID(fmt.Sprintf("%s-%d", test.idPrefix, i))), Labels: []string{test.label}, Properties: map[string]interface{}{"index": i}})
+				require.NoError(t, err)
+			}
+			ctx := context.Background()
+			txScan, err := engine.BeginTransaction()
+			require.NoError(t, err)
+			defer txScan.Rollback()
+			before, err := test.read(ctx, txScan)
+			require.NoError(t, err)
+			require.Len(t, before, 3)
+			beforeIDs := sortedNodeIDs(before)
+			txInsert, err := engine.BeginTransaction()
+			require.NoError(t, err)
+			defer txInsert.Rollback()
+			_, err = txInsert.CreateNode(&Node{ID: NodeID(prefixTestID(test.idPrefix + "-new")), Labels: []string{test.label}, Properties: map[string]interface{}{"index": 99}})
+			require.NoError(t, err)
+			require.NoError(t, txInsert.Commit())
+			after, err := test.read(ctx, txScan)
+			require.NoError(t, err)
+			require.Equal(t, beforeIDs, sortedNodeIDs(after))
+			txFresh, err := engine.BeginTransaction()
+			require.NoError(t, err)
+			defer txFresh.Rollback()
+			fresh, err := test.read(ctx, txFresh)
+			require.NoError(t, err)
+			require.Len(t, fresh, 4)
 		})
-		require.NoError(t, err)
 	}
-
-	txScan, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	defer txScan.Rollback()
-
-	before, err := txScan.getNodesByLabelLocked("User")
-	require.NoError(t, err)
-	beforeIDs := sortedNodeIDs(before)
-
-	txInsert, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	_, err = txInsert.CreateNode(&Node{
-		ID:         NodeID(prefixTestID("user-new")),
-		Labels:     []string{"User"},
-		Properties: map[string]interface{}{"index": 99},
-	})
-	require.NoError(t, err)
-	require.NoError(t, txInsert.Commit())
-
-	after, err := txScan.getNodesByLabelLocked("User")
-	require.NoError(t, err)
-	afterIDs := sortedNodeIDs(after)
-	require.Equal(t, beforeIDs, afterIDs)
-
-	txFresh, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	defer txFresh.Rollback()
-	fresh, err := txFresh.getNodesByLabelLocked("User")
-	require.NoError(t, err)
-	require.Len(t, fresh, 4)
-}
-
-func TestTransaction_AllNodesRepeatabilityWithinSnapshot(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	defer engine.Close()
-
-	for i := 0; i < 3; i++ {
-		_, err := engine.CreateNode(&Node{
-			ID:         NodeID(prefixTestID(fmt.Sprintf("all-node-%d", i))),
-			Labels:     []string{"Node"},
-			Properties: map[string]interface{}{"index": i},
-		})
-		require.NoError(t, err)
-	}
-
-	txScan, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	defer txScan.Rollback()
-
-	before, err := txScan.AllNodes()
-	require.NoError(t, err)
-	beforeIDs := sortedNodeIDs(before)
-
-	txInsert, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	_, err = txInsert.CreateNode(&Node{
-		ID:         NodeID(prefixTestID("all-node-new")),
-		Labels:     []string{"Node"},
-		Properties: map[string]interface{}{"index": 99},
-	})
-	require.NoError(t, err)
-	require.NoError(t, txInsert.Commit())
-
-	after, err := txScan.AllNodes()
-	require.NoError(t, err)
-	afterIDs := sortedNodeIDs(after)
-	require.Equal(t, beforeIDs, afterIDs)
-
-	txFresh, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	defer txFresh.Rollback()
-	fresh, err := txFresh.AllNodes()
-	require.NoError(t, err)
-	require.Len(t, fresh, 4)
 }
 
 func TestTransaction_NodeDeleteAndEdgeCreateConflict(t *testing.T) {
@@ -268,9 +225,9 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	defer txRead.Rollback()
 
-	outBefore, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
+	outBefore, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
-	inBefore, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: target})
+	inBefore, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: target})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(firstEdgeID)}, sortedEdgeIDStrings(outBefore))
 	require.Equal(t, []string{string(firstEdgeID)}, sortedEdgeIDStrings(inBefore))
@@ -284,9 +241,9 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 	require.NoError(t, txInsert.CreateEdge(&Edge{ID: laterEdgeID, StartNode: start, EndNode: laterTarget, Type: "LINKS"}))
 	require.NoError(t, txInsert.Commit())
 
-	outAfter, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
+	outAfter, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
-	inAfter, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: laterTarget})
+	inAfter, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: laterTarget})
 	require.NoError(t, err)
 	require.Equal(t, sortedEdgeIDStrings(outBefore), sortedEdgeIDStrings(outAfter))
 	require.Empty(t, inAfter)
@@ -294,7 +251,7 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 	txFresh, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	defer txFresh.Rollback()
-	freshOut, err := txFresh.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
+	freshOut, err := txFresh.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(firstEdgeID), string(laterEdgeID)}, sortedEdgeIDStrings(freshOut))
 }
@@ -326,7 +283,7 @@ func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelet
 	require.NoError(t, err)
 	beforeNode, err := txRead.getCommittedNodeLocked(target)
 	require.NoError(t, err)
-	betweenBefore, err := engine.GetEdgesBetweenVisibleAt(start, target, txRead.readTS)
+	betweenBefore, err := engine.GetEdgesBetweenVisibleAt(context.Background(), start, target, txRead.readTS)
 	require.NoError(t, err)
 	require.Len(t, betweenBefore, 1)
 	require.Equal(t, edgeID, beforeEdge.ID)
@@ -339,7 +296,7 @@ func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelet
 	require.NoError(t, err)
 	afterNode, err := txRead.getCommittedNodeLocked(target)
 	require.NoError(t, err)
-	betweenAfter, err := engine.GetEdgesBetweenVisibleAt(start, target, txRead.readTS)
+	betweenAfter, err := engine.GetEdgesBetweenVisibleAt(context.Background(), start, target, txRead.readTS)
 	require.NoError(t, err)
 	require.Len(t, betweenAfter, 1)
 	require.Equal(t, edgeID, afterEdge.ID)
@@ -355,7 +312,7 @@ func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelet
 	defer txFresh.Rollback()
 	_, err = txFresh.GetNode(target)
 	require.ErrorIs(t, err, ErrNotFound)
-	betweenFresh, err := engine.GetEdgesBetweenVisibleAt(start, target, txFresh.readTS)
+	betweenFresh, err := engine.GetEdgesBetweenVisibleAt(context.Background(), start, target, txFresh.readTS)
 	require.NoError(t, err)
 	require.Len(t, betweenFresh, 0)
 }
@@ -461,7 +418,7 @@ func BenchmarkTransaction_HighContentionAbortRate(b *testing.B) {
 
 func countNodesWithBoolProperty(t *testing.T, tx *BadgerTransaction, label, property string) int {
 	t.Helper()
-	nodes, err := tx.getNodesByLabelLocked(label)
+	nodes, err := tx.getNodesByLabelLocked(context.Background(), label)
 	require.NoError(t, err)
 	count := 0
 	for _, node := range nodes {

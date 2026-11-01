@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -68,7 +69,7 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should be able to retrieve migrated nodes
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(nodes), 2, "Should have at least 2 migrated nodes")
 
@@ -89,7 +90,7 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 	assert.True(t, foundNode2, "legacy-node-2 should be accessible with all properties")
 
 	// Verify edge was migrated with properties preserved
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(edges), 1, "Should have at least 1 migrated edge")
 
@@ -185,7 +186,7 @@ func TestMigration_MixedData(t *testing.T) {
 	store, err := manager.GetDefaultStorage()
 	require.NoError(t, err)
 
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 
 	var foundUnprefixed, foundPrefixed bool
@@ -259,13 +260,13 @@ func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
 	assert.Equal(t, "CONNECTS", retrieved.Type)
 
 	// Verify we can traverse from node1
-	outgoing, err := store.GetOutgoingEdges(storage.NodeID("node-1"))
+	outgoing, err := store.GetOutgoingEdges(context.Background(), storage.NodeID("node-1"))
 	require.NoError(t, err)
 	assert.Len(t, outgoing, 1)
 	assert.Equal(t, storage.EdgeID("edge-1"), outgoing[0].ID)
 
 	// Verify we can traverse to node2
-	incoming, err := store.GetIncomingEdges(storage.NodeID("node-2"))
+	incoming, err := store.GetIncomingEdges(context.Background(), storage.NodeID("node-2"))
 	require.NoError(t, err)
 	assert.Len(t, incoming, 1)
 	assert.Equal(t, storage.EdgeID("edge-1"), incoming[0].ID)
@@ -306,7 +307,7 @@ func TestMigration_LabelIndexesPreserved(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify label index works after migration
-	people, err := store.GetNodesByLabel("Person")
+	people, err := store.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	assert.Len(t, people, 2)
 

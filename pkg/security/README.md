@@ -168,7 +168,7 @@ Direct 1:1 mapping of all SSRF protections:
 | `validateOAuthTokenFormat()` | `ValidateToken()`    | ✅ 100%                     |
 | `validateOAuthUserinfoUrl()` | `ValidateURL()`      | ✅ 100%                     |
 | `createSecureFetchOptions()` | `SecurityMiddleware` | ✅ 100%                     |
-| Private IP detection         | `isPrivateIP()`      | ✅ All ranges               |
+| IP restriction               | `IsRestrictedIP()`   | ✅ All ranges               |
 | Cloud metadata blocking      | `ValidateURL()`      | ✅ AWS/Azure/GCP            |
 | Protocol smuggling           | `ValidateURL()`      | ✅ file://, gopher://, etc. |
 

@@ -20,11 +20,11 @@ type danglingTraversalEngine struct {
 	missingNodeIDs map[storage.NodeID]error
 }
 
-func (e *danglingTraversalEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *danglingTraversalEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if edges, ok := e.forcedOutgoing[nodeID]; ok {
 		return edges, nil
 	}
-	return e.MemoryEngine.GetOutgoingEdges(nodeID)
+	return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
 }
 
 // OutgoingEdgeHeaders mirrors GetOutgoingEdges so the traversal's header fast
@@ -83,10 +83,10 @@ func setupChainedTestData(t *testing.T, exec *StorageExecutor) {
 	require.NoError(t, err)
 
 	// Get all nodes by label
-	persons, _ := exec.storage.GetNodesByLabel("Person")
-	pocs, _ := exec.storage.GetNodesByLabel("POC")
-	areas, _ := exec.storage.GetNodesByLabel("Area")
-	managers, _ := exec.storage.GetNodesByLabel("Manager")
+	persons, _ := exec.storage.GetNodesByLabel(ctx, "Person")
+	pocs, _ := exec.storage.GetNodesByLabel(ctx, "POC")
+	areas, _ := exec.storage.GetNodesByLabel(ctx, "Area")
+	managers, _ := exec.storage.GetNodesByLabel(ctx, "Manager")
 
 	// Map nodes by name
 	nodeByName := make(map[string]*storage.Node)
@@ -392,7 +392,7 @@ func TestTraverseFromNode(t *testing.T) {
 
 	t.Run("traverses from specific node", func(t *testing.T) {
 		// Get a POC node
-		pocs, _ := exec.storage.GetNodesByLabel("POC")
+		pocs, _ := exec.storage.GetNodesByLabel(context.Background(), "POC")
 		require.NotEmpty(t, pocs)
 
 		var poc1 *storage.Node
@@ -433,7 +433,7 @@ func TestTraverseFromNode(t *testing.T) {
 
 	t.Run("returns nil for non-matching label", func(t *testing.T) {
 		// Get a Person node
-		persons, _ := exec.storage.GetNodesByLabel("Person")
+		persons, _ := exec.storage.GetNodesByLabel(context.Background(), "Person")
 		require.NotEmpty(t, persons)
 
 		// Try to traverse from Person but require POC label
@@ -738,9 +738,9 @@ func setupChainedBenchmarkData(b *testing.B, exec *StorageExecutor) {
 	}
 
 	// Get all nodes
-	persons, _ := exec.storage.GetNodesByLabel("Person")
-	pocs, _ := exec.storage.GetNodesByLabel("POC")
-	areas, _ := exec.storage.GetNodesByLabel("Area")
+	persons, _ := exec.storage.GetNodesByLabel(ctx, "Person")
+	pocs, _ := exec.storage.GetNodesByLabel(ctx, "POC")
+	areas, _ := exec.storage.GetNodesByLabel(ctx, "Area")
 
 	// Create relationships
 	for i, poc := range pocs {

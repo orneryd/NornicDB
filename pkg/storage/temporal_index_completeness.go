@@ -207,7 +207,9 @@ func engineScope(engine Engine) []string {
 // RebuildTemporalIndexes, for one label instead of the whole store.
 func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string) error {
 	var ids []NodeID
-	if err := StreamStoredNodesByLabelProjected(engine, label, []string{}, func(node *Node) error {
+	// The backfill is maintenance work without a caller context: its own
+	// lifetime (context.Background) is the boundary, not a forwarded default.
+	if err := StreamStoredNodesByLabelProjected(context.Background(), engine, label, []string{}, func(node *Node) error {
 		if node != nil {
 			ids = append(ids, EnsureNodeIDDatabasePrefixForEngine(engine, node.ID))
 		}
@@ -240,7 +242,9 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string
 var errStopLabelProbe = errors.New("label has nodes")
 
 func labelHasNoNodes(engine Engine, label string) (bool, error) {
-	err := StreamStoredNodesByLabelProjected(engine, label, nil, func(node *Node) error {
+	// A label probe is a maintenance read: it runs on its own lifetime
+	// (context.Background), not on a statement read's context.
+	err := StreamStoredNodesByLabelProjected(context.Background(), engine, label, nil, func(node *Node) error {
 		if node == nil {
 			return nil
 		}
@@ -266,10 +270,18 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	}
 	var overlay []*Node
 	var touched map[NodeID]bool
+	var captureErr error
 	err = b.withReadView(func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
+		pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
+		if err != nil {
+			captureErr = err
+			return
+		}
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr // the canceled capture retires the scan
+		}
 		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, touched: touched, latest: func(node *Node) (bool, error) { nodes = append(nodes, node); return true, nil }})
 		return err
 	})

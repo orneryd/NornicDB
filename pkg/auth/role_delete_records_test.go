@@ -41,32 +41,59 @@ func TestDeletedRoleStartsEmptyAfterRecreation(t *testing.T) {
 	require.Equal(t, `[]`, solo.Properties["roles"])
 }
 
-func TestDeleteRoleOwnedRecordFailureChangesNothing(t *testing.T) {
-	for _, test := range []struct {
+func TestRoleOwnedRecordFailureChangesNothing(t *testing.T) {
+	type faultTarget struct {
 		op storagefault.MutationOperation
 		id storage.NodeID
+	}
+	for _, operation := range []struct {
+		name    string
+		rename  bool
+		targets []faultTarget
 	}{
-		{storagefault.MutationDelete, "proc_priv:execute:ops:db.a"},
-		{storagefault.MutationDelete, "db_priv:ops:nornic"},
-		{storagefault.MutationDelete, "role_db_access:ops"},
-		{storagefault.MutationDelete, "role_entitlement:ops"},
-		{storagefault.MutationUpdate, "user:worker"},
-		{storagefault.MutationDelete, "role:ops"},
+		{name: "TestDeleteRoleOwnedRecordFailureChangesNothing", targets: []faultTarget{
+			{storagefault.MutationDelete, "proc_priv:execute:ops:db.a"},
+			{storagefault.MutationDelete, "db_priv:ops:nornic"},
+			{storagefault.MutationDelete, "role_db_access:ops"},
+			{storagefault.MutationDelete, "role_entitlement:ops"},
+			{storagefault.MutationUpdate, "user:worker"},
+			{storagefault.MutationDelete, "role:ops"},
+		}},
+		{name: "TestRoleRenameRecordFailureChangesNothing", rename: true, targets: []faultTarget{
+			{storagefault.MutationCreate, "proc_priv:boosted:renamed:db.cdc.*"},
+			{storagefault.MutationDelete, "proc_priv:execute:ops:db.a"},
+			{storagefault.MutationCreate, "db_priv:renamed:nornic"},
+			{storagefault.MutationDelete, "role_db_access:ops"},
+			{storagefault.MutationCreate, "role_entitlement:renamed"},
+			{storagefault.MutationUpdate, "user:worker"},
+		}},
 	} {
-		t.Run(string(test.op)+string(test.id), func(t *testing.T) {
-			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-			t.Cleanup(func() { _ = base.Close() })
-			system := storage.NewNamespacedEngine(base, "system")
-			fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
-			roles := seedRoleRename(t, fault)
-			before, err := system.AllNodes()
-			require.NoError(t, err)
-			fault.Operation, fault.ID = test.op, test.id
-			require.ErrorIs(t, roles.DeleteRole(context.Background(), "ops"), errRoleMutation)
-			after, err := system.AllNodes()
-			require.NoError(t, err)
-			require.ElementsMatch(t, before, after)
-			require.True(t, roles.Exists("ops"))
+		t.Run(operation.name, func(t *testing.T) {
+			for _, target := range operation.targets {
+				t.Run(string(target.op)+string(target.id), func(t *testing.T) {
+					base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+					t.Cleanup(func() { _ = base.Close() })
+					system := storage.NewNamespacedEngine(base, "system")
+					fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
+					roles := seedRoleRename(t, fault)
+					before, err := system.AllNodes(context.Background())
+					require.NoError(t, err)
+					fault.Operation, fault.ID = target.op, target.id
+					if operation.rename {
+						err = roles.RenameRole(context.Background(), "ops", "renamed")
+					} else {
+						err = roles.DeleteRole(context.Background(), "ops")
+					}
+					require.ErrorIs(t, err, errRoleMutation)
+					after, err := system.AllNodes(context.Background())
+					require.NoError(t, err)
+					require.ElementsMatch(t, before, after)
+					require.True(t, roles.Exists("ops"))
+					if operation.rename {
+						require.False(t, roles.Exists("renamed"))
+					}
+				})
+			}
 		})
 	}
 }
@@ -85,7 +112,7 @@ func TestDeleteRolePublishesCachesAfterCommit(t *testing.T) {
 			require.NoError(t, stores.Privileges.Load(ctx))
 			require.NoError(t, stores.Entitlements.Load(ctx))
 			require.NoError(t, stores.Users.loadUsers())
-			before, err := system.AllNodes()
+			before, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			switch stage {
 			case "user update":
@@ -105,7 +132,7 @@ func TestDeleteRolePublishesCachesAfterCommit(t *testing.T) {
 				require.Equal(t, []Role{RoleViewer}, stores.Users.users["worker"].Roles)
 			} else {
 				require.ErrorIs(t, err, errRoleMutation)
-				after, err := system.AllNodes()
+				after, err := system.AllNodes(ctx)
 				require.NoError(t, err)
 				require.ElementsMatch(t, before, after)
 				require.True(t, roles.Exists("ops"))

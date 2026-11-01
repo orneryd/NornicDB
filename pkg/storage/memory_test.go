@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -188,11 +189,11 @@ func TestMemoryEngine_UpdateNode(t *testing.T) {
 		}}))
 
 		// Old label should be empty
-		oldNodes, _ := engine.GetNodesByLabel("OldLabel")
+		oldNodes, _ := engine.GetNodesByLabel(context.Background(), "OldLabel")
 		assert.Empty(t, oldNodes)
 
 		// New label should have node
-		newNodes, _ := engine.GetNodesByLabel("NewLabel")
+		newNodes, _ := engine.GetNodesByLabel(context.Background(), "NewLabel")
 		require.Len(t, newNodes, 1)
 		assert.Equal(t, prefixTestID("node-1"), string(newNodes[0].ID))
 	})
@@ -244,7 +245,7 @@ func TestMemoryEngine_DeleteNode(t *testing.T) {
 
 		require.NoError(t, engine.DeleteNode(NodeID(prefixTestID("node-1"))))
 
-		nodes, _ := engine.GetNodesByLabel("TestLabel")
+		nodes, _ := engine.GetNodesByLabel(context.Background(), "TestLabel")
 		assert.Empty(t, nodes)
 	})
 
@@ -494,10 +495,10 @@ func TestMemoryEngine_UpdateEdge(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify indexes updated
-		outgoing, _ := engine.GetOutgoingEdges(NodeID(prefixTestID("n1")))
+		outgoing, _ := engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n1")))
 		assert.Empty(t, outgoing)
 
-		outgoing, _ = engine.GetOutgoingEdges(NodeID(prefixTestID("n2")))
+		outgoing, _ = engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n2")))
 		require.Len(t, outgoing, 1)
 		assert.Equal(t, prefixTestID("edge-1"), string(outgoing[0].ID))
 	})
@@ -563,10 +564,10 @@ func TestMemoryEngine_DeleteEdge(t *testing.T) {
 
 		require.NoError(t, engine.DeleteEdge(EdgeID(prefixTestID("edge-1"))))
 
-		outgoing, _ := engine.GetOutgoingEdges(NodeID(prefixTestID("n1")))
+		outgoing, _ := engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n1")))
 		assert.Empty(t, outgoing)
 
-		incoming, _ := engine.GetIncomingEdges(NodeID(prefixTestID("n2")))
+		incoming, _ := engine.GetIncomingEdges(context.Background(), NodeID(prefixTestID("n2")))
 		assert.Empty(t, incoming)
 	})
 
@@ -604,22 +605,22 @@ func TestMemoryEngine_GetNodesByLabel(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		persons, err := engine.GetNodesByLabel("Person")
+		persons, err := engine.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		assert.Len(t, persons, 2)
 
-		employees, err := engine.GetNodesByLabel("Employee")
+		employees, err := engine.GetNodesByLabel(context.Background(), "Employee")
 		require.NoError(t, err)
 		assert.Len(t, employees, 1)
 
-		companies, err := engine.GetNodesByLabel("Company")
+		companies, err := engine.GetNodesByLabel(context.Background(), "Company")
 		require.NoError(t, err)
 		assert.Len(t, companies, 1)
 	})
 
 	t.Run("returns empty for nonexistent label", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		nodes, err := engine.GetNodesByLabel("NonexistentLabel")
+		nodes, err := engine.GetNodesByLabel(context.Background(), "NonexistentLabel")
 		require.NoError(t, err)
 		assert.Empty(t, nodes)
 	})
@@ -627,7 +628,7 @@ func TestMemoryEngine_GetNodesByLabel(t *testing.T) {
 	t.Run("closed engine", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
 		engine.Close()
-		_, err := engine.GetNodesByLabel("Test")
+		_, err := engine.GetNodesByLabel(context.Background(), "Test")
 		assert.ErrorIs(t, err, ErrStorageClosed)
 	})
 
@@ -639,100 +640,110 @@ func TestMemoryEngine_GetNodesByLabel(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		exact, err := engine.GetNodesByLabel("Person")
+		exact, err := engine.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		require.Len(t, exact, 1)
 		assert.Equal(t, prefixTestID("node-1"), string(exact[0].ID))
 
 		for _, other := range []string{"person", "PERSON", "PeRsOn"} {
-			nodes, err := engine.GetNodesByLabel(other)
+			nodes, err := engine.GetNodesByLabel(context.Background(), other)
 			require.NoError(t, err)
 			assert.Empty(t, nodes, "%q is another label", other)
 		}
 	})
 }
 
+// memoryDirectionalEdgeCase is one directional edge-lookup case. A case with
+// partners builds the shared two-partner fixture, an isolated case builds only
+// that node, and a case with neither runs against the empty engine.
+type memoryDirectionalEdgeCase struct {
+	name      string
+	partners  [2]string
+	towardHub bool
+	isolated  string
+	query     string
+	wantCount int
+	wantErr   error
+}
+
+// memoryDirectionalEdgeFixture builds the graph the outgoing and incoming
+// edge-lookup cases share: a "center" hub, two partner nodes, e1/e2 joining the
+// hub to one partner each in the queried direction and e3 joining it the other
+// way. towardHub selects the incoming shape; otherwise the edges point away.
+func memoryDirectionalEdgeFixture(t *testing.T, engine *MemoryEngine, partners [2]string, towardHub bool) {
+	t.Helper()
+	for _, id := range []string{"center", partners[0], partners[1]} {
+		_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID(id))})
+		require.NoError(t, err)
+	}
+	for _, spec := range [][3]string{
+		{"e1", partners[0], "center"},
+		{"e2", partners[1], "center"},
+		{"e3", "center", partners[0]},
+	} {
+		start, end := spec[1], spec[2]
+		if !towardHub {
+			start, end = end, start
+		}
+		require.NoError(t, engine.CreateEdge(&Edge{
+			ID:        EdgeID(prefixTestID(spec[0])),
+			StartNode: NodeID(prefixTestID(start)),
+			EndNode:   NodeID(prefixTestID(end)),
+		}))
+	}
+}
+
+// runMemoryDirectionalEdgeCases owns the fixture and the assertions for both
+// lookup directions; each caller supplies only its own lookup so the outgoing
+// and incoming contracts stay distinct while the graph and expectations live
+// once.
+func runMemoryDirectionalEdgeCases(t *testing.T, lookup func(*MemoryEngine, NodeID) ([]*Edge, error), cases []memoryDirectionalEdgeCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTestMemoryEngine(t)
+			if tc.partners[0] != "" {
+				memoryDirectionalEdgeFixture(t, engine, tc.partners, tc.towardHub)
+			}
+			if tc.isolated != "" {
+				_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID(tc.isolated))})
+				require.NoError(t, err)
+			}
+			id := NodeID(tc.query)
+			if tc.query != "" {
+				id = NodeID(prefixTestID(tc.query))
+			}
+			edges, err := lookup(engine, id)
+			if tc.wantErr != nil {
+				assert.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			if tc.wantCount == 0 {
+				assert.Empty(t, edges)
+				return
+			}
+			assert.Len(t, edges, tc.wantCount)
+		})
+	}
+}
+
 func TestMemoryEngine_GetOutgoingEdges(t *testing.T) {
-	t.Run("returns outgoing edges", func(t *testing.T) {
-		engine := newTestMemoryEngine(t)
-		_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("center"))})
-		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("target1"))})
-		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("target2"))})
-		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{
-			ID:        EdgeID(prefixTestID("e1")),
-			StartNode: NodeID(prefixTestID("center")),
-			EndNode:   NodeID(prefixTestID("target1")),
-		}))
-		require.NoError(t, engine.CreateEdge(&Edge{
-			ID:        EdgeID(prefixTestID("e2")),
-			StartNode: NodeID(prefixTestID("center")),
-			EndNode:   NodeID(prefixTestID("target2")),
-		}))
-		require.NoError(t, engine.CreateEdge(&Edge{
-			ID:        EdgeID(prefixTestID("e3")),
-			StartNode: NodeID(prefixTestID("target1")),
-			EndNode:   NodeID(prefixTestID("center")),
-		}))
-
-		edges, err := engine.GetOutgoingEdges(NodeID(prefixTestID("center")))
-		require.NoError(t, err)
-		assert.Len(t, edges, 2)
-	})
-
-	t.Run("returns empty for node with no outgoing", func(t *testing.T) {
-		engine := newTestMemoryEngine(t)
-		_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("isolated"))})
-		require.NoError(t, err)
-
-		edges, err := engine.GetOutgoingEdges(NodeID(prefixTestID("isolated")))
-		require.NoError(t, err)
-		assert.Empty(t, edges)
-	})
-
-	t.Run("empty ID", func(t *testing.T) {
-		engine := newTestMemoryEngine(t)
-		_, err := engine.GetOutgoingEdges("")
-		assert.ErrorIs(t, err, ErrInvalidID)
+	runMemoryDirectionalEdgeCases(t, func(engine *MemoryEngine, id NodeID) ([]*Edge, error) {
+		return engine.GetOutgoingEdges(context.Background(), id)
+	}, []memoryDirectionalEdgeCase{
+		{name: "returns outgoing edges", partners: [2]string{"target1", "target2"}, query: "center", wantCount: 2},
+		{name: "returns empty for node with no outgoing", isolated: "isolated", query: "isolated"},
+		{name: "empty ID", wantErr: ErrInvalidID},
 	})
 }
 
 func TestMemoryEngine_GetIncomingEdges(t *testing.T) {
-	t.Run("returns incoming edges", func(t *testing.T) {
-		engine := newTestMemoryEngine(t)
-		_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("center"))})
-		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("source1"))})
-		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("source2"))})
-		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{
-			ID:        EdgeID(prefixTestID("e1")),
-			StartNode: NodeID(prefixTestID("source1")),
-			EndNode:   NodeID(prefixTestID("center")),
-		}))
-		require.NoError(t, engine.CreateEdge(&Edge{
-			ID:        EdgeID(prefixTestID("e2")),
-			StartNode: NodeID(prefixTestID("source2")),
-			EndNode:   NodeID(prefixTestID("center")),
-		}))
-		require.NoError(t, engine.CreateEdge(&Edge{
-			ID:        EdgeID(prefixTestID("e3")),
-			StartNode: NodeID(prefixTestID("center")),
-			EndNode:   NodeID(prefixTestID("source1")),
-		}))
-
-		edges, err := engine.GetIncomingEdges(NodeID(prefixTestID("center")))
-		require.NoError(t, err)
-		assert.Len(t, edges, 2)
-	})
-
-	t.Run("empty ID", func(t *testing.T) {
-		engine := newTestMemoryEngine(t)
-		_, err := engine.GetIncomingEdges("")
-		assert.ErrorIs(t, err, ErrInvalidID)
+	runMemoryDirectionalEdgeCases(t, func(engine *MemoryEngine, id NodeID) ([]*Edge, error) {
+		return engine.GetIncomingEdges(context.Background(), id)
+	}, []memoryDirectionalEdgeCase{
+		{name: "returns incoming edges", partners: [2]string{"source1", "source2"}, towardHub: true, query: "center", wantCount: 2},
+		{name: "empty ID", wantErr: ErrInvalidID},
 	})
 }
 
@@ -763,7 +774,7 @@ func TestMemoryEngine_GetEdgesBetween(t *testing.T) {
 			EndNode:   NodeID(prefixTestID("n3")),
 		}))
 
-		edges, err := engine.GetEdgesBetween(NodeID(prefixTestID("n1")), NodeID(prefixTestID("n2")))
+		edges, err := engine.GetEdgesBetween(context.Background(), NodeID(prefixTestID("n1")), NodeID(prefixTestID("n2")))
 		require.NoError(t, err)
 		assert.Len(t, edges, 2)
 	})
@@ -775,20 +786,20 @@ func TestMemoryEngine_GetEdgesBetween(t *testing.T) {
 		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2"))})
 		require.NoError(t, err)
 
-		edges, err := engine.GetEdgesBetween(NodeID(prefixTestID("n1")), NodeID(prefixTestID("n2")))
+		edges, err := engine.GetEdgesBetween(context.Background(), NodeID(prefixTestID("n1")), NodeID(prefixTestID("n2")))
 		require.NoError(t, err)
 		assert.Empty(t, edges)
 	})
 
 	t.Run("empty start ID", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		_, err := engine.GetEdgesBetween("", "n2")
+		_, err := engine.GetEdgesBetween(context.Background(), "", "n2")
 		assert.ErrorIs(t, err, ErrInvalidID)
 	})
 
 	t.Run("empty end ID", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		_, err := engine.GetEdgesBetween("n1", "")
+		_, err := engine.GetEdgesBetween(context.Background(), "n1", "")
 		assert.ErrorIs(t, err, ErrInvalidID)
 	})
 }
@@ -811,7 +822,7 @@ func TestMemoryEngine_BulkCreateNodes(t *testing.T) {
 		assert.Equal(t, int64(3), count)
 
 		// Verify label indexes
-		aNodes, _ := engine.GetNodesByLabel("A")
+		aNodes, _ := engine.GetNodesByLabel(context.Background(), "A")
 		assert.Len(t, aNodes, 2)
 	})
 
@@ -1161,13 +1172,16 @@ func TestMemoryEngine_ImplementsEngine(t *testing.T) {
 // Tests for 0% coverage functions
 // ========================================
 
-func TestGetAllNodes(t *testing.T) {
+func TestAllNodes(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	// Test empty storage
 	t.Run("empty_storage", func(t *testing.T) {
-		nodes := engine.GetAllNodes()
+		nodes, err := engine.AllNodes(context.Background())
+		if err != nil {
+			t.Fatalf("AllNodes failed: %v", err)
+		}
 		if len(nodes) != 0 {
 			t.Errorf("Expected 0 nodes, got %d", len(nodes))
 		}
@@ -1195,7 +1209,10 @@ func TestGetAllNodes(t *testing.T) {
 	engine.CreateNode(node3)
 
 	t.Run("all_nodes_returned", func(t *testing.T) {
-		nodes := engine.GetAllNodes()
+		nodes, err := engine.AllNodes(context.Background())
+		if err != nil {
+			t.Fatalf("AllNodes failed: %v", err)
+		}
 		if len(nodes) != 3 {
 			t.Errorf("Expected 3 nodes, got %d", len(nodes))
 		}
@@ -1211,7 +1228,10 @@ func TestGetAllNodes(t *testing.T) {
 	})
 
 	t.Run("returns_copies", func(t *testing.T) {
-		nodes := engine.GetAllNodes()
+		nodes, err := engine.AllNodes(context.Background())
+		if err != nil {
+			t.Fatalf("AllNodes failed: %v", err)
+		}
 		// Modify returned node
 		nodes[0].Properties["modified"] = true
 
@@ -1227,9 +1247,8 @@ func TestGetAllNodes(t *testing.T) {
 		closedEngine.CreateNode(&Node{ID: NodeID(prefixTestID("test")), Labels: []string{"Test"}})
 		closedEngine.Close()
 
-		nodes := closedEngine.GetAllNodes()
-		if len(nodes) != 0 {
-			t.Errorf("Closed engine should return empty slice, got %d nodes", len(nodes))
+		if nodes, err := closedEngine.AllNodes(context.Background()); err == nil || len(nodes) != 0 {
+			t.Errorf("Closed engine must report the failed read: len=%d err=%v", len(nodes), err)
 		}
 	})
 }

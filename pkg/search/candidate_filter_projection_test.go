@@ -46,9 +46,9 @@ func BenchmarkTypeOnlyCandidateFilterFromMetadata(b *testing.B) {
 	}
 }
 
-func (s *candidateFilterReadSpy) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (s *candidateFilterReadSpy) BatchGetNodes(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	s.fullBatchReads++
-	return s.Engine.BatchGetNodes(ids)
+	return s.Engine.BatchGetNodes(ctx, ids)
 }
 
 func (s *candidateFilterReadSpy) GetNode(id storage.NodeID) (*storage.Node, error) {
@@ -56,7 +56,7 @@ func (s *candidateFilterReadSpy) GetNode(id storage.NodeID) (*storage.Node, erro
 	return s.Engine.GetNode(id)
 }
 
-func (s *candidateFilterReadSpy) BatchGetNodesWithoutEmbeddings(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (s *candidateFilterReadSpy) BatchGetNodesWithoutEmbeddings(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	s.lightBatchReads++
 	if s.batchErr != nil {
 		return nil, s.batchErr

@@ -250,6 +250,14 @@ BOOSTED: 'BOOSTED';
 PROCEDURE: 'PROCEDURE';
 DBMS: 'DBMS';
 TO: 'TO';
+
+// The LOAD CSV reading clause keeps its words last among the keywords, so the
+// earlier token numbers stay as they were; `symbol` keeps them usable as
+// names, as it does for every other clause keyword.
+LOAD: 'LOAD';
+CSV: 'CSV';
+HEADERS: 'HEADERS';
+FIELDTERMINATOR: 'FIELDTERMINATOR';
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
 

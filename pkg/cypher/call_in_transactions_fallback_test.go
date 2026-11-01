@@ -25,7 +25,7 @@ func TestVariableScopeCallInTransactionsFallback_BatchesSeeStatementParameters(t
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	_, err := exec.Execute(context.Background(), "UNWIND range(1, 3) AS i CREATE (:X {id: i})", nil)
 	require.NoError(t, err)
-	seeds, err := exec.storage.GetNodesByLabel("X")
+	seeds, err := exec.storage.GetNodesByLabel(context.Background(), "X")
 	require.NoError(t, err)
 
 	ctx := withQueryParams(context.Background(), map[string]interface{}{"mark": "seen"})

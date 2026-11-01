@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -84,7 +85,7 @@ func TestBadgerTransaction_ValidateNodeConstraints_DomainBranch(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
 
-	err = tx.validateNodeConstraints(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"status": "disabled"}})
+	err = tx.validateNodeConstraints(context.Background(), &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"status": "disabled"}})
 	require.Error(t, err)
 	var cv *ConstraintViolationError
 	require.True(t, errors.As(err, &cv))

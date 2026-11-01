@@ -24,7 +24,7 @@ type blockingNodeIteratorEngine struct {
 func (e *blockingNodeIteratorEngine) IterateNodes(fn func(*storage.Node) bool) error {
 	e.enteredOnce.Do(func() { close(e.entered) })
 	<-e.release
-	nodes, err := e.Engine.AllNodes()
+	nodes, err := e.Engine.AllNodes(context.Background())
 	if err != nil {
 		return err
 	}

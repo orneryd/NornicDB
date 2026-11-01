@@ -44,7 +44,7 @@ func TestNeo4jCompatExactQueries(t *testing.T) {
 	}
 
 	// Verify setup
-	nodes, err := store.GetNodesByLabel("File")
+	nodes, err := store.GetNodesByLabel(ctx, "File")
 	require.NoError(t, err)
 	t.Logf("Created %d File nodes", len(nodes))
 	for _, n := range nodes {
@@ -176,7 +176,7 @@ func TestNeo4jCompatExactQueriesWithEmbeddings(t *testing.T) {
 	}
 
 	// Set embeddings on 2 of 3 files (simulating NornicDB embed worker)
-	nodes, err := store.GetNodesByLabel("File")
+	nodes, err := store.GetNodesByLabel(ctx, "File")
 	require.NoError(t, err)
 	require.Len(t, nodes, 3)
 
@@ -363,7 +363,7 @@ func TestNeo4jCompatE2EWithServerStorageAndEmbeddings(t *testing.T) {
 	// ==========================================================================
 	// Step 3: Verify chunks were created with relationships
 	// ==========================================================================
-	allNodes, err := store.AllNodes()
+	allNodes, err := store.AllNodes(ctx)
 	require.NoError(t, err)
 
 	// Build maps for lookup

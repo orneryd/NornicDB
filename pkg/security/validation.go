@@ -149,7 +149,7 @@ func ValidateURL(rawURL string, policy URLPolicy) error {
 			if policy.HostPolicy == URLDevelopmentHost && ip.IsLoopback() {
 				return nil
 			}
-			if isPrivateIP(ip) {
+			if IsRestrictedIP(ip, IPPolicy{}) {
 				return ErrURLPrivateIP
 			}
 		}
@@ -188,65 +188,60 @@ func ParseURL(rawURL string) (*url.URL, error) {
 	return parsed, nil
 }
 
-// isPrivateIP checks if an IP address is in a private range.
-func isPrivateIP(ip net.IP) bool {
+// IPPolicy selects the additional address classes a consumer refuses. The zero
+// policy is the literal-address rule ValidateURL applies. Multicast and
+// unspecified addresses are separate flags because they stay permitted for a
+// consumer that never rejected them; enabling a flag only adds its class.
+type IPPolicy struct {
+	// RejectMulticast refuses multicast destination addresses.
+	RejectMulticast bool
+	// RejectUnspecified refuses unspecified addresses such as 0.0.0.0 and ::.
+	RejectUnspecified bool
+}
+
+// IsRestrictedIP is the one owner of IP address restriction. ValidateURL asks
+// it about a URL's literal host with the zero policy; APOC asks it about every
+// resolved and every dialled address with RejectMulticast and
+// RejectUnspecified enabled.
+//
+// The zero policy refuses loopback, private and link-local addresses: IPv4
+// 10/8, 172.16/12, 192.168/16 and 169.254/16, and IPv6 fc00::/7 and fe80::/10.
+// An IPv4-mapped IPv6 address is judged by its IPv4 address. A nil or malformed
+// address is not restricted here; a consumer that must not use an unjudgeable
+// address rejects it before asking this question.
+func IsRestrictedIP(ip net.IP, policy IPPolicy) bool {
 	if ip.IsLoopback() {
 		return true
 	}
 
-	if ip.To4() != nil {
-		privateRanges := []struct {
-			start net.IP
-			end   net.IP
-		}{
-			{net.ParseIP("10.0.0.0"), net.ParseIP("10.255.255.255")},
-			{net.ParseIP("172.16.0.0"), net.ParseIP("172.31.255.255")},
-			{net.ParseIP("192.168.0.0"), net.ParseIP("192.168.255.255")},
-			{net.ParseIP("169.254.0.0"), net.ParseIP("169.254.255.255")},
-		}
-
-		for _, r := range privateRanges {
-			if inRange(ip, r.start, r.end) {
-				return true
-			}
+	if v4 := ip.To4(); v4 != nil {
+		switch {
+		case v4[0] == 10:
+			return true
+		case v4[0] == 172 && v4[1]&0xf0 == 16:
+			return true
+		case v4[0] == 192 && v4[1] == 168:
+			return true
+		case v4[0] == 169 && v4[1] == 254:
+			return true
 		}
 	} else {
 		if ip.IsPrivate() {
 			return true
 		}
+		// fe80::/10 IPv6 link-local unicast.
 		if len(ip) == 16 && ip[0] == 0xfe && (ip[1]&0xc0) == 0x80 {
 			return true
 		}
 	}
 
+	if policy.RejectMulticast && ip.IsMulticast() {
+		return true
+	}
+	if policy.RejectUnspecified && ip.IsUnspecified() {
+		return true
+	}
 	return false
-}
-
-func inRange(ip, start, end net.IP) bool {
-	return bytesCompare(ip, start) >= 0 && bytesCompare(ip, end) <= 0
-}
-
-func bytesCompare(a, b net.IP) int {
-	a4 := a.To4()
-	b4 := b.To4()
-	if a4 != nil && b4 != nil {
-		for i := 0; i < len(a4); i++ {
-			if a4[i] < b4[i] {
-				return -1
-			}
-			if a4[i] > b4[i] {
-				return 1
-			}
-		}
-		return 0
-	}
-	if string(a) < string(b) {
-		return -1
-	}
-	if string(a) > string(b) {
-		return 1
-	}
-	return 0
 }
 
 // ValidateHeaderValue validates HTTP header values to prevent injection attacks.

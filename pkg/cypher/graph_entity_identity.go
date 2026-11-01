@@ -162,12 +162,15 @@ func (v *graphIdentityStorage) edge(edge *storage.Edge) *storage.Edge {
 	return &copy
 }
 
-func (v *graphIdentityStorage) nodes(nodes []*storage.Node) []*storage.Node {
+func (v *graphIdentityStorage) nodes(nodes []*storage.Node, err error) ([]*storage.Node, error) {
+	if err != nil {
+		return nil, err
+	}
 	result := make([]*storage.Node, len(nodes))
 	for i, node := range nodes {
 		result[i] = v.node(node)
 	}
-	return result
+	return result, nil
 }
 
 func (v *graphIdentityStorage) edges(edges []*storage.Edge, err error) ([]*storage.Edge, error) {
@@ -190,7 +193,7 @@ func (v *graphIdentityStorage) GetNode(key storage.NodeID) (*storage.Node, error
 	return v.node(node), err
 }
 
-func (v *graphIdentityStorage) BatchGetNodes(keys []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (v *graphIdentityStorage) BatchGetNodes(ctx context.Context, keys []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	requests := make([]storage.NodeID, 0, len(keys))
 	originals := make(map[storage.NodeID][]storage.NodeID, len(keys))
 	for _, key := range keys {
@@ -201,7 +204,7 @@ func (v *graphIdentityStorage) BatchGetNodes(keys []storage.NodeID) (map[storage
 			originals[id] = append(originals[id], key)
 		}
 	}
-	nodes, err := v.Engine.BatchGetNodes(requests)
+	nodes, err := v.Engine.BatchGetNodes(ctx, requests)
 	if err != nil {
 		return nil, err
 	}
@@ -214,53 +217,44 @@ func (v *graphIdentityStorage) BatchGetNodes(keys []storage.NodeID) (map[storage
 	return result, nil
 }
 
-func (v *graphIdentityStorage) GetAllNodes() []*storage.Node { return v.nodes(v.Engine.GetAllNodes()) }
-func (v *graphIdentityStorage) AllNodes() ([]*storage.Node, error) {
-	nodes, err := v.Engine.AllNodes()
-	if err != nil {
-		return nil, err
-	}
-	return v.nodes(nodes), nil
+func (v *graphIdentityStorage) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return v.nodes(v.Engine.AllNodes(ctx))
 }
-func (v *graphIdentityStorage) AllEdges() ([]*storage.Edge, error) {
-	return v.edges(v.Engine.AllEdges())
+func (v *graphIdentityStorage) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
+	return v.edges(v.Engine.AllEdges(ctx))
 }
-func (v *graphIdentityStorage) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	nodes, err := v.Engine.GetNodesByLabel(label)
-	if err != nil {
-		return nil, err
-	}
-	return v.nodes(nodes), nil
+func (v *graphIdentityStorage) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return v.nodes(v.Engine.GetNodesByLabel(ctx, label))
 }
 func (v *graphIdentityStorage) GetFirstNodeByLabel(label string) (*storage.Node, error) {
 	node, err := v.Engine.GetFirstNodeByLabel(label)
 	return v.node(node), err
 }
-func (v *graphIdentityStorage) GetOutgoingEdges(key storage.NodeID) ([]*storage.Edge, error) {
+func (v *graphIdentityStorage) GetOutgoingEdges(ctx context.Context, key storage.NodeID) ([]*storage.Edge, error) {
 	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine)
 	if !ok {
 		return nil, nil
 	}
-	return v.edges(v.Engine.GetOutgoingEdges(id))
+	return v.edges(v.Engine.GetOutgoingEdges(ctx, id))
 }
-func (v *graphIdentityStorage) GetIncomingEdges(key storage.NodeID) ([]*storage.Edge, error) {
+func (v *graphIdentityStorage) GetIncomingEdges(ctx context.Context, key storage.NodeID) ([]*storage.Edge, error) {
 	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine)
 	if !ok {
 		return nil, nil
 	}
-	return v.edges(v.Engine.GetIncomingEdges(id))
+	return v.edges(v.Engine.GetIncomingEdges(ctx, id))
 }
-func (v *graphIdentityStorage) GetEdgesByType(kind string) ([]*storage.Edge, error) {
-	return v.edges(v.Engine.GetEdgesByType(kind))
+func (v *graphIdentityStorage) GetEdgesByType(ctx context.Context, kind string) ([]*storage.Edge, error) {
+	return v.edges(v.Engine.GetEdgesByType(ctx, kind))
 }
 
-func (v *graphIdentityStorage) GetEdgesBetween(start, end storage.NodeID) ([]*storage.Edge, error) {
+func (v *graphIdentityStorage) GetEdgesBetween(ctx context.Context, start, end storage.NodeID) ([]*storage.Edge, error) {
 	left, leftOK := storage.EntityIdentityFromKey(string(start)).NodeLookupID(v.Engine)
 	right, rightOK := storage.EntityIdentityFromKey(string(end)).NodeLookupID(v.Engine)
 	if !leftOK || !rightOK {
 		return nil, nil
 	}
-	return v.edges(v.Engine.GetEdgesBetween(left, right))
+	return v.edges(v.Engine.GetEdgesBetween(ctx, left, right))
 }
 func (v *graphIdentityStorage) GetEdgeBetween(start, end storage.NodeID, kind string) *storage.Edge {
 	left, leftOK := storage.EntityIdentityFromKey(string(start)).NodeLookupID(v.Engine)
@@ -271,11 +265,11 @@ func (v *graphIdentityStorage) GetEdgeBetween(start, end storage.NodeID, kind st
 	return v.edge(v.Engine.GetEdgeBetween(left, right, kind))
 }
 func (v *graphIdentityStorage) GetInDegree(key storage.NodeID) int {
-	edges, _ := v.GetIncomingEdges(key)
+	edges, _ := v.GetIncomingEdges(context.Background(), key)
 	return len(edges)
 }
 func (v *graphIdentityStorage) GetOutDegree(key storage.NodeID) int {
-	edges, _ := v.GetOutgoingEdges(key)
+	edges, _ := v.GetOutgoingEdges(context.Background(), key)
 	return len(edges)
 }
 func (v *graphIdentityStorage) StreamNodesWithOptions(ctx context.Context, options storage.StreamNodesOptions, visit func(*storage.Node) error) error {
@@ -311,7 +305,7 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 
 // algorithmIdentityInput gives all whole-graph algorithms one key domain for
 // native arguments, graph scans, adjacency and their computed maps.
-func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, error) {
+func (e *StorageExecutor) algorithmIdentityInput(ctx context.Context, procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, error) {
 	view := graphIdentityView(e.storage, e.graphIdentityScope)
 	graph := e.cloneWithStorage(view, selectedDatabaseStorage)
 	input := append([]interface{}(nil), args...)
@@ -328,7 +322,7 @@ func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interf
 			}
 		}
 	}
-	nodes, err := graph.algorithmNodes(procedure, input)
+	nodes, err := graph.algorithmNodes(ctx, procedure, input)
 	return graph, nodes, err
 }
 

@@ -1,6 +1,8 @@
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 // CoordinatorOwnedTransactionMetadataKey identifies a participant whose
 // terminal outcome belongs to a Fabric coordinator. Independent commits by a

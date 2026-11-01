@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -10,17 +11,17 @@ import (
 
 type schemaLocalizationScanErrorEngine struct{ Engine }
 
-func (e *schemaLocalizationScanErrorEngine) GetNodesByLabel(string) ([]*Node, error) {
+func (e *schemaLocalizationScanErrorEngine) GetNodesByLabel(ctx context.Context, _ string) ([]*Node, error) {
 	return nil, ErrConflict
 }
 
 type schemaLocalizationPredicateErrorEngine struct{ Engine }
 
-func (e *schemaLocalizationPredicateErrorEngine) GetNodesByLabel(string) ([]*Node, error) {
+func (e *schemaLocalizationPredicateErrorEngine) GetNodesByLabel(ctx context.Context, _ string) ([]*Node, error) {
 	return []*Node{{ID: "test:n1", Labels: []string{"Person"}}}, nil
 }
 
-func (e *schemaLocalizationPredicateErrorEngine) GetOutgoingEdges(NodeID) ([]*Edge, error) {
+func (e *schemaLocalizationPredicateErrorEngine) GetOutgoingEdges(ctx context.Context, _ NodeID) ([]*Edge, error) {
 	return nil, ErrConflict
 }
 

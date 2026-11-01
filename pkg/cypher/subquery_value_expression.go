@@ -969,9 +969,9 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 	var edges []*storage.Edge
 	var err error
 	if shape.outgoing {
-		edges, err = store.GetOutgoingEdges(node.ID)
+		edges, err = store.GetOutgoingEdges(ctx, node.ID)
 	} else {
-		edges, err = store.GetIncomingEdges(node.ID)
+		edges, err = store.GetIncomingEdges(ctx, node.ID)
 	}
 	if err != nil {
 		recordExpressionFailure(ctx, err)

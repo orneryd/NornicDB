@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -89,10 +90,10 @@ func TestBufferedWALBinaryIndexPublicReplay(t *testing.T) {
 	edge, err := dest.GetEdge("test:r")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:r"), edge.ID)
-	outgoing, err := dest.GetOutgoingEdges("test:n128")
+	outgoing, err := dest.GetOutgoingEdges(context.Background(), "test:n128")
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
-	incoming, err := dest.GetIncomingEdges("test:n139")
+	incoming, err := dest.GetIncomingEdges(context.Background(), "test:n139")
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 }
@@ -136,11 +137,11 @@ func TestBufferedWALForeignNumericIDsPublicReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:n128"), got.StartNode)
 	require.Equal(t, NodeID("test:n139"), got.EndNode)
-	outgoing, err := dest.GetOutgoingEdges("test:n128")
+	outgoing, err := dest.GetOutgoingEdges(context.Background(), "test:n128")
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, EdgeID("test:r"), outgoing[0].ID)
-	incoming, err := dest.GetIncomingEdges("test:n139")
+	incoming, err := dest.GetIncomingEdges(context.Background(), "test:n139")
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 	require.Equal(t, EdgeID("test:r"), incoming[0].ID)
@@ -148,7 +149,7 @@ func TestBufferedWALForeignNumericIDsPublicReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:n10"), old.StartNode)
 	require.Equal(t, NodeID("test:n11"), old.EndNode)
-	keep, err := dest.GetOutgoingEdges("test:n10")
+	keep, err := dest.GetOutgoingEdges(context.Background(), "test:n10")
 	require.NoError(t, err)
 	require.Len(t, keep, 1)
 	require.Equal(t, EdgeID("test:existing"), keep[0].ID)

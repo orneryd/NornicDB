@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -49,7 +50,7 @@ func TestScopedLabelIDReadCostIgnoresOtherDatabases(t *testing.T) {
 				namespace := NewNamespacedEngine(engine, "a")
 				return testing.AllocsPerRun(3, func() {
 					seen := 0
-					err := namespace.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+					err := namespace.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool {
 						seen++
 						if id != "n0" {
 							t.Fatalf("first ID = %q", id)

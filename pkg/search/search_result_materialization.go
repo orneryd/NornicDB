@@ -130,7 +130,7 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 func (s *Service) hitNodes(ctx context.Context, ids []storage.NodeID, seenOrphans map[string]bool) ([]*storage.Node, bool) {
 	nodes := make([]*storage.Node, len(ids))
 	if s.supportsBatchNodesWithoutEmbeddings() {
-		batch, err := s.batchGetNodesWithoutEmbeddings(ids)
+		batch, err := s.batchGetNodesWithoutEmbeddings(ctx, ids)
 		if err != nil {
 			return nil, false
 		}

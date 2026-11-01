@@ -108,7 +108,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// Validate optimistically before invoking them, without retaining entity keys.
 	// Metadata-free commits retain the single protected validation phase.
 	if len(tx.Metadata) > 0 {
-		if err := tx.validateCommitLocked(); err != nil {
+		if err := tx.validateCommitLocked(ctx); err != nil {
 			return err
 		}
 		// Log metadata. D-10a bracket-prefix migrated to a transaction_id slog
@@ -167,7 +167,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 
 	defer releaseCommitLocks()
 
-	if err := tx.validateCommitLocked(); err != nil {
+	if err := tx.validateCommitLocked(ctx); err != nil {
 		return err
 	}
 
@@ -299,6 +299,16 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		logicalID = tx.commitLogicalID
 	}
 	cw.configureStoredEntityPublication(logicalID, false)
+	// A commit that staged no entity, no raw key, no schema or runtime state
+	// and no temporal entry writes an empty set. Its cache scope is complete
+	// and empty, not unknown: declaring it keeps every cache a concurrent
+	// read warmed. An unclassified raw write still leaves the scope unknown
+	// (cacheWriteScope.complete), and a commit that stages any fact keeps its
+	// per-fact revocation below.
+	if !hasWrites && len(temporalTargets) == 0 && !tx.knowledgeSchemaDirty && tx.schemaRuntime == nil && len(tx.operations) == 0 && prepare == nil {
+		empty := cacheWriteScope{known: true}
+		cw.declaredCache = &empty
+	}
 	// The physical writer owns the same immutable delta for ordinary and large
 	// commits. Register it before the timestamp becomes visible; its stage may
 	// help an earlier same-key publisher without waiting for that goroutine.
@@ -481,7 +491,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 
 // validateCommitLocked keeps both optimistic and protected validation on the
 // same constraint/conflict and consumer error-classification owner.
-func (tx *BadgerTransaction) validateCommitLocked() error {
+func (tx *BadgerTransaction) validateCommitLocked(ctx context.Context) error {
 	if err := tx.resolveConnectedDeletesLocked(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
@@ -492,7 +502,7 @@ func (tx *BadgerTransaction) validateCommitLocked() error {
 		return err
 	}
 
-	if err := tx.validateAllConstraints(); err != nil {
+	if err := tx.validateAllConstraints(ctx); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		// Wire contract: prefix "constraint violation:" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.

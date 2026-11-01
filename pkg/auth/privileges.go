@@ -225,7 +225,7 @@ func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 	defer p.mu.Unlock()
 	matrix := make(map[string]map[string]DbPrivilege)
 	err := WithRoleRecords(ctx, p.storage, roles, func(view storage.Engine) error {
-		nodes, err := view.GetNodesByLabel(dbPrivLabel)
+		nodes, err := view.GetNodesByLabel(ctx, dbPrivLabel)
 		if err != nil {
 			return err
 		}

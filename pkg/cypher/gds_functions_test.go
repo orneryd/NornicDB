@@ -117,7 +117,7 @@ func TestGDSFunctionArgumentErrors(t *testing.T) {
 		}
 		store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = store.Close() })
-		value, found, err := cypherfn.EvaluateFunction(name, args, cypherfn.Context{Eval: func(expression string) (interface{}, error) {
+		value, found, err := cypherfn.EvaluateFunction(context.Background(), name, args, cypherfn.Context{Eval: func(expression string) (interface{}, error) {
 			index, _ := strconv.Atoi(expression)
 			if values[index] == errArgument {
 				return nil, errArgument
@@ -174,29 +174,7 @@ func TestGDSFunctionArgumentErrors(t *testing.T) {
 	require.Nil(t, value)
 }
 
-// failingEdgeEngine fails the relationship reads a test switches on.
-type failingEdgeEngine struct {
-	storage.Engine
-	failOutgoing, failIncoming bool
-	// only limits the failures to one node's reads, when set.
-	only storage.NodeID
-}
-
 var errEdgeRead = errors.New("edge read failed")
-
-func (e *failingEdgeEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	if e.failOutgoing && (e.only == "" || e.only == id) {
-		return nil, errEdgeRead
-	}
-	return e.Engine.GetOutgoingEdges(id)
-}
-
-func (e *failingEdgeEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	if e.failIncoming && (e.only == "" || e.only == id) {
-		return nil, errEdgeRead
-	}
-	return e.Engine.GetIncomingEdges(id)
-}
 
 // A failed relationship read, in either direction, is the statement's error,
 // not an empty neighbourhood.
@@ -212,10 +190,10 @@ func TestGDSLinkPredictionReportsFailedReads(t *testing.T) {
 	require.NoError(t, err)
 	b, err := store.GetNode("b")
 	require.NoError(t, err)
-	engine := &failingEdgeEngine{Engine: store}
+	engine := &directionalReadFaultEngine{Engine: store}
 	call := func(name string) (interface{}, error) {
 		values := []interface{}{a, b}
-		value, _, err := cypherfn.EvaluateFunction(name, []string{"0", "1"}, cypherfn.Context{Storage: engine, Eval: func(expression string) (interface{}, error) {
+		value, _, err := cypherfn.EvaluateFunction(context.Background(), name, []string{"0", "1"}, cypherfn.Context{Storage: engine, Eval: func(expression string) (interface{}, error) {
 			index, _ := strconv.Atoi(expression)
 			return values[index], nil
 		}})
@@ -236,13 +214,19 @@ func TestGDSLinkPredictionReportsFailedReads(t *testing.T) {
 		{true, false, "b", "gds.alpha.linkprediction.commonNeighbors"},
 		{false, true, "c", "gds.alpha.linkprediction.adamicAdar"},
 	} {
-		engine.failOutgoing, engine.failIncoming, engine.only = failure.outgoing, failure.incoming, failure.only
+		engine.outgoingErr, engine.incomingErr, engine.only = nil, nil, failure.only
+		if failure.outgoing {
+			engine.outgoingErr = errEdgeRead
+		}
+		if failure.incoming {
+			engine.incomingErr = errEdgeRead
+		}
 		_, err := call(failure.name)
 		require.ErrorIs(t, err, errEdgeRead, "%+v", failure)
 	}
 
 	// An empty argument list may arrive as one empty argument.
-	value, _, err = cypherfn.EvaluateFunction("gds.version", []string{""}, cypherfn.Context{Eval: func(string) (interface{}, error) { return nil, nil }})
+	value, _, err = cypherfn.EvaluateFunction(context.Background(), "gds.version", []string{""}, cypherfn.Context{Eval: func(string) (interface{}, error) { return nil, nil }})
 	require.NoError(t, err)
 	require.Equal(t, gdsVersion, value)
 }

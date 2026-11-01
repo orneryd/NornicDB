@@ -17,23 +17,21 @@ type relationshipScanGuardEngine struct {
 	outgoingCalls   int
 }
 
-func (e *relationshipScanGuardEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	if e.forbidLabelScan {
-		return nil, fmt.Errorf("GetNodesByLabel should not be called for indexed relationship start-node pruning")
-	}
-	return e.MemoryEngine.GetNodesByLabel(label)
+func (e *relationshipScanGuardEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return guardedNodeScan(e.forbidLabelScan, "GetNodesByLabel should not be called for indexed relationship start-node pruning", func() ([]*storage.Node, error) {
+		return e.MemoryEngine.GetNodesByLabel(ctx, label)
+	})
 }
 
-func (e *relationshipScanGuardEngine) AllNodes() ([]*storage.Node, error) {
-	if e.forbidLabelScan {
-		return nil, fmt.Errorf("AllNodes should not be called for indexed relationship start-node pruning")
-	}
-	return e.MemoryEngine.AllNodes()
+func (e *relationshipScanGuardEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return guardedNodeScan(e.forbidLabelScan, "AllNodes should not be called for indexed relationship start-node pruning", func() ([]*storage.Node, error) {
+		return e.MemoryEngine.AllNodes(ctx)
+	})
 }
 
-func (e *relationshipScanGuardEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *relationshipScanGuardEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	e.outgoingCalls++
-	return e.MemoryEngine.GetOutgoingEdges(nodeID)
+	return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
 }
 
 func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, count int) {

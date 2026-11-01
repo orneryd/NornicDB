@@ -110,7 +110,10 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 					{"warm graph count", func() error { _, e := tenant.NodeCount(); return e }},
 					{"global count", func() error { _, e := b.NodeCount(); return e }},
 					{"latest fallback", func() error { _, e := b.GetNodeLatestVisible("tenant:a"); return e }},
-					{"bounded latest", func() error { _, e := b.BatchGetNodesLatestVisible([]storage.NodeID{"tenant:a"}); return e }},
+					{"bounded latest", func() error {
+						_, e := b.BatchGetNodesLatestVisible(context.Background(), []storage.NodeID{"tenant:a"})
+						return e
+					}},
 					{"raw partial prefix", func() error {
 						return b.StreamNodesByPrefix(context.Background(), "ten", func(*storage.Node) error { return errors.New("pending prefix emitted a body") })
 					}},
@@ -133,7 +136,7 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 						return e
 					}},
 					{"warm transaction point", func() error { _, e := victimTx.GetNode("tenant:a"); return e }},
-					{"transaction label cache", func() error { _, e := victimTx.GetNodesByLabel("ReadFence"); return e }},
+					{"transaction label cache", func() error { _, e := victimTx.GetNodesByLabel(context.Background(), "ReadFence"); return e }},
 				} {
 					t.Run(read.name, func(t *testing.T) { require.ErrorIs(t, read.run(), storage.ErrConflict) })
 				}
@@ -150,10 +153,10 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				count, err := peer.NodeCount()
 				require.NoError(t, err)
 				require.EqualValues(t, 2, count)
-				batch, err := b.BatchGetNodes([]storage.NodeID{"peer:a", "peer:b"})
+				batch, err := b.BatchGetNodes(context.Background(), []storage.NodeID{"peer:a", "peer:b"})
 				require.NoError(t, err)
 				require.Len(t, batch, 2)
-				batch, err = b.BatchGetNodesLatestVisible([]storage.NodeID{"peer:a"})
+				batch, err = b.BatchGetNodesLatestVisible(context.Background(), []storage.NodeID{"peer:a"})
 				require.NoError(t, err)
 				require.Len(t, batch, 1)
 				count, err = b.NodeCountByLabelInNamespace("ten", "ReadFence")
@@ -164,13 +167,13 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				require.Len(t, ids, 2)
 				// These low-level transaction collection methods remain global,
 				// even after a write or SetNamespace pins the transaction.
-				_, err = peerTx.AllNodes()
+				_, err = peerTx.AllNodes(context.Background())
 				require.ErrorIs(t, err, storage.ErrConflict)
-				_, err = peerTx.AllEdges()
+				_, err = peerTx.AllEdges(context.Background())
 				require.ErrorIs(t, err, storage.ErrConflict)
-				_, err = peerTx.GetEdgesByType("REL")
+				_, err = peerTx.GetEdgesByType(context.Background(), "REL")
 				require.ErrorIs(t, err, storage.ErrConflict)
-				nodes, err := peerTx.GetNodesByLabel("ReadFence")
+				nodes, err := peerTx.GetNodesByLabel(context.Background(), "ReadFence")
 				require.NoError(t, err)
 				require.Len(t, nodes, 2)
 				peerSnapshot, err := storage.OpenReadSnapshot(context.Background(), peer)
@@ -276,9 +279,9 @@ func TestPendingDropUnboundTransactionPrefixReadsRemainPeerScoped(t *testing.T) 
 				require.NoError(t, tx.StreamNodesWithOptions(context.Background(), opts, func(n *storage.Node) error { ids = append(ids, n.ID); return nil }))
 				require.Equal(t, []storage.NodeID{"peer:keep"}, ids)
 
-				_, err = tx.AllNodes()
+				_, err = tx.AllNodes(context.Background())
 				require.ErrorIs(t, err, storage.ErrConflict, "an explicit peer prefix must not turn the unbound frame into a global-read exemption")
-				_, err = tx.AllEdges()
+				_, err = tx.AllEdges(context.Background())
 				require.ErrorIs(t, err, storage.ErrConflict)
 			})
 		}

@@ -181,7 +181,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		nodeIDs = append(nodeIDs, pointIDToNodeID(point.Id))
 	}
 
-	existing, err := store.BatchGetNodes(nodeIDs)
+	existing, err := store.BatchGetNodes(ctx, nodeIDs)
 	if err != nil {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantReadExistingPointsFailed(err), grpcresponse.QdrantSourceFallback)
 	}
@@ -360,7 +360,7 @@ func (s *PointsService) Count(ctx context.Context, req *qpb.CountPoints) (*qpb.C
 		return nil, err
 	}
 
-	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
+	nodes, err := store.GetNodesByLabel(ctx, QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 	}
@@ -510,7 +510,7 @@ func (s *PointsService) Scroll(ctx context.Context, req *qpb.ScrollPoints) (*qpb
 	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, store)
 	defer releaseProjection()
 
-	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
+	nodes, err := store.GetNodesByLabel(ctx, QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 	}
@@ -1519,7 +1519,7 @@ func (s *PointsService) resolvePointsSelector(ctx context.Context, store storage
 		}
 		return out, nil
 	case *qpb.PointsSelector_Filter:
-		nodes, err := store.GetNodesByLabel(QdrantPointLabel)
+		nodes, err := store.GetNodesByLabel(ctx, QdrantPointLabel)
 		if err != nil && err != storage.ErrNotFound {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantScanPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}

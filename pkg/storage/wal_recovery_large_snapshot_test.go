@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -51,7 +52,7 @@ func TestRecoverFromWALWithResult_RestoresLargeEdgeSnapshot(t *testing.T) {
 	require.Zero(t, result.Failed)
 	t.Cleanup(func() { _ = recovered.Close() })
 
-	recoveredEdges, err := recovered.AllEdges()
+	recoveredEdges, err := recovered.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, recoveredEdges, edgeCount)
 

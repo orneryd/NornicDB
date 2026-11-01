@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -13,7 +14,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	require.NoError(t, b.FlushWriteBehind(nil))
 	_, err := b.GetNode("test:a")
 	require.NoError(t, err)
-	_, err = b.GetOutgoingEdges("test:a")
+	_, err = b.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	edgeGen := b.edgeCacheGen.current()
 	view, err := b.captureReadView(nil)
@@ -32,7 +33,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	current, err := b.GetNode("test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(4), current.Properties["v"])
-	edges, err := b.GetOutgoingEdges("test:a")
+	edges, err := b.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(4), edges[0].Properties["v"])
 
@@ -45,7 +46,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), edge.Properties["v"])
 	// The older read must not refill the current unversioned cache with old data.
-	edges, err = b.GetOutgoingEdges("test:a")
+	edges, err = b.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(4), edges[0].Properties["v"])
 }

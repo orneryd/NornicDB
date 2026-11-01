@@ -18,7 +18,7 @@ type graphBuilderReadEngine struct {
 	read func(storage.NodeID) ([]*storage.Edge, error)
 }
 
-func (e *graphBuilderReadEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *graphBuilderReadEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	return e.read(id)
 }
 

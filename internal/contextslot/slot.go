@@ -1,7 +1,9 @@
 // Package contextslot owns lazy, type-scoped state shared by nested operations.
 package contextslot
 
-import "context"
+import (
+	"context"
+)
 
 type key[T any] struct{}
 

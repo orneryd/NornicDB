@@ -208,7 +208,7 @@ func TestSelectedPathSearchStorage(t *testing.T) {
 	exec := NewStorageExecutor(base)
 	_, err := exec.Execute(ctx, "CREATE (:S {id: 1})-[:T]->(:S {id: 2})-[:T]->(:S {id: 3})", nil)
 	require.NoError(t, err)
-	failing := NewStorageExecutor(&failingEdgeEngine{Engine: base, failOutgoing: true, failIncoming: true})
+	failing := NewStorageExecutor(&directionalReadFaultEngine{Engine: base, outgoingErr: errEdgeRead, incomingErr: errEdgeRead})
 	for _, query := range []string{
 		"MATCH p = SHORTEST 1 (a:S {id: 1})(()-[:T]-())+(b) RETURN count(*) AS c",
 		"MATCH p = SHORTEST 1 (a:S {id: 1})(()-[:T]->())+(b) RETURN count(*) AS c",
@@ -226,7 +226,7 @@ func TestSelectedPathSearchStorage(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (a:S {id: 1}) RETURN a", nil)
 	require.NoError(t, err)
 	first := "selected_dangling:" + result.Rows[0][0].(*storage.Node).ID
-	edges, err := inner.MemoryEngine.GetOutgoingEdges(first)
+	edges, err := inner.MemoryEngine.GetOutgoingEdges(ctx, first)
 	require.NoError(t, err)
 	inner.forcedOutgoing[first] = append(edges, &storage.Edge{ID: "selected_dangling:dangling", Type: "T", StartNode: first, EndNode: "selected_dangling:missing"})
 	result, err = exec.Execute(ctx, "MATCH p = SHORTEST 1 (a:S {id: 1})(()-[:T]->())+(b) RETURN b.id AS b", nil)

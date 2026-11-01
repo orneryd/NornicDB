@@ -116,7 +116,7 @@ func runAdmissionMatrixCase(t *testing.T, composite, explicit, reject bool, fail
 		}
 	}
 	if tc.wantNodes != nil {
-		nodes, err := shard.GetNodesByLabel(admissionMatrixLabel)
+		nodes, err := shard.GetNodesByLabel(ctx, admissionMatrixLabel)
 		require.NoError(t, err)
 		require.Len(t, nodes, tc.wantNodes())
 	}
@@ -361,7 +361,7 @@ func requireBatchScopeRejected(t *testing.T, exec *StorageExecutor, shard storag
 		_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
 		require.NoError(t, err)
 	}
-	nodes, readErr := shard.GetNodesByLabel(admissionMatrixLabel)
+	nodes, readErr := shard.GetNodesByLabel(context.Background(), admissionMatrixLabel)
 	require.NoError(t, readErr)
 	require.Empty(t, nodes, "scope rejection must precede independent writes")
 }

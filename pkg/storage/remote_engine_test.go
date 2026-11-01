@@ -641,7 +641,7 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 		t.Fatalf("DeleteEdge failed: %v", err)
 	}
 
-	if nodes, err := engine.GetNodesByLabel("Person"); err != nil || len(nodes) == 0 {
+	if nodes, err := engine.GetNodesByLabel(context.Background(), "Person"); err != nil || len(nodes) == 0 {
 		t.Fatalf("GetNodesByLabel failed: len=%d err=%v", len(nodes), err)
 	}
 	if _, err := engine.GetFirstNodeByLabel("Missing"); err != ErrNotFound {
@@ -650,26 +650,26 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 	if _, err := engine.GetFirstNodeByLabel("Person"); err != nil {
 		t.Fatalf("GetFirstNodeByLabel failed: %v", err)
 	}
-	if edges, err := engine.GetOutgoingEdges("n1"); err != nil || len(edges) == 0 {
+	if edges, err := engine.GetOutgoingEdges(context.Background(), "n1"); err != nil || len(edges) == 0 {
 		t.Fatalf("GetOutgoingEdges failed: len=%d err=%v", len(edges), err)
 	}
-	if edges, err := engine.GetIncomingEdges("n1"); err != nil || len(edges) == 0 {
+	if edges, err := engine.GetIncomingEdges(context.Background(), "n1"); err != nil || len(edges) == 0 {
 		t.Fatalf("GetIncomingEdges failed: len=%d err=%v", len(edges), err)
 	}
-	if edges, err := engine.GetEdgesBetween("n1", "n2"); err != nil || len(edges) == 0 {
+	if edges, err := engine.GetEdgesBetween(context.Background(), "n1", "n2"); err != nil || len(edges) == 0 {
 		t.Fatalf("GetEdgesBetween failed: len=%d err=%v", len(edges), err)
 	}
 	if edge := engine.GetEdgeBetween("n1", "n2", "KNOWS"); edge == nil {
 		t.Fatalf("GetEdgeBetween failed")
 	}
-	if edges, err := engine.GetEdgesByType("KNOWS"); err != nil || len(edges) == 0 {
+	if edges, err := engine.GetEdgesByType(context.Background(), "KNOWS"); err != nil || len(edges) == 0 {
 		t.Fatalf("GetEdgesByType failed: len=%d err=%v", len(edges), err)
 	}
-	if allEdges, err := engine.AllEdges(); err != nil || len(allEdges) == 0 {
+	if allEdges, err := engine.AllEdges(context.Background()); err != nil || len(allEdges) == 0 {
 		t.Fatalf("AllEdges failed: len=%d err=%v", len(allEdges), err)
 	}
-	if allNodes := engine.GetAllNodes(); len(allNodes) == 0 {
-		t.Fatalf("GetAllNodes should return nodes")
+	if allNodes, err := engine.AllNodes(context.Background()); err != nil || len(allNodes) == 0 {
+		t.Fatalf("AllNodes failed: len=%d err=%v", len(allNodes), err)
 	}
 	if got := engine.GetInDegree("n1"); got != 2 {
 		t.Fatalf("GetInDegree mismatch: %d", got)
@@ -791,14 +791,14 @@ func TestRemoteEngineBulkAndErrorFallbacks(t *testing.T) {
 	if err := engine.BulkDeleteEdges([]EdgeID{"e1"}); err != nil {
 		t.Fatalf("BulkDeleteEdges failed: %v", err)
 	}
-	if got, err := engine.BatchGetNodes([]NodeID{"n1", "n2"}); err != nil {
+	if got, err := engine.BatchGetNodes(context.Background(), []NodeID{"n1", "n2"}); err != nil {
 		t.Fatalf("BatchGetNodes failed: %v", err)
 	} else if len(got) == 0 {
 		t.Fatalf("expected at least one batch node")
 	}
 
-	if nodes := engine.GetAllNodes(); len(nodes) != 0 {
-		t.Fatalf("GetAllNodes should swallow errors and return empty slice")
+	if nodes, err := engine.AllNodes(context.Background()); err == nil || len(nodes) != 0 {
+		t.Fatalf("AllNodes must report the failed read: len=%d err=%v", len(nodes), err)
 	}
 	if n, err := engine.NodeCount(); err != nil || n != 0 {
 		t.Fatalf("expected NodeCount fallback to zero with nil error; n=%d err=%v", n, err)
@@ -871,26 +871,26 @@ func TestRemoteEngineAdditionalErrorBranches(t *testing.T) {
 	if err := engine.BulkDeleteEdges([]EdgeID{"e1"}); err == nil {
 		t.Fatalf("expected BulkDeleteEdges error")
 	}
-	if _, err := engine.GetOutgoingEdges("n1"); err == nil {
+	if _, err := engine.GetOutgoingEdges(context.Background(), "n1"); err == nil {
 		t.Fatalf("expected GetOutgoingEdges conversion error")
 	}
-	if _, err := engine.GetIncomingEdges("n1"); err == nil {
+	if _, err := engine.GetIncomingEdges(context.Background(), "n1"); err == nil {
 		t.Fatalf("expected GetIncomingEdges conversion error")
 	}
-	if _, err := engine.GetEdgesBetween("a", "b"); err == nil {
+	if _, err := engine.GetEdgesBetween(context.Background(), "a", "b"); err == nil {
 		t.Fatalf("expected GetEdgesBetween conversion error")
 	}
-	if _, err := engine.GetEdgesByType("REL"); err == nil {
+	if _, err := engine.GetEdgesByType(context.Background(), "REL"); err == nil {
 		t.Fatalf("expected GetEdgesByType conversion error")
 	}
-	if _, err := engine.AllEdges(); err == nil {
+	if _, err := engine.AllEdges(context.Background()); err == nil {
 		t.Fatalf("expected AllEdges conversion error")
 	}
 	if edge := engine.GetEdgeBetween("a", "b", "REL"); edge != nil {
 		t.Fatalf("expected nil edge for conversion error")
 	}
 
-	got, err := engine.BatchGetNodes([]NodeID{"ok", "not-found", "bad"})
+	got, err := engine.BatchGetNodes(context.Background(), []NodeID{"ok", "not-found", "bad"})
 	if err == nil {
 		t.Fatalf("expected BatchGetNodes error")
 	}
@@ -916,22 +916,22 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 	if err := queryErrEngine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e1"}}); err == nil {
 		t.Fatalf("expected UpdateEdge query error")
 	}
-	if _, err := queryErrEngine.GetNodesByLabel("Person"); err == nil {
+	if _, err := queryErrEngine.GetNodesByLabel(context.Background(), "Person"); err == nil {
 		t.Fatalf("expected GetNodesByLabel query error")
 	}
-	if _, err := queryErrEngine.GetOutgoingEdges("n1"); err == nil {
+	if _, err := queryErrEngine.GetOutgoingEdges(context.Background(), "n1"); err == nil {
 		t.Fatalf("expected GetOutgoingEdges query error")
 	}
-	if _, err := queryErrEngine.GetIncomingEdges("n1"); err == nil {
+	if _, err := queryErrEngine.GetIncomingEdges(context.Background(), "n1"); err == nil {
 		t.Fatalf("expected GetIncomingEdges query error")
 	}
-	if _, err := queryErrEngine.GetEdgesBetween("a", "b"); err == nil {
+	if _, err := queryErrEngine.GetEdgesBetween(context.Background(), "a", "b"); err == nil {
 		t.Fatalf("expected GetEdgesBetween query error")
 	}
-	if _, err := queryErrEngine.GetEdgesByType("REL"); err == nil {
+	if _, err := queryErrEngine.GetEdgesByType(context.Background(), "REL"); err == nil {
 		t.Fatalf("expected GetEdgesByType query error")
 	}
-	if _, err := queryErrEngine.AllEdges(); err == nil {
+	if _, err := queryErrEngine.AllEdges(context.Background()); err == nil {
 		t.Fatalf("expected AllEdges query error")
 	}
 	if _, err := queryErrEngine.GetFirstNodeByLabel("Person"); err == nil {
@@ -997,7 +997,7 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 			{1},
 		}, nil)}, nil
 	})
-	if _, err := mixedRowsEngine.GetNodesByLabel("Person"); err == nil {
+	if _, err := mixedRowsEngine.GetNodesByLabel(context.Background(), "Person"); err == nil {
 		t.Fatalf("expected GetNodesByLabel conversion error")
 	}
 
@@ -1281,7 +1281,7 @@ func TestRemoteEngineBatchGetNodes_BranchCoverage(t *testing.T) {
 			schema: NewSchemaManager(),
 		}
 
-		nodes, err := eng.BatchGetNodes([]NodeID{"n1", "n2"})
+		nodes, err := eng.BatchGetNodes(context.Background(), []NodeID{"n1", "n2"})
 		if err != nil {
 			t.Fatalf("BatchGetNodes failed: %v", err)
 		}
@@ -1303,7 +1303,7 @@ func TestRemoteEngineBatchGetNodes_BranchCoverage(t *testing.T) {
 			schema: NewSchemaManager(),
 		}
 
-		_, err := eng.BatchGetNodes([]NodeID{"n1"})
+		_, err := eng.BatchGetNodes(context.Background(), []NodeID{"n1"})
 		if err == nil || !strings.Contains(err.Error(), "query exploded") {
 			t.Fatalf("expected query error, got: %v", err)
 		}

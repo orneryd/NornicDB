@@ -18,7 +18,7 @@ import (
 // multidb.DatabaseManager.GetStorage, which wraps the namespaced engine in
 // an unexported sizeTrackingEngine. That wrapper embeds only storage.Engine,
 // so it must forward every optional storage interface explicitly; before it
-// forwarded storage.ProjectedLabelNodeReader, collectNodesWithStreaming's
+// forwarded storage.ProjectedLabelNodeReader, collectNodesWithStreamingProjection's
 // label-indexed fast path in match_multi.go silently fell through to a
 // whole-namespace storage.StreamNodes scan for every label-scoped MATCH. An
 // in-process StorageExecutor built directly over storage.NamespacedEngine

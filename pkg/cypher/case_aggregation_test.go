@@ -394,7 +394,8 @@ func TestCaseConditionEvaluation(t *testing.T) {
 
 	t.Run("CASE WHEN with CONTAINS unicode", func(t *testing.T) {
 		// Test resolveReturnItem directly with the node we created
-		nodes := exec.storage.GetAllNodes()
+		nodes, err := exec.storage.AllNodes(context.Background())
+		require.NoError(t, err)
 
 		var testNode *storage.Node
 		for _, node := range nodes {

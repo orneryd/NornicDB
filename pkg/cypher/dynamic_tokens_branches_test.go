@@ -18,9 +18,9 @@ func TestDynamicTokenBranches(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:DB {id: 1})-[:DBR]->(:DB {id: 2})", nil)
 	require.NoError(t, err)
 	store := exec.getStorage(ctx)
-	nodes, err := store.GetNodesByLabel("DB")
+	nodes, err := store.GetNodesByLabel(ctx, "DB")
 	require.NoError(t, err)
-	edges, err := store.GetEdgesByType("DBR")
+	edges, err := store.GetEdgesByType(ctx, "DBR")
 	require.NoError(t, err)
 	node, edge := nodes[0], edges[0]
 	requireCode := func(t *testing.T, err error, code string) {
@@ -108,17 +108,17 @@ func TestDynamicTokenBranches(t *testing.T) {
 			return values[expr], nil
 		}}
 	}
-	_, err = fnDynamicLabelTest(fnContext(nil, nil), []string{"n"})
+	_, err = fnDynamicLabelTest(context.Background(), fnContext(nil, nil), []string{"n"})
 	require.Error(t, err)
-	_, err = fnDynamicLabelTest(fnContext(nil, context.Canceled), []string{"n", "l", "a"})
+	_, err = fnDynamicLabelTest(context.Background(), fnContext(nil, context.Canceled), []string{"n", "l", "a"})
 	require.ErrorIs(t, err, context.Canceled)
-	value, err := fnDynamicLabelTest(fnContext(map[string]interface{}{"l": "A", "a": false}, nil), []string{"n", "l", "a"})
+	value, err := fnDynamicLabelTest(context.Background(), fnContext(map[string]interface{}{"l": "A", "a": false}, nil), []string{"n", "l", "a"})
 	require.NoError(t, err)
 	require.Nil(t, value)
-	value, err = fnDynamicLabelTest(fnContext(map[string]interface{}{"n": edge, "l": "DBR", "a": false}, nil), []string{"n", "l", "a"})
+	value, err = fnDynamicLabelTest(context.Background(), fnContext(map[string]interface{}{"n": edge, "l": "DBR", "a": false}, nil), []string{"n", "l", "a"})
 	require.NoError(t, err)
 	require.Equal(t, true, value)
-	_, err = fnDynamicLabelTest(fnContext(map[string]interface{}{"n": node, "l": int64(1), "a": false}, nil), []string{"n", "l", "a"})
+	_, err = fnDynamicLabelTest(context.Background(), fnContext(map[string]interface{}{"n": node, "l": int64(1), "a": false}, nil), []string{"n", "l", "a"})
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
 
 	// Static checks: MERGE actions, REMOVE label items on a relationship, a

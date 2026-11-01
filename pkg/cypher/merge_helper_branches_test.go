@@ -16,7 +16,7 @@ func TestMergeCacheAndIndexHelpers(t *testing.T) {
 
 	_, err := exec.Execute(ctx, "CREATE (n:Person {id:'p1', email:'a@x'})", nil)
 	require.NoError(t, err)
-	nodes, err := store.GetNodesByLabel("Person")
+	nodes, err := store.GetNodesByLabel(ctx, "Person")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	n := nodes[0]
@@ -44,7 +44,7 @@ func TestMergeCacheAndIndexHelpers(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "CREATE (a:L {id:'1'}), (b:L {id:'2'})", nil)
 	require.NoError(t, err)
-	all, err := store.GetNodesByLabel("L")
+	all, err := store.GetNodesByLabel(ctx, "L")
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 	loaded := exec.loadMergeCandidateNodes(store, []storage.NodeID{all[0].ID, all[1].ID, all[0].ID})

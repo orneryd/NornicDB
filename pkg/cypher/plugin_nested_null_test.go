@@ -153,10 +153,10 @@ func BenchmarkPluginResultBoundary(b *testing.B) {
 }
 
 func TestRegisteredNestedNullResults(t *testing.T) {
-	cypherfn.Register("registeredNestedNull", func(cypherfn.Context, []string) (interface{}, error) {
+	cypherfn.Register("registeredNestedNull", func(_ context.Context, _ cypherfn.Context, _ []string) (interface{}, error) {
 		return map[string]interface{}{"a": (*storage.Node)(nil)}, nil
 	})
-	value, found, err := cypherfn.EvaluateFunction("registeredNestedNull", nil, cypherfn.Context{Eval: func(string) (interface{}, error) { return nil, nil }})
+	value, found, err := cypherfn.EvaluateFunction(context.Background(), "registeredNestedNull", nil, cypherfn.Context{Eval: func(string) (interface{}, error) { return nil, nil }})
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, map[string]interface{}{"a": nil}, value)

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -207,27 +208,27 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_AdjacencyEffects(t *testing.T) 
 		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
 	}))
 
-	outA, err := engine.GetOutgoingEdgesVisibleAt("test:mat-a", version)
+	outA, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:mat-a", version)
 	require.NoError(t, err)
 	require.Len(t, outA, 2)
 
-	inD, err := engine.GetIncomingEdgesVisibleAt("test:mat-d", version)
+	inD, err := engine.GetIncomingEdgesVisibleAt(context.Background(), "test:mat-d", version)
 	require.NoError(t, err)
 	require.Len(t, inD, 2)
 
-	inB, err := engine.GetIncomingEdgesVisibleAt("test:mat-b", version)
+	inB, err := engine.GetIncomingEdgesVisibleAt(context.Background(), "test:mat-b", version)
 	require.NoError(t, err)
 	require.Empty(t, inB)
 
-	outB, err := engine.GetOutgoingEdgesVisibleAt("test:mat-b", version)
+	outB, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:mat-b", version)
 	require.NoError(t, err)
 	require.Empty(t, outB)
 
-	inC, err := engine.GetIncomingEdgesVisibleAt("test:mat-c", version)
+	inC, err := engine.GetIncomingEdgesVisibleAt(context.Background(), "test:mat-c", version)
 	require.NoError(t, err)
 	require.Empty(t, inC)
 
-	outD, err := engine.GetOutgoingEdgesVisibleAt("test:mat-d", version)
+	outD, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:mat-d", version)
 	require.NoError(t, err)
 	require.Empty(t, outD)
 }

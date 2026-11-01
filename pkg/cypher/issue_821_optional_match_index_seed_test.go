@@ -35,11 +35,11 @@ func (s *labelStreamCountingEngine) StreamNodesWithOptions(ctx context.Context, 
 	})
 }
 
-func (s *labelStreamCountingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+func (s *labelStreamCountingEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
 	if s.scanErr != nil {
 		return s.scanErr
 	}
-	return s.NamespacedEngine.StreamNodesByLabelProjected(label, properties, func(node *storage.Node) error {
+	return s.NamespacedEngine.StreamNodesByLabelProjected(ctx, label, properties, func(node *storage.Node) error {
 		s.nodesVisited++
 		return visit(node)
 	})
@@ -52,14 +52,14 @@ func (s *labelStreamCountingEngine) StreamNodes(ctx context.Context, fn func(nod
 	})
 }
 
-func (s *labelStreamCountingEngine) AllNodes() ([]*storage.Node, error) {
-	nodes, err := s.NamespacedEngine.AllNodes()
+func (s *labelStreamCountingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	nodes, err := s.NamespacedEngine.AllNodes(ctx)
 	s.nodesVisited += int64(len(nodes))
 	return nodes, err
 }
 
-func (s *labelStreamCountingEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	nodes, err := s.NamespacedEngine.GetNodesByLabel(label)
+func (s *labelStreamCountingEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	nodes, err := s.NamespacedEngine.GetNodesByLabel(ctx, label)
 	s.nodesVisited += int64(len(nodes))
 	return nodes, err
 }

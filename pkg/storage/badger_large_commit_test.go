@@ -44,7 +44,7 @@ func stageLargeCreate(t *testing.T, tx *BadgerTransaction, n int) {
 
 func countBigNodes(t *testing.T, engine *BadgerEngine) int {
 	t.Helper()
-	nodes, err := engine.GetNodesByLabel("Big")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "Big")
 	require.NoError(t, err)
 	return len(nodes)
 }
@@ -83,7 +83,7 @@ func TestLargeCommit_CommitsBeyondOneBatchAndSurvivesReopen(t *testing.T) {
 	count, err := engine.NodeCount()
 	require.NoError(t, err)
 	require.Equal(t, int64(n), count)
-	edges, err := engine.GetOutgoingEdges(largeCommitNodeID(n / 2))
+	edges, err := engine.GetOutgoingEdges(context.Background(), largeCommitNodeID(n/2))
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	requireNoLargeCommitIntent(t, engine)
@@ -350,7 +350,7 @@ func TestLargeCommit_DeleteWithOpenSnapshotReader(t *testing.T) {
 	reader, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	defer reader.Rollback()
-	before, err := reader.GetNodesByLabel("Big")
+	before, err := reader.GetNodesByLabel(context.Background(), "Big")
 	require.NoError(t, err)
 	require.Len(t, before, n)
 
@@ -387,7 +387,7 @@ func TestDeleteByPrefix_FlushesPeriodicallyAndCompletes(t *testing.T) {
 	nodesDeleted, _, err := engine.DeleteByPrefix("drop:")
 	require.NoError(t, err)
 	require.Equal(t, int64(n), nodesDeleted)
-	nodes, err := engine.GetNodesByLabel("V")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "V")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }

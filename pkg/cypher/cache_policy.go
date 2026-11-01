@@ -1,6 +1,8 @@
 package cypher
 
-import "context"
+import (
+	"context"
+)
 
 // These conservative hints can over-invalidate caches. Execution admission and
 // resolved statement modes use readStatementExecutionContract instead.

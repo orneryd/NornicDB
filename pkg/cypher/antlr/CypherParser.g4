@@ -322,6 +322,16 @@ forSt
     : FOR symbol IN expression
     ;
 
+// Neo4j's LOAD CSV reading clause: the clause binds one record variable per
+// row of the named resource, optionally naming the first row's columns and
+// setting the field separator. It is a reading clause, so the clauses that
+// follow it - and therefore the statement's effects and scope - are read from
+// the same grammar product; the resource itself belongs to the participant
+// that owns it.
+loadCSVSt
+    : LOAD CSV (WITH HEADERS)? FROM expression AS symbol (FIELDTERMINATOR (charLit | stringLit))?
+    ;
+
 readingStatement
     : useClause
     | matchSt
@@ -329,6 +339,7 @@ readingStatement
     | letSt
     | filterSt
     | forSt
+    | loadCSVSt
     | queryCallSt
     | callSubquery
     ;
@@ -805,6 +816,7 @@ symbol
     | ROW
     | TRIM
     | FROM
+    | LOAD | CSV | HEADERS | FIELDTERMINATOR
     | LEADING
     | TRAILING
     | BOTH

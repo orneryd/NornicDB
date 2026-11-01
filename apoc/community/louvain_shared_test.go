@@ -1,6 +1,9 @@
 package community
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestLouvainRingUsesSharedCommunities(t *testing.T) {
 	nodes := make([]*Node, 4)
@@ -9,7 +12,10 @@ func TestLouvainRingUsesSharedCommunities(t *testing.T) {
 		nodes[i] = &Node{ID: int64(i)}
 		relationships[i] = &Relationship{StartNode: int64(i), EndNode: int64((i + 1) % 4)}
 	}
-	result := Louvain(nodes, relationships, DefaultLouvainConfig())
+	result, err := Louvain(context.Background(), nodes, relationships, DefaultLouvainConfig())
+	if err != nil {
+		t.Fatalf("Louvain: %v", err)
+	}
 	if len(result) != len(nodes) {
 		t.Fatalf("got %d nodes, want %d", len(result), len(nodes))
 	}
@@ -24,7 +30,10 @@ func TestLouvainDefaultsResolutionAndExcludedEndpoints(t *testing.T) {
 	nodes := []*Node{{ID: 10}, {ID: 20}}
 	relationships := []*Relationship{{StartNode: 10, EndNode: 20}, {StartNode: 10, EndNode: 99}}
 	for _, config := range []LouvainConfig{{}, {Resolution: 0.25}} {
-		result := Louvain(nodes, relationships, config)
+		result, err := Louvain(context.Background(), nodes, relationships, config)
+		if err != nil {
+			t.Fatalf("Louvain: %v", err)
+		}
 		if len(result) != 2 || result[0].Node != nodes[0] || result[1].Node != nodes[1] {
 			t.Fatalf("unexpected result: %+v", result)
 		}

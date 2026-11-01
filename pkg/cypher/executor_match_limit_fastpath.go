@@ -61,7 +61,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return &ExecuteResult{Columns: []string{columnName}, Rows: rows, Stats: &QueryStats{}}, true
 	}
 
-	nodes, err := e.collectNodesWithStreaming(ctx, labels, nil, varName, "", limit)
+	nodes, err := e.collectNodesWithStreamingProjection(ctx, labels, nil, varName, "", limit, nil)
 	if err != nil {
 		return nil, false
 	}

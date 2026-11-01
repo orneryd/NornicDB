@@ -15,6 +15,7 @@ package storage
 // shipping.
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -25,50 +26,56 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLabelIndex_SurvivesEngineReopen — the canonical bug-report
-// reproduction. Create a labelled node, close the engine cleanly,
-// reopen the same data dir, and confirm MATCH-by-label still returns
-// the node. Bug as reported would surface as zero rows here.
+// TestLabelIndex_SurvivesEngineReopen owns the create/close/reopen/label-read
+// assertion for the single-label report and the reported multi-label shape.
+// Each case retains its original population and additional body/session proof.
 func TestLabelIndex_SurvivesEngineReopen(t *testing.T) {
-	dir := t.TempDir()
-
-	// First open: create and label a node, close cleanly.
-	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
-	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
+	for _, tc := range []struct {
+		name      string
+		node      *Node
+		checkBody bool
+	}{
+		{name: "TestLabelIndex_SurvivesEngineReopen", checkBody: true,
+			node: &Node{ID: "test:n1", Labels: []string{"Foo"}, Properties: map[string]any{"k": int64(1)}}},
+		{name: "TestLabelIndex_MultiLabelSurvivesReopen",
+			node: &Node{ID: "test:multi-1", Labels: []string{"Aprodan", "Academic", "Concept"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+			if engine1 != nil {
+				fixtureowner.Own(t, engine1)
+			}
+			require.NoError(t, err)
+			_, err = engine1.CreateNode(tc.node)
+			require.NoError(t, err)
+			if tc.checkBody {
+				pre, err := engine1.GetNodesByLabel(context.Background(), "Foo")
+				require.NoError(t, err)
+				require.Len(t, pre, 1, "in-session GetNodesByLabel must find the node")
+			}
+			require.NoError(t, engine1.Close())
+			engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = engine2.Close() })
+			for _, label := range tc.node.Labels {
+				post, err := engine2.GetNodesByLabel(context.Background(), label)
+				require.NoError(t, err)
+				if tc.checkBody {
+					require.Len(t, post, 1, "label-index must persist across restart; got 0 nodes after reopen — this is the v1.1.1 bug-report shape")
+					assert.Contains(t, post[0].Labels, "Foo")
+				} else {
+					require.Len(t, post, 1, "label %q must surface the node after reopen", label)
+				}
+				assert.Equal(t, tc.node.ID, post[0].ID)
+			}
+			if tc.checkBody {
+				all, err := engine2.AllNodes(context.Background())
+				require.NoError(t, err)
+				assert.Len(t, all, 1, "node body itself must survive reopen")
+			}
+		})
 	}
-	require.NoError(t, err)
-
-	node := &Node{
-		ID:         "test:n1",
-		Labels:     []string{"Foo"},
-		Properties: map[string]any{"k": int64(1)},
-	}
-	_, err = engine1.CreateNode(node)
-	require.NoError(t, err)
-
-	pre, err := engine1.GetNodesByLabel("Foo")
-	require.NoError(t, err)
-	require.Len(t, pre, 1, "in-session GetNodesByLabel must find the node")
-	require.NoError(t, engine1.Close())
-
-	// Reopen the same dir.
-	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine2.Close() })
-
-	// MATCH (n:Foo) → must still find the node.
-	post, err := engine2.GetNodesByLabel("Foo")
-	require.NoError(t, err)
-	require.Len(t, post, 1,
-		"label-index must persist across restart; got 0 nodes after reopen — this is the v1.1.1 bug-report shape")
-	assert.Equal(t, NodeID("test:n1"), post[0].ID)
-	assert.Contains(t, post[0].Labels, "Foo")
-
-	// AllNodes must also see the node — confirms the storage itself is intact.
-	all, err := engine2.AllNodes()
-	require.NoError(t, err)
-	assert.Len(t, all, 1, "node body itself must survive reopen")
 }
 
 // TestLabelIndex_BulkCreatedNodesSurviveReopen — the bug report
@@ -122,7 +129,7 @@ func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 				wipeLabelIndexAndMarker(t, before, prefixLabelIndex)
 			}
 			if tc.checkBefore {
-				got, err := before.GetNodesByLabel(tc.label)
+				got, err := before.GetNodesByLabel(context.Background(), tc.label)
 				require.NoError(t, err)
 				want := tc.count
 				if tc.wipe {
@@ -141,52 +148,19 @@ func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 			if tc.readNamespace != "" {
 				reader = NewNamespacedEngine(after, tc.readNamespace)
 			}
-			got, err := reader.GetNodesByLabel(tc.label)
+			got, err := reader.GetNodesByLabel(context.Background(), tc.label)
 			require.NoError(t, err)
 			assert.Len(t, got, tc.count, "persisted or rebuilt label entries must survive reopen")
 			if tc.readNamespace != "" {
-				control, err := NewNamespacedEngine(after, "other").GetNodesByLabel(tc.label)
+				control, err := NewNamespacedEngine(after, "other").GetNodesByLabel(context.Background(), tc.label)
 				require.NoError(t, err)
 				require.Len(t, control, 1, "other namespace must retain its own label row")
 				assert.Equal(t, NodeID("scope-control"), control[0].ID)
-				all, err := after.GetNodesByLabel(tc.label)
+				all, err := after.GetNodesByLabel(context.Background(), tc.label)
 				require.NoError(t, err)
 				assert.Len(t, all, tc.count+1, "raw read must include both scopes")
 			}
 		})
-	}
-}
-
-// TestLabelIndex_MultiLabelSurvivesReopen — the bug report cites
-// `MATCH (c:Aprodan:Academic:Concept)` returning 0 against 227 true.
-// Pin: multi-label nodes write a label-index entry per label, and
-// every label is independently queryable after reopen.
-func TestLabelIndex_MultiLabelSurvivesReopen(t *testing.T) {
-	dir := t.TempDir()
-
-	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
-	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
-	}
-	require.NoError(t, err)
-
-	node := &Node{
-		ID:     "test:multi-1",
-		Labels: []string{"Aprodan", "Academic", "Concept"},
-	}
-	_, err = engine1.CreateNode(node)
-	require.NoError(t, err)
-	require.NoError(t, engine1.Close())
-
-	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine2.Close() })
-
-	for _, label := range []string{"Aprodan", "Academic", "Concept"} {
-		got, err := engine2.GetNodesByLabel(label)
-		require.NoError(t, err)
-		require.Len(t, got, 1, "label %q must surface the node after reopen", label)
-		assert.Equal(t, NodeID("test:multi-1"), got[0].ID)
 	}
 }
 
@@ -289,12 +263,12 @@ func TestLabelIndex_QueryMatchesPropertyAndLabelFunctions(t *testing.T) {
 	t.Cleanup(func() { _ = engine2.Close() })
 
 	// Path 1: GetNodesByLabel — the index path.
-	byIndex, err := engine2.GetNodesByLabel("Agree")
+	byIndex, err := engine2.GetNodesByLabel(context.Background(), "Agree")
 	require.NoError(t, err)
 
 	// Path 2: AllNodes + filter on labels — the post-decode path that
 	// the bug report says "still works".
-	all, err := engine2.AllNodes()
+	all, err := engine2.AllNodes(context.Background())
 	require.NoError(t, err)
 	var byScan []*Node
 	for _, n := range all {

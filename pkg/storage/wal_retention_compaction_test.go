@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -84,7 +85,7 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		sort.Strings(paths)
 		recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(wal.config.Dir, paths[len(paths)-1]))
 		require.NoError(t, err)
-		nodes, err := recovered.AllNodes()
+		nodes, err := recovered.AllNodes(context.Background())
 		require.NoError(t, err)
 		require.Len(t, nodes, 6)
 		require.Zero(t, result.Failed)

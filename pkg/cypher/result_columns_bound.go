@@ -100,7 +100,7 @@ func syntaxDeclarationSpan(clause cypherantlr.SyntaxNode, name string) (start, e
 			return nil
 		}
 		switch parent.Rule() {
-		case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_letItem, cypherantlr.CypherParserRULE_yieldItem:
+		case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_letItem, cypherantlr.CypherParserRULE_yieldItem, cypherantlr.CypherParserRULE_loadCSVSt:
 			start, end = node.Span()
 			found = true
 		}

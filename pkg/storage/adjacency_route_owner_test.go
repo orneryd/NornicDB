@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -13,7 +14,7 @@ type adjacencyOverrideDecorator struct {
 	rows  []*Edge
 }
 
-func (d *adjacencyOverrideDecorator) GetAdjacentEdges(NodeID) ([]*Edge, []*Edge, error) {
+func (d *adjacencyOverrideDecorator) GetAdjacentEdges(ctx context.Context, _ NodeID) ([]*Edge, []*Edge, error) {
 	d.calls++
 	return d.rows, d.rows, nil
 }
@@ -25,11 +26,11 @@ type adjacencyDirectionalFailure struct {
 	failure error
 }
 
-func (d *adjacencyDirectionalFailure) GetOutgoingEdges(NodeID) ([]*Edge, error) {
+func (d *adjacencyDirectionalFailure) GetOutgoingEdges(ctx context.Context, _ NodeID) ([]*Edge, error) {
 	d.calls = append(d.calls, "out")
 	return d.rows, nil
 }
-func (d *adjacencyDirectionalFailure) GetIncomingEdges(NodeID) ([]*Edge, error) {
+func (d *adjacencyDirectionalFailure) GetIncomingEdges(ctx context.Context, _ NodeID) ([]*Edge, error) {
 	d.calls = append(d.calls, "in")
 	return d.rows, d.failure
 }
@@ -39,7 +40,7 @@ func TestAdjacencyDispatcherPreservesActualDecoratorAndErrorPolicy(t *testing.T)
 	b.writeBehind.Close()
 	rows := []*Edge{{ID: "test:r", StartNode: "test:hub", EndNode: "test:a"}}
 	decorated := &adjacencyOverrideDecorator{BadgerEngine: b, rows: rows}
-	out, in, err := NewNamespacedEngine(decorated, "test").GetAdjacentEdges("hub")
+	out, in, err := NewNamespacedEngine(decorated, "test").GetAdjacentEdges(context.Background(), "hub")
 	require.NoError(t, err)
 	require.Equal(t, 1, decorated.calls)
 	require.Equal(t, EdgeID("r"), out[0].ID)
@@ -53,7 +54,7 @@ func TestAdjacencyDispatcherPreservesActualDecoratorAndErrorPolicy(t *testing.T)
 		if namespaced {
 			engine = NewNamespacedEngine(d, "test")
 		}
-		out, in, err = readAdjacency(engine, adjacencyBoth, "hub", "", nil, visibleRead)
+		out, in, err = readAdjacency(context.Background(), engine, adjacencyBoth, "hub", "", nil, visibleRead)
 		require.ErrorIs(t, err, failure)
 		require.Equal(t, []string{"out", "in"}, d.calls)
 		if namespaced {
@@ -87,31 +88,31 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 		return n
 	}
 
-	reader, err := b.captureAdjacencyReader("test:hub", true, true, visibleRead)
+	reader, err := b.captureAdjacencyReader(context.Background(), "test:hub", true, true, visibleRead)
 	require.NoError(t, err)
 	require.NotNil(t, reader.view)
 	defer reader.view.Close()
 	require.Equal(t, 1, activeReads())
-	out, err := reader.read(true)
+	out, err := reader.read(context.Background(), true)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	require.Equal(t, EdgeID("test:out"), out[0].ID)
 	updated := copyEdge(incoming)
 	updated.Properties["v"] = int64(2)
 	require.NoError(t, b.UpdateEdge(EdgeUpdateRequest{After: updated}))
-	in, err := reader.read(false)
+	in, err := reader.read(context.Background(), false)
 	require.NoError(t, err)
 	require.Len(t, in, 1)
 	require.Equal(t, int64(1), in[0].Properties["v"])
 	require.Equal(t, 1, activeReads())
 	reader.view.Close()
 	require.Zero(t, activeReads())
-	current, err := b.GetIncomingEdges("test:hub")
+	current, err := b.GetIncomingEdges(context.Background(), "test:hub")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), current[0].Properties["v"])
-	_, _, err = b.GetAdjacentEdges("test:hub")
+	_, _, err = b.GetAdjacentEdges(context.Background(), "test:hub")
 	require.NoError(t, err)
-	cached, err := b.captureAdjacencyReader("test:hub", true, true, visibleRead)
+	cached, err := b.captureAdjacencyReader(context.Background(), "test:hub", true, true, visibleRead)
 	require.NoError(t, err)
 	require.Nil(t, cached.view)
 	require.Zero(t, activeReads())
@@ -120,14 +121,14 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 	if locked {
 		b.writeBehind.mu.Unlock()
 	}
-	out, err = cached.read(true)
+	out, err = cached.read(context.Background(), true)
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:out"), out[0].ID)
-	in, err = cached.read(false)
+	in, err = cached.read(context.Background(), false)
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:in"), in[0].ID)
 
-	out, in, err = readAdjacency(b, adjacencyIncoming, "test:hub", "", nil, visibleRead)
+	out, in, err = readAdjacency(context.Background(), b, adjacencyIncoming, "test:hub", "", nil, visibleRead)
 	require.NoError(t, err)
 	require.Nil(t, out)
 	require.Equal(t, EdgeID("test:in"), in[0].ID)

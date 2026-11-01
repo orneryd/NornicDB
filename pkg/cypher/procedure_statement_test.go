@@ -30,7 +30,7 @@ func TestRunManyFailedStatementFailsTheTransaction(t *testing.T) {
 				require.Error(t, err, "the refused statement failed the transaction")
 			}
 			for _, label := range []string{"BeforeRunMany", "InRunMany"} {
-				nodes, err := stores["nornic"].GetNodesByLabel(label)
+				nodes, err := stores["nornic"].GetNodesByLabel(ctx, label)
 				require.NoError(t, err)
 				require.Empty(t, nodes, label)
 			}

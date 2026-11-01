@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -13,19 +14,19 @@ type asyncErrQueryEngine struct {
 	err error
 }
 
-func (e *asyncErrQueryEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
+func (e *asyncErrQueryEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
 	return nil, e.err
 }
 
-func (e *asyncErrQueryEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
+func (e *asyncErrQueryEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	return nil, e.err
 }
 
-func (e *asyncErrQueryEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
+func (e *asyncErrQueryEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	return nil, e.err
 }
 
-func (e *asyncErrQueryEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (e *asyncErrQueryEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	return nil, e.err
 }
 

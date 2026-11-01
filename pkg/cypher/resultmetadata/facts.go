@@ -89,6 +89,9 @@ const (
 	ClauseFinish
 	ClauseLet
 	ClauseFilter
+	// ClauseLoadCSV is the LOAD CSV reading clause, which binds its record
+	// variable without reading a graph.
+	ClauseLoadCSV
 )
 
 // CallKind distinguishes exporting calls from unit calls independently of rows.

@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // constituentForElementID resolves a qualified identity before a local read.
 // A qualified ID never falls back to another database with the same local ID.
 // qualified is true even when its database is unavailable or the kind differs.
@@ -83,30 +85,49 @@ func (c *CompositeEngine) sourceEdge(alias string, engine Engine, edge *Edge) *E
 	return edgeFromDatabase(edge, c.constituentDatabase(alias, engine))
 }
 
-func edgesFromDatabase(edges []*Edge, database string) []*Edge {
-	for _, edge := range edges {
-		if edge != nil && edge.Database == "" {
-			copy := append([]*Edge(nil), edges...)
-			for i, value := range copy {
-				copy[i] = edgeFromDatabase(value, database)
+// entitiesFromDatabase stamps a source identity without mutating source-owned
+// entities or slices. Already-bound collections retain their backing array.
+// One bounded traversal owns both projection and cancellation for both kinds.
+func entitiesFromDatabase[T *Node | *Edge](ctx context.Context, entities []T, database string) ([]T, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	result := entities
+	copied := false
+	for start := 0; start < len(entities); start += bulkReadCancellationInterval {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		end := min(start+bulkReadCancellationInterval, len(entities))
+		// Select the entity representation once per bounded block. The inner
+		// loops inspect concrete metadata without an indirect per-record call.
+		switch values := any(entities[start:end]).(type) {
+		case []*Node:
+			for i, value := range values {
+				if value != nil && value.RuntimeMetadata().Database == "" {
+					if !copied {
+						result = append([]T(nil), entities...)
+						copied = true
+					}
+					result[start+i] = any(nodeFromDatabase(value, database)).(T)
+				}
 			}
-			return copy
+		case []*Edge:
+			for i, value := range values {
+				if value != nil && value.Database == "" {
+					if !copied {
+						result = append([]T(nil), entities...)
+						copied = true
+					}
+					result[start+i] = any(edgeFromDatabase(value, database)).(T)
+				}
+			}
 		}
 	}
-	return edges
-}
-
-func nodesFromDatabase(nodes []*Node, database string) []*Node {
-	for _, node := range nodes {
-		if node != nil && node.RuntimeMetadata().Database == "" {
-			copy := append([]*Node(nil), nodes...)
-			for i, value := range copy {
-				copy[i] = nodeFromDatabase(value, database)
-			}
-			return copy
-		}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return nodes
+	return result, nil
 }
 
 func nodePairDatabase(start, end NodeID) string {

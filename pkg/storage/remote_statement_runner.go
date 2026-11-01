@@ -1,6 +1,8 @@
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 // RemoteStatementRunner runs one statement of a remote engine's operations,
 // and returns its columns and rows.

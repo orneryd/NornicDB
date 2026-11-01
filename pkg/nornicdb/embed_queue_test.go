@@ -986,7 +986,6 @@ func TestChunkText(t *testing.T) {
 // with multiple components and features.
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -1210,7 +1209,8 @@ func TestLargeContentEmbedding(t *testing.T) {
 		}
 
 		// Verify NO separate FileChunk nodes were created (new architecture stores all on same node)
-		allNodes := engine.GetAllNodes()
+		allNodes, readErr := engine.AllNodes(t.Context())
+		require.NoError(t, readErr)
 		chunkNodes := 0
 		for _, n := range allNodes {
 			for _, label := range n.Labels {

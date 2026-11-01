@@ -21,6 +21,7 @@
 package multidb
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -147,8 +148,9 @@ func (m *DatabaseManager) markMigrationComplete() error {
 // Returns true if any unprefixed data is found, false otherwise.
 // Returns an error if scanning fails.
 func (m *DatabaseManager) detectUnprefixedData(engine storage.Engine) (bool, error) {
-	// Get all nodes
-	allNodes, err := engine.AllNodes()
+	// Namespace migration is a one-time operation, not a statement read: it
+	// runs on its own lifetime.
+	allNodes, err := engine.AllNodes(context.Background())
 	if err != nil {
 		return false, err
 	}
@@ -166,7 +168,7 @@ func (m *DatabaseManager) detectUnprefixedData(engine storage.Engine) (bool, err
 	}
 
 	// Also check edges
-	allEdges, err := engine.AllEdges()
+	allEdges, err := engine.AllEdges(context.Background())
 	if err != nil {
 		return false, err
 	}
@@ -197,13 +199,13 @@ func (m *DatabaseManager) detectUnprefixedData(engine storage.Engine) (bool, err
 func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 	defaultDB := m.config.DefaultDatabase
 
-	// Get all nodes and edges
-	allNodes, err := engine.AllNodes()
+	// The migration operation runs on its own lifetime.
+	allNodes, err := engine.AllNodes(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get all nodes: %w", err)
 	}
 
-	allEdges, err := engine.AllEdges()
+	allEdges, err := engine.AllEdges(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get all edges: %w", err)
 	}

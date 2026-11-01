@@ -69,7 +69,7 @@ func TestRebuildEdgeTypeIndexBranches(t *testing.T) {
 		processed, err := engine.rebuildEdgeTypeIndex(nilCtx)
 		require.NoError(t, err)
 		require.Equal(t, 2, processed)
-		edges, err := engine.GetEdgesByType("Knows")
+		edges, err := engine.GetEdgesByType(context.Background(), "Knows")
 		require.NoError(t, err)
 		require.Len(t, edges, 1)
 	})

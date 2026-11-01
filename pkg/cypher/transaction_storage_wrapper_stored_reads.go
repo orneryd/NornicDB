@@ -26,32 +26,25 @@ func (w *transactionStorageWrapper) GetStoredEdge(id storage.EdgeID) (*storage.E
 	return w.toUserEdge(edge), nil
 }
 
-func (w *transactionStorageWrapper) GetStoredOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := w.tx.GetStoredOutgoingEdges(w.prefixNodeID(id))
-	if err != nil || w.namespace == "" {
-		return edges, err
-	}
-	return w.toUserEdges(edges), nil
+// GetStoredOutgoingEdges is GetOutgoingEdges' stored read: the same read exit
+// over the transaction's physically stored adjacency instead of its live,
+// pending-inclusive view.
+func (w *transactionStorageWrapper) GetStoredOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return w.adjacencyEdges(ctx, adjacencyRead{kind: storage.TransactionReadOutgoing, node: id, stored: true})
 }
 
-func (w *transactionStorageWrapper) GetStoredIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := w.tx.GetStoredIncomingEdges(w.prefixNodeID(id))
-	if err != nil || w.namespace == "" {
-		return edges, err
-	}
-	return w.toUserEdges(edges), nil
+// GetStoredIncomingEdges is GetStoredOutgoingEdges for the incoming side.
+func (w *transactionStorageWrapper) GetStoredIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return w.adjacencyEdges(ctx, adjacencyRead{kind: storage.TransactionReadIncoming, node: id, stored: true})
 }
 
-func (w *transactionStorageWrapper) GetStoredNodesByLabel(label string) ([]*storage.Node, error) {
-	nodes, err := w.tx.GetStoredNodesByLabel(label)
-	if err != nil || w.namespace == "" {
-		return nodes, err
-	}
-	return w.toUserNamespacedNodes(nodes), nil
+func (w *transactionStorageWrapper) GetStoredNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	nodes, err := w.tx.GetStoredNodesByLabel(ctx, label)
+	return projectTransactionRead(ctx, w, nodes, err, readScanned)
 }
 
-func (w *transactionStorageWrapper) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
-	return w.streamNodesByLabelProjected(label, properties, true, visit)
+func (w *transactionStorageWrapper) StreamStoredNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
+	return w.streamNodesByLabelProjected(ctx, label, properties, true, visit)
 }
 
 func (w *transactionStorageWrapper) StreamStoredEdgesByType(ctx context.Context, edgeType string, visit func(*storage.Edge) error) error {

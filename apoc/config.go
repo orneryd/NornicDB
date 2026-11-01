@@ -396,7 +396,7 @@ plugins_dir: /opt/nornicdb/plugins
 # Enable/disable entire categories
 categories:
   coll: true        # Collection functions
-  text: true        # Text processing
+  text: false       # Text processing (enabled selectively below)
   math: true        # Mathematical operations
   convert: true     # Type conversions
   map: true         # Map operations
@@ -417,8 +417,8 @@ functions:
   # Disable all import functions
   "apoc.import.*": false
   
-  # Enable specific algorithm
-  "apoc.algo.pageRank": true
+  # Enable a specific text function
+  "apoc.text.camelCase": true
 
 # Security settings
 security:

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
@@ -27,8 +28,10 @@ func (p *namespaceCountReadProbe) EdgeCountByEndLabelInNamespace(namespace, labe
 	return p.BadgerEngine.EdgeCountByEndLabelInNamespace(namespace, label, edgeType)
 }
 
-func (*namespaceCountReadProbe) AllEdges() ([]*Edge, error) { panic("count materialized edges") }
-func (*namespaceCountReadProbe) GetEdgesByType(string) ([]*Edge, error) {
+func (*namespaceCountReadProbe) AllEdges(ctx context.Context) ([]*Edge, error) {
+	panic("count materialized edges")
+}
+func (*namespaceCountReadProbe) GetEdgesByType(ctx context.Context, _ string) ([]*Edge, error) {
 	panic("count materialized a relationship type")
 }
 

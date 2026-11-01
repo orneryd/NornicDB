@@ -183,7 +183,7 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 		})
 		fnCtx.Nodes = row.nodes
 		fnCtx.Rels = row.rels
-		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
+		if v, found, err := cypherfn.EvaluateFunction(ctx, name, args, fnCtx); found {
 			if err != nil {
 				functionEvaluationFailure(ctx, err)
 				return nil

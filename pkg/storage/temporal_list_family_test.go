@@ -369,7 +369,7 @@ func (g *tlfStreamGuard) StreamStoredEdgesByType(ctx context.Context, edgeType s
 	})
 }
 
-func (g *tlfStreamGuard) GetEdgesByType(string) ([]*Edge, error) {
+func (g *tlfStreamGuard) GetEdgesByType(ctx context.Context, _ string) ([]*Edge, error) {
 	g.fallback++
 	return nil, ErrInvalidData
 }

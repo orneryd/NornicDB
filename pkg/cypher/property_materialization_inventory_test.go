@@ -15,9 +15,9 @@ import (
 
 func propertyDurableSnapshot(t testing.TB, store *storage.NamespacedEngine) string {
 	t.Helper()
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(context.Background())
 	require.NoError(t, err)
 	values := map[string]interface{}{}
 	for _, node := range nodes {
@@ -244,9 +244,9 @@ func assertMaterializedValue(t *testing.T, store *storage.NamespacedEngine, rout
 	default:
 		return
 	}
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(context.Background())
 	require.NoError(t, err)
 	var bags []map[string]interface{}
 	rel := strings.Contains(route, "rel") || route == "foreach" || route == "unwind-create" || route == "subquery-create"

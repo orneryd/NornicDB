@@ -69,15 +69,15 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 			}
 			_, err = storage.GetStoredEdge(wrapper, "deleted")
 			require.ErrorIs(t, err, storage.ErrNotFound)
-			outgoing, err := storage.GetStoredOutgoingEdges(wrapper, "x")
+			outgoing, err := storage.GetStoredOutgoingEdges(context.Background(), wrapper, "x")
 			require.NoError(t, err)
 			require.Len(t, outgoing, 1)
 			require.Equal(t, storage.EdgeID("hidden"), outgoing[0].ID)
-			incoming, err := storage.GetStoredIncomingEdges(wrapper, "z")
+			incoming, err := storage.GetStoredIncomingEdges(context.Background(), wrapper, "z")
 			require.NoError(t, err)
 			require.Len(t, incoming, 1)
 			require.Equal(t, storage.EdgeID("pending"), incoming[0].ID)
-			nodes, err := storage.GetStoredNodesByLabel(wrapper, "N")
+			nodes, err := storage.GetStoredNodesByLabel(context.Background(), wrapper, "N")
 			require.NoError(t, err)
 			ids := make([]string, 0, len(nodes))
 			for _, n := range nodes {
@@ -86,14 +86,14 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 			sort.Strings(ids)
 			require.Equal(t, []string{"pending", "x", "y", "z"}, ids)
 			ids = nil
-			require.NoError(t, storage.StreamStoredNodesByLabelProjected(wrapper, "N", []string{"k"}, func(n *storage.Node) error {
+			require.NoError(t, storage.StreamStoredNodesByLabelProjected(context.Background(), wrapper, "N", []string{"k"}, func(n *storage.Node) error {
 				ids = append(ids, string(n.ID))
 				return nil
 			}))
 			sort.Strings(ids)
 			require.Equal(t, []string{"pending", "x", "y", "z"}, ids)
 			ids = nil
-			require.NoError(t, wrapper.StreamNodesByLabelProjected("N", []string{"k"}, func(n *storage.Node) error {
+			require.NoError(t, wrapper.StreamNodesByLabelProjected(context.Background(), "N", []string{"k"}, func(n *storage.Node) error {
 				ids = append(ids, string(n.ID))
 				return nil
 			}))
@@ -156,7 +156,7 @@ func TestTransactionStoredReaderKeepsSnapshot(t *testing.T) {
 	edge, err := storage.GetStoredEdge(wrapper, "hidden")
 	require.NoError(t, err)
 	require.Equal(t, "before", edge.Properties["k"])
-	nodes, err := storage.GetStoredNodesByLabel(wrapper, "N")
+	nodes, err := storage.GetStoredNodesByLabel(context.Background(), wrapper, "N")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	for _, typ := range []string{"REL", ""} {

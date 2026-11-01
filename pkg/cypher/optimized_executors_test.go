@@ -730,7 +730,8 @@ func TestGetNodeCached(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get all nodes to find the ID
-	nodes := store.GetAllNodes()
+	nodes, err := store.AllNodes(ctx)
+	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	nodeID := nodes[0].ID
 
@@ -787,14 +788,15 @@ func TestBatchGetNodes(t *testing.T) {
 	}
 
 	// Get all node IDs
-	allNodes := store.GetAllNodes()
+	allNodes, err := store.AllNodes(ctx)
+	require.NoError(t, err)
 	ids := make([]storage.NodeID, len(allNodes))
 	for i, n := range allNodes {
 		ids[i] = n.ID
 	}
 
 	// Batch get
-	result := exec.BatchGetNodes(ids)
+	result := exec.BatchGetNodes(ctx, ids)
 	assert.Len(t, result, 3, "Should return all 3 nodes")
 
 	for _, id := range ids {

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"strings"
@@ -72,7 +73,7 @@ func BenchmarkBadger_GetEdgesByType_CacheHit(b *testing.B) {
 	}
 
 	// Warm cache.
-	edges, err := engine.GetEdgesByType(edgeType)
+	edges, err := engine.GetEdgesByType(context.Background(), edgeType)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func BenchmarkBadger_GetEdgesByType_CacheHit(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		edges, err := engine.GetEdgesByType(edgeType)
+		edges, err := engine.GetEdgesByType(context.Background(), edgeType)
 		if err != nil {
 			b.Fatal(err)
 		}

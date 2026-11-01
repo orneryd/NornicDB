@@ -66,7 +66,7 @@ func TestAutoTLP_ServerSideEmbeddingsTriggerInferenceOnEmbedded(t *testing.T) {
 	b, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{"content": "beta"})
 	require.NoError(t, err)
 
-	edges, err := db.storage.AllEdges()
+	edges, err := db.storage.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Len(t, edges, 0)
 
@@ -86,7 +86,7 @@ func TestAutoTLP_ServerSideEmbeddingsTriggerInferenceOnEmbedded(t *testing.T) {
 	db.SetEmbedder(&staticTestEmbedder{dims: 3})
 
 	require.Eventually(t, func() bool {
-		out, err := db.storage.GetEdgesBetween(storage.NodeID(a.ID), storage.NodeID(b.ID))
+		out, err := db.storage.GetEdgesBetween(ctx, storage.NodeID(a.ID), storage.NodeID(b.ID))
 		if err != nil {
 			return false
 		}

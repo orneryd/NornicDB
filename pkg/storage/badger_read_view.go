@@ -99,7 +99,23 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 		if _, idle := w.idleReadEpoch(opts.scope); idle {
 			overlay = nil
 		}
-		capture(overlay)
+		// The capture runs inside the view's own unwind boundary. A panic from a
+		// capture callback (a defect, not a result) still unwinds, but it must not
+		// leave this read's transaction, timestamp or the engine's close barrier
+		// owned by a dead stack: Close releases them and the panic continues
+		// unchanged, so Engine.Close never waits for a read that cannot return.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					view.Close()
+					if opts.longLived {
+						b.txnWG.Done()
+					}
+					panic(r)
+				}
+			}()
+			capture(overlay)
+		}()
 	}
 	if opts.longLived {
 		b.txnWG.Done()

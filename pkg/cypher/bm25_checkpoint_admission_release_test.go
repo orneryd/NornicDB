@@ -31,9 +31,9 @@ type nor283ScanEngine struct {
 	reads atomic.Int32
 }
 
-func (e *nor283ScanEngine) AllNodes() ([]*storage.Node, error) {
+func (e *nor283ScanEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	e.reads.Add(1)
-	return e.Engine.AllNodes()
+	return e.Engine.AllNodes(ctx)
 }
 
 type nor283IteratorEngine struct{ *nor283ScanEngine }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -58,9 +59,12 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 
 // nodeConstraintValidation owns schema iteration, first-error ordering, DOMAIN
 // and property-type policy. Reads remain attached to their actual authority:
-// a transaction's pending/current view or the caller's physical publishing txn.
-// The concrete context avoids interface boxes and retains original error values.
+// a transaction's pending/current view or the caller's physical publishing txn,
+// and to their own lifetime (ctx): the staging write's own for a context-free
+// transaction API, the commit's caller context for a commit. The concrete
+// context avoids interface boxes and retains original error values.
 type nodeConstraintValidation struct {
+	ctx         context.Context
 	engine      *BadgerEngine
 	native      *badger.Txn
 	schema      *SchemaManager
@@ -77,7 +81,7 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 			if v.transaction != nil {
 				var err error
 				if len(c.Properties) > 1 {
-					err = v.transaction.checkNodeKeyConstraint(node, c)
+					err = v.transaction.checkNodeKeyConstraint(v.ctx, node, c)
 				} else {
 					err = v.transaction.checkUniqueConstraint(node, c)
 				}
@@ -117,7 +121,7 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 			}
 		case ConstraintNodeKey:
 			if v.transaction != nil {
-				if err := v.transaction.checkNodeKeyConstraint(node, c); err != nil {
+				if err := v.transaction.checkNodeKeyConstraint(v.ctx, node, c); err != nil {
 					return err
 				}
 				continue
@@ -153,7 +157,7 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 			}
 		case ConstraintTemporal:
 			if v.transaction != nil {
-				if err := v.transaction.checkTemporalConstraint(node, c); err != nil {
+				if err := v.transaction.checkTemporalConstraint(v.ctx, node, c); err != nil {
 					return err
 				}
 				continue
@@ -782,29 +786,28 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 // checkEdgeCardinalityInTxn counts edges of the given type connected to the anchor
 // node (determined by constraint direction) and rejects the new edge if adding it
 // would exceed MaxCount.
+//
+// Its input authority is the caller's own publishing transaction: the entries of
+// the anchor node's adjacency index are iterated and their bodies decoded inside
+// txn, so the count sees exactly the state this write is validating against.
+// Population selection is all this route keeps; the counter owns the population
+// predicate, the threshold and the violation that the staged-transaction route
+// uses as well, and this route stops at the first counted image that fills the
+// constraint instead of counting the rest.
 func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c Constraint, namespace string, excludeEdgeID EdgeID) error {
-	// Determine anchor node based on direction.
-	var anchorNode NodeID
-	if c.Direction == "OUTGOING" {
-		anchorNode = NodeID(edge.StartNode)
-	} else {
-		anchorNode = NodeID(edge.EndNode)
-	}
+	counter := newEdgeCardinalityCounter(c, edge, namespace, excludeEdgeID)
 
 	// Choose the index prefix based on direction.
 	var prefix []byte
 	if c.Direction == "OUTGOING" {
-		prefix = b.outgoingIndexPrefixString(anchorNode)
+		prefix = b.outgoingIndexPrefixString(counter.anchor)
 	} else {
-		prefix = b.incomingIndexPrefixString(anchorNode)
+		prefix = b.incomingIndexPrefixString(counter.anchor)
 	}
 	if prefix == nil {
 		// Anchor node has no numID → no adjacent edges indexed.
 		return nil
 	}
-
-	count := 0
-	nsPrefix := namespace + ":"
 
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
@@ -815,10 +818,7 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 			continue
 		}
 		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
-		if !ok || edgeID == "" || edgeID == excludeEdgeID {
-			continue
-		}
-		if namespace != "" && !strings.HasPrefix(string(edgeID), nsPrefix) {
+		if !ok || edgeID == "" || !counter.admits(edgeID) {
 			continue
 		}
 
@@ -841,17 +841,11 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 		if err != nil {
 			return err
 		}
-		if existingEdge.Type == c.Label {
-			count++
-			if count >= c.MaxCount {
-				dir := strings.ToLower(c.Direction)
-				return &ConstraintViolationError{
-					Type:  ConstraintCardinality,
-					Label: c.Label,
-					Message: fmt.Sprintf("Adding this edge would exceed max %s count of %d for relationship type %s on node %s (current: %d)",
-						dir, c.MaxCount, c.Label, anchorNode, count),
-				}
-			}
+		if !counter.counts(existingEdge.Type) {
+			continue
+		}
+		if counter.reached() {
+			return counter.violation()
 		}
 	}
 

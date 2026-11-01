@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/url"
 	"testing"
@@ -24,7 +25,7 @@ func TestNestedUseFromSystemDatabaseWritesNothing(t *testing.T) {
 			writer := getAuthToken(t, users, "writer")
 			system, err := server.dbManager.GetStorage("system")
 			require.NoError(t, err)
-			before, err := system.GetNodesByLabel("_User")
+			before, err := system.GetNodesByLabel(context.Background(), "_User")
 			require.NoError(t, err)
 
 			statement := map[string]any{
@@ -46,12 +47,12 @@ func TestNestedUseFromSystemDatabaseWritesNothing(t *testing.T) {
 			}
 			require.NotEmpty(t, body.Errors, "the nested statement is refused")
 
-			after, err := system.GetNodesByLabel("_User")
+			after, err := system.GetNodesByLabel(context.Background(), "_User")
 			require.NoError(t, err)
 			require.Len(t, after, len(before), "the system database is unchanged")
 			nornic, err := server.dbManager.GetStorage("nornic")
 			require.NoError(t, err)
-			written, err := nornic.GetNodesByLabel("_User")
+			written, err := nornic.GetNodesByLabel(context.Background(), "_User")
 			require.NoError(t, err)
 			require.Empty(t, written, "the user database is unchanged")
 		})

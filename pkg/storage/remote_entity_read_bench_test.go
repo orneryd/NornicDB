@@ -26,7 +26,7 @@ func BenchmarkRemoteEntityReadAdmission(b *testing.B) {
 		b.Run(fmt.Sprintf("all/%d", count), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				if nodes, err := engine.AllNodes(); err != nil || len(nodes) != count {
+				if nodes, err := engine.AllNodes(context.Background()); err != nil || len(nodes) != count {
 					b.Fatalf("node list: %v", err)
 				}
 			}

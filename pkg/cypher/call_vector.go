@@ -6,10 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -21,116 +19,19 @@ import (
 // Neo4j Vector Index Procedures
 // ========================================
 
-// callDbIndexVectorQueryNodes implements db.index.vector.queryNodes
-// Syntax: CALL db.index.vector.queryNodes('indexName', k, queryVector) YIELD node, score
-//
-// This is the primary vector similarity search procedure for:
-//   - Semantic memory retrieval
-//   - Similar document discovery
-//   - Embedding-based node matching
+// callDbIndexVectorQueryNodesWithVector implements the search half of
+// db.index.vector.queryNodes. The statement has already bound and resolved the
+// procedure's arguments, once, in callVectorQueryArguments.
 //
 // Parameters:
 //   - indexName: Name of the vector index (from CREATE VECTOR INDEX)
 //   - k: Number of results to return
-//   - queryVector: The query embedding vector ([]float32 or []float64)
+//   - queryVector: The query embedding to search with
 //
 // Returns:
 //   - node: The matched node with all properties
 //   - score: Cosine similarity score (0.0 to 1.0)
-func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Parse parameters from: CALL db.index.vector.queryNodes('indexName', k, queryInput)
-	// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
-	indexName, k, input, err := e.parseVectorQueryParams(cypher)
-	if err != nil {
-		return nil, localizedError(localization.CypherSpecializedCallsVectorQueryParseFailed(err), err)
-	}
-	return e.callDbIndexVectorQueryNodesInput(ctx, indexName, k, input)
-}
-
-func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
-	// Resolve the query vector
-	var queryVector []float32
-
-	if len(input.vector) > 0 {
-		// Direct vector provided (Neo4j compatible)
-		queryVector = input.vector
-	} else if input.stringQuery != "" {
-		// String query - embed server-side (NornicDB enhancement)
-		if e.queryEmbedderForStatement(ctx) == nil {
-			return nil, localizedError(localization.CypherSpecializedCallsStringQueryEmbedderRequired(), nil)
-		}
-		embedded, embedErr := e.embedVectorQueryText(ctx, input.stringQuery)
-		if embedErr != nil {
-			return nil, localizedError(localization.CypherSpecializedCallsEmbedQueryTextFailed(input.stringQuery, embedErr), embedErr)
-		}
-		queryVector = embedded
-	} else if input.hasValue || input.paramName != "" {
-		// Parameter reference - resolve from context parameters
-		// Parameters should have been substituted by executeCall, but if not, try to resolve here
-		paramValue := input.value
-		if !input.hasValue {
-			params := getParamsFromContext(ctx)
-			if params == nil {
-				return &ExecuteResult{Columns: columnNames(nodeScoreColumns), Rows: [][]interface{}{}}, nil
-			}
-			var exists bool
-			paramValue, exists = params[input.paramName]
-			if !exists {
-				return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(input.paramName), nil)
-			}
-		}
-
-		if text, isText := paramValue.(string); isText {
-			// String parameter - embed it
-			if e.queryEmbedderForStatement(ctx) == nil {
-				return nil, localizedError(localization.CypherSpecializedCallsParameterStringEmbedderRequired(input.paramName), nil)
-			}
-			embedded, embedErr := e.embedVectorQueryText(ctx, text)
-			if embedErr != nil {
-				return nil, localizedError(localization.CypherSpecializedCallsEmbedParameterFailed(input.paramName, text, embedErr), embedErr)
-			}
-			queryVector = embedded
-		} else {
-			list, ok := valueconvert.ReadList(paramValue)
-			if !ok {
-				return nil, localizedError(localization.CypherSpecializedCallsParameterUnsupportedType(input.paramName, cypherTypeName(paramValue)), nil)
-			}
-			var issue *valueconvert.NumberListIssue
-			queryVector, issue = list.Numbers32()
-			if issue != nil {
-				if issue.OutOfRange {
-					return nil, localizedError(localization.CypherCoreFunctionArgumentInvalid("vector query", "representable numeric coordinates", fmt.Sprint(issue.Value)), nil)
-				}
-				return nil, localizedError(localization.CypherSpecializedCallsParameterNonNumeric(input.paramName, fmt.Sprintf("%T", issue.Value)), nil)
-			}
-		}
-	} else {
-		// No query input provided - check if this might be a substituted invalid parameter
-		params := getParamsFromContext(ctx)
-		if params != nil {
-			// Parameters were provided, so if we have no input, it might be a substituted invalid type
-			// Check which parameters have unsupported types to provide a better error message
-			var unsupportedParams []string
-			for paramName, paramValue := range params {
-				// Check if this parameter has an unsupported type for vector queries
-				_, list := valueconvert.ReadList(paramValue)
-				_, text := paramValue.(string)
-				if !list && !text {
-					unsupportedParams = append(unsupportedParams, fmt.Sprintf("$%s (%T)", paramName, paramValue))
-				}
-			}
-
-			if len(unsupportedParams) > 0 {
-				// Found parameters with unsupported types - provide specific error
-				paramList := strings.Join(unsupportedParams, ", ")
-				return nil, localizedError(localization.CypherSpecializedCallsUnsupportedParameters(paramList), nil)
-			}
-			// Parameters exist but all have supported types - might be a different issue
-			return nil, localizedError(localization.CypherSpecializedCallsQueryInputPossiblyUnsupported(), nil)
-		}
-		return nil, localizedError(localization.CypherSpecializedCallsQueryInputRequired(), nil)
-	}
-
+func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Context, indexName string, k int, queryVector []float32) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: columnNames(nodeScoreColumns),
 		Rows:    [][]interface{}{},
@@ -298,22 +199,79 @@ func noSuchVectorIndexError(indexName string) error {
 		fmt.Sprintf("There is no such vector schema index: %s", indexName))
 }
 
-// vectorQueryInput represents either a vector or a string query for vector search
-type vectorQueryInput struct {
-	vector      []float32 // Pre-computed vector (from client)
-	stringQuery string    // Text query to embed server-side
-	paramName   string    // Parameter name if using $param
-	value       interface{}
-	hasValue    bool
+// vectorQueryInputTypes is the third argument's contract in the diagnostics a
+// vector query reports for a value of another type.
+const vectorQueryInputTypes = "[]float32, []float64, []interface{}, or string"
+
+// vectorQueryInputDiagnostics names the localized messages one vector query
+// procedure reports while it resolves its third argument. The node and
+// relationship procedures keep their own message identities; the resolution
+// itself is shared.
+type vectorQueryInputDiagnostics struct {
+	stringQueryEmbedderRequired func() localization.Message
+	embedQueryFailed            func(query string, cause error) localization.Message
+	queryInputRequired          func() localization.Message
 }
 
+var (
+	nodeVectorQueryInputDiagnostics = vectorQueryInputDiagnostics{
+		stringQueryEmbedderRequired: localization.CypherSpecializedCallsStringQueryEmbedderRequired,
+		embedQueryFailed:            localization.CypherSpecializedCallsEmbedQueryTextFailed,
+		queryInputRequired:          localization.CypherSpecializedCallsQueryInputRequired,
+	}
+	relationshipVectorQueryInputDiagnostics = vectorQueryInputDiagnostics{
+		stringQueryEmbedderRequired: localization.CypherProceduresStringQueryEmbedderRequired,
+		embedQueryFailed:            localization.CypherProceduresEmbedQueryFailed,
+		queryInputRequired:          localization.CypherProceduresQueryInputRequired,
+	}
+)
+
+// vectorQueryCoordinates is the one owner of a vector query's third-argument
+// resolution. The statement has already evaluated and bound the argument, so
+// this is the actual value: search text is embedded server-side, a numeric
+// list is the query vector, and any other value is the argument error its type
+// earns.
+func (e *StorageExecutor) vectorQueryCoordinates(ctx context.Context, procedure string, diagnostics vectorQueryInputDiagnostics, query interface{}) ([]float32, error) {
+	if text, isText := query.(string); isText {
+		if text == "" {
+			return nil, localizedError(diagnostics.queryInputRequired(), nil)
+		}
+		if e.queryEmbedderForStatement(ctx) == nil {
+			return nil, localizedError(diagnostics.stringQueryEmbedderRequired(), nil)
+		}
+		embedded, err := e.embedVectorQueryText(ctx, text)
+		if err != nil {
+			return nil, localizedError(diagnostics.embedQueryFailed(text, err), err)
+		}
+		return embedded, nil
+	}
+	list, isList := valueconvert.ReadList(query)
+	if !isList {
+		return nil, localizedError(localization.CypherProceduresArgumentType(procedure, "query", vectorQueryInputTypes, cypherTypeName(query)), nil)
+	}
+	coordinates, issue := list.Numbers32()
+	if issue != nil {
+		if issue.OutOfRange {
+			return nil, localizedError(localization.CypherCoreFunctionArgumentInvalid("vector query", "representable numeric coordinates", fmt.Sprint(issue.Value)), nil)
+		}
+		return nil, localizedError(localization.CypherProceduresArgumentType(procedure, "query", "numeric coordinates", cypherTypeName(issue.Value)), nil)
+	}
+	return coordinates, nil
+}
+
+// callVectorQueryArguments is the one owner of the two vector query
+// procedures' arguments: it checks the index name and neighbour count, resolves
+// the query input, then hands the resolved vector to the procedure's own
+// search.
 func (e *StorageExecutor) callVectorQueryArguments(ctx context.Context, args []interface{}, relationships bool) (*ExecuteResult, error) {
 	if len(args) != 3 {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentCount", "vector queries require three arguments")
 	}
 	procedure := "db.index.vector.queryNodes"
+	diagnostics := nodeVectorQueryInputDiagnostics
 	if relationships {
 		procedure = "db.index.vector.queryRelationships"
+		diagnostics = relationshipVectorQueryInputDiagnostics
 	}
 	// A null name or count fails the call (ProcedureCallFailed), as in
 	// Neo4j; a value of another type is a TypeError.
@@ -325,113 +283,12 @@ func (e *StorageExecutor) callVectorQueryArguments(ctx context.Context, args []i
 	if err != nil {
 		return nil, err
 	}
-	k := int(count)
-	input := &vectorQueryInput{value: args[2], hasValue: true}
-	if text, ok := args[2].(string); ok {
-		input = &vectorQueryInput{stringQuery: text}
+	queryVector, err := e.vectorQueryCoordinates(ctx, procedure, diagnostics, args[2])
+	if err != nil {
+		return nil, err
 	}
 	if relationships {
-		return e.callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
+		return e.callDbIndexVectorQueryRelationshipsWithVector(ctx, indexName, int(count), queryVector)
 	}
-	return e.callDbIndexVectorQueryNodesInput(ctx, indexName, k, input)
-}
-
-// parseVectorQueryParams extracts indexName, k, and query input from a vector query CALL.
-// The query can be either:
-//   - A vector array: [0.1, 0.2, ...]
-//   - A string query: 'search text' (will be embedded server-side if embedder available)
-//   - A parameter: $queryVector (resolved later)
-func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName string, k int, input *vectorQueryInput, err error) {
-	// Default values
-	k = 10
-	indexName = "default"
-	input = &vectorQueryInput{}
-
-	// Find the procedure call (supports both queryNodes and queryRelationships)
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "DB.INDEX.VECTOR.QUERYNODES")
-	if callIdx == -1 {
-		callIdx = strings.Index(upper, "DB.INDEX.VECTOR.QUERYRELATIONSHIPS")
-	}
-	if callIdx == -1 {
-		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorProcedureNotFound(), nil)
-	}
-
-	// Find the opening parenthesis
-	rest := cypher[callIdx:]
-	parenIdx := strings.Index(rest, "(")
-	if parenIdx == -1 {
-		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorParametersMissing(), nil)
-	}
-
-	endIdx := cyphertext.FindMatchingDelimiter(rest, parenIdx, '(', ')', cyphertext.OpeningDelimiter)
-	if endIdx < 0 {
-		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorUnmatchedParenthesis(), nil)
-	}
-
-	params := rest[parenIdx+1 : endIdx]
-
-	// Split parameters (careful with nested brackets)
-	parts := splitTopLevelComma(params)
-
-	if len(parts) >= 1 {
-		// First param is index name (quoted string)
-		indexName = strings.Trim(strings.TrimSpace(parts[0]), "'\"")
-	}
-
-	if len(parts) >= 2 {
-		// Second param is k (integer)
-		kStr := strings.TrimSpace(parts[1])
-		if val, parseErr := strconv.Atoi(kStr); parseErr == nil {
-			k = val
-		}
-	}
-
-	if len(parts) >= 3 {
-		// Third param can be:
-		// - Vector array: [0.1, 0.2, ...]
-		// - String query: 'search text' or "search text"
-		// - Parameter: $queryVector
-		// - Substituted parameter value: 123, "text", [0.1, 0.2], etc.
-		queryStr := strings.TrimSpace(parts[2])
-
-		if strings.HasPrefix(queryStr, "$") {
-			// Parameter reference - store name for later resolution
-			input.paramName = strings.TrimPrefix(queryStr, "$")
-		} else if isListLiteral(queryStr) {
-			// Inline vector array
-			input.vector = parseInlineVector(queryStr)
-		} else if (strings.HasPrefix(queryStr, "'") && strings.HasSuffix(queryStr, "'")) ||
-			(strings.HasPrefix(queryStr, "\"") && strings.HasSuffix(queryStr, "\"")) {
-			// Quoted string query - will be embedded server-side
-			input.stringQuery = strings.Trim(queryStr, "'\"")
-		} else {
-			// Could be a substituted parameter value that doesn't match patterns above
-			// This will be handled in callDbIndexVectorQueryNodes when checking for parameter resolution
-			// For now, leave it empty - will be caught by validation later
-		}
-	}
-
-	return indexName, k, input, nil
-}
-
-// parseInlineVector parses an inline vector like [0.1, 0.2, 0.3]; nil for
-// anything but one list literal.
-func parseInlineVector(s string) []float32 {
-	if !isListLiteral(s) {
-		return nil
-	}
-	s = s[1 : len(s)-1]
-
-	parts := strings.Split(s, ",")
-	result := make([]float32, 0, len(parts))
-
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if val, err := strconv.ParseFloat(p, 32); err == nil {
-			result = append(result, float32(val))
-		}
-	}
-
-	return result
+	return e.callDbIndexVectorQueryNodesWithVector(ctx, indexName, int(count), queryVector)
 }

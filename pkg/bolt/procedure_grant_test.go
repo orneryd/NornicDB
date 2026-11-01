@@ -151,11 +151,11 @@ type grantLookupEngine struct {
 	fail *bool
 }
 
-func (e *grantLookupEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *grantLookupEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if *e.fail {
 		return nil, errors.New("grants unreadable")
 	}
-	return e.Engine.GetNodesByLabel(label)
+	return e.Engine.GetNodesByLabel(ctx, label)
 }
 
 // GRANT IMMUTABLE runs on a Bolt server without authentication, and is

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -67,40 +68,42 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 func TestReadViewEmptyOverlaySelectors(t *testing.T) {
 	var w *WriteBehindBuffer
 	require.Equal(t, bufferedEntityState{}, w.entityStateLocked(bufferedNodeEntity, "test:n"))
-	nodes, nodeIDs := w.labelOverlayLocked("L")
+	nodes, nodeIDs, _ := w.labelOverlayLocked(context.Background(), "L")
 	require.Nil(t, nodes)
 	require.Nil(t, nodeIDs)
-	nodes, nodeIDs = w.allNodesOverlayLocked()
+	nodes, nodeIDs, _ = w.allNodesOverlayLocked(context.Background())
 	require.Nil(t, nodes)
 	require.Nil(t, nodeIDs)
-	edges, edgeIDs := w.typeOverlayLocked("R")
+	edges, edgeIDs, _ := w.typeOverlayLocked(context.Background(), "R")
 	require.Nil(t, edges)
 	require.Nil(t, edgeIDs)
-	edges, edgeIDs = w.allEdgesOverlayLocked()
+	edges, edgeIDs, _ = w.allEdgesOverlayLocked(context.Background())
 	require.Nil(t, edges)
 	require.Nil(t, edgeIDs)
-	edges, suppressed, deleted := w.edgeAdjacencyOverlayLocked("test:n", true)
+	edges, suppressed, deleted, _ := w.edgeAdjacencyOverlayLocked(context.Background(), "test:n", true)
 	require.Nil(t, edges)
 	require.Nil(t, suppressed)
 	require.False(t, deleted)
-	edges, suppressed, sourceDeleted, targetDeleted := w.edgesBetweenOverlayLocked("test:a", "test:b")
+	edges, suppressed, sourceDeleted, targetDeleted, _ := w.edgesBetweenOverlayLocked(context.Background(), "test:a", "test:b")
 	require.Nil(t, edges)
 	require.Nil(t, suppressed)
 	require.False(t, sourceDeleted)
 	require.False(t, targetDeleted)
-	require.Nil(t, w.keyCandidatesLocked("L", "p", int64(1)))
-	w.visitEntityOverlayLocked(bufferedNodeEntity, func(*CommitBuffer, func(string)) {
+	candidates, candidatesErr := w.keyCandidatesLocked(context.Background(), "L", "p", int64(1))
+	require.NoError(t, candidatesErr)
+	require.Nil(t, candidates)
+	require.NoError(t, w.visitEntityOverlayLocked(context.Background(), bufferedNodeEntity, func(*CommitBuffer, func(string) bool) {
 		t.Fatal("empty overlay must not enumerate candidates")
-	}, func(string, bufferedEntityState) { t.Fatal("empty overlay must not visit entities") })
+	}, func(string, bufferedEntityState) { t.Fatal("empty overlay must not visit entities") }))
 	require.Zero(t, testing.AllocsPerRun(100, func() {
 		w.entityStateLocked(bufferedNodeEntity, "test:n")
-		w.labelOverlayLocked("L")
-		w.allNodesOverlayLocked()
-		w.typeOverlayLocked("R")
-		w.allEdgesOverlayLocked()
-		w.edgeAdjacencyOverlayLocked("test:n", true)
-		w.edgesBetweenOverlayLocked("test:a", "test:b")
-		w.keyCandidatesLocked("L", "p", int64(1))
+		w.labelOverlayLocked(context.Background(), "L")
+		w.allNodesOverlayLocked(context.Background())
+		w.typeOverlayLocked(context.Background(), "R")
+		w.allEdgesOverlayLocked(context.Background())
+		w.edgeAdjacencyOverlayLocked(context.Background(), "test:n", true)
+		w.edgesBetweenOverlayLocked(context.Background(), "test:a", "test:b")
+		w.keyCandidatesLocked(context.Background(), "L", "p", int64(1))
 	}))
 }
 
@@ -129,10 +132,10 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 			_, idle := b.writeBehind.idleReadEpoch("test")
 			require.True(t, idle)
 			for _, read := range []func() ([]*Edge, error){
-				func() ([]*Edge, error) { return b.GetOutgoingEdges("test:a") },
-				func() ([]*Edge, error) { return b.GetIncomingEdges("test:b") },
+				func() ([]*Edge, error) { return b.GetOutgoingEdges(context.Background(), "test:a") },
+				func() ([]*Edge, error) { return b.GetIncomingEdges(context.Background(), "test:b") },
 				func() ([]*Edge, error) {
-					out, in, err := readAdjacency(b, adjacencyBoth, "test:a", "", nil, visibleRead)
+					out, in, err := readAdjacency(context.Background(), b, adjacencyBoth, "test:a", "", nil, visibleRead)
 					require.Empty(t, in)
 					return out, err
 				},

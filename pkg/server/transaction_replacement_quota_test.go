@@ -168,7 +168,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 									flush()
 									old := time.Now().Add(-72 * time.Hour)
 									if entity == "node" {
-										nodes, err := storage.GetStoredNodesByLabel(store, "Doc")
+										nodes, err := storage.GetStoredNodesByLabel(context.Background(), store, "Doc")
 										require.NoError(t, err)
 										require.Len(t, nodes, 1)
 										nodes[0].CreatedAt, nodes[0].UpdatedAt = old, old
@@ -245,7 +245,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 											wantPayload = strings.Repeat("x", 2048)
 										}
 										if entity == "node" {
-											stored, err := storage.GetStoredNodesByLabel(store, "Doc")
+											stored, err := storage.GetStoredNodesByLabel(context.Background(), store, "Doc")
 											require.NoError(t, err)
 											require.Len(t, stored, 1)
 											require.Equal(t, wantPayload, stored[0].Properties["payload"])
@@ -322,7 +322,7 @@ func quotaStoredBodies(t *testing.T, store storage.Engine) storage.TransactionCh
 
 func updateQuotaPayload(store storage.Engine, entity, payload string) error {
 	if entity == "node" {
-		nodes, err := storage.GetStoredNodesByLabel(store, "Doc")
+		nodes, err := storage.GetStoredNodesByLabel(context.Background(), store, "Doc")
 		if err != nil {
 			return err
 		}

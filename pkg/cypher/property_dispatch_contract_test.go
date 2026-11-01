@@ -79,11 +79,11 @@ func TestPropertyDispatchReaderScope(t *testing.T) {
 // Callback failures belong to dispatch even if a handler discards its error;
 // lazy handlers must still be free to leave an argument unevaluated.
 func TestPropertyDispatchArgumentFailureBoundary(t *testing.T) {
-	cypherfn.Register("property_dispatch_discard_error", func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	cypherfn.Register("property_dispatch_discard_error", func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		_, _ = ctx.Eval(args[0])
 		return "discarded", nil
 	})
-	cypherfn.Register("property_dispatch_panic", func(cypherfn.Context, []string) (interface{}, error) {
+	cypherfn.Register("property_dispatch_panic", func(_ context.Context, _ cypherfn.Context, _ []string) (interface{}, error) {
 		panic("registry defect")
 	})
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "dispatch_failure"))
