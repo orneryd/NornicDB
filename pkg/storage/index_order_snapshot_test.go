@@ -219,7 +219,9 @@ func TestOrderedIndexSnapshotEmptyViewKeepsSourceLease(t *testing.T) {
 				w.active.addNode(node)
 			case "draining":
 				w.AppendCommit(bufferedCommit{ops: []Operation{{Type: OpCreateNode, Node: node}}})
-				w.rotate()
+				if _, rotateErr := w.rotate(t.Context()); rotateErr != nil {
+					t.Fatal(rotateErr)
+				}
 			case "active":
 				w.AppendCommit(bufferedCommit{ops: []Operation{{Type: OpCreateNode, Node: node}}})
 			}

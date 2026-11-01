@@ -106,6 +106,7 @@ func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
 // run every validation phase (constraints, snapshot isolation, connected
 // deletes) and holds the engine write barrier.
 func (tx *BadgerTransaction) commitBufferedLocked() error {
+	preparationContext := commitPreparationLifetime(tx.commitCtx)
 	// The commit is acknowledged under its entities' write-order stripes, so
 	// a write of the same entities that commits to Badger itself
 	// (orderAfterBufferedCommits) falls wholly before or after it. They are
@@ -113,7 +114,10 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// A node it deletes is held exclusively, so no commit writing a
 	// relationship of that node is acknowledged alongside it.
 	var stripes, deletions orderStripeSet
-	entities := operationEntities(tx.operations)
+	entities, err := operationEntities(preparationContext, tx.operations)
+	if err != nil {
+		return tx.abortCommitLocked(err)
+	}
 	stripes.entities(entities)
 	for _, id := range entities.deletedNodes {
 		deletions.add(string(id))
@@ -122,7 +126,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		return tx.abortCommitLocked(err)
 	}
 	defer tx.engine.writeBehind.order.unlockMixed(&stripes, &deletions)
-	if err := tx.revalidateEndpointsLocked(); err != nil {
+	if err := tx.revalidateEndpointsLocked(preparationContext); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
 	}
@@ -199,12 +203,15 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	var accounting func()
 	if registry := tx.engine.storedEntityObservers.Load(); registry != nil {
 		if observer := (*registry)[tx.namespace].observer; observer != nil {
-			changes, err := tx.engine.captureStoredEntityChanges(storedEntityCapture{staged: tx})
+			changes, err := tx.engine.captureStoredEntityChanges(preparationContext, storedEntityCapture{staged: tx})
 			if err != nil {
 				tx.closeLocked(TxStatusRolledBack, true, nil)
 				return err
 			}
 			accounting, err = observer(StoredEntityPublication{Namespace: tx.namespace, LogicalID: logicalID, Changes: changes})
+			if err == nil {
+				err = preparationContext.Err()
+			}
 			if err != nil {
 				tx.closeLocked(TxStatusRolledBack, true, nil)
 				return err
@@ -426,7 +433,10 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		}
 		schema := b.GetSchemaForNamespace(c.namespace)
 		schemas[c.namespace] = schema
-		view := capturePublicationConstraintView(schema)
+		view, err := capturePublicationConstraintView(context.Background(), schema)
+		if err != nil {
+			return abort(err)
+		}
 		constraints[c.namespace] = &view
 	}
 
@@ -475,7 +485,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 				return abort(err)
 			}
 		}
-		if err := b.materializeMVCCCommitWithHeads(w, versions[c.namespace], c.ops, true); err != nil {
+		if err := b.materializeMVCCCommitWithHeads(context.Background(), w, versions[c.namespace], c.ops, true); err != nil {
 			return abort(err)
 		}
 		for keyStr := range deletes {
@@ -511,7 +521,11 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 
 	var notificationOps []Operation
 	for _, c := range commits {
-		cw.publishKeys = appendOperationPublicationKeys(cw.publishKeys, constraints[c.namespace], c.ops)
+		var err error
+		cw.publishKeys, err = appendOperationPublicationKeys(context.Background(), cw.publishKeys, constraints[c.namespace], c.ops)
+		if err != nil {
+			return abort(err)
+		}
 		notificationOps = append(notificationOps, c.ops...)
 	}
 	capturePublicationOperations(notification, notificationOps)
@@ -724,15 +738,25 @@ func (b *BadgerEngine) FlushWriteBehind(ctx context.Context) error {
 		}
 		return nil
 	}
-	gens := b.writeBehind.rotate(true)
+	gens, rotationErr := b.writeBehind.rotate(commitPreparationLifetime(ctx), true)
 	// Every commit acknowledged before the flush is captured; the barrier
 	// goes before they are applied. The background worker applies a
 	// generation it claimed holding no barrier and then delivers its
 	// notifications: a flush waiting for it under the barrier would hold it
 	// across that generation's listeners.
 	b.writeBarrier.RUnlock()
+	if rotationErr != nil {
+		return rotationErr
+	}
+	// Rotation handed acknowledged work to the existing replay owner. Wake it
+	// even if cancellation prevents this caller from entering its wait.
+	b.writeBehind.signal()
 	err := b.writeBehind.flushContext(ctx, false, false)
 	if ctx != nil && ctx.Err() != nil {
+		// Retain any real apply failure already returned.
+		if err != nil {
+			return err
+		}
 		return ctx.Err()
 	}
 	b.drainCommitNotifications()

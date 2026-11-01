@@ -9,6 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// countingStreamingEngine observes the executor's direct reads: streaming
+// scans, full loads and label scans. It adds no behavior of its own, so it is a
+// transparent decorator and declares the canonical storage.EngineUnwrapper
+// capability. The executor's implicit-transaction resolution therefore opens a
+// statement's write transaction on the engine underneath, while the wrapper
+// keeps counting the reads of every read-only statement that runs on it.
 type countingStreamingEngine struct {
 	storage.Engine
 	streamNodesCalls int
@@ -16,6 +22,9 @@ type countingStreamingEngine struct {
 	allEdgesCalls    int
 	labelCalls       int
 }
+
+// GetInnerEngine is the canonical EngineUnwrapper accessor.
+func (c *countingStreamingEngine) GetInnerEngine() storage.Engine { return c.Engine }
 
 func (c *countingStreamingEngine) StreamNodes(ctx context.Context, fn func(node *storage.Node) error) error {
 	c.streamNodesCalls++

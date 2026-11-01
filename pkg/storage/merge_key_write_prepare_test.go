@@ -64,7 +64,7 @@ func TestPrepareMergeNodeForWriteLocksUntrustedHolder(t *testing.T) {
 	engine, schema := newMergeKeyTestEngine(t)
 	ctx := context.Background()
 	nodeID := createKeyNode(t, engine, "w2", 2)
-	constraint := schema.uniqueConstraints["U:k"]
+	constraint := schema.uniqueConstraints[nodePropertyKey{label: "U", property: "k"}]
 	constraint.mu.Lock()
 	constraint.valuesCacheComplete = false
 	constraint.mu.Unlock()
@@ -109,7 +109,7 @@ func TestPrepareMergeNodeForWriteBufferedAdmission(t *testing.T) {
 			engine := newWriteBehindTestEngine(t, time.Hour)
 			schema := engine.GetSchemaForNamespace("test")
 			require.NoError(t, schema.AddConstraint(Constraint{Name: "u_k", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
-			require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
+			require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), NewNamespacedEngine(engine, "test"), schema))
 			ctx := context.Background()
 			name := "wb"
 			if tc.drained {

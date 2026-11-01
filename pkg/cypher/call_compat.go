@@ -790,8 +790,8 @@ func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteRes
 // Neo.ClientError.Schema.IndexDropFailed, so a procedure never reports a drop
 // that did not happen and never drops an index of another kind.
 func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storage.SchemaManager) bool) error {
-	if isCompositeRoot(e.storage) {
-		return localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+	if err := schemaDDLTargetError(e.storage); err != nil {
+		return err
 	}
 	return e.mutateSchema(context.Background(), func(schema *storage.SchemaManager) error {
 		if schema == nil || !exists(schema) {

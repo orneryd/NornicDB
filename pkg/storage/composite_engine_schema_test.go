@@ -216,7 +216,8 @@ func TestCompositeEngine_GetSchema_EmptyComposite(t *testing.T) {
 	indexes := nonLookupIndexes(mergedSchema.GetIndexes())
 	assert.Equal(t, 0, len(indexes))
 
-	constraints := mergedSchema.GetConstraints()
+	constraints, discoveryErr := mergedSchema.GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	assert.Equal(t, 0, len(constraints))
 }
 

@@ -44,20 +44,26 @@ type storedEntityView struct {
 // bufferedState selects the stored-inclusive typed overlay under its existing
 // read lock. The record reader remains the caller's pinned transaction; hidden
 // bodies and tombstones must mask that same committed predecessor.
-func (v storedEntityView) bufferedState(b *BadgerEngine, kind bufferedEntityKind, id string) bufferedEntityState {
+func (v storedEntityView) bufferedState(ctx context.Context, b *BadgerEngine, kind bufferedEntityKind, id string) (bufferedEntityState, error) {
 	if v.acknowledged == nil {
-		return bufferedEntityState{}
+		return bufferedEntityState{}, nil
 	}
-	v.acknowledged.mu.RLock()
+	if err := v.acknowledged.mu.RLockContext(ctx); err != nil {
+		return bufferedEntityState{}, err
+	}
 	defer v.acknowledged.mu.RUnlock()
-	return v.acknowledged.entityStateLocked(kind, id, bufferedReadVisibility{engine: b, visibility: storedRead})
+	return v.acknowledged.entityStateLocked(kind, id, bufferedReadVisibility{engine: b, visibility: storedRead}), nil
 }
 
-func (v storedEntityView) node(b *BadgerEngine, id NodeID) (*Node, error) {
+func (v storedEntityView) node(ctx context.Context, b *BadgerEngine, id NodeID) (*Node, error) {
 	if v.absent {
 		return nil, nil
 	}
-	if state := v.bufferedState(b, bufferedNodeEntity, string(id)); state.found {
+	state, err := v.bufferedState(ctx, b, bufferedNodeEntity, string(id))
+	if err != nil {
+		return nil, err
+	}
+	if state.found {
 		if state.deleted {
 			return nil, nil
 		}
@@ -93,11 +99,15 @@ func (v storedEntityView) node(b *BadgerEngine, id NodeID) (*Node, error) {
 	return b.loadNodeEmbeddingState(v.read, node, id, true)
 }
 
-func (v storedEntityView) edge(b *BadgerEngine, id EdgeID) (*Edge, error) {
+func (v storedEntityView) edge(ctx context.Context, b *BadgerEngine, id EdgeID) (*Edge, error) {
 	if v.absent {
 		return nil, nil
 	}
-	edge, _, err := b.readStoredEdgeImage(v.read, v.bufferedState(b, bufferedEdgeEntity, string(id)), id)
+	state, err := v.bufferedState(ctx, b, bufferedEdgeEntity, string(id))
+	if err != nil {
+		return nil, err
+	}
+	edge, _, err := b.readStoredEdgeImage(v.read, state, id)
 	return edge, err
 }
 
@@ -146,20 +156,30 @@ type storedEntityCapture struct {
 	staged *BadgerTransaction
 }
 
-func (b *BadgerEngine) captureStoredEntityChanges(request storedEntityCapture) ([]StoredEntityChange, error) {
+func (b *BadgerEngine) captureStoredEntityChanges(ctx context.Context, request storedEntityCapture) ([]StoredEntityChange, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	keys, before, after := request.keys, request.before, request.after
 	if tx := request.staged; tx != nil {
 		if tx.preparedEntityCommit != nil {
 			return tx.preparedEntityCommit.changes, nil
 		}
 		var constraints publicationConstraintView
-		keys = appendOperationPublicationKeys(nil, &constraints, tx.physicalOperationsLocked())
+		var err error
+		keys, err = appendOperationPublicationKeys(ctx, nil, &constraints, tx.physicalOperationsLocked())
+		if err != nil {
+			return nil, err
+		}
 		before = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx}, acknowledged: b.writeBehind, boundaries: b.storedEntityObservers.Load()}
 		after = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, stagedWrites: tx.pendingWrites, stagedDeletes: tx.pendingDeletes}}
 	}
 	seen := make(map[any]struct{}, len(keys))
 	changes := make([]StoredEntityChange, 0, len(keys))
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch key.(type) {
 		case NodeID, EdgeID:
 		default:
@@ -173,24 +193,30 @@ func (b *BadgerEngine) captureStoredEntityChanges(request storedEntityCapture) (
 		var err error
 		switch id := key.(type) {
 		case NodeID:
-			read := func() error { var err error; change.BeforeNode, err = before.node(b, id); return err }
+			read := func() error { var err error; change.BeforeNode, err = before.node(ctx, b, id); return err }
 			if before.boundaries != nil && (*before.boundaries)[namespaceForNodeID(id)].boundary != nil {
 				err = (*before.boundaries)[namespaceForNodeID(id)].boundary.WithStoredEntityRead(StoredEntityNodePriorRead, string(id), read)
 			} else {
 				err = read()
 			}
 			if err == nil {
-				change.AfterNode, err = after.node(b, id)
+				err = ctx.Err()
+			}
+			if err == nil {
+				change.AfterNode, err = after.node(ctx, b, id)
 			}
 		case EdgeID:
-			read := func() error { var err error; change.BeforeEdge, err = before.edge(b, id); return err }
+			read := func() error { var err error; change.BeforeEdge, err = before.edge(ctx, b, id); return err }
 			if before.boundaries != nil && (*before.boundaries)[namespaceForEdgeID(id)].boundary != nil {
 				err = (*before.boundaries)[namespaceForEdgeID(id)].boundary.WithStoredEntityRead(StoredEntityEdgePriorRead, string(id), read)
 			} else {
 				err = read()
 			}
 			if err == nil {
-				change.AfterEdge, err = after.edge(b, id)
+				err = ctx.Err()
+			}
+			if err == nil {
+				change.AfterEdge, err = after.edge(ctx, b, id)
 			}
 		}
 		if err != nil {
@@ -255,9 +281,9 @@ func (entry StoredEntitySnapshotEntry) Read() (StoredEntityChange, error) {
 	var err error
 	switch entry.Kind {
 	case StoredEntityNodeKind:
-		change.AfterNode, err = view.node(entry.snapshot.engine, NodeID(entry.ID))
+		change.AfterNode, err = view.node(context.Background(), entry.snapshot.engine, NodeID(entry.ID))
 	case StoredEntityEdgeKind:
-		change.AfterEdge, err = view.edge(entry.snapshot.engine, EdgeID(entry.ID))
+		change.AfterEdge, err = view.edge(context.Background(), entry.snapshot.engine, EdgeID(entry.ID))
 	default:
 		return StoredEntityChange{}, ErrInvalidData
 	}
@@ -342,7 +368,7 @@ func (b *BadgerEngine) InitializeStoredEntityObserver(namespace string, initiali
 	return nil
 }
 
-func (cw *commitWriter) prepareStoredEntityPublication() error {
+func (cw *commitWriter) prepareStoredEntityPublication(ctx context.Context) error {
 	if err := cw.pendingNamespaceWriteConflict(); err != nil {
 		return err
 	}
@@ -357,6 +383,9 @@ func (cw *commitWriter) prepareStoredEntityPublication() error {
 	}
 	var keys []any
 	for _, key := range cw.publishKeys {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var namespace string
 		switch id := key.(type) {
 		case NodeID:
@@ -379,7 +408,7 @@ func (cw *commitWriter) prepareStoredEntityPublication() error {
 	}
 	prior := cw.db.newTxnAt(readTs, false)
 	defer prior.Discard()
-	changes, err := cw.engine.captureStoredEntityChanges(storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: prior}, boundaries: registry}, after: storedEntityView{read: embeddingRecordReader{txn: cw.txn}}})
+	changes, err := cw.engine.captureStoredEntityChanges(ctx, storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: prior}, boundaries: registry}, after: storedEntityView{read: embeddingRecordReader{txn: cw.txn}}})
 	if err != nil {
 		return err
 	}
@@ -389,7 +418,7 @@ func (cw *commitWriter) prepareStoredEntityPublication() error {
 	if cw.stored.logicalID == "" {
 		cw.stored.logicalID = generateTxID()
 	}
-	cw.stored.publish, err = cw.engine.prepareStoredEntityChanges(registry, cw.stored.logicalID, changes)
+	cw.stored.publish, err = cw.engine.prepareStoredEntityChanges(ctx, registry, cw.stored.logicalID, changes)
 	return err
 }
 
@@ -622,18 +651,21 @@ func (b *BadgerEngine) prepareDeletedEntityPublication(nodes, edges map[uint64]s
 	var changes []StoredEntityChange
 	err := b.db.View(func(txn *badger.Txn) error {
 		var err error
-		changes, err = b.captureStoredEntityChanges(storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: txn}, boundaries: registry}, after: storedEntityView{absent: true}})
+		changes, err = b.captureStoredEntityChanges(context.Background(), storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: txn}, boundaries: registry}, after: storedEntityView{absent: true}})
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return b.prepareStoredEntityChanges(registry, generateTxID(), changes)
+	return b.prepareStoredEntityChanges(context.Background(), registry, generateTxID(), changes)
 }
 
-func (b *BadgerEngine) prepareStoredEntityChanges(registry *storedEntityObserverRegistry, logicalID string, changes []StoredEntityChange) (func(), error) {
+func (b *BadgerEngine) prepareStoredEntityChanges(ctx context.Context, registry *storedEntityObserverRegistry, logicalID string, changes []StoredEntityChange) (func(), error) {
 	events := make(map[string][]StoredEntityChange)
 	for _, change := range changes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var namespace string
 		switch {
 		case change.BeforeNode != nil:
@@ -649,12 +681,18 @@ func (b *BadgerEngine) prepareStoredEntityChanges(registry *storedEntityObserver
 	}
 	var publications []func()
 	for namespace, changes := range events {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		observer := (*registry)[namespace].observer
 		if observer == nil {
 			continue
 		}
 		publish, err := observer(StoredEntityPublication{Namespace: namespace, LogicalID: logicalID, Changes: changes})
 		if err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if publish != nil {

@@ -25,8 +25,11 @@ func (tx *BadgerTransaction) GetStoredIncomingEdges(ctx context.Context, id Node
 	return tx.getStoredAdjacentEdges(ctx, id, Incoming)
 }
 
+// getStoredAdjacentEdges selects one direction of the stored incidence read.
+// The caller's context reaches the native incidence read, so a canceled request
+// stops that enumeration rather than only this filtering afterwards.
 func (tx *BadgerTransaction) getStoredAdjacentEdges(ctx context.Context, id NodeID, direction EdgeDirection) ([]*Edge, error) {
-	edges, err := tx.IncidentEdges(id)
+	edges, err := tx.IncidentEdges(ctx, id)
 	if err != nil {
 		return nil, err
 	}

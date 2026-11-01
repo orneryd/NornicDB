@@ -36,15 +36,10 @@ import (
 // whose context is canceled before it is admitted persists and publishes
 // nothing.
 //
-// Cancellation: the ctx is checked before the detached rebuild starts and is
-// passed to the prospective definition's stored-node stream, so a canceled or
-// canceling caller stops preparing and returns ctx's error before any durable
-// write or publication. The exported creation validators
-// (ValidateConstraintOnCreationForEngine and its property-type and contract
-// counterparts) and the exported UNIQUE value refresh keep their ctx-free
-// published contracts, so they do not observe cancellation and are not
-// interrupted mid-scan. Cancellation is therefore honored before persisting
-// and publishing, not as an interruption of an in-flight validation scan.
+// Cancellation: ctx owns detached preparation, including stored enumeration,
+// constraint validation, and UNIQUE cache rebuilding. A canceled preparation
+// returns before any durable write or live publication. Accepted installation
+// completes under its schema mutation lease.
 //
 // Ownership: the prospective state is derived from engine's stored entities
 // before that admission, so this is an offline administrative replacement. It
@@ -86,7 +81,7 @@ func (sm *SchemaManager) ReplaceDefinitionDurable(ctx context.Context, engine En
 	if err := rebuildSchemaDerivedStateForEngine(ctx, engine, prospective); err != nil {
 		return err
 	}
-	if err := validateSchemaDefinitionForEngine(engine, prospective); err != nil {
+	if err := validateSchemaDefinitionForEngine(ctx, engine, prospective); err != nil {
 		return err
 	}
 
@@ -124,15 +119,14 @@ func (sm *SchemaManager) ReplaceDefinitionDurable(ctx context.Context, engine En
 //
 // Every stored node is read, the ones the visibility layer hides included: the
 // indexes are trusted to hold every matching node. The node stream honors ctx;
-// the exported UNIQUE value refresh it starts with is ctx-free by contract, so
-// cancellation is observed before the stream but not inside that refresh. The
+// the UNIQUE refresh and subsequent validation share that lifetime. The
 // schema must be a manager this caller owns, such as an unaccepted
 // replacement's detached manager.
 func rebuildSchemaDerivedStateForEngine(ctx context.Context, engine Engine, schema *SchemaManager) error {
 	if engine == nil || schema == nil {
 		return nil
 	}
-	if err := RefreshUniqueConstraintValuesForEngine(engine, schema); err != nil {
+	if err := RefreshUniqueConstraintValuesForEngine(ctx, engine, schema); err != nil {
 		return err
 	}
 	if err := StreamStoredNodes(ctx, engine, StreamNodesOptions{}, func(node *Node) error {
@@ -158,21 +152,20 @@ func rebuildSchemaDerivedStateForEngine(ctx context.Context, engine Engine, sche
 // accepted definition against engine's stored entities, so a replacement the
 // data cannot satisfy is rejected before it is persisted or published.
 //
-// The validators are the exported ctx-free creation validators: their scans are
-// not expected to observe cancellation.
-func validateSchemaDefinitionForEngine(engine Engine, schema *SchemaManager) error {
+// The validators share the preparing caller's context.
+func validateSchemaDefinitionForEngine(ctx context.Context, engine Engine, schema *SchemaManager) error {
 	for _, constraint := range schema.GetAllConstraints() {
-		if err := ValidateConstraintOnCreationForEngine(engine, constraint); err != nil {
+		if err := ValidateConstraintOnCreationForEngine(ctx, engine, constraint); err != nil {
 			return err
 		}
 	}
 	for _, typeConstraint := range schema.GetAllPropertyTypeConstraints() {
-		if err := ValidatePropertyTypeConstraintOnCreationForEngine(engine, typeConstraint); err != nil {
+		if err := ValidatePropertyTypeConstraintOnCreationForEngine(ctx, engine, typeConstraint); err != nil {
 			return err
 		}
 	}
 	for _, contract := range schema.GetAllConstraintContracts() {
-		if err := ValidateConstraintContractOnCreationForEngine(engine, contract); err != nil {
+		if err := ValidateConstraintContractOnCreationForEngine(ctx, engine, contract); err != nil {
 			return err
 		}
 	}

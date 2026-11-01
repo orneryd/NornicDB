@@ -1415,18 +1415,45 @@ func TestGh908CreateDeleteRelationshipUsesMatchedRows(t *testing.T) {
 	}
 }
 
+// A relationship create the statement cannot perform fails the statement,
+// and the DELETE of that relationship in the same statement neither hides the
+// failure nor leaves an edge behind.
+//
+// The rejected write is a real one: the statement gives the relationship a
+// property value the storage schema cannot hold (a map), so the CREATE clause
+// rejects the relationship at its own write boundary. The former fake engine
+// injected the rejection below the executor, which the statement's atomic
+// owner no longer routes writes to: a local write statement stages its writes
+// in one transaction and never calls the engine the executor was built with.
+// Nothing here claims a storage-level fault - the schema rejection is the
+// supported public control, and the rollback and error transport it exercises
+// are the atomic owner's own.
 func TestGh908CreateDeleteRelationshipPropagatesWriteFailure(t *testing.T) {
 	base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "rejected-create-delete")
-	exec := NewStorageExecutor(&edgeRejectingEngine{Engine: base})
+	exec := NewStorageExecutor(base)
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:Actor), (:Movie)", nil)
 	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r:TEMP]->(m) DELETE r", nil)
-	require.ErrorIs(t, err, errEdgeRejected)
+	_, err = exec.Execute(ctx, "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r:TEMP {props: {x: 1}}]->(m) DELETE r", nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "property value has unsupported type")
 	nodes, err := base.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	edges, err := base.AllEdges(ctx)
+	require.NoError(t, err)
+	require.Empty(t, edges)
+
+	// Sensitivity control: the same statement writes its relationship when it
+	// does not reject it, and the DELETE then leaves the graph as it was, so the
+	// assertions above are not satisfied by a query that never creates anything.
+	result, err := exec.Execute(ctx, "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r2:TEMP]->(m) DELETE r2 RETURN count(r2) AS deleted", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	nodes, err = base.AllNodes(ctx)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+	edges, err = base.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Empty(t, edges)
 }

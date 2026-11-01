@@ -1276,32 +1276,6 @@ func TestSetAuditLogger(t *testing.T) {
 // Helper Function Tests
 // =============================================================================
 
-func TestIsMutationQuery(t *testing.T) {
-	tests := []struct {
-		query    string
-		expected bool
-	}{
-		{"MATCH (n) RETURN n", false},
-		{"CREATE (n:Test)", true},
-		{"MERGE (n:Test)", true},
-		{"DELETE n", true},
-		{"SET n.prop = 1", true},
-		{"REMOVE n.prop", true},
-		{"DROP INDEX", true},
-		{"  CREATE (n)", true},
-		{"match (n) return n", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.query, func(t *testing.T) {
-			result := isMutationQuery(tt.query)
-			if result != tt.expected {
-				t.Errorf("isMutationQuery(%q) = %v, want %v", tt.query, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestParseIntQuery(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -10,9 +10,6 @@ func (state *TraversalContext) traversalCancelled() bool {
 	if state.cancellationObserved {
 		return true
 	}
-	if state.cancelCtx == nil {
-		return false
-	}
 	if !state.cancelInitialized {
 		state.cancelInitialized = true
 		state.cancelDone = state.cancelCtx.Done()

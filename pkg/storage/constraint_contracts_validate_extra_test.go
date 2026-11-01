@@ -22,7 +22,7 @@ func TestBadgerTransaction_ValidateConstraintContracts_EarlyOutAndPaths(t *testi
 
 	// No contracts yet => early-out branch.
 	tx.pendingNodes["test:a"] = &Node{ID: "test:a", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}}
-	require.NoError(t, tx.validateConstraintContracts())
+	require.NoError(t, tx.validateConstraintContracts(t.Context()))
 
 	sm := engine.GetSchemaForNamespace("test")
 	require.NoError(t, sm.AddConstraintContractBundle(ConstraintContract{
@@ -45,7 +45,7 @@ func TestBadgerTransaction_ValidateConstraintContracts_EarlyOutAndPaths(t *testi
 	// Exercise affectedEdges + oldEdge path.
 	tx.operations = append(tx.operations, Operation{Type: OpUpdateEdge, OldEdge: &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "MEMBER_OF"}})
 	tx.pendingEdges["test:e2"] = &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "MEMBER_OF", Properties: map[string]any{"kind": "secondary"}}
-	require.NoError(t, tx.validateConstraintContracts())
+	require.NoError(t, tx.validateConstraintContracts(t.Context()))
 }
 
 func TestBadgerTransaction_ValidateConstraintContracts_EngineClosedError(t *testing.T) {
@@ -67,6 +67,6 @@ func TestBadgerTransaction_ValidateConstraintContracts_EngineClosedError(t *test
 
 	tx.pendingNodes["test:a"] = &Node{ID: "test:a", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}}
 	require.NoError(t, engine.Close())
-	err = tx.validateConstraintContracts()
+	err = tx.validateConstraintContracts(t.Context())
 	require.Error(t, err)
 }

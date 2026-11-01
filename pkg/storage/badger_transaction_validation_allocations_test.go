@@ -41,7 +41,7 @@ func runHighDegreeDeleteValidation(tb testing.TB, engine *BadgerEngine, nodeID N
 	require.NoError(tb, err)
 	require.NoError(tb, tx.SetNamespace("test"))
 	tx.operations = append(tx.operations, Operation{Type: OpDeleteNode, NodeID: nodeID})
-	err = tx.validateSnapshotIsolationConflicts()
+	err = tx.validateSnapshotIsolationConflicts(tb.Context())
 	_ = tx.Rollback()
 	require.NoError(tb, err)
 }

@@ -45,6 +45,9 @@ import (
 //	E8 on a caller walk, the caller's own context parameters that a nil test
 //	   proves nil at every call it makes toward the function walked from (E3 at
 //	   the call).
+//	E9 at creation, a future call result with no path back to creation is
+//	   excluded only when every return is built by E1-E6 from excluded actual
+//	   arguments. Unknown producers and latent stored requests remain held.
 //
 // An address of a context that is only written through or only loaded holds
 // nothing beyond its loads, which are judged themselves; any other address is
@@ -476,8 +479,9 @@ func ownContextNilAt(fn *ssa.Function, block *ssa.BasicBlock) bool {
 
 // creationRoots are the roots of E3 for a fresh context created at origin:
 // origin itself, the creating function's context parameters proven nil
-// there, and immutable SSA values whose nil branch dominates creation.
-func creationRoots(origin ssa.Value, fn *ssa.Function) func(ssa.Value) bool {
+// there, immutable SSA values whose nil branch dominates creation, and call
+// results which cannot have been produced yet at this creation.
+func creationRoots(origin ssa.Value, fn *ssa.Function, discharge func(string)) func(ssa.Value) bool {
 	roots := map[ssa.Value]bool{origin: true}
 	if instr, ok := origin.(ssa.Instruction); ok {
 		for _, param := range fn.Params {
@@ -493,8 +497,85 @@ func creationRoots(origin ssa.Value, fn *ssa.Function) func(ssa.Value) bool {
 		// NilAt is the shared typed-SSA dominance fact, not a source-text
 		// pattern or a conclusion about a mutable field's other loads.
 		instr, ok := origin.(ssa.Instruction)
-		return ok && workcensus.NilAt(v, instr.Block())
+		if !ok {
+			return false
+		}
+		if futurePureCallResultAt(v, instr, roots) {
+			if discharge != nil {
+				discharge("proof: future argument-derived context result " + heldDescription(v) + " is unavailable at creation in " + symbolOf(fn))
+			}
+			return true
+		}
+		return workcensus.NilAt(v, instr.Block())
 	}
+}
+
+// futurePureCallResultAt reports an argument-derived result not yet produced
+// at creation. A known callee must return only values excluded from its actual
+// arguments by E1-E6; unknown/field/global/wrapped results remain held. Only a
+// call in this function is judged: fields, cells, enclosing/captured values
+// and unknown locations remain held. A later result in a loop is retained
+// whenever its block can reach creation again. Extracts are judged at their
+// producing call, so an already-produced tuple is not mistaken for the future.
+func futurePureCallResultAt(value ssa.Value, creation ssa.Instruction, roots map[ssa.Value]bool) bool {
+	index := 0
+	var call *ssa.Call
+	switch value := value.(type) {
+	case *ssa.Call:
+		call = value
+	case *ssa.Extract:
+		call, _ = value.Tuple.(*ssa.Call)
+		index = value.Index
+	}
+	if call == nil || call.Parent() != creation.Parent() || call.Block() == nil || creation.Block() == nil {
+		return false
+	}
+	if call.Block() == creation.Block() {
+		for _, ins := range call.Block().Instrs {
+			if ins == call {
+				return false
+			}
+			if ins == creation {
+				break
+			}
+		}
+	}
+	seen := map[*ssa.BasicBlock]bool{}
+	pending := append([]*ssa.BasicBlock(nil), call.Block().Succs...)
+	for len(pending) > 0 {
+		block := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if block == creation.Block() {
+			return false
+		}
+		if !seen[block] {
+			seen[block] = true
+			pending = append(pending, block.Succs...)
+		}
+	}
+	// Availability alone does not remove unknown latent request sources.
+	callee := call.Common().StaticCallee()
+	if callee == nil || len(callee.Blocks) == 0 || len(callee.Params) != len(call.Common().Args) {
+		return false
+	}
+	parameters := map[ssa.Value]bool{}
+	for i, param := range callee.Params {
+		parameters[param] = excludedValue(call.Common().Args[i], func(v ssa.Value) bool { return roots[v] || workcensus.NilAt(v, creation.Block()) }, map[ssa.Value]bool{}, 0)
+	}
+	returns := 0
+	for _, block := range callee.Blocks {
+		for _, ins := range block.Instrs {
+			ret, ok := ins.(*ssa.Return)
+			if !ok {
+				continue
+			}
+			if index >= len(ret.Results) || !excludedValue(ret.Results[index], func(v ssa.Value) bool { return parameters[v] }, map[ssa.Value]bool{}, 0) {
+				return false
+			}
+			returns++
+		}
+	}
+	return returns > 0
 }
 
 // ReviewedHeldValue is a reviewed record for one function whose held contexts,

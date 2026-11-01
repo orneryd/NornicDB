@@ -97,7 +97,7 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	require.NoError(t, tx4.SetNamespace("test"))
 	tx4.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
 	_ = tx4.checkNodeCreateConflict("test:a")
-	_ = tx4.checkNodeWriteConflict("test:a")
+	_ = tx4.checkNodeWriteConflict(t.Context(), "test:a")
 	_ = tx4.checkEdgeWriteConflict("test:e1")
 	_ = tx4.checkEdgeWriteConflict("test:e1")
 	_ = tx4.checkEdgeEndpointConflicts(&Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS"})

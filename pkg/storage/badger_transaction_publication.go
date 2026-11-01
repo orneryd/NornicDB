@@ -15,7 +15,17 @@ import (
 // preparation continuation belongs solely to accepted entity-commit admission.
 type CommitPublication struct {
 	AfterPublication func()
-	prepare          func() error
+	prepare          func(context.Context) error
+}
+
+// commitPreparationLifetime selects the existing nil-detached completion contract.
+// A nil commit context intentionally outlives both caller cancellation and engine
+// stop; nonnil contexts remain caller-owned until publication acceptance.
+func commitPreparationLifetime(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 // PublishCommit commits atomically, then invokes AfterPublication once on
@@ -32,12 +42,9 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	}
 	afterPublication, prepare := request.AfterPublication, request.prepare
 	// A nil publication context is the explicit detached native boundary.
-	// Preparation still requires a context: retain the engine owner while
-	// removing its stop cancellation, without changing commitCtx's nil contract.
-	preparationContext := ctx
-	if preparationContext == nil {
-		preparationContext = context.WithoutCancel(tx.engine.work.Context())
-	}
+	// Private preparation receives its unbounded completion lifetime, preserving
+	// commitCtx's nil contract independently of the engine stop signal.
+	preparationContext := commitPreparationLifetime(ctx)
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -132,8 +139,15 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// the final authoritative phase owns entity keys: an intervening peer may
 	// commit before this acquisition, so revalidate under the existing key order.
 	// Entity and endpoint authority precedes unique values for every native commit.
-	nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
-	releaseEntityAuthority, authorityErr := tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.commitCtx, tx.ID, entityCommitKeys(nodes, edges, endpoints))
+	nodes, edges, endpoints, authorityErr := tx.pendingEntityAuthorityKeysLocked(preparationContext)
+	if authorityErr != nil {
+		return tx.abortCommitLocked(authorityErr)
+	}
+	entityKeys, authorityErr := entityCommitKeys(preparationContext, nodes, edges, endpoints)
+	if authorityErr != nil {
+		return tx.abortCommitLocked(authorityErr)
+	}
+	releaseEntityAuthority, authorityErr := tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.commitCtx, tx.ID, entityKeys)
 	if authorityErr != nil {
 		return tx.abortCommitLocked(authorityErr)
 	}
@@ -182,13 +196,13 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		return err
 	}
 
-	temporalTargets, err := tx.bufferTemporalIndexWrites()
+	temporalTargets, err := tx.bufferTemporalIndexWrites(preparationContext)
 	if err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return fmt.Errorf("buffering temporal index writes: %w", err)
 	}
 
-	if err := tx.materializeDeferredEdgesLocked(); err != nil {
+	if err := tx.materializeDeferredEdgesLocked(preparationContext); err != nil {
 		return tx.abortCommitLocked(err)
 	}
 
@@ -196,22 +210,29 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// logically observed before begin. Reuse the existing rebase owner before
 	// capturing pairs; its logical MVCC snapshot anchor remains unchanged.
 	if tx.replayedSinceBeginLocked() && tx.schemaRuntime == nil && !tx.knowledgeSchemaDirty {
-		if err := tx.rebaseBadgerAfterDrainLocked(); err != nil {
+		if err := tx.rebaseBadgerAfterDrainLocked(preparationContext); err != nil {
 			return tx.abortCommitLocked(err)
 		}
 	}
 	// MVCC history, change events, the entity caches and the callbacks all
 	// take each entity's final body as storage returns it.
-	if err := tx.engine.storeWrittenBodies(tx.pendingWrites, tx.operations); err != nil {
+	if err := tx.engine.storeWrittenBodies(preparationContext, tx.pendingWrites, tx.operations); err != nil {
 		return tx.abortCommitLocked(err)
 	}
 
 	// Preparation hands immutable semantic images to the accepted command owner
 	// only after the normal validation/order pipeline, before any commit bytes.
 	if prepare != nil {
-		if err := prepare(); err != nil {
+		if err := prepare(preparationContext); err != nil {
 			return tx.abortCommitLocked(err)
 		}
+	}
+
+	// Accepted prepared commits clear commitCtx at the handoff. Their completion
+	// is detached even from engine stop; plain commits retain the caller lifetime.
+	preparationContext = commitPreparationLifetime(tx.commitCtx)
+	if err := preparationContext.Err(); err != nil {
+		return tx.abortCommitLocked(err)
 	}
 
 	// Buffered replay can run before this function returns, including from
@@ -239,13 +260,17 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// after the commits acknowledged before it (orderAfterBufferedCommits).
 	var order orderHold
 	if tx.engine.writeBehindEnabled() {
-		drained, err := tx.engine.orderAfterBufferedCommits(tx.commitCtx, &order, operationEntities(tx.operations))
+		entities, err := operationEntities(preparationContext, tx.operations)
+		if err != nil {
+			return tx.abortCommitLocked(err)
+		}
+		drained, err := tx.engine.orderAfterBufferedCommits(tx.commitCtx, &order, entities)
 		if err != nil {
 			return tx.abortCommitLocked(err)
 		}
 		defer order.release()
 		if (drained || tx.replayedSinceBeginLocked()) && tx.schemaRuntime == nil && !tx.knowledgeSchemaDirty {
-			if err := tx.rebaseBadgerAfterDrainLocked(); err != nil {
+			if err := tx.rebaseBadgerAfterDrainLocked(preparationContext); err != nil {
 				tx.closeLocked(TxStatusRolledBack, true, nil)
 				return err
 			}
@@ -253,7 +278,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		// Commits of its endpoints or of a deleted node's relationships,
 		// drained or committed directly, may have landed after this commit
 		// staged and validated them.
-		if err := tx.revalidateEndpointsLocked(); err != nil {
+		if err := tx.revalidateEndpointsLocked(preparationContext); err != nil {
 			return tx.abortCommitLocked(err)
 		}
 	}
@@ -330,8 +355,14 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		// The constraint metadata is captured before the physical commit
 		// below can turn large and take the commit gate exclusively: late
 		// key derivation then reads only this immutable view.
-		constraints := capturePublicationConstraintView(schema)
-		cw.publishKeys = appendOperationPublicationKeys(nil, &constraints, operations)
+		constraints, err := capturePublicationConstraintView(preparationContext, schema)
+		if err != nil {
+			return tx.abortCommitLocked(err)
+		}
+		cw.publishKeys, err = appendOperationPublicationKeys(preparationContext, nil, &constraints, operations)
+		if err != nil {
+			return tx.abortCommitLocked(err)
+		}
 		if len(operations) > 0 {
 			notification = engine.queueCommitOperations(nil, nil, notificationAtCommit)
 			capturePublicationOperations(notification, operations)
@@ -368,17 +399,17 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		schemaPublication = lease
 	}
 	if hasWrites {
-		if err := tx.engine.materializeMVCCCommit(&cw.batchWriter, version, physicalOperations); err != nil {
+		if err := tx.engine.materializeMVCCCommit(preparationContext, &cw.batchWriter, version, physicalOperations); err != nil {
 			return tx.abortCommitLocked(fmt.Errorf("materializing mvcc commit state: %w", err))
 		}
-		if err := tx.writeChangeEventsLocked(&cw.batchWriter, physicalOperations, version.CommitTimestamp); err != nil {
+		if err := tx.writeChangeEventsLocked(preparationContext, &cw.batchWriter, physicalOperations, version.CommitTimestamp); err != nil {
 			return tx.abortCommitLocked(fmt.Errorf("writing change events: %w", err))
 		}
 	}
-	if err := tx.flushBufferedWrites(&cw.batchWriter); err != nil {
+	if err := tx.flushBufferedWrites(preparationContext, &cw.batchWriter); err != nil {
 		return tx.abortCommitLocked(fmt.Errorf("flushing buffered writes: %w", err))
 	}
-	if err := tx.engine.refreshTemporalCurrentPointers(&cw.batchWriter, temporalTargets, temporalPointerState{pending: tx.pendingNodes, deleted: tx.deletedNodes}); err != nil {
+	if err := tx.engine.refreshTemporalCurrentPointers(preparationContext, &cw.batchWriter, temporalTargets, temporalPointerState{pending: tx.pendingNodes, deleted: tx.deletedNodes}); err != nil {
 		return tx.abortCommitLocked(fmt.Errorf("refreshing temporal current pointers: %w", err))
 	}
 
@@ -503,7 +534,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 // validateCommitLocked keeps both optimistic and protected validation on the
 // same constraint/conflict and consumer error-classification owner.
 func (tx *BadgerTransaction) validateCommitLocked(ctx context.Context) error {
-	if err := tx.resolveConnectedDeletesLocked(); err != nil {
+	if err := tx.resolveConnectedDeletesLocked(ctx); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
 	}
@@ -520,7 +551,7 @@ func (tx *BadgerTransaction) validateCommitLocked(ctx context.Context) error {
 		return localizedError(localization.StorageTransactionConstraintViolation(err), err)
 	}
 
-	if err := tx.validateSnapshotIsolationConflicts(); err != nil {
+	if err := tx.validateSnapshotIsolationConflicts(ctx); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		// MERGE-on-same-unique-value race: surface as the consumer-
 		// pinned constraint-violation wire shape so retry classifiers

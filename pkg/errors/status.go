@@ -307,8 +307,17 @@ func MarkCommitRolledBack(err error) error {
 	return &commitRolledBackError{err: err}
 }
 
-// IsCommitRolledBack reports whether a COMMIT failure was tagged by
-// MarkCommitRolledBack.
+// IsCommitRolledBack reports whether a COMMIT failure is known to have kept
+// nothing. Authoritative committed truth in the response overrides a historical
+// child's rollback marker. That child remains reachable through errors.Is for
+// diagnostics, but cannot make an actually committed response retryable.
 func IsCommitRolledBack(err error) bool {
+	if view := responseTerminalView(err); view != nil {
+		for _, record := range view.records {
+			if record.committed {
+				return false
+			}
+		}
+	}
 	return stderrors.Is(err, ErrCommitRolledBack)
 }

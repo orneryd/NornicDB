@@ -13,7 +13,7 @@ import (
 func TestUniqueIndexPreCanceledLookupAndRetry(t *testing.T) {
 	schema := NewSchemaManager()
 	require.NoError(t, schema.AddUniqueConstraint("cancel_unique", "Item", "uid"))
-	schema.ApplyUniqueValue("Item", "uid", "kept", "target:kept", ValidatedUniqueClaim)
+	schema.ApplyUniqueValue(context.Background(), "Item", "uid", "kept", "target:kept", ValidatedUniqueClaim)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	for _, value := range []string{"kept", "missing"} {
@@ -37,8 +37,8 @@ func TestUniqueIndexPreCanceledLookupAndRetry(t *testing.T) {
 func TestUniqueIndexCanceledConstraintLockWaiter(t *testing.T) {
 	schema := NewSchemaManager()
 	require.NoError(t, schema.AddUniqueConstraint("wait_unique", "Item", "uid"))
-	schema.ApplyUniqueValue("Item", "uid", "kept", "target:kept", ValidatedUniqueClaim)
-	constraint := schema.uniqueConstraints["Item:uid"]
+	schema.ApplyUniqueValue(context.Background(), "Item", "uid", "kept", "target:kept", ValidatedUniqueClaim)
+	constraint := schema.uniqueConstraints[nodePropertyKey{label: "Item", property: "uid"}]
 	constraint.mu.Lock()
 	var release sync.Once
 	defer release.Do(constraint.mu.Unlock)
@@ -91,13 +91,15 @@ func TestUniqueIndexCanceledConstraintLockWaiter(t *testing.T) {
 func TestUniqueIndexPendingOverlayCancellationAndRetry(t *testing.T) {
 	schema := NewSchemaManager()
 	require.NoError(t, schema.AddUniqueConstraint("pending_unique", "Item", "uid"))
-	schema.ApplyUniqueValue("Item", "uid", "kept", "target:old", ValidatedUniqueClaim)
+	schema.ApplyUniqueValue(context.Background(), "Item", "uid", "kept", "target:old", ValidatedUniqueClaim)
 	buffer := newCommitBuffer()
 	index := newPendingNodeIndex()
 	index.tracked["Item"] = map[string]struct{}{"uid": {}}
 	add := func(id NodeID, value string) {
 		node := &Node{ID: id, Labels: []string{"Item"}, Properties: map[string]interface{}{"uid": value}}
-		buffer.nodes[id] = node
+		// Use the canonical generation owner so its replay order marks
+		// this as a real pending mutation, not an empty read lease.
+		buffer.addNode(node)
 		index.add(node)
 	}
 	// Each namespace has its own unique holder. The target's committed holder

@@ -17,11 +17,16 @@ import (
 func TestPublicationCoreHelpsEarlierOutOfOrderRegistration(t *testing.T) {
 	schema := NewSchemaManager()
 	require.NoError(t, schema.AddUniqueConstraint("unique_u", "L", "u"))
-	constraints := capturePublicationConstraintView(schema)
+	constraints, viewErr := capturePublicationConstraintView(t.Context(), schema)
+	require.NoError(t, viewErr)
 	old := &Node{ID: "db:a", Labels: []string{"L"}, Properties: map[string]any{"u": "A"}}
 	written := CopyNode(old)
 	written.Properties["u"] = "B"
 	taken := &Node{ID: "db:b", Labels: []string{"L"}, Properties: map[string]any{"u": "A"}}
+	freedKeys, keyErr := appendNodePublicationKeys(t.Context(), nil, &constraints, old.ID, old, written)
+	require.NoError(t, keyErr)
+	takenKeys, keyErr := appendNodePublicationKeys(t.Context(), nil, &constraints, taken.ID, nil, taken)
+	require.NoError(t, keyErr)
 	for _, tc := range []struct {
 		name         string
 		older, newer []any
@@ -30,7 +35,7 @@ func TestPublicationCoreHelpsEarlierOutOfOrderRegistration(t *testing.T) {
 		{"repeated entity dependency", []any{NodeID("db:n"), NodeID("db:n")}, []any{NodeID("db:n"), NodeID("db:n")}},
 		// The later entity takes A only after the older entity frees it. Their
 		// IDs differ, so only the UNIQUE-value dependency establishes the order.
-		{"freed unique value across entities", appendNodePublicationKeys(nil, &constraints, old.ID, old, written), appendNodePublicationKeys(nil, &constraints, taken.ID, nil, taken)},
+		{"freed unique value across entities", freedKeys, takenKeys},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stage publicationStage
@@ -63,16 +68,21 @@ func awaitPublicationCore(t *testing.T, done <-chan struct{}, label string) bool
 func TestPublicationCoreDisjointKeysDoNotWait(t *testing.T) {
 	schema := NewSchemaManager()
 	require.NoError(t, schema.AddUniqueConstraint("unique_u", "L", "u"))
-	constraints := capturePublicationConstraintView(schema)
+	constraints, viewErr := capturePublicationConstraintView(t.Context(), schema)
+	require.NoError(t, viewErr)
 	older := &Node{ID: "db:a", Labels: []string{"L"}, Properties: map[string]any{"u": "A"}}
 	newer := CopyNode(older)
 	newer.ID = "peer:b"
+	olderKeys, keyErr := appendNodePublicationKeys(t.Context(), nil, &constraints, older.ID, nil, older)
+	require.NoError(t, keyErr)
+	newerKeys, keyErr := appendNodePublicationKeys(t.Context(), nil, &constraints, newer.ID, nil, newer)
+	require.NoError(t, keyErr)
 	for _, tc := range []struct {
 		name         string
 		older, newer []any
 	}{
 		{"different entities", []any{NodeID("db:a")}, []any{NodeID("db:b")}},
-		{"same unique value in different namespaces", appendNodePublicationKeys(nil, &constraints, older.ID, nil, older), appendNodePublicationKeys(nil, &constraints, newer.ID, nil, newer)},
+		{"same unique value in different namespaces", olderKeys, newerKeys},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stage publicationStage
@@ -123,7 +133,7 @@ func TestPublicationCoreMetadataCommitDoesNotWaitOnStage(t *testing.T) {
 	})
 	go func() {
 		defer close(olderDone)
-		olderErr = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error { return txn.Set([]byte("core:entity"), []byte("body")) }, func(*commitCacheImages) { close(entered); <-release }, func() []any { return []any{NodeID("db:n")} }, nil)
+		olderErr = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error { return txn.Set([]byte("core:entity"), []byte("body")) }, func(*commitCacheImages) { close(entered); <-release }, func(context.Context) ([]any, error) { return []any{NodeID("db:n")}, nil }, nil)
 	}()
 	if !awaitPublicationCore(t, entered, "older commit rendezvous") {
 		return

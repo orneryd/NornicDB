@@ -51,13 +51,29 @@ func TestFoundationScannerConsumers(t *testing.T) {
 	})
 	t.Run("relationship readers", func(t *testing.T) {
 		pattern := "(a {note:'-[:FAKE]->(bad)'})-[:`R|]` /* ] */]->(`b:c`)"
-		hops := e.parseRelationshipHops(pattern, "a")
-		require.Len(t, hops, 1)
-		require.Equal(t, []string{"R|]"}, hops[0].relTypes)
-		require.True(t, hops[0].outgoing)
+		// The traversal reader consumes accepted text; public admission owns
+		// comment normalization. Raw lexical extent remains tested below.
+		parsed := e.parseTraversalPattern(t.Context(), StripComments(pattern))
+		require.NotNil(t, parsed)
+		require.Equal(t, []string{"R|]"}, parsed.Relationship.Types)
+		require.Equal(t, "outgoing", parsed.Relationship.Direction)
 		require.Equal(t, []string{"R|]"}, e.extractRelTypesFromPattern(pattern, "-["))
-		require.Equal(t, "b:c", e.extractTargetVariable(pattern, "a"))
-		require.Equal(t, "a:b", e.extractTargetVariable("(`a:b` {note:'('})<-[:R]-(b)", "b"))
+		require.Equal(t, "b:c", symbolicNameValue(parsed.EndNode.variable))
+		incoming := e.parseTraversalPattern(t.Context(), "(`a:b` {note:'('})<-[:R]-(b)")
+		require.NotNil(t, incoming)
+		require.Equal(t, "a:b", symbolicNameValue(incoming.StartNode.variable))
+		require.Equal(t, "incoming", incoming.Relationship.Direction)
+		for _, parser := range apocAlgorithmParsers() {
+			t.Run(parser.name, func(t *testing.T) {
+				t.Cleanup(parser.setup())
+				public := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
+				_, err := public.Execute(t.Context(), "CREATE (a:EscapedStart {note:'-[:FAKE]->(bad)'})-[:`R|]`]->(:EscapedEnd)", nil)
+				require.NoError(t, err)
+				result, err := public.Execute(t.Context(), "MATCH (a:EscapedStart), (`b:c`:EscapedEnd) WHERE "+pattern+" RETURN count(a) AS c", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+			})
+		}
 	})
 	t.Run("AST delete and call", func(t *testing.T) {
 		b := NewASTBuilder()

@@ -440,11 +440,6 @@ func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bo
 	}
 }
 
-func isMutationQuery(query string) bool {
-	requirements := cypher.QueryPermissionRequirements(context.Background(), query, cypher.RawSource)
-	return requirements.Write || requirements.Schema
-}
-
 // canAccessGraph reports whether the principal may use graph, a request's
 // database: a database, an alias, or a composite constituent, which needs
 // access to its composite and its database (graphAccess), as the executor

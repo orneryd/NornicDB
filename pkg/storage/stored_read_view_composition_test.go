@@ -110,7 +110,7 @@ func TestStoredReadViewTransactionIncidenceAcrossReplay(t *testing.T) {
 			return 0, err
 		}
 		defer tx.Rollback()
-		edges, err := tx.IncidentEdges("test:a")
+		edges, err := tx.IncidentEdges(t.Context(), "test:a")
 		return int64(len(edges)), err
 	})
 	require.EqualValues(t, 1, count)

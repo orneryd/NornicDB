@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,7 @@ func TestBadgerEngine_RelationshipUniqueConstraint(t *testing.T) {
 	tx3.Commit()
 
 	// Validate constraint (simulating CREATE CONSTRAINT)
-	err := engine.ValidateRelationshipConstraint(RelationshipConstraint{
+	err := engine.ValidateRelationshipConstraint(context.Background(), RelationshipConstraint{
 		Name:       "unique_txid",
 		Type:       ConstraintUnique,
 		RelType:    "TRANSACTION",
@@ -110,7 +111,7 @@ func TestBadgerEngine_RelationshipExistenceConstraint(t *testing.T) {
 	tx3.Commit()
 
 	// Validate EXISTS constraint (should fail)
-	err := engine.ValidateRelationshipConstraint(RelationshipConstraint{
+	err := engine.ValidateRelationshipConstraint(context.Background(), RelationshipConstraint{
 		Name:       "require_since",
 		Type:       ConstraintExists,
 		RelType:    "KNOWS",
@@ -160,7 +161,7 @@ func TestBadgerEngine_RelationshipConstraintValidTypes(t *testing.T) {
 	tx3.Commit()
 
 	// Validate UNIQUE constraint on CREATED type only (should pass)
-	err := engine.ValidateRelationshipConstraint(RelationshipConstraint{
+	err := engine.ValidateRelationshipConstraint(context.Background(), RelationshipConstraint{
 		Name:       "unique_created_txid",
 		Type:       ConstraintUnique,
 		RelType:    "CREATED",
@@ -191,7 +192,7 @@ func TestBadgerEngine_RelationshipConstraintValidationErrors(t *testing.T) {
 	}))
 	require.NoError(t, tx.Commit())
 
-	err = engine.ValidateRelationshipConstraint(RelationshipConstraint{
+	err = engine.ValidateRelationshipConstraint(context.Background(), RelationshipConstraint{
 		Name:       "unknown",
 		Type:       ConstraintType("WEIRD"),
 		RelType:    "KNOWS",
@@ -199,7 +200,7 @@ func TestBadgerEngine_RelationshipConstraintValidationErrors(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "unsupported relationship constraint type")
 
-	err = engine.ValidateRelationshipConstraint(RelationshipConstraint{
+	err = engine.ValidateRelationshipConstraint(context.Background(), RelationshipConstraint{
 		Name:       "bad_unique_arity",
 		Type:       ConstraintUnique,
 		RelType:    "KNOWS",
@@ -207,7 +208,7 @@ func TestBadgerEngine_RelationshipConstraintValidationErrors(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "exactly 1 property")
 
-	err = engine.ValidateRelationshipConstraint(RelationshipConstraint{
+	err = engine.ValidateRelationshipConstraint(context.Background(), RelationshipConstraint{
 		Name:       "bad_exists_arity",
 		Type:       ConstraintExists,
 		RelType:    "KNOWS",

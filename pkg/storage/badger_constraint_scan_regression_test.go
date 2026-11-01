@@ -22,7 +22,7 @@ func TestBadgerConstraintScansRecordErrors(t *testing.T) {
 			return b.scanForNodeKeyViolationInTxn(txn, "test", "Account", []string{"key"}, []interface{}{"new"}, "")
 		}},
 		{"full_label_temporal", true, func(b *BadgerEngine, txn *badger.Txn) error {
-			return b.scanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "Account", Properties: []string{"key", "from", "to"}}, "new", start, start.Add(time.Hour), true, "", temporalOverlapFullLabel)
+			return b.scanForTemporalOverlapInTxn(t.Context(), txn, "test", Constraint{Type: ConstraintTemporal, Label: "Account", Properties: []string{"key", "from", "to"}}, "new", start, start.Add(time.Hour), true, "", temporalOverlapFullLabel)
 		}},
 		{"edge_unique", false, func(b *BadgerEngine, txn *badger.Txn) error {
 			return b.checkEdgeUniquenessInTxn(txn, &Edge{Type: "REL", Properties: map[string]interface{}{"key": "new"}},

@@ -398,7 +398,7 @@ func TestBadgerEngine_ValidateConstraintOnCreation(t *testing.T) {
 	tx.Commit()
 
 	// Try to create UNIQUE constraint (should fail - existing duplicates)
-	err := engine.ValidateConstraintOnCreation(Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "unique_email",
 		Type:       ConstraintUnique,
 		Label:      "User",
@@ -437,7 +437,7 @@ func TestBadgerEngine_ValidateExistenceConstraintOnCreation(t *testing.T) {
 	tx.Commit()
 
 	// Try to create EXISTS constraint (should fail)
-	err := engine.ValidateConstraintOnCreation(Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "require_name",
 		Type:       ConstraintExists,
 		Label:      "Person",

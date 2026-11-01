@@ -177,16 +177,16 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	}
 
 	for _, constraint := range compiledConstraints {
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 			return nil, true, err
 		}
 	}
 	for _, constraint := range compiledTypes {
-		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 			return nil, true, err
 		}
 	}
-	if err := storage.ValidateConstraintContractOnCreationForEngine(e.storage, contract); err != nil {
+	if err := storage.ValidateConstraintContractOnCreationForEngine(ctx, e.storage, contract); err != nil {
 		return nil, true, err
 	}
 	schema := e.storage.GetSchema()
@@ -223,7 +223,7 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	// Like a standalone UNIQUE constraint, a contract's IS UNIQUE entries need
 	// their value cache built and marked complete; without it every write to
 	// the label falls back to scanning all of its nodes (#1120).
-	if err := storage.RefreshUniqueConstraintValuesForConstraintsForEngine(e.storage, schema, compiledConstraints); err != nil {
+	if err := storage.RefreshUniqueConstraintValuesForConstraintsForEngine(ctx, e.storage, schema, compiledConstraints); err != nil {
 		return nil, true, err
 	}
 

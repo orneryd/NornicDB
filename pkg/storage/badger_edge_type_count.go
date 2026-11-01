@@ -939,7 +939,7 @@ func (tx *BadgerTransaction) nodeLabelsTxVisibleLocked(id NodeID) ([]string, err
 // (incidentEdgesLocked): the positional counters count every stored
 // relationship, hidden ones too. The caller must hold tx.mu.
 func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing bool) (map[string]int64, error) {
-	edges, err := tx.incidentEdgesLocked(nodeID)
+	edges, err := tx.incidentEdgesLocked(context.Background(), nodeID)
 	if err != nil {
 		return nil, err
 	}

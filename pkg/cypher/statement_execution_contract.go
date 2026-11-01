@@ -12,6 +12,7 @@ import (
 type statementExecutionContract struct {
 	writes, transaction, calls, dynamic bool
 	unknownProcedure                    bool
+	selectsDatabase                     bool
 }
 
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
@@ -66,5 +67,21 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 			(fixedWrite || spec.ExecutesStatements || spec.Name == "tx.setMetaData")
 		return false
 	})
+	// Only transaction-bearing static statements need a selection owner. A
+	// retained USE token is merely a cheap admission hint: property/label names
+	// can use that keyword, so only a grammar-owned clause selects the owner.
+	if contract.transaction && !contract.dynamic {
+		for i := 0; i < structure.TokenCount(); i++ {
+			if structure.Token(i).Kind() == cypherantlr.CypherParserUSE {
+				structure.Walk(func(node cypherantlr.SyntaxNode) func() {
+					if node.Rule() == cypherantlr.CypherParserRULE_useClause {
+						contract.selectsDatabase = true
+					}
+					return nil
+				})
+				break
+			}
+		}
+	}
 	return contract, nil
 }

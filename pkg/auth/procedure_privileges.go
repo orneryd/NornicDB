@@ -32,9 +32,9 @@ package auth
 import (
 	"context"
 	"errors"
-	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/ctxsort"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -90,19 +90,26 @@ func procedurePrivilegeNode(n *storage.Node) (ProcedurePrivilege, bool) {
 	return grant, role != "" && procedure != "" && n.ID == procedurePrivilegeNodeID(grant)
 }
 
-// grants reads every grant from the system database.
-func (p *ProcedurePrivilegeStore) grants() ([]ProcedurePrivilege, error) {
+// grants reads every grant from the system database on ctx, the caller's
+// lifetime: a canceled caller stops at the storage read, and one canceled
+// after that read returned stops at the first converted node, instead of
+// returning a partial grant list.
+func (p *ProcedurePrivilegeStore) grants(ctx context.Context) ([]ProcedurePrivilege, error) {
 	if p == nil || p.storage == nil {
 		return nil, nil
 	}
-	// The auth store's grant enumeration keeps its existing API (no caller
-	// context): it runs on the store's own lifetime.
-	nodes, err := p.storage.GetNodesByLabel(context.Background(), procedurePrivilegeLabel)
+	nodes, err := p.storage.GetNodesByLabel(ctx, procedurePrivilegeLabel)
 	if err != nil {
 		return nil, err
 	}
 	var grants []ProcedurePrivilege
 	for _, n := range nodes {
+		// The read's rows are only a candidate population: converting them is
+		// this store's own work, so it watches the same caller lifetime rather
+		// than converting rows a canceled caller no longer waits for.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if grant, ok := procedurePrivilegeNode(n); ok {
 			grants = append(grants, grant)
 		}
@@ -110,16 +117,30 @@ func (p *ProcedurePrivilegeStore) grants() ([]ProcedurePrivilege, error) {
 	return grants, nil
 }
 
-func sortProcedurePrivileges(grants []ProcedurePrivilege) {
-	sort.Slice(grants, func(i, j int) bool {
-		if grants[i].Role != grants[j].Role {
-			return grants[i].Role < grants[j].Role
+// sortProcedurePrivileges orders grants by role, then procedure, then a plain
+// grant before a boosted one, on ctx: a caller canceled during the sort stops
+// and gets its own error, leaving the caller to publish nothing.
+func sortProcedurePrivileges(ctx context.Context, grants []ProcedurePrivilege) error {
+	return ctxsort.Sort(ctx, grants, func(a, b ProcedurePrivilege) int {
+		switch {
+		case a.Role != b.Role:
+			if a.Role < b.Role {
+				return -1
+			}
+			return 1
+		case a.Procedure != b.Procedure:
+			if a.Procedure < b.Procedure {
+				return -1
+			}
+			return 1
+		case a.Boosted == b.Boosted:
+			return 0
+		case a.Boosted:
+			return 1
+		default:
+			return -1
 		}
-		if grants[i].Procedure != grants[j].Procedure {
-			return grants[i].Procedure < grants[j].Procedure
-		}
-		return !grants[i].Boosted && grants[j].Boosted
-	})
+	}, false)
 }
 
 // Lookup returns role's grant for procedure (boosted or not), if it holds
@@ -185,13 +206,18 @@ func (p *ProcedurePrivilegeStore) Revoke(ctx context.Context, role, procedure st
 	return true, nil
 }
 
-// List returns every grant, in role, procedure order.
+// List returns every grant, in role, procedure order. Both the read and its
+// own work over the read's rows run on ctx, the caller's lifetime: a canceled
+// caller gets its cancellation and no grants, never the part it had converted
+// or sorted.
 func (p *ProcedurePrivilegeStore) List(ctx context.Context) ([]ProcedurePrivilege, error) {
-	grants, err := p.grants()
+	grants, err := p.grants(ctx)
 	if err != nil {
 		return nil, err
 	}
-	sortProcedurePrivileges(grants)
+	if err := sortProcedurePrivileges(ctx, grants); err != nil {
+		return nil, err
+	}
 	return grants, nil
 }
 
@@ -203,7 +229,10 @@ func (p *ProcedurePrivilegeStore) AllowsBoosted(roles []string, procedure string
 	if p == nil || procedure == "" || len(roles) == 0 {
 		return false, nil
 	}
-	grants, err := p.grants()
+	// This context-free public check keeps its existing API: its own
+	// lifetime is the true lifetime at that boundary, not a forwarded caller
+	// default.
+	grants, err := p.grants(context.Background())
 	if err != nil {
 		return false, err
 	}

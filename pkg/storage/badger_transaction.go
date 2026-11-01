@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -780,9 +779,12 @@ func (tx *BadgerTransaction) bufferDeleteEdgeBetweenIndexes(edge *Edge) {
 // flushBufferedWrites applies all buffered writes and deletes through the
 // commit writer w (see Commit). Each key is its own unit, so the buffered
 // writes may span any number of Badger batches.
-func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
+func (tx *BadgerTransaction) flushBufferedWrites(ctx context.Context, w *batchWriter) error {
 	// Apply deletes first (in case a key is both written and deleted, delete wins)
 	for keyStr := range tx.pendingDeletes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		key := []byte(keyStr)
 		if tx.commitW != nil {
 			tx.commitW.rawCache.add(tx.engine, key, tx.pendingWrites[keyStr])
@@ -794,6 +796,9 @@ func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
 
 	// Apply writes (only keys that weren't deleted)
 	for keyStr, value := range tx.pendingWrites {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Skip if this key was also deleted (delete wins)
 		if tx.pendingDeletes[keyStr] {
 			continue
@@ -902,7 +907,7 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 
 	// Track for read-your-writes and constraint validation
 	nodeCopy := copyNode(node)
-	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
+	_ = tx.pendingNodeChangedLocked(context.Background(), tx.pendingNodes[node.ID], nodeCopy) // context-free native staging
 	tx.pendingNodes[node.ID] = nodeCopy
 	delete(tx.deletedNodes, node.ID)
 
@@ -1092,7 +1097,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) er
 
 	// Track for read-your-writes
 	nodeCopy := copyNode(node)
-	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
+	_ = tx.pendingNodeChangedLocked(context.Background(), tx.pendingNodes[node.ID], nodeCopy) // context-free native staging
 	tx.pendingNodes[node.ID] = nodeCopy
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 		tx.bufferDelete(pendingEmbedKey(node.ID))
@@ -1245,7 +1250,7 @@ func (tx *BadgerTransaction) scanCommittedEmbeddingKeysLocked(nodeID NodeID, vis
 // from reads still connects its endpoints, and a delete that skipped it left
 // it dangling. Bodies come from the stored records, as the engine's own
 // cascade reads them (nodeDeletionEdges).
-func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error) {
+func (tx *BadgerTransaction) incidentEdgesLocked(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	var edges []*Edge
 	listed := make(map[EdgeID]struct{})
 	include := func(edge *Edge) {
@@ -1270,7 +1275,14 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 
 	// Relationships this transaction created or rewrote: the committed index
 	// does not list the new ones (#741).
-	for edgeID, edge := range tx.pendingAdjacencyLocked(nodeID) {
+	pending, err := tx.pendingAdjacencyLocked(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	for edgeID, edge := range pending {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, deleted := tx.deletedEdges[edgeID]; !deleted {
 			include(edge)
 		}
@@ -1281,15 +1293,16 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 	// not straddle replay/retirement. Transaction-local rewrites and deletes
 	// still take precedence over that captured stored view.
 	if tx.engine.writeBehind != nil {
-		// This transaction-local write bookkeeping reads on the write's own
-		// lifetime (context.Background): it belongs to the write, not to a
-		// statement read that may be canceled.
-		outgoing, incoming, err := readAdjacency(context.Background(), tx.engine, adjacencyBoth, nodeID, "", nil, storedRead)
+		// Integrity preparation follows the selected staging or commit phase lifetime.
+		outgoing, incoming, err := readAdjacency(ctx, tx.engine, adjacencyBoth, nodeID, "", nil, storedRead)
 		if err != nil {
 			return nil, err
 		}
 		for _, adjacent := range [...][]*Edge{outgoing, incoming} {
 			for _, edge := range adjacent {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				if !skip(edge.ID) {
 					include(copyEdge(edge))
 				}
@@ -1310,6 +1323,10 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 			opts.Prefix = prefix
 			it := index.NewIterator(opts)
 			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+				if err := ctx.Err(); err != nil {
+					it.Close()
+					return err
+				}
 				edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().Key())
 				if !ok {
 					continue
@@ -1321,6 +1338,9 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 			it.Close()
 		}
 		for _, edgeID := range edgeIDs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if skip(edgeID) {
 				continue
 			}
@@ -1340,7 +1360,7 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 	// Badger sorts every time an iterator opens, and deleting N nodes opened
 	// iterators over up to N of them per node (#703). Bodies are read through
 	// badgerTx, so a peer's change to one conflicts with this transaction.
-	err := tx.withSnapshotViewLocked(func(view *badger.Txn) error {
+	err = tx.withSnapshotViewLocked(func(view *badger.Txn) error {
 		return committed(view, tx.badgerTx)
 	})
 	return edges, err
@@ -1422,7 +1442,7 @@ func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMod
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
 		return ErrNotFound
 	}
-	if err := tx.materializeDeferredEdgesLocked(); err != nil {
+	if err := tx.materializeDeferredEdgesLocked(context.Background()); err != nil {
 		return err
 	}
 
@@ -1452,12 +1472,11 @@ func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMod
 		tx.deletedNodes[nodeID] = struct{}{}
 		return nil
 	}
-	result, err := tx.engine.executeNodeDeletion(tx.staged(), nodeID, oldNode)
+	result, err := tx.engine.executeNodeDeletion(context.Background(), tx.staged(), nodeID, oldNode)
 	if err != nil {
 		return err
 	}
-	tx.recordNodeDeletionLocked(nodeID, result)
-	return nil
+	return tx.recordNodeDeletionLocked(context.Background(), nodeID, result)
 }
 
 // enrollCommittedWriteLocked adds key, the primary key of a committed node or
@@ -1475,21 +1494,43 @@ func (tx *BadgerTransaction) enrollCommittedWriteLocked(key []byte, kind string)
 
 // recordNodeDeletionLocked owns the staged deletion's pending-state and
 // Operation publication after the common physical/staged kernel succeeds.
-func (tx *BadgerTransaction) recordNodeDeletionLocked(nodeID NodeID, result nodeDeletionResult) {
-	tx.pendingNodeChangedLocked(tx.pendingNodes[nodeID], nil)
+func (tx *BadgerTransaction) recordNodeDeletionLocked(ctx context.Context, nodeID NodeID, result nodeDeletionResult) error {
+	if err := tx.pendingNodeChangedLocked(ctx, tx.pendingNodes[nodeID], nil); err != nil {
+		return err
+	}
 	delete(tx.pendingNodes, nodeID)
 	tx.deletedNodes[nodeID] = struct{}{}
 	operation := result.operation(nodeID)
 	operation.Timestamp = time.Now()
 	tx.operations = append(tx.operations, operation)
+	return nil
 }
 
 // IncidentEdges lists every relationship that connects nodeID as the
 // transaction sees storage, those the visibility layer hides included
 // (IncidentEdgeLister): the relationships a DETACH DELETE of the node
 // removes, and the ones that keep a non-DETACH DELETE from removing it.
-func (tx *BadgerTransaction) IncidentEdges(nodeID NodeID) ([]*Edge, error) {
-	tx.mu.Lock()
+//
+// It is a bulk read, so ctx is the caller's: it admits the transaction's read
+// lock and the enumeration polls it, so a canceled or expired request returns
+// its own error and no partial relationship list, and the enumeration stops
+// instead of materializing the rest.
+//
+// Admission is cancellable as the transaction's other context-carrying
+// admission is: a request canceled or expired while it waits for another
+// holder returns its own error instead of waiting for that holder to finish.
+// The holder is never preempted, and a canceled waiter leaves no hold behind.
+// The transaction's own state keeps its precedence: a released client reports
+// ErrTransactionClosed even for a canceled request, and once the read is
+// admitted the locked lifecycle guard runs before anything is read. This is
+// the same ownership order PublishCommit uses at tx.mu.
+func (tx *BadgerTransaction) IncidentEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return nil, err
+	}
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
@@ -1497,7 +1538,7 @@ func (tx *BadgerTransaction) IncidentEdges(nodeID NodeID) ([]*Edge, error) {
 	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
 		return nil, err
 	}
-	edges, err := tx.incidentEdgesLocked(nodeID)
+	edges, err := tx.incidentEdgesLocked(ctx, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -1505,44 +1546,6 @@ func (tx *BadgerTransaction) IncidentEdges(nodeID NodeID) ([]*Edge, error) {
 		edges[i] = copyEdge(edge)
 	}
 	return edges, nil
-}
-
-// resolveConnectedDeletesLocked finishes the deletes of DeleteGraphNode with RejectConnected at
-// commit: a node no relationship connects any more is deleted for good; one
-// that is still connected fails the commit, as Neo4j's DeleteConnectedNode
-// constraint does. Nodes are checked in ID order, so the error names the
-// same node every time.
-func (tx *BadgerTransaction) resolveConnectedDeletesLocked() error {
-	if len(tx.connectedDeletes) == 0 {
-		return nil
-	}
-	ids := make([]NodeID, 0, len(tx.connectedDeletes))
-	for id := range tx.connectedDeletes {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	for _, id := range ids {
-		// Every relationship counts, hidden ones too: the delete would
-		// otherwise remove them with the node (incidentEdgesLocked).
-		remaining, err := tx.incidentEdgesLocked(id)
-		if err != nil {
-			return err
-		}
-		if len(remaining) > 0 {
-			return &NodeStillConnectedError{NodeID: id, Namespace: tx.namespace}
-		}
-	}
-	for _, id := range ids {
-		oldNode := tx.connectedDeletes[id]
-		delete(tx.deletedNodes, id)
-		result, err := tx.engine.executeNodeDeletion(tx.staged(), id, oldNode)
-		if err != nil {
-			return err
-		}
-		tx.recordNodeDeletionLocked(id, result)
-	}
-	tx.connectedDeletes = nil
-	return nil
 }
 
 // CreateEdge adds an edge to the transaction.
@@ -2330,7 +2333,7 @@ func (tx *BadgerTransaction) replayedSinceBeginLocked() bool {
 // against the drained heads, so a commit acknowledged after this
 // transaction began still conflicts. Staged ID and property-key counters
 // follow the writer transaction.
-func (tx *BadgerTransaction) rebaseBadgerAfterDrainLocked() error {
+func (tx *BadgerTransaction) rebaseBadgerAfterDrainLocked(ctx context.Context) error {
 	snapshotTx, badgerReadTs, err := tx.badgerDB.beginTxn(false)
 	if err != nil {
 		return err
@@ -2354,7 +2357,7 @@ func (tx *BadgerTransaction) rebaseBadgerAfterDrainLocked() error {
 	tx.badgerReadHeld = true
 	tx.badgerTx = next
 	tx.clearSnapshotCachesLocked()
-	return tx.validateSnapshotIsolationConflicts()
+	return tx.validateSnapshotIsolationConflicts(ctx)
 }
 
 // ResumeAfterIndependentCommit advances an implicit caller's read view while
@@ -2393,7 +2396,7 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(preserveWrites bool) error {
 		} else if tx.schemaRuntime != nil && tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence != tx.readTS.CommitSequence {
 			err = fmt.Errorf("schema snapshot changed before continuation: %w", ErrConflict)
 		} else {
-			err = tx.validateSnapshotIsolationConflicts()
+			err = tx.validateSnapshotIsolationConflicts(context.Background())
 		}
 		if err != nil {
 			snapshotTx.Discard()

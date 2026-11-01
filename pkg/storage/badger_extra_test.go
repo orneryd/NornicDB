@@ -507,7 +507,7 @@ func TestSchemaManager_CheckUniqueConstraint_NoConstraint(t *testing.T) {
 	sm := b.GetSchema()
 
 	// No constraint registered for this label/property — should return no error
-	err := sm.CheckUniqueConstraint("Ghost", "prop", "val", "")
+	err := sm.CheckUniqueConstraint(context.Background(), "Ghost", "prop", "val", "")
 	assert.NoError(t, err)
 }
 
@@ -518,7 +518,7 @@ func TestSchemaManager_CheckUniqueConstraint_WithConstraint(t *testing.T) {
 	_ = sm.AddUniqueConstraint("uc-check", "Item", "code")
 
 	// No data yet → no conflict
-	err := sm.CheckUniqueConstraint("Item", "code", "ABC123", "")
+	err := sm.CheckUniqueConstraint(context.Background(), "Item", "code", "ABC123", "")
 	assert.NoError(t, err)
 }
 

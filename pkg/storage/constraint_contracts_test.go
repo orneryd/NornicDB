@@ -806,47 +806,47 @@ func TestBadgerTransactionEvaluateConstraintContractExpressions(t *testing.T) {
 	}
 
 	node := &Node{ID: "tenant::n1", Properties: map[string]interface{}{"status": "active"}}
-	ok, err := tx.evaluateNodeConstraintContractExpressionLocked(node, "n.status IN ['active', 'pending']")
+	ok, err := tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "n.status IN ['active', 'pending']")
 	if err != nil || !ok {
 		t.Fatalf("expected node IN expression to pass, ok=%v err=%v", ok, err)
 	}
 
-	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(node, "n.status IN ['disabled']")
+	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "n.status IN ['disabled']")
 	if err != nil || ok {
 		t.Fatalf("expected node IN expression to fail without error, ok=%v err=%v", ok, err)
 	}
 
-	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(node, "n.status = 'active'")
+	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "n.status = 'active'")
 	if err != nil || !ok {
 		t.Fatalf("expected node comparison expression to pass, ok=%v err=%v", ok, err)
 	}
 
 	edge := &Edge{ID: "tenant::e1", StartNode: "tenant::start", EndNode: "tenant::end", Properties: map[string]interface{}{"status": "open", "weight": 7}}
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "r.status IN ['open', 'closed']")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "r.status IN ['open', 'closed']")
 	if err != nil || !ok {
 		t.Fatalf("expected relationship IN expression to pass, ok=%v err=%v", ok, err)
 	}
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "startNode(r).region = endNode(r).region")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "startNode(r).region = endNode(r).region")
 	if err != nil || !ok {
 		t.Fatalf("expected endpoint equality expression to pass, ok=%v err=%v", ok, err)
 	}
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "r.weight >= 7")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "r.weight >= 7")
 	if err != nil || !ok {
 		t.Fatalf("expected relationship comparison expression to pass, ok=%v err=%v", ok, err)
 	}
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "startNode(r) <> endNode(r)")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "startNode(r) <> endNode(r)")
 	if err != nil || !ok {
 		t.Fatalf("expected distinct endpoint expression to pass, ok=%v err=%v", ok, err)
 	}
 
 	loop := &Edge{ID: "tenant::loop", StartNode: "tenant::start", EndNode: "tenant::start"}
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(loop, "startNode(r) <> endNode(r)")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), loop, "startNode(r) <> endNode(r)")
 	if err != nil || ok {
 		t.Fatalf("expected distinct endpoint expression to fail without error, ok=%v err=%v", ok, err)
 	}
 
 	tx.deletedNodes["tenant::end"] = struct{}{}
-	_, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "startNode(r).region = endNode(r).region")
+	_, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "startNode(r).region = endNode(r).region")
 	if err == nil {
 		t.Fatal("expected missing endpoint error")
 	}
@@ -911,7 +911,7 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 		t.Fatalf("expected deleted edge to be hidden, edge=%v err=%v", edge, err)
 	}
 
-	outgoing, err := tx.currentDirectedEdgesLocked("tenant::n1", adjacencyOutgoing)
+	outgoing, err := tx.currentDirectedEdgesLocked(t.Context(), "tenant::n1", adjacencyOutgoing)
 	if err != nil {
 		t.Fatalf("currentDirectedEdgesLocked outgoing: %v", err)
 	}
@@ -919,7 +919,7 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 		t.Fatalf("unexpected outgoing edges: %+v", outgoing)
 	}
 
-	incoming, err := tx.currentDirectedEdgesLocked("tenant::n1", adjacencyIncoming)
+	incoming, err := tx.currentDirectedEdgesLocked(t.Context(), "tenant::n1", adjacencyIncoming)
 	if err != nil {
 		t.Fatalf("currentDirectedEdgesLocked incoming: %v", err)
 	}
@@ -927,7 +927,7 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 		t.Fatalf("unexpected incoming edges: %+v", incoming)
 	}
 
-	adjacent, err := tx.currentAdjacentEdgesLocked("tenant::n1")
+	adjacent, err := tx.currentAdjacentEdgesLocked(t.Context(), "tenant::n1")
 	if err != nil {
 		t.Fatalf("currentAdjacentEdgesLocked: %v", err)
 	}

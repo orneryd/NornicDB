@@ -82,6 +82,9 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 		return err
 	}
 	for _, c := range constraints {
+		if c.EffectiveEntityType() != ConstraintEntityNode {
+			continue
+		}
 		switch c.Type {
 		case ConstraintUnique:
 			if v.transaction != nil {
@@ -193,7 +196,7 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 				}
 			}
 
-			if err := v.engine.scanForTemporalOverlapInTxn(v.native, v.namespace, c, keyVal, interval.start, interval.end, interval.hasEnd, v.exclude); err != nil {
+			if err := v.engine.scanForTemporalOverlapInTxn(v.ctx, v.native, v.namespace, c, keyVal, interval.start, interval.end, interval.hasEnd, v.exclude); err != nil {
 				return err
 			}
 		case ConstraintDomain:
@@ -405,7 +408,7 @@ const (
 // histories for canonical list keys, and the canonical label reader when an
 // index cannot establish completeness. Every route shares body decoding and
 // the same interval/equality violation owner.
-func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start, end time.Time, hasEnd bool, excludeNodeID NodeID, mode ...temporalOverlapScan) error {
+func (b *BadgerEngine) scanForTemporalOverlapInTxn(ctx context.Context, txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start, end time.Time, hasEnd bool, excludeNodeID NodeID, mode ...temporalOverlapScan) error {
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	if !ok {
 		return nil
@@ -434,7 +437,7 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace st
 	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
 	if fullLabel {
 		runTemporalConstraintScanHook()
-		it := b.newLabelIndexReader(context.Background(), txn, namespace+":", c.Label, "", storedRead, false)
+		it := b.newLabelIndexReader(ctx, txn, namespace+":", c.Label, "", storedRead, false)
 		defer it.Close()
 		for it.Next() {
 			id := it.NodeID()
@@ -453,13 +456,13 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace st
 	}
 	if list {
 		historyConstraint := constraint
-		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{excludeNodeID: excludeNodeID, latest: func(node *Node) (bool, error) {
+		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, excludeNodeID: excludeNodeID, latest: func(node *Node) (bool, error) {
 			err := temporalOverlapViolation(historyConstraint, spec, node, keyValue, interval)
 			return err == nil, err
 		}})
 		return err
 	}
-	previous, next, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: start, excludeNodeID: excludeNodeID, adjacent: true})
+	previous, next, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, at: start, excludeNodeID: excludeNodeID, adjacent: true})
 	if err != nil {
 		return err
 	}

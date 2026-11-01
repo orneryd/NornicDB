@@ -5,7 +5,7 @@ The approved dependency order is current #1684 terminal-outcome prerequisite,
 label-index readiness and remaining preparation. Preserve each author's work;
 port into current owners rather than restoring obsolete implementations.
 
-Current gate (2026-11-01): full `make verify BASE=origin/release/v1.4.4` on a frozen committed candidate, with unchanged duplicate checker best effort. Earlier deferred/test-only directions and running-job notes below are historical; the current-prerequisite integration section and external current-resume.json record the active state. All four remaining API decisions are explicitly approved. No final verification pass or published correction head is claimed.
+Current gate (2026-11-01): full `make verify BASE=origin/release/v1.4.4` after integrating current diagnostic corrections, with unchanged duplicate checker best effort. The 5bf14fceb run failed and was superseded; no full verification is currently running. Earlier deferred/test-only directions and running-job notes below are historical; the current-prerequisite integration section and external current-resume.json record the active state. All four remaining API decisions are explicitly approved. No final verification pass or published correction head is claimed.
 
 - [x] Preserve original #1636, #1693 and #1667 heads and the separate #1667 prototype.
 - [x] Rebase #1636 S1–S4 onto current #1684 (61d13cded), preserving release APOC I/O policy.
@@ -15,7 +15,7 @@ Current gate (2026-11-01): full `make verify BASE=origin/release/v1.4.4` on a fr
 - [ ] Validate foundation read admission, concurrent-limit rejection and shared envelope consumers on the combined source.
 - [ ] Reconcile compiled source/control populations with the integrated implementation; fix census portability and stale artifacts.
 - [ ] Review #1667's own acceptance criteria against the combined foundations and preserve all still-required author work.
-- [ ] Integrate proven label readiness/LowMemory fixes, retaining existing marker bytes and storage layout.
+- [x] Integrate proven label readiness/LowMemory fixes, retaining existing marker bytes and storage layout. Completed focused native60k/rebuild/snapshot controls are recorded below; final current-source performance/full-suite qualification stays open.
 - [ ] Resolve all failures exposed by integration, including existing release regressions.
 - [ ] Measure affected ready/building reads and preparation workloads; reject regressions and unsupported prototype behavior.
 - [ ] Run full make test on the frozen combined source and fix every failure.
@@ -92,7 +92,7 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 
 - [x] Fetch actual release base de70c0e83 and record clean local verification checkpoint3a611d2c2.
 - [x] Attempt existing installed advisory duplicate checker on exact staged integration; database transaction endpoint timed out. Preserve incomplete result; continue current-source owner review, no checker/hook edits.
-- [ ] Complete `make verify BASE=origin/release/v1.4.4` on3a611d2c2; started with all mapped checks selected. This supersedes the earlier simple make-test-only/deferred-verify direction for this run. No final result or qualification is asserted.
+- [x] Complete the diagnostic `make verify BASE=origin/release/v1.4.4` on3a611d2c2: FAIL109m26s, recorded below with seven failed coverage groups and incomplete/failed checks. This closes execution of that historical diagnostic only; the final corrected-source full gate remains open.
 
 
 ## Full-verification fallout (pinned3a611d2c2; fixes not yet integrated)
@@ -101,19 +101,19 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [x] Independently review Bolt disconnect/native listener retirement fix. Real TCP and close-owner controls pass race count3 in isolated source (2.603s); keep net.ErrClosed filtering at the existing close-outcome owner.
 - [x] Verify exact injected closed-WAL rollback shutdown outcomes in the existing terminal matrix (isolated race2.994s); all other matrix cells still require clean retirement.
 - [x] Review retirement of the zero-production-caller DELETE-with-LIMIT subgraph. Preserve already-correct public both-parser mixed-type behavior; no live performance or data-loss claim.
-- [ ] Integrate reviewed Fabric, Search, Bolt and retired-DELETE corrections after the pinned full run completes, then reverify the integrated source.
+- [x] Integrate reviewed Fabric, Search, Bolt and retired-DELETE corrections after the pinned diagnostic run; nine reviewed fallout patches and focused integrated checks are recorded below. Final full-source revalidation remains open.
 - [ ] Complete immutable transaction-image effect guard repair without exempting metadata effect accounting.
-- [ ] Fix quota replacement shutdown access-metadata failures (DeepSeek2a5bcfe32e464f4fa2af2974f62da834).
-- [ ] Correct HTTP stop test fixtures to enroll the actual production stop owner and observe native listener errors; retain forced-close/outcome assertions and join test work.
-- [ ] Complete normalization proposal review and repair the flat-map serialization cancellation gap found during independent review.
-- [ ] Complete public DB.CreateIndex readiness investigation before making any product-defect claim.
+- [x] Correct quota replacement shutdown access metadata through approved conditional WriteAccessMeta, existing entity authority/buffer ordering and same-transaction presence. Parent native/kp race passes3.703s/1.459s; genuine storage faults remain errors.
+- [x] Correct HTTP stop fixtures through the actual production stop owner, retaining native listener/forced-close outcomes and joined work. Integrated exact failure race controls pass7.011s (recorded below).
+- [x] Complete normalization review and repair actual flat-map serialization cancellation; integrated normalized-value controls pass4.427s and four private/public cancellation controls pass2.369s. Full current-source qualification remains separate.
+- [x] Complete public DB.CreateIndex investigation: populated-store missing rows were reproduced, then canonical transactional DDL population/admission corrected. The current-prerequisite integration records the accepted implementation; no unresolved proposal is claimed here.
 
 - [x] Independently verify integrated candidate Bolt/Fabric/Cypher fallout controls under race (4.197s/1.955s/6.643s); convert package built with no matching test, not claimed a test pass.
 - [x] Independently verify integrated Search lifecycle/nil-entry controls under race (12.864s).
 - [x] Consolidate HTTP fixture registration/cleanup into one owner and independently verify the two exact failures under race (7.011s); preserve actual-completion/error assertions.
 - [x] Independently verify normalized value-key/map/relationship controls in candidate under race (4.427s), then the four actual private/public normalization cancellation cases under race (2.369s).
 - [ ] Reject broad effect-image proof proposal after read-only review exposed alias/literal-publication holes; preserve counterexamples and implement a narrow sound adaptation rather than marking the holder non-effect.
-- [ ] Fix confirmed public DB.CreateIndex populated-store missing-row defect through existing transactional DDL owner (DeepSeek3cfb53d729444270a88d3b373bd873df); no second population implementation or ready-empty publication.
+- [x] Fix confirmed populated-store DB.CreateIndex missing rows through existing transactional DDL; canonical native pre-snapshot DDL admission is integrated, without a second population owner or ready-empty publication. Final suite remains open.
 
 
 ## Completed initial full gate and recovery
@@ -123,9 +123,9 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [x] Repair the two docs source links and verify both release targets exist. Strict docs recovery passes (14s).
 - [x] Start local Docker and recover differential verification against pinned Neo4j (234s; Bolt 113.245s, HTTP 101.885s). This selected only differential/docs; seven other steps were skipped.
 - [x] Align the complete conformance package budget with the existing 30-minute full-suite standard. Three complete coverage traversals of the pinned head took 613.036/645.943/609.897s and failed only the known numeric-owner guard. Preserve the 12,960-case constructor population and every per-case assertion/deadline. A fresh full conformance pass remains required.
-- [ ] Complete the full Search run after its original panic masked later cases. Evidence: `primary-search-full-after-fallout.log`. Investigate any remaining failure or hang.
+- [x] Complete the previously blocked whole Search recovery: PASS244.040s after reader/IVF/retirement fixture repairs, recorded below. This historical whole-package result does not qualify subsequent source edits or replace the final full gate.
 - [x] Reject the clear-buffer-only access-retirement proposal. Real-store node/edge tests fail after a batch has drained: orphan metadata reappears and shutdown retains a not-found error (1.150s). Stop superseded job `2a5bcfe32e464f4fa2af2974f62da834`; preserve its proposal and the RED evidence.
-- [ ] Complete canonical access lookup/publication correction, job `e75e51b467b84650bd69db6f8528ae6c`: prevent metadata resurrection, retain genuine failures, and preserve storage formats.
+- [x] Complete canonical access lookup/publication correction: typed WriteAccessMeta prevents orphan metadata resurrection, skips only true absence, retains genuine faults and preserves storage formats. Integrated parent native/kp race passes3.703s/1.459s.
 - [ ] Complete schema DDL population/quoted-identifier correction, job `ed67549586224a0aa21131fa438282c1`.
 - [x] Retain bounded 52/94-member correspondence reviews, including their cost, dependency and provenance gaps. Neither review establishes complete population qualification.
 - [ ] Run final full `make verify` on the complete, frozen, rebased source. The original failed run and selected recovery passes do not establish readiness.
@@ -135,7 +135,7 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 
 - [x] Integrate the exact-vector reader fixture correction after parent review. The original read-holds-metadata/queued-admin-writer schedule is staged using production admission and vector leaf locks, with two chunk reads. A real recursive-lock overlay reproduces the deadlock; independent primary race count=3 passes (1.844s). Whole Search rerun is in progress; no full pass claimed yet.
 - [ ] Complete DDL proposal regression repairs: concurrent index-name admission, transactional persistence-failure fixture, and scoped traversal fixture. DeepSeek job `365956528c1447ed95d507b5d8dc20ff`.
-- [ ] Review exact schema string persistence through the existing lossless JSON owner, including old ordinary JSON compatibility and durable reopen. DeepSeek job `c3511b2986d146379f5e48b67a61b078`; no storage-layout migration is approved.
+- [x] Review/integrate exact schema JSON persistence via canonical lossless JSON owner: escaped-surrogate durable reopen, ordinary payload bytes and old JSON read/rewrite pass parent default race2.822s. No key/layout/version migration.
 - [ ] Review whether deterministic mid-fill publication tests require a new global test seam; prefer existing owners and require suite-safe cleanup. DeepSeek job `1891fe79e9b24ba79c3b9544981a895c`.
 - [x] Obtain typed access writer, remaining discovery APIs, and custom-engine atomicity contract decisions; all approved in the latest operator reply.
 - [ ] Follow the latest user gate: full `make verify`; duplicate checker best effort, with any timeout/incomplete inventory reported explicitly. Do not change checker rules or claim a clean result from missing output.
@@ -144,17 +144,17 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [x] Verify current numeric ownership guard independently: PASS1.106s after retired DELETE route removal, not attributed to unrelated normalizer controls.
 
 - [x] Review and integrate canonical JSON owner reuse in native transaction schema read/write/roundtrip. Parent default race passes2.822s for escaped surrogate durable reopen, exact ordinary payload bytes, old JSON read/rewrite. No key/layout/version migration. Worker fullstorage and final integrated gate remain pending.
-- [ ] Finish newly reproduced public bulk UNIQUE false positives (NaN/list identity collision) through canonical constraint equality; qualify ordinary and nonreflexive scale costs.
+- [x] Correct reproduced bulk UNIQUE NaN/list identity false positives via canonical equality. Parent default race passes2.946s; matched4096-node preparation median4.030→1.791ms and73775→24524allocations. Broader throughput qualification is not inferred.
 
 - [x] Integrate canonical native bulk constraint equality correction: false NaN/list duplicates reproduced first; original error slice ownership preserved. Parent default race passes2.946s. Matched preflight4096-node median4.030→1.791ms and73775→24524allocations; this is not full bulk/transport throughput proof.
 - [x] Integrate private pending tracking ctx/error correction and atomic publication, preserving accepted maintenance lifetimes. Parent default race passes2.839s, including actual canceled public publication while buffer writer remains held and full32768-ID control. Allocationparity retained; latency qualification under contention remains open.
-- [ ] Resolve concurrent ordinary DDL admission through canonical live gate before snapshot and native after-publication release before reentrant listeners. Context-aware gate/managed commit Go contracts are pending operator choice; no wrapper/fallback proposal accepted.
-- [ ] Correct schema document export/import exact UTF16 identity through existing canonical codec while preserving ordinary document layout; DeepSeek1e858 scoped to adminimport.
+- [x] Integrate canonical live pre-snapshot native DDL admission and after-publication release, preserving explicit snapshot conflicts and managed commit ownership. Current-prerequisite integration records focused proof; final full gate remains open.
+- [x] Integrate schema document exact UTF16 import/export through the canonical codec, preserving ordinary document formatting/layout; whole adminimport race passes2.933s. Destination persistence is separately corrected/verified below.
 
 - [x] Integrate schema document lossless import/export owner reuse; preserve ordinary indentation/newline/0600 and old input. Independent whole adminimport race passes2.933s. Destination restart durability finding remains separately open, not hidden by source-reopen controls.
 - [x] Repeat unchanged installed advisory checker on frozen alternate-index tree628503fc6f043db44580808c4929835148a18a53: INCOMPLETE database tx/commit timeout. Advisoryexit0 is not a pass; realindexSHA unchanged; no checker/config modifications. Continue priorinventory/sourceownerreview per maintainer instruction.
 - [ ] Complete all original DDL publication tests with minimum safe one-shot test seam and actualjoins; preserve original9tests and addforeignfillcontrol. DeepSeekddf303.
-- [ ] Reproduce/fix public schema import destination persistence before readiness; no dismissal as baseline/unrelated. DeepSeekfab8 publicRED andwritecontractproposal first.
+- [x] Reproduce and fix destination schema import durability through canonical ReplaceDefinitionDurable; strict binding precompile and direct-loader failure atomicity included. Integrated storage5.916s/adminimport4.014s race passes; no storage-layout migration.
 
 
 ## 2026-11-01 current-prerequisite integration
@@ -178,7 +178,7 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [x] Integrate fail-closed local-write atomic capability check and preserve delegated/native owner behavior. Parent focused default checks pass; independent public/callback/native/deferred-outcome race checks pass5.942s.
 - [x] Complete approved WriteAccessMeta atomic-presence owner and all Go callers/docs. After two failed DeepSeek jobs (connection reset, malformed response), native takeover reused existing typed authority, buffer order and same-transaction stored reads. Parent native/kp race passes3.703s/1.459s. No storage-format change.
 - [x] Integrate approved discovery migration from DeepSeek `a5ea54f497b64cbcb6676d2b30283c75`, including all typed callers and embedding migration documentation. Worker public held-schema-writer fail-first and focused controls pass; parent integrated race passes storage3.671s/adminimport3.353s; Cypher compiled with no matched tests, not a test pass.
-- [ ] Correct IndexNode follow-up review findings: preserve old posting until all new keys are prepared; propagate request context through DDL backfill. Existing production request cache build is unpublished, so no published-cache corruption is claimed without proof.
+- [x] Complete context-first IndexNode preparation-before-apply and DDL BackfillCompositeIndex propagation; canceled replacement preserves old postings, all typed callers/docs migrate and both-parser DDL cancellation/retry controls pass (recorded above).
 
 ## Final contract integration checkpoint
 
@@ -187,3 +187,45 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [x] Parent full adminimport race passes3.850s before the final migrations; final combined affected controls also pass afterward.
 - [ ] Finish normal current-source census controls; preserve prior incomplete race runs.
 - [ ] Create the frozen local candidate and run full `make verify BASE=origin/release/v1.4.4`; no qualified push or readiness claim before actual results.
+
+## Current diagnostic correction checkpoint
+
+- [x] Preserve failed 5bf14fceb full verification and supersession receipt. First Cypher traversal failed; retry was canceled deliberately. Later checks remain unexecuted.
+- [x] Reconcile exact URL-sink manifests against current bodies and verify whole observability independently (16.742s); no runtime security change or waived sink.
+- [x] Qualify frozen stored-entity census on 065635afd: all37 mutants pass, full package947.681s. Artifact applicability must be re-established after subsequent source edits.
+- [x] Integrate required traversal-context legacy retirement after exhaustive initializer review; preserve separate undirected context defect.
+- [x] Migrate five transparent read decorators through the existing EngineUnwrapper capability. Parent integrated race test population passes42.766s; opaque write/fault decorators remain separately unresolved.
+- [x] Review and integrate generic captured-cell reaching-store proof, retaining negative/unknown cases. Parent internal/workcensus passes14.825s; parent real-source correlation checks pending. This is not the duplicate checker and does not modify its rules.
+- [x] Re-pin only two moved trackedRWMutex nil-call sites after byte-identical method-body comparison to HEAD and release; no new detached acceptance.
+- [x] Integrate complete canonical preparation context/error propagation and approved metadata/discovery callers; parent preparation controls pass5.040s and combined storage/Cypher/adminimport/knowledgepolicy checks are recorded above. Final full qualification remains open.
+- [x] Correct public undirected adjacency cancellation and dynamic native autocommit APOC USE routing through originating context plus existing statement coordinator. Integrated parent undirected race11.839s and native coordinator/metadata focused checks are preserved; full suite remains open.
+- [ ] Resolve remaining opaque test-fixture failures with meaningful public and component assertions; never blindly unwrap mutation/fault probes.
+- [x] Reproduce and correct durable schema creation/privilege preparation cancellation: parent five creation controls race3.134s and wholeauth race27.531s; context propagation, no partial grants and rename/delete0writes retained. No blanket unqualified-population closure.
+- [ ] Freeze corrected source, refresh source-pinned evidence, commit and run fresh full make verify before publishing readiness.
+
+- [x] Integrate complete canonical commit-preparation ctx/error propagation and three discovery methods; parent tagged race passes storage2.788s (Cypher compiled with no matched tests, not qualified by that selection). No per-transaction context field or stored-format change.
+- [x] Integrate actual public undirected MATCH cancellation at both route owners, retaining originating ctx through canonical adjacency/combine. Parent public cancellation/relationship/counter race result is recorded in parent-current-integration-checks.json.
+- [x] Add public undirected typed-count positive control to prove the materialization probe is reached; overlay qualification passes1.826s, integrated race also run.
+- [x] Parent real-source captured-context proof controls pass; exact log in census-result-correlation-review/parent-result-correlation-tests.log. No duplicate checker modification.
+- [ ] Finish newly reproduced receipt/acknowledged-overlay admission, durable creation validation and DELETE guard context propagation.
+- [x] Integrate native autocommit coordinator reuse with exact nativeRoot provenance, original auth/lifetime and independent periodic batch preservation; public APOC/standard USE REDs retained, child focused race22.776s and parent integrated checks preserved. Final full gate remains open.
+
+- [x] Parent independently runs all12 preparation public/component tests after receipt/overlay and canonical bulk-poll completion: PASS5.040s; inner-poll negative control remains preserved.
+- [x] Integrate e3 schema creation validators/cache ctx migration. Parent all5public controls race PASS3.134s; introduced duplicate-selection deadlock and stale-selection success were reproduced and corrected before integration.
+- [x] Integrate defensive privilege/role original-context propagation, owning loops and canonical cancellable sorting from DeepSeek; parent wholeauth race PASS27.531s. Preserve actual post-read cancellation/no partialgrants and rename/delete0writes controls.
+- [ ] Qualify cache-staging allocation overhead and unexplained buffered-preparation timing increase with matched/profiled measurements; neither is waived or declared noise.
+- [ ] Complete all affected fixture migrations after integrated nativeRoot statement coordination, callback auth/lifetime and periodic ownership. Commit rejection, buffered completion/HTTP202 and optimistic-ID focused controls pass, but remaining opaque observation/Graphify/Graphiti fixtures and final current Cypher/race qualification remain open.
+
+- [ ] Correct newly reproduced runtime schema identity defects: colon-bearing label/property pairs collide, and a relationship-only UNIQUE cache rejects unrelated node writes. Both-parser native public RED evidence preserved; no storage-key/payload/version change permitted.
+- [x] Integrate structured committed terminal failure retention at canonical Fabric owner and authoritative response-commit truth in IsCommitRolledBack; contradictory retained-marker, generic confirmed-commit and native WAL outcome controls preserved. Full errors/Fabric race and focused current integration evidence exist; final full gate remains open.
+
+### Resume: integrated native metadata and fixture corrections
+
+- [x] Independently verify actual buffered ACK metadata / HTTP status / optimistic IDs: Cypher 4.676s, storage 3.736s, server 2.239s.
+- [x] Review and integrate seven layered atomic error fixture files; retain component error checks and public native rollback controls. Focused parent run passed 2.486s; strengthen accepted SET to change persisted value.
+- [ ] Complete whole Cypher run (parent-current-cypher-suite.log). Integrated claim/metadata/DELETE race passed storage3.026s/Cypher5.665s; layered error fixtures race6.113s and remaining MERGE/index fixtures race4.311s. These selections do not qualify the whole package.
+- [ ] Accept or revert typed shared-claim experiment after matched performance qualification.
+- [ ] Integrate independently verified DeepSeek bulk-read waiter correction only for reproduced defects (job 17c51c975a874a58b1de6b5a0bccd07d).
+- [ ] Refresh source-bound census evidence and freeze candidate for full make verify; no full verification or readiness claimed.
+
+- [x] Independently review exactly two stale reconciliation function proofs; holdsEntities now receives originating phase context, and trackPendingValues has only the canonical typed key rename. Apply JSON-only source pins; strict revalidation in progress, no new exceptions.

@@ -34,7 +34,7 @@ func TestPublicPublishCommitWarmPendingAdmissionCancellation(t *testing.T) {
 	w := engine.writeBehind
 	require.NotNil(t, w)
 	w.mu.RLock()
-	warm := slices.Contains(w.trackedPairs, pendingPropertyKey{label: "Tuple", property: "tenant"})
+	warm := slices.Contains(w.trackedPairs, nodePropertyKey{label: "Tuple", property: "tenant"})
 	w.mu.RUnlock()
 	require.True(t, warm, "normal schema attachment must already track this pair")
 	tx := beginMergeKeyTx(t, engine)
@@ -176,7 +176,7 @@ func TestPublicPublishCommitWarmPendingAdmissionCancellation(t *testing.T) {
 // both the live value populations and their tracking metadata unchanged,
 // including cancellation after an earlier pair completed in the candidate.
 func TestPendingTrackingCancellationPublishesAtomically(t *testing.T) {
-	pairs := []pendingPropertyKey{{label: "Tuple", property: "a"}, {label: "Tuple", property: "b"}}
+	pairs := []nodePropertyKey{{label: "Tuple", property: "a"}, {label: "Tuple", property: "b"}}
 	for _, tc := range []struct {
 		existing bool
 		count    int
@@ -189,7 +189,7 @@ func TestPendingTrackingCancellationPublishesAtomically(t *testing.T) {
 					w.active.addNode(&Node{ID: NodeID(fmt.Sprint(i)), Labels: []string{"Tuple"}, Properties: map[string]interface{}{"a": int64(i), "b": int64(i), "unchanged": int64(i)}})
 				}
 				if tc.existing {
-					require.NoError(t, w.trackPendingValues(t.Context(), []pendingPropertyKey{{label: "Tuple", property: "unchanged"}}))
+					require.NoError(t, w.trackPendingValues(t.Context(), []nodePropertyKey{{label: "Tuple", property: "unchanged"}}))
 				}
 				return w
 			}
@@ -217,7 +217,7 @@ func TestPendingTrackingCancellationPublishesAtomically(t *testing.T) {
 						require.NotContains(t, original.tracked["Tuple"], "b")
 						require.Len(t, original.byValue, 1024)
 						require.Len(t, original.byProperty, 1)
-						require.Len(t, original.byProperty[pendingPropertyKey{label: "Tuple", property: "unchanged"}], 1024)
+						require.Len(t, original.byProperty[nodePropertyKey{label: "Tuple", property: "unchanged"}], 1024)
 					}
 					require.NoError(t, w.trackPendingValues(t.Context(), pairs))
 					require.Len(t, w.pendingIndex.byProperty[pairs[0]], 1024)
@@ -235,7 +235,7 @@ func TestPendingTrackingCancellationPublishesAtomically(t *testing.T) {
 }
 
 func BenchmarkWarmPendingTrackingAdmission(b *testing.B) {
-	w := &WriteBehindBuffer{trackedPairs: []pendingPropertyKey{{label: "Tuple", property: "a"}}}
+	w := &WriteBehindBuffer{trackedPairs: []nodePropertyKey{{label: "Tuple", property: "a"}}}
 	ctx := b.Context()
 	b.ReportAllocs()
 	b.ResetTimer()

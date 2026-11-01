@@ -160,13 +160,13 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 		b.dropSuppressionEnd(kind, id)
 		b.prepareCommitOperations(ops, false)
 	}
-	keys := func() []any {
+	keys := func(context.Context) ([]any, error) {
 		ops = []Operation{operation()}
 		capturePublicationOperations(notification, ops)
 		if kind == manualSuppressionNode {
-			return []any{NodeID(id)}
+			return []any{NodeID(id)}, nil
 		}
-		return []any{EdgeID(id)}
+		return []any{EdgeID(id)}, nil
 	}
 	if b.writeBehind != nil {
 		// The commits its drain replays, then this one, are delivered once

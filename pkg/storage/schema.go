@@ -103,10 +103,10 @@ type SchemaManager struct {
 	schemaMutationMu               contextRWMutex
 
 	// Constraints
-	uniqueConstraints       map[string]*UniqueConstraint      // key: "Label:property"
-	constraints             map[string]Constraint             // key: constraint name, stores all constraint types
-	constraintContracts     map[string]ConstraintContract     // key: contract name
-	propertyTypeConstraints map[string]PropertyTypeConstraint // key: constraint name
+	uniqueConstraints       map[nodePropertyKey]*UniqueConstraint // exact node label/property identity
+	constraints             map[string]Constraint                 // key: constraint name, stores all constraint types
+	constraintContracts     map[string]ConstraintContract         // key: contract name
+	propertyTypeConstraints map[string]PropertyTypeConstraint     // key: constraint name
 
 	// pendingWrites is the write cache of an AsyncEngine above the engine that
 	// maintains these indexes; index lookups merge its pending writes (#719).
@@ -229,7 +229,7 @@ type SchemaManager struct {
 //	All methods are thread-safe for concurrent access.
 func NewSchemaManager() *SchemaManager {
 	return &SchemaManager{
-		uniqueConstraints:       make(map[string]*UniqueConstraint),
+		uniqueConstraints:       make(map[nodePropertyKey]*UniqueConstraint),
 		constraints:             make(map[string]Constraint),
 		constraintContracts:     make(map[string]ConstraintContract),
 		propertyTypeConstraints: make(map[string]PropertyTypeConstraint),
@@ -359,8 +359,8 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 
 	sm.addConstraintPropertyIndexLocked(c)
 
-	if c.Type == ConstraintUnique && len(c.Properties) == 1 {
-		uniqueKey := fmt.Sprintf("%s:%s", c.Label, c.Properties[0])
+	if c.Type == ConstraintUnique && c.EffectiveEntityType() == ConstraintEntityNode && len(c.Properties) == 1 {
+		uniqueKey := nodePropertyKey{label: c.Label, property: c.Properties[0]}
 		if _, exists := sm.uniqueConstraints[uniqueKey]; !exists {
 			sm.uniqueConstraints[uniqueKey] = &UniqueConstraint{
 				Name:     c.Name,
@@ -755,7 +755,7 @@ type schemaRuleRollback func()
 // stageSchemaFamily copies one schema family so a rejected rule add restores
 // its published entries, including the runtime value caches and compiled index
 // pointers those entries own, without rebuilding any other family.
-func stageSchemaFamily[M any](field *map[string]M) schemaRuleRollback {
+func stageSchemaFamily[K comparable, M any](field *map[K]M) schemaRuleRollback {
 	published := maps.Clone(*field)
 	return func() { *field = published }
 }
@@ -1476,13 +1476,20 @@ func (sm *SchemaManager) RangeQuery(name string, minVal, maxVal interface{}, inc
 	return results, nil
 }
 
-// GetConstraints returns all unique constraints.
-func (sm *SchemaManager) GetConstraints() []UniqueConstraint {
-	sm.mu.RLock()
+// GetConstraints returns single-property node UNIQUE constraints.
+// ctx bounds metadata admission and enumeration. The only errors are context
+// cancellation/deadline errors; an error returns no partial constraints.
+func (sm *SchemaManager) GetConstraints(ctx context.Context) ([]UniqueConstraint, error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer sm.mu.RUnlock()
 
 	constraints := make([]UniqueConstraint, 0, len(sm.uniqueConstraints))
 	for _, c := range sm.uniqueConstraints {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		constraints = append(constraints, UniqueConstraint{
 			Name:     c.Name,
 			Label:    c.Label,
@@ -1490,7 +1497,7 @@ func (sm *SchemaManager) GetConstraints() []UniqueConstraint {
 		})
 	}
 
-	return constraints
+	return constraints, nil
 }
 
 // GetConstraintsForLabels returns all constraints for given labels, ordered

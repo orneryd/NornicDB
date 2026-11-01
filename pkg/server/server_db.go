@@ -849,16 +849,11 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 			// Query syntax errors, security errors, etc. return 200 OK
 			// with errors in the response body (Neo4j standard behavior)
 		}
-	} else if s.db.IsAsyncWritesEnabled() {
-		// Only return 202 for mutations that actually completed through the
-		// eventual-consistency path.
-		for _, stmt := range req.Statements {
-			if isMutationQuery(stmt.Statement) && shouldUseAcceptedStatusForMutation(&response) {
-				status = http.StatusAccepted
-				w.Header().Set("X-NornicDB-Consistency", "eventual")
-				break
-			}
-		}
+	} else if s.db.IsAsyncWritesEnabled() && shouldUseAcceptedStatusForMutation(&response) {
+		// The publication owner's actual ACK is authoritative, including a
+		// dynamic procedure whose declared READ mode executes a writing child.
+		status = http.StatusAccepted
+		w.Header().Set("X-NornicDB-Consistency", "eventual")
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)

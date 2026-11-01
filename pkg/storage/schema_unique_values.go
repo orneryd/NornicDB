@@ -14,10 +14,13 @@ import (
 )
 
 // CheckUniqueConstraint checks if a value violates a unique constraint.
+// ctx owns key preparation and admission; cancellation leaves claims unchanged.
 // Returns error if constraint is violated.
-func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value interface{}, excludeNode NodeID) error {
-	sm.mu.RLock()
-	key := label + ":" + property
+func (sm *SchemaManager) CheckUniqueConstraint(ctx context.Context, label, property string, value interface{}, excludeNode NodeID) error {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return err
+	}
+	key := nodePropertyKey{label: label, property: property}
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 
@@ -25,12 +28,18 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 		return nil // No constraint
 	}
 
-	constraint.mu.RLock()
+	return constraint.checkValue(ctx, value, excludeNode)
+}
+
+// checkValue owns canonical claim validation after the caller selected a constraint.
+func (constraint *UniqueConstraint) checkValue(ctx context.Context, value interface{}, excludeNode NodeID) error {
+	if err := constraint.mu.RLockContext(ctx); err != nil {
+		return err
+	}
 	defer constraint.mu.RUnlock()
 
-	// A constraint check belongs to the write it admits, so the key has that
-	// write's lifetime: it cannot cancel.
-	valueKey, ok, err := indexValueKey(context.Background(), value)
+	// Key preparation follows the caller that is still admitting this claim.
+	valueKey, ok, err := indexValueKey(ctx, value)
 	if err != nil {
 		return err
 	}
@@ -40,7 +49,7 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 
 	if existingNode, found := constraint.values[valueKey]; found {
 		if existingNode != excludeNode {
-			return localizedError(localization.StorageSchemaUniqueConstraintViolation(label, property, value), nil)
+			return localizedError(localization.StorageSchemaUniqueConstraintViolation(constraint.Label, constraint.Property, value), nil)
 		}
 	}
 
@@ -56,7 +65,7 @@ func (sm *SchemaManager) LookupUniqueConstraintValue(ctx context.Context, label,
 	if err := sm.mu.RLockContext(ctx); err != nil {
 		return "", false, false, false, err
 	}
-	constraint, exists := sm.uniqueConstraints[label+":"+property]
+	constraint, exists := sm.uniqueConstraints[nodePropertyKey{label: label, property: property}]
 	sm.mu.RUnlock()
 	if !exists || value == nil {
 		return "", false, exists, false, ctx.Err()
@@ -784,36 +793,50 @@ const (
 // Atomic publication retires all predecessor claims with RetiredUniqueClaim
 // before acquiring final claims, so key transfers do not depend on mutation
 // order. A nil or non-indexable value, or an unconstrained (label, property)
-// pair, is a no-op.
+// pair, is a no-op. ctx owns preparation and admission; an error leaves the
+// current claim unchanged. Accepted publication supplies its completion lifetime.
 //
 // Example usage:
 //
 //	// Publish one current, validated claim.
-//	schema.ApplyUniqueValue("User", "email", "alice@example.com", node.ID, storage.ValidatedUniqueClaim)
+//	err := schema.ApplyUniqueValue(ctx, "User", "email", "alice@example.com", node.ID, storage.ValidatedUniqueClaim)
 //
 //	// Retire the claim held by the stored node being deleted.
-//	schema.ApplyUniqueValue("User", "email", "alice@example.com", node.ID, storage.RetiredUniqueClaim)
-func (sm *SchemaManager) ApplyUniqueValue(label, property string, value any, nodeID NodeID, action UniqueValueAction) {
+//	err = schema.ApplyUniqueValue(ctx, "User", "email", "alice@example.com", node.ID, storage.RetiredUniqueClaim)
+func (sm *SchemaManager) ApplyUniqueValue(ctx context.Context, label, property string, value any, nodeID NodeID, action UniqueValueAction) error {
 	if action != ValidatedUniqueClaim && action != RecoveredUniqueClaim && action != RetiredUniqueClaim {
 		panic(fmt.Sprintf("storage: ApplyUniqueValue: unknown UniqueValueAction %d", action))
 	}
 
-	sm.mu.RLock()
-	key := label + ":" + property
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return err
+	}
+	key := nodePropertyKey{label: label, property: property}
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 
 	if !exists {
-		return
+		return nil
 	}
-	// The claim belongs to the accepted write that publishes or retires it, so
-	// the key has that write's lifetime: it cannot cancel.
-	valueKey, ok, err := indexValueKey(context.Background(), value)
-	if err != nil || !ok {
-		return
+	return constraint.applyValue(ctx, value, nodeID, action)
+}
+
+// applyValue owns key preparation and atomic mutation of one selected claim.
+// The caller has validated action or supplies a known canonical action.
+func (constraint *UniqueConstraint) applyValue(ctx context.Context, value any, nodeID NodeID, action UniqueValueAction) error {
+	// Prepare the complete key and acquire admission before changing a claim.
+	// Accepted publication callers explicitly supply their completion lifetime.
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ctx.Err()
 	}
 
-	constraint.mu.Lock()
+	if err := constraint.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	switch action {
 	case ValidatedUniqueClaim:
 		constraint.values[valueKey] = nodeID
@@ -827,6 +850,7 @@ func (sm *SchemaManager) ApplyUniqueValue(label, property string, value any, nod
 		}
 	}
 	constraint.mu.Unlock()
+	return nil
 }
 
 // retireUniqueValuesByNodePrefix publishes a bulk node deletion to the same

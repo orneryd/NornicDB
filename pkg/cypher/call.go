@@ -136,11 +136,14 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// Every tail route consumes the same seed once, including projections,
 	// empty row sets and write tails. Pass-through results already own its stats.
 	defer func() {
-		if err == nil && result != nil && seed != nil && result != seed && result.Stats != seed.Stats {
-			if result.Stats == nil || *result.Stats == (QueryStats{}) {
-				result.Stats = seed.Stats
-			} else {
-				result.Stats = mergeQueryStats(result.Stats, seed.Stats)
+		if err == nil && result != nil && seed != nil && result != seed {
+			mergeOptimisticMetadata(result, seed)
+			if result.Stats != seed.Stats {
+				if result.Stats == nil || *result.Stats == (QueryStats{}) {
+					result.Stats = seed.Stats
+				} else {
+					result.Stats = mergeQueryStats(result.Stats, seed.Stats)
+				}
 			}
 		}
 	}()
@@ -1301,6 +1304,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 				seed := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
 				if result != nil {
 					seed.Stats = result.Stats
+					mergeOptimisticMetadata(seed, result)
 				}
 				result = seed
 			}

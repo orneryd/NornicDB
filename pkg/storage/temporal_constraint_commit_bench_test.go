@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -31,7 +32,7 @@ func BenchmarkTemporalConstraintCreate(b *testing.B) {
 				b.Cleanup(func() { require.NoError(b, inner.Close()) })
 				engine := NewNamespacedEngine(inner, "test")
 				c := Constraint{Name: "bench_temporal", Type: ConstraintTemporal, EntityType: ConstraintEntityNode, Label: "Period", Properties: append(append([]string(nil), keyProps...), "from", "to")}
-				require.NoError(b, ValidateConstraintOnCreationForEngine(engine, c))
+				require.NoError(b, ValidateConstraintOnCreationForEngine(context.Background(), engine, c))
 				require.NoError(b, engine.GetSchema().AddConstraint(c))
 				require.NoError(b, MarkNewTemporalConstraintsForEngine(engine, engine.GetSchema(), []Constraint{c}))
 				properties := func(key, slot int) map[string]interface{} {

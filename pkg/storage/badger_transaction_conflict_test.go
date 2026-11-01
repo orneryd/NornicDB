@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -160,7 +161,7 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 		Properties: map[string]any{"name": "Alice"},
 	})
 	require.NoError(t, err)
-	constraint := schema.uniqueConstraints["Person:name"]
+	constraint := schema.uniqueConstraints[nodePropertyKey{label: "Person", property: "name"}]
 	require.NotNil(t, constraint)
 	constraint.mu.Lock()
 	constraint.valuesCacheComplete = true
@@ -173,7 +174,7 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 		Properties: map[string]any{"name": "Alice"},
 	}
 
-	err = tx.classifyUpdateConflictAsUniqueViolation(nodeID)
+	err = tx.classifyUpdateConflictAsUniqueViolation(t.Context(), nodeID)
 	require.Error(t, err)
 	var cve *ConstraintViolationError
 	require.ErrorAs(t, err, &cve)
@@ -183,8 +184,8 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 	require.Contains(t, cve.Message, "claimed by concurrent commit")
 	require.ErrorIs(t, cve.Cause, ErrConflict)
 
-	schema.ApplyUniqueValue("Person", "name", "Alice", nodeID, RetiredUniqueClaim)
-	require.Nil(t, tx.classifyUpdateConflictAsUniqueViolation(nodeID))
+	schema.ApplyUniqueValue(context.Background(), "Person", "name", "Alice", nodeID, RetiredUniqueClaim)
+	require.Nil(t, tx.classifyUpdateConflictAsUniqueViolation(t.Context(), nodeID))
 }
 
 // TestTransactionEntityPolicyScenarios owns policy validation across committed

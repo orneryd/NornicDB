@@ -34,6 +34,8 @@ func TestProcedureCatalogMutationRecoversLegacyIdentity(t *testing.T) {
 				exec := NewStorageExecutor(fault)
 				fault.createErr = nil
 				if arrival == "visible after construction" {
+					// Native public command sees legacy data arriving after construction.
+					exec = NewStorageExecutor(base)
 					seed()
 				}
 				var query string
@@ -45,14 +47,21 @@ func TestProcedureCatalogMutationRecoversLegacyIdentity(t *testing.T) {
 				case "drop exact":
 					query = "CALL apoc.custom.dropProcedure('Report')"
 				}
-				_, err := exec.Execute(context.Background(), query, nil)
+				var err error
+				if arrival == "failed startup migration" {
+					// Component proof retains the actual startup write-fault owner.
+					// Native statements cannot route writes through this decorator.
+					_, err = exec.executeCall(context.Background(), query)
+				} else {
+					_, err = exec.Execute(context.Background(), query, nil)
+				}
 				if operation == "drop lowercase" {
 					require.Error(t, err, "absent exact spelling must not delete a differently cased payload")
 				} else {
 					require.NoError(t, err)
 				}
 				ClearUserProcedures()
-				exec = NewStorageExecutor(fault)
+				exec = NewStorageExecutor(base)
 				nodes, err := base.GetNodesByLabel(context.Background(), procedureCatalogLabel)
 				require.NoError(t, err)
 				var names []string

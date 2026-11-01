@@ -121,12 +121,12 @@ func (b *BadgerEngine) WriteAccessMeta(request knowledgepolicy.AccessMetaWriteRe
 	err := b.withPublishingUpdate(ctx, func(txn *badger.Txn) error {
 		if request.Mode == knowledgepolicy.FlushExistingEntity {
 			view := storedEntityView{read: embeddingRecordReader{txn: txn}}
-			node, err := view.node(b, NodeID(entityID))
+			node, err := view.node(ctx, b, NodeID(entityID))
 			if err != nil {
 				return err
 			}
 			if node == nil {
-				edge, err := view.edge(b, EdgeID(entityID))
+				edge, err := view.edge(ctx, b, EdgeID(entityID))
 				if err != nil {
 					return err
 				}
@@ -149,7 +149,9 @@ func (b *BadgerEngine) WriteAccessMeta(request knowledgepolicy.AccessMetaWriteRe
 		_, err = accessMetaInTxn(txn, entityID, accessMetaWrite, &updated)
 		written = err == nil
 		return err
-	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(NodeID(target)))} }, nil, stages...)
+	}, nil, func(context.Context) ([]any, error) {
+		return []any{namespaceWriteKey(namespaceForNodeID(NodeID(target)))}, nil
+	}, nil, stages...)
 	return written && err == nil, err
 }
 
@@ -172,7 +174,9 @@ func (b *BadgerEngine) DeleteAccessMeta(entityID string) error {
 			return err
 		}
 		return txn.Delete(accessMetaKey(entityID))
-	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(NodeID(target)))} }, nil)
+	}, nil, func(context.Context) ([]any, error) {
+		return []any{namespaceWriteKey(namespaceForNodeID(NodeID(target)))}, nil
+	}, nil)
 }
 
 // ReadAccessMeta is the one implementation of committed access metadata reads

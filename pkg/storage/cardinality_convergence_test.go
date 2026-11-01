@@ -363,7 +363,7 @@ func stagedCardinalityViaCurrentAdjacency(tx *BadgerTransaction, edge *Edge, c C
 	if c.Direction != "OUTGOING" {
 		direction = adjacencyIncoming
 	}
-	images, err := tx.currentDirectedEdgesLocked(counter.anchor, direction)
+	images, err := tx.currentDirectedEdgesLocked(context.Background(), counter.anchor, direction)
 	if err != nil {
 		return err
 	}

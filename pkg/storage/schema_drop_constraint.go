@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -76,7 +75,7 @@ func (sm *SchemaManager) dropConstraintContractLocked(contract ConstraintContrac
 func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 	if c, ok := sm.constraints[name]; ok {
 		var droppedUnique *UniqueConstraint
-		var droppedUniqueKey string
+		var droppedUniqueKey nodePropertyKey
 		var droppedOwnedIndex *RangeIndex
 		var droppedPropertyIndex *PropertyIndex
 
@@ -107,8 +106,8 @@ func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 			}
 		}
 
-		if c.Type == ConstraintUnique && len(c.Properties) == 1 {
-			droppedUniqueKey = fmt.Sprintf("%s:%s", c.Label, c.Properties[0])
+		if c.Type == ConstraintUnique && c.EffectiveEntityType() == ConstraintEntityNode && len(c.Properties) == 1 {
+			droppedUniqueKey = nodePropertyKey{label: c.Label, property: c.Properties[0]}
 			if existing, ok := sm.uniqueConstraints[droppedUniqueKey]; ok {
 				droppedUnique = existing
 				delete(sm.uniqueConstraints, droppedUniqueKey)

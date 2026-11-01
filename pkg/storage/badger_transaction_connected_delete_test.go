@@ -97,7 +97,7 @@ func TestDeleteConnectedNodeFailures(t *testing.T) {
 	require.NoError(t, err)
 	tx.connectedDeletes = map[NodeID]*Node{"test:ghost": nil}
 	tx.mu.Lock()
-	err = tx.resolveConnectedDeletesLocked()
+	err = tx.resolveConnectedDeletesLocked(t.Context())
 	tx.mu.Unlock()
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, tx.Rollback())
@@ -111,7 +111,7 @@ func TestDeleteConnectedNodeFailures(t *testing.T) {
 	require.NoError(t, err)
 	tx.connectedDeletes = map[NodeID]*Node{"test:a": {ID: "test:a"}}
 	tx.mu.Lock()
-	err = tx.resolveConnectedDeletesLocked()
+	err = tx.resolveConnectedDeletesLocked(t.Context())
 	tx.mu.Unlock()
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())

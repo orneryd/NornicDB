@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -70,7 +71,7 @@ func TestConstraintCreationNonreflexivePublicValidation(t *testing.T) {
 						require.NoError(t, e.CreateEdge(&Edge{ID: EdgeID(fmt.Sprintf("test:e%d", i)), StartNode: "test:a", EndNode: "test:b", Type: "Value", Properties: props}))
 					}
 				}
-				require.NoError(t, ValidateConstraintOnCreationForEngine(e, Constraint{Name: "nan_values", Type: ConstraintUnique, EntityType: entity, Label: "Value", Properties: []string{"v"}}))
+				require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), e, Constraint{Name: "nan_values", Type: ConstraintUnique, EntityType: entity, Label: "Value", Properties: []string{"v"}}))
 			})
 		}
 	}

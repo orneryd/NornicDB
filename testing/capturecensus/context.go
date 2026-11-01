@@ -208,7 +208,7 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog, sour
 		// Everything the creating function holds there, except what the
 		// exclusions E1-E6 prove holds no request (held.go). A nil branch
 		// excludes only the function's own parameters it proves nil.
-		roots := creationRoots(origin, fn)
+		roots := creationRoots(origin, fn, log.discharge)
 		held := heldValues(fn, nil, roots)
 		// A reviewed record clears exactly the held occurrences it is pinned
 		// to, and what E4-E6 build only from them; anything else still held

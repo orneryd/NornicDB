@@ -91,6 +91,10 @@ func (f *nilFlow) use(v ssa.Value, at ssa.Instruction) []string {
 		f.discharge("proof: nil-test guard")
 		return nil
 	}
+	if f.assertionNonNilAt(v, at) {
+		f.discharge("proof: assertion-call normal-return postcondition at use")
+		return nil
+	}
 	// Go's (value, error) convention: a result used only after its sibling
 	// error tested nil comes from the callee's success returns.
 	if x, ok := v.(*ssa.Extract); ok && at != nil {
@@ -125,6 +129,58 @@ func errorChecked(call *ssa.Call, block *ssa.BasicBlock) bool {
 	return iff.Block().Dominates(block) && success.Dominates(block)
 }
 
+// assertionNonNilAt is deliberately use-site dependent: an earlier visible
+// synchronous call must dominate this use and pass this exact SSA value to a
+// parameter tested non-nil on every normal return of every possible target.
+// It never updates the value memo: a use before the assertion may still be nil.
+func (f *nilFlow) assertionNonNilAt(value ssa.Value, use ssa.Instruction) bool {
+	if value == nil || use == nil || use.Block() == nil || value.Referrers() == nil {
+		return false
+	}
+	for _, ref := range *value.Referrers() {
+		call, ok := ref.(*ssa.Call)
+		if !ok || call == use || call.Block() == nil || call.Parent() != use.Parent() || !call.Block().Dominates(use.Block()) {
+			continue
+		}
+		if call.Block() == use.Block() && instructionIndex(call) >= instructionIndex(use) {
+			continue
+		}
+		for index, arg := range call.Common().Args {
+			if arg != value {
+				continue
+			}
+			targets := f.p.CallTargets(call)
+			proven := len(targets) > 0
+			for _, target := range targets {
+				i := index + len(target.Params) - len(call.Common().Args)
+				if len(target.Blocks) == 0 || i < 0 || i >= len(target.Params) || !types.AssignableTo(value.Type(), target.Params[i].Type()) {
+					proven = false
+					break
+				}
+				returns := 0
+				for _, block := range target.Blocks {
+					if _, ok := block.Instrs[len(block.Instrs)-1].(*ssa.Return); !ok {
+						continue
+					}
+					returns++
+					if !NonNilAt(target.Params[i], block) {
+						proven = false
+						break
+					}
+				}
+				if returns == 0 || !proven {
+					proven = false
+					break
+				}
+			}
+			if proven {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // sameLocation reports two addresses of one variable: the same cell, or the
 // same field of the same base object (cellObject).
 func sameLocation(a, b ssa.Value) bool {
@@ -156,9 +212,9 @@ func cellObject(v ssa.Value) ssa.Value {
 }
 
 // recoverReachable reports whether fn's Recover block can run: some deferred
-// call may recover a panic. It is unreachable only when every deferred call has
-// a static callee (a function, closure or method) and none of those callees can
-// reach the builtin recover through the call graph. A deferred interface call,
+// call may recover a panic and return normally. It is unreachable when every
+// deferred call has a static callee which either cannot reach recover or
+// cannot finish normally after recovering a non-nil panic. A deferred interface call,
 // a function value without a static callee, or a call in that walk with no
 // visible target counts as possibly recovering. A deferred callee from a
 // package loaded without bodies is judged by externalMayRecover.
@@ -187,13 +243,82 @@ func (f *nilFlow) recoverReachable(fn *ssa.Function) bool {
 				}
 				continue
 			}
-			if f.mayCallRecover(callee, map[*ssa.Function]bool{}) {
+			if !recoveryCannotReturn(callee) && f.mayCallRecover(callee, map[*ssa.Function]bool{}) {
 				live = true
 			}
 		}
 	}
 	f.recovers[fn] = live
 	return live
+}
+
+// recoveryCannotReturn proves that a deferred function cannot finish normally
+// after directly recovering a non-nil panic. Unknown callees and cell escapes
+// do not supply this proof. A captured cause may only retain the original cause
+// or be replaced by a value strictly tested non-nil before its store.
+func recoveryCannotReturn(fn *ssa.Function) bool {
+	var recovered []*ssa.Call
+	for _, block := range fn.Blocks {
+		for _, ins := range block.Instrs {
+			if call, ok := ins.(*ssa.Call); ok {
+				if builtin, ok := call.Common().Value.(*ssa.Builtin); ok && builtin.Name() == "recover" {
+					recovered = append(recovered, call)
+				}
+			}
+		}
+	}
+	if len(recovered) == 0 {
+		return false
+	}
+	for _, cause := range recovered {
+		var cell *ssa.Alloc
+		var initial *ssa.Store
+		if cause.Referrers() != nil {
+			for _, ref := range *cause.Referrers() {
+				if store, ok := ref.(*ssa.Store); ok && store.Val == cause {
+					candidate, ok := store.Addr.(*ssa.Alloc)
+					if !ok || cell != nil && cell != candidate {
+						return false
+					}
+					cell = candidate
+					initial = store
+				}
+			}
+		}
+		if cell != nil {
+			if !localCell(cell) {
+				return false
+			}
+			stores := capturedStores(cell)
+			for _, ref := range *cell.Referrers() {
+				if store, ok := ref.(*ssa.Store); ok && store.Addr == cell {
+					stores = append(stores, store)
+				}
+			}
+			for _, store := range stores {
+				if store.Val != cause && !NonNilAt(store.Val, store.Block()) {
+					return false
+				}
+			}
+		}
+		for _, block := range fn.Blocks {
+			if _, ok := block.Instrs[len(block.Instrs)-1].(*ssa.Return); !ok {
+				continue
+			}
+			guarded := NilAt(cause, block)
+			if !guarded && cell != nil {
+				for _, ref := range *cell.Referrers() {
+					if load, ok := ref.(*ssa.UnOp); ok && load.Op == token.MUL && load.X == cell && initial != nil && initial.Block().Dominates(load.Block()) && (initial.Block() != load.Block() || instructionIndex(initial) < instructionIndex(load)) && NilAt(load, block) {
+						guarded = true
+					}
+				}
+			}
+			if !guarded {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // externalMayRecover judges a deferred callee whose package was loaded without
@@ -385,7 +510,7 @@ func (f *nilFlow) value(v ssa.Value) (witness []string) {
 		}
 		return f.value(v.X)
 	case *ssa.Field:
-		return f.field(structField(v.X.Type(), v.Field))
+		return f.projectField(v.X, structField(v.X.Type(), v.Field))
 	case *ssa.UnOp:
 		if v.Op == token.MUL {
 			return f.load(v)
@@ -540,6 +665,44 @@ func (f *nilFlow) embedded(x ssa.Value) []string {
 // anywhere. Embedded interfaces and whole-value stores share this projection.
 func (f *nilFlow) projectField(x ssa.Value, field *types.Var) []string {
 	name := "field " + field.Name()
+	// A by-value parameter is a snapshot of each actual argument, not every
+	// allocation of its struct type. No pointer/alias assumption is made here.
+	if param, ok := x.(*ssa.Parameter); ok && !isPointer(param.Type()) {
+		key := struct {
+			value ssa.Value
+			field *types.Var
+		}{x, field}
+		if f.active[key] {
+			return []string{"unresolved cyclic projection of " + name}
+		}
+		f.active[key] = true
+		defer delete(f.active, key)
+		index := -1
+		for i, candidate := range param.Parent().Params {
+			if candidate == param {
+				index = i
+				break
+			}
+		}
+		sites := f.p.SourceCallSites(param.Parent())
+		matched := false
+		for _, site := range sites {
+			args := site.Common().Args
+			i := index - (len(param.Parent().Params) - len(args))
+			if i < 0 || i >= len(args) || !types.AssignableTo(args[i].Type(), param.Type()) {
+				continue
+			}
+			matched = true
+			if w := f.projectField(args[i], field); w != nil {
+				return w
+			}
+		}
+		if matched {
+			f.discharge("proof: by-value field follows every visible caller argument")
+			return nil
+		}
+		return f.field(field)
+	}
 	if _, ok := x.(*ssa.Const); ok {
 		return []string{"zero " + name + " of " + x.Type().String()}
 	}
@@ -605,6 +768,13 @@ func (f *nilFlow) load(load *ssa.UnOp) []string {
 				f.discharge("proof: immutable captured cell " + addr.Name() + " of " + capture.Parent().String())
 				return nil
 			}
+			if store, capture, ok := capturedCellStore(addr, cell); ok {
+				if w := f.use(store.Val, capture); w != nil {
+					return append(w[:len(w):len(w)], "-> captured "+addr.Name()+" of "+capture.Parent().String())
+				}
+				f.discharge("proof: reaching store before the capture of " + addr.Name() + " of " + capture.Parent().String())
+				return nil
+			}
 			return f.stores(cell, "captured "+addr.Name())
 		}
 	}
@@ -629,6 +799,55 @@ func capturedCellValue(free *ssa.FreeVar, cell *ssa.Alloc) (ssa.Value, *ssa.Make
 		return nil, nil, false
 	}
 	return stored, closure, true
+}
+
+// capturedCellStore names the one definition that reaches a closure's capture
+// of cell, with that capture, when the cell can still hold only that value:
+// its address escapes to no call, no capturing closure stores into it, and no
+// store to it can run again after the capture. Earlier reassignments are permitted, but the cell therefore holds,
+// when the closure reads it, the single value that reached its capture; and the capture, not the store, is where that value leaves the
+// function, so the nil tests and checked errors that dominate the capture
+// bound it. A reaching definition this rule cannot name as one store, and a
+// cell any of those writes can still change, is unknown.
+func capturedCellStore(free *ssa.FreeVar, cell *ssa.Alloc) (*ssa.Store, *ssa.MakeClosure, bool) {
+	closure, _ := freeVarClosure(free)
+	if closure == nil || !localCell(cell) || len(capturedStores(cell)) > 0 {
+		return nil, nil, false
+	}
+	for _, store := range storesTo(cell) {
+		if cellRewrittenAfter(cell, store, closure) {
+			return nil, nil, false
+		}
+	}
+	definitions := definitionsBefore(closure.Block(), instructionIndex(closure), cell, nil)
+	if len(definitions) != 1 || definitions[0].store == nil {
+		return nil, nil, false
+	}
+	return definitions[0].store, closure, true
+}
+
+// storesTo are the direct stores to cell in its own function.
+func storesTo(cell *ssa.Alloc) []*ssa.Store {
+	if cell.Referrers() == nil {
+		return nil
+	}
+	var out []*ssa.Store
+	for _, ref := range *cell.Referrers() {
+		if store, ok := ref.(*ssa.Store); ok && store.Addr == cell {
+			out = append(out, store)
+		}
+	}
+	return out
+}
+
+// instructionIndex is instruction's slot in its own block, or -1.
+func instructionIndex(instruction ssa.Instruction) int {
+	for index, candidate := range instruction.Block().Instrs {
+		if candidate == instruction {
+			return index
+		}
+	}
+	return -1
 }
 
 func freeVarBinding(free *ssa.FreeVar) ssa.Value {
@@ -774,6 +993,11 @@ func (f *nilFlow) definedRead(load *ssa.UnOp, addr ssa.Value, name string) []str
 			if w = f.storedValue(d.store, load); w != nil {
 				w = append(w[:len(w):len(w)], "-> stored in "+name)
 			}
+		case d.whole != nil:
+			w = f.projectField(d.whole.Val, field)
+			if w == nil {
+				f.discharge("proof: field projected from exact whole-base store")
+			}
 		case d.unknown:
 			if w = everywhere(); w != nil {
 				w = append(w[:len(w):len(w)], "-> after a write that may reach "+name)
@@ -807,6 +1031,7 @@ func (f *nilFlow) storedValue(store *ssa.Store, load *ssa.UnOp) []string {
 
 type definition struct {
 	store                   *ssa.Store // a store to this very location
+	whole                   *ssa.Store // whole value stored to this field's exact base
 	unknown                 bool       // a write that may change it to any of its possible values
 	nilBranch, nonNilBranch bool       // the known result of a nil test of it
 	tested                  *ssa.UnOp  // the tested load, for a nil-test result
@@ -846,6 +1071,11 @@ func writesLocation(ins ssa.Instruction, addr ssa.Value, field *types.Var) (defi
 		}
 		if fa, ok := ins.Addr.(*ssa.FieldAddr); ok && structField(fa.X.Type(), fa.Field) == field {
 			return definition{unknown: true}, true
+		}
+		// An exact whole-base assignment defines this field by projection of
+		// the assigned value. Another object's store remains unknown below.
+		if fa, ok := addr.(*ssa.FieldAddr); ok && cellObject(ins.Addr) == cellObject(fa.X) && types.Identical(ins.Val.Type(), fa.X.Type().Underlying().(*types.Pointer).Elem()) {
+			return definition{whole: ins}, true
 		}
 		if ptr, ok := ins.Addr.Type().Underlying().(*types.Pointer); ok && containsField(ptr.Elem(), field, 0) {
 			return definition{unknown: true}, true
@@ -919,7 +1149,17 @@ func testedEdge(pred, succ *ssa.BasicBlock, addr ssa.Value, field *types.Var) (d
 // reachingDefinitions walks backwards from load and returns, for every path,
 // the nearest definition of its location.
 func reachingDefinitions(load *ssa.UnOp, addr ssa.Value, field *types.Var) []definition {
+	return definitionsBefore(load.Block(), instructionIndex(load), addr, field)
+}
+
+// definitionsBefore walks backwards from (block, index) and returns, for every
+// path, the nearest definition of the location, with one shared walk for every
+// reader of a location (a load, a closure's capture).
+func definitionsBefore(block *ssa.BasicBlock, index int, addr ssa.Value, field *types.Var) []definition {
 	var out []definition
+	if block == nil || index < 0 {
+		return nil
+	}
 	scanned := map[*ssa.BasicBlock]bool{}
 	var scan func(block *ssa.BasicBlock, end int)
 	scan = func(block *ssa.BasicBlock, end int) {
@@ -944,13 +1184,7 @@ func reachingDefinitions(load *ssa.UnOp, addr ssa.Value, field *types.Var) []def
 			}
 		}
 	}
-	block := load.Block()
-	for i, ins := range block.Instrs {
-		if ins == load {
-			scan(block, i)
-			break
-		}
-	}
+	scan(block, index)
 	return out
 }
 

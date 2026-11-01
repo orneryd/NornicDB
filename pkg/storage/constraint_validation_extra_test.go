@@ -9,18 +9,18 @@ import (
 )
 
 func TestRefreshUniqueConstraintValuesForEngine_NilArgs(t *testing.T) {
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(nil, nil))
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(nil, NewSchemaManager()))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), nil, nil))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), nil, NewSchemaManager()))
 
 	e := newTestMemoryEngine(t)
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(e, nil))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), e, nil))
 }
 
 func TestRefreshUniqueConstraintValuesForEngine_NoConstraints(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
 	schema := NewSchemaManager()
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(e, schema))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), e, schema))
 }
 
 func TestRefreshUniqueConstraintValuesForEngine_RebuildsCache(t *testing.T) {
@@ -40,7 +40,7 @@ func TestRefreshUniqueConstraintValuesForEngine_RebuildsCache(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(e, schema))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), e, schema))
 }
 
 func TestValidateRelationshipConstraintOnCreationForEngine_DispatchesByType(t *testing.T) {
@@ -56,17 +56,17 @@ func TestValidateRelationshipConstraintOnCreationForEngine_DispatchesByType(t *t
 	}))
 
 	// Unique relationship constraint passes when there's no duplicate.
-	require.NoError(t, validateRelationshipConstraintOnCreationForEngine(e, Constraint{
+	require.NoError(t, validateRelationshipConstraintOnCreationForEngine(context.Background(), e, Constraint{
 		Type: ConstraintUnique, Label: "REL", Properties: []string{"v"},
 	}))
 
 	// PropertyType is handled separately, returns nil here.
-	require.NoError(t, validateRelationshipConstraintOnCreationForEngine(e, Constraint{
+	require.NoError(t, validateRelationshipConstraintOnCreationForEngine(context.Background(), e, Constraint{
 		Type: ConstraintPropertyType, Label: "REL",
 	}))
 
 	// Unsupported relationship constraint type.
-	err := validateRelationshipConstraintOnCreationForEngine(e, Constraint{
+	err := validateRelationshipConstraintOnCreationForEngine(context.Background(), e, Constraint{
 		Type: "BOGUS", Label: "REL",
 	})
 	require.Error(t, err)
@@ -83,7 +83,7 @@ func TestValidateDomainConstraintOnCreationForEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	// Pass: value in allow-list.
-	require.NoError(t, validateDomainConstraintOnCreationForEngine(e, Constraint{
+	require.NoError(t, validateDomainConstraintOnCreationForEngine(context.Background(), e, Constraint{
 		Type: ConstraintDomain, Label: "Order", Properties: []string{"state"},
 		AllowedValues: []interface{}{"active", "pending"},
 	}))
@@ -94,7 +94,7 @@ func TestValidateDomainConstraintOnCreationForEngine(t *testing.T) {
 		Properties: map[string]any{"state": "deleted"},
 	})
 	require.NoError(t, err)
-	err = validateDomainConstraintOnCreationForEngine(e, Constraint{
+	err = validateDomainConstraintOnCreationForEngine(context.Background(), e, Constraint{
 		Type: ConstraintDomain, Label: "Order", Properties: []string{"state"},
 		AllowedValues: []interface{}{"active", "pending"},
 	})
@@ -104,11 +104,11 @@ func TestValidateDomainConstraintOnCreationForEngine(t *testing.T) {
 	require.Equal(t, ConstraintDomain, cve.Type)
 
 	// Validation rejects too-many properties.
-	require.Error(t, validateDomainConstraintOnCreationForEngine(e, Constraint{
+	require.Error(t, validateDomainConstraintOnCreationForEngine(context.Background(), e, Constraint{
 		Type: ConstraintDomain, Properties: []string{"a", "b"},
 	}))
 	// Validation rejects empty allow-list.
-	require.Error(t, validateDomainConstraintOnCreationForEngine(e, Constraint{
+	require.Error(t, validateDomainConstraintOnCreationForEngine(context.Background(), e, Constraint{
 		Type: ConstraintDomain, Properties: []string{"a"},
 	}))
 }
@@ -121,12 +121,12 @@ func TestValidateCardinalityOnCreationForEngine(t *testing.T) {
 	}
 
 	// Outgoing cardinality 5 → pass.
-	require.NoError(t, validateCardinalityOnCreationForEngine(edges, Constraint{
+	require.NoError(t, validateCardinalityOnCreationForEngine(context.Background(), edges, Constraint{
 		Type: ConstraintCardinality, Label: "OWNS", Direction: "OUTGOING", MaxCount: 5,
 	}))
 
 	// Outgoing cardinality 2 → fail (a has 3).
-	err := validateCardinalityOnCreationForEngine(edges, Constraint{
+	err := validateCardinalityOnCreationForEngine(context.Background(), edges, Constraint{
 		Type: ConstraintCardinality, Label: "OWNS", Direction: "OUTGOING", MaxCount: 2,
 	})
 	require.Error(t, err)
@@ -140,7 +140,7 @@ func TestValidateCardinalityOnCreationForEngine(t *testing.T) {
 		{ID: "e1", StartNode: "p", EndNode: "tgt", Type: "ASSIGNED"},
 		{ID: "e2", StartNode: "q", EndNode: "tgt", Type: "ASSIGNED"},
 	}
-	err = validateCardinalityOnCreationForEngine(incomingEdges, Constraint{
+	err = validateCardinalityOnCreationForEngine(context.Background(), incomingEdges, Constraint{
 		Type: ConstraintCardinality, Label: "ASSIGNED", Direction: "INCOMING", MaxCount: 1,
 	})
 	require.Error(t, err)
@@ -162,7 +162,7 @@ func TestValidatePolicyOnCreationForEngine(t *testing.T) {
 
 	edges, err := e.AllEdges(context.Background())
 	require.NoError(t, err)
-	err = validatePolicyOnCreationForEngine(e, edges, Constraint{
+	err = validatePolicyOnCreationForEngine(context.Background(), e, edges, Constraint{
 		Type: ConstraintPolicy, Label: "READS", PolicyMode: "DISALLOWED", SourceLabel: "User", TargetLabel: "Secret",
 	})
 	require.Error(t, err)
@@ -171,12 +171,12 @@ func TestValidatePolicyOnCreationForEngine(t *testing.T) {
 	require.NoError(t, e.GetSchema().AddConstraint(Constraint{
 		Name: "allow_reports", Type: ConstraintPolicy, Label: "READS", PolicyMode: "ALLOWED", SourceLabel: "User", TargetLabel: "Report",
 	}))
-	err = validatePolicyOnCreationForEngine(e, edges, Constraint{
+	err = validatePolicyOnCreationForEngine(context.Background(), e, edges, Constraint{
 		Type: ConstraintPolicy, Label: "READS", PolicyMode: "ALLOWED", SourceLabel: "User", TargetLabel: "Secret",
 	})
 	require.NoError(t, err)
 
-	err = validatePolicyOnCreationForEngine(e, edges, Constraint{
+	err = validatePolicyOnCreationForEngine(context.Background(), e, edges, Constraint{
 		Type: ConstraintPolicy, Label: "READS", PolicyMode: "ALLOWED", SourceLabel: "Admin", TargetLabel: "Secret",
 	})
 	require.Error(t, err)
@@ -193,7 +193,7 @@ func TestValidateRelPropertyTypeOnCreationForEngine(t *testing.T) {
 	require.NoError(t, e.CreateEdge(&Edge{ID: "test:ok", StartNode: "test:a", EndNode: "test:b", Type: "SCORED", Properties: map[string]any{"score": int64(10)}}))
 	require.NoError(t, e.CreateEdge(&Edge{ID: "test:ignored", StartNode: "test:a", EndNode: "test:b", Type: "OTHER", Properties: map[string]any{"score": "bad"}}))
 
-	require.NoError(t, validateRelPropertyTypeOnCreationForEngine(e, PropertyTypeConstraint{
+	require.NoError(t, validateRelPropertyTypeOnCreationForEngine(context.Background(), e, PropertyTypeConstraint{
 		EntityType:   ConstraintEntityRelationship,
 		Label:        "SCORED",
 		Property:     "score",
@@ -201,7 +201,7 @@ func TestValidateRelPropertyTypeOnCreationForEngine(t *testing.T) {
 	}))
 
 	require.NoError(t, e.CreateEdge(&Edge{ID: "test:bad", StartNode: "test:a", EndNode: "test:b", Type: "SCORED", Properties: map[string]any{"score": "bad"}}))
-	err := validateRelPropertyTypeOnCreationForEngine(e, PropertyTypeConstraint{
+	err := validateRelPropertyTypeOnCreationForEngine(context.Background(), e, PropertyTypeConstraint{
 		EntityType:   ConstraintEntityRelationship,
 		Label:        "SCORED",
 		Property:     "score",

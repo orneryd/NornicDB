@@ -34,12 +34,12 @@ type pendingNodeIndex struct {
 	byValue map[pendingValueKey][]NodeID
 	// byProperty: (label, property) → pending node ID → membership key, for the
 	// ordered and not-null scans of a property index.
-	byProperty map[pendingPropertyKey]map[NodeID]interface{}
+	byProperty map[nodePropertyKey]map[NodeID]interface{}
 }
 
-// pendingPropertyKey is a (label, property) pair; the label is as stored on
-// the node, as in the schema's property indexes.
-type pendingPropertyKey struct {
+// nodePropertyKey is the exact node label/property identity shared by schema
+// UNIQUE claims and pending property indexes. It is runtime-only, never encoded.
+type nodePropertyKey struct {
 	label    string
 	property string
 }
@@ -57,7 +57,7 @@ func newPendingNodeIndex() *pendingNodeIndex {
 		byLabel:    make(map[string]map[NodeID]bool),
 		tracked:    make(map[string]map[string]struct{}),
 		byValue:    make(map[pendingValueKey][]NodeID),
-		byProperty: make(map[pendingPropertyKey]map[NodeID]interface{}),
+		byProperty: make(map[nodePropertyKey]map[NodeID]interface{}),
 	}
 }
 
@@ -92,7 +92,7 @@ func (p *pendingNodeIndex) addValue(node *Node, label, property string) {
 	if valueIDs := p.byValue[key]; !slices.Contains(valueIDs, node.ID) {
 		p.byValue[key] = append(valueIDs, node.ID)
 	}
-	pair := pendingPropertyKey{label: label, property: property}
+	pair := nodePropertyKey{label: label, property: property}
 	propertyIDs := p.byProperty[pair]
 	if propertyIDs == nil {
 		propertyIDs = make(map[NodeID]interface{})
@@ -103,11 +103,14 @@ func (p *pendingNodeIndex) addValue(node *Node, label, property string) {
 
 // remove drops the entries add made for node (the cached object being
 // replaced or retired).
-func (p *pendingNodeIndex) remove(node *Node) {
+func (p *pendingNodeIndex) remove(ctx context.Context, node *Node) error {
 	if node == nil {
-		return
+		return nil
 	}
 	for _, label := range node.Labels {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if ids := p.byLabel[label]; ids != nil {
 			delete(ids, node.ID)
 			if len(ids) == 0 {
@@ -115,13 +118,20 @@ func (p *pendingNodeIndex) remove(node *Node) {
 			}
 		}
 		for property := range p.tracked[label] {
-			valueKey, ok, err := indexNonNilMembershipKey(context.Background(), node.Properties[property])
-			if err != nil || !ok {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			pair := nodePropertyKey{label: label, property: property}
+			valueKey, ok := p.byProperty[pair][node.ID]
+			if !ok {
 				continue
 			}
 			key := pendingValueKey{label: label, property: property, value: valueKey}
 			valueIDs := p.byValue[key]
 			for index, id := range valueIDs {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				if id != node.ID {
 					continue
 				}
@@ -135,7 +145,6 @@ func (p *pendingNodeIndex) remove(node *Node) {
 				}
 				break
 			}
-			pair := pendingPropertyKey{label: label, property: property}
 			if propertyIDs := p.byProperty[pair]; propertyIDs != nil {
 				delete(propertyIDs, node.ID)
 				if len(propertyIDs) == 0 {
@@ -144,6 +153,7 @@ func (p *pendingNodeIndex) remove(node *Node) {
 			}
 		}
 	}
+	return nil
 }
 
 // replace moves node's entries from prev to node. A write-back that keeps
@@ -153,11 +163,12 @@ func (p *pendingNodeIndex) remove(node *Node) {
 // doesn't hold yet, and that version was never added here. Skipping the add
 // for it would leave the node superseded in the committed index and absent
 // from this one, so index lookups miss it until the flush (#1043).
+
 func (p *pendingNodeIndex) replace(prev, node *Node) {
 	if prev != nil && node != nil && prev.ID == node.ID && p.listed(prev) && p.sameEntries(prev, node) {
 		return
 	}
-	p.remove(prev)
+	_ = p.remove(context.Background(), prev) // native/acknowledged write bookkeeping cannot cancel
 	p.add(node)
 }
 
@@ -256,7 +267,7 @@ func (p *pendingNodeIndex) track(ctx context.Context, label, property string, ca
 	// Constant-size publication under the pending owner's write lock.
 	p.byValue = values
 	if len(propertyIDs) > 0 {
-		p.byProperty[pendingPropertyKey{label: label, property: property}] = propertyIDs
+		p.byProperty[nodePropertyKey{label: label, property: property}] = propertyIDs
 	}
 	p.tracked[label] = properties
 	return nil
@@ -274,7 +285,7 @@ type pendingWriteSource interface {
 	unlockPendingWrites()
 	// trackPendingValues indexes these (label, property) pairs of pending
 	// nodes by value.
-	trackPendingValues(context.Context, []pendingPropertyKey) error
+	trackPendingValues(context.Context, []nodePropertyKey) error
 }
 
 // pendingWriteOwner reports a node with a pending create, update or delete,
@@ -349,7 +360,7 @@ func (v pendingWriteView) propertyEntries(ctx context.Context, label, property s
 		return nil, nil
 	}
 	var entries map[interface{}][]NodeID
-	for id, valueKey := range v.index.byProperty[pendingPropertyKey{label: label, property: property}] {
+	for id, valueKey := range v.index.byProperty[nodePropertyKey{label: label, property: property}] {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -397,18 +408,18 @@ func (sm *SchemaManager) trackPendingPairs() {
 		return
 	}
 	sm.mu.RLock()
-	pairs := make([]pendingPropertyKey, 0, len(sm.compositeIndexes)+len(sm.uniqueConstraints))
+	pairs := make([]nodePropertyKey, 0, len(sm.compositeIndexes)+len(sm.uniqueConstraints))
 	for _, idx := range sm.compositeIndexes {
 		if len(idx.Properties) == 1 {
-			pairs = append(pairs, pendingPropertyKey{label: idx.Label, property: idx.Properties[0]})
+			pairs = append(pairs, nodePropertyKey{label: idx.Label, property: idx.Properties[0]})
 		}
 	}
 	for _, constraint := range sm.uniqueConstraints {
-		pairs = append(pairs, pendingPropertyKey{label: constraint.Label, property: constraint.Property})
+		pairs = append(pairs, nodePropertyKey{label: constraint.Label, property: constraint.Property})
 	}
 	for _, constraint := range sm.constraints {
 		if (constraint.Type == ConstraintUnique || constraint.Type == ConstraintNodeKey) && len(constraint.Properties) > 0 {
-			pairs = append(pairs, pendingPropertyKey{label: constraint.Label, property: constraint.Properties[0]})
+			pairs = append(pairs, nodePropertyKey{label: constraint.Label, property: constraint.Properties[0]})
 		}
 	}
 	sm.mu.RUnlock()

@@ -572,109 +572,6 @@ func (e *StorageExecutor) idCounter() int64 {
 	return atomic.LoadInt64(&idCounter)
 }
 
-// evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
-// like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
-// Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
-func (e *StorageExecutor) evaluateRelationshipPatternInWhere(ctx context.Context, node *storage.Node, variable, pattern string) bool {
-	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
-		return false
-	}
-	if e.isChainedPattern(pattern) {
-		return e.checkChainedPattern(ctx, node, variable, pattern, "")
-	}
-	_ = e.extractTargetVariable(pattern, variable) // not needed for simple (var)-[]->() pattern
-	relPattern := e.parseOptionalRelPattern(context.Background(), pattern)
-	targetMatches := func(targetNodeID storage.NodeID) bool {
-		if len(relPattern.targetLabels) == 0 && len(relPattern.targetProps) == 0 {
-			return true
-		}
-		targetNode, err := e.getQueryNode(e.storage, targetNodeID)
-		if err != nil || targetNode == nil {
-			return false
-		}
-		if len(relPattern.targetLabels) > 0 && !mergeNodeHasLabels(targetNode, relPattern.targetLabels) {
-			return false
-		}
-		for key, expected := range relPattern.targetProps {
-			actual, ok := targetNode.Properties[key]
-			if !ok || !e.compareEqual(actual, expected) {
-				return false
-			}
-		}
-		return true
-	}
-	var checkIncoming, checkOutgoing bool
-	var relTypes []string
-	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
-	if checkIncoming {
-		edges, _ := e.storage.GetIncomingEdges(ctx, node.ID)
-		for _, edge := range edges {
-			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.StartNode) {
-				return true
-			}
-		}
-	}
-	if checkOutgoing {
-		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
-		for _, edge := range edges {
-			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.EndNode) {
-				return true
-			}
-		}
-	}
-	if !checkIncoming && !checkOutgoing {
-		incoming, _ := e.storage.GetIncomingEdges(ctx, node.ID)
-		outgoing, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
-		return len(incoming) > 0 || len(outgoing) > 0
-	}
-	return false
-}
-
-// checkChainedPattern handles chained relationship patterns like (p)-[:KNOWS]->()-[:KNOWS]->()
-func (e *StorageExecutor) checkChainedPattern(ctx context.Context, node *storage.Node, variable, pattern, innerWhere string) bool {
-	// Parse the pattern to extract relationship hops
-	// E.g., (p)-[:KNOWS]->()-[:KNOWS]->() has two hops
-
-	// Find the first relationship part
-	// Pattern looks like: (variable)-[rel1]->(intermediate)-[rel2]->...
-
-	// Find the start of the first relationship (after the variable node)
-	varPattern := "(" + variable + ")"
-	if !strings.Contains(pattern, varPattern) {
-		// Try with label: (variable:Label)
-		idx := strings.Index(pattern, "("+variable+":")
-		if idx < 0 {
-			return false
-		}
-	}
-
-	// Extract relationship hops
-	hops := e.parseRelationshipHops(pattern, variable)
-	if len(hops) == 0 {
-		return false
-	}
-
-	// Traverse the chain starting from the given node
-	return e.traverseChain(ctx, node, hops, 0)
-}
-
-// relationshipHop represents one step in a chained relationship pattern
-type relationshipHop struct {
-	relTypes []string
-	outgoing bool
-}
-
-// parseRelationshipHops extracts relationship hops from a pattern
-func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []relationshipHop {
-	var hops []relationshipHop
-	forEachRelationshipSource(pattern, func(_, open, close, _ int, incoming, _ bool) bool {
-		declaration := relationshipDeclarationOf(StripComments(pattern[open+1 : close]))
-		hops = append(hops, relationshipHop{relTypes: declaration.types, outgoing: !incoming})
-		return true
-	})
-	return hops
-}
-
 // forEachRelationshipSource frames relationship declarations in pattern text.
 // The relationship grammar remains here; opaque, name and delimiter extents
 // belong to the shared lexical owners and the existing declaration reader.
@@ -721,46 +618,6 @@ func forEachRelationshipSource(pattern string, visit func(start, open, close, en
 	}
 }
 
-func (e *StorageExecutor) traverseChain(ctx context.Context, node *storage.Node, hops []relationshipHop, hopIndex int) bool {
-	if hopIndex >= len(hops) {
-		return true // All hops matched
-	}
-
-	hop := hops[hopIndex]
-
-	if hop.outgoing {
-		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
-		for _, edge := range edges {
-			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
-				// Get the target node and recurse
-				nextNode, err := e.getQueryNode(e.storage, edge.EndNode)
-				if err != nil {
-					continue
-				}
-				if e.traverseChain(ctx, nextNode, hops, hopIndex+1) {
-					return true
-				}
-			}
-		}
-	} else {
-		edges, _ := e.storage.GetIncomingEdges(ctx, node.ID)
-		for _, edge := range edges {
-			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
-				// Get the source node and recurse
-				nextNode, err := e.getQueryNode(e.storage, edge.StartNode)
-				if err != nil {
-					continue
-				}
-				if e.traverseChain(ctx, nextNode, hops, hopIndex+1) {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
 // extractVariableNameFromReturnItem extracts the variable name from a return item expression.
 // Examples:
 //   - "n" -> "n"
@@ -796,44 +653,6 @@ func extractVariableNameFromReturnItem(expr string) string {
 
 	// Simple variable name
 	return expr
-}
-
-// extractTargetVariable extracts the target variable name from a relationship pattern
-// e.g., from "(m)-[:MANAGES]->(report)" it extracts "report"
-func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) string {
-	target := ""
-	forEachRelationshipSource(pattern, func(start, _, _, end int, incoming, outgoing bool) bool {
-		if outgoing {
-			open, _ := cyphertext.GapEnd(pattern, end)
-			if open < len(pattern) && pattern[open] == '(' {
-				at, _ := cyphertext.GapEnd(pattern, open+1)
-				if name, ok := cyphertext.ScanIdentifier(pattern, at); ok {
-					target = name.Value
-				}
-			}
-		} else if incoming {
-			for index := 0; index < start; index++ {
-				if next, opaque := cyphertext.SkipToken(pattern, index); opaque {
-					index = next - 1
-					continue
-				}
-				if pattern[index] != '(' {
-					continue
-				}
-				close := cyphertext.FindMatchingDelimiter(pattern, index, '(', ')', cyphertext.OpeningDelimiter)
-				if close < 0 {
-					break
-				}
-				at, _ := cyphertext.GapEnd(pattern, index+1)
-				if name, ok := cyphertext.ScanIdentifier(pattern, at); ok {
-					target = name.Value
-				}
-				index = close
-			}
-		}
-		return target == ""
-	})
-	return target
 }
 
 // extractRelTypesFromPattern consumes the existing relationship grammar.

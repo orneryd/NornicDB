@@ -117,13 +117,18 @@ func (e *StorageExecutor) executeRouted(ctx context.Context, cypher string, para
 
 func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome, clientText bool) (result *ExecuteResult, retErr error) {
 	member := e.membership(ctx)
+	if member.statement != nil && member.statement.executor.nativeOrigin != nil {
+		var release func()
+		ctx, release = bindNativeStatementLifetime(ctx, member.statement.executor.nativeOrigin)
+		defer release()
+	}
 	if member.storage != nil && (member.transaction == nil || member.transaction.controller != e) {
 		ctx = context.WithValue(ctx, ctxKeyTxStorage, member.storage)
 	}
 	if member.statement != nil {
 		ctx = &compositeContext{Context: ctx, statement: member.statement, storage: member.storage}
 	}
-	if member.transaction != nil && e.txContext == nil && bareTransactionCommand(cypher) == "" && !transactionScriptShape(cypher) {
+	if member.transaction != nil && (member.statement == nil || member.statement.nativeRoot == nil) && e.txContext == nil && bareTransactionCommand(cypher) == "" && !transactionScriptShape(cypher) {
 		e = e.cloneWithStorage(e.storage)
 		e.txContext = member.transaction
 	}

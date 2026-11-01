@@ -178,6 +178,9 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 	if err != nil {
 		return map[string]error{"baseline": err}
 	}
+	// Database selection is a routing fact added by actual generated USE
+	// clauses, not a change to the independent body effects/permission oracle.
+	wantContract.selectsDatabase = wantContract.transaction && !wantContract.dynamic && statement.uses > 0
 	if wantContract.writes != statement.writes {
 		return map[string]error{"baseline": fmt.Errorf("body write contract disagrees with generator")}
 	}

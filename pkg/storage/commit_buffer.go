@@ -473,7 +473,7 @@ type WriteBehindBuffer struct {
 	// trackedPairs is the set of (label, property) pairs an attached
 	// schema indexes by value; the pending index rebuilds from it when it
 	// has been released empty. Guarded by mu.
-	trackedPairs []pendingPropertyKey
+	trackedPairs []nodePropertyKey
 
 	flushCh chan struct{}
 	// work is the buffer's one owner: the background flusher is its accepted
@@ -699,7 +699,7 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 			case OpCreateNode, OpUpdateNode:
 				w.pendingIndex.replace(op.OldNode, op.Node)
 			case OpDeleteNode:
-				w.pendingIndex.remove(op.OldNode)
+				_ = w.pendingIndex.remove(context.Background(), op.OldNode) // acknowledged buffer retirement cannot cancel
 			}
 		}
 	}
@@ -711,20 +711,45 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 }
 
 // rotate moves the active generation into draining and installs a fresh one.
-// It is O(1); writers immediately continue on the new generation.
-func (w *WriteBehindBuffer) rotate(capture ...bool) []*CommitBuffer {
-	w.mu.Lock()
+// Rotation is O(1); writers immediately continue on the new generation.
+// Optional frontier capture copies its generation pointers with cancellation.
+func (w *WriteBehindBuffer) rotate(ctx context.Context, capture ...bool) ([]*CommitBuffer, error) {
+	if err := w.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer w.mu.Unlock()
+	// Prepare the optional captured frontier before changing ownership. Once
+	// rotation is applied, accepted replay owns the generation independently.
+	var generations []*CommitBuffer
+	if len(capture) > 0 && capture[0] {
+		count := len(w.draining)
+		if w.opCount != 0 {
+			count++
+		}
+		if count > 0 {
+			generations = make([]*CommitBuffer, count)
+			var cancel bulkReadCancellation
+			for i, generation := range w.draining {
+				if err := cancel.check(ctx); err != nil {
+					return nil, err
+				}
+				generations[i] = generation
+			}
+			if w.opCount != 0 {
+				generations[count-1] = w.active
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if w.opCount != 0 {
 		w.active.ops = w.opCount
 		w.draining = append(w.draining, w.active)
 		w.active = newCommitBuffer()
 		w.opCount = 0
 	}
-	if len(capture) > 0 && capture[0] {
-		return append([]*CommitBuffer(nil), w.draining...)
-	}
-	return nil
+	return generations, nil
 }
 
 // targetSizeLocked returns the current size threshold. Caller holds w.mu.
@@ -767,11 +792,11 @@ func (w *WriteBehindBuffer) run() {
 		case <-stop:
 			return
 		case <-timer.C:
-			w.rotate()
+			_, _ = w.rotate(context.Background()) // accepted worker rotation cannot cancel
 			w.drainOne(true, nil)
 			reset()
 		case <-w.flushCh:
-			w.rotate()
+			_, _ = w.rotate(context.Background()) // accepted worker rotation cannot cancel
 			w.drainOne(true, nil)
 			if !timer.Stop() {
 				select {
@@ -905,12 +930,12 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 			for _, op := range c.ops {
 				switch op.Type {
 				case OpCreateNode, OpUpdateNode:
-					w.pendingIndex.remove(op.Node)
+					_ = w.pendingIndex.remove(context.Background(), op.Node) // acknowledged buffer retirement cannot cancel
 					if node, ok := w.nodeLocked(op.Node.ID); ok {
 						w.pendingIndex.add(node)
 					}
 				case OpDeleteNode:
-					w.pendingIndex.remove(op.OldNode)
+					_ = w.pendingIndex.remove(context.Background(), op.OldNode) // acknowledged buffer retirement cannot cancel
 					if node, ok := w.nodeLocked(op.NodeID); ok {
 						w.pendingIndex.add(node)
 					}
@@ -972,7 +997,7 @@ func (w *WriteBehindBuffer) unlockPendingWrites() {
 
 // trackPendingValues indexes these (label, property) pairs of buffered
 // nodes by value from now on, including the nodes already buffered.
-func (w *WriteBehindBuffer) trackPendingValues(ctx context.Context, pairs []pendingPropertyKey) error {
+func (w *WriteBehindBuffer) trackPendingValues(ctx context.Context, pairs []nodePropertyKey) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1038,7 +1063,7 @@ func (w *WriteBehindBuffer) trackPendingValues(ctx context.Context, pairs []pend
 			candidate.byProperty[pair] = ids // track replaces each new population
 		}
 	}
-	tracked := make([]pendingPropertyKey, 0, len(w.trackedPairs)+len(pairs))
+	tracked := make([]nodePropertyKey, 0, len(w.trackedPairs)+len(pairs))
 	for _, pair := range w.trackedPairs {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1069,14 +1094,14 @@ func (w *WriteBehindBuffer) trackPendingValues(ctx context.Context, pairs []pend
 // copying every buffered node of the label: constraint validation calls it on
 // every write of a bulk load.
 func (w *WriteBehindBuffer) ensurePendingValueTracked(ctx context.Context, label, property string) error {
-	pair := pendingPropertyKey{label: label, property: property}
+	pair := nodePropertyKey{label: label, property: property}
 	if err := w.mu.RLockContext(ctx); err != nil {
 		return err
 	}
 	tracked := slices.Contains(w.trackedPairs, pair)
 	w.mu.RUnlock()
 	if !tracked {
-		return w.trackPendingValues(ctx, []pendingPropertyKey{pair})
+		return w.trackPendingValues(ctx, []nodePropertyKey{pair})
 	}
 	return ctx.Err()
 }
@@ -1144,11 +1169,15 @@ func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
 }
 
 func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier bool) error {
-	w.rotate()
+	if _, err := w.rotate(commitPreparationLifetime(ctx)); err != nil {
+		return err
+	}
 	w.signal()
 	var last *CommitBuffer
 	if frontier {
-		w.mu.RLock()
+		if err := w.mu.RLockContext(ctx); err != nil {
+			return err
+		}
 		if n := len(w.draining); n > 0 {
 			last = w.draining[n-1]
 		}
@@ -1172,9 +1201,28 @@ func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier
 			// the same claim, application and settlement lifetime.
 			w.signal()
 		}
-		w.mu.RLock()
+		if err := w.mu.RLockContext(ctx); err != nil {
+			return err
+		}
 		pending := len(w.draining)
-		done := pending == 0 || (last != nil && !slices.Contains(w.draining, last))
+		done := pending == 0
+		if last != nil && !done {
+			found := false
+			var cancel bulkReadCancellation
+			for _, generation := range w.draining {
+				if ctx != nil {
+					if err := cancel.check(ctx); err != nil {
+						w.mu.RUnlock()
+						return err
+					}
+				}
+				if generation == last {
+					found = true
+					break
+				}
+			}
+			done = !found
+		}
 		w.mu.RUnlock()
 		if done {
 			return nil

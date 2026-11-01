@@ -84,7 +84,7 @@ func TestAcceptedBufferedReceiptVisibleBeforeFlush(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, r.Wait(context.Background()))
 	require.True(t, tx.AcknowledgedBuffered())
-	physical, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: "test", logicalID: "live-receipt"})
+	physical, err := b.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{namespace: "test", logicalID: "live-receipt"})
 	require.NoError(t, err)
 	require.False(t, physical.present, "physical-only reads must not observe an acknowledged generation before flush")
 	for _, test := range []struct {
@@ -109,7 +109,7 @@ func TestAcceptedBufferedReceiptVisibleBeforeFlush(t *testing.T) {
 			_, err = b.GetNode("test:duplicate-must-not-stage")
 			require.ErrorIs(t, err, ErrNotFound, "acknowledged receipt must prevent duplicate semantic application")
 			if test.mode == CommitModeImplicit {
-				physical, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: "test", logicalID: "live-receipt"})
+				physical, err := b.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{namespace: "test", logicalID: "live-receipt"})
 				require.NoError(t, err)
 				require.False(t, physical.present, "implicit duplicate admission must observe the pending receipt without flushing it")
 			}

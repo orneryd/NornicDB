@@ -145,7 +145,7 @@ func (b *BadgerEngine) withUpdate(request updateRequest, fn func(txn *badger.Txn
 
 // withPublishingUpdate binds a memory-only delta to the existing atomic writer.
 // keys reads the prior/written images captured by fn, after fn succeeds.
-func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger.Txn) error, publish func(*commitCacheImages), keys func() []any, notification *commitNotification, stages ...func(*commitWriter) error) error {
+func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger.Txn) error, publish func(*commitCacheImages), keys func(context.Context) ([]any, error), notification *commitNotification, stages ...func(*commitWriter) error) error {
 	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		cw.notification = notification
 		if err := cw.writeOnce(fn); err != nil {
@@ -153,7 +153,12 @@ func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger
 		}
 		cw.publish = publish
 		if keys != nil {
-			cw.publishKeys = keys()
+			preparationContext := commitPreparationLifetime(ctx)
+			var err error
+			cw.publishKeys, err = keys(preparationContext)
+			if err != nil {
+				return err
+			}
 		}
 		for _, stage := range stages {
 			if err := stage(cw); err != nil {

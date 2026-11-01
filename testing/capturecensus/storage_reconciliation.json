@@ -329,46 +329,54 @@
     "(*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).holdsEntities": {
       "present": true,
       "file": "pkg/storage/buffered_write_order.go",
-      "sourceSHA256": "496f1503e81b767e5c851be7d299a456050e285eb2eea13606acc65df57bced4",
+      "sourceSHA256": "4dba6a2fd8890c079396d8118b0a213efef0c8a2ec62315afd5b037b72a037b2",
       "directCalls": [
         "w.readEpoch.Load",
-        "w.mu.RLock",
+        "w.mu.RLockContext",
         "w.mu.RUnlock",
         "w.entityStateLocked",
         "string",
         "w.entityStateLocked",
         "string",
         "w.edgeAdjacencyOverlayLocked",
-        "context.Background",
         "len",
         "len"
       ],
-      "freshContextCalls": [
-        "pkg/storage/buffered_write_order.go:212 context.Background"
-      ]
+      "freshContextCalls": []
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).trackPendingValues": {
       "present": true,
       "file": "pkg/storage/commit_buffer.go",
-      "sourceSHA256": "2d0ae1c188896e88189b1718d21a773acc5a8009815dafc4621cb258badb805a",
+      "sourceSHA256": "8b9273f69dfe1b245a120fc51a11de0cfdf95f7665323b8566c3a9b45d56cd37",
       "directCalls": [
+        "ctx.Err",
         "len",
-        "w.mu.Lock",
+        "w.mu.LockContext",
         "w.mu.Unlock",
+        "ctx.Err",
+        "slices.Contains",
+        "len",
+        "w.pendingIndex.track",
+        "w.nodeLocked",
+        "append",
         "newPendingNodeIndex",
         "w.allNodesOverlayLocked",
-        "context.Background",
-        "w.pendingIndex.add",
-        "w.pendingIndex.track",
-        "context.Background",
+        "ctx.Err",
+        "candidate.add",
+        "ctx.Err",
+        "ctx.Err",
+        "make",
+        "len",
+        "len",
+        "ctx.Err",
+        "append",
+        "candidate.track",
         "w.nodeLocked",
         "slices.Contains",
-        "append"
+        "append",
+        "ctx.Err"
       ],
-      "freshContextCalls": [
-        "pkg/storage/commit_buffer.go:980 context.Background",
-        "pkg/storage/commit_buffer.go:986 context.Background"
-      ]
+      "freshContextCalls": []
     }
   },
   "repinnedExistingSources": {
@@ -418,7 +426,7 @@
     "github.com/orneryd/nornicdb/pkg/lifecycle.Run": {
       "present": true,
       "file": "pkg/lifecycle/supervisor.go",
-      "sourceSHA256": "132d998e72eba3d552b9c6baac4bb5001c678b73851e7b5ba97e0d99006c315d",
+      "sourceSHA256": "46971ac6cd59410dbff27800833cc038fd32413c286584906b468fa6ea441707",
       "directCalls": [
         "signal.NotifyContext",
         "stop",
@@ -434,10 +442,10 @@
         "context.Background",
         "cancel",
         "DrainReverse",
-        "compose.Outcomes"
+        "errors.Join"
       ],
       "freshContextCalls": [
-        "pkg/lifecycle/supervisor.go:73 context.Background"
+        "pkg/lifecycle/supervisor.go:71 context.Background"
       ]
     }
   },

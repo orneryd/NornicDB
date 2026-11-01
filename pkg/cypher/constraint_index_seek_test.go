@@ -130,13 +130,35 @@ func (e *laterLabelScanErrEngine) GetNodesByLabel(ctx context.Context, label str
 }
 
 // A constraint whose index can't be filled isn't created.
-func TestGh875ConstraintIndexFillFailureDropsConstraint(t *testing.T) {
+func TestComponentGh875ConstraintIndexFillFailureDropsConstraint(t *testing.T) {
 	base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	engine := &laterLabelScanErrEngine{Engine: base}
 	exec := NewStorageExecutor(engine)
-	_, err := exec.Execute(context.Background(), "CREATE CONSTRAINT rec_uid FOR (n:Rec) REQUIRE n.uid IS UNIQUE", nil)
+	_, err := exec.executeCreateConstraint(context.Background(), "CREATE CONSTRAINT rec_uid FOR (n:Rec) REQUIRE n.uid IS UNIQUE")
 	require.ErrorContains(t, err, "label scan failed")
 	require.Equal(t, 3, engine.scans)
 	require.Empty(t, base.GetSchema().GetAllConstraints())
 	require.False(t, base.GetSchema().MaintainsPropertyIndex("Rec", "uid"))
+}
+
+// Public native refusal leaves neither a constraint nor its owned index; the
+// component above separately retains the arbitrary index-fill I/O failure.
+func TestPublicConstraintCreationRefusalLeavesNoOwnedIndex(t *testing.T) {
+	exec, ctx := newUnitExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:RefusedIndex {uid:'same'}), (:RefusedIndex {uid:'same'})", nil)
+	require.NoError(t, err)
+	const query = "CREATE CONSTRAINT refused_index FOR (n:RefusedIndex) REQUIRE n.uid IS UNIQUE"
+	_, err = exec.Execute(ctx, query, nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.DatabaseError.Schema.ConstraintCreationFailed:")
+	require.Empty(t, exec.storage.GetSchema().GetAllConstraints())
+	require.False(t, exec.storage.GetSchema().MaintainsPropertyIndex("RefusedIndex", "uid"))
+	_, err = exec.Execute(ctx, "MATCH (n:RefusedIndex) WITH n LIMIT 1 DELETE n", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.True(t, exec.storage.GetSchema().MaintainsPropertyIndex("RefusedIndex", "uid"))
+	ids, err := exec.storage.GetSchema().PropertyIndexLookup(ctx, "RefusedIndex", "uid", "same")
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
 }

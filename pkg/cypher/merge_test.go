@@ -1327,7 +1327,10 @@ func TestExecuteMerge_MissingParameterAndAnonymousPattern(t *testing.T) {
 	require.Equal(t, int64(1), fallback.Rows[0][0])
 }
 
-func TestExecuteMerge_RecoversFromDuplicateCreateForParameterizedRepositoryMerge(t *testing.T) {
+// Component proof: the deliberately stale read double is consulted by the
+// canonical clause pipeline; native public transactions use their own snapshot
+// reader and cannot be made stale by this outer engine decorator.
+func TestComponentExecuteMerge_RecoversFromDuplicateCreateForParameterizedRepositoryMerge(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	require.NoError(t, store.GetSchema().AddUniqueConstraint("repo_path", "Repository", "path"))
@@ -1349,16 +1352,15 @@ func TestExecuteMerge_RecoversFromDuplicateCreateForParameterizedRepositoryMerge
 	})
 	ctx := context.Background()
 
-	result, err := exec.Execute(ctx, `
-		MERGE (r:Repository {path: $path})
-		SET r.name = $name, r.is_dependency = $is_dependency
-		RETURN r.path, r.name, r.is_dependency
-	`, map[string]interface{}{
+	result, err := exec.executeRequiredPipeline(withParams(ctx, map[string]interface{}{
 		"path":          "/Users/timothysweet/src/my-CodeGraphContext",
 		"name":          "my-CodeGraphContext",
 		"is_dependency": false,
-	})
-
+	}), `
+		MERGE (r:Repository {path: $path})
+		SET r.name = $name, r.is_dependency = $is_dependency
+		RETURN r.path, r.name, r.is_dependency
+	`)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, "/Users/timothysweet/src/my-CodeGraphContext", result.Rows[0][0])
@@ -1415,7 +1417,10 @@ func TestExecuteMerge_CreatesNodeWhenLegacySequentialIDWouldCollide(t *testing.T
 	assert.NotEqual(t, storage.NodeID("node-1"), files[0].ID)
 }
 
-func TestExecuteCompoundMatchMerge_StaleLabelLookupSurfacesConstraintViolation(t *testing.T) {
+// Component proof: the deliberately stale read double is consulted by the
+// canonical clause pipeline; native public transactions use their own snapshot
+// reader and cannot be made stale by this outer engine decorator.
+func TestComponentExecuteCompoundMatchMerge_StaleLabelLookupSurfacesConstraintViolation(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	require.NoError(t, store.GetSchema().AddConstraint(storage.Constraint{
@@ -1459,18 +1464,17 @@ func TestExecuteCompoundMatchMerge_StaleLabelLookupSurfacesConstraintViolation(t
 	// exactly like Neo4j does. The previous AllNodes() fallback silently
 	// "recovered" from the stale index at O(N) cost per row, which hid real
 	// index problems and diverged from Neo4j end-user behavior.
-	result, err := exec.Execute(ctx, `
-		MATCH (fn:Function {name: $func_name, path: $path, line_number: $function_line_number})
-		MERGE (p:Parameter {name: $name, path: $path, function_line_number: $function_line_number})
-		MERGE (fn)-[:HAS_PARAMETER]->(p)
-		RETURN p.name, p.path, p.function_line_number
-	`, map[string]interface{}{
+	result, err := exec.executeRequiredPipeline(withParams(ctx, map[string]interface{}{
 		"func_name":            "run",
 		"path":                 "/Users/timothysweet/src/my-CodeGraphContext/tests/unit/tools/test_indexing_scalability.py",
 		"function_line_number": int64(365),
 		"name":                 "query",
-	})
-
+	}), `
+		MATCH (fn:Function {name: $func_name, path: $path, line_number: $function_line_number})
+		MERGE (p:Parameter {name: $name, path: $path, function_line_number: $function_line_number})
+		MERGE (fn)-[:HAS_PARAMETER]->(p)
+		RETURN p.name, p.path, p.function_line_number
+	`)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
 	assert.Nil(t, result)

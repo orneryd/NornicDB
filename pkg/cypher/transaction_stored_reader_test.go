@@ -118,7 +118,7 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 				if entity == storage.ConstraintEntityRelationship {
 					label = "REL"
 				}
-				err := storage.ValidateConstraintOnCreationForEngine(wrapper, storage.Constraint{
+				err := storage.ValidateConstraintOnCreationForEngine(context.Background(), wrapper, storage.Constraint{
 					Name: "u", Type: storage.ConstraintUnique, EntityType: entity, Label: label, Properties: []string{"k"},
 				})
 				require.Error(t, err, "hidden committed and pending values both occupy their unique keys")

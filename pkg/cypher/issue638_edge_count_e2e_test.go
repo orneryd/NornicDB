@@ -17,11 +17,18 @@ import (
 // never by materializing edges of the store.
 
 // getEdgesByTypeProbe records GetEdgesByType calls so the counter fast path
-// can be asserted structurally (the materializing path would show up here).
+// can be asserted structurally (the materializing path would show up here). It
+// adds no behavior of its own, so it is a transparent decorator and exposes the
+// canonical storage.EngineUnwrapper accessor: a write statement opens its
+// transaction on the engine underneath while read statements keep counting
+// through this probe.
 type getEdgesByTypeProbe struct {
 	storage.Engine
 	calls int
 }
+
+// GetInnerEngine is the canonical EngineUnwrapper accessor.
+func (p *getEdgesByTypeProbe) GetInnerEngine() storage.Engine { return p.Engine }
 
 type forwardingNamespacedEngine struct {
 	storage.Engine
@@ -124,6 +131,15 @@ func TestIssue638_RelationshipCountShapes_ExactRows(t *testing.T) {
 	}
 	// None of the counter-answered shapes may have materialized edges.
 	require.Zero(t, probe.calls-before, "counter shapes must not call GetEdgesByType")
+
+	// Undirected typed counting materializes relationships because each
+	// non-loop relationship contributes once from either endpoint. This public
+	// shape proves the materialization counter is connected to execution.
+	materializedBefore := probe.calls
+	undirected, undirectedErr := exec.Execute(ctx, "MATCH ()-[r:TICK]-() RETURN count(r) AS c", nil)
+	require.NoError(t, undirectedErr)
+	require.Equal(t, int64(40), undirected.Rows[0][0])
+	require.Greater(t, probe.calls, materializedBefore, "public materializing count must reach the probe")
 
 	// Both-labeled endpoints stay a real traversal (Neo4j plans
 	// NodeByLabelScan -> Expand -> Filter for this shape).

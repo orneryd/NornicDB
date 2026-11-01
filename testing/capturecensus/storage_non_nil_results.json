@@ -65,8 +65,8 @@
       "pkg/lifecycle/once_completion.go [compiled]": "4580aa35ffadf75dc7f586d5e0604d76c98e7572d2c9cb5c3f8792072615e265",
       "pkg/lifecycle/outcomes.go [compiled]": "b8af8a676ab519e3b7657704b16cc18f8eb72aeec197b95d7f98f712279d8e8f",
       "pkg/lifecycle/owned_timer.go [compiled]": "620916510ab50afb326d328d616b2d0575e43eee37e4977a210f2cb986c308e9",
-      "pkg/lifecycle/shutdown.go [compiled]": "f5556f3834bc8feac54fb2e027afb44cf132f038646e605776d650b71d56a226",
-      "pkg/lifecycle/supervisor.go [compiled]": "5d30197cfcdacc012d6368dedc286843a9c7ad031fcb6001debcf70083a55f4c",
+      "pkg/lifecycle/shutdown.go [compiled]": "40cff00f7a1e5dc2c049726df6f5d9374ae3857eeb0e10e7f021411f4776c15f",
+      "pkg/lifecycle/supervisor.go [compiled]": "71f5a73aa7013a87a833b5897886f318233e8032b9653e7e05f6ea4c2291795e",
       "pkg/lifecycle/testenv.go [compiled]": "5351a788e0f66f65711405a76f4639276985b6670b3a1e5d6253545fe1b258af",
       "pkg/lifecycle/work_lifetime.go [compiled]": "c8f5ea102f7eb45f33b632343c924e0346f53d08257f88b0758f8fc414de9648"
     },
@@ -125,14 +125,14 @@
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).initContext": "7ac9ba3fe7798704b64ad8ad9b7e3aa9b0f737d8099060239cb8867f16112684",
         "github.com/orneryd/nornicdb/pkg/lifecycle.AfterFuncJoined": "6bb6fb2039522b4a4291218781500b888615ba44ae35ad73963a0809b2f94fc2",
         "github.com/orneryd/nornicdb/pkg/lifecycle.AfterFuncOwned": "7a7defc01df3edf25a6384f36d253920a1595656a7dce74be3ea5d0f88c06b53",
-        "github.com/orneryd/nornicdb/pkg/lifecycle.DrainReverse": "8fb3e2fe8ee3f3dc6cd56e34c22c636018a8a588890773820138d4032e1aa381",
+        "github.com/orneryd/nornicdb/pkg/lifecycle.DrainReverse": "03aea866d5dea2c4709a4b1d1fba4cd157076935b9b8ab7b27f84195cae90063",
         "github.com/orneryd/nornicdb/pkg/lifecycle.NewFakeComponent": "552845a164ff7be14592e5d64a259d4d12e6cab86c53ac067e45b99e4b8be241",
         "github.com/orneryd/nornicdb/pkg/lifecycle.NewWorkLifetime": "151a6f6cda5fe680b2dbe76ad16e9d38c7e2ffe0c6bd8fea394ae25c709cc5ca",
-        "github.com/orneryd/nornicdb/pkg/lifecycle.Run": "132d998e72eba3d552b9c6baac4bb5001c678b73851e7b5ba97e0d99006c315d",
+        "github.com/orneryd/nornicdb/pkg/lifecycle.Run": "46971ac6cd59410dbff27800833cc038fd32413c286584906b468fa6ea441707",
         "github.com/orneryd/nornicdb/pkg/lifecycle.nextSeq": "43208e64ecaaf2b59c58d4f5a2e3b187eb0d3e7b5023edde8eddfb238216e9f3",
         "github.com/orneryd/nornicdb/pkg/lifecycle.requireContext": "3018b54bafeaba96cf337c916fb85ce12b87af997b22e5a9773e8e9d72dc6e81"
       },
-      "Closure": "39f7799bf3a908a4bc5169ae11559ab9a1c059849ff0b56e9a7608f6a06fa892",
+      "Closure": "f740e4125d07ee0c72751d964a655aef722c02275e496c83ac939d039153630c",
       "Modules": null,
       "Callers": null,
       "FieldWriters": {
@@ -169,8 +169,8 @@
           "initContext declared"
         ]
       },
-      "Reason": "Reviewed normal-return contract only: Context calls init before reading private ctx; initContext's sync.Once.Do initializes it with context.WithCancel(non-nil parent). NewWorkLifetime rejects nil; zero value uses Background. Cancellation preserves a non-nil context. No request provenance or owner substitution is exempted; nullable wrapper results and direct ctx field loads are not covered.",
-      "Approver": "Codex parent approval of source/writer-pinned provider contract (current integration session)"
+      "Reason": "Reviewed normal-return contract only: Context calls init before reading private ctx; initContext's sync.Once.Do initializes it with context.WithCancel(non-nil parent). NewWorkLifetime rejects nil; zero value uses Background. Cancellation preserves a non-nil context. No request provenance or owner substitution is exempted; nullable wrapper results and direct ctx field loads are not covered. Provider package re-reviewed in full at HEAD 5bf14fcebcabe665f40d5df30abfb754ee006ca0 after the prerequisite rebase: only DrainReverse and Run changed (errors.Join replaces the compose.Outcomes call); neither writes WorkLifetime state nor supplies a context to its Context provider.",
+      "Approver": "DeepSeek bounded worker complete provider-package re-review at 5bf14fcebcabe665f40d5df30abfb754ee006ca0; final parent acceptance pending"
     }
   }
 }

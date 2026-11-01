@@ -13,10 +13,12 @@ import (
 type recordingManagedCommitEngine struct {
 	*storage.NamespacedEngine
 	commits int
+	last    *storage.BadgerTransaction
 }
 
 func (e *recordingManagedCommitEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
 	e.commits++
+	e.last = tx
 	return tx.CommitContext(ctx)
 }
 

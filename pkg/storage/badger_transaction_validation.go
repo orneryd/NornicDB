@@ -10,13 +10,13 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
+func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Context) error {
 	// Metadata handlers can publish a peer commit between the optimistic and
 	// authoritative passes. Endpoint memoization belongs to one pass only.
 	tx.nodeHeadCache = nil
 	// The buffer first, the stored heads below after: a buffered delete
 	// applied in between is found in its heads.
-	if err := tx.bufferedDeleteConflictLocked(); err != nil {
+	if err := tx.bufferedDeleteConflictLocked(ctx); err != nil {
 		return err
 	}
 	// Idempotent hidden-edge CREATEs stage no writes. Re-read them at the
@@ -37,6 +37,9 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 		}
 	}
 	for _, op := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		switch op.Type {
 		case OpCreateNode:
 			if !op.FreshID {
@@ -45,7 +48,7 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 				}
 			}
 		case OpUpdateNode, OpDeleteNode, OpUpdateEmbedding:
-			if err := tx.checkNodeWriteConflict(op.NodeID); err != nil {
+			if err := tx.checkNodeWriteConflict(ctx, op.NodeID); err != nil {
 				return err
 			}
 			if op.Type == OpDeleteNode {
@@ -140,7 +143,7 @@ func (tx *BadgerTransaction) checkNodeCreateConflict(nodeID NodeID) error {
 	return nil
 }
 
-func (tx *BadgerTransaction) checkNodeWriteConflict(nodeID NodeID) error {
+func (tx *BadgerTransaction) checkNodeWriteConflict(ctx context.Context, nodeID NodeID) error {
 	head, err := tx.engine.GetNodeCurrentHead(nodeID)
 	if err == ErrNotFound {
 		return nil
@@ -164,7 +167,7 @@ func (tx *BadgerTransaction) checkNodeWriteConflict(nodeID NodeID) error {
 		// conflict (which would just observe the peer's node, find
 		// the constraint already satisfied, and complete cleanly).
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-		if cv := tx.classifyUpdateConflictAsUniqueViolation(nodeID); cv != nil {
+		if cv := tx.classifyUpdateConflictAsUniqueViolation(ctx, nodeID); cv != nil {
 			return cv
 		}
 		return localizedError(localization.StorageTransactionNodeChangedDetailed(string(nodeID), head.Version.String(), tx.readTS.String()), ErrConflict)
@@ -180,13 +183,16 @@ func (tx *BadgerTransaction) checkNodeWriteConflict(nodeID NodeID) error {
 // that isn't shaped this way (lost-update on a contended counter, generic
 // SI conflict on an unrelated update, etc.); the caller falls back to
 // the generic conflict error.
-func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID NodeID) error {
+func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(ctx context.Context, nodeID NodeID) error {
 	pending, ok := tx.pendingNodes[nodeID]
 	if !ok || pending == nil || tx.namespace == "" {
 		return nil
 	}
 	// Reuse the retained mutation preimage; ordinary reads retain no claims.
-	preimages, distinctUpdates := tx.nodeMutationPreimagesLocked()
+	preimages, distinctUpdates, err := tx.nodeMutationPreimagesLocked(ctx)
+	if err != nil {
+		return err
+	}
 	before := preimages[nodeID]
 	if distinctUpdates {
 		for index := range tx.operations {
@@ -201,13 +207,15 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID Node
 	if schema == nil {
 		return nil
 	}
-	// Commit conflict classification belongs to accepted publication, which has
-	// no statement request to cancel.
-	constraints, err := schema.GetConstraintsForLabels(context.Background(), pending.Labels)
+	// Conflict classification is preparation and uses the current publication owner.
+	constraints, err := schema.GetConstraintsForLabels(ctx, pending.Labels)
 	if err != nil {
 		return err
 	}
 	for _, c := range constraints {
+		if c.EffectiveEntityType() != ConstraintEntityNode {
+			continue
+		}
 		if c.Type != ConstraintUnique || len(c.Properties) != 1 {
 			continue
 		}
@@ -216,16 +224,15 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID Node
 		if !has {
 			continue
 		}
-		same, err := sameNodeUniqueClaim(context.Background(), before, pending, c.Label, prop)
+		same, err := sameNodeUniqueClaim(ctx, before, pending, c.Label, prop)
 		if err != nil {
 			return err
 		}
 		if same {
 			continue
 		}
-		// Commit conflict classification is owned by accepted publication (and
-		// the context-free snapshot continuation API), independent of a statement.
-		existing, found, constrained, complete, err := schema.LookupUniqueConstraintValue(context.Background(), c.Label, prop, val)
+		// Snapshot continuations explicitly supply their detached native lifetime.
+		existing, found, constrained, complete, err := schema.LookupUniqueConstraintValue(ctx, c.Label, prop, val)
 		if err != nil {
 			return err
 		}
@@ -884,7 +891,7 @@ func (tx *BadgerTransaction) validateAllConstraints(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := tx.validateConstraintContracts(); err != nil {
+	if err := tx.validateConstraintContracts(ctx); err != nil {
 		return err
 	}
 	return nil

@@ -9,8 +9,8 @@
       "Uses": [
         "pkg/storage/badger_managed.go:222:31 (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commit -> (*github.com/orneryd/nornicdb/pkg/storage.commitOracle).waitPublished: nil context.Context",
         "pkg/storage/embedding_publication_proof.go:29:38 (*github.com/orneryd/nornicdb/pkg/storage.commitWriter).commitOutcome -> (*github.com/orneryd/nornicdb/pkg/storage.commitOracle).waitPublished: nil context.Context",
-        "pkg/storage/write_admission_mutex.go:124:85 (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).Lock -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext: nil context.Context",
-        "pkg/storage/write_admission_mutex.go:125:86 (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLock -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLockContext: nil context.Context"
+        "pkg/storage/write_admission_mutex.go:138:85 (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).Lock -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).LockContext: nil context.Context",
+        "pkg/storage/write_admission_mutex.go:139:86 (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLock -> (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).RLockContext: nil context.Context"
       ]
     },
     "nil context.Context -> parameter ctx of (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).newCommitWriter": {

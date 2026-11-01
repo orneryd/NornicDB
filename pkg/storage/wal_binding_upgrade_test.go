@@ -105,7 +105,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				data, err := decodeBufferedWALRecord(entry)
 				require.NoError(t, err)
 				require.NotEmpty(t, data.TxID)
-				marker, err := recovered.observeBufferedCommitReceipt(bufferedReceiptRead{txID: data.TxID})
+				marker, err := recovered.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{txID: data.TxID})
 				require.NoError(t, err)
 				require.False(t, marker.present, "fixture update unexpectedly reached storage")
 			}

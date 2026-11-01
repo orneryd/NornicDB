@@ -87,10 +87,10 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	if !detach {
 		if _, deferred := store.(storage.ConnectedNodeDeleter); deferred {
 			var err error
-			if connected, err = connectedDeleteTargets(store, nodeIDs, edgeIDs); err != nil {
+			if connected, err = connectedDeleteTargets(ctx, store, nodeIDs, edgeIDs); err != nil {
 				return nil, true, err
 			}
-		} else if err := validateNoResidualRelationships(store, nodeIDs, edgeIDs); err != nil {
+		} else if err := validateNoResidualRelationships(ctx, store, nodeIDs, edgeIDs); err != nil {
 			return nil, true, err
 		}
 	}
@@ -110,7 +110,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	}
 	if detach {
 		for _, nodeID := range nodeIDs {
-			incident, err := connectingRelationships(store, nodeID)
+			incident, err := connectingRelationships(ctx, store, nodeID)
 			if err != nil {
 				return nil, true, err
 			}

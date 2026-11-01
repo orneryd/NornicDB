@@ -175,7 +175,7 @@ func tlfOutcome(t *testing.T, err error, violation bool) {
 
 func tlfRegister(t *testing.T, inner *BadgerEngine, engine *NamespacedEngine, c Constraint) {
 	t.Helper()
-	require.NoError(t, ValidateConstraintOnCreationForEngine(engine, c), "empty-label public DDL setup")
+	require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, c), "empty-label public DDL setup")
 	require.NoError(t, engine.GetSchema().AddConstraint(c))
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, engine.GetSchema(), []Constraint{c}))
 	require.True(t, engine.GetSchema().HasConstraintNamed(c.Name))
@@ -279,7 +279,7 @@ func TestTemporalListFamilyTemporalListEnforcement(t *testing.T) {
 					interval, ok := spec.interval(probe)
 					require.True(t, ok)
 					scanErr := inner.withView(func(txn *badger.Txn) error {
-						return inner.scanForTemporalOverlapInTxn(txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
+						return inner.scanForTemporalOverlapInTxn(t.Context(), txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
 					})
 					t.Logf("TLF_SCAN list explicit err=%v", scanErr)
 					tlfOutcome(t, scanErr, true)
@@ -344,7 +344,7 @@ func TestTemporalListFamilyTemporalCreationNode(t *testing.T) {
 					}
 					tlfKeys(t, c, pair, tlfExpectedCreationEqual(shape), composite)
 					require.False(t, engine.GetSchema().HasConstraintNamed(c.Name))
-					err := ValidateConstraintOnCreationForEngine(engine, c)
+					err := ValidateConstraintOnCreationForEngine(context.Background(), engine, c)
 					t.Logf("TLF_NODE_DDL shape=%s err=%v", shape, err)
 					require.False(t, engine.GetSchema().HasConstraintNamed(c.Name))
 					tlfOutcome(t, err, shape == "signed-zero" || shape == "same")
@@ -381,12 +381,12 @@ func tlfRelationshipDDL(t *testing.T, c Constraint, engine *NamespacedEngine, ed
 	guard := &tlfStreamGuard{NamespacedEngine: engine}
 	var err error
 	if route == "stream" {
-		err = ValidateConstraintOnCreationForEngine(guard, c)
+		err = ValidateConstraintOnCreationForEngine(context.Background(), guard, c)
 		require.Equal(t, 1, guard.calls)
 		require.Equal(t, 2, guard.visits)
 	} else {
 		require.Len(t, edges, 2)
-		err = validateRelTemporalOnCreationForEngine(edges, c)
+		err = validateRelTemporalOnCreationForEngine(context.Background(), edges, c)
 		require.Zero(t, guard.calls)
 	}
 	require.Zero(t, guard.fallback)
@@ -482,7 +482,7 @@ func TestTemporalListFamilyTemporalMixedNodeDDL(t *testing.T) {
 					}
 					tlfKeys(t, c, pair, shape != "unequal", true)
 					require.False(t, engine.GetSchema().HasConstraintNamed(c.Name))
-					err := ValidateConstraintOnCreationForEngine(engine, c)
+					err := ValidateConstraintOnCreationForEngine(context.Background(), engine, c)
 					t.Logf("TLF_MIXED_NODE_DDL shape=%s err=%v", shape, err)
 					require.False(t, engine.GetSchema().HasConstraintNamed(c.Name))
 					tlfOutcome(t, err, shape == "mixed" || shape == "same")
@@ -533,7 +533,7 @@ func TestTemporalListFamilyTemporalMixedEnforcement(t *testing.T) {
 						interval, ok := spec.interval(pair[1])
 						require.True(t, ok)
 						scanErr := inner.withView(func(txn *badger.Txn) error {
-							return inner.scanForTemporalOverlapInTxn(txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
+							return inner.scanForTemporalOverlapInTxn(t.Context(), txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
 						})
 						violation := shape == "mixed" || shape == "same"
 						t.Logf("TLF_SCAN mixed explicit shape=%s err=%v", shape, scanErr)
@@ -723,7 +723,7 @@ func TestTemporalListFamilyCanonicalNodeDDLControls(t *testing.T) {
 					require.NoError(t, err)
 				}
 				c := Constraint{Name: "tlf_canonical", Type: kind, EntityType: ConstraintEntityNode, Label: "TLF_CANONICAL", Properties: []string{"key", "group"}}
-				err := ValidateConstraintOnCreationForEngine(engine, c)
+				err := ValidateConstraintOnCreationForEngine(context.Background(), engine, c)
 				t.Logf("TLF_CANONICAL_DDL kind=%s order=%d err=%v", kind, order, err)
 				require.Error(t, err)
 				var typed *ConstraintViolationError

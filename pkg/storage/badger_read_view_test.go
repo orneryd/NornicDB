@@ -287,7 +287,9 @@ func TestSnapshotOverlaySchemaAndCounterRetirement(t *testing.T) {
 		require.Equal(t, int64(1), n)
 	}
 	check()
-	b.writeBehind.rotate()
+	if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
+		t.Fatal(rotateErr)
+	}
 	b.writeBehind.mu.RLock()
 	generation := b.writeBehind.draining[0]
 	b.writeBehind.mu.RUnlock()
@@ -302,7 +304,9 @@ func TestSnapshotOverlaySchemaAndCounterRetirement(t *testing.T) {
 
 func TestSnapshotOverlayLateSchemaTracking(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	b.writeBehind.rotate()
+	if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
+		t.Fatal(rotateErr)
+	}
 	b.writeBehind.mu.RLock()
 	generation := b.writeBehind.draining[0]
 	b.writeBehind.mu.RUnlock()

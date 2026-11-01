@@ -15,7 +15,7 @@ func TestMergeAdmissionCanonicalTuple(t *testing.T) {
 			schema := engine.GetSchemaForNamespace("test")
 			c := Constraint{Name: "tuple", Type: kind, Label: "Tuple", Properties: []string{"tenant", "id"}}
 			require.NoError(t, schema.AddConstraint(c))
-			require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
+			require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), NewNamespacedEngine(engine, "test"), schema))
 			idx, owned := schema.ConstraintPropertyIndex(c.Name)
 			require.True(t, owned)
 			require.NoError(t, schema.BackfillCompositeIndex(t.Context(), idx.Name, nil))
@@ -94,7 +94,7 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 			schema := engine.GetSchemaForNamespace("test")
 			c := Constraint{Name: "tuple", Type: kind, Label: "Tuple", Properties: []string{"tenant", "id"}}
 			require.NoError(t, schema.AddConstraint(c))
-			require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
+			require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), NewNamespacedEngine(engine, "test"), schema))
 			idx, owned := schema.ConstraintPropertyIndex(c.Name)
 			require.True(t, owned)
 			require.NoError(t, schema.BackfillCompositeIndex(t.Context(), idx.Name, nil))

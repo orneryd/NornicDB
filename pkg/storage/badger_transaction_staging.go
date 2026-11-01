@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -70,11 +71,14 @@ func (tx *BadgerTransaction) materializeDeferredEdgeLocked(identifier EdgeID) er
 	return nil
 }
 
-func (tx *BadgerTransaction) materializeDeferredEdgesLocked() error {
+func (tx *BadgerTransaction) materializeDeferredEdgesLocked(ctx context.Context) error {
 	if len(tx.deferredEdgeWrites) == 0 {
 		return nil
 	}
 	for _, operation := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if operation.Type != OpCreateEdge {
 			continue
 		}

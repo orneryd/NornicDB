@@ -146,19 +146,19 @@ func TestBug_NodeTemporalCompositeKey_CreationValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	c := compositeTemporalConstraint()
-	require.NoError(t, ValidateConstraintOnCreationForEngine(engine, c), "different k2 values do not overlap")
+	require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, c), "different k2 values do not overlap")
 
 	_, err = engine.CreateNode(compositeTemporalNode("p3", "a", "x", compositeDay(20), nil))
 	require.NoError(t, err)
-	err = ValidateConstraintOnCreationForEngine(engine, c)
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, c)
 	require.Error(t, err, "pre-existing overlap within one composite key")
 
 	_, err = engine.CreateNode(compositeTemporalNode("p-null", "z", nil, compositeDay(500), nil))
 	require.NoError(t, err)
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{Type: ConstraintTemporal, Label: "E", Properties: []string{"k1", "k2", "vf", "vt"}})
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{Type: ConstraintTemporal, Label: "E", Properties: []string{"k1", "k2", "vf", "vt"}})
 	require.Error(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{Type: ConstraintTemporal, Label: "E", Properties: []string{"vf", "vt"}})
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{Type: ConstraintTemporal, Label: "E", Properties: []string{"vf", "vt"}})
 	require.ErrorContains(t, err, "at least 3 properties")
 }
 

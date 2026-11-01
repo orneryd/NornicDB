@@ -52,9 +52,9 @@ type TraversalContext struct {
 	resultCount      int                              // Count of results found so far
 	temporalViewport TemporalViewport
 	temporalChecker  temporalCurrentNodeChecker
-	// cancelCtx is consulted at DFS entry and sibling expansion so callers can
-	// abandon long traversals on client disconnect / server shutdown. It is
-	// allowed to be nil for legacy call sites that pass through Background.
+	// cancelCtx is the required originating statement context. Every production
+	// initializer supplies it; private zero-value traversal states are invalid.
+	// DFS entry and sibling expansion retain its cancellation and ownership.
 	cancelCtx            context.Context
 	cancelDone           <-chan struct{}
 	cancelParentDone     <-chan struct{}
@@ -140,7 +140,7 @@ func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.N
 		} else {
 			edges, answered, err = reader.IncomingEdgeHeaders(nodeID)
 		}
-		if err != nil && ctx.cancelCtx != nil {
+		if err != nil {
 			recordExpressionFailure(ctx.cancelCtx, err)
 			return nil
 		}
@@ -155,7 +155,7 @@ func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.N
 	} else {
 		edges, err = e.storage.GetIncomingEdges(ctx.cancelCtx, nodeID)
 	}
-	if err != nil && ctx.cancelCtx != nil {
+	if err != nil {
 		recordExpressionFailure(ctx.cancelCtx, err)
 	}
 	return edges
@@ -1868,8 +1868,8 @@ func (e *StorageExecutor) findPaths(
 		edges = e.traversalEdges(ctx, lookupID, false)
 	case "both":
 		var err error
-		edges, err = undirectedIncidentEdges(e.storage, lookupID)
-		if err != nil && ctx.cancelCtx != nil {
+		edges, err = undirectedIncidentEdges(ctx.cancelCtx, e.storage, lookupID)
+		if err != nil {
 			recordExpressionFailure(ctx.cancelCtx, err)
 			return results
 		}

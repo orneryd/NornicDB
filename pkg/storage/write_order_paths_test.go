@@ -189,7 +189,9 @@ func TestOrderDrainStopsAtItsFrontier(t *testing.T) {
 	buf = NewWriteBehindBuffer(time.Hour, 0, func(*CommitBuffer) error {
 		later.Do(func() {
 			require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{ID: "test:later"}}))
-			buf.rotate()
+			if _, rotateErr := buf.rotate(t.Context()); rotateErr != nil {
+				t.Fatal(rotateErr)
+			}
 		})
 		applied.Add(1)
 		return nil

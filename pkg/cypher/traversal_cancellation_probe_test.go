@@ -62,7 +62,7 @@ func BenchmarkLiveTraversalCancellationProbe(b *testing.B) {
 }
 
 func TestTraversalCancellationState(t *testing.T) {
-	require.False(t, (&TraversalContext{}).traversalCancelled())
+	require.False(t, (&TraversalContext{cancelCtx: context.Background()}).traversalCancelled())
 	background := &TraversalContext{cancelCtx: context.Background()}
 	require.False(t, background.traversalCancelled())
 	require.False(t, background.traversalCancelled())

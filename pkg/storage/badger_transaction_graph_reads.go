@@ -191,8 +191,16 @@ func (tx *BadgerTransaction) GetEdge(edgeID EdgeID) (*Edge, error) {
 // snapshot or write-behind view; between reads retain the engine's current view.
 // For example, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: id}
 // reads outgoing edges, while TransactionReadBetween also supplies Other.
+// Admission follows IncidentEdges: the caller's context ends a wait for the
+// transaction's lock, and a closed transaction reports ErrTransactionClosed
+// first.
 func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request TransactionEdgeRead) ([]*Edge, error) {
-	tx.mu.Lock()
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return nil, err
+	}
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
@@ -228,7 +236,7 @@ func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request TransactionE
 	if err != nil {
 		return nil, err
 	}
-	return tx.mergePendingAdjacentEdgesLocked(committed, request.Node, func(edge *Edge) bool {
+	return tx.mergePendingAdjacentEdgesLocked(ctx, committed, request.Node, func(edge *Edge) bool {
 		switch request.Kind {
 		case TransactionReadOutgoing:
 			return edge.StartNode == request.Node
@@ -237,7 +245,7 @@ func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request TransactionE
 		default:
 			return edge.StartNode == request.Node && edge.EndNode == request.Other
 		}
-	}), nil
+	})
 }
 
 // GetEdgeBetween returns a matching edge including pending transaction writes.
@@ -276,8 +284,16 @@ func (tx *BadgerTransaction) getCommittedEdgesByTypeLocked(ctx context.Context, 
 }
 
 // AllEdges returns all visible edges including pending transaction writes.
+// Admission follows IncidentEdges: the caller's context ends a wait for the
+// transaction's lock, and a closed transaction reports ErrTransactionClosed
+// first.
 func (tx *BadgerTransaction) AllEdges(ctx context.Context) ([]*Edge, error) {
-	tx.mu.Lock()
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return nil, err
+	}
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
@@ -300,8 +316,16 @@ func (tx *BadgerTransaction) AllEdges(ctx context.Context) ([]*Edge, error) {
 }
 
 // GetEdgesByType returns edges of a given type including pending transaction writes.
+// Admission follows IncidentEdges: the caller's context ends a wait for the
+// transaction's lock, and a closed transaction reports ErrTransactionClosed
+// first.
 func (tx *BadgerTransaction) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
-	tx.mu.Lock()
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return nil, err
+	}
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
@@ -327,8 +351,16 @@ func (tx *BadgerTransaction) GetEdgesByType(ctx context.Context, edgeType string
 }
 
 // GetNodesByLabel returns nodes with the given label including pending transaction writes.
+// Admission follows IncidentEdges: the caller's context ends a wait for the
+// transaction's lock, and a closed transaction reports ErrTransactionClosed
+// first.
 func (tx *BadgerTransaction) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
-	tx.mu.Lock()
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return nil, err
+	}
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
@@ -355,6 +387,9 @@ func (tx *BadgerTransaction) GetNodesByLabel(ctx context.Context, label string) 
 // pinned snapshot and overlays pending writes as one stream. The callback can
 // stop iteration without forcing the transaction to resolve or copy the rest
 // of the label population.
+// Admission follows IncidentEdges: the caller's context ends a wait for the
+// transaction's lock, and a closed transaction reports ErrTransactionClosed
+// first.
 func (tx *BadgerTransaction) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
 	return tx.streamNodesByLabelProjected(ctx, label, properties, visibleRead, visit)
 }
@@ -365,7 +400,12 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 	if visit == nil {
 		return ErrInvalidData
 	}
-	tx.mu.Lock()
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return err
+	}
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
@@ -567,6 +607,9 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 // committed view its other reads take (getAllCommittedNodesLocked). Pending
 // writes replace their committed versions and are not filtered (callers test
 // every node they receive); ErrIterationStopped from visit ends the stream.
+// Admission follows IncidentEdges: the caller's context ends a wait for the
+// transaction's lock, and a closed transaction reports ErrTransactionClosed
+// first.
 func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
@@ -580,7 +623,12 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 		}
 		return err
 	}
-	tx.mu.Lock()
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return err
+	}
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
@@ -766,8 +814,16 @@ func (tx *BadgerTransaction) GetFirstNodeByLabel(label string) (*Node, error) {
 }
 
 // AllNodes returns all visible nodes including pending transaction writes.
+// Admission follows IncidentEdges: the caller's context ends a wait for the
+// transaction's lock, and a closed transaction reports ErrTransactionClosed
+// first.
 func (tx *BadgerTransaction) AllNodes(ctx context.Context) ([]*Node, error) {
-	tx.mu.Lock()
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return nil, err
+	}
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err

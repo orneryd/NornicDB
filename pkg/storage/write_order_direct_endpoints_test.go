@@ -63,7 +63,9 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 			require.True(t, buffered, "the relabel is acknowledged, not yet applied")
 
 			require.NoError(t, tc.write(b), "a direct write over an endpoint's acknowledged commit is refused")
-			require.False(t, b.writeBehind.holdsEntities(writtenEntities{nodes: []NodeID{tc.relabel}}),
+			held, holdErr := b.writeBehind.holdsEntities(t.Context(), writtenEntities{nodes: []NodeID{tc.relabel}})
+			require.NoError(t, holdErr)
+			require.False(t, held,
 				"the direct write ran before the endpoint's acknowledged relabel was applied")
 			require.NoError(t, b.FlushWriteBehind(nil))
 

@@ -65,7 +65,7 @@ func TestReplaceDefinitionDurablePublishesTheDefinitionItPersisted(t *testing.T)
 	require.True(t, complete, "an accepted replacement's value cache is rebuilt from storage")
 	require.True(t, found)
 	require.Equal(t, NodeID(durableDefinitionNamespace+":u1"), holder)
-	require.Error(t, schema.CheckUniqueConstraint("Person", "email", "alice@example.com", "someone-else"),
+	require.Error(t, schema.CheckUniqueConstraint(context.Background(), "Person", "email", "alice@example.com", "someone-else"),
 		"the rebuilt UNIQUE cache must reject a duplicate of a stored value")
 
 	// The equality index contents were rebuilt from the stored nodes too.

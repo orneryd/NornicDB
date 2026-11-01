@@ -36,7 +36,7 @@ func TestPR1655StorageUniqueClaimConflict(t *testing.T) {
 			}))
 			// The engine is empty: this mirrors the complete cache published
 			// by CREATE CONSTRAINT, which the Execute/Bolt tests use.
-			constraint := schema.uniqueConstraints["Doc:id"]
+			constraint := schema.uniqueConstraints[nodePropertyKey{label: "Doc", property: "id"}]
 			constraint.mu.Lock()
 			constraint.valuesCacheComplete = true
 			constraint.mu.Unlock()

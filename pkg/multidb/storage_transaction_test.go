@@ -43,7 +43,7 @@ func TestTransactionQuotaMergeAdmissionDoesNotWaitForWriter(t *testing.T) {
 	tracker := engine.(*sizeTrackingEngine)
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddConstraint(storage.Constraint{Name: "quota_key", Type: storage.ConstraintUnique, Label: "Quota", Properties: []string{"id"}}))
-	require.NoError(t, storage.RefreshUniqueConstraintValuesForEngine(engine, schema))
+	require.NoError(t, storage.RefreshUniqueConstraintValuesForEngine(context.Background(), engine, schema))
 	tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace(db))

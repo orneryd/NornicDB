@@ -285,10 +285,17 @@ var _ = []any{(*Engine).hiddenThroughClosure, (*slotTx).hiddenAfterReload, (*Eng
 	// Shapes earlier versions excluded by wider proofs are now reported.
 	for fn, why := range map[string]string{
 		"(*capture.fixture.slotTx).unchangedReload": "a field load holds the field",
-		"(*capture.fixture.Engine).ParseVia":        "a helper result is held: no return provenance",
 	} {
 		require.Contains(t, all, inScope(fn), why)
 	}
+	require.NotContains(t, all, inScope("(*capture.fixture.Engine).ParseVia"), "withSource returns context.WithValue of this fresh argument, produced after creation")
+	var futureProof bool
+	for _, entry := range i.Acceptances {
+		if entry.Kind == KindProof && strings.Contains(entry.Key, "future argument-derived context result call capture.fixture.withSource") {
+			futureProof = true
+		}
+	}
+	require.True(t, futureProof, "the argument-derived future result needs its exact generic proof")
 }
 
 // Controls for the walk: a result is excluded by what its callee returns on

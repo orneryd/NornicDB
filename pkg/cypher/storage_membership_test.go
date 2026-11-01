@@ -158,6 +158,11 @@ func TestStorageMembershipConstructions(t *testing.T) {
 		}
 		_, err = nested.Execute(innerCtx, query, map[string]interface{}{"body": write})
 		nestedError = err
+		if form == "use" {
+			// Returning from a child is not statement completion: the enclosing
+			// owner must retain pending effects until it commits or rolls back.
+			require.Zero(t, f.writes(t, "one", run), "child USE must not publish before its callback returns")
+		}
 		return &ExecuteResult{Columns: []string{"v"}, Rows: [][]interface{}{{int64(1)}}}, err
 	}))
 	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
@@ -202,7 +207,9 @@ func TestStorageMembershipConstructions(t *testing.T) {
 							}
 							_, execErr := e.Execute(ctx, query, nil)
 							control := statement == "script" || statement == "case_script" || statement == "begin" || statement == "commit" || statement == "rollback"
-							rejected := control || statement == "use" && !composite
+							// Explicit native transactions remain single-database; native
+							// autocommit uses the shared coordinator for child selection.
+							rejected := control || statement == "use" && explicit && !composite
 							if explicit {
 								end := "COMMIT"
 								if completion == "discard" || execErr != nil {

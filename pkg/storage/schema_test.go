@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,7 +73,8 @@ func TestSchemaManager(t *testing.T) {
 			t.Fatalf("Failed with IF NOT EXISTS: %v", err)
 		}
 
-		constraints := sm.GetConstraints()
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
 		if len(constraints) != 1 {
 			t.Errorf("Expected 1 constraint, got %d", len(constraints))
 		}
@@ -83,28 +85,28 @@ func TestSchemaManager(t *testing.T) {
 		sm.AddUniqueConstraint("email_unique", "User", "email")
 
 		// First value should be fine
-		err := sm.CheckUniqueConstraint("User", "email", "test@example.com", "")
+		err := sm.CheckUniqueConstraint(context.Background(), "User", "email", "test@example.com", "")
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
 
 		// Register the value
-		sm.ApplyUniqueValue("User", "email", "test@example.com", "node1", ValidatedUniqueClaim)
+		sm.ApplyUniqueValue(context.Background(), "User", "email", "test@example.com", "node1", ValidatedUniqueClaim)
 
 		// Same value should fail
-		err = sm.CheckUniqueConstraint("User", "email", "test@example.com", "")
+		err = sm.CheckUniqueConstraint(context.Background(), "User", "email", "test@example.com", "")
 		if err == nil {
 			t.Error("Expected constraint violation error")
 		}
 
 		// Same value with same node ID should be OK (update case)
-		err = sm.CheckUniqueConstraint("User", "email", "test@example.com", "node1")
+		err = sm.CheckUniqueConstraint(context.Background(), "User", "email", "test@example.com", "node1")
 		if err != nil {
 			t.Errorf("Unexpected error for same node: %v", err)
 		}
 
 		// No constraint on different property
-		err = sm.CheckUniqueConstraint("User", "name", "test@example.com", "")
+		err = sm.CheckUniqueConstraint(context.Background(), "User", "name", "test@example.com", "")
 		if err != nil {
 			t.Errorf("Unexpected error for unconstrained property: %v", err)
 		}
@@ -114,7 +116,7 @@ func TestSchemaManager(t *testing.T) {
 		sm := NewSchemaManager()
 		require.NoError(t, sm.AddUniqueConstraint("age_unique", "User", "age"))
 
-		sm.ApplyUniqueValue("User", "age", int(1), "node1", ValidatedUniqueClaim)
+		sm.ApplyUniqueValue(context.Background(), "User", "age", int(1), "node1", ValidatedUniqueClaim)
 
 		got, found, constrained, _, uniqueLookupErr1 := sm.LookupUniqueConstraintValue(t.Context(), "User", "age", int64(1))
 		if uniqueLookupErr1 != nil {
@@ -124,11 +126,11 @@ func TestSchemaManager(t *testing.T) {
 		require.True(t, found)
 		assert.Equal(t, NodeID("node1"), got)
 
-		err := sm.CheckUniqueConstraint("User", "age", float64(1), "")
+		err := sm.CheckUniqueConstraint(context.Background(), "User", "age", float64(1), "")
 		require.Error(t, err)
 
-		sm.ApplyUniqueValue("User", "age", int64(1), "node1", RetiredUniqueClaim)
-		err = sm.CheckUniqueConstraint("User", "age", float64(1), "")
+		sm.ApplyUniqueValue(context.Background(), "User", "age", int64(1), "node1", RetiredUniqueClaim)
+		err = sm.CheckUniqueConstraint(context.Background(), "User", "age", float64(1), "")
 		require.NoError(t, err)
 	})
 
@@ -150,23 +152,23 @@ func TestSchemaManager(t *testing.T) {
 	t.Run("UnregisterUniqueValue", func(t *testing.T) {
 		sm := NewSchemaManager()
 		sm.AddUniqueConstraint("id_unique", "Node", "id")
-		sm.ApplyUniqueValue("Node", "id", "test-1", "node1", ValidatedUniqueClaim)
+		sm.ApplyUniqueValue(context.Background(), "Node", "id", "test-1", "node1", ValidatedUniqueClaim)
 
 		// Should fail before unregister
-		err := sm.CheckUniqueConstraint("Node", "id", "test-1", "")
+		err := sm.CheckUniqueConstraint(context.Background(), "Node", "id", "test-1", "")
 		if err == nil {
 			t.Error("Expected constraint violation")
 		}
 
 		// A stale retirement cannot release a different owner's claim.
-		sm.ApplyUniqueValue("Node", "id", "test-1", "another-node", RetiredUniqueClaim)
-		require.Error(t, sm.CheckUniqueConstraint("Node", "id", "test-1", ""))
+		sm.ApplyUniqueValue(context.Background(), "Node", "id", "test-1", "another-node", RetiredUniqueClaim)
+		require.Error(t, sm.CheckUniqueConstraint(context.Background(), "Node", "id", "test-1", ""))
 
 		// Unregister the actual owner.
-		sm.ApplyUniqueValue("Node", "id", "test-1", "node1", RetiredUniqueClaim)
+		sm.ApplyUniqueValue(context.Background(), "Node", "id", "test-1", "node1", RetiredUniqueClaim)
 
 		// Should succeed after unregister
-		err = sm.CheckUniqueConstraint("Node", "id", "test-1", "")
+		err = sm.CheckUniqueConstraint(context.Background(), "Node", "id", "test-1", "")
 		if err != nil {
 			t.Errorf("Unexpected error after unregister: %v", err)
 		}
@@ -288,7 +290,8 @@ func TestSchemaManager(t *testing.T) {
 		sm.AddUniqueConstraint("user_username", "User", "username")
 		sm.AddUniqueConstraint("post_id", "Post", "id")
 
-		constraints := sm.GetConstraints()
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
 		if len(constraints) != 3 {
 			t.Errorf("Expected 3 constraints, got %d", len(constraints))
 		}
@@ -308,7 +311,7 @@ func TestSchemaManager_DropConstraintAndIndexHelpers(t *testing.T) {
 		if err := sm.DropConstraint("user_email_unique"); err != nil {
 			t.Fatalf("DropConstraint(unique) failed: %v", err)
 		}
-		if err := sm.CheckUniqueConstraint("User", "email", "a@example.com", ""); err != nil {
+		if err := sm.CheckUniqueConstraint(context.Background(), "User", "email", "a@example.com", ""); err != nil {
 			t.Fatalf("expected dropped unique constraint to stop enforcing, got %v", err)
 		}
 
@@ -339,7 +342,9 @@ func TestSchemaManager_DropConstraintAndIndexHelpers(t *testing.T) {
 		if err := sm.DropConstraint("user_email_unique"); err == nil {
 			t.Fatal("expected persist rollback error for unique constraint")
 		}
-		if len(sm.GetConstraints()) == 0 {
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
+		if len(constraints) == 0 {
 			t.Fatal("expected dropped unique constraint to be restored after persist error")
 		}
 
@@ -433,7 +438,9 @@ func TestSchemaManager_PersistRollbackAndRangeDeleteBranches(t *testing.T) {
 		if len(sm.GetAllConstraints()) != 0 {
 			t.Fatal("constraint map should be rolled back on persist failure")
 		}
-		if len(sm.GetConstraints()) != 0 {
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
+		if len(constraints) != 0 {
 			t.Fatal("unique constraints map should be rolled back on persist failure")
 		}
 	})
@@ -1222,7 +1229,8 @@ func TestSchemaManager_PersistenceErrorRollback(t *testing.T) {
 		require.ErrorIs(t, err, persistErr)
 
 		// Constraint should NOT be registered
-		constraints := sm.GetConstraints()
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
 		assert.Len(t, constraints, 0)
 	})
 
@@ -1282,7 +1290,7 @@ func TestValidateConstraintOnCreation_UnknownType(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "bad",
 		Type:       ConstraintType("INVALID"),
 		Label:      "Person",
@@ -1302,7 +1310,7 @@ func TestValidateConstraintOnCreation_UniqueViolation(t *testing.T) {
 	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "unique_email",
 		Type:       ConstraintUnique,
 		Label:      "Person",
@@ -1322,7 +1330,7 @@ func TestValidateConstraintOnCreation_ExistenceViolation(t *testing.T) {
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "exists_name",
 		Type:       ConstraintExists,
 		Label:      "Person",
@@ -1338,7 +1346,7 @@ func TestValidateConstraintOnCreation_UniqueMultipleProperties(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "composite_unique",
 		Type:       ConstraintUnique,
 		Label:      "Person",
@@ -1368,7 +1376,7 @@ func TestValidateExistenceRelationshipConstraint(t *testing.T) {
 		RelType:    "WORKS_AT",
 		Properties: []string{"since"},
 	}
-	err = engine.validateExistenceRelationshipConstraint(rc)
+	err = engine.validateExistenceRelationshipConstraint(context.Background(), rc)
 	require.Error(t, err)
 	var cve *ConstraintViolationError
 	require.True(t, errors.As(err, &cve))
@@ -1383,7 +1391,7 @@ func TestValidateExistenceRelationshipConstraint_MultipleProperties(t *testing.T
 		RelType:    "WORKS_AT",
 		Properties: []string{"a", "b"},
 	}
-	err := engine.validateExistenceRelationshipConstraint(rc)
+	err := engine.validateExistenceRelationshipConstraint(context.Background(), rc)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exactly 1 property")
 }
@@ -1398,7 +1406,7 @@ func TestValidateConstraintOnCreation_NodeKeyViolation(t *testing.T) {
 	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "nk_person",
 		Type:       ConstraintNodeKey,
 		Label:      "Person",
@@ -1417,7 +1425,7 @@ func TestValidateConstraintOnCreation_NodeKeyNullProperty(t *testing.T) {
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John"}})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "nk_person2",
 		Type:       ConstraintNodeKey,
 		Label:      "Person",
@@ -1455,7 +1463,7 @@ func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "temporal_contract",
 		Type:       ConstraintTemporal,
 		Label:      "Contract",
@@ -1468,7 +1476,7 @@ func TestValidateConstraintOnCreation_TemporalBadProperties(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "bad_temporal",
 		Type:       ConstraintTemporal,
 		Label:      "Contract",
@@ -1482,7 +1490,7 @@ func TestValidateConstraintOnCreation_ExistenceMultipleProperties(t *testing.T) 
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "bad_exists",
 		Type:       ConstraintExists,
 		Label:      "Person",

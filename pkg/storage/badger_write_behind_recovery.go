@@ -94,7 +94,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			}
 			// Both reads below are physical-only: the record's own marker,
 			// never the pending generations, which replay does not consult.
-			receipt, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: envelope.Namespace, logicalID: envelope.LogicalTxID})
+			receipt, err := b.observeBufferedCommitReceipt(context.Background(), bufferedReceiptRead{namespace: envelope.Namespace, logicalID: envelope.LogicalTxID})
 			if err != nil {
 				return err
 			}
@@ -125,7 +125,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		if data.TxID == "" {
 			return nil
 		}
-		marker, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: data.Namespace, txID: data.TxID, logicalID: data.LogicalTxID})
+		marker, err := b.observeBufferedCommitReceipt(context.Background(), bufferedReceiptRead{namespace: data.Namespace, txID: data.TxID, logicalID: data.LogicalTxID})
 		if err != nil {
 			return fmt.Errorf("wal: failed to check flush marker for %q: %w", data.TxID, err)
 		}

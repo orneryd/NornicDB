@@ -988,7 +988,7 @@ func TestTransaction_IncidentEdgesBuffered(t *testing.T) {
 		defer tx.Rollback()
 
 		tx.mu.Lock()
-		result, err := tx.engine.executeNodeDeletion(tx.staged(), edge.StartNode, nil)
+		result, err := tx.engine.executeNodeDeletion(t.Context(), tx.staged(), edge.StartNode, nil)
 		count, ids := int64(len(result.ids)), result.ids
 		tx.mu.Unlock()
 		if err != nil {
@@ -1056,7 +1056,7 @@ func TestTransaction_IncidentEdgesBuffered(t *testing.T) {
 		defer tx.Rollback()
 
 		tx.mu.Lock()
-		_, err = tx.incidentEdgesLocked(nodeID)
+		_, err = tx.incidentEdgesLocked(context.Background(), nodeID)
 		tx.mu.Unlock()
 		if err == nil {
 			t.Fatal("expected corrupt edge payload error")
@@ -1073,7 +1073,7 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		result, err := tx.engine.executeNodeDeletion(tx.staged(), NodeID(prefixTestID("missing-node")), nil)
+		result, err := tx.engine.executeNodeDeletion(t.Context(), tx.staged(), NodeID(prefixTestID("missing-node")), nil)
 		count, ids := int64(len(result.ids)), result.ids
 		if err != ErrNotFound {
 			t.Fatalf("expected ErrNotFound, got %v", err)
@@ -1116,7 +1116,7 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		result, err := tx.engine.executeNodeDeletion(tx.staged(), nodeID, &Node{ID: nodeID, Labels: []string{"Person", "Employee"}})
+		result, err := tx.engine.executeNodeDeletion(t.Context(), tx.staged(), nodeID, &Node{ID: nodeID, Labels: []string{"Person", "Employee"}})
 		count, ids := int64(len(result.ids)), result.ids
 		if err != nil {
 			t.Fatalf("deleteNodeBuffered failed: %v", err)
@@ -1161,7 +1161,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		tx.bufferSet(dropKey, []byte("value"))
 		tx.bufferDelete(dropKey)
 
-		require.NoError(t, tx.flushBufferedWrites(singleBatchWriter(tx.badgerTx)))
+		require.NoError(t, tx.flushBufferedWrites(t.Context(), singleBatchWriter(tx.badgerTx)))
 		require.Empty(t, tx.pendingWrites)
 		require.Empty(t, tx.pendingDeletes)
 
@@ -1184,7 +1184,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		defer tx.Rollback()
 
 		tx.bufferDelete([]byte{})
-		err = tx.flushBufferedWrites(singleBatchWriter(tx.badgerTx))
+		err = tx.flushBufferedWrites(t.Context(), singleBatchWriter(tx.badgerTx))
 		require.Error(t, err)
 	})
 
@@ -1198,7 +1198,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		require.NoError(t, err)
 		defer tx.Rollback()
 
-		result, err := tx.engine.executeNodeDeletion(tx.staged(), nodeID, nil)
+		result, err := tx.engine.executeNodeDeletion(t.Context(), tx.staged(), nodeID, nil)
 		count, ids := int64(len(result.ids)), result.ids
 		require.NoError(t, err)
 		require.Zero(t, count)
@@ -1696,7 +1696,7 @@ func TestTransaction_IncidentEdgesSkipNonEdgeKeys(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 	tx.mu.Lock()
-	edges, err := tx.incidentEdgesLocked(start)
+	edges, err := tx.incidentEdgesLocked(context.Background(), start)
 	tx.mu.Unlock()
 	require.NoError(t, err)
 	require.Len(t, edges, 1)

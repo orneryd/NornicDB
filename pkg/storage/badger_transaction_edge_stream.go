@@ -10,6 +10,9 @@ import (
 // GetEdgesByType merges them, without collecting the type into a slice.
 // Committed reads are scoped to the transaction's database. Visited edges are
 // copies, so the callback may keep them.
+// Admission follows IncidentEdges: the caller's context ends a wait for the
+// transaction's lock, and a closed transaction reports ErrTransactionClosed
+// first.
 func (tx *BadgerTransaction) StreamEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
 	return tx.streamEdgesByType(ctx, edgeType, visibleRead, visit)
 }
@@ -21,7 +24,12 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	tx.mu.Lock()
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return err
+	}
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err

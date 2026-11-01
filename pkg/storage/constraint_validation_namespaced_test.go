@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -85,7 +86,7 @@ func TestMonster531CompositeUniqueStorage(t *testing.T) {
 	require.NoError(t, err)
 	_, err = engine.CreateNode(node("test:null2", int64(1), nil))
 	require.NoError(t, err)
-	require.NoError(t, ValidateConstraintOnCreationForEngine(NewNamespacedEngine(engine, "test"), constraint))
+	require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), NewNamespacedEngine(engine, "test"), constraint))
 
 	transaction, err := engine.BeginTransaction()
 	require.NoError(t, err)
@@ -145,7 +146,7 @@ func TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine(t *testi
 	// 2. Force the namespace-aware rebuild path. Pre-fix, this populated
 	//    the cache with unprefixed IDs because AllNodes-via-the-namespaced-
 	//    engine returns user-prefix-stripped nodes.
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(ns, schema))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), ns, schema))
 
 	// 3. The cache must hold the storage-prefixed ID. CheckUniqueConstraint
 	//    against the SAME node's storage ID must NOT raise a violation —
@@ -153,10 +154,10 @@ func TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine(t *testi
 	storageID := EnsureNodeIDDatabasePrefixForEngine(ns, "n-1")
 	require.NoError(
 		t,
-		schema.CheckUniqueConstraint("T", "uid", "abc-123", storageID),
+		schema.CheckUniqueConstraint(context.Background(), "T", "uid", "abc-123", storageID),
 		"false UNIQUE on the matched node itself: see consumer-pinned-error-contract-plan.md §2.3",
 	)
 
 	// 4. A different storage ID claiming the same value MUST still violate.
-	require.Error(t, schema.CheckUniqueConstraint("T", "uid", "abc-123", NodeID(namespace+":n-2")))
+	require.Error(t, schema.CheckUniqueConstraint(context.Background(), "T", "uid", "abc-123", NodeID(namespace+":n-2")))
 }

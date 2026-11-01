@@ -345,8 +345,17 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 		}
 		switch outcome {
 		case "committed":
-			// Its storage committed before the failure (a panic after the
-			// commit): the write stays committed.
+			// Native truth does not erase a structured terminal failure (WAL
+			// bookkeeping or post-commit completion). The canonical outcome
+			// composition records that truth, including a contradictory child's
+			// rollback claim, so committed work can never become retryable.
+			if nornicerrors.HasTerminalOutcome(err) {
+				var outcomes nornicerrors.TerminalOutcomes
+				outcomes, _ = outcomes.RecordCommit()
+				return outcomes.Retain(err)
+			}
+			// A generic lost acknowledgement with confirmed commit retains its
+			// existing successful contract; panics still propagate after cleanup.
 			return nil
 		case StateUnknown:
 			return fmt.Errorf("%w: %w", ErrCommitOutcomeUnknown, err)

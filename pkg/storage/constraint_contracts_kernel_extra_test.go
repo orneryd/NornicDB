@@ -59,14 +59,14 @@ func TestConstraintContracts_ValidateKernel_DeterministicOrderAndParity(t *testi
 
 	// Node path: target order follows label order, so alpha (Person) is the
 	// first violated contract.
-	err = tx.validateConstraintContractsForNodeLocked(node)
+	err = tx.validateConstraintContractsForNodeLocked(t.Context(), node)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "constraint contract alpha_rule violated")
 	require.NotContains(t, err.Error(), "beta_rule")
 
 	// Edge path: a single target in the schema's name order, so edge_alpha is
 	// reported first — identical wrapping through the shared kernel.
-	err = tx.validateConstraintContractsForEdgeLocked(edge)
+	err = tx.validateConstraintContractsForEdgeLocked(t.Context(), edge)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "constraint contract edge_alpha violated")
 	require.NotContains(t, err.Error(), "edge_beta")
@@ -74,7 +74,7 @@ func TestConstraintContracts_ValidateKernel_DeterministicOrderAndParity(t *testi
 	// Reversing the label order flips the reported contract: the same kernel,
 	// the same deterministic rule.
 	node.Labels = []string{"Employee", "Person"}
-	err = tx.validateConstraintContractsForNodeLocked(node)
+	err = tx.validateConstraintContractsForNodeLocked(t.Context(), node)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "constraint contract beta_rule violated")
 	require.NotContains(t, err.Error(), "alpha_rule")
@@ -119,7 +119,7 @@ func BenchmarkConstraintContracts_ValidateLocked_Node(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := tx.validateConstraintContractsForNodeLocked(node); err != nil {
+		if err := tx.validateConstraintContractsForNodeLocked(b.Context(), node); err != nil {
 			b.Fatal(err)
 		}
 	}

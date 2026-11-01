@@ -239,10 +239,14 @@ func pipelineUnwindAlias(clause string) string {
 // same statement is also deleting that edge (e.g.
 // "MATCH (a)-[r]->(b) DELETE a, r"); edgeIDs holds every edge this
 // statement is about to remove, so those are subtracted before the check.
-func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
+//
+// The check is a bulk read that runs before the statement is accepted, so it
+// carries the request's own context: a canceled or expired request stops the
+// read and fails the statement instead of running it to completion.
+func validateNoResidualRelationships(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
 	beingDeleted := deletingEdgeSet(edgeIDs)
 	for _, nodeID := range nodeIDs {
-		connected, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		connected, err := nodeHasResidualRelationships(ctx, store, nodeID, beingDeleted)
 		if err != nil {
 			return err
 		}
@@ -258,11 +262,11 @@ func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.Nod
 // deletes them for now, and the transaction's commit fails unless a later
 // clause deletes those relationships, as in Neo4j
 // (storage.ConnectedNodeDeleter).
-func connectedDeleteTargets(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
+func connectedDeleteTargets(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
 	beingDeleted := deletingEdgeSet(edgeIDs)
 	var connected map[storage.NodeID]struct{}
 	for _, nodeID := range nodeIDs {
-		residual, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		residual, err := nodeHasResidualRelationships(ctx, store, nodeID, beingDeleted)
 		if err != nil {
 			return nil, err
 		}
@@ -286,8 +290,8 @@ func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
 
 // nodeHasResidualRelationships reports whether a relationship other than
 // those beingDeleted connects nodeID (connectingRelationships).
-func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
-	connecting, err := connectingRelationships(store, nodeID)
+func nodeHasResidualRelationships(ctx context.Context, store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+	connecting, err := connectingRelationships(ctx, store, nodeID)
 	if err != nil {
 		return false, err
 	}
@@ -307,12 +311,14 @@ func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, b
 // non-DETACH DELETE removed a node whose only relationships were hidden, as
 // in Neo4j it fails with DeleteConnectedNode for any relationship. Stores run
 // without a transaction (composite and remote databases) list what their
-// reads return.
-func connectingRelationships(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+// reads return. Both routes are bulk reads the statement runs before it is
+// accepted, so ctx is the request's: the caller's cancellation stops the list
+// (native or fallback) rather than being replaced by a background lifetime.
+func connectingRelationships(ctx context.Context, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if lister, ok := store.(storage.IncidentEdgeLister); ok {
-		return lister.IncidentEdges(nodeID)
+		return lister.IncidentEdges(ctx, nodeID)
 	}
-	return undirectedIncidentEdges(store, nodeID)
+	return undirectedIncidentEdges(ctx, store, nodeID)
 }
 
 // residualRelationshipDeleteError builds the error returned when a

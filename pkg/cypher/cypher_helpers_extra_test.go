@@ -2275,60 +2275,58 @@ func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
 	err = eng.CreateEdge(&storage.Edge{ID: "e2", StartNode: "n2", EndNode: "n3", Type: "LIKES"})
 	require.NoError(t, err)
 
-	n1, err := eng.GetNode("n1")
-	require.NoError(t, err)
-	n2, err := eng.GetNode("n2")
-	require.NoError(t, err)
-	n3, err := eng.GetNode("n3")
-	require.NoError(t, err)
+	// Exercise the live row-predicate/subquery traversal through public WHERE,
+	// rather than keeping an otherwise unreachable relationship evaluator alive.
+	for _, parser := range apocAlgorithmParsers() {
+		t.Run(parser.name, func(t *testing.T) {
+			t.Cleanup(parser.setup())
+			for _, tc := range []struct {
+				pattern string
+				age     int64
+				want    int64
+			}{
+				{"(n)-[:KNOWS]->()", 40, 1},
+				{"(n)-[:LIKES]->()", 40, 0},
+				{"(n)<-[:KNOWS]-()", 30, 1},
+				{"(n)-[:ANY]-()", 30, 0},
+				{"(n)-[:KNOWS]->()-[:LIKES]->()", 40, 1},
+				{"(n:Person)-[:KNOWS]->()-[:LIKES]->()", 40, 1},
+				{"(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()", 40, 1},
+				{"(n)-[:KNOWS]->()-[:MISSING]->()", 40, 0},
+				{"(n)<-[:LIKES|FOLLOWS]-()<-[]-()", 20, 1},
+				{"(n)<-[:MISSING]-()", 20, 0},
+				{"(n)-[]->()", 40, 1},
+				{"(n)-[:KNOWS]-()", 30, 1},
+			} {
+				result, err := exec.Execute(t.Context(), "MATCH (n:Person) WHERE n.age = $age AND "+tc.pattern+" RETURN count(n) AS c", map[string]interface{}{"age": tc.age})
+				require.NoError(t, err, tc.pattern)
+				require.Equal(t, [][]interface{}{{tc.want}}, result.Rows, tc.pattern)
+			}
+			_, err := exec.Execute(t.Context(), "MATCH (n:Person) WHERE (x)-[:KNOWS]->() RETURN n", nil)
+			require.Error(t, err, "an unbound source is rejected by the live statement owner")
+		})
+	}
+	// Inspect the canonical live parse product too: successful traversal alone
+	// would not prove that the unused alternative type was retained.
+	outgoing := exec.parseTraversalPattern(t.Context(), "(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()")
+	require.NotNil(t, outgoing)
+	require.Len(t, outgoing.Segments, 2)
+	assert.Equal(t, "outgoing", outgoing.Segments[0].Relationship.Direction)
+	assert.ElementsMatch(t, []string{"KNOWS", "FRIEND"}, outgoing.Segments[0].Relationship.Types)
+	assert.Equal(t, "outgoing", outgoing.Segments[1].Relationship.Direction)
+	assert.Equal(t, []string{"LIKES"}, outgoing.Segments[1].Relationship.Types)
+	incoming := exec.parseTraversalPattern(t.Context(), "(n)<-[:LIKES|FOLLOWS]-()<-[]-()")
+	require.NotNil(t, incoming)
+	require.Len(t, incoming.Segments, 2)
+	assert.Equal(t, "incoming", incoming.Segments[0].Relationship.Direction)
+	assert.ElementsMatch(t, []string{"LIKES", "FOLLOWS"}, incoming.Segments[0].Relationship.Types)
+	assert.Equal(t, "incoming", incoming.Segments[1].Relationship.Direction)
+	assert.Empty(t, incoming.Segments[1].Relationship.Types)
+	// Live structural reader keeps malformed-input and directional/type cases.
+	for _, malformed := range []string{"(n)-[:BROKEN->()", "(n)<-[:BROKEN-()"} {
+		require.Nil(t, exec.parseTraversalPattern(t.Context(), malformed), malformed)
+	}
 
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(x)-[:KNOWS]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(n)-[:KNOWS]->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(n)-[:LIKES]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n2, "n", "(n)<-[:KNOWS]-()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n2, "n", "(n)-[:ANY]-()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
-
-	assert.False(t, exec.checkChainedPattern(context.Background(), n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
-	assert.True(t, exec.checkChainedPattern(context.Background(), n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
-
-	hops := exec.parseRelationshipHops("(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()", "n")
-	require.Len(t, hops, 2)
-	assert.True(t, hops[0].outgoing)
-	assert.ElementsMatch(t, []string{"KNOWS", "FRIEND"}, hops[0].relTypes)
-	assert.True(t, hops[1].outgoing)
-	assert.ElementsMatch(t, []string{"LIKES"}, hops[1].relTypes)
-	assert.Empty(t, exec.parseRelationshipHops("(n)-[:BROKEN->()", "n"))
-	incomingHops := exec.parseRelationshipHops("(n)<-[:LIKES|FOLLOWS]-()<-[]-()", "n")
-	require.Len(t, incomingHops, 2)
-	assert.False(t, incomingHops[0].outgoing)
-	assert.ElementsMatch(t, []string{"LIKES", "FOLLOWS"}, incomingHops[0].relTypes)
-	assert.False(t, incomingHops[1].outgoing)
-	assert.Empty(t, incomingHops[1].relTypes)
-	assert.Empty(t, exec.parseRelationshipHops("(n)<-[:BROKEN-()", "n"))
-
-	assert.True(t, exec.traverseChain(context.Background(), n1, []relationshipHop{
-		{relTypes: []string{"KNOWS"}, outgoing: true},
-		{relTypes: []string{"LIKES"}, outgoing: true},
-	}, 0))
-	assert.False(t, exec.traverseChain(context.Background(), n1, []relationshipHop{
-		{relTypes: []string{"KNOWS"}, outgoing: true},
-		{relTypes: []string{"MISSING"}, outgoing: true},
-	}, 0))
-
-	// Incoming traversal branch.
-	assert.True(t, exec.traverseChain(context.Background(), n3, []relationshipHop{
-		{relTypes: []string{"LIKES"}, outgoing: false},
-		{relTypes: []string{"KNOWS"}, outgoing: false},
-	}, 0))
-	assert.False(t, exec.traverseChain(context.Background(), n3, []relationshipHop{
-		{relTypes: []string{"MISSING"}, outgoing: false},
-	}, 0))
-
-	// No type filter branch.
-	assert.True(t, exec.traverseChain(context.Background(), n1, []relationshipHop{
-		{relTypes: nil, outgoing: true},
-	}, 0))
 }
 
 func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T) {
@@ -2439,9 +2437,13 @@ func TestCypherHelpers_ExtractionHelpers_Branches(t *testing.T) {
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("id(n)"))
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("id(n.name)"))
 
-	assert.Equal(t, "b", exec.extractTargetVariable("(a)-[:KNOWS]->(b:Person)", "a"))
-	assert.Equal(t, "a", exec.extractTargetVariable("(a:Person)<-[:KNOWS]-(b)", "b"))
-	assert.Equal(t, "", exec.extractTargetVariable("(a)-[:KNOWS]-", "a"))
+	forward := exec.parseTraversalPattern(t.Context(), "(a)-[:KNOWS]->(b:Person)")
+	require.NotNil(t, forward)
+	assert.Equal(t, "b", forward.EndNode.variable)
+	incoming := exec.parseTraversalPattern(t.Context(), "(a:Person)<-[:KNOWS]-(b)")
+	require.NotNil(t, incoming)
+	assert.Equal(t, "a", incoming.StartNode.variable)
+	require.Nil(t, exec.parseTraversalPattern(t.Context(), "(a)-[:KNOWS]-"))
 
 	got := dedupeNonEmpty([]string{"a", "", "a", " b ", "b"}, []string{"", "c", "a"})
 	assert.Equal(t, []string{"a", "b", "c"}, got)

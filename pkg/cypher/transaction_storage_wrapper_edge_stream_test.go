@@ -44,7 +44,7 @@ func TestTransactionStorageWrapper_StreamEdgesByType(t *testing.T) {
 	sort.Strings(got)
 	require.Equal(t, []string{"e1:x->y", "e2:y->x"}, got)
 
-	err = storage.ValidateConstraintOnCreationForEngine(wrapper, storage.Constraint{
+	err = storage.ValidateConstraintOnCreationForEngine(context.Background(), wrapper, storage.Constraint{
 		Name: "u", Type: storage.ConstraintUnique, EntityType: storage.ConstraintEntityRelationship, Label: "REL", Properties: []string{"k"},
 	})
 	require.Error(t, err, "the pending edge duplicates the committed one")

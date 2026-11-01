@@ -67,6 +67,19 @@ func guardedRejectionCapture(ctx context.Context, ok bool) {
 
 func UseGuardedRejectionCapture() { guardedRejectionCapture(nil, true) }
 
+// reassignedCapture is the same accepted shape when the result replaces the
+// request it came from: the cell now holds two stored values, and the capture,
+// not either store, is where the accepted one leaves the function.
+func reassignedCapture(ctx context.Context, fail bool) {
+	ctx, err := maybeCtx(fail)
+	if err != nil {
+		return
+	}
+	go func() { _ = sink(ctx) }()
+}
+
+func UseReassignedCapture() { reassignedCapture(context.Background(), false) }
+
 // ignoredCapture captures the result without its error: the nil error return
 // still reaches sink.
 func ignoredCapture(fail bool) {
@@ -190,6 +203,19 @@ func TestMayBeNilGuardedCapture(t *testing.T) {
 		for _, want := range []string{"proof: immutable captured cell", "proof: return with a non-nil error excluded by the caller's check"} {
 			if !strings.Contains(reasons, want) {
 				t.Errorf("%s: silent for the wrong reason, want %q in %v", silent, want, why[silent])
+			}
+		}
+	}
+	// The accepted context that replaced its own request keeps its checked
+	// result: two stores reach the cell, and the one that reaches the capture
+	// is judged with the nil tests and checked errors that hold there.
+	if w, reported := got["reassignedCapture"]; reported {
+		t.Errorf("reassignedCapture: guarded capture reported as nil: %s", w)
+	} else {
+		reasons := strings.Join(why["reassignedCapture"], " ")
+		for _, want := range []string{"proof: reaching store before the capture of ctx of census.fixture.reassignedCapture", "proof: return with a non-nil error excluded by the caller's check"} {
+			if !strings.Contains(reasons, want) {
+				t.Errorf("reassignedCapture: silent for the wrong reason, want %q in %v", want, why["reassignedCapture"])
 			}
 		}
 	}

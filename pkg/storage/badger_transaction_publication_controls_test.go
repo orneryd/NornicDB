@@ -67,12 +67,12 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 // the same logical-reservation window as the regression.
 func stageReservedPublication(t *testing.T, peer *BadgerTransaction) {
 	t.Helper()
-	require.NoError(t, peer.validateSnapshotIsolationConflicts())
+	require.NoError(t, peer.validateSnapshotIsolationConflicts(t.Context()))
 	version, err := peer.engine.allocateMVCCVersion(peer.badgerTx, peer.namespace, time.Now())
 	require.NoError(t, err)
 	peer.CommitVersion = version
-	require.NoError(t, peer.engine.materializeMVCCCommit(singleBatchWriter(peer.badgerTx), version, peer.operations))
-	require.NoError(t, peer.flushBufferedWrites(singleBatchWriter(peer.badgerTx)))
+	require.NoError(t, peer.engine.materializeMVCCCommit(t.Context(), singleBatchWriter(peer.badgerTx), version, peer.operations))
+	require.NoError(t, peer.flushBufferedWrites(t.Context(), singleBatchWriter(peer.badgerTx)))
 }
 
 func publishReservedPublication(t *testing.T, peer *BadgerTransaction) {

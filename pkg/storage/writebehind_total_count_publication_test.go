@@ -241,7 +241,7 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 		}
 	}
 	require.True(t, found, "buffered ACK must have an actual recoverable WAL payload before crash")
-	marker, err := engine.observeBufferedCommitReceipt(bufferedReceiptRead{txID: tx.ID})
+	marker, err := engine.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{txID: tx.ID})
 	require.NoError(t, err)
 	require.False(t, marker.present, "crash fixture must not be durably replayed")
 	crashClose(t, engine, wal)

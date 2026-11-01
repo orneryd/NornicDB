@@ -41,15 +41,15 @@ func TestConstraintContracts_CurrentStateHelpers(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, e)
 
-	out, err := tx.currentDirectedEdgesLocked("test:a", adjacencyOutgoing)
+	out, err := tx.currentDirectedEdgesLocked(t.Context(), "test:a", adjacencyOutgoing)
 	require.NoError(t, err)
 	require.NotEmpty(t, out)
 
-	in, err := tx.currentDirectedEdgesLocked("test:b", adjacencyIncoming)
+	in, err := tx.currentDirectedEdgesLocked(t.Context(), "test:b", adjacencyIncoming)
 	require.NoError(t, err)
 	require.NotEmpty(t, in)
 
-	adj, err := tx.currentAdjacentEdgesLocked("test:a")
+	adj, err := tx.currentAdjacentEdgesLocked(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.NotEmpty(t, adj)
 }
@@ -73,44 +73,44 @@ func TestConstraintContracts_EvaluateExpressions_Locked(t *testing.T) {
 	edge, err := tx.currentEdgeLocked("test:works")
 	require.NoError(t, err)
 
-	ok, err := tx.evaluateNodeConstraintContractExpressionLocked(node, "n.team IN ['core', 'ops']")
+	ok, err := tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "n.team IN ['core', 'ops']")
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(node, "COUNT { (n)-[:WORKS_WITH]->(:Team) } >= 1")
+	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "COUNT { (n)-[:WORKS_WITH]->(:Team) } >= 1")
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(node, "NOT EXISTS { (n)-[:MISSING]->(:Team) }")
+	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "NOT EXISTS { (n)-[:MISSING]->(:Team) }")
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(node, "not-a-supported-predicate")
+	ok, err = tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "not-a-supported-predicate")
 	require.Error(t, err)
 	require.False(t, ok)
 
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "r.kind IN ['peer', 'lead']")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "r.kind IN ['peer', 'lead']")
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "startNode(r) <> endNode(r)")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "startNode(r) <> endNode(r)")
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "startNode(r).team = endNode(r).team")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "startNode(r).team = endNode(r).team")
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "r.weight >= 1")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "r.weight >= 1")
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, "unsupported relationship expr")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, "unsupported relationship expr")
 	require.Error(t, err)
 	require.False(t, ok)
 
 	badEdge := &Edge{ID: "test:bad", StartNode: "test:missing", EndNode: "test:right", Type: "WORKS_WITH"}
-	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(badEdge, "startNode(r).team = endNode(r).team")
+	ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), badEdge, "startNode(r).team = endNode(r).team")
 	require.Error(t, err)
 	require.False(t, ok)
 }
@@ -157,14 +157,14 @@ func TestConstraintContracts_ValidateLocked_SuccessAndViolation(t *testing.T) {
 
 	node, err := tx.currentNodeLocked("test:p1")
 	require.NoError(t, err)
-	require.NoError(t, tx.validateConstraintContractsForNodeLocked(node))
+	require.NoError(t, tx.validateConstraintContractsForNodeLocked(t.Context(), node))
 
 	edge, err := tx.currentEdgeLocked("test:r1")
 	require.NoError(t, err)
-	require.NoError(t, tx.validateConstraintContractsForEdgeLocked(edge))
+	require.NoError(t, tx.validateConstraintContractsForEdgeLocked(t.Context(), edge))
 
 	node.Properties["team"] = "other"
-	err = tx.validateConstraintContractsForNodeLocked(node)
+	err = tx.validateConstraintContractsForNodeLocked(t.Context(), node)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "constraint contract person_team_allowed violated")
 
@@ -172,7 +172,7 @@ func TestConstraintContracts_ValidateLocked_SuccessAndViolation(t *testing.T) {
 	edge.EndNode = "test:p2"
 	// Force violation by changing endpoint team through pending node shadow.
 	tx.pendingNodes["test:p2"] = &Node{ID: "test:p2", Labels: []string{"Person"}, Properties: map[string]any{"team": "other"}}
-	err = tx.validateConstraintContractsForEdgeLocked(edge)
+	err = tx.validateConstraintContractsForEdgeLocked(t.Context(), edge)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "constraint contract same_team_rel violated")
 }

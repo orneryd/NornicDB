@@ -86,8 +86,8 @@ func consumerHits(t *testing.T, svc *search.Service, word string) int {
 }
 
 // newConsumerVectorStore stores one indexed node. The search service reads
-// through the returned barrier, as does an executor built on it: the barrier
-// pauses whichever read decides the older statement's index change.
+// through the returned barrier: the barrier pauses whichever refresh read
+// decides the older statement's index change.
 func newConsumerVectorStore(t *testing.T, observed func(*storage.Node, error) bool) (storage.Engine, *consumerObservationBarrier, *search.Service) {
 	t.Helper()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
@@ -143,7 +143,11 @@ func TestCypherDelayedSetCannotOverrideNewerWrite(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store, barrier, svc := newConsumerVectorStore(t, consumerContent(tc.observed))
-			older := NewStorageExecutor(barrier)
+			// The older statement runs its supported atomic write path: the
+			// engine's native transaction owns its reads and its write. The
+			// barrier stays the search service's engine, so the paused read is
+			// still the older statement's own post-commit refresh read.
+			older := NewStorageExecutor(store)
 			older.SetSearchService(svc)
 			newer := NewStorageExecutor(store)
 			newer.SetSearchService(svc)

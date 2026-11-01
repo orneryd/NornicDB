@@ -19,12 +19,12 @@ func TestTransactionSnapshotExcludesReservedUnpublishedDelete(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
 	require.NoError(t, peer.DeleteEdge(edgeID))
-	require.NoError(t, peer.validateSnapshotIsolationConflicts())
+	require.NoError(t, peer.validateSnapshotIsolationConflicts(t.Context()))
 	version, err := engine.allocateMVCCVersion(peer.badgerTx, peer.namespace, time.Now())
 	require.NoError(t, err)
 	peer.CommitVersion = version
-	require.NoError(t, engine.materializeMVCCCommit(singleBatchWriter(peer.badgerTx), version, peer.operations))
-	require.NoError(t, peer.flushBufferedWrites(singleBatchWriter(peer.badgerTx)))
+	require.NoError(t, engine.materializeMVCCCommit(t.Context(), singleBatchWriter(peer.badgerTx), version, peer.operations))
+	require.NoError(t, peer.flushBufferedWrites(t.Context(), singleBatchWriter(peer.badgerTx)))
 
 	reader, err := engine.BeginTransaction()
 	require.NoError(t, err)

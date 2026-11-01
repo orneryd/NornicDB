@@ -1191,11 +1191,11 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 		}
 
 		// Merge constraints
-		constraints := constituentSchema.GetConstraints()
+		constraints, _ := constituentSchema.GetConstraints(context.Background()) // context-free schema composition cannot cancel
 		for i := range constraints {
 			constraint := &constraints[i]
 			// Add constraint if not already present (by name)
-			mergedConstraints := mergedSchema.GetConstraints()
+			mergedConstraints, _ := mergedSchema.GetConstraints(context.Background()) // context-free schema composition cannot cancel
 			found := false
 			for j := range mergedConstraints {
 				existing := &mergedConstraints[j]
@@ -1218,7 +1218,7 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 		allConstraints := constituentSchema.GetAllConstraints()
 		for i := range allConstraints {
 			constraint := &allConstraints[i]
-			mergedConstraints := mergedSchema.GetConstraints()
+			mergedConstraints, _ := mergedSchema.GetConstraints(context.Background()) // context-free schema composition cannot cancel
 			found := false
 			for j := range mergedConstraints {
 				existing := &mergedConstraints[j]

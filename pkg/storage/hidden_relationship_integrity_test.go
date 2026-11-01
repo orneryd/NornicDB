@@ -165,7 +165,7 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 			require.NoError(t, err)
 
 			require.NoError(t, deleteInTransaction(t, engine, func(tx *BadgerTransaction) error {
-				edges, err := tx.IncidentEdges("test:hub")
+				edges, err := tx.IncidentEdges(t.Context(), "test:hub")
 				require.NoError(t, err)
 				require.Equal(t, []string{"test:e1", "test:e2", "test:e3"}, edgeIDLister(t)(edges, nil))
 				return tx.DeleteGraphNode("test:hub", CascadeEdges)
@@ -176,7 +176,7 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 				tx, err := engine.BeginTransaction()
 				require.NoError(t, err)
 				incident := func(id NodeID) []string {
-					edges, err := tx.IncidentEdges(id)
+					edges, err := tx.IncidentEdges(t.Context(), id)
 					return edgeIDLister(t)(edges, err)
 				}
 				require.Equal(t, []string{"test:e4"}, incident("test:peer1"))

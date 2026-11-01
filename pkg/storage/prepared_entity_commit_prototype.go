@@ -138,7 +138,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		// set, then the buffer generations and the physical marker under its
 		// retirement exclusion. An absent receipt is staged under the key the
 		// observation already built.
-		observation, err := tx.engine.observeBufferedCommitReceipt(bufferedReceiptRead{
+		observation, err := tx.engine.observeBufferedCommitReceipt(commitPreparationLifetime(ctx), bufferedReceiptRead{
 			namespace: tx.namespace,
 			logicalID: logicalID,
 			native:    tx.badgerTx,
@@ -170,6 +170,11 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		return &PreparedEntityCommit{engine: engine, mode: mode, namespace: namespace, logicalID: logicalID, decide: make(chan bool, 1), finished: done, terminal: CommitOutcome{State: CommitApplied}}, nil
 	}
 	for _, op := range request.Operations {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if err := ApplyEntityChange(tx, op, func(updateRequest NodeUpdateRequest) error {
 			updateRequest.Policy = StoredNodeImages
 			return tx.UpdateGraphNode(updateRequest)
@@ -195,30 +200,45 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			if prepared != nil && prepared.afterPublication != nil {
 				prepared.afterPublication()
 			}
-		}, prepare: func() error {
+		}, prepare: func(preparationContext context.Context) error {
 			if tx.schemaRuntime != nil || tx.knowledgeSchemaDirty {
 				return ErrInvalidData
 			}
-			changes, err := tx.engine.captureStoredEntityChanges(storedEntityCapture{staged: tx})
+			changes, err := tx.engine.captureStoredEntityChanges(preparationContext, storedEntityCapture{staged: tx})
 			if err != nil {
 				return err
 			}
 			operations := append([]Operation(nil), tx.operations...)
 			for i := range operations {
+				if err := preparationContext.Err(); err != nil {
+					return err
+				}
 				operations[i].snapshotForNotification()
 			}
-			nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
+			nodes, edges, endpoints, err := tx.pendingEntityAuthorityKeysLocked(preparationContext)
+			if err != nil {
+				return err
+			}
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
 			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
 			prepared.retainAuthority = func(admission context.Context) (func(), error) {
-				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, entityCommitKeys(nodes, edges, endpoints))
+				keyContext := commitPreparationLifetime(admission)
+				entityKeys, err := entityCommitKeys(keyContext, nodes, edges, endpoints)
+				if err != nil {
+					return nil, err
+				}
+				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, entityKeys)
 				if err != nil {
 					return nil, err
 				}
 				var nodeImages []*Node
 				var edgeImages []*Edge
 				for _, op := range operations {
+					if err := keyContext.Err(); err != nil {
+						releaseEntities()
+						return nil, err
+					}
 					if op.Node != nil {
 						nodeImages = append(nodeImages, op.Node)
 					}
@@ -231,13 +251,6 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 					if op.OldEdge != nil {
 						edgeImages = append(edgeImages, op.OldEdge)
 					}
-				}
-				// RetainAcceptedAuthority(nil) is explicitly non-cancellable:
-				// detach the existing native owner only for key preparation, while
-				// preserving nil admission for the established lock owner.
-				keyContext := admission
-				if keyContext == nil {
-					keyContext = context.WithoutCancel(tx.engine.work.Context())
 				}
 				valueKeys, err := schema.appendConstraintValueKeys(keyContext, nil, nodeImages, edgeImages)
 				if err != nil {

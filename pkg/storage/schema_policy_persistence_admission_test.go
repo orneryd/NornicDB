@@ -342,8 +342,8 @@ func TestPolicyRejectedMutationKeepsDerivedSchemaState(t *testing.T) {
 	require.NoError(t, schema.AddPropertyIndex("doc_name", "Doc", []string{"name"}))
 	require.NoError(t, schema.CreatePromotionPolicy(policyPersistenceFixturePolicy("published")))
 
-	schema.ApplyUniqueValue("Doc", "id", "kept", "policy:1", ValidatedUniqueClaim)
-	unique := schema.uniqueConstraints["Doc:id"]
+	schema.ApplyUniqueValue(context.Background(), "Doc", "id", "kept", "policy:1", ValidatedUniqueClaim)
+	unique := schema.uniqueConstraints[nodePropertyKey{label: "Doc", property: "id"}]
 	require.NotNil(t, unique)
 	unique.mu.Lock()
 	unique.valuesCacheComplete = true
@@ -367,7 +367,7 @@ func TestPolicyRejectedMutationKeepsDerivedSchemaState(t *testing.T) {
 	require.True(t, schema.mu.TryLock(), "a rejected change must release the schema lock")
 	schema.mu.Unlock()
 
-	require.Same(t, unique, schema.uniqueConstraints["Doc:id"],
+	require.Same(t, unique, schema.uniqueConstraints[nodePropertyKey{label: "Doc", property: "id"}],
 		"a rejected change must keep the unique constraint and its value cache")
 	unique.mu.RLock()
 	value, kept := unique.values["kept"]
@@ -492,8 +492,8 @@ func newConstraintRuntimeCacheFixture(t *testing.T) *constraintRuntimeCacheFixtu
 
 	schema := NewSchemaManager()
 	require.NoError(t, schema.AddUniqueConstraint("existing_id", "Doc", "id"))
-	schema.ApplyUniqueValue("Doc", "id", "kept", "constraint:1", ValidatedUniqueClaim)
-	unique := schema.uniqueConstraints["Doc:id"]
+	schema.ApplyUniqueValue(context.Background(), "Doc", "id", "kept", "constraint:1", ValidatedUniqueClaim)
+	unique := schema.uniqueConstraints[nodePropertyKey{label: "Doc", property: "id"}]
 	require.NotNil(t, unique)
 	unique.mu.Lock()
 	unique.valuesCacheComplete = true
@@ -515,7 +515,7 @@ func (f *constraintRuntimeCacheFixture) requireUnchanged(t *testing.T, before *S
 	t.Helper()
 
 	require.Equal(t, before, f.schema.ExportDefinition(), "a rejected constraint must not become the readable schema")
-	require.Same(t, f.unique, f.schema.uniqueConstraints["Doc:id"],
+	require.Same(t, f.unique, f.schema.uniqueConstraints[nodePropertyKey{label: "Doc", property: "id"}],
 		"a rejected constraint add must keep the live unique constraint and its value cache")
 	nodeID, valueFound, constrained, complete, uniqueLookupErr1 := f.schema.LookupUniqueConstraintValue(t.Context(), "Doc", "id", "kept")
 	if uniqueLookupErr1 != nil {

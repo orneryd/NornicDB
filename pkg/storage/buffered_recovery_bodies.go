@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"github.com/dgraph-io/badger/v4"
 )
@@ -11,7 +12,10 @@ import (
 // operations. Read prior bodies before applying raw writes/deletes: node deletion
 // also needs the committed relationship bodies for adjacency/history.
 func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *bufferedCommit, writes map[string][]byte, deletes map[string]bool) error {
-	states := newCommitStates(commit.ops)
+	states, err := newCommitStates(context.Background(), commit.ops)
+	if err != nil {
+		return err
+	}
 	read := func(key []byte) ([]byte, error) {
 		item, err := txn.Get(key)
 		if err == badger.ErrKeyNotFound {

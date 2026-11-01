@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -98,7 +99,8 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.constraintContracts) > 0 {
 		def.ConstraintContracts = make([]ConstraintContract, 0, len(sm.constraintContracts))
 		for _, contract := range sm.constraintContracts {
-			def.ConstraintContracts = append(def.ConstraintContracts, cloneConstraintContract(contract))
+			cloned, _ := cloneConstraintContract(context.Background(), contract) // native schema export cannot cancel
+			def.ConstraintContracts = append(def.ConstraintContracts, cloned)
 		}
 		sort.Slice(def.ConstraintContracts, func(i, j int) bool {
 			return def.ConstraintContracts[i].Name < def.ConstraintContracts[j].Name
@@ -303,7 +305,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	defer sm.publishTokenSnapshotLocked(nil, nil)
 
 	// Reset all collections.
-	sm.uniqueConstraints = make(map[string]*UniqueConstraint)
+	sm.uniqueConstraints = make(map[nodePropertyKey]*UniqueConstraint)
 	sm.constraints = make(map[string]Constraint)
 	sm.constraintContracts = make(map[string]ConstraintContract)
 	sm.propertyTypeConstraints = make(map[string]PropertyTypeConstraint)
@@ -319,8 +321,8 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 		cc := cloneConstraint(c)
 		sm.constraints[cc.Name] = cc
 
-		if cc.Type == ConstraintUnique && len(cc.Properties) == 1 {
-			key := cc.Label + ":" + cc.Properties[0]
+		if cc.Type == ConstraintUnique && cc.EffectiveEntityType() == ConstraintEntityNode && len(cc.Properties) == 1 {
+			key := nodePropertyKey{label: cc.Label, property: cc.Properties[0]}
 			sm.uniqueConstraints[key] = &UniqueConstraint{
 				Name:     cc.Name,
 				Label:    cc.Label,
@@ -331,7 +333,8 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	}
 
 	for _, contract := range def.ConstraintContracts {
-		sm.constraintContracts[contract.Name] = cloneConstraintContract(contract)
+		cloned, _ := cloneConstraintContract(context.Background(), contract) // native metadata mutation cannot cancel
+		sm.constraintContracts[contract.Name] = cloned
 	}
 
 	// Property type constraints.

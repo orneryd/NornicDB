@@ -90,7 +90,7 @@ func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, rem
 		if users != nil && !sameSystemStore(r.storage, users.storage) {
 			return storage.ErrCrossNamespaceTransaction
 		}
-		records, err := roleOwnedRecords(view, oldName, newName)
+		records, err := roleOwnedRecords(ctx, view, oldName, newName)
 		if err != nil {
 			return err
 		}
@@ -159,17 +159,26 @@ type roleOwnedRecord struct {
 
 // roleOwnedRecords is the single enumerator for deletion and rename. Adding a
 // record type here includes it in both operations. The role node is last, so
-// its removal and every dependent record change commit together.
-func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwnedRecord, error) {
+// its removal and every dependent record change commit together. Every label
+// read and the conversion of the nodes it returned run on ctx, the caller's
+// lifetime: a canceled role change stops at the storage reader, and one
+// canceled after a read returned stops at that label's first node, before any
+// record changes.
+func roleOwnedRecords(ctx context.Context, view storage.Engine, oldName, newName string) ([]roleOwnedRecord, error) {
 	var records []roleOwnedRecord
 	for _, label := range []string{procedurePrivilegeLabel, dbPrivLabel, roleDbAccessLabel, roleEntitlementLabel, "_User", roleLabel} {
-		// Role record enumeration keeps its existing API (no caller context): it
-		// runs on the auth store's own lifetime.
-		nodes, err := view.GetNodesByLabel(context.Background(), label)
+		nodes, err := view.GetNodesByLabel(ctx, label)
 		if err != nil {
 			return nil, err
 		}
 		for _, node := range nodes {
+			// This label's rows are only a candidate population: deciding which
+			// of them the role owns is this enumerator's own work, so it watches
+			// the same caller lifetime instead of classifying rows a canceled
+			// caller no longer waits for.
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			record := roleOwnedRecord{node: node, replacementRole: newName, roleProperty: "role"}
 			switch label {
 			case procedurePrivilegeLabel:

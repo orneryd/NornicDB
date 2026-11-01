@@ -295,11 +295,12 @@ func (w *transactionStorageWrapper) DeleteGraphNode(id storage.NodeID, mode stor
 }
 
 // IncidentEdges is BadgerTransaction.IncidentEdges for this wrapper's
-// namespace (storage.IncidentEdgeLister). The read carries no caller context,
-// so its projection observes the wrapper's own lifetime.
-func (w *transactionStorageWrapper) IncidentEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := w.tx.IncidentEdges(w.prefixNodeID(nodeID))
-	return projectTransactionRead(context.Background(), w, edges, err, readOwnAdjacency)
+// namespace (storage.IncidentEdgeLister). It is a bulk read, so ctx is the
+// caller's: it reaches the native incidence read and this wrapper's projection,
+// and a canceled request returns its own error with no partial list.
+func (w *transactionStorageWrapper) IncidentEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	edges, err := w.tx.IncidentEdges(ctx, w.prefixNodeID(nodeID))
+	return projectTransactionRead(ctx, w, edges, err, readOwnAdjacency)
 }
 
 func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
@@ -1050,4 +1051,12 @@ func (w *transactionStorageWrapper) RecordMaterializedAccess(entityID string) {
 	if recorder, ok := w.underlying.(materializedAccessRecorder); ok {
 		recorder.RecordMaterializedAccess(entityID)
 	}
+}
+
+// hasPendingCommitEffects retains the original four-way implicit decision:
+// entity operations, knowledge-policy schema changes, deferred validation, or
+// completion actions. Ordinary schema DDL registers its onSchemaCommit action;
+// no new schema heuristic changes when a transaction must commit.
+func (w *transactionStorageWrapper) hasPendingCommitEffects() bool {
+	return w.tx.OperationCount() != 0 || w.tx.HasKnowledgePolicyChanges() || w.tx.RequiresCommitValidation() || len(w.commitActions) != 0
 }

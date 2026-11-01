@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"testing"
@@ -130,7 +131,7 @@ func TestPendingConstraintIndex_LargeTransactionScalesLinearly(t *testing.T) {
 		engine, cleanup := setupTestBadgerEngine(t)
 		defer cleanup()
 		require.NoError(t, engine.GetSchemaForNamespace("test").AddUniqueConstraint("u_k", "Item", "k"))
-		require.NoError(t, RefreshUniqueConstraintValuesForEngine(engine, engine.GetSchemaForNamespace("test")))
+		require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), engine, engine.GetSchemaForNamespace("test")))
 		tx, err := engine.BeginTransaction()
 		require.NoError(t, err)
 		start := time.Now()

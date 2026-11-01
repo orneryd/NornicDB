@@ -83,17 +83,36 @@ HTTP and Bolt syntax remains unchanged.
 ## UNIQUE claim retirement
 
 Claim publication has one method,
-`SchemaManager.ApplyUniqueValue(label, property, value, nodeID, action)`, which
+`SchemaManager.ApplyUniqueValue(ctx, label, property, value, nodeID, action) error`, which
 owns the constraint lookup, value-key projection and claim mutation under the
 constraint's mutex. The former `RegisterUniqueValue` and `UnregisterUniqueValue`
 methods and the `UniqueValueRegistrationPolicy` type are removed; forwarding
 wrappers are not provided. Update direct Go callers:
 
 - `RegisterUniqueValue(label, property, value, nodeID, policy)` maps directly to
-  `ApplyUniqueValue(label, property, value, nodeID, action)` with the same
+  `ApplyUniqueValue(ctx, label, property, value, nodeID, action) error` with the same
   arguments, using `ValidatedUniqueClaim` or `RecoveredUniqueClaim`.
 - `UnregisterUniqueValue(label, property, value, nodeID)` becomes
-  `ApplyUniqueValue(label, property, value, nodeID, RetiredUniqueClaim)`.
+  `ApplyUniqueValue(ctx, label, property, value, nodeID, RetiredUniqueClaim)`.
+
+Prepare callers pass their request context and handle the returned error;
+canceled key preparation or admission leaves the current claim unchanged.
+Accepted native publication and recovery explicitly use their completion
+lifetime, so a canceled statement cannot interrupt an accepted frame.
+
+Creation validation and UNIQUE cache rebuild APIs also take `ctx` first:
+`ValidateConstraintOnCreationForEngine`,
+`ValidatePropertyTypeConstraintOnCreationForEngine`,
+`ValidateConstraintContractOnCreationForEngine`,
+`RefreshUniqueConstraintValuesForEngine`,
+`RefreshUniqueConstraintValuesForConstraintsForEngine`,
+`SchemaManager.CheckUniqueConstraint`, and
+`BadgerEngine.ValidateRelationshipConstraint`. The two Badger convenience
+methods `ValidateConstraintOnCreation` and
+`ValidatePropertyTypeConstraintOnCreation` are retired; callers use the
+canonical engine validators with their context. A failed refresh preserves
+existing caches. Replacing a selected constraint while its scan runs returns
+`storage.ErrConflict`; retry against the current schema.
 
 `UniqueValueAction` has three values. `ValidatedUniqueClaim` assigns the value
 to the node unconditionally and is required for current validated mutations. The

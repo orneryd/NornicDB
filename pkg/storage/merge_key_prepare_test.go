@@ -16,7 +16,7 @@ func newMergeKeyTestEngine(t *testing.T) (*BadgerEngine, *SchemaManager) {
 	engine := createTestBadgerEngine(t)
 	schema := engine.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "u_k", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), NewNamespacedEngine(engine, "test"), schema))
 	return engine, schema
 }
 
@@ -270,7 +270,7 @@ func TestPrepareMergeKeyEdgeBranches(t *testing.T) {
 	require.Empty(t, schema.uniqueConstraintCommitLocks)
 	schema.uniqueConstraintCommitLocksMu.Unlock()
 
-	schema.ApplyUniqueValue("U", "k", int64(10), NodeID(prefixTestID("ghost")), ValidatedUniqueClaim)
+	schema.ApplyUniqueValue(context.Background(), "U", "k", int64(10), NodeID(prefixTestID("ghost")), ValidatedUniqueClaim)
 	stale := beginMergeKeyTx(t, engine)
 	require.NoError(t, stale.PrepareMergeKey(ctx, "U", "k", int64(10)))
 	require.NoError(t, stale.Rollback())

@@ -252,9 +252,19 @@ func (e *StorageExecutor) handleBegin(ctx context.Context) (_ *ExecuteResult, re
 	// constraint fails with ConstraintValidationFailed (and fails the
 	// transaction), not the COMMIT (#700). COMMIT checks again under the
 	// constraint keys' locks, against what other writers committed since.
-	tx, bookkeeping, err := e.openTransaction(context.Background(), txEngine, start)
-	if err != nil {
+	if err := e.beginNativeTransaction(context.Background(), txEngine, start); err != nil {
 		return nil, err
+	}
+	return &ExecuteResult{Columns: []string{"status"}, Rows: [][]interface{}{{"Transaction started"}}}, nil
+}
+
+// beginNativeTransaction installs the native controller after the common
+// transaction admission succeeds. Its caller selects explicit versus implicit
+// lifetime; neither route duplicates namespace, metadata or WAL ownership.
+func (e *StorageExecutor) beginNativeTransaction(ctx context.Context, engine TransactionCapableEngine, start transactionStart) error {
+	tx, bookkeeping, err := e.openTransaction(ctx, engine, start)
+	if err != nil {
+		return err
 	}
 	txCtx := &TransactionContext{
 		controller: e, outsideStorage: e.storage,
@@ -271,10 +281,7 @@ func (e *StorageExecutor) handleBegin(ctx context.Context) (_ *ExecuteResult, re
 	e.txContext = txCtx
 	e.storage = e.transactionStorageFor(tx)
 
-	return &ExecuteResult{
-		Columns: []string{"status"},
-		Rows:    [][]interface{}{{"Transaction started"}},
-	}, nil
+	return nil
 }
 
 // handleCommit commits the active transaction.
@@ -300,13 +307,15 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 	// Commit based on transaction type
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)
 	var (
-		err     error
-		opCount int
+		err                  error
+		opCount              int
+		acknowledgedBuffered bool
 	)
 	switch tx := e.txContext.tx.(type) {
 	case *storage.BadgerTransaction:
 		opCount = tx.OperationCount()
 		err = e.commitStorageTransaction(ctx, tx)
+		acknowledgedBuffered = tx.AcknowledgedBuffered()
 	case *fabric.FabricTransaction:
 		err = tx.Commit(nil, nil)
 		if err == nil {
@@ -326,12 +335,7 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		}
 		err = bookkeeping.rejectCommit(ctx, err, err.Error())
 		_, localTx := e.txContext.tx.(*storage.BadgerTransaction)
-		e.txContext.active = false
-		runningTransactions.end(e.txContext.running)
-		if e.txContext.outsideStorage != nil {
-			e.storage = e.txContext.outsideStorage
-		}
-		e.txContext = nil
+		e.releaseTransactionContext()
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
 		failure := nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, localizedError(localization.CypherTransactionsCommitFailed(err), err))
@@ -358,12 +362,7 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		_ = e.txContext.fabricRemoteExe.Close()
 		e.txContext.fabricRemoteExe = nil
 	}
-	e.txContext.active = false
-	runningTransactions.end(e.txContext.running)
-	if e.txContext.outsideStorage != nil {
-		e.storage = e.txContext.outsideStorage
-	}
-	e.txContext = nil
+	e.releaseTransactionContext()
 
 	if bookkeepingErr != nil {
 		return nil, localizedError(localization.CypherTransactionsCommitFailed(bookkeepingErr), bookkeepingErr)
@@ -373,11 +372,7 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		Columns: []string{"status"},
 		Rows:    [][]interface{}{{"Transaction committed"}},
 	}
-	if receipt != nil {
-		result.Metadata = map[string]interface{}{
-			"receipt": receipt,
-		}
-	}
+	attachNativeCommitMetadata(result, receipt, acknowledgedBuffered)
 	return result, completionErr
 }
 
@@ -444,12 +439,7 @@ func (e *StorageExecutor) handleRollback(ctx context.Context, primary error) (*E
 		err = terminalErr
 	}
 
-	e.txContext.active = false
-	runningTransactions.end(e.txContext.running)
-	if e.txContext.outsideStorage != nil {
-		e.storage = e.txContext.outsideStorage
-	}
-	e.txContext = nil
+	e.releaseTransactionContext()
 
 	if err != nil {
 		return nil, nornicerrors.TransactionControlFailure(nornicerrors.TerminalRollback, localizedError(localization.CypherTransactionsRollbackFailed(err), err))
@@ -582,4 +572,27 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 	e.decayMismatchLogged = false
 	// Single router: the transaction only changes which storage view e.storage is.
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+}
+
+// releaseTransactionContext detaches a finished controller and its running
+// transaction entry. Commit, rollback and empty-reader completion use the same
+// ownership release; an issued callback never obtains this controller.
+func (e *StorageExecutor) releaseTransactionContext() {
+	e.txContext.active = false
+	runningTransactions.end(e.txContext.running)
+	if e.txContext.outsideStorage != nil {
+		e.storage = e.txContext.outsideStorage
+	}
+	e.txContext = nil
+}
+
+// endEmptyNativeTransaction ends the same no-mutation lifetime on ordinary
+// implicit and coordinated native readers. Its WAL operation remains empty
+// completion, and a native cleanup error is retained beside any record error.
+func (e *StorageExecutor) endEmptyNativeTransaction(ctx context.Context, tx *storage.BadgerTransaction, bookkeeping transactionWAL) error {
+	nativeErr := tx.Rollback()
+	if e.txContext != nil && e.txContext.tx == tx {
+		e.releaseTransactionContext()
+	}
+	return bookkeeping.abortOperation(ctx, nativeErr, "no mutations", nornicerrors.TerminalEmptyCompletion)
 }

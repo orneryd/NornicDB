@@ -53,7 +53,7 @@ func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *test
 	}
 
 	schema.mu.RLock()
-	constraint := schema.uniqueConstraints["Function:uid"]
+	constraint := schema.uniqueConstraints[nodePropertyKey{label: "Function", property: "uid"}]
 	schema.mu.RUnlock()
 	if constraint == nil {
 		t.Fatal("Function.uid UNIQUE constraint missing")

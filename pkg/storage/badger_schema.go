@@ -211,10 +211,12 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 			if hasUnique {
 				for _, label := range node.Labels {
 					for propName, propValue := range node.Properties {
-						if err := sm.CheckUniqueConstraint(label, propName, propValue, node.ID); err != nil {
+						if err := sm.CheckUniqueConstraint(context.Background(), label, propName, propValue, node.ID); err != nil {
 							return fmt.Errorf("schema: rebuild unique values: namespace=%q: %w", namespace, err)
 						}
-						sm.ApplyUniqueValue(label, propName, propValue, node.ID, ValidatedUniqueClaim)
+						if err := sm.ApplyUniqueValue(context.Background(), label, propName, propValue, node.ID, ValidatedUniqueClaim); err != nil {
+							return err
+						}
 					}
 				}
 			}

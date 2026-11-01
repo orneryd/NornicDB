@@ -19,12 +19,15 @@ const pendingIndexMinNodes = 8
 // transaction deletes it). It is a no-op until a lookup has built the index,
 // so a transaction that never reads through a property index pays nothing.
 // Caller holds tx.mu.
-func (tx *BadgerTransaction) pendingNodeChangedLocked(prev, node *Node) {
+func (tx *BadgerTransaction) pendingNodeChangedLocked(ctx context.Context, prev, node *Node) error {
 	if tx.pendingIndex == nil {
-		return
+		return nil
 	}
-	tx.pendingIndex.remove(prev)
+	if err := tx.pendingIndex.remove(ctx, prev); err != nil {
+		return err
+	}
 	tx.pendingIndex.add(node)
+	return nil
 }
 
 // pendingValueMatchesLocked returns the transaction's pending nodes with
@@ -33,6 +36,7 @@ func (tx *BadgerTransaction) pendingNodeChangedLocked(prev, node *Node) {
 // from them; the first lookup of a (label, property) pair indexes that pair
 // by value. The result may be the index's own slice: callers copy it.
 // Caller holds tx.mu.
+
 func (tx *BadgerTransaction) pendingValueMatchesLocked(ctx context.Context, label, property string, valueKey interface{}) ([]NodeID, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

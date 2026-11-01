@@ -49,7 +49,7 @@ func TestTemporalConstraintBackfillsBufferedNodes(t *testing.T) {
 	require.True(t, tx.AcknowledgedBuffered(), "the create is acknowledged, not yet applied")
 
 	c := Constraint{Name: "period_history", Type: ConstraintTemporal, EntityType: ConstraintEntityNode, Label: "Period", Properties: []string{"key", "from", "to"}}
-	require.NoError(t, ValidateConstraintOnCreationForEngine(engine, c))
+	require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, c))
 	require.NoError(t, engine.GetSchema().AddConstraint(c))
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, engine.GetSchema(), []Constraint{c}))
 	require.NoError(t, inner.FlushWriteBehind(nil))

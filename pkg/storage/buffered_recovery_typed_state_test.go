@@ -262,7 +262,7 @@ func TestBufferedRecoveryRejectsCorruptAuthoritativeBodies(t *testing.T) {
 			payload, err := json.Marshal(data)
 			require.NoError(t, err)
 			require.Error(t, ReplayWALEntry(b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
-			marker, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{txID: "corrupt"})
+			marker, err := b.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{txID: "corrupt"})
 			require.NoError(t, err)
 			require.False(t, marker.present)
 			_, err = b.GetNode("test:n")

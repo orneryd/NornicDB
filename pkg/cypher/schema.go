@@ -72,10 +72,20 @@ func isCompositeAllowedCommand(cypher string) bool {
 	return false
 }
 
+// schemaDDLTargetError validates the graph owning a schema mutation before
+// transaction capability or mutation admission. Composite roots coordinate
+// constituents and deliberately have no local schema transaction owner.
+func schemaDDLTargetError(engine storage.Engine) error {
+	if isCompositeRoot(engine) {
+		return localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+	}
+	return nil
+}
+
 // executeSchemaCommand handles CREATE CONSTRAINT and CREATE INDEX commands.
 func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if isCompositeRoot(e.storage) {
-		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+	if err := schemaDDLTargetError(e.storage); err != nil {
+		return nil, err
 	}
 	if err := e.prepareSchemaTransaction(ctx); err != nil {
 		return nil, err
@@ -231,7 +241,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			Properties: parsed.properties,
 		}
 
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 			return nil, err
 		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
@@ -256,7 +266,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 				Label:      parsed.label,
 				Properties: parsed.properties,
 			}
-			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+			if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 				return nil, err
 			}
 			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
@@ -279,7 +289,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			Label:      parsed.label,
 			Properties: parsed.properties,
 		}
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 			return nil, err
 		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
@@ -310,7 +320,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if parsed.isRelationship {
 			constraint.EntityType = storage.ConstraintEntityRelationship
 		}
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 			return nil, err
 		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
@@ -333,7 +343,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 					Label:      parsed.label,
 					Properties: []string{parsed.property},
 				}
-				if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+				if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 					return nil, err
 				}
 				if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
@@ -352,14 +362,14 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 				Label:      parsed.label,
 				Properties: []string{parsed.property},
 			}
-			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+			if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 				return nil, err
 			}
 			schema := e.storage.GetSchema()
 			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 				return nil, err
 			}
-			if err := storage.RefreshUniqueConstraintValuesForEngine(e.storage, schema); err != nil {
+			if err := storage.RefreshUniqueConstraintValuesForEngine(ctx, e.storage, schema); err != nil {
 				return nil, err
 			}
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -384,7 +394,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if parsed.isRelationship {
 				constraint.EntityType = storage.ConstraintEntityRelationship
 			}
-			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+			if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 				return nil, err
 			}
 			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
@@ -410,7 +420,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			ptc.EntityType = storage.ConstraintEntityRelationship
 			opts.EntityType = storage.ConstraintEntityRelationship
 		}
-		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(e.storage, ptc); err != nil {
+		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(ctx, e.storage, ptc); err != nil {
 			return nil, err
 		}
 		if err := e.storage.GetSchema().AddPropertyTypeConstraint(constraintName, parsed.label, parsed.property, parsed.expectedType, opts); err != nil {
@@ -446,7 +456,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			MaxCount:   parsed.maxCount,
 			Direction:  parsed.direction,
 		}
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 			return nil, err
 		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
@@ -472,7 +482,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			TargetLabel: parsed.targetLabel,
 			PolicyMode:  parsed.policyMode,
 		}
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 			return nil, err
 		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
@@ -515,7 +525,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			}
 		}
 
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
 			return nil, err
 		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
@@ -538,8 +548,8 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 //	DROP INDEX index_name
 //	DROP INDEX index_name IF EXISTS
 func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if isCompositeRoot(e.storage) {
-		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+	if err := schemaDDLTargetError(e.storage); err != nil {
+		return nil, err
 	}
 
 	rest := strings.TrimSpace(strings.TrimSpace(cypher)[len("DROP INDEX"):])

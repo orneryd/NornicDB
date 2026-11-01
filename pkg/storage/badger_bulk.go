@@ -74,6 +74,9 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 			return err
 		}
 		for _, c := range constraints {
+			if c.EffectiveEntityType() != ConstraintEntityNode {
+				continue
+			}
 			var values []interface{}
 			switch c.Type {
 			case ConstraintUnique:

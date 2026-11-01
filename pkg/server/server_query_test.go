@@ -1442,45 +1442,96 @@ func TestHandleImplicitTransaction_BranchMatrix(t *testing.T) {
 }
 
 func TestHandleImplicitTransaction_AsyncWriteAccepted(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbCfg := nornicdb.DefaultConfig()
-	dbCfg.Memory.DecayEnabled = false
-	dbCfg.Database.AsyncWritesEnabled = true
-	db, err := nornicdb.Open(tmpDir, dbCfg)
-	require.NoError(t, err)
-	defer db.Close()
+	for _, buffered := range []bool{false, true} {
+		t.Run(fmt.Sprintf("buffered=%t", buffered), func(t *testing.T) {
+			tmpDir := t.TempDir()
+			dbCfg := nornicdb.DefaultConfig()
+			dbCfg.Memory.DecayEnabled = false
+			dbCfg.Database.AsyncWritesEnabled = buffered
+			db, err := nornicdb.Open(tmpDir, dbCfg)
+			require.NoError(t, err)
+			defer db.Close()
 
-	authStorage := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = authStorage.Close() })
-	authn, err := auth.NewAuthenticator(auth.AuthConfig{
-		SecurityEnabled: true,
-		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
-	}, authStorage)
-	require.NoError(t, err)
-	_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+			authStorage := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			t.Cleanup(func() { _ = authStorage.Close() })
+			authn, err := auth.NewAuthenticator(auth.AuthConfig{
+				SecurityEnabled: true,
+				JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
+			}, authStorage)
+			require.NoError(t, err)
+			_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
 
-	cfg := DefaultConfig()
-	cfg.Port = 0
-	srv, err := New(db, authn, cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { stopTestServer(t, srv) })
+			cfg := DefaultConfig()
+			cfg.Port = 0
+			srv, err := New(db, authn, cfg)
+			require.NoError(t, err)
+			t.Cleanup(func() { stopTestServer(t, srv) })
 
-	req := httptest.NewRequest(http.MethodPost, "/db/nornic/tx/commit", strings.NewReader(`{"statements":[{"statement":"CREATE (n:Doc {name:'async'})"}]}`))
-	req = req.WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{
-		Username: "admin",
-		Roles:    []string{"admin"},
-	}))
-	rec := httptest.NewRecorder()
-	srv.handleImplicitTransaction(rec, req, "nornic")
-	require.Equal(t, http.StatusAccepted, rec.Code)
-	require.Equal(t, "eventual", rec.Header().Get("X-NornicDB-Consistency"))
-	var payload map[string]interface{}
-	require.NoError(t, json.NewDecoder(rec.Body).Decode(&payload))
-	optimisticRaw, ok := payload["optimistic"].(map[string]interface{})
-	require.True(t, ok, "expected optimistic metadata in async response")
-	createdIDs, ok := optimisticRaw["createdNodeIds"].([]interface{})
-	require.True(t, ok)
-	require.NotEmpty(t, createdIDs)
+			for _, tc := range []struct {
+				name, query    string
+				writes, failed bool
+				params         map[string]interface{}
+			}{
+				{name: "ordinary", query: "CREATE (n:Doc {name:'async'})", writes: true},
+				{name: "dynamic", query: "CALL apoc.cypher.run(\"CREATE (n:Doc {name:'async-dynamic'}) RETURN n\",{}) YIELD value RETURN value.n AS n", writes: true},
+				{name: "read", query: "MATCH (n:Doc) RETURN count(n) AS count"},
+				{name: "no-op", query: "MATCH (n:NoAckTarget) SET n.value=1 RETURN count(n) AS count"},
+				{name: "dynamic-no-op", query: "CALL apoc.cypher.run('MATCH (n:NoAckTarget) SET n.value=1 RETURN count(n) AS count',{}) YIELD value RETURN value.count AS count"},
+				{name: "error", query: "CREATE (:NoAckAfterError) RETURN 1/$zero AS v", failed: true, params: map[string]interface{}{"zero": int64(0)}},
+				{name: "rollback-read", query: "MATCH (n:NoAckAfterError) RETURN count(n) AS count"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					wire, err := json.Marshal(map[string]interface{}{"statements": []map[string]interface{}{{"statement": tc.query, "parameters": tc.params}}})
+					require.NoError(t, err)
+					req := httptest.NewRequest(http.MethodPost, "/db/nornic/tx/commit", bytes.NewReader(wire))
+					req = req.WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{Username: "admin", Roles: []string{"admin"}}))
+					rec := httptest.NewRecorder()
+					srv.handleImplicitTransaction(rec, req, "nornic")
+					expected := http.StatusOK
+					if buffered && tc.writes {
+						expected = http.StatusAccepted
+					}
+					require.Equal(t, expected, rec.Code, "body=%s", rec.Body.String())
+					if expected == http.StatusAccepted {
+						require.Equal(t, "eventual", rec.Header().Get("X-NornicDB-Consistency"))
+					} else {
+						require.Empty(t, rec.Header().Get("X-NornicDB-Consistency"))
+					}
+					var payload map[string]interface{}
+					require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+					if tc.failed {
+						require.Len(t, payload["errors"], 1)
+						require.NotContains(t, payload, "receipt")
+						require.NotContains(t, payload, "optimistic")
+						return
+					}
+					require.Empty(t, payload["errors"])
+					if tc.writes {
+						require.Contains(t, payload, "receipt")
+						optimistic, ok := payload["optimistic"].(map[string]interface{})
+						require.True(t, ok, "actual created-ID metadata must survive dynamic calls")
+						ids, ok := optimistic["createdNodeIds"].([]interface{})
+						require.True(t, ok)
+						require.Len(t, ids, 1)
+					} else {
+						require.NotContains(t, payload, "optimistic")
+						require.NotContains(t, payload, "receipt")
+						results := payload["results"].([]interface{})
+						require.Len(t, results, 1)
+						data := results[0].(map[string]interface{})["data"].([]interface{})
+						require.Len(t, data, 1)
+						row := data[0].(map[string]interface{})["row"].([]interface{})
+						require.Len(t, row, 1)
+						want := float64(0)
+						if tc.name == "read" {
+							want = 2
+						}
+						require.Equal(t, want, row[0], "native graph and rollback are visible through real HTTP")
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestHandleImplicitTransaction_AsyncEnabledBuffersSetWriteReturnsAccepted(t *testing.T) {

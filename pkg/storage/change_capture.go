@@ -326,19 +326,25 @@ func (tx *BadgerTransaction) endChangeCaptureLocked(committed bool) {
 // order the transaction first touched them; the relationships a node delete
 // removes come before it. It runs before the commit's buffered writes, so a
 // cascaded relationship's stored record is still its state before.
-func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations []Operation, commitTime time.Time) error {
+func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *batchWriter, operations []Operation, commitTime time.Time) error {
 	capture := tx.changeCapture
 	if capture == nil {
 		return nil
 	}
 	b := tx.engine
-	states := newCommitStates(operations)
+	states, err := newCommitStates(ctx, operations)
+	if err != nil {
+		return err
+	}
 	base := ChangeEvent{
 		CommitSeq: capture.commitSeq, StartTime: tx.StartTime.UnixNano(), CommitTime: commitTime.UnixNano(),
 		Mode: capture.mode, TxMetadata: copyChangeMetadata(tx.Metadata),
 	}
 	seq := uint32(0)
 	write := func(event ChangeEvent) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		event.Seq = seq
 		seq++
 		value, err := encodeValue(&event)
@@ -366,13 +372,17 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 		if current == nil {
 			current = before
 		}
-		event.EdgeKeys = keys.ofEdge(current)
-		startKeys, startErr := keys.ofNode(labels.node(current.StartNode))
+		var err error
+		event.EdgeKeys, err = keys.ofEdge(ctx, current)
+		if err != nil {
+			return err
+		}
+		startKeys, startErr := keys.ofNode(ctx, labels.node(current.StartNode))
 		if startErr != nil {
 			return startErr
 		}
 		event.StartKeys = startKeys
-		endKeys, endErr := keys.ofNode(labels.node(current.EndNode))
+		endKeys, endErr := keys.ofNode(ctx, labels.node(current.EndNode))
 		if endErr != nil {
 			return endErr
 		}
@@ -380,6 +390,9 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 		return write(event)
 	}
 	for _, op := range operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode, OpDeleteNode:
 			id := op.NodeID
@@ -419,7 +432,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 				if whole == nil {
 					whole = states.committedNodes[id]
 				}
-				nodeKeys, keysErr := keys.ofNode(whole)
+				nodeKeys, keysErr := keys.ofNode(ctx, whole)
 				if keysErr != nil {
 					return keysErr
 				}
@@ -560,14 +573,12 @@ type changeKeys struct {
 // ofNode is a node's key values per label: for each NODE KEY constraint on
 // one of its labels, in constraint-name order, the constrained properties'
 // values. Nil when it has none; a discovery failure is returned.
-func (k changeKeys) ofNode(node *Node) (map[string][]map[string]any, error) {
+func (k changeKeys) ofNode(ctx context.Context, node *Node) (map[string][]map[string]any, error) {
 	if node == nil || k.schema == nil {
 		return nil, nil
 	}
-	// Change capture records the key values of a write the engine already
-	// accepted, so this discovery has the accepted write's lifetime: there is
-	// no request to cancel.
-	constraints, err := k.schema.GetConstraintsForLabels(context.Background(), node.Labels)
+	// Key discovery follows the publication phase owner, including plain request preparation.
+	constraints, err := k.schema.GetConstraintsForLabels(ctx, node.Labels)
 	if err != nil {
 		return nil, err
 	}
@@ -576,7 +587,11 @@ func (k changeKeys) ofNode(node *Node) (map[string][]map[string]any, error) {
 		if constraint.Type != ConstraintNodeKey || constraint.EffectiveEntityType() != ConstraintEntityNode {
 			continue
 		}
-		if values := keyValues(constraint.Properties, node.Properties); values != nil {
+		values, err := keyValues(ctx, constraint.Properties, node.Properties)
+		if err != nil {
+			return nil, err
+		}
+		if values != nil {
 			if keys == nil {
 				keys = make(map[string][]map[string]any)
 			}
@@ -589,38 +604,47 @@ func (k changeKeys) ofNode(node *Node) (map[string][]map[string]any, error) {
 // ofEdge is a relationship's key values: for each RELATIONSHIP KEY
 // constraint on its type, in constraint-name order, the constrained
 // properties' values. Nil when it has none.
-func (k changeKeys) ofEdge(edge *Edge) []map[string]any {
+func (k changeKeys) ofEdge(ctx context.Context, edge *Edge) ([]map[string]any, error) {
 	if edge == nil || k.schema == nil {
-		return nil
+		return nil, nil
 	}
-	constraints := k.schema.GetAllConstraints()
-	sort.Slice(constraints, func(i, j int) bool { return constraints[i].Name < constraints[j].Name })
+	constraints, err := k.schema.GetConstraintsForLabels(ctx, []string{edge.Type})
+	if err != nil {
+		return nil, err
+	}
 	var keys []map[string]any
 	for _, constraint := range constraints {
 		if constraint.Type != ConstraintRelationshipKey || constraint.Label != edge.Type {
 			continue
 		}
-		if values := keyValues(constraint.Properties, edge.Properties); values != nil {
+		values, err := keyValues(ctx, constraint.Properties, edge.Properties)
+		if err != nil {
+			return nil, err
+		}
+		if values != nil {
 			keys = append(keys, values)
 		}
 	}
-	return keys
+	return keys, nil
 }
 
 // keyValues is the named properties' values, or nil when one is missing.
-func keyValues(names []string, properties map[string]any) map[string]any {
+func keyValues(ctx context.Context, names []string, properties map[string]any) (map[string]any, error) {
 	if len(names) == 0 {
-		return nil
+		return nil, nil
 	}
 	values := make(map[string]any, len(names))
 	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		value, ok := properties[name]
 		if !ok || value == nil {
-			return nil
+			return nil, nil
 		}
 		values[name] = value
 	}
-	return values
+	return values, nil
 }
 
 // changedProperties returns the keys whose value differs between before and

@@ -131,7 +131,9 @@ func TestFlushSettlesGenerationAppliedOutsideTheDrain(t *testing.T) {
 		t.Run(fmt.Sprintf("claimed=%v", claimed), func(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour)
 			bufferedCreate(t, b, &Node{ID: "test:direct"})
-			b.writeBehind.rotate()
+			if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
+				t.Fatal(rotateErr)
+			}
 			b.writeBehind.mu.RLock()
 			buf := b.writeBehind.draining[len(b.writeBehind.draining)-1]
 			b.writeBehind.mu.RUnlock()

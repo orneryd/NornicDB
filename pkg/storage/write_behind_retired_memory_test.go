@@ -23,10 +23,14 @@ func TestWriteBehindBuffer_RetiredGenerationCollectible(t *testing.T) {
 			retire := func() weak.Pointer[CommitBuffer] {
 				require.NoError(t, w.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{ID: "test:retired"}}))
 				generation := weak.Make(w.active)
-				w.rotate()
+				if _, rotateErr := w.rotate(t.Context()); rotateErr != nil {
+					t.Fatal(rotateErr)
+				}
 				if pendingSuccessor {
 					require.NoError(t, w.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{ID: "test:pending"}}))
-					w.rotate()
+					if _, rotateErr := w.rotate(t.Context()); rotateErr != nil {
+						t.Fatal(rotateErr)
+					}
 				}
 				w.drainOne(true, nil)
 				return generation

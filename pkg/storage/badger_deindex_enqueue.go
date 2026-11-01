@@ -55,7 +55,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 		}
 		b.prepareCommitOperations(ops, false)
 	}
-	keys := func() []any {
+	keys := func(preparationContext context.Context) ([]any, error) {
 		if nodeChanged != nil {
 			ops = []Operation{{Type: OpUpdateNode, Node: nodeChanged}}
 		}
@@ -63,7 +63,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			ops = []Operation{{Type: OpUpdateEdge, Edge: edgeChanged}}
 		}
 		capturePublicationOperations(notification, ops)
-		return appendOperationPublicationKeys(nil, nil, ops)
+		return appendOperationPublicationKeys(preparationContext, nil, nil, ops)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		mutation, err := b.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: entityID, isEdge: isEdge})

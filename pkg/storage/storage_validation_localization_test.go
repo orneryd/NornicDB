@@ -88,7 +88,7 @@ func TestStorageValidationLocalizedConfigurationAndPropertyErrors(t *testing.T) 
 }
 
 func TestStorageValidationLocalizedConstraintViolation(t *testing.T) {
-	err := validateRelExistenceOnEdges([]*Edge{{ID: "tenant:edge-1", Type: "OWNS"}}, Constraint{
+	err := validateRelExistenceOnEdges(context.Background(), []*Edge{{ID: "tenant:edge-1", Type: "OWNS"}}, Constraint{
 		Type:       ConstraintExists,
 		Label:      "OWNS",
 		Properties: []string{"since"},

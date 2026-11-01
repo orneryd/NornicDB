@@ -73,15 +73,18 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 		defer order.release()
 	}
 	// Capture before physical assembly can acquire the commit gate.
-	constraints := capturePublicationConstraintView(schema)
+	constraints, preparationErr := capturePublicationConstraintView(commitPreparationLifetime(write.ctx), schema)
+	if preparationErr != nil {
+		return "", preparationErr
+	}
 	var publicationOps []Operation
 	publish := func(images *commitCacheImages) {
 		b.publishCommitOperations(dbName, schema, publicationOps, true, true, images)
 	}
-	keys := func() []any {
+	keys := func(preparationContext context.Context) ([]any, error) {
 		publicationOps = []Operation{{Type: OpCreateNode, Node: image}}
 		capturePublicationOperations(notification, publicationOps)
-		return appendNodePublicationKeys(nil, &constraints, node.ID, nil, image)
+		return appendNodePublicationKeys(preparationContext, nil, &constraints, node.ID, nil, image)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
@@ -535,18 +538,21 @@ func (b *BadgerEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 		defer order.release()
 	}
 	// Capture before physical assembly can acquire the commit gate.
-	constraints := capturePublicationConstraintView(schema)
+	constraints, preparationErr := capturePublicationConstraintView(commitPreparationLifetime(write.ctx), schema)
+	if preparationErr != nil {
+		return preparationErr
+	}
 	var publicationOps []Operation
 	publish := func(images *commitCacheImages) {
 		b.publishCommitOperations(dbName, schema, publicationOps, true, true, images)
 	}
-	keys := func() []any {
+	keys := func(preparationContext context.Context) ([]any, error) {
 		publicationOps = []Operation{{Type: OpUpdateNode, Node: image, OldNode: existingNode}}
 		if wasInsert {
 			publicationOps[0].Type = OpCreateNode
 		}
 		capturePublicationOperations(notification, publicationOps)
-		return appendNodePublicationKeys(nil, &constraints, node.ID, existingNode, image)
+		return appendNodePublicationKeys(preparationContext, nil, &constraints, node.ID, existingNode, image)
 	}
 	err := b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
@@ -812,19 +818,22 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	var publicationOps []Operation
 	schema := b.schemaForNodeID(id)
 	// Capture before physical assembly can acquire the commit gate.
-	constraints := capturePublicationConstraintView(schema)
+	constraints, preparationErr := capturePublicationConstraintView(commitPreparationLifetime(write.ctx), schema)
+	if preparationErr != nil {
+		return preparationErr
+	}
 	publish := func(images *commitCacheImages) {
 		b.publishCommitOperations(namespaceForNodeID(id), schema, publicationOps, true, true, images)
 	}
-	keys := func() []any {
+	keys := func(preparationContext context.Context) ([]any, error) {
 		publicationOps = []Operation{result.operation(id)}
 		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
+		return appendOperationPublicationKeys(preparationContext, nil, &constraints, publicationOps)
 	}
 
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		var err error
-		result, err = b.executeNodeDeletion(txn, id, nil)
+		result, err = b.executeNodeDeletion(commitPreparationLifetime(write.ctx), txn, id, nil)
 		return err
 	}, publish, keys, notification, write.stagePublication)
 

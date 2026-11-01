@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -109,7 +110,7 @@ func TestBadgerEngine_PropertyTypeConstraintValidation(t *testing.T) {
 	tx2.Commit()
 
 	// Try to create type constraint (should fail - existing data violates)
-	err := engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err := ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "User",
 		Property:     "age",
 		ExpectedType: PropertyTypeInteger,
@@ -146,7 +147,7 @@ func TestBadgerEngine_PropertyTypeConstraintSuccess(t *testing.T) {
 	tx.Commit()
 
 	// Validate STRING type constraint (should succeed)
-	err := engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err := ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "User",
 		Property:     "name",
 		ExpectedType: PropertyTypeString,
@@ -157,7 +158,7 @@ func TestBadgerEngine_PropertyTypeConstraintSuccess(t *testing.T) {
 	}
 
 	// Validate INTEGER type constraint (should succeed)
-	err = engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err = ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "User",
 		Property:     "age",
 		ExpectedType: PropertyTypeInteger,
@@ -191,7 +192,7 @@ func TestBadgerEngine_MixedNumericTypes(t *testing.T) {
 	tx.Commit()
 
 	// Both should satisfy INTEGER constraint
-	err := engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err := ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "Node",
 		Property:     "count",
 		ExpectedType: PropertyTypeInteger,
@@ -225,7 +226,7 @@ func TestBadgerEngine_PropertyTypeConstraintWithNulls(t *testing.T) {
 	tx.Commit()
 
 	// STRING type constraint should allow NULL
-	err := engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err := ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "Person",
 		Property:     "nickname",
 		ExpectedType: PropertyTypeString,

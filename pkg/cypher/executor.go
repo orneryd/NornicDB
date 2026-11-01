@@ -1466,7 +1466,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	}
 	// Check if this is a write operation using cached analysis
 	info := e.analyzer.Analyze(ctx, cypher)
-	needsTransaction, err := statementNeedsTransaction(ctx, cypher)
+	contract, err := readStatementExecutionContract(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -1478,7 +1478,11 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
-	if needsTransaction {
+	if contract.transaction {
+		_, managed := fabric.FabricTransactionFromContext(ctx)
+		if (contract.dynamic || contract.selectsDatabase) && !managed && !storage.CoordinatorOwnsTransaction(ctx) {
+			return e.executeNativeCoordinatedStatement(ctx, cypher, upperQuery)
+		}
 		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
 	}
 
@@ -1491,13 +1495,6 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		return readExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
-}
-
-// statementNeedsTransaction keeps write clauses and registered WRITE procedures
-// under the same statement rollback owner. tx.setMetaData also needs a transaction.
-func statementNeedsTransaction(ctx context.Context, cypher string) (bool, error) {
-	contract, err := readStatementExecutionContract(ctx, cypher)
-	return contract.transaction, err
 }
 
 // executeWithImplicitTransaction wraps a write query in a single implicit
@@ -1536,6 +1533,17 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		return result, err
 	}
 
+	// Schema target semantics precede local transaction capability. Reject a
+	// composite root through the schema owner's validator without executing a
+	// callback on an engine that has no atomic write owner.
+	_, body := parseExecutionMode(cypher)
+	schemaDDL := isOrdinarySchemaDDL(body)
+	if schemaDDL {
+		if err := schemaDDLTargetError(e.storage); err != nil {
+			return nil, err
+		}
+	}
+
 	// Try to get a transaction-capable engine and async wrapper (if present)
 	engines := e.resolveImplicitTxEngines()
 	if engines.namespace == "" {
@@ -1560,7 +1568,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// commit, which avoids duplicate per-operation checks and improves write
 	// throughput.
 	start := transactionStart{implicit: true, namespace: engines.namespace}
-	if _, body := parseExecutionMode(cypher); isOrdinarySchemaDDL(body) {
+	if schemaDDL {
 		start.schema = e.storage.GetSchema()
 		if provider, ok := e.storage.(interface {
 			GetSchemaForNamespace(string) *storage.SchemaManager
@@ -1641,9 +1649,8 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// A write-shaped query can legitimately match no mutation targets. Committing
 	// an empty Badger transaction still performs store-wide validation work, so
 	// roll it back after the match has completed instead.
-	if tx.OperationCount() == 0 && !tx.HasKnowledgePolicyChanges() && !tx.RequiresCommitValidation() && len(txWrapper.commitActions) == 0 {
-		_ = tx.Rollback()
-		return result, bookkeeping.abort(ctx, nil, "no mutations")
+	if !txWrapper.hasPendingCommitEffects() {
+		return result, txExec.endEmptyNativeTransaction(ctx, tx, bookkeeping)
 	}
 
 	if inlineEmbeddingEnabled {
@@ -1689,27 +1696,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		return completionErr
 	})
 
-	// Attach receipt metadata if WAL markers were recorded. Receipts are
-	// attached exactly as on the durable path: the write-behind ACK carries
-	// the same information (its commit markers are appended before the ACK
-	// per the buffer design). The eventual marker below is how the HTTP
-	// layer tells an acknowledged buffered commit from a durable one.
-	if receipt != nil {
-		if result.Metadata == nil {
-			result.Metadata = make(map[string]interface{})
-		}
-		result.Metadata["receipt"] = receipt
-	}
-
-	// Mark commits that were acknowledged through the write-behind buffer.
-	// Every eligible write buffers when the engine has it enabled; this
-	// marker is what makes the server answer 202 Accepted instead of 200.
-	if tx.AcknowledgedBuffered() {
-		if result.Metadata == nil {
-			result.Metadata = make(map[string]interface{})
-		}
-		result.Metadata["eventual"] = true
-	}
+	attachNativeCommitMetadata(result, receipt, tx.AcknowledgedBuffered())
 
 	// Promote the tx-scoped MERGE lookup cache into the parent so
 	// subsequent Execute calls still benefit from the cross-query

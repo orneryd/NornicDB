@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"sync"
@@ -111,7 +112,7 @@ func TestWriteBehindBuffer_NeverBlocksWritesDuringDrain(t *testing.T) {
 
 // FlushAsync rotates without waiting; test-only helper on the buffer.
 func (w *WriteBehindBuffer) FlushAsync() {
-	w.rotate()
+	_, _ = w.rotate(context.Background()) // detached fixture drain cannot cancel
 	w.signal()
 }
 

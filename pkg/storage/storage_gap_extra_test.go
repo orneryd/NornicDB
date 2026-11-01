@@ -333,11 +333,12 @@ func TestSchemaDefinitionPersistenceHelpers(t *testing.T) {
 		restored := NewSchemaManager()
 		require.NoError(t, restored.ReplaceFromDefinition(def))
 
-		constraints := restored.GetConstraints()
+		constraints, discoveryErr := restored.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
 		require.Len(t, constraints, 1)
-		require.NoError(t, restored.CheckUniqueConstraint("User", "email", "alice@example.com", ""))
-		restored.ApplyUniqueValue("User", "email", "alice@example.com", "node-1", ValidatedUniqueClaim)
-		require.Error(t, restored.CheckUniqueConstraint("User", "email", "alice@example.com", ""))
+		require.NoError(t, restored.CheckUniqueConstraint(context.Background(), "User", "email", "alice@example.com", ""))
+		restored.ApplyUniqueValue(context.Background(), "User", "email", "alice@example.com", "node-1", ValidatedUniqueClaim)
+		require.Error(t, restored.CheckUniqueConstraint(context.Background(), "User", "email", "alice@example.com", ""))
 		_, ok := restored.GetCompositeIndex("user_loc_idx")
 		require.True(t, ok)
 		_, ok = restored.GetFulltextIndex("user_search_idx")
@@ -448,7 +449,9 @@ func TestBadgerSchemaHelpers(t *testing.T) {
 
 		sm := engine.GetSchemaForNamespace("testns")
 		require.NotNil(t, sm)
-		require.Len(t, sm.GetConstraints(), 1)
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
+		require.Len(t, constraints, 1)
 		require.Len(t, nonLookupIndexes(sm.GetIndexes()), 1)
 	})
 
@@ -489,7 +492,7 @@ func TestBadgerSchemaHelpers(t *testing.T) {
 		sm := NewSchemaManager()
 		require.NoError(t, sm.AddUniqueConstraint("user_email", "User", "email"))
 		require.NoError(t, engine.rebuildUniqueConstraintValues("nornic", sm))
-		require.Error(t, sm.CheckUniqueConstraint("User", "email", "alice@example.com", ""))
+		require.Error(t, sm.CheckUniqueConstraint(context.Background(), "User", "email", "alice@example.com", ""))
 		require.NoError(t, engine.rebuildUniqueConstraintValues("", sm))
 		require.NoError(t, engine.rebuildUniqueConstraintValues("nornic", nil))
 	})
@@ -748,30 +751,30 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			}
 		})
 
-		require.NoError(t, ValidateConstraintOnCreationForEngine(engine, Constraint{
+		require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintUnique,
 			Label:      "Person",
 			Properties: []string{"email"},
 		}))
-		require.NoError(t, ValidateConstraintOnCreationForEngine(engine, Constraint{
+		require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintNodeKey,
 			Label:      "Person",
 			Properties: []string{"id", "name"},
 		}))
-		require.NoError(t, ValidateConstraintOnCreationForEngine(engine, Constraint{
+		require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintExists,
 			Label:      "Person",
 			Properties: []string{"name"},
 		}))
 
-		err := ValidateConstraintOnCreationForEngine(engine, Constraint{Type: ConstraintType("weird")})
+		err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{Type: ConstraintType("weird")})
 		require.ErrorContains(t, err, "unknown constraint type")
 	})
 
 	t.Run("node key helper validates property counts nulls and duplicates", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
 
-		err := validateNodeKeyConstraintOnCreationWithEngine(&constraintValidationEngine{Engine: base}, Constraint{
+		err := validateNodeKeyConstraintOnCreationWithEngine(context.Background(), &constraintValidationEngine{Engine: base}, Constraint{
 			Type:       ConstraintNodeKey,
 			Label:      "Person",
 			Properties: nil,
@@ -784,7 +787,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 				{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "1"}},
 			},
 		}
-		err = validateNodeKeyConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateNodeKeyConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintNodeKey,
 			Label:      "Person",
 			Properties: []string{"id", "name"},
@@ -797,7 +800,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "1", "name": "alice"}},
 			{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"id": "1", "name": "alice"}},
 		}
-		err = validateNodeKeyConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateNodeKeyConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintNodeKey,
 			Label:      "Person",
 			Properties: []string{"id", "name"},
@@ -809,7 +812,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 	t.Run("temporal helper validates arity scan errors and temporal violations", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
 
-		err := validateTemporalConstraintOnCreationWithEngine(&constraintValidationEngine{Engine: base}, Constraint{
+		err := validateTemporalConstraintOnCreationWithEngine(context.Background(), &constraintValidationEngine{Engine: base}, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from"},
@@ -820,7 +823,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			Engine: base,
 			err:    errors.New("scan failed"),
 		}
-		err = validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},
@@ -831,7 +834,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 		engine.nodes = []*Node{
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"from": time.Now(), "to": time.Now().Add(time.Hour)}},
 		}
-		err = validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},
@@ -844,7 +847,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 		engine.nodes = []*Node{
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": "bad", "to": now}},
 		}
-		err = validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},
@@ -856,7 +859,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": now, "to": now.Add(2 * time.Hour)}},
 			{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": now.Add(time.Hour), "to": now.Add(3 * time.Hour)}},
 		}
-		err = validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},
@@ -868,7 +871,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": now, "to": now.Add(time.Hour)}},
 			{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": now.Add(2 * time.Hour), "to": now.Add(3 * time.Hour)}},
 		}
-		require.NoError(t, validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		require.NoError(t, validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},

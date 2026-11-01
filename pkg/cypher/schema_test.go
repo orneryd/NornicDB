@@ -33,7 +33,8 @@ func TestCreateUniqueConstraint(t *testing.T) {
 	}
 
 	// Verify constraint exists
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Fatalf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -159,7 +160,8 @@ func TestSchemaInitialization(t *testing.T) {
 	}
 
 	// Verify all schemas created
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Errorf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -209,7 +211,8 @@ func TestConstraintWithoutName(t *testing.T) {
 	}
 
 	// Verify constraint exists with generated name
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Fatalf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -256,7 +259,8 @@ func TestIdempotentSchemaCreation(t *testing.T) {
 	}
 
 	// Should still have only one constraint
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Errorf("Expected 1 constraint, got %d", len(constraints))
 	}

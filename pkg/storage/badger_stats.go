@@ -541,7 +541,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
 	_ = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		return txn.Delete(pendingEmbedKey(nodeID))
-	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
+	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil)
 }
 
 // AddToPendingEmbeddings adds a node to the pending embeddings index.
@@ -565,7 +565,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 			return err
 		}
 		return b.setPendingEmbeddingInTxn(txn, nodeID)
-	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
+	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil)
 }
 
 // PendingEmbeddingsCount returns the number of nodes waiting for embedding.

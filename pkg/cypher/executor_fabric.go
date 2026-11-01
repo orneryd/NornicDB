@@ -18,7 +18,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 type fabricPreparedExecKey struct{}
@@ -95,26 +94,6 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	if tx == nil {
 		tx = fabric.NewFabricTransaction(fmt.Sprintf("fab-%d", time.Now().UnixNano()))
 	}
-	if autoCommit {
-		defer func() {
-			cause := recover()
-			if tx.State() == "open" {
-				// The statement owns completion even if execution panics.
-				// Preserve the execution panic after every participant ends.
-				func() {
-					defer func() {
-						if cleanupPanic := recover(); cleanupPanic != nil && cause == nil {
-							cause = cleanupPanic
-						}
-					}()
-					resultErr = nornicerrors.CombineTerminalOutcomes(resultErr, tx.Rollback(nil))
-				}()
-			}
-			if cause != nil {
-				panic(cause)
-			}
-		}()
-	}
 	var prepared *fabricPreparedExec
 	if len(preparation) > 0 {
 		prepared = preparation[0]
@@ -174,6 +153,13 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	var remoteExec *fabric.RemoteFragmentExecutor
 	if member := e.membership(ctx); member.statement != nil {
 		dispatch = member.statement.executor
+		// Native dynamic roots acquire a catalog only when an actual composite
+		// selection already prepared it. Reuse that owner for local/remote keys.
+		if dispatch.nativeOrigin != nil {
+			dispatch.mu.Lock()
+			dispatch.catalog = catalog
+			dispatch.mu.Unlock()
+		}
 		localExec = fabric.NewLocalFragmentExecutor(dispatch, func(db string) (storage.Engine, error) {
 			selected, _, err := e.scopedExecutorForUse(db, authToken)
 			if err != nil {
@@ -216,30 +202,18 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 		}
 		return e.recordStatementReference(cypher, database)
 	})
-	stream, err := fabricExecutor.Execute(ctx, tx, fragment, params, authToken)
-	if err != nil {
-		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
-		// for client-issued COMMIT/ROLLBACK. In autocommit mode, rollback immediately.
-		return nil, fabricGraphReferenceError(err)
-	}
-	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows.Load())
-	if autoCommit {
-		commitCtx, err := txphase.CommitContext(ctx)
+	var stream *fabric.ResultStream
+	ctx, err = dispatch.runStatementOwner(ctx, autoCommit, func(runCtx context.Context) error {
+		var err error
+		stream, err = fabricExecutor.Execute(runCtx, tx, fragment, params, authToken)
 		if err != nil {
-			return nil, err
+			return fabricGraphReferenceError(err)
 		}
-		if err := tx.Commit(nil, nil); err != nil {
-			if commitFailureWroteNothing(false, err) {
-				err = nornicerrors.MarkCommitRolledBack(err)
-			}
-			return nil, err
-		}
-		if tx.WriteShard() != "" {
-			publishStatementCommit(ctx)
-		}
-		// Once terminal commit is admitted, result framing must report its real
-		// outcome even if the request deadline expires while commit is pending.
-		ctx = commitCtx
+		e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows.Load())
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	if stream == nil {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -753,6 +727,10 @@ type cypherFabricExecutor struct {
 	remote                *fabric.RemoteFragmentExecutor
 	statement             *compositeStatement
 	wholeStatementMutable bool
+	// nativeOrigin is set only for a native autocommit root, never an explicit/composite route.
+	nativeOrigin            context.Context
+	nativeCompletion        *ExecuteResult
+	nativeCompletionContext context.Context
 
 	mu sync.Mutex
 	// localTxExecBySub holds the sub-transaction executors of a statement
@@ -973,23 +951,50 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 		return existing, nil
 	}
 
-	txExec := NewStorageExecutor(engine)
-	txExec.ShareStatementCachesFrom(c.base)
-	txExec.deferFlush = c.base.deferFlush
-	txExec.ShareEmbedderFrom(c.base)
-	c.base.shareSearchFor(txExec, storageDatabaseName(engine))
-	txExec.inferenceManager = c.base.inferenceManager
-	txExec.onNodeMutated = c.base.onNodeMutated
-	txExec.defaultEmbeddingDimensions = c.base.defaultEmbeddingDimensions
-	txExec.dbManager = c.base.dbManager
-	if err := txExec.bindStatementCacheScope(dbName); err != nil {
-		return nil, err
-	}
-	txExec.vectorRegistry = c.base.vectorRegistry
-	txExec.vectorIndexSpaces = c.base.vectorIndexSpaces
+	var txExec *StorageExecutor
+	if c.nativeOrigin != nil && engine == c.base.storage {
+		// This is another lifetime on the root's existing database, not a new
+		// selected database. Reuse its canonical runtime bindings and caches.
+		txExec = c.base.cloneWithStorage(engine)
+		txExec.txContext = nil
+		txExec.sharedExecutor = false
+	} else {
+		txExec = NewStorageExecutor(engine)
+		txExec.ShareStatementCachesFrom(c.base)
+		txExec.deferFlush = c.base.deferFlush
+		txExec.ShareEmbedderFrom(c.base)
+		c.base.shareSearchFor(txExec, storageDatabaseName(engine))
+		txExec.inferenceManager = c.base.inferenceManager
+		txExec.onNodeMutated = c.base.onNodeMutated
+		txExec.defaultEmbeddingDimensions = c.base.defaultEmbeddingDimensions
+		txExec.dbManager = c.base.dbManager
+		if err := txExec.bindStatementCacheScope(dbName); err != nil {
+			return nil, err
+		}
+		txExec.vectorRegistry = c.base.vectorRegistry
+		txExec.vectorIndexSpaces = c.base.vectorIndexSpaces
 
-	beginCtx := WithTransactionControl(WithAuthToken(storage.WithCoordinatorOwnedTransaction(withoutCompositeStatement(ctx)), c.authToken))
-	if _, err := txExec.Execute(beginCtx, "BEGIN", nil); err != nil {
+	}
+
+	beginCtx := ctx
+	if c.nativeOrigin == nil {
+		beginCtx = WithTransactionControl(WithAuthToken(storage.WithCoordinatorOwnedTransaction(withoutCompositeStatement(ctx)), c.authToken))
+	}
+	var beginErr error
+	if c.nativeOrigin != nil {
+		engines := txExec.resolveImplicitTxEngines()
+		if engines.txEngine == nil {
+			beginErr = localizedError(localization.CypherTransactionsEngineUnsupported(), nil)
+		} else {
+			beginErr = txExec.beginNativeTransaction(ctx, engines.txEngine, transactionStart{implicit: true, namespace: engines.namespace})
+		}
+		if beginErr == nil {
+			txExec.txContext.coordinatorOwned = true
+		}
+	} else {
+		_, beginErr = txExec.Execute(beginCtx, "BEGIN", nil)
+	}
+	if err := beginErr; err != nil {
 		return nil, localizedError(localization.CypherCommandRoutingFabricShardTransactionFailed(dbName, err), err)
 	}
 
@@ -1002,13 +1007,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	}()
 
 	physical := txExec.txContext.tx.(*storage.BadgerTransaction)
-	physical.SetWriteAdmission(func() error {
-		if err := authorizeDatabase(WithAuthToken(ctx, c.authToken), dbName, "write"); err != nil {
-			return err
-		}
-		_, err := c.fabricTransaction().GetOrOpen(sub.ShardName, true)
-		return err
-	})
+	physical.SetWriteAdmission(func() error { return c.admitNativeWrite(ctx, sub.ShardName, dbName) })
 	outcome := func() string {
 		if physical.IsCommitted() {
 			return "committed"
@@ -1016,15 +1015,38 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 		return "rolledback"
 	}
 
-	terminalCtx := context.WithoutCancel(beginCtx)
-	if tx := c.fabricTransaction(); tx != nil {
-		terminalCtx = WithTransactionControl(WithAuthToken(tx.BindContext(beginCtx), c.authToken))
+	// Native autocommit already owns a detached begin context for cleanup and
+	// passes its actual admitted context at commit. Explicit/composite scopes
+	// retain their independently bound transaction lifetime.
+	terminalCtx := beginCtx
+	if c.nativeOrigin == nil {
+		terminalCtx = context.WithoutCancel(beginCtx)
+		if tx := c.fabricTransaction(); tx != nil {
+			terminalCtx = WithTransactionControl(WithAuthToken(tx.BindContext(beginCtx), c.authToken))
+		}
 	}
 	commitFn := func(_ *fabric.SubTransaction) error {
-		_, err := txExec.handleCommit(terminalCtx)
+		commitCtx := terminalCtx
+		if c.nativeOrigin != nil {
+			commitCtx = c.nativeCompletionContext
+		}
+		if c.nativeOrigin != nil && !txExec.txContext.storageWrapper.hasPendingCommitEffects() {
+			owner := txExec.txContext
+			bookkeeping := transactionWAL{owner.wal, owner.walSeqStart, owner.txID, owner.database}
+			return txExec.endEmptyNativeTransaction(commitCtx, physical, bookkeeping)
+		}
+		completion, err := txExec.handleCommit(commitCtx)
+		if c.nativeOrigin != nil {
+			c.nativeCompletion = completion
+		}
 		return err
 	}
 	rollbackFn := func(_ *fabric.SubTransaction) error {
+		// Native terminal owners detach once even when a WAL finish fails.
+		// Coordinator compensation must not issue a second user ROLLBACK.
+		if c.nativeOrigin != nil && txExec.txContext == nil {
+			return nil
+		}
 		// Local storage rollback has no context API. Always release its state;
 		// the protocol terminal owner bounds its wait independently.
 		_, err := txExec.handleRollback(terminalCtx, nil)

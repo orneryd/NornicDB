@@ -230,7 +230,7 @@ func TestConstraintCreation_DoesNotScanOtherDatabases(t *testing.T) {
 	for _, c := range relationshipConstraintKinds() {
 		t.Run(string(c.Type)+"_"+c.Name, func(t *testing.T) {
 			guard.reset()
-			require.NoError(t, ValidateConstraintOnCreationForEngine(nsA, c))
+			require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), nsA, c))
 			require.Zero(t, guard.allEdgesCalls, "relationship constraint creation must not scan AllEdges")
 			require.Zero(t, guard.allNodesCalls, "relationship constraint creation must not scan AllNodes")
 			require.Zero(t, guard.edgesByType, "relationship constraint creation must stream, not load GetEdgesByType")
@@ -240,7 +240,7 @@ func TestConstraintCreation_DoesNotScanOtherDatabases(t *testing.T) {
 
 	t.Run("relationship property type", func(t *testing.T) {
 		guard.reset()
-		require.NoError(t, ValidatePropertyTypeConstraintOnCreationForEngine(nsA, PropertyTypeConstraint{
+		require.NoError(t, ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), nsA, PropertyTypeConstraint{
 			Name: "ptc", EntityType: ConstraintEntityRelationship, Label: "REL", Property: "k", ExpectedType: PropertyTypeString,
 		}))
 		require.Zero(t, guard.allEdgesCalls)
@@ -252,7 +252,7 @@ func TestConstraintCreation_DoesNotScanOtherDatabases(t *testing.T) {
 		schema := nsA.GetSchema()
 		require.NoError(t, schema.AddConstraint(Constraint{Name: "uniq_email", Type: ConstraintUnique, Label: "User", Properties: []string{"email"}}))
 		guard.reset()
-		require.NoError(t, RefreshUniqueConstraintValuesForEngine(nsA, schema))
+		require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), nsA, schema))
 		require.Zero(t, guard.allNodesCalls, "UNIQUE refresh must not scan AllNodes")
 		require.Empty(t, guard.foreignNodes("b:"), "nodes of database b must not be read")
 	})
@@ -307,13 +307,13 @@ func TestRelationshipConstraintCreation_StreamsOnlyTypeAndDatabase(t *testing.T)
 			seedRelDatabase(t, NewNamespacedEngine(inner, "b"), violatingEdges("REL")[c.Name]...)
 			nsA := NewNamespacedEngine(inner, "a")
 			seedRelDatabase(t, nsA, violatingEdges("OTHER")[c.Name]...)
-			require.NoError(t, ValidateConstraintOnCreationForEngine(nsA, c),
+			require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), nsA, c),
 				"violations of other types / other databases must be ignored")
 
 			// The same violation in database a's REL edges is reported.
 			nsC := NewNamespacedEngine(inner, "c")
 			seedRelDatabase(t, nsC, violatingEdges("REL")[c.Name]...)
-			err := ValidateConstraintOnCreationForEngine(nsC, c)
+			err := ValidateConstraintOnCreationForEngine(context.Background(), nsC, c)
 			require.Error(t, err)
 			var cve *ConstraintViolationError
 			require.ErrorAs(t, err, &cve)
@@ -334,7 +334,7 @@ func TestRelationshipKeyCreation_ReportsMissingPropertyBeforeDuplicate(t *testin
 		relEdge("e2", "y", "x", "REL", map[string]any{"k": "dup"}),
 		relEdge("e3", "x", "x", "REL", map[string]any{}),
 	)
-	err := ValidateConstraintOnCreationForEngine(ns, Constraint{Name: "key", Type: ConstraintRelationshipKey, EntityType: ConstraintEntityRelationship, Label: "REL", Properties: []string{"k"}})
+	err := ValidateConstraintOnCreationForEngine(context.Background(), ns, Constraint{Name: "key", Type: ConstraintRelationshipKey, EntityType: ConstraintEntityRelationship, Label: "REL", Properties: []string{"k"}})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missing required property")
 }
@@ -346,9 +346,9 @@ func TestRelationshipPropertyTypeCreation_StreamsOnlyTypeAndDatabase(t *testing.
 	seedRelDatabase(t, NewNamespacedEngine(inner, "b"), relEdge("e1", "x", "y", "REL", bad))
 	nsA := NewNamespacedEngine(inner, "a")
 	seedRelDatabase(t, nsA, relEdge("e1", "x", "y", "OTHER", bad), relEdge("e2", "x", "y", "REL", map[string]any{"k": "s"}))
-	require.NoError(t, ValidatePropertyTypeConstraintOnCreationForEngine(nsA, ptc))
+	require.NoError(t, ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), nsA, ptc))
 	require.NoError(t, nsA.CreateEdge(relEdge("e3", "y", "x", "REL", bad)))
-	require.Error(t, ValidatePropertyTypeConstraintOnCreationForEngine(nsA, ptc))
+	require.Error(t, ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), nsA, ptc))
 }
 
 func TestBadgerValidateRelationshipConstraint_StreamsType(t *testing.T) {
@@ -363,13 +363,13 @@ func TestBadgerValidateRelationshipConstraint_StreamsType(t *testing.T) {
 
 	unique := RelationshipConstraint{Name: "u", Type: ConstraintUnique, RelType: "REL", Properties: []string{"k"}}
 	exists := RelationshipConstraint{Name: "e", Type: ConstraintExists, RelType: "REL", Properties: []string{"k"}}
-	require.NoError(t, e.ValidateRelationshipConstraint(unique))
-	require.NoError(t, e.ValidateRelationshipConstraint(exists))
+	require.NoError(t, e.ValidateRelationshipConstraint(context.Background(), unique))
+	require.NoError(t, e.ValidateRelationshipConstraint(context.Background(), exists))
 
 	require.NoError(t, e.CreateEdge(relEdge("t:r2", "t:y", "t:x", "REL", map[string]any{"k": "dup"})))
-	require.ErrorContains(t, e.ValidateRelationshipConstraint(unique), "r1")
+	require.ErrorContains(t, e.ValidateRelationshipConstraint(context.Background(), unique), "r1")
 	require.NoError(t, e.CreateEdge(relEdge("t:r3", "t:y", "t:y", "REL", map[string]any{})))
-	require.ErrorContains(t, e.ValidateRelationshipConstraint(exists), "r3")
+	require.ErrorContains(t, e.ValidateRelationshipConstraint(context.Background(), exists), "r3")
 }
 
 func collectEdgeIDs(t *testing.T, engine Engine, edgeType string) []string {
@@ -476,25 +476,25 @@ func TestConstraintCreation_FallbackForEnginesWithoutStreaming(t *testing.T) {
 		relEdge("e2", "y", "x", "REL", map[string]any{"k": "dup"}),
 	)
 
-	err := ValidateConstraintOnCreationForEngine(plain, Constraint{Name: "u", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "REL", Properties: []string{"k"}})
+	err := ValidateConstraintOnCreationForEngine(context.Background(), plain, Constraint{Name: "u", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "REL", Properties: []string{"k"}})
 	require.Error(t, err)
 	require.Equal(t, 1, plain.byType, "fallback reads the one relationship type")
 	require.Zero(t, plain.allEdges, "fallback must never scan AllEdges")
 
 	schema := inner.GetSchema()
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "uq", Type: ConstraintUnique, Label: "A", Properties: []string{"k"}}))
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(plain, schema))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), plain, schema))
 	require.Equal(t, 1, plain.byLabel, "fallback reads the constrained label")
 	require.Zero(t, plain.allNodes, "fallback must never scan AllNodes")
 }
 
 // legacyRefreshUniqueValues is the former AllNodes-based rebuild, kept here
 // as the reference the streamed rebuild must match.
-func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManager) map[string]map[interface{}]NodeID {
+func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManager) map[nodePropertyKey]map[interface{}]NodeID {
 	t.Helper()
 	nodes, err := engine.AllNodes(context.Background())
 	require.NoError(t, err)
-	out := map[string]map[interface{}]NodeID{}
+	out := map[nodePropertyKey]map[interface{}]NodeID{}
 	schema.mu.RLock()
 	defer schema.mu.RUnlock()
 	for key := range schema.uniqueConstraints {
@@ -503,7 +503,7 @@ func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManage
 	for _, node := range nodes {
 		for _, label := range node.Labels {
 			for prop, value := range node.Properties {
-				values, ok := out[label+":"+prop]
+				values, ok := out[nodePropertyKey{label: label, property: prop}]
 				if !ok {
 					continue
 				}
@@ -518,10 +518,10 @@ func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManage
 	return out
 }
 
-func uniqueCacheSnapshot(schema *SchemaManager) map[string]map[interface{}]NodeID {
+func uniqueCacheSnapshot(schema *SchemaManager) map[nodePropertyKey]map[interface{}]NodeID {
 	schema.mu.RLock()
 	defer schema.mu.RUnlock()
-	out := map[string]map[interface{}]NodeID{}
+	out := map[nodePropertyKey]map[interface{}]NodeID{}
 	for key, uc := range schema.uniqueConstraints {
 		uc.mu.RLock()
 		values := make(map[interface{}]NodeID, len(uc.values))
@@ -529,7 +529,7 @@ func uniqueCacheSnapshot(schema *SchemaManager) map[string]map[interface{}]NodeI
 			values[k] = v
 		}
 		if !uc.valuesCacheComplete {
-			panic("unique cache " + key + " not marked complete")
+			panic(fmt.Sprintf("unique cache %v not marked complete", key))
 		}
 		uc.mu.RUnlock()
 		out[key] = values
@@ -560,11 +560,11 @@ func TestRefreshUniqueConstraintValues_StreamedMatchesFullScan(t *testing.T) {
 		require.NoError(t, schema.AddConstraint(c))
 	}
 
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(nsA, schema))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), nsA, schema))
 	got := uniqueCacheSnapshot(schema)
 	require.Equal(t, legacyRefreshUniqueValues(t, nsA, schema), got)
-	require.Equal(t, NodeID("a:u1"), got["User:email"]["a@x"])
-	require.Len(t, got["Admin:uid"], 2)
+	require.Equal(t, NodeID("a:u1"), got[nodePropertyKey{label: "User", property: "email"}]["a@x"])
+	require.Len(t, got[nodePropertyKey{label: "Admin", property: "uid"}], 2)
 
 	// A duplicate among constrained values is still reported.
 	nsDup := NewNamespacedEngine(inner, "dup")
@@ -574,7 +574,7 @@ func TestRefreshUniqueConstraintValues_StreamedMatchesFullScan(t *testing.T) {
 	}
 	dupSchema := nsDup.GetSchema()
 	require.NoError(t, dupSchema.AddConstraint(Constraint{Name: "u_email", Type: ConstraintUnique, Label: "User", Properties: []string{"email"}}))
-	require.ErrorContains(t, RefreshUniqueConstraintValuesForEngine(nsDup, dupSchema), "refresh unique constraint values")
+	require.ErrorContains(t, RefreshUniqueConstraintValuesForEngine(context.Background(), nsDup, dupSchema), "refresh unique constraint values")
 }
 
 func TestStreamEdgesByType_CompositeStreamsEachConstituent(t *testing.T) {

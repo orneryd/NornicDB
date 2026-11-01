@@ -8,24 +8,30 @@ import (
 
 // nodeMutationPreimagesLocked folds only staged mutations. Reads retain no
 // observation state, and a create/delete starts a new incarnation of a claim.
-func (tx *BadgerTransaction) nodeMutationPreimagesLocked() (map[NodeID]*Node, bool) {
+func (tx *BadgerTransaction) nodeMutationPreimagesLocked(ctx context.Context) (map[NodeID]*Node, bool, error) {
 	updates := 0
 	for index := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		operation := &tx.operations[index]
 		if operation.Type == OpUpdateNode {
 			updates++
 		}
 	}
 	if updates == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	// A pure update batch with one operation per pending identity already
 	// carries its ordered first images. No fold map is needed in this case.
 	if updates == len(tx.operations) && updates == len(tx.pendingNodes) {
-		return nil, true
+		return nil, true, nil
 	}
 	before := make(map[NodeID]*Node, min(updates, len(tx.pendingNodes)))
 	for index := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		operation := &tx.operations[index]
 		switch operation.Type {
 		case OpCreateNode, OpDeleteNode:
@@ -38,7 +44,7 @@ func (tx *BadgerTransaction) nodeMutationPreimagesLocked() (map[NodeID]*Node, bo
 			}
 		}
 	}
-	return before, false
+	return before, false, nil
 }
 
 // nodeClaimPreimage selects the caller's immutable observation when supplied,
@@ -83,14 +89,23 @@ func sameNodeUniqueClaim(ctx context.Context, before, after *Node, label, proper
 // existing buffered/storage read cut and projected body decoder.
 func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked(ctx context.Context) error {
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	if len(tx.pendingNodes) == 0 || !schema.HasUniqueValueTracking() {
+	if len(tx.pendingNodes) == 0 {
 		return nil
 	}
-	preimages, distinctUpdates := tx.nodeMutationPreimagesLocked()
+	constraints, err := schema.GetConstraints(ctx)
+	if err != nil {
+		return err
+	}
+	if len(constraints) == 0 {
+		return nil
+	}
+	preimages, distinctUpdates, err := tx.nodeMutationPreimagesLocked(ctx)
+	if err != nil {
+		return err
+	}
 	if len(preimages) == 0 && !distinctUpdates {
 		return nil
 	}
-	constraints := schema.GetConstraints()
 	properties := make([]string, 0, len(constraints))
 	include := make(map[string]struct{}, len(constraints))
 	for index := range constraints {
@@ -105,7 +120,7 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked(ctx context.Contex
 	// overlay map and opens one Badger read transaction rather than one per node.
 	var buffered map[NodeID]*Node
 	entered := false
-	err := tx.engine.withReadView(ctx, func(buffer *WriteBehindBuffer) {
+	err = tx.engine.withReadView(ctx, func(buffer *WriteBehindBuffer) {
 		if buffer == nil {
 			return
 		}
@@ -178,7 +193,7 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked(ctx context.Contex
 				}
 			}
 			if changed {
-				if err := tx.classifyUpdateConflictAsUniqueViolation(id); err != nil {
+				if err := tx.classifyUpdateConflictAsUniqueViolation(ctx, id); err != nil {
 					return err
 				}
 				return localizedError(localization.StorageTransactionNodeChanged(string(id)), ErrConflict)
