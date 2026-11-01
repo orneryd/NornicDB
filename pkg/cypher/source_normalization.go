@@ -33,7 +33,7 @@ func newSourceOffsetError(code, detail, prefix string, offset int) error {
 // Offset facts come from producers, never from guessing at arbitrary prose.
 func (r *queryRewrite) restoreSourceError(err error) (error, bool) {
 	if err == nil || cyphertext.IsSubmittedDiagnostic(err) {
-		return nil, false
+		return err, false
 	}
 	restoredText, changed := (resultRestoration{source: r}).value(err.Error(), sourceDiagnosticText)
 	message := restoredText.(string)
